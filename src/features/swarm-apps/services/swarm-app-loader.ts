@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 addendum: validate manifest.skillProfiles — fail-closed on the map shape, unknown capability keys (isSkillCapabilityId), and stub profiles (pattern + instructions must be non-empty). Sits next to the uses: block — the two kernel-capability validations read together.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Validate manifest.surface.ops fail-closed against the shared surface-bridge vocabulary (@/shared/surface-bridge-ops) — a typo'd op must fail at load, not silently never relay; absence stays legal (= no ops relayed, the fail-closed default).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Validate packaged-bot harness and API declarations as complete compatible pairs before activation.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: validate the artifacts: ("Send to…") block fail-closed — a malformed declaration (bad MIME glob, off-mount endpoint, unknown mode) fails the app load instead of half-registering a dead menu entry.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: fail manifest load on malformed access blocks, unknown/duplicate tiers, missing deny, unsupported defaults, and invalid capability mappings.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | INSTALLER-GAPS CORE-05: validate package-owned smoke probes, confined JSON fixtures, route ownership, and explicit AI-route metadata.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Validate manifest-contributed Takeout slices fail-closed: literal canonical suffixes only, confined compiled modules, bounded uncompressed bytes, unique stable ids/paths, and named handler exports.
@@ -36,6 +37,7 @@ import {
   routeAuthContradicts,
   type SwarmAppRouteAuthMode,
 } from '@/shared/route-auth';
+import { validateArtifactActionsDeclaration } from '@/shared/artifact-exchange';
 import {
   SWARM_APP_BOT_HARNESS_TYPES,
   SWARM_APP_BOT_SPECIAL_API_TYPES,
@@ -840,6 +842,14 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
       { path: absPath, name: manifest.name },
       'Manifest declares no suite (ADR-097) — it will list under "More" in the catalog until one is added',
     );
+  }
+
+  // ADR-139: the artifacts: block ("Send to…" declarations) is optional, but a malformed one
+  // fails the LOAD — a bad MIME glob or an off-mount endpoint must never half-register into the
+  // shared menu registry where the defect surfaces as a dead menu entry far from its cause.
+  const artifactsError = validateArtifactActionsDeclaration(manifest.artifacts);
+  if (artifactsError) {
+    throw new Error(`Manifest ${absPath}: ${artifactsError} (ADR-139 — fix the artifacts: block; the app will not load until it validates)`);
   }
 
   // ADR-085 D3: bots[].accessRoles (ADR-087 parity for packaged bots). Fail closed — an unknown

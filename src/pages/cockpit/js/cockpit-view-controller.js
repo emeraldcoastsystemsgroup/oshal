@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add allow-modals to the embedded-surface iframe sandbox. Without it the browser silently ignores window.confirm()/prompt()/alert() inside every ribbon surface, so core demo actions (Composer Publish, Studio Post, Codex Packer Deploy, Files Delete, Storage "+ New repo", Utilities Disconnect) appeared to do nothing on click. Surfaces are first-party (allow-same-origin); modals are safe.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | renderConnectorDiscoverView forwards the focused app's connector allow-list (profile.connectors ← manifest dependencies.connectors) so the marketplace only offers providers the app declared — inside Little Monsters the Facebook/LinkedIn catalog no longer appears.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Delegate full-screen permission to first-party packaged surfaces so games can hide cockpit chrome on request.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 D4a: renderToolView forwards a shape-checked one-shot `artifact=` ref from the cockpit URL to the surface iframe URL, so an open-mode "Send to…" dispatch lands in the destination surface pre-loaded.
  */
 
 import {
@@ -310,7 +311,14 @@ export class CockpitViewController {
       // so drop the sandbox for it (keep it for third-party/tool surfaces). Other surfaces stay sandboxed.
       const isVoiceSurface = /\/api\/jarvis(\/|$|\?)/.test(String(iframeUrl));
       // Cache-bust the surface so UI edits always load fresh (no stale iframe/CDN copy).
-      const bustedUrl = String(iframeUrl) + (iframeUrl.includes('?') ? '&' : '?') + 'v=' + Date.now();
+      let bustedUrl = String(iframeUrl) + (iframeUrl.includes('?') ? '&' : '?') + 'v=' + Date.now();
+      // ADR-139 D4a: forward a one-shot artifact handle from the cockpit URL to the surface, so
+      // a "Send to…" open-mode dispatch (/cockpit/?app=<name>&artifact=art_…) lands with the ref
+      // in the surface's OWN URL. Shape-checked so an arbitrary query value cannot ride through.
+      const artifactRef = new URLSearchParams(window.location.search).get('artifact');
+      if (artifactRef && /^art_[A-Za-z0-9_-]{8,64}$/.test(artifactRef)) {
+        bustedUrl += '&artifact=' + encodeURIComponent(artifactRef);
+      }
       const sandboxAttr = isVoiceSurface
         ? ''
         // allow-downloads is load-bearing: without it a sandboxed surface's download is
