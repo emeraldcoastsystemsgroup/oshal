@@ -137,6 +137,8 @@ export interface LabMetrics {
 export interface SimResult {
   curve: EquityPoint[];
   metrics: LabMetrics;
+  /** The capital this run started from (LAB_START_CASH unless the caller sized it to an account). */
+  startCash?: number;
   state: WalkState;
   windowStart: string;
   windowEnd: string;
@@ -507,15 +509,15 @@ export function stepDay(a: Aligned, cfg: StrategyConfig, policy: RiskPolicy, sta
  * @param state - Walk state carrying trade/win/loss/maxDD tallies.
  * @returns Persistable metrics.
  */
-export function metricsFor(curve: EquityPoint[], state: WalkState): LabMetrics {
+export function metricsFor(curve: EquityPoint[], state: WalkState, startCash: number = LAB_START_CASH): LabMetrics {
   const n = curve.length;
   if (n < 2) {
     return { totalReturnPct: 0, cagrPct: 0, sharpe: 0, maxDrawdownPct: round2(state.maxDD * 100), winRatePct: 0, trades: state.trades, spyReturnPct: 0, alphaVsSpyPct: 0, bars: n, avgDailyPct: 0, bestDayPct: 0, worstDayPct: 0 };
   }
   const first = curve[0], last = curve[n - 1];
-  const totalReturnPct = (last.e / LAB_START_CASH - 1) * 100;
-  const spyReturnPct = first.s > 0 ? (last.s / LAB_START_CASH - 1) * 100 : 0;
-  const growth = last.e / LAB_START_CASH;
+  const totalReturnPct = (last.e / startCash - 1) * 100;
+  const spyReturnPct = first.s > 0 ? (last.s / startCash - 1) * 100 : 0;
+  const growth = last.e / startCash;
   const cagrPct = growth > 0 ? (Math.pow(growth, 252 / n) - 1) * 100 : -100;
   const rets: number[] = [];
   for (let i = 1; i < n; i++) if (curve[i - 1].e > 0) rets.push(curve[i].e / curve[i - 1].e - 1);
@@ -548,7 +550,15 @@ const round3 = (n: number): number => Math.round(n * 1000) / 1000;
  *  decision functions read "all history up to t" — a different fetch start changes what the
  *  1Week/3Month resamples see and therefore the decisions. `fetchStart` is recorded on every
  *  result so a regression can reproduce the run bit-for-bit (modulo tape restatements). */
-export interface BacktestWindow { windowDays?: number; endDate?: string; fetchStartDate?: string }
+export interface BacktestWindow {
+  windowDays?: number; endDate?: string; fetchStartDate?: string;
+  /** Starting capital for THIS run (default LAB_START_CASH). Whole-share sizing means a $20K book and a
+   *  $500K book do not trade the same — the operator's 2026-09-04 point. Forward walks and regressions
+   *  keep the $100K reference unless the pinned baseline recorded another capital. */
+  startCash?: number;
+}
+/** @description The capital a run should start from: a positive override, else the $100K reference. */
+export function resolveStartCash(win: BacktestWindow): number { return win.startCash && Number.isFinite(win.startCash) && win.startCash > 0 ? win.startCash : LAB_START_CASH; }
 
 /**
  * @description Runs a full backtest for a config: fetch, warm up, walk to the last session.
@@ -571,25 +581,26 @@ export async function runBacktest(cfg: StrategyConfig, win: BacktestWindow = {})
   if (dates.length < cfg.warmupDays + 10) throw new Error(`not enough history (${dates.length} sessions for warmup ${cfg.warmupDays})`);
 
   const w = cfg.warmupDays;
+  const startCash = resolveStartCash(win);
   const corePx = priceAt(a, cfg.coreSymbol, w);
   const state: WalkState = {
-    cash: LAB_START_CASH, lots: {}, coreQty: 0, barCount: 0,
-    peakEquity: LAB_START_CASH, maxDD: 0, wins: 0, losses: 0, trades: 0,
+    cash: startCash, lots: {}, coreQty: 0, barCount: 0,
+    peakEquity: startCash, maxDD: 0, wins: 0, losses: 0, trades: 0,
     lastDate: dates[w - 1], spyAnchor: a.spy[w],
   };
   if (cfg.corePct > 0) {
     if (!corePx) throw new Error(`no ${cfg.coreSymbol} price at warmup for the core sleeve`);
-    state.coreQty = Math.floor(((cfg.corePct / 100) * LAB_START_CASH) / corePx);
+    state.coreQty = Math.floor(((cfg.corePct / 100) * startCash) / corePx);
     state.cash -= state.coreQty * corePx;
   }
 
   const curve: EquityPoint[] = [];
   for (let t = w; t < dates.length; t++) {
     const e = stepDay(a, cfg, policyFor(cfg), state, t);
-    curve.push({ d: dates[t], e: round2(e), s: round2(LAB_START_CASH * (a.spy[t] / state.spyAnchor)) });
+    curve.push({ d: dates[t], e: round2(e), s: round2(startCash * (a.spy[t] / state.spyAnchor)) });
   }
   return {
-    curve, metrics: metricsFor(curve, state), state,
+    curve, metrics: metricsFor(curve, state, startCash), state, startCash,
     windowStart: dates[w], windowEnd: dates[dates.length - 1], bars: curve.length, feed: a.feed,
     fetchStart: dates[0],
   };
@@ -653,22 +664,23 @@ async function runBlendBacktest(cfg: StrategyConfig, win: BacktestWindow = {}): 
   if (dates.length < cfg.warmupDays + 10) throw new Error(`not enough history (${dates.length} sessions for warmup ${cfg.warmupDays})`);
 
   const w = cfg.warmupDays;
+  const startCash = resolveStartCash(win);
   const partCfgs = components.map(blendPartConfig);
   const partPolicies = partCfgs.map(policyFor);
   const parts: WalkState[] = components.map((c) => ({
-    cash: (c.weightPct / 100) * LAB_START_CASH, lots: {}, coreQty: 0, barCount: 0,
-    peakEquity: (c.weightPct / 100) * LAB_START_CASH, maxDD: 0, wins: 0, losses: 0, trades: 0,
+    cash: (c.weightPct / 100) * startCash, lots: {}, coreQty: 0, barCount: 0,
+    peakEquity: (c.weightPct / 100) * startCash, maxDD: 0, wins: 0, losses: 0, trades: 0,
     lastDate: dates[w - 1], spyAnchor: a.spy[w],
   }));
   const state: WalkState = {
-    cash: LAB_START_CASH - components.reduce((s, c) => s + (c.weightPct / 100) * LAB_START_CASH, 0),
-    lots: {}, coreQty: 0, barCount: 0, peakEquity: LAB_START_CASH, maxDD: 0, wins: 0, losses: 0, trades: 0,
+    cash: startCash - components.reduce((s, c) => s + (c.weightPct / 100) * startCash, 0),
+    lots: {}, coreQty: 0, barCount: 0, peakEquity: startCash, maxDD: 0, wins: 0, losses: 0, trades: 0,
     lastDate: dates[w - 1], spyAnchor: a.spy[w], parts: {},
   };
   if (cfg.corePct > 0) {
     const corePx = priceAt(a, cfg.coreSymbol, w);
     if (!corePx) throw new Error(`no ${cfg.coreSymbol} price at warmup for the blend core`);
-    state.coreQty = Math.floor(((cfg.corePct / 100) * LAB_START_CASH) / corePx);
+    state.coreQty = Math.floor(((cfg.corePct / 100) * startCash) / corePx);
     state.cash -= state.coreQty * corePx;
   }
 
@@ -677,11 +689,11 @@ async function runBlendBacktest(cfg: StrategyConfig, win: BacktestWindow = {}): 
     let e = state.cash + state.coreQty * (priceAt(a, cfg.coreSymbol, t) ?? 0);
     for (let i = 0; i < components.length; i++) e += stepDay(a, partCfgs[i], partPolicies[i], parts[i], t);
     rollBlend(state, parts, e, dates[t]);
-    curve.push({ d: dates[t], e: round2(e), s: round2(LAB_START_CASH * (a.spy[t] / state.spyAnchor)) });
+    curve.push({ d: dates[t], e: round2(e), s: round2(startCash * (a.spy[t] / state.spyAnchor)) });
   }
   parts.forEach((p, i) => { (state.parts as Record<string, WalkState>)[String(i)] = p; });
   return {
-    curve, metrics: metricsFor(curve, state), state,
+    curve, metrics: metricsFor(curve, state, startCash), state, startCash,
     windowStart: dates[w], windowEnd: dates[dates.length - 1], bars: curve.length, feed: a.feed,
     fetchStart: dates[0],
   };
