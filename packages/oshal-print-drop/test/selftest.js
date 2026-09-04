@@ -421,6 +421,114 @@ async function testWsd() {
 }
 
 /**
+ * @description Build a REAL zip archive (local headers + central directory + EOCD,
+ * deflate-compressed) so the XPS guard exercises the actual archive reader rather
+ * than a stubbed one. Mirrors the shape Windows spools: FixedPage parts under
+ * Documents/1/Pages/.
+ * @param {Array<{name:string,content:string}>} entries The parts to store.
+ * @returns {Buffer} The archive bytes.
+ */
+function buildZip(entries) {
+  const zlib = require('zlib');
+  const locals = [];
+  const central = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const nameBuf = Buffer.from(entry.name, 'utf8');
+    const raw = Buffer.from(entry.content, 'utf8');
+    const deflated = zlib.deflateRawSync(raw);
+    const crc = zlib.crc32 ? zlib.crc32(raw) : 0;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(deflated.length, 18);
+    local.writeUInt32LE(raw.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    locals.push(Buffer.concat([local, nameBuf, deflated]));
+    const dir = Buffer.alloc(46);
+    dir.writeUInt32LE(0x02014b50, 0);
+    dir.writeUInt16LE(20, 6);
+    dir.writeUInt16LE(8, 10);
+    dir.writeUInt32LE(crc, 16);
+    dir.writeUInt32LE(deflated.length, 20);
+    dir.writeUInt32LE(raw.length, 24);
+    dir.writeUInt16LE(nameBuf.length, 28);
+    dir.writeUInt32LE(offset, 42);
+    central.push(Buffer.concat([dir, nameBuf]));
+    offset += local.length + nameBuf.length + deflated.length;
+  }
+  const centralBuf = Buffer.concat(central);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(centralBuf.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, centralBuf, eocd]);
+}
+
+/**
+ * @description XPS text guard. A printed PDF from the Windows IPP class driver is a
+ * page bitmap with zero extractable characters (measured), so the whole point of
+ * accepting XPS is that its glyph runs carry the text. Asserts recovery, reading
+ * order (paint order runs a heading into the body), and the honest failure a
+ * document with no text runs must produce.
+ * @returns {Promise<void>} Resolves when asserted.
+ */
+async function testXpsText() {
+  const { extractXpsText } = require('../lib/xps-text');
+  // Runs are listed out of reading order on purpose: XPS lists them in PAINT order.
+  const page = '<?xml version="1.0" encoding="utf-8"?><FixedPage xmlns="http://schemas.microsoft.com/xps/2005/06">'
+    + '<Glyphs OriginX="96" OriginY="180" UnicodeString="second line &amp; more" />'
+    + '<Glyphs OriginX="300" OriginY="96" UnicodeString="RIGHT" />'
+    + '<Glyphs OriginX="96" OriginY="96" UnicodeString="Heading " />'
+    + '</FixedPage>';
+  const xps = buildZip([
+    { name: '[Content_Types].xml', content: '<Types/>' },
+    { name: 'Documents/1/Pages/1.fpage', content: page },
+  ]);
+  const result = extractXpsText(xps);
+  assert.ok(result.ok, `XPS text extracted (got ${result.ok ? 'ok' : result.reason})`);
+  assert.strictEqual(result.pages, 1, 'one FixedPage part');
+  assert.strictEqual(
+    result.text,
+    'Heading RIGHT\nsecond line & more',
+    'runs are ordered by line then left-to-right, and XML entities are decoded',
+  );
+
+  const imagesOnly = buildZip([{ name: 'Documents/1/Pages/1.fpage', content: '<FixedPage><Path/></FixedPage>' }]);
+  const empty = extractXpsText(imagesOnly);
+  assert.strictEqual(empty.ok, false, 'a page with no glyph runs is an honest failure, not empty success');
+  assert.match(empty.reason, /images only|no text runs/i, 'the failure names why');
+  assert.strictEqual(extractXpsText(Buffer.from('%PDF-1.7 not a zip')).ok, false, 'a non-archive is refused');
+
+  // The spooler must land the companion .txt beside the document.
+  const dropDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-xps-'));
+  try {
+    const { spoolDocument } = require('../lib/spooler');
+    const { Readable } = require('stream');
+    const saved = await spoolDocument(
+      Readable.from([xps]),
+      { jobId: 7, jobName: 'Quarterly', userName: 'u', clientIp: '127.0.0.1', format: 'application/oxps', source: 'wsd', printerName: 'p' },
+      { dropDir, maxBytes: 5 * 1024 * 1024 },
+    );
+    assert.strictEqual(saved.extension, 'xps', 'declared XPS format drives the extension');
+    const sidecar = JSON.parse(fs.readFileSync(`${saved.filePath}.json`, 'utf8'));
+    assert.ok(sidecar.textFile, 'sidecar points at the companion text file');
+    assert.strictEqual(sidecar.textCharacters, 'Heading RIGHT\nsecond line & more'.length);
+    assert.strictEqual(
+      fs.readFileSync(path.join(dropDir, sidecar.textFile), 'utf8'),
+      'Heading RIGHT\nsecond line & more',
+      'companion .txt holds the recovered text, ready to ingest with no parser',
+    );
+  } finally {
+    fs.rmSync(dropDir, { recursive: true, force: true });
+  }
+}
+
+/**
  * @description Run every test against one shared server instance, then the cap test.
  * @returns {Promise<void>} Resolves on full success.
  */
@@ -442,7 +550,8 @@ async function main() {
   await testByteCap();
   await testSubtypeAdvertisement();
   await testWsd();
-  log.info('selftest passed', { suites: 9 });
+  await testXpsText();
+  log.info('selftest passed', { suites: 10 });
 }
 
 main().catch((err) => {
