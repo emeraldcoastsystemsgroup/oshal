@@ -144,6 +144,20 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** an emitted-ops turn logs op count + names + the target app at INFO, and the BUG-18
   failure shape (a `custom` op whose name no surface handles) is diagnosable from the api log alone.
 
+### Hugging Face lane — first real completion through the router
+- **Remaining:** PR #288 registered Hugging Face Inference Providers as a free-tier, operator-key, and
+  Token Chase lane (`router.huggingface.co/v1`, every candidate `:cheapest`, last in the operator
+  order) and it is deployed (2f9b6dd1, 2026-09-04). No HF token exists on the operator box, so the
+  only proof is `tests/unit/huggingface-lane.spec.ts` with the vendor probe doubled (see the
+  real-boundary audit row). The candidate ids were live-listed on `GET /v1/models` on 2026-09-04 and
+  will rot like every other lane's; HF's free monthly credit is $0.10 ($2 on PRO), so a walled
+  account answers 402, which the rotation already treats as "cool it and move on".
+- **Done when:** with `HF_TOKEN` in `.env` and the api recreated, `scripts/evidence/prove-free-tier-live.ts`
+  reports the `huggingface` lane UP with a real completion (dated in the deploy record); a token
+  pasted on `/free-models` connects and `GET /api/connect/free-tier/rotation` shows the lane
+  eligible; and the lane's row in `docs/governance/real-boundary-regression-audit.md` cites that
+  dated evidence instead of "pending an operator token".
+
 ## Security, tenancy, and trust boundaries
 
 ### The SEC/CORE/APP hardening-track identifiers have no definition anywhere in the repo
