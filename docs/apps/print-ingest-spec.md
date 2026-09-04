@@ -13,37 +13,84 @@ standalone `packages/oshal-print-drop` utility gains in order to deliver documen
 
 ### 1.1 The user's experience
 
-A person on the LAN opens any document, presses Ctrl+P, and picks a printer. That is the whole
-interaction. Which printer they pick decides what the swarm does with the document:
+A person opens any document, presses Ctrl+P, and picks **one** printer. That is the whole
+interaction — no driver, no settings change, the same zero-touch property the printer already has.
 
-| Printer in the dialog | What happens |
-|---|---|
-| **oshal — My Documents** | The document becomes searchable knowledge owned by one person and private to them |
-| **oshal — Swarm Knowledge** | The document becomes knowledge every member of the swarm can retrieve |
-| **oshal — <Bot> Knowledge** | The document is routed into a named bot's corpus |
-| **oshal — New Ticket** | The document opens a ticket; nothing is written to any corpus |
-| **oshal — Print to File** | Today's behaviour: the document is saved to disk and nothing is sent anywhere |
+Everything printed lands in **one inbox**, and a `print-queue` ticket does the work of deciding
+where it belongs. The person is asked once, in the ticket, with the answer already filled in:
 
-Nothing is installed on the printing machine. No driver, no agent, no settings change — the same
-zero-touch property the printer itself has.
+```
+Print queue #418 — "Quarterly Operations Summary"          awaiting your approval
+
+  From      ParentPC · printed 14:32 · 5 pages · 11,240 characters
+  Preview   Heat exchanger E-204 was serviced on 14 August; fouling factor
+            returned to nominal. Outstanding item: replace the differential…
+
+  Title     [ Quarterly Operations Summary                              ]
+
+  Store it where?                                    (recommendation pre-ticked)
+   [x] Maintenance bot          why: equipment IDs, service intervals   high
+   [x] Swarm knowledge          why: operational record, broadly useful medium
+   [ ] Jarvis                   why: no personal or scheduling content  low
+   [ ] Private to me
+   [ ] Nowhere — reject this document
+
+            [ Approve ]   [ Reject ]
+```
+
+Approve, and the payload is delivered to every ticked destination. Reject, and the staged document
+is discarded and the decision recorded.
+
+Superseded design note: an earlier revision advertised one printer per destination. That is replaced
+by the single inbox (ADR-135 Amendment C) — classification can read the document's content, which a
+print dialog cannot, and adding a destination becomes a form option instead of a new device on
+everyone's machine.
 
 ### 1.2 What happens after printing
 
-1. The document lands in the drop folder with its sidecar, exactly as today.
-2. If the forwarder is enabled, it delivers the document and sidecar to the swarm and marks it
-   delivered. If the swarm is unreachable, the document stays on disk and delivery is retried; the
-   printing user is never blocked and never sees an error.
-3. A `print-intake` ticket is created. It carries the document, its provenance, and the destination
-   the chosen queue implies.
-4. **If approvals are on for that destination**, the ticket stops at an approval gate and appears in
-   the inbox surface as *awaiting approval*. Nothing is written to any corpus until a human approves.
-5. On approval (or immediately, if approvals are off), the bot extracts the text, titles and
-   classifies the document, writes it to the destination corpus with print provenance, and completes
-   the ticket.
-6. The document is retrievable by content. Any citation of it shows that it arrived by print, from
-   which machine, and when.
+1. The document lands in the drop folder with its sidecar — and, when it arrived as XPS, a companion
+   `.txt` of its recovered text. All of this ships today.
+2. If the forwarder is enabled, it delivers the document, sidecar and text to the swarm and marks it
+   delivered. If the swarm is unreachable the document stays on disk and delivery is retried; the
+   printing person is never blocked and never sees an error.
+3. A **`print-queue`** ticket is created. Its job is classification, not ingestion.
+4. The bot builds a **recommendation**: proposed title, and a ranked set of destinations with a
+   one-line reason and a confidence for each (§1.4).
+5. The ticket stops at the approval gate carrying that form. **Nothing is written to any corpus
+   until a human approves**, and the form is editable — approval is a decision, not a rubber stamp.
+6. On approval the payload is delivered to **every ticked destination** (§1.6), each copy carrying
+   the same content-hash document id, and the ticket completes.
+7. The document is retrievable by content. Any citation shows it arrived by print, from which
+   machine, and when.
 
-### 1.3 The inbox surface
+### 1.3 Why a ticket rather than a background rule
+
+Because the answer is genuinely ambiguous and the cost of being wrong is asymmetric. A document put
+in the wrong corpus cannot be removed — core has no per-document delete — so an automatic rule that
+guesses wrong is permanent. A ticket makes the guess cheap to correct while it is still free.
+
+It also means the mechanism is the swarm's own: a ticket type, a workflow, an approval gate, a
+surface. Nothing bespoke.
+
+### 1.4 How the recommendation is built
+
+Four signals, used in descending order of trust. The first is the only one that decides *ownership*;
+the rest only ever propose.
+
+| Signal | What it decides | Trust |
+|---|---|---|
+| Local session identity (per-user localhost instance) | The owner | **Authoritative** — the process runs as that person |
+| Originating machine / print IP matched against known users | A *suggested* owner | Hint. Never becomes `owner_sub`; a mapped document still needs approval |
+| Document content, classified by the bot | Which specialist domains it belongs to | Reasoning, cost-attributed to the bot per ADR-036 |
+| Prior approved decisions from the same source | Which boxes start ticked | Learned, always overridable |
+
+Each proposed destination carries a **reason** and a **confidence**. A reason a person cannot
+evaluate ("relevance 0.83") is not a reason; "equipment IDs and service intervals" is.
+
+Low confidence never becomes an unticked-but-hidden option — every available destination is shown,
+so the person can see what was *not* recommended and why.
+
+### 1.5 The inbox surface
 
 One cockpit surface, `/print-ingest/`, registered through `ui.static`. It lists documents rather than
 tickets, because the operator's question is "what got printed and where did it go":
@@ -60,7 +107,39 @@ tickets, because the operator's question is "what got printed and where did it g
 Rejection deletes the staged document and records the rejection. It does not delete the original in
 the drop folder — the utility's output is the user's file, not the swarm's.
 
-### 1.4 Destination and level vocabulary
+### 1.6 Storing close *and* far
+
+A document can be approved into **several destinations at once**, and that is deliberate rather than
+wasteful. Retrieval fuses two per-collection rankings by reciprocal rank, so a document's score
+depends on what it competes with *inside the collection being searched*: the same document ranks
+high in a focused bot corpus and is buried in a large swarm one, for the identical query. A copy
+close to the bot that needs it is found; a single copy in the big corpus often is not.
+
+Typical shapes:
+
+| Intent | Destinations |
+|---|---|
+| "Jarvis and the specialists should both know this" | the specialist bot's corpus **and** the swarm level |
+| "Every bot should know this generically" | the swarm level alone |
+| "This is mine" | private, owned — one copy |
+
+Three rules keep fan-out honest:
+
+1. **One identity across copies** — every copy carries the same `doc_id` (`print:<sha256>`), so
+   results dedupe by document instead of showing the same page three times, and every copy is
+   reachable from one id.
+2. **The fan-out set is recorded** in the package's own table. Core cannot delete a single document,
+   so knowing exactly where copies went is the difference between *retractable later* and
+   *permanent by accident*.
+3. **Fan-out is never silent** — the form lists every destination a copy will land in. Approving one
+   destination is not approving three.
+
+**Constraint:** the swarm level is kernel-reserved and generic ingest into it is refused unless the
+caller is an admin. Operator approval *is* that gate, but the form must not offer the swarm
+destination to an approver who lacks it — better a missing option than a write that fails after the
+person believed they had filed the document.
+
+### 1.7 Destination and level vocabulary
 
 The surface uses the same three words the Settings → Knowledge tab already uses — *swarm*, *bot*,
 *private* — because they resolve to the same three targets. Two labelling rules, both load-bearing:
@@ -71,7 +150,7 @@ The surface uses the same three words the Settings → Knowledge tab already use
 - The swarm destination is described as **everyone in this swarm can retrieve this**. An operator's
   non-private ingest is world-readable to every signed-in user, and the UI must not imply otherwise.
 
-### 1.5 Configuring approvals
+### 1.8 Configuring approvals
 
 Approvals are a property of the workflow, not of a hidden setting:
 
@@ -85,7 +164,7 @@ There is deliberately **no bespoke settings table** for this package. A per-app 
 designed but unbuilt (ADR-090 Axis D); building a private one here is the hardcoding this design is
 meant to avoid. When Axis D ships, the approvals toggle is its first natural consumer.
 
-### 1.6 Non-goals
+### 1.9 Non-goals
 
 - No OCR. A scanned image printed to the swarm is reported as *no extractable text*, not guessed at.
 - No document editing, versioning, or storage-of-record. The corpus is an index, not a filing system.
@@ -185,17 +264,24 @@ uses: [rag, storage, notifications]
 
 ragCollections: ["print-drop-*"]     # lifecycle ownership only - NOT access control
 
-ticketType: print-intake
+ticketType: print-queue
 workflow:
-  name: Print Intake
+  name: Print Queue
   pipeline: graph
   workerBot: print-ingest-bot
   processDefinition:
     nodeGraph:
-      # start -> extract -> classify -> [approval-gate] -> ingest -> deliver
-      # The gate node is present when approvals are on and absent when off.
-      # It must NOT sit inside a parallel region - the engine rejects that at
-      # publish time and defensively at runtime.
+      # start -> extract -> classify -> [approval-gate] -> fan-out ingest -> deliver
+      #
+      # `classify` produces the recommendation form; the gate carries it for the
+      # human to edit, so approval releases a PAYLOAD, not just a yes.
+      # `fan-out ingest` writes one copy per approved destination, all sharing the
+      # content-hash doc_id, and records the fan-out set before returning.
+      #
+      # The gate node is present when approvals are on and absent when off, and it
+      # must NOT sit inside a parallel region - the engine rejects that at publish
+      # time and defensively at runtime. That constraint is why the fan-out writes
+      # run sequentially after the gate rather than as a parallel split.
 
 bots:
   - agentId: <fresh uuid>
@@ -229,8 +315,10 @@ One table, owner-RLS, created by a package migration and keyed by `user_sub` per
 | `content_sha256` | idempotency + `doc_id` (`print:<sha256>`) |
 | `document_path` | staged file under the package's storage |
 | `sidecar` | JSONB, the raw sidecar as received, for audit |
-| `destination`, `target_collection`, `bot_id` | resolved destination |
-| `state` | `staged` → `awaiting_approval` → `ingested` \| `rejected` \| `failed` |
+| `recommendation` | JSONB — the proposed destinations with reason and confidence, as shown |
+| `approved_destinations` | JSONB — what the person actually ticked, which is not the same thing |
+| `fanout` | JSONB — one row per written copy: `{destination, collection, ragDocId, writtenAt}`. This is the ONLY record of where copies went; core cannot delete a single document, so without it a fan-out is permanent by accident |
+| `state` | `staged` → `awaiting_approval` → `ingested` \| `partially_ingested` \| `rejected` \| `failed` |
 | `extract_status`, `extract_reason` | mirrors the `doc-extract` `{ok,reason}` contract |
 | `ticket_id`, `rag_doc_id` | cross-references |
 | `created_at`, `decided_at`, `decided_by` | who approved, and when |
@@ -284,6 +372,8 @@ Printed content reaches a model's context. Three defences, all of which already 
 | XPS document (WSD path can emit it) | Rejected with *format not supported*; explicitly not guessed at |
 | Duplicate print | Idempotency key matches; original result returned; no second corpus entry |
 | Approval never given | Ticket sits in `approval_required` indefinitely; a staleness sweep reports, never auto-approves |
+| One destination of a fan-out fails | The successful copies are recorded, state becomes `partially_ingested`, and the failure names the destination. Never rolled back — a written copy cannot be un-written — and never retried blindly, since a retry against a succeeded destination would duplicate it |
+| Swarm destination offered to a non-admin approver | Prevented at form-build time, not at write time: an option that would fail is not shown |
 | Package deactivated mid-flight | Ticket type unregisters; queued tickets defer (the existing startup-race guard), documents stay staged |
 | Corpus write fails | Intake row `failed`, ticket not completed, document retained for retry |
 
@@ -305,8 +395,15 @@ means the boundary a guard claims to protect must actually be crossed.
 - Approval gate: with the gate present, nothing is written until approve; the ticket transitions
   `approved → paused → approval_required` and `resume` releases it. **Against a real ticket store**,
   not a mocked status field.
-- Destination resolution: each of the four destinations lands in the declared target, and a bot
-  destination with an unknown `botId` fails closed.
+- Destination resolution: each destination lands in its declared target, and a bot destination with
+  an unknown `botId` fails closed.
+- **Fan-out**: approving three destinations writes three copies **sharing one `doc_id`**, records
+  all three in the fan-out set, and a search that sweeps every collection returns the document
+  **once**, not three times.
+- **Fan-out is what was approved**: unticking a recommended destination means no copy lands there —
+  asserted by inspecting the writes, not the response body.
+- Partial failure: with one destination made to fail, the succeeded copies are recorded, state is
+  `partially_ingested`, and the failure names the destination.
 
 **Edge**
 - Watcher ignores `.part` files and acts only on completed renames.
