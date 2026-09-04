@@ -22,6 +22,7 @@
 # 15 | maintainer@emeraldcoastsystemsgroup.com   | Forward ENCRYPTION_KEY to the controller API only so the ADR-002 encrypted-config vault can use the key already provisioned in the host .env without exposing that deployment-wide secret to worker bots; guarded by an exact-one API-only mapping test.
 # 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 knob passthroughs: STORYBOARD_CLI_IMAGE_BOT_ID/_TIMEOUT_MS (which bot node renders + dispatch deadline) and the PORTRAIT_STUDIO_* operating knobs (vendor timeout / daily cap / concurrency). A knob set only in .env is INVISIBLE to the container without an anchor entry — the July free-lane lesson (a pasted key never reached any container) applied to the image rail before it bit.
 # 17 | maintainer@emeraldcoastsystemsgroup.com   | Forward OSHAL_JSON_BODY_LIMIT to the controller API only: the documented body-limits tuning knob never reached the container, so a customer's 1K-lead CSV import 413ed at the implicit 100kb default with no way to raise it from the host env.
+# 18 | maintainer@emeraldcoastsystemsgroup.com   | Forward FMCSA_WEBKEY to the controller API only: the intelligent-sales underwriting connector's env fallback (its admin-pasted setting wins when both exist). Guard entry added to compose-env-passthrough.spec.ts — the silent-env-var class this file has paid for four times.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -1288,6 +1289,12 @@ services:
       # env is silently ignored and a large lead-import CSV keeps 413ing at the 100kb
       # default (found live on the gsquared CRM box, 2026-08-26).
       OSHAL_JSON_BODY_LIMIT: ${OSHAL_JSON_BODY_LIMIT:-}
+      # FMCSA (Motus/QCMobile) WebKey — CONTROLLER ONLY. Read by the intelligent-sales
+      # underwriting connector as the env fallback behind its admin-pasted setting
+      # (sales_settings.integrations wins when both are set). Unforwarded, an operator
+      # stubbing it in the box env would be silently ignored — the exact class this
+      # file has paid for four times.
+      FMCSA_WEBKEY: ${FMCSA_WEBKEY:-}
       # Master connector-token AES key — CONTROLLER ONLY (removed from x-bot-env).
       # The controller decrypts tokens here + hands bots short-lived per-user tokens.
       SESSION_SECRET: ${SESSION_SECRET:-}

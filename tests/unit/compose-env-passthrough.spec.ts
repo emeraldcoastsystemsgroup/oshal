@@ -56,6 +56,10 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   // 100kb default because the documented tuning knob (body-limits.ts jsonBodyLimit) was never
   // forwarded — the exact silent-env-var shape this spec exists for.
   { name: 'OSHAL_JSON_BODY_LIMIT', readBy: 'security/hardening body-limits jsonBodyLimit — the global JSON body cap' },
+  // 2026-09-02, gsquared underwriting (R3-01a): the FMCSA WebKey's env fallback. The admin
+  // paste in the package's settings outranks it, but a box operator managing keys in the env
+  // file (their standing habit for RingCentral/Microsoft/Twilio) must not be silently ignored.
+  { name: 'FMCSA_WEBKEY', readBy: 'intelligent-sales lib/is-fmcsa webKey() — env fallback behind the admin-pasted setting' },
 ];
 
 // This list is CURATED, not exhaustive, and that is a deliberate trade rather than laziness:
