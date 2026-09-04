@@ -23,6 +23,7 @@
 # 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 knob passthroughs: STORYBOARD_CLI_IMAGE_BOT_ID/_TIMEOUT_MS (which bot node renders + dispatch deadline) and the PORTRAIT_STUDIO_* operating knobs (vendor timeout / daily cap / concurrency). A knob set only in .env is INVISIBLE to the container without an anchor entry — the July free-lane lesson (a pasted key never reached any container) applied to the image rail before it bit.
 # 17 | maintainer@emeraldcoastsystemsgroup.com   | Forward OSHAL_JSON_BODY_LIMIT to the controller API only: the documented body-limits tuning knob never reached the container, so a customer's 1K-lead CSV import 413ed at the implicit 100kb default with no way to raise it from the host env.
 # 18 | maintainer@emeraldcoastsystemsgroup.com   | Forward FMCSA_WEBKEY to the controller API only: the intelligent-sales underwriting connector's env fallback (its admin-pasted setting wins when both exist). Guard entry added to compose-env-passthrough.spec.ts — the silent-env-var class this file has paid for four times.
+# 19 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: HF_TOKEN passthrough for the Hugging Face Inference Providers lane. Compose does not auto-forward .env; a pasted key that never reaches the container is the 2026-07-11 "working key, dead lane" defect.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -300,9 +301,11 @@ x-bot-env: &bot-env
   #   groq     https://console.groq.com/keys
   #   cerebras https://cloud.cerebras.ai/
   #   mistral  https://console.mistral.ai/api-keys/
+  #   huggingface https://huggingface.co/settings/tokens (Inference Providers router; $0.10/mo credit free, $2 PRO)
   GROQ_API_KEY: ${GROQ_API_KEY:-}
   CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
   MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+  HF_TOKEN: ${HF_TOKEN:-}
   # DEMO SWITCH (default OFF). On, the operator-key lane may run an operator's turn on THIS
   # deployment's own hosted keys (the vars above) when they have connected no LLM of their own —
   # what makes a demo box answer out of the tin. Off, those keys are never lent to a turn: a caller

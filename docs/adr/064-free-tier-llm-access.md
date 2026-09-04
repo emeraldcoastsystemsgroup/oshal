@@ -7,11 +7,19 @@ the platform offers users free runs. The instant on-ramp (pooled-Codex "free sha
 already exists; this ADR scopes the durable free tier and rules out the naive approach.
 
 **Built (`src/app/routes/free-tier-*.ts`, mounted `/api/connect/free-tier`):** a provider
-catalog (OpenRouter, Gemini/AI Studio, Groq, Cerebras, Mistral — all OpenAI-compatible, all
+catalog (OpenRouter, Gemini/AI Studio, Groq, Cerebras, Mistral, Hugging Face Inference Providers — all OpenAI-compatible, all
 Cline-native ids); validate-on-save connect (fail-closed round-trip) reusing the per-user
 AES-GCM connector store; OpenRouter PKCE OAuth connect; LRU rotation with a per-connection
 rate-limit cooldown table (`oshal_free_tier_state`); and the Cline-handoff seam
 `getFreeTierConnection()` → `freeTierToHarnessConfig()` returning the `buildClineProvider` shape.
+
+**Lane added 2026-09-04 — Hugging Face Inference Providers** (`router.huggingface.co/v1`, the
+OpenAI-compatible router that fronts Groq / Cerebras / Together / Fireworks / DeepInfra / Novita and
+others behind one HF token). Candidates carry the `:cheapest` policy suffix and the lane sits LAST in
+the operator lane order because the monthly credit is thin: $0.10 on a free account, $2 on PRO (HF
+pricing page, fetched 2026-09-04), then pay-as-you-go at provider rates. Guard:
+`tests/unit/huggingface-lane.spec.ts`; live companion `scripts/evidence/prove-free-tier-live.ts`
+with `HF_TOKEN`.
 
 **Execution wiring BUILT 2026-06-21:** `resolveUserLlmConnection(pool, sub)` is the per-request
 resolver — the user's explicit bring-your-own endpoint wins, else a *probed-live* free-tier
@@ -160,7 +168,7 @@ your free models" wizard, a running "free capacity connected" tally, and the rig
   redirect to its auth page → user approves → exchange the code for a scoped API key (no manual
   paste), which reaches its `:free` models. This is the closest to true one-click; do it first.
   *(Verify the current OpenRouter auth/exchange endpoints before wiring — that flow has changed.)*
-- **Deep-link-and-paste everywhere else** (Gemini / Groq / Cerebras / Mistral): these are API-key
+- **Deep-link-and-paste everywhere else** (Gemini / Groq / Cerebras / Mistral / Hugging Face): these are API-key
   based with no OAuth delegation. Deep-link the user straight to the provider's key page and have
   them paste the key back. Also accept Codex `auth.json` import (already supported).
 
