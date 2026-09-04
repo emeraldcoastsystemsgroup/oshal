@@ -600,7 +600,7 @@ network credential at all.
 | P0 — `/api/rag/upload` extracts text (uploaded PDFs/DOCX) | **Shipped** (PR #273) with a real-boundary guard |
 | Configurable advertised formats | **Shipped** (PR #275), default unchanged |
 | XPS text recovery + companion `.txt` at spool time | **Shipped** (PR #275), guarded by suite 10 |
-| P1 store package — inbox, `print-queue` classification ticket, approval form, fan-out ingest | Not started |
+| P1 store package — inbox, `print-queue` classification ticket, approval form, fan-out ingest | **Built** — `print-ingest` 0.1.0 in the store repo (PR #101), installs `inactive`. 31 guards + migration verified against real Postgres. **Not yet loaded into a live swarm** |
 | P2 edge forwarder (default OFF) | Not started |
 | ~~P3 multi-queue advertisement~~ | **Dropped** — superseded by Amendment C (one inbox) |
 | P4 print-to-ticket | Not started; largely subsumed by D14, since every print already becomes a ticket |
