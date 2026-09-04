@@ -19,6 +19,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credential forwarding from Jarvis/model delegation; credentials stay inside audited server-side provider operations.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry the turn's resolved endpoint through the whole turn: the in-process steps (haven passive learning, the legacy classify/synthesize path) now run on the same byoLlmConnection instead of silently falling to the controller's configured CLI harness, and the one bounded retry re-resolves to the NEXT usable endpoint rather than deliberately dropping the connection onto a provider a SEC-05 node refuses.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Let a CLI-lane failure reach the bounded retry: reportResolvedLlmFailure only answers for hosted connections, so a CLI turn (the demo operator's default brain) could never retry and surfaced the harness error instead of an answer.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | buildCatalogBlock: the effective-route catalog (curated + dynamically discovered store apps, ADR-085/087) is injected into every live bot turn. The live path had NO catalog - the plan guidance said "the catalog keys above" over a message that never carried one, and the persona's baked specialist list was the bot's only (stale, platform-only) world model, so a CRM-only deployment had a Jarvis that had never heard of its own CRM and shrugged at a pipeline question (operator report 2026-09-04). Bounded, degrades to '' - a catalog failure never blocks the turn.
  *
  * @module jarvis-orchestrator
  */
@@ -460,6 +461,43 @@ export async function loadEffectiveRoutes(ctx: AppContext): Promise<{ routes: Ap
     logger.warn({ err }, 'Jarvis dynamic route discovery failed — using curated catalog only');
   }
   return { routes, byKey: new Map(routes.map((r) => [r.key, r])) };
+}
+
+/**
+ * @description The ASSISTANT CATALOG block injected into every live bot turn - the SAME effective
+ * routes the surface chips (GET /catalog) and the plan compiler already use. This is what makes
+ * Jarvis's knowledge of the swarm DEPLOYMENT-SHAPED instead of baked into the persona: a CRM-only
+ * box lists its CRM, and a store install joins Jarvis's world the moment it activates (ADR-085) -
+ * subject to the same ADR-087 role filter as every other reach path. Without it, Jarvis answered
+ * "I don't have that data" about an app running on the same box (operator report, 2026-09-04).
+ * Bounded (40 routes, trimmed blurbs); returns '' on failure so a catalog hiccup never blocks the
+ * turn - the same degrade contract as buildOpenWorkBlock.
+ * @param ctx - app context (pool for dynamic discovery).
+ * @returns The catalog text block, or '' when it cannot be built.
+ */
+export async function buildCatalogBlock(ctx: AppContext): Promise<string> {
+  try {
+    const { routes } = await loadEffectiveRoutes(ctx);
+    if (!routes.length) return '';
+    const lines = routes.slice(0, 40).map((r) => {
+      const reach = r.mode === 'delegate'
+        ? 'you can hand work to it'
+        : `point the user to it: ${r.deepLink}`;
+      return `- ${r.key}: ${r.name} - ${r.blurb.slice(0, 180)} (${reach})`;
+    });
+    return [
+      'ASSISTANT CATALOG - the specialists and apps ON THIS DEPLOYMENT. This list is authoritative',
+      'and supersedes any baked-in specialist list in your instructions: installations differ, and',
+      'what is listed here is what exists for this user. When a question belongs to one of these',
+      'domains and you do not hold its data in this turn, never answer with a bare "I do not know" -',
+      'hand the work off, or name the owning app and point the user to it (with its link). These',
+      'are also the "catalog keys" the multi-app plan directive refers to.',
+      ...lines,
+    ].join('\n');
+  } catch (err) {
+    logger.warn({ err }, 'jarvis: buildCatalogBlock failed - the turn proceeds without the catalog');
+    return '';
+  }
 }
 
 /**

@@ -38,6 +38,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | SEC-01 containment: preflight every owner-scoped Jarvis read before legacy subject resolution, return the stable 403 refusal for fleet-secret callers, and preserve independently authenticated OIDC/PAT access under mixed headers.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Resolve delegated Jarvis identity exclusively from verified, durable, exact-route SEC-01 claims before the legacy shadow-only subject carrier.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | CORE-05: return the canonical 503 ai_disabled state before Jarvis starts an inference job.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | Inject the deployment app catalog (buildCatalogBlock) into every live turn's context blocks, ahead of the plan guidance that already referred to "the catalog keys above". Closes the unified-bot-strategy gap: the model finally sees the same dynamically discovered route set the surface chips and plan compiler use.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | SCREEN AWARENESS: /ask accepts a `context` snapshot (the surface-bridge `context` op the focused app relays), folds it into the turn beside the attachment block, and returns the `oshal:surface` ops Jarvis emitted back to the client. Before this the floating assistant could not know which app screen the operator was on — it answered "I'm not currently being handed the live Resume Studio document contents", which was literally true — while extractSurfaceDirectives sat fully built and imported by tests only. Ops are dropped (and logged) when the turn carried no context, so a model can never drive a surface the operator is not actually looking at.
  *
  * @module jarvis-routes
@@ -83,6 +84,7 @@ import {
   APP_ROUTES,
   PLAN_DIRECTIVE_GUIDANCE,
   loadEffectiveRoutes,
+  buildCatalogBlock,
   runJarvisBot,
   compileAndDispatchPlan,
   maskPendingComplexSummaries,
@@ -708,8 +710,12 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
     let botMessage = message;
     if (!providerBoundIntent) {
       const tools = buildToolsBlock();
+      // The deployment's app catalog rides EVERY model turn (before the plan guidance, whose
+      // "catalog keys above" refers to it). Without it the persona's baked specialist list was
+      // Jarvis's whole world - a store-installed app on this box did not exist to the model.
+      const catalog = await buildCatalogBlock(ctx);
       const openWork = await buildOpenWorkBlock(ctx, sub);
-      const ctxBlocks = [tools, openWork, PLAN_DIRECTIVE_GUIDANCE].filter(Boolean).join('\n\n');
+      const ctxBlocks = [tools, catalog, openWork, PLAN_DIRECTIVE_GUIDANCE].filter(Boolean).join('\n\n');
       // The live screen sits with the attached media: both are authoritative context for THIS turn,
       // and both belong immediately before the user's words so they frame the question being asked.
       const screenBlock = buildSurfaceContextPrompt(surfaceContext);
