@@ -20,6 +20,7 @@ const os = require('os');
 const path = require('path');
 const { startIppServer } = require('../lib/ipp-server');
 const { DEFAULT_FORMATS } = require('../lib/printer-attributes');
+const { deliverToSwarm, swarmTargetReady } = require('../lib/swarm-target');
 const { advertisePrinter } = require('../lib/advertise');
 const { startWsdDiscovery } = require('../lib/wsd/discovery');
 const { createWsdHttpHandler } = require('../lib/wsd/http');
@@ -44,6 +45,13 @@ Options:
   --no-wsd         Disable WSD         OSHAL_PRINT_NO_WSD    (unset)
   --wsd-announce-sec <n>  WSD Hello re-announce period, 0 = off
                                        OSHAL_PRINT_WSD_ANNOUNCE_SEC  90
+  --target <what>  folder | swarm      OSHAL_PRINT_TARGET    folder
+                   'swarm' makes this a PRINT-TO-RAG printer: the document goes
+                   straight to the swarm's print inbox. The printing machine needs
+                   no credential and no software - this process holds the token.
+  --intake-url <u> Swarm print intake  OSHAL_PRINT_INTAKE_URL
+                   e.g. http://<swarm>:35457/api/print-ingest/documents
+                   Credential comes from OSHAL_PRINT_INTAKE_TOKEN (env only).
   --uuid <uuid>    Device identity     OSHAL_PRINT_UUID      derived from host + name
                    Pin this when renaming the printer, or installed client
                    queues will point at an identity that no longer answers.
@@ -121,11 +129,21 @@ function resolveConfig(argv) {
   const file = loadFileConfig();
   const pick = (flag, envName, key, fallback) => setting(argv, file, { flag, env: envName, key, fallback });
   const printerName = pick('--name', 'OSHAL_PRINT_NAME', 'name', DEFAULT_PRINTER_NAME);
+  // Only a flag or env names THIS instance. A name in the config file is the
+  // deployment's default for the file printer, and a second printer started from
+  // the same directory must not silently inherit its name - or, worse, its pinned
+  // identity, which would put two printers on one UUID.
+  const chosenHere = (flag, envName) => argValue(argv, flag) !== undefined
+    || (env[envName] !== undefined && env[envName] !== '');
+  const nameWasExplicit = chosenHere('--name', 'OSHAL_PRINT_NAME');
+  const uuidWasExplicit = chosenHere('--uuid', 'OSHAL_PRINT_UUID');
   const hostname = os.hostname();
   // Identity follows the name unless pinned - see the header note on renames.
   const uuid = String(pick('--uuid', 'OSHAL_PRINT_UUID', 'uuid', deriveUuid(`${hostname}/${printerName}`))).toLowerCase();
   return {
     printerName,
+    nameWasExplicit,
+    uuidWasExplicit,
     printerInfo: 'oshal print-drop - print jobs are saved as files on the host',
     printerLocation: hostname,
     hostname,
@@ -137,6 +155,11 @@ function resolveConfig(argv) {
     wsd: !argv.includes('--no-wsd') && !env.OSHAL_PRINT_NO_WSD && file.wsd !== false,
     wsdAnnounceSec: Number(pick('--wsd-announce-sec', 'OSHAL_PRINT_WSD_ANNOUNCE_SEC', 'wsdAnnounceSec', 90)),
     formats: parseFormats(pick('--formats', 'OSHAL_PRINT_FORMATS', 'formats', DEFAULT_FORMATS)),
+    target: String(pick('--target', 'OSHAL_PRINT_TARGET', 'target', 'folder')).trim().toLowerCase(),
+    intakeUrl: String(pick('--intake-url', 'OSHAL_PRINT_INTAKE_URL', 'intakeUrl', '')).trim(),
+    // Credential: env first. A token in a config file is a token in a backup.
+    intakeToken: String(env.OSHAL_PRINT_INTAKE_TOKEN || file.intakeToken || '').trim(),
+    deleteAfterDelivery: file.deleteAfterDelivery !== false,
     interfaceAddress: pick('--iface', 'OSHAL_PRINT_IFACE', 'iface', ''),
     uuid,
     uuidUri: `urn:uuid:${uuid}`,
@@ -210,6 +233,81 @@ function printBanner(config, port) {
   process.stderr.write(`${lines.join('\n')}\n`);
 }
 
+
+/**
+ * @description Finish configuring a print-to-rag printer. The name carries the
+ * address on purpose (operator's shape: "oshal print to rag - <ip>"): discovery
+ * does not cross networks, so a machine reaching this over an overlay adds it by
+ * address, and the name is where that address is written down. A swarm target
+ * that is not fully configured REFUSES TO START rather than quietly behaving as
+ * a folder printer - a printer that keeps documents locally while the operator
+ * believes they reach the swarm is the failure worth being loud about.
+ * @param {object} config The resolved configuration (mutated in place).
+ * @param {object} log The logger.
+ * @returns {void}
+ */
+function applySwarmTarget(config, log) {
+  if (config.target !== 'swarm') return;
+  const ready = swarmTargetReady(config);
+  if (!ready.ok) {
+    throw new Error(`--target swarm needs a complete destination: ${ready.reason}`);
+  }
+  if (!config.nameWasExplicit) {
+    const where = config.interfaceAddress || config.hostname;
+    config.printerName = `oshal print to rag - ${where}`;
+  }
+  // A renamed printer is a DIFFERENT device. Re-derive unless this instance was
+  // given an identity of its own, so it can never collide with the file printer's.
+  if (!config.uuidWasExplicit) {
+    config.uuid = deriveUuid(`${config.hostname}/${config.printerName}`);
+    config.uuidUri = `urn:uuid:${config.uuid}`;
+  }
+  config.printerInfo = 'oshal print to rag - printed documents go to the swarm inbox for approval';
+  log.info('print-to-rag target', { name: config.printerName, intakeUrl: config.intakeUrl });
+}
+
+/**
+ * @description Build the post-spool delivery hook, or null for a folder printer.
+ * Delivery sends the RECOVERED TEXT, never the binary, so the swarm never parses
+ * an untrusted document. A delivered document's local copy is removed; a failed
+ * one is KEPT and logged, because losing a document to a swarm outage would be
+ * the one unrecoverable outcome here.
+ * @param {object} config The resolved configuration.
+ * @param {object} log The logger.
+ * @returns {((result:object)=>Promise<void>)|null} The hook, or null.
+ */
+function buildDeliver(config, log) {
+  if (config.target !== 'swarm') return null;
+  return async (result) => {
+    const sidecarPath = `${result.filePath}.json`;
+    let sidecar = {};
+    try { sidecar = JSON.parse(fs.readFileSync(sidecarPath, 'utf8')); } catch (err) { /* bounded below */ }
+    const textPath = sidecar.textFile ? path.join(path.dirname(result.filePath), sidecar.textFile) : null;
+    let text = '';
+    if (textPath && fs.existsSync(textPath)) text = fs.readFileSync(textPath, 'utf8');
+    if (!text.trim()) {
+      log.warn('not delivered - no recoverable text in this document', {
+        file: result.filePath, reason: sidecar.textError || 'the format carries no text layer',
+      });
+      return;
+    }
+    const outcome = await deliverToSwarm(config, { text, sidecar });
+    if (!outcome.ok) {
+      log.error('swarm delivery failed - the document is kept locally for retry', {
+        file: result.filePath, reason: outcome.reason,
+      });
+      return;
+    }
+    log.info('delivered to the swarm print inbox', {
+      intakeId: outcome.intakeId, duplicate: outcome.duplicate, chars: text.length,
+    });
+    if (!config.deleteAfterDelivery) return;
+    for (const p of [result.filePath, sidecarPath, textPath]) {
+      if (p) { try { fs.rmSync(p, { force: true }); } catch (err) { /* keeping it is harmless */ } }
+    }
+  };
+}
+
 /**
  * @description Boot the printer: ensure the drop folder, start the IPP server,
  * publish mDNS, and wire graceful shutdown.
@@ -224,11 +322,13 @@ async function main() {
   const config = resolveConfig(argv);
   const log = createLogger('print-drop');
   fs.mkdirSync(config.dropDir, { recursive: true });
-  const { server, state, ctx } = await startIppServer(config, log);
   if ((config.mdns || config.wsd) && !config.interfaceAddress) {
     config.interfaceAddress = await detectLanAddress();
     if (!config.interfaceAddress) log.warn('could not detect the default-route address - advertising on all interfaces (multi-homed hosts may egress the wrong one; use --iface)');
   }
+  applySwarmTarget(config, log);
+  const { server, state, ctx } = await startIppServer(config, log);
+  ctx.deliver = buildDeliver(config, log);
   const advertisement = config.mdns
     ? advertisePrinter(
         { printerName: config.printerName, port: state.port, hostname: config.hostname, uuid: config.uuid, interfaceAddress: config.interfaceAddress },
@@ -247,6 +347,7 @@ async function main() {
         baseUrl,
         dropDir: config.dropDir,
         maxBytes: config.maxBytes,
+        deliver: ctx.deliver,
         log,
       }),
     });

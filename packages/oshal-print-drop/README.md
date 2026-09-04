@@ -78,6 +78,46 @@ directed IPP install above instead.
 - **iOS/iPadOS**: not supported in this phase (AirPrint requires URF raster; this
   printer deliberately advertises PDF only).
 
+## Two printers, two destinations
+
+The same binary runs in two shapes, chosen by `--target`:
+
+| Target | What it is | Where a document goes |
+|---|---|---|
+| `folder` (default) | Print to file | Saved in the drop folder with its sidecar |
+| `swarm` | **Print to RAG** | Straight to the swarm's print inbox for classification and approval |
+
+A swarm-target printer names itself `oshal print to rag - <address>` and needs a destination:
+
+```bash
+OSHAL_PRINT_INTAKE_TOKEN=oshal_pat_...   node bin/print-drop.js --target swarm   --intake-url http://<swarm>:35457/api/print-ingest/documents
+```
+
+**The printing machine holds no credential and installs nothing.** This process holds the token; a
+person just picks a printer. That is the point of the shape, not a side effect of it.
+
+Behaviour worth knowing:
+
+- A **half-configured** swarm target refuses to start. A printer that quietly keeps documents locally
+  while you believe they reach the swarm is the failure worth being loud about.
+- Only the **recovered text** is delivered, never the binary — the swarm never parses an untrusted
+  document.
+- A **failed delivery keeps the document** and logs why; the local copy is removed only on success.
+- A **renamed printer is a different device**: identity re-derives on rename unless you pass
+  `--uuid`, so a swarm printer started from the same directory can never inherit the file printer's
+  pinned identity.
+
+### Reaching it from another network
+
+An overlay (Headscale/Tailscale) gives **reachability, not discovery**. mDNS and WSD are link-local
+multicast and do not cross a layer-3 overlay, so a remote machine will not see the printer appear on
+its own — it adds it once, by address. That is why the address is in the name.
+
+| | Same LAN | Over the overlay |
+|---|---|---|
+| Appears by itself | yes | **no** |
+| Printing works once added | yes | yes |
+
 ## Configuration
 
 Flag > environment variable > `print-drop.config.json` > default.
