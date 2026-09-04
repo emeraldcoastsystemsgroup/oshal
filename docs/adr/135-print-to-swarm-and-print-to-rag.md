@@ -472,6 +472,127 @@ failing at write time.
 
 ---
 
+## Amendment D — the operator's answers to the open questions
+
+*Operator, 2026-09-03. Questions 1, 2, 4 and 5 are settled here; question 3 in
+[Amendment E](#amendment-e--how-the-printing-host-authenticates).*
+
+### Q1 — fix the extraction defect in core: **yes**
+
+Shipped as PR #273 before this amendment was written. The operator also set the standing rule that
+frames the rest: *"this is a new core service, so it can make changes to the core with approved and
+modified ADRs."* Core is reachable — through an ADR, not around one.
+
+### Q2 — "routing, not privacy" for the per-bot level: **accepted**, with the control named correctly
+
+> *"Because of the approval workflow and the auto-association based on IP address, the administrator
+> of the swarm will set the rules — but by default it prints to queue and is approved."*
+
+Accepted. The human gate is the control, and per-bot chunk ACLs are **not** a prerequisite.
+
+One distinction has to survive into the build, because getting it wrong would be a security claim
+the system cannot honour: **approval controls what goes in, not who can read it afterwards.** A
+document approved into a bot corpus is still readable by any signed-in user, because
+`agent-knowledge-*` chunks carry no ACL and `searchAllCollections` sweeps them. So:
+
+- The gate prevents *misplacement*. It does not create *confidentiality*.
+- The bot destination's label says, at the point of choice, that anyone signed in can retrieve it.
+- Anything that must stay private goes to the user level, which is genuinely enforced by `owner_sub`
+  and RLS.
+
+### Q4 — default approval posture: **everything through the queue, approved**
+
+Default is approvals ON for every destination. This matches the standing automation directive
+(outward-acting behaviour is opt-in, default off) and it is the safe default given G3: a document
+placed in the wrong corpus cannot be removed.
+
+### D16 — admin-set association rules
+
+The operator introduced these: *"the administrator of the swarm will set the rules"* for
+auto-association based on IP.
+
+An admin maintains a rule set mapping a source — machine, print IP, printer queue — to a
+**suggested user** and **default destinations**. Rules feed the recommendation in D14; they are how
+"this machine is Dad's laptop, and it usually files to the household corpus" becomes pre-ticked
+boxes instead of a decision made twice a week.
+
+Bounds, so a rule set never becomes a silent write path:
+
+1. **A rule pre-ticks; it does not approve.** The default remains queue-and-approve. An admin may
+   enable auto-approval *per rule*, explicitly, and never as a default.
+2. **No rule may auto-approve into the swarm-wide level.** That level is world-readable to every
+   signed-in user; it always takes a human.
+3. **A rule never establishes ownership.** IP-to-user remains a hint (D8, D14). Authoritative
+   ownership comes only from a local per-user session (Amendment B).
+4. **Every auto-approved ingest is recorded** with the rule that caused it, so a bad rule is
+   discoverable after the fact rather than inferred from a corpus that quietly grew.
+
+### Q5 — phase-one scope: **the inbox and the classifying ticket**
+
+Settled by Amendment C. Phase one is the single inbox, the `print-queue` classification ticket, the
+approval form and fan-out ingest. Multi-queue advertisement is dropped entirely.
+
+---
+
+## Amendment E — how the printing host authenticates
+
+*Operator, 2026-09-03: "I like printing to swarm over the edge client … I like the edge client when
+it works and when we have easy ways for remote computers to install the edge client with the proper
+keys to tunnel in."*
+
+### D17 — the printing host enrols as an edge node, and the credential is the node-bound PAT
+
+Verified in the tree rather than assumed. The edge-node rail **is** the PAT rail, deliberately:
+`POST /api/join/enroll` is self-service — any signed-in person enrols their own computer — and mints
+an `oshal_pat_…` token **bound to one `clientId`** in `oshal_cli_tokens.node_client_id`.
+
+That binding gives exactly the four properties this path needs, and no other option has all four:
+
+| Property | Why it decides this | Node-bound PAT | Unbound PAT | Service secret |
+|---|---|---|---|---|
+| Carries a **server-verified** user sub | `owner_sub` becomes real identity, not an assertion (D8) | yes — proven at the `whoami` handshake, "never asserted" | yes | **no** — machine trust, no user |
+| **Confined** if the machine is lost | A home machine is not a trusted host | yes — that device's plane and nothing else | **no** — a general-purpose account credential | **no** — swarm-wide |
+| **Rotatable per node** | One compromised laptop must not force a swarm-wide rotation | yes | per-token | **no** — one value everywhere |
+| **Revocable per node** | Removing one machine is one action | yes | yes | no |
+
+The operator's "easy way for remote computers to install with the proper keys" is already built:
+`GET /api/join/node-installer` delivers *the same enrolment as a runnable script with the credential
+already in it*.
+
+### The one core change this needs
+
+A node-bound token is **deliberately confined** to the worker plane: `decideNodeTokenScope` admits
+`/api/remote-clients/:clientId/*` plus the two enrolment-handshake paths, and returns `off-plane`
+for everything else. That confinement is the feature — *"a copy lifted off an edge machine can drive
+that one device's plane and nothing else"* — and it is also why the rail does not fit print intake
+as it stands.
+
+So: **admit the print intake path to a node-bound token's scope, and nothing else.** One path added
+to one admitted set. The token stays device-bound, stays rotatable and revocable, and still resolves
+to the enrolling person's verified sub, so the ingest is owned correctly. This is the ADR-approved
+core change the operator authorised in Amendment D — narrow by construction, and reviewed as its own
+PR with a guard proving the token still cannot reach anything else.
+
+Rejected, with the reason each fails:
+
+- **Unbound PAT.** The CLI-token middleware stamps an authenticated `req.oidc` for *every*
+  `requiresAuth` route, so an unbound PAT would work on `/api/rag/*` today with no core change at
+  all. That convenience is precisely the objection: it is a general-purpose account credential
+  sitting on a household machine. The bound variant exists because of this.
+- **`serviceSecretOr` on `/api/rag/*`.** A machine-wide secret carries no user identity, so ownership
+  would have to be *asserted* in a header. Asserting ownership is what D8 forbids, and it would also
+  hand every secret holder a way to write into any person's corpus.
+
+### Prerequisite, in the operator's own framing
+
+This is conditional on the edge client *working* and on remote install being *easy*. The installer
+route exists; whether enrolment is solid end to end on a fresh machine is **not verified here**, and
+proving it is a prerequisite of P2 rather than an assumption behind it. Until then the phase-1 build
+can run on the same machine as the swarm, where the localhost topology (Amendment B) needs no
+network credential at all.
+
+---
+
 ## Build state
 
 | Item | State |
@@ -484,8 +605,11 @@ failing at write time.
 | ~~P3 multi-queue advertisement~~ | **Dropped** — superseded by Amendment C (one inbox) |
 | P4 print-to-ticket | Not started; largely subsumed by D14, since every print already becomes a ticket |
 
-Open questions 1 and 3 are answered above. Question 5 (phase-one scope) is effectively answered by
-Amendment C: phase one is the inbox plus the classifying ticket. Questions 2 (per-bot
-confidentiality) and 4 (default approval posture) remain open — and note that D15's fan-out makes
-question 2 sharper, because a document copied into a bot corpus is copied into a corpus with no
-access control.
+**All five open questions are now answered** — see Amendments D and E. In short: fix core (done);
+per-bot is routing not privacy, with the human gate as the control; the printing host enrols as an
+edge node on a device-bound credential; everything queues and is approved by default; and phase one
+is the inbox plus the classifying ticket.
+
+Remaining prerequisites, neither of them assumptions: the print intake path must be admitted to the
+node-token scope (one narrow core change, its own PR), and edge enrolment must be proven working on
+a fresh machine before P2 depends on it.
