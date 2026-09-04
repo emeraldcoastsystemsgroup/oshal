@@ -12,6 +12,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: ensureJarvisSchema / saveTaskPending / finishTask / findJarvisTaskSessionId / buildOpenWorkBlock / persistJarvisTurn / markJarvisSessionTaskStatus / mapJarvisTaskStatusFromTicketStatus / storedVisual (route decomposition, no behaviour change).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | jarvisFailureNoteForTicketStatus: an escalated/cancelled ticket left the shelf row's error column NULL, so a failed multi-app plan rendered as status 'error' with no message. Say the run stopped — never summarize an outcome that does not exist.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | OPEN WORK results carry their AGE and are scoped to their own task. Live verification on the gsquared staging box: with no dates and a preamble commanding "read the RESULT and report it", Jarvis quoted a month-old demo-era CRM pull as the current pipeline ("0 in docs out, 4 opportunities" against a live 473/7/2) even after the catalog freshness rule shipped — the two guidances conflicted and this one won. Now they agree: a result answers questions about that task; current-state questions file a fresh handoff.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Persist captured deliverables on the task (files JSONB) so a finished task still offers its download after a reload, not only in the reply that happened to be on screen. Reset files alongside result/visual on re-file: a task re-run under the same id must never surface the previous run's links.
  *
  * @module jarvis-task-store
@@ -166,22 +167,30 @@ export async function findJarvisTaskSessionId(
 export async function buildOpenWorkBlock(ctx: AppContext, sub: string): Promise<string> {
   try {
     const rows = (await ctx.pool.query(
-      `SELECT id, title, status, kind, result FROM jarvis_tasks WHERE user_sub = $1 ORDER BY created_at DESC LIMIT 8`,
+      `SELECT id, title, status, kind, result, created_at FROM jarvis_tasks WHERE user_sub = $1 ORDER BY created_at DESC LIMIT 8`,
       [sub],
-    )).rows as Array<{ id: string; title: string; status: string; kind: string; result: string | null }>;
+    )).rows as Array<{ id: string; title: string; status: string; kind: string; result: string | null; created_at?: string | Date }>;
     if (!rows.length) return '';
     const lines = rows.map((r) => {
+      // The age is part of the record: without it a month-old demo-era pull read exactly like
+      // this morning's, and Jarvis quoted it as the current pipeline (2026-09-04, gsquared).
+      const ageDays = r.created_at ? Math.floor((Date.now() - new Date(r.created_at).getTime()) / 86400000) : null;
+      const age = ageDays == null ? '' : ageDays <= 0 ? ' (today)' : ageDays === 1 ? ' (1 day ago)' : ` (${ageDays} days ago)`;
       if (r.status === 'done' && r.result && r.result.trim()) {
         // Include the actual result so Jarvis can report it. Cap so the prompt stays bounded.
-        return `- [${r.id}] ${r.title} — DONE. RESULT:\n${r.result.trim().slice(0, 1500)}`;
+        return `- [${r.id}] ${r.title} — DONE${age}. RESULT:\n${r.result.trim().slice(0, 1500)}`;
       }
       const live = (r.status === 'queued' || r.status === 'summarizing' || r.status === 'pending') ? 'in progress' : r.status;
-      return `- [${r.id}] ${r.title} — ${live}`;
+      return `- [${r.id}] ${r.title} — ${live}${age}`;
     });
     return [
-      'OPEN WORK — your recent tasks. If the user asks about one, READ its RESULT below and report it',
-      'directly in your voice (rich if it helps). NEVER say you don\'t have it, and NEVER re-file a task',
-      'that is already DONE. To continue/refine an in-progress item, update it by its id.',
+      'OPEN WORK — your recent tasks. If the user asks about ONE OF THESE TASKS, read its RESULT',
+      'below and report it directly in your voice (rich if it helps) — never say you don\'t have it,',
+      'and never re-file a task that is already DONE. To continue/refine an in-progress item,',
+      'update it by its id. SCOPE: each RESULT is a record of that past task at its stated age —',
+      'it is NOT the current state of any app or dataset. For a question about current data',
+      '(counts, stages, what is in a list right now), file a fresh handoff to the owning domain',
+      'instead of quoting an old result as today\'s numbers.',
       ...lines,
     ].join('\n');
   } catch (err) {
