@@ -391,17 +391,21 @@ export async function placeDecisionOrder(
   // decision minted for book A while executing on book B — an order justified by the WRONG book's
   // decision, silently breaking the ADR-052 justification chain. Book B executing book A's id → 404.
   const d = (await pool.query(
-    `SELECT action, symbol, side, qty, order_type, limit_price, stop_price, trail_price, trail_percent, time_in_force, extended_hours
+    `SELECT action, symbol, side, qty, order_type, limit_price, stop_price, trail_price, trail_percent, time_in_force, extended_hours, agent_id
        FROM oshal_trading_decisions WHERE decision_id=$1 AND user_sub=$2 AND book_id=$3`, [decisionId, sub, book.bookId])).rows[0];
   if (!d) throw new TradingError(404, 'decision_not_found', 'No such decision for this book.');
   if (d.action === 'hold' || !d.symbol || !d.side || !(Number(d.qty) > 0)) {
     throw new TradingError(409, 'not_actionable', 'This decision recommends no trade (hold) or has no sized order.');
   }
-  // ADR-134 view-only rule: a DISABLED book exists so its balances/positions are visible — it may
-  // reduce risk (sells / protective exits) but must never ADD it. The refusal sits in the engine,
-  // not the surface, so no route or schedule path can buy on a book the operator hasn't armed.
-  if (!book.enabled && d.side === 'buy') {
-    throw new TradingError(409, 'book_disabled', `Book '${book.ref}' is view-only (disabled) — enable it in Accounts & books before buying.`);
+  // "Enabled" gates the AUTOPILOT, not the operator (2026-09-04 fix). A disabled book means the
+  // autopilot will not autonomously trade the account — it must never ADD risk there. But the
+  // operator clicking Buy is an explicit, confirmed human action, so an OPERATOR-authored decision
+  // (agent_id 'operator', or a protected-lot entry) may buy a disabled book; only an AUTONOMOUS
+  // decision (the analyst/rotation/ensemble/pop agents) is refused. The dispatcher already hard-skips
+  // disabled books for autonomous entries upstream; this is the backstop.
+  const operatorAuthored = d.agent_id === 'operator' || d.agent_id === 'pinned-lot' || d.agent_id === 'event-playbook';
+  if (!book.enabled && d.side === 'buy' && !operatorAuthored) {
+    throw new TradingError(409, 'book_disabled', `Book '${book.ref}' is view-only for the autopilot — an autonomous buy is refused. A manual (operator) order may still buy here.`);
   }
   if (mode === 'live' && (!liveTradingEnabled() || confirm !== true)) {
     throw new TradingError(403, 'live_blocked', 'Live orders require TRADING_LIVE_ENABLED=true and an explicit confirm.');
