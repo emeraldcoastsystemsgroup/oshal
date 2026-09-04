@@ -1,6 +1,7 @@
 # ADR-137 — Deploy modes: one named posture instead of a dozen independent switches
 
 **Status:** Proposed — operator direction 2026-09-04, minimal implementation landed with this ADR.
+Amendment A (credential posture per mode) accepted and built 2026-09-04.
 
 **Date:** 2026-09-04
 
@@ -140,3 +141,43 @@ violation rules — and a guard exercising the whole table. Boot-time enforcemen
 reads (D6) follow once the mode table has survived contact with a real second deployment.
 
 Deliberately **not** built here: any change to what an unset deployment does.
+
+---
+
+## Amendment A — credential posture per mode (operator, 2026-09-04)
+
+The operator restated the modes along a second axis — **where the AI credentials come from** —
+after the career engine spent 25 days "looking for something that isn't there": its brokered-only
+credential wall had no carve for the deployment's own logins, so AI scoring silently died on a box
+where every other bot ran fine on the mounted `~/.codex`.
+
+| Posture | Who it serves | AI credentials | Built |
+|---|---|---|---|
+| **demo / dev / test** (`demo`, and any posture with `DEMO_MODE`) | one person's own machines | The **portal fallback**: the deployment's own vendor logins — pushed with the build from the computer that built it, or pushed from a satellite. Lent only under ADR-127's two gates: `DEMO_MODE` truthy **and** the exact `OSHAL_OPERATOR_SUBS` subject. | yes |
+| **SaaS / multi-user** (`tenant`, and every non-demo posture) | many people | **Key-based, per user**: credentials brokered from the caller's own connector rows, under the names each engine reads. Vendor CLI logins are never lent, and a pushed login is refused (409). | yes |
+| **codebase** | a developer swarm | as above, and the swarm may modify its own code through the developer rails | recorded, not built — BACKLOG |
+| **codeless** | an install-from-Docker swarm | as above; the swarm may not write its own code and files defects to a tracker instead | recorded, not built — BACKLOG |
+
+`codebase` / `codeless` is a **development** axis, orthogonal to network reach; it is recorded here
+so the next reader does not mint a fifth network mode for it.
+
+**What this amendment ships**
+
+1. **Store, career-hunter 1.12.4** — the engine child inherits the mounted vendor logins under the
+   two gates (`operatorPortalFallback`), and the per-user keys the dispatch brokers now reach the
+   engine under the names it reads (`OSHAL_CRED_ANTHROPIC` → `ANTHROPIC_API_KEY`) — the tenant
+   path that had been a dead end.
+2. **Core, `POST /api/claude-code/auth/import`** — adopts the `.credentials.json` a satellite's
+   `claude auth login` wrote into the controller's mounted login path under the same two gates; the
+   SEC-05 409 stands everywhere else, and a read-only mount answers its own 409 naming
+   `CLAUDE_AUTH_MOUNT_MODE=rw`. Codex already had this shape: operator platform promotion on
+   `POST /api/openai-codex/oauth/import` writes the live `~/.codex/auth.json`.
+3. **`@oshal/chat`** — "Log in + push" and "Push to swarm" on the Codex and Claude rows. The vendor
+   CLI runs its own login and listens on its own localhost redirect on the satellite (the VS Code
+   pattern — the vendor's OAuth is never brokered); the node notices the file the CLI writes and
+   pushes it under the user's verified OIDC session, refusing plain http to a public host.
+
+Guards: store `career-no-sync-api.test.mjs` (wall vs carve, brokered-key mapping); core
+`claude-code-demo-login-adoption.spec.ts` (real router + service: both gates, atomic 0600 write,
+read-only 409, wrong-shape 400), `claude-code-credential-distribution-boundary.spec.ts` (the carve
+cannot widen past both gates), `node-login-push.spec.ts` (what may leave the satellite, and where).

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Lock out unordered Claude credential Redis publication/subscription while preserving explicit file import and authenticated propagation documentation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: lock out raw HTTP export/import and preserve only local OAuth persistence plus redacted authenticated status diagnostics.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Track the current transport-wide denial and exact ordered-tombstone/read-only-file wording in the maintained credential boundary documentation.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: the ONLY carve in the controller import is the demo portal fallback, and it must be gated on BOTH demoModeEnabled() and the exact isDeploymentOperatorSub() subject — pin that in source so a later edit cannot widen it to requiresOperator alone.
  */
 
 import { readFileSync } from 'node:fs';
@@ -44,5 +45,19 @@ describe('Claude Code credential distribution boundary', () => {
     expect(readme).toContain('Redis credential broadcast is disabled');
     expect(readme).toContain('versioned, ordered rail');
     expect(readme).toContain('read-only credential file');
+  });
+
+  it('carves the demo portal fallback on BOTH ADR-127 gates and nothing looser', () => {
+    const importRoute = controllerRoutesSource.slice(controllerRoutesSource.indexOf('function registerImportRoute('));
+    expect(importRoute).toContain('demoModeEnabled()');
+    expect(importRoute).toContain('isDeploymentOperatorSub(getCaller(req).sub)');
+    expect(importRoute).toContain("'credential_distribution_disabled_pending_versioned_revocation_rail'");
+    expect(importRoute).toContain('adoptOperatorLoginFile(');
+    expect(importRoute).toContain("'claude_credentials_path_read_only'");
+    // The service validates the vendor shape and never accepts a bare token or an API key.
+    expect(serviceSource).toContain('parseVendorLoginFile(');
+    expect(serviceSource).toContain("codedError('CLAUDE_LOGIN_FILE_INVALID'");
+    expect(readme).toContain('Demo portal fallback (ADR-137 amendment A)');
+    expect(readme).toContain('CLAUDE_AUTH_MOUNT_MODE=rw');
   });
 });
