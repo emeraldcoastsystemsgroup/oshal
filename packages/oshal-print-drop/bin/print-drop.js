@@ -19,6 +19,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { startIppServer } = require('../lib/ipp-server');
+const { DEFAULT_FORMATS } = require('../lib/printer-attributes');
 const { advertisePrinter } = require('../lib/advertise');
 const { startWsdDiscovery } = require('../lib/wsd/discovery');
 const { createWsdHttpHandler } = require('../lib/wsd/http');
@@ -81,6 +82,20 @@ function loadFileConfig() {
 }
 
 /**
+ * @description Normalize the advertised document formats from a comma-separated
+ * string (flag/env) or an array (config file). The first entry becomes the
+ * advertised default, which is the one clients actually honour.
+ * @param {string|string[]} value The configured value.
+ * @returns {string[]} A non-empty list of MIME types.
+ */
+function parseFormats(value) {
+  const list = (Array.isArray(value) ? value : String(value).split(','))
+    .map((f) => String(f).trim().toLowerCase())
+    .filter(Boolean);
+  return list.length ? list : DEFAULT_FORMATS;
+}
+
+/**
  * @description Resolve one setting by the project's precedence rule:
  * command-line flag, then environment variable, then config file, then default.
  * @param {string[]} argv The process arguments.
@@ -121,6 +136,7 @@ function resolveConfig(argv) {
     mdns: !argv.includes('--no-mdns') && !env.OSHAL_PRINT_NO_MDNS && file.mdns !== false,
     wsd: !argv.includes('--no-wsd') && !env.OSHAL_PRINT_NO_WSD && file.wsd !== false,
     wsdAnnounceSec: Number(pick('--wsd-announce-sec', 'OSHAL_PRINT_WSD_ANNOUNCE_SEC', 'wsdAnnounceSec', 90)),
+    formats: parseFormats(pick('--formats', 'OSHAL_PRINT_FORMATS', 'formats', DEFAULT_FORMATS)),
     interfaceAddress: pick('--iface', 'OSHAL_PRINT_IFACE', 'iface', ''),
     uuid,
     uuidUri: `urn:uuid:${uuid}`,
