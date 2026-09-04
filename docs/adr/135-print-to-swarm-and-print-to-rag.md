@@ -593,6 +593,71 @@ network credential at all.
 
 ---
 
+## Amendment F — the printer IS the swarm endpoint (supersedes D2 and P2)
+
+*Operator correction, 2026-09-04: "there isn't a drop folder moving to the inbox — it's a new
+printer. It's advertised if you can see the swarm."*
+
+D2 designed an edge **forwarder**: documents land in a drop folder, a watcher notices, and it pushes
+them to the swarm. That is the wrong shape. The correct one is simpler and was already within
+reach:
+
+**A second printer whose destination is the swarm.** `--target swarm` turns any instance into a
+print-to-rag printer: it names itself `oshal print to rag - <address>`, and a document printed to it
+goes straight to `/api/print-ingest/documents`. There is no folder to watch and nothing to forward —
+the spool directory becomes a buffer that is emptied on delivery and retained only on failure.
+
+### D18 — the printing machine holds no credential and installs nothing
+
+This is the property that makes the shape right, not merely simpler. **The printer process holds the
+swarm token; the person printing holds nothing.** No agent, no login, no configuration on the client
+— they pick a printer. Every question about distributing credentials to client machines dissolves,
+because no client machine ever has one.
+
+Consequences that follow, and are enforced in code:
+
+- **A half-configured swarm target refuses to start.** A printer that quietly keeps documents
+  locally while an operator believes they reach the swarm is precisely the silent failure worth
+  being loud about.
+- **Only the recovered text is delivered, never the binary** — the same reason intake takes text:
+  the swarm never parses an untrusted document.
+- **A failed delivery keeps the document and says why.** Losing a printed page to a swarm outage is
+  the one unrecoverable outcome here, so delivery removes the local copy only on success.
+- **A renamed printer is a different device.** The identity re-derives on rename unless the instance
+  was given one explicitly, so a second printer started from the same directory can never inherit
+  the file printer's pinned UUID — caught in live testing, where exactly that happened.
+
+### D19 — an overlay gives reachability, not discovery
+
+The operator asked whether Headscale/Tailscale is required for a machine to see this printer. The
+honest answer has two halves:
+
+| | Same LAN | Over the overlay |
+|---|---|---|
+| **Discovery** (printer appears by itself) | Yes — proven across two machines | **No.** mDNS and WSD are link-local multicast; a Tailscale/Headscale network is layer 3 and does not carry multicast |
+| **Reachability** (printing works once added) | Yes | **Yes** — that is exactly what the overlay provides |
+
+So the overlay is **required** for an off-LAN machine to print to the swarm, and it is **not
+sufficient** to make the printer appear on its own. A remote machine adds the printer once, by
+address. That is why the name carries the address: `oshal print to rag - <ip>` is the thing a
+person needs to type, written where they will read it.
+
+Claiming otherwise would be the easy mistake here. An overlay makes remote machines feel local, and
+they are — for everything except broadcast.
+
+### Verified end to end, 2026-09-04
+
+A real Windows print job on a queue installed from `http://…:6632/ipp/print`: XPS received → text
+recovered → delivered to the inbox (`intakeId 8ebbc701…`, 194 characters) → the spool folder emptied
+for that document while the earlier failed one was retained → approved in the inbox → written to
+`my-knowledge` → retrieved by content with `provenance: print-drop` and the content-hash
+`doc_id`. The intermediate failure was equally instructive: with the app inactive, delivery reported
+*"swarm delivery failed - the document is kept locally for retry"* naming the 503.
+
+**P2 (the edge forwarder) is dropped.** There is nothing to forward.
+
+---
+
 ## Build state
 
 | Item | State |
@@ -601,7 +666,7 @@ network credential at all.
 | Configurable advertised formats | **Shipped** (PR #275), default unchanged |
 | XPS text recovery + companion `.txt` at spool time | **Shipped** (PR #275), guarded by suite 10 |
 | P1 store package — inbox, `print-queue` classification ticket, approval form, fan-out ingest | **Built** — `print-ingest` 0.1.0 in the store repo (PR #101), installs `inactive`. 31 guards + migration verified against real Postgres. **Not yet loaded into a live swarm** |
-| P2 edge forwarder (default OFF) | Not started |
+| ~~P2 edge forwarder~~ | **Dropped** — superseded by Amendment F: the printer *is* the endpoint, so there is nothing to forward |
 | ~~P3 multi-queue advertisement~~ | **Dropped** — superseded by Amendment C (one inbox) |
 | P4 print-to-ticket | Not started; largely subsumed by D14, since every print already becomes a ticket |
 
