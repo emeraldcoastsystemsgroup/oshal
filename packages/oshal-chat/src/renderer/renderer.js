@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Rebuilt as the OSHAL Node surface: Jarvis orb + voice (lifted from src/api/jarvis.html), chat over the remote-client IPC, worker activity log, identity sign-in, and local-account login buttons.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Full-Jarvis mode UI: orb-row button + settings (open-on-launch checkbox, cockpit path) that open the swarm-hosted cockpit window
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Orb fallback polish (operator feedback): replies render as markdown (not raw text), TTS speaks a short sanitized summary (never URLs, ids, code, or tables), most-natural installed voice is the default
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: the Codex and Claude rows show the swarm's login state and offer "Log in + push" (vendor login here, pushed when it lands) and "Push to swarm" (push the login this machine already holds); a 401 offers the swarm sign-in and retries once.
  */
 
 'use strict';
@@ -407,23 +408,67 @@ async function connect() {
 }
 
 /* ===================== Local accounts ===================== */
-async function refreshAccounts() {
-  const accounts = await oshal.authStatus();
-  $('accounts').innerHTML = accounts.map((a) =>
-    '<div class="account">'
+function accountRow(a) {
+  const pushable = !!a.pushable;
+  return '<div class="account">'
     + '<span class="acct-dot ' + (a.authed ? 'on' : 'off') + '"></span>'
     + '<span class="acct-label">' + esc(a.label) + '</span>'
-    + '<span class="acct-state">' + (a.authed ? 'signed in' : 'not signed in') + '</span>'
-    + '<button class="ghost-btn small" data-login="' + esc(a.id) + '">' + (a.authed ? 'Re-login' : 'Log in') + '</button>'
-    + '</div>').join('');
-  $('accounts').querySelectorAll('[data-login]').forEach((b) => {
-    b.onclick = async () => {
-      b.disabled = true; b.textContent = 'Opening…';
-      const res = await oshal.authLogin(b.getAttribute('data-login'));
-      setMsg(res.ok ? ('Launched: ' + res.command + ' — finish in the terminal/browser, then reopen Config.') : (res.error || 'Login failed.'), res.ok ? 'ok' : 'err');
-      setTimeout(refreshAccounts, 1500);
-    };
-  });
+    + (pushable ? '<span class="acct-swarm" id="swarm-' + esc(a.id) + '">swarm: checking…</span>' : '')
+    + '<span class="acct-state">' + (a.authed ? 'signed in here' : 'not signed in') + '</span>'
+    + '<button class="ghost-btn small" data-login="' + esc(a.id) + '">' + (a.authed ? 'Re-login' : 'Log in') + (pushable ? ' + push' : '') + '</button>'
+    + (pushable ? '<button class="ghost-btn small" data-push="' + esc(a.id) + '"' + (a.authed ? '' : ' disabled') + '>Push to swarm</button>' : '')
+    + '</div>';
+}
+async function refreshAccounts() {
+  const accounts = await oshal.authStatus();
+  $('accounts').innerHTML = accounts.map(accountRow).join('');
+  $('accounts').querySelectorAll('[data-login]').forEach((b) => { b.onclick = () => loginAccount(b, b.getAttribute('data-login')); });
+  $('accounts').querySelectorAll('[data-push]').forEach((b) => { b.onclick = () => pushAccount(b, b.getAttribute('data-push')); });
+  accounts.filter((a) => a.pushable).forEach((a) => { refreshSwarmState(a.id); });
+}
+async function refreshSwarmState(id) {
+  const el = $('swarm-' + id);
+  if (!el) return;
+  const s = await oshal.authSwarmStatus(id);
+  const text = s.authenticated ? 'swarm: signed in' : s.needsSignIn ? 'swarm: sign in to check' : s.ok ? 'swarm: not signed in' : ('swarm: ' + (s.detail || 'unknown'));
+  el.textContent = text;
+  el.className = 'acct-swarm' + (s.authenticated ? ' on' : '');
+}
+function describePush(res) {
+  if (res.ok) return 'Pushed to the swarm' + (res.email ? ' as ' + res.email : '') + ' — its bots run on this login now.';
+  return res.detail || res.reason || 'Push failed.';
+}
+// The swarm import routes need the user's own session: a 401 means "sign in first", so do that once.
+async function pushWithSignIn(id) {
+  let res = await oshal.authPush(id);
+  if (res.needsSignIn) {
+    setMsg('Sign in to the swarm to push this login…', '');
+    const signed = await oshal.signIn();
+    if (signed.ok) res = await oshal.authPush(id);
+  }
+  return res;
+}
+async function pushAccount(b, id) {
+  b.disabled = true; b.textContent = 'Pushing…';
+  const res = await pushWithSignIn(id);
+  setMsg(describePush(res), res.ok ? 'ok' : 'err');
+  setTimeout(refreshAccounts, 500);
+}
+async function loginAccount(b, id) {
+  b.disabled = true; b.textContent = 'Opening…';
+  setMsg('Finish the login in the terminal/browser — this node pushes it to the swarm when it lands.', '');
+  const res = await oshal.authLoginAndPush(id);
+  if (!res.launched) setMsg(res.error || 'Login failed.', 'err');
+  else if (!res.push) setMsg('Launched: ' + res.command + ' — finish in the terminal/browser, then reopen Config.', 'ok');
+  else {
+    let push = res.push;
+    if (push.needsSignIn) {
+      const signed = await oshal.signIn();
+      if (signed.ok) push = await oshal.authPush(id);
+    }
+    setMsg(describePush(push), push.ok ? 'ok' : 'err');
+  }
+  setTimeout(refreshAccounts, 800);
 }
 async function signIn() {
   setMsg('Opening sign-in…', '');

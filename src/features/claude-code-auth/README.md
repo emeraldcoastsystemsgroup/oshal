@@ -33,7 +33,9 @@ promoting credentials back into the control plane.
 
 Raw credential distribution is disabled on every transport:
 
-- Controller `POST /api/claude-code/auth/import` returns HTTP 409 with `imported: false`.
+- Controller `POST /api/claude-code/auth/import` returns HTTP 409 with `imported: false` — the one
+  exception is the demo portal fallback below, which is the operator adopting their own login on
+  their own deployment, not a distribution rail.
 - The bot-node import target requires the exact configured `X-Service-Secret` but is read-only and
   returns `imported: false`; it never copies a credential or reveals a filesystem path.
 - Controller fleet propagation returns HTTP 409 when machine authentication is configured and
@@ -44,6 +46,20 @@ Raw credential distribution is disabled on every transport:
 Credentials can exist only in the node's local authentication persistence or a deployment-mounted
 read-only credential file. There is no HTTP or Redis raw import/export path. Re-enabling
 distribution requires a versioned, ordered rail with monotonic revocation tombstones.
+
+### Demo portal fallback (ADR-137 amendment A)
+
+A `DEMO_MODE` deployment is one person's own machine(s), and that person's vendor logins are the
+deployment's brain (ADR-127). When the browser lives on a satellite rather than the swarm host,
+`claude auth login` runs there — the vendor CLI listens on its own localhost redirect, exactly as
+the VS Code extension does — and the `@oshal/chat` node pushes the file it wrote to
+`POST /api/claude-code/auth/import` under the operator's verified OIDC session. The controller
+adopts it into its mounted login path only when BOTH ADR-127 gates hold: `DEMO_MODE` truthy and
+the exact `OSHAL_OPERATOR_SUBS` subject. It validates the `claudeAiOauth` shape, writes atomically
+at 0600, and answers 409 `claude_credentials_path_read_only` when the mount is read-only
+(`CLAUDE_AUTH_MOUNT_MODE=rw` opts the deployment in). Off demo, or for anyone else, the 409 above
+stands. Codex has the same shape through `POST /api/openai-codex/oauth/import`, whose operator
+platform promotion already writes the live `~/.codex/auth.json`.
 
 The presence of a mounted OAuth file or a successful status response does not authorize autonomous
 Cline, Claude Code, Codex, or Gemini CLI work. Unattended CLI execution is operationally disabled

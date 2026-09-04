@@ -156,4 +156,6 @@ label.check input { width: auto; margin: 0; }
 .acct-dot.off { background: var(--muted); }
 .acct-label { font-weight: 600; }
 .acct-state { color: var(--muted); font-size: 12px; margin-left: auto; }
+.acct-swarm { color: var(--muted); font-size: 12px; }
+.acct-swarm.on { color: var(--ok); }
 .account .ghost-btn { margin-left: 8px; }

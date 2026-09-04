@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Write OAuth credentials in claude CLI's native format at ~/.claude/.credentials.json (claudeAiOauth shape) so CLI subprocess auth works in containers without ANTHROPIC_API_KEY
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: disable raw Redis credential publication/subscription because unordered pub/sub cannot prevent stale credential resurrection after logout.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05: remove credential export/import APIs; only local mounted-file status and local OAuth persistence remain until an ordered versioned distribution rail exists.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | ADR-137 amendment A: adoptOperatorLoginFile — a DEMO deployment's exact operator may hand the controller the .credentials.json that `claude auth login` wrote on a satellite; validated to the vendor shape, written atomically at 0600 into the mounted login path, with a read-only mount named as its own failure. The route owns both gates; this never broadcasts.
  */
 
 import crypto from 'crypto';
@@ -28,6 +29,21 @@ const execFileAsync = promisify(execFileCallback);
 const DEFAULT_BINARY = 'claude';
 const DEFAULT_COMMAND_TIMEOUT_MS = 15000;
 const AUTH_URL_REGEX = /(https?:\/\/[^\s]+)/i;
+/** Filesystem errno values that mean "this mount will never take a write", not "try again". */
+const READ_ONLY_FS_CODES = new Set(['EROFS', 'EACCES', 'EPERM']);
+
+/** Builds an Error carrying a stable machine-readable code the route maps to an HTTP answer. */
+function codedError(code: string, message: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string };
+  error.code = code;
+  return error;
+}
+
+/** True when a write failed because the credential path lives on a read-only mount. */
+function isReadOnlyFsError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && READ_ONLY_FS_CODES.has(code);
+}
 
 // OAuth constants — must match the Claude Code CLI's registered client configuration.
 // The redirect URI points to Anthropic's code-display page (not localhost) because
@@ -100,6 +116,15 @@ export interface ClaudeCodeAuthStartResult {
 export interface ClaudeCodeAuthCallbackResult {
   authenticated: boolean;
   email: string | null;
+}
+
+/**
+ * @description Result of adopting an operator device's vendor-written login file (ADR-137 A).
+ */
+export interface ClaudeCodeLoginAdoption {
+  adopted: true;
+  credentialsPath: string;
+  expiresAt: number | null;
 }
 
 /**
@@ -414,6 +439,101 @@ export class ClaudeCodeAuthService {
       logger.info({ credentialsPath }, 'Claude Code OAuth credentials persisted');
     } catch (error) {
       logger.error({ err: error, credentialsPath }, 'Failed to persist Claude Code OAuth credentials');
+    }
+  }
+
+  /**
+   * @description ADR-137 amendment A — the demo deployment's "portal fallback". Adopts the
+   * `.credentials.json` that `claude auth login` wrote on the machine where the browser was (a
+   * satellite node) into this controller's mounted login path, the same file every bot consumes.
+   * The route has already proven DEMO_MODE and the exact operator subject; this method only checks
+   * the vendor shape, writes atomically at 0600, and names a read-only mount as a distinct failure
+   * so the operator knows to set CLAUDE_AUTH_MOUNT_MODE=rw rather than retry.
+   * @param rawLoginFile - The file contents as `claude auth login` wrote them (JSON string or object)
+   * @returns The adopted path and the access-token expiry the file carries
+   */
+  adoptOperatorLoginFile(rawLoginFile: unknown): ClaudeCodeLoginAdoption {
+    const startedAt = Date.now();
+    const oauth = this.parseVendorLoginFile(rawLoginFile);
+    const credentialsPath = this.resolveClaudeCredentialsPath();
+    if (!credentialsPath) {
+      throw codedError('CLAUDE_CREDENTIALS_PATH_UNSET', 'No Claude credentials path is configured on this controller');
+    }
+    try {
+      this.writeLoginFileAtomically(credentialsPath, { claudeAiOauth: oauth });
+    } catch (error) {
+      logger.error({ err: error, credentialsPath }, 'Claude Code login file adoption could not write the mounted path');
+      if (isReadOnlyFsError(error)) {
+        throw codedError('CLAUDE_CREDENTIALS_PATH_READ_ONLY', `${credentialsPath} is mounted read-only on this controller`);
+      }
+      throw error;
+    }
+    const expiresAt = typeof oauth.expiresAt === 'number' ? oauth.expiresAt : null;
+    logger.info({ credentialsPath, expiresAt, durationMs: Date.now() - startedAt }, 'Claude Code login file adopted from an operator device');
+    return { adopted: true, credentialsPath, expiresAt };
+  }
+
+  /**
+   * @description Accepts only the canonical claude CLI shape (`claudeAiOauth.accessToken`), so a
+   * pasted API key, a codex auth.json, or arbitrary JSON can never land in the login path.
+   * @param raw - JSON string or already-parsed object
+   * @returns The validated claudeAiOauth block
+   */
+  private parseVendorLoginFile(raw: unknown): Record<string, unknown> {
+    let parsed: unknown = raw;
+    if (typeof raw === 'string') {
+      try {
+        parsed = JSON.parse(raw);
+      } catch (error) {
+        logger.error({ err: error }, 'Claude Code login file adoption received non-JSON content');
+        throw codedError('CLAUDE_LOGIN_FILE_INVALID', 'The login file is not valid JSON');
+      }
+    }
+    const oauth = (parsed as { claudeAiOauth?: unknown } | null)?.claudeAiOauth;
+    if (!oauth || typeof oauth !== 'object' || Array.isArray(oauth)) {
+      throw codedError('CLAUDE_LOGIN_FILE_INVALID', 'Expected the claudeAiOauth block that `claude auth login` writes');
+    }
+    const block = oauth as Record<string, unknown>;
+    if (typeof block.accessToken !== 'string' || !block.accessToken.trim()) {
+      throw codedError('CLAUDE_LOGIN_FILE_INVALID', 'The login file carries no access token');
+    }
+    if (block.refreshToken !== undefined && block.refreshToken !== null && typeof block.refreshToken !== 'string') {
+      throw codedError('CLAUDE_LOGIN_FILE_INVALID', 'The login file refresh token has an unexpected shape');
+    }
+    return block;
+  }
+
+  /**
+   * @description Writes the login file through a same-directory temp file and rename, so a bot
+   * reading mid-write never sees a torn file, then pins 0600 like the CLI does.
+   * @param credentialsPath - Destination path
+   * @param contents - JSON-serialisable file body
+   */
+  private writeLoginFileAtomically(credentialsPath: string, contents: unknown): void {
+    const directory = path.dirname(credentialsPath);
+    const temporaryPath = path.join(
+      directory,
+      `.credentials.json.adopt-${process.pid}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.tmp`,
+    );
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    let descriptor: number | null = null;
+    try {
+      descriptor = fs.openSync(temporaryPath, 'wx', 0o600);
+      fs.writeFileSync(descriptor, `${JSON.stringify(contents, null, 2)}\n`, 'utf-8');
+      fs.fsyncSync(descriptor);
+      fs.closeSync(descriptor);
+      descriptor = null;
+      fs.renameSync(temporaryPath, credentialsPath);
+      fs.chmodSync(credentialsPath, 0o600);
+    } finally {
+      if (descriptor !== null) {
+        try { fs.closeSync(descriptor); } catch (error) { logger.error({ err: error, temporaryPath }, 'Failed to close the temporary login file'); }
+      }
+      try {
+        if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+      } catch (error) {
+        logger.error({ err: error, temporaryPath }, 'Failed to remove the temporary login file');
+      }
     }
   }
 
