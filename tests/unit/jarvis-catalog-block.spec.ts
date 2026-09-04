@@ -47,6 +47,9 @@ describe('Jarvis catalog block: the model sees the deployment it actually runs o
     // OPEN WORK result. The block must say old task results never stand in for current data.
     expect(block).toMatch(/FRESHNESS/);
     expect(block).toMatch(/fresh handoff/i);
+    // Third live iteration: Jarvis knew the app but still asked "need your go-ahead to refresh"
+    // and led with the stale number. A read is not outward - the rule must command acting.
+    expect(block).toMatch(/never ask permission/i);
   });
 
   it('tells Jarvis how to reach each mode: delegate = hand work, handoff = point with the link', async () => {
