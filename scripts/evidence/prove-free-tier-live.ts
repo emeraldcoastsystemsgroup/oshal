@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | OpenRouter lane now ACTUALLY discovers its candidates from GET /models (the change-log line above claimed discovery but the lane was hardcoded — and 2 of its 3 ids had rotted). Same :free + zero-pricing double filter and family/context ranking as the runtime (free-tier-rotation.ts discoverPlatformFreeModels); top 5 probed. Kept standalone (no src imports) so the evidence harness runs on a bare checkout.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Gemini lane candidates refreshed — Google zeroed free quota on gemini-2.0-flash (429 limit:0) and retired 1.5-flash (404); replaced with live-probed gemini-flash-lite-latest (self-updating alias) + gemini-3.1-flash-lite, matching free-tier-providers.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Operator pasted groq/cerebras/mistral keys; two lane defects found and fixed. (a) keyEnv -> keyEnvs[]: the gemini lane read only GEMINI_API_KEY and reported "not configured" while a valid key sat in GOOGLE_API_KEY (compose + optimizer-providers already honour both). (b) Cerebras retired every llama-3.x id (GET /models now lists gpt-oss-120b / gemma-4-31b / zai-glm-4.7 only), so the lane reported DOWN with a working key — candidates refreshed, matching free-tier-providers.ts.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Hugging Face Inference Providers lane (HF_TOKEN / HUGGINGFACE_API_KEY) against the OpenAI-compatible router — candidates match free-tier-providers.ts (`:cheapest` policy suffix; live-probed via GET /v1/models 2026-09-04). This script is the REAL companion for the doubled vendor probe in tests/unit/huggingface-lane.spec.ts.
  */
 
 /**
@@ -44,6 +45,9 @@ const LANES: Lane[] = [
   // so the probe needs a real max_tokens budget or it returns 200-but-empty.
   { provider: 'cerebras', keyEnvs: ['CEREBRAS_API_KEY'], baseUrl: 'https://api.cerebras.ai/v1', models: ['gpt-oss-120b', 'gemma-4-31b', 'zai-glm-4.7'] },
   { provider: 'mistral', keyEnvs: ['MISTRAL_API_KEY'], baseUrl: 'https://api.mistral.ai/v1', models: ['mistral-small-latest', 'open-mistral-nemo'] },
+  // Hugging Face router: `:cheapest` picks the lowest-priced live provider for the model. The gpt-oss
+  // ids are reasoning models — same max_tokens caveat as Cerebras.
+  { provider: 'huggingface', keyEnvs: ['HF_TOKEN', 'HUGGINGFACE_API_KEY'], baseUrl: 'https://router.huggingface.co/v1', models: ['openai/gpt-oss-20b:cheapest', 'meta-llama/Llama-3.1-8B-Instruct:cheapest', 'openai/gpt-oss-120b:cheapest'] },
 ];
 
 /** Probe-order preference over the discovered catalog — mirrors free-tier-rotation.ts. */

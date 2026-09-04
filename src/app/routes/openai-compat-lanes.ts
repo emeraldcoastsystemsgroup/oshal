@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted the OpenAI-compatible framework-lane catalog (base URL + key env vars) out of optimizer-providers so the free-tier resolver can build an OPERATOR-KEY lane from the same table instead of duplicating endpoints. Adds a default model per lane and the operator lane order.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Hugging Face Inference Providers lane (HF_TOKEN, alias HUGGINGFACE_API_KEY) — the OpenAI-compatible router at router.huggingface.co/v1. Appended LAST in the operator lane order on purpose: the monthly credit is $0.10 (free) / $2 (PRO), so it is the lane of last resort, not a peer of Groq or Cerebras. The default model carries the `:cheapest` policy suffix for the same reason.
  */
 
 /** @description One OpenAI-compatible vendor endpoint the platform can call with a process env key. */
@@ -42,14 +43,22 @@ export const OPENAI_COMPAT_LANES: Record<string, OpenAiCompatLane> = {
     envKeys: ['TOGETHER_API_KEY', 'TOGETHERAI_API_KEY'],
     defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
   },
+  huggingface: {
+    baseUrl: 'https://router.huggingface.co/v1',
+    envKeys: ['HF_TOKEN', 'HUGGINGFACE_API_KEY'],
+    // `:cheapest` = the router picks the lowest output price among live providers for the model.
+    defaultModel: 'openai/gpt-oss-20b:cheapest',
+  },
 };
 
 /**
  * @description Lane preference order for the OPERATOR's own turns, most-capable-per-dollar first.
  * OpenRouter is deliberately absent: that key is the shared ADR-064 platform free-fallback and is
  * hard-guarded to `:free` model ids, so it is not an operator BYOK lane.
+ * Hugging Face is deliberately last: its monthly credit ($0.10 free / $2 PRO) is a rounding error
+ * next to the others, so it only runs when every other configured lane is absent or cooled.
  */
-export const DEFAULT_OPERATOR_LANE_ORDER = ['gemini', 'groq', 'cerebras', 'mistral', 'openai'];
+export const DEFAULT_OPERATOR_LANE_ORDER = ['gemini', 'groq', 'cerebras', 'mistral', 'openai', 'huggingface'];
 
 /**
  * @description First non-empty process-env key for a lane.
