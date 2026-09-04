@@ -1,6 +1,6 @@
 # ADR-136: Trading Surface Information Architecture and Direct Trades
 
-- **Status:** Accepted (operator direction 2026-09-03; D1-D3 and D7 SHIPPING NOW, D4-D6 DESIGNED for phase 2)
+- **Status:** Accepted (operator direction 2026-09-03; D1-D3 and D7 shipped 2026-09-03; D6 v1 shipped 2026-09-04 — core #284 + trading 1.7.0; D4-D5 DESIGNED for phase 2)
 - **Date:** 2026-09-03
 - **Depends on:** ADR-052 (no justification, no trade), ADR-085/093 (kernel/store carve), ADR-095 (Strategy Library apply-to-profile), ADR-134 (multi-account trading books — the N-book model this IA finally surfaces correctly)
 
@@ -104,7 +104,11 @@ Done-when: a paper rule on a held name fires within N minutes of a real 2.02 fil
 
 CIK resolution reuses whatever lookup `fundamentals.ts` already relies on to address a symbol at EDGAR — no new symbol→CIK mapping is introduced. Polling cadence is deliberately narrow: only symbols the operator currently holds, only inside the earnings window the world calendar already flags, so this is a handful of EDGAR calls per held name per week, not a market-wide crawl. The rule's UI lives on the account's position row in account detail (it is inherently account- and position-scoped), with the roster of active rules also visible from Strategies, since a standing rule is a form of strategy configuration.
 
-### D6. IPO playbook (Anthropic first) — DESIGNED (phase 2)
+### D6. IPO playbook (Anthropic first) — SHIPPED v1 (2026-09-04)
+
+As built: `src/app/trading-event-plans.ts` stores one plan per account (FORCE-RLS) and runs it as a state machine on a per-user `trading-events:<sub>` schedule leg (every 5 minutes, 09:00–16:55 ET, weekdays), gated by `TRADING_EVENT_PLANS`: armed → watching (EDGAR full-text search for the issuer's public S-1/F-1, then the 424B4 pricing prospectus, from which the IPO price and ticker are parsed; the operator may also supply both) → priced → listed (first fresh trade in a regular session) → entry placed (day LIMIT at IPO × (1 + premium cap), sized as a percent of equity or in dollars, guardrail-capped) → filled → exits placed (take-profit SELL LIMIT GTC at IPO × (1 + tp); STOP SELL GTC at IPO × (1 − sl)) → closed (a fill cancels its sibling; a time stop sells at market) or missed/cancelled/error. Every order is an `event-playbook` decision through the engine's single order path. The Strategy Studio recognises an event request and designs the plan against the IPO research findings, saving it and returning a dry-run (orders at example IPO prices) instead of a backtest; plans are armed (confirm-gated), disarmed and deleted from Strategies → Event playbooks or the account page. Not automated, by design: the Schwab Conditional Offer to Purchase and its post-pricing confirmation — the dry-run lists them as manual steps. Not yet built: the COTP reminder sequence (T-3/T-1/T-0), which stays in BACKLOG.
+
+Original design (kept for the record):
 
 Three pieces, all expressed through rails that already exist:
 
@@ -145,4 +149,4 @@ The engine's order path, guardrails, live gate, reservation arbiter, and book-di
 
 ## Status / open items
 
-D1-D3 and D7 ship now against the current codebase. D4, D5, and D6 are designed but not built — each gets its own BACKLOG entry with the done-when criteria stated above (see [BACKLOG.md](../BACKLOG.md)); none is scheduled by this ADR.
+D1-D3 and D7 shipped 2026-09-03 (trading 1.5.x-1.6.0, core #272). D6 v1 shipped 2026-09-04 (core #284, trading 1.7.0) with the COTP reminder sequence left in BACKLOG. D4 and D5 are designed but not built — each has its own BACKLOG entry with the done-when criteria stated above (see [BACKLOG.md](../BACKLOG.md)); neither is scheduled by this ADR.
