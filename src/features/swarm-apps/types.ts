@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Add manifest-contributed Google Takeout slices and the activation registrar port: packages declare bounded path suffixes plus a package-local ingest export, while the kernel owns archive parsing and retracts contributions on deactivate/uninstall.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Add a first-class deterministic service-route schedule target. The manifest contract separates prompt dispatch from a static POST to a package-owned service-auth route so scheduled package workers never masquerade as agent prompts.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | SwarmAppStaticUi.group — a manifest may split its ribbon's top tray into labelled bands. The cockpit renderer already grouped by this field and already gated it to the top section; the key simply had nowhere to come from, because synthesiseProfile's map dropped it. Optional, so every existing manifest is unchanged and an older core ignores it (flat ribbon) rather than failing the load.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: manifest.artifacts — the app's "Send to…" declarations (accepts/provides, from @/shared/artifact-exchange). Optional and additive (an older core ignores it); the VALUE is validated fail-closed at load, registered on activate, retracted on deactivate — the skill-profiles discipline.
  */
 
 import type { SwarmAppRouteAuthMode } from '@/shared/route-auth';
@@ -28,6 +29,7 @@ import type { SwarmAccessRole } from '@/shared/types/access-roles';
 import type { GuestTier } from '@/shared/middleware/guest-capability-matrix';
 import type { SkillCapabilityId, SkillProfile } from '@/shared/skill-profiles';
 import type { SurfaceBridgeOpName } from '@/shared/surface-bridge-ops';
+import type { ArtifactActionsDeclaration } from '@/shared/artifact-exchange';
 
 
 /**
@@ -607,6 +609,9 @@ export interface SwarmAppManifest {
   };
   /** Surface-bridge op allow-list (fail-closed: absent = the relay carries nothing). */
   surface?: SwarmAppSurfaceDeclaration;
+  /** ADR-139: the app's "Send to…" artifact declarations — validated fail-closed at load,
+   *  registered on activate, retracted on deactivate. Absent = the app doesn't participate. */
+  artifacts?: ArtifactActionsDeclaration;
   routes?: SwarmAppRouteDeclaration[];
   /** Package-owned Google Takeout slices registered only while this app is active. */
   takeout?: SwarmAppTakeoutSliceDeclaration[];

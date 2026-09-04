@@ -35,6 +35,7 @@
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | Back under the 1000-code-line hard cap (1082 -> 941). Entries 27-29 pushed this file past it, which fails the BLOCKING gate_lint (eslint max-lines, --max-warnings 0) and would have blocked the branch. Moved out the two groups that were never orchestration: record presentation/visibility to swarm-app-record-view.ts, and manifest-to-runtime translation (tool create-input, selector seed, safe WHERE, interpolation) to swarm-app-manifest-mapping.ts. Verbatim moves behind the same names, so the class body and this module's public exports are unchanged; both tsconfigs typecheck at 0 errors and the manifest specs stay green.
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | Forward ui.static[].group into the synthesised ribbon items. RibbonNav has grouped on this field since the rail-pin work, but synthesiseProfile's static-item map listed the keys it copied, so a manifest declaring `group:` produced an identical flat ribbon with no error anywhere — the silent no-op that made the feature look unimplemented. Forwarded verbatim; the renderer stays the authority on where a heading is allowed.
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | listApps passes its caller to toSummary as the VIEWER, and the new getAppForViewer is the viewer-scoped counterpart to getApp. A public-scoped app keeps the owner_sub stamped at install, so both read paths were serializing the deployment operator's OIDC subject to every caller. The viewer is passed through even when undefined on purpose: global search lists with no caller and matches summary.ownerSub to find a user's own person-scoped apps, so unconditional redaction would have hidden those from their owner.
+ * 33 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: applyArtifactActions on activate / unregister on deactivate — the app's "Send to…" declarations join the shared registry with the skill-profiles discipline (replace-by-app, retract-on-absent, full teardown on toggle-off).
  */
 
 import type { Pool } from 'pg';
@@ -64,6 +65,10 @@ import {
   registerAppSkillProfiles,
   unregisterAppSkillProfiles,
 } from '@/shared/skill-profiles';
+import {
+  registerAppArtifactActions,
+  unregisterAppArtifactActions,
+} from '@/shared/artifact-exchange';
 import { readManifest, listManifestFiles, serializeManifest } from './swarm-app-loader';
 import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type SummaryViewer } from './swarm-app-record-view';
 import {
@@ -855,6 +860,7 @@ export class SwarmAppService {
     await this.setBotStatuses(record.agentIds, 'active');
     this.applyGuestTier(record);
     this.applySkillProfiles(record);
+    this.applyArtifactActions(record);
     // Dynamic UI discovery is the last activation step that may throw directly. Complete it
     // before enabling model tools or seeding grants, then keep only non-throwing/caught steps
     // after the privilege boundary. loadApp still compensates if an unexpected later error escapes.
@@ -1185,6 +1191,13 @@ export class SwarmAppService {
     } catch (err) {
       logger.error({ err, app: record.name }, 'Skill-profile deregistration failed (non-fatal)');
     }
+    // ADR-139: retract the app's "Send to…" artifact actions — a toggled-off app must hold zero
+    // live menu entries. Idempotent.
+    try {
+      unregisterAppArtifactActions(record.name);
+    } catch (err) {
+      logger.error({ err, app: record.name }, 'Artifact-action deregistration failed (non-fatal)');
+    }
     // Retract the app's dynamically registered bots FIRST — a stale registry entry
     // would keep resolving dispatch to a deactivated app (ghost dispatch). Idempotent.
     try {
@@ -1375,6 +1388,27 @@ export class SwarmAppService {
    * @param tier - The tier to approve, or null to revoke.
    * @returns The updated record, or null when the app doesn't exist.
    */
+  /**
+   * @description Register the app's "Send to…" artifact declarations (ADR-139) into the shared
+   * registry. Called from activate(); deactivate() retracts. Mirrors applySkillProfiles — the
+   * negative case RETRACTS rather than skips, so an edit-reload that removes the artifacts:
+   * block clears the prior registration instead of leaving stale menu entries live.
+   * @param record - The app being activated.
+   */
+  private applyArtifactActions(record: SwarmApplicationRecord): void {
+    const decl = record.manifest.artifacts;
+    const empty = !decl || ((decl.accepts?.length ?? 0) === 0 && (decl.provides?.length ?? 0) === 0);
+    if (empty) {
+      unregisterAppArtifactActions(record.name);
+      return;
+    }
+    try {
+      registerAppArtifactActions(record.name, decl);
+    } catch (err) {
+      logger.error({ err, app: record.name }, 'Artifact-action registration failed (non-fatal)');
+    }
+  }
+
   async approveGuestTier(name: string, tier: GuestTier | null): Promise<SwarmApplicationRecord | null> {
     const record = await this.repo.setGuestTierApproval(name, tier);
     if (!record) return null;

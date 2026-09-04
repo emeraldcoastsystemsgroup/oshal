@@ -1,6 +1,6 @@
 # ADR-139 — Artifact exchange: one "Send to…" registry instead of N×M point integrations
 
-**Status:** Proposed — operator direction 2026-09-04 ("noodle on this new function"); design only, nothing built. Core changes wait for operator acceptance.
+**Status:** Accepted (staged) — operator approved the staged build 2026-09-04 ("ok lets do it in stages") after a design review that surfaced two under-specified spots, resolved in amendment A below. **Stage 1 shipped with this amendment**: the shared registry + handle store (`src/shared/artifact-exchange/`), the `/api/artifacts` routes + `send-to.js`, fail-closed `artifacts:` manifest parsing with activate/deactivate lifecycle, the cockpit `artifact=` forward, and Portrait Studio as the first registered destination. Stages 2–3 (built-in destinations, document-hub menu, sources/pickers, NL leg) remain open.
 
 **Date:** 2026-09-04
 
@@ -62,8 +62,8 @@ artifacts:
       label: Restyle in Portrait Studio
       icon: 🎨
       types: [image/*]                      # MIME globs this action takes
-      mode: open                            # open the surface pre-loaded…
-      open: /api/portrait-studio/app?artifact={ref}
+      mode: open                            # open the surface pre-loaded (no URL template —
+                                            # the cockpit navigation contract is fixed, see D4a)
     - id: rag-ingest
       label: Ingest to RAG
       icon: 📚
@@ -75,9 +75,11 @@ artifacts:
       list: /api/portrait-studio/portraits  # a picker can enumerate the caller's artifacts
 ```
 
-Rules, all fail-closed in the loader (the `suite:` discipline): unknown `mode`, an `open` template
-without `{ref}`, an endpoint outside the app's own mount, or a malformed type glob **fails the app
-load**. A destination that isn't registered simply never appears — there is no "generic open" fallback.
+Rules, all fail-closed in the loader (the `suite:` discipline): unknown `mode`, a post action
+without a root-relative `/api/...` endpoint, an `open` action *with* an endpoint, or a malformed
+type glob **fails the app load**. A destination that isn't registered simply never appears — there
+is no "generic open" fallback. (Amendment A dropped the per-action `open:` URL template from the
+original draft: navigation is one fixed cockpit contract, not N app-authored URLs to validate.)
 
 ### D2 — Handles: a claim ticket, not a byte copy
 
@@ -131,6 +133,35 @@ Nothing about `post` mode is fire-and-forget spending: a destination whose actio
 outwardly (email, social posting) either uses `open` mode — the user finishes the action in the
 destination's own UI — or carries the standard `confirm:true` 428 gate behind its endpoint. The registry
 never bypasses a destination's own consent gates.
+
+### D4a — Amendment A (operator review, 2026-09-04): navigation mechanics and the destination contract
+
+The review surfaced two under-specified spots ("every app is going to need a path… there will need
+to be some controller that opens a new tab or updates the surface in place… have you really thought
+this out"). Resolutions, now binding:
+
+**One controller, one navigation contract.** There is exactly one dispatch controller — the shared
+`send-to.js` — not one per app. It runs inside the source surface's iframe and hands navigation to
+the shell: `window.top.location = /cockpit/?app=<name>&artifact=<ref>` (same-origin, rides the
+existing `?app=` URL contract, back-button returns). The cockpit's `renderToolView` forwards a
+shape-checked `artifact=` ref onto the destination surface's iframe URL — that is the whole
+mechanism. **Default = update in place** (same tab); new-tab comes free because menu entries can be
+dispatched from links (ctrl/middle-click); an in-place "peek" overlay is a later enhancement, not
+the spine. Consequence: `mode: open` needs **no per-action URL template** — the original draft's
+`open:` field is dropped, so there are no N app-authored navigation URLs to validate.
+
+**What a destination must actually implement** (the receive checklist — this is the whole per-app
+cost):
+
+| Mode | Must implement | Typical size |
+|---|---|---|
+| `open` | On surface boot, read `artifact=` from its OWN URL; `GET /api/artifacts/handles/:ref/content`; feed the blob into the existing upload/import path. An expired/foreign ref resolves 404 → render the normal empty state, never an error page. | ~15 lines |
+| `post` | One auth-gated endpoint on its own mount taking `{ ref }`; resolve content the same way; answer `{ ok, message }` for the toast. Outward-acting endpoints keep their own `confirm` gates. | one route |
+
+Apps that register nothing implement nothing and lose nothing. Source-side instrumentation (the
+"Send to…" button on an artifact-bearing UX object) is one call —
+`oshalSendTo({ type, name, source }, anchorEl)` — added per surface, incrementally; the serve URL
+it points at is the owner-scoped route the surface already renders from.
 
 ### D5 — Who integrates, day one and later
 

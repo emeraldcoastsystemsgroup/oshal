@@ -171,6 +171,7 @@
  * 158 | maintainer@emeraldcoastsystemsgroup.com   | Wire one lifecycle-scoped package Takeout registry into app activation and the generic authenticated archive route.
  * 159 | maintainer@emeraldcoastsystemsgroup.com   | Wire one confined deterministic package-schedule registry into the shared scheduler and manifest activation lifecycle.
  * 160 | maintainer@emeraldcoastsystemsgroup.com   | Multi-provider login (ADR-126): registered /login/:provider next to /login (same loginHandler — it dispatches by path/provider), and made the callback state-mismatch recovery provider-aware via loginRestartPathForCallbackPath so a failed /callback/microsoft restarts the Microsoft flow instead of the generic /login.
+ * 161 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: mount /api/artifacts (serviceSecretOr(requiresAuth)) — the artifact-exchange "Send to…" menu, owner-bound handle mint/redeem, and the shared send-to.js component.
  */
 
 require('dotenv').config();
@@ -242,6 +243,7 @@ import { createFreeTierRoutes } from './routes/free-tier-routes';
 import { createLlmPreferenceRoutes } from './routes/llm-preference-routes';
 import { createTvPairingRoutes, createTvTokenAuthMiddleware } from './routes/tv-pairing-routes';
 import { createCliTokenAuthMiddleware, createCliTokenRoutes } from './routes/cli-token-routes';
+import { createArtifactExchangeRoutes } from './routes/artifact-exchange-routes';
 import { createLocalAuthRoutes, isLocalAuthEnabled } from './routes/local-auth-routes';
 import { createApplicationAuthMiddlewareSet } from './middleware/application-auth';
 import { createBudgetRoutes } from './routes/budget-routes';
@@ -1214,6 +1216,9 @@ function createApp(): express.Application {
   // implies full impersonation" reasoning was retired because bots hold the secret and are
   // injectable. swarm-cli login --secret uses this (operator only).
   app.use('/api/cli-tokens', serviceSecretOr(requiresAuth), createCliTokenRoutes(ctx.pool));
+  // ADR-139 Stage 1: the artifact exchange — "Send to…" menu resolution, owner-bound handle
+  // mint/redeem (the claim-ticket rail), and the one shared send-to.js browser component.
+  app.use('/api/artifacts', serviceSecretOr(requiresAuth), createArtifactExchangeRoutes());
   // LOCAL_AUTH flows (ADR-117): /invite + /logout pages, login/accept/bootstrap, and the
   // operator-or-trusted-service user administration API. Mounted below the GUC stamp so
   // admin reads ride the caller's RLS identity; the public legs are the front door and
