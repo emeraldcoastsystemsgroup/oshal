@@ -1359,7 +1359,15 @@ async function handleInput(text) {
   const _low = text.toLowerCase();
   const offeredResultIdForTurn = pendingResultOfferId;
   pendingResultOfferId = null; // An offer belongs only to the immediately following user turn.
-  if (!atts.length && offeredResultIdForTurn && /^\s*(?:yes|yeah|yep|sure|ok(?:ay)?|please do|go ahead)\s*[.!]?\s*$/.test(_low)) {
+  const offeredCatchupForTurn = pendingCatchupOffer;
+  pendingCatchupOffer = false;
+  const saidYes = /^\s*(?:yes|yeah|yep|sure|ok(?:ay)?|please do|go ahead)\s*[.!]?\s*$/.test(_low);
+  if (!atts.length && offeredCatchupForTurn && !offeredResultIdForTurn && saidYes) {
+    showCenterUserCopy(text); addConvo('You', 'user', `<div>${esc(text)}</div>`); scrollToConvo();
+    await readAllBacklog();
+    return;
+  }
+  if (!atts.length && offeredResultIdForTurn && saidYes) {
     showCenterUserCopy(text); addConvo('You', 'user', `<div>${esc(text)}</div>`); scrollToConvo();
     await openJob(offeredResultIdForTurn);
     return;
@@ -1631,8 +1639,93 @@ function announceReady(job) {
   setStatus('Results ready: ' + label.slice(0, 30));
   renderShelfFromCache();   // reflect the new unread item's highlight
 }
+/* ── Catch-up summary: results that finished while nobody was listening ───────────────────
+   One announcement per BATCH, never one per task (operator, 2026-09-04: sixteen Kalshi rows read
+   one at a time is noise, not news). Tasks are grouped by the app that produced them — a task
+   titled "Kalshi: 1 new playable hand" belongs to Kalshi — and phrased as counts, largest group
+   first: "While you were away: 16 new updates from Kalshi and 2 tasks finished." The details stay
+   in the work queue, unread, until asked for. This block is pure (no DOM, no fetch) so
+   tests/unit/jarvis-catchup-summary.spec.ts evaluates it exactly as written. */
+/* @jarvis-catchup-begin */
+const CATCHUP_SOURCE_RE = /^([A-Z][A-Za-z0-9 .&'-]{0,30}?):\s/;
+/* The app a task came from, read off its title's "Source: …" prefix; '' when there is none. */
+function catchupSource(title) {
+  const m = CATCHUP_SOURCE_RE.exec(String(title || ''));
+  return m ? m[1].trim() : '';
+}
+/* Fold finished tasks into per-source counts and one spoken sentence. Returns null when nothing
+   in the batch has finished. `away` picks the lead-in: what you missed vs. what just landed. */
+function summarizeCatchup(tasks, opts) {
+  const away = !!(opts && opts.away);
+  const bySource = new Map();
+  for (const t of tasks || []) {
+    if (!t || (t.status !== 'done' && t.status !== 'error')) continue;
+    const source = catchupSource(t.title);
+    const g = bySource.get(source) || { source, done: 0, failed: 0 };
+    if (t.status === 'done') g.done += 1; else g.failed += 1;
+    bySource.set(source, g);
+  }
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const parts = [];
+  for (const g of bySource.values()) {
+    if (g.source) {
+      if (g.done) parts.push({ n: g.done, text: `${plural(g.done, 'new update', 'new updates')} from ${g.source}` });
+      if (g.failed) parts.push({ n: g.failed, text: `${plural(g.failed, `${g.source} update`, `${g.source} updates`)} failed` });
+    } else {
+      if (g.done) parts.push({ n: g.done, text: `${plural(g.done, 'task', 'tasks')} finished` });
+      if (g.failed) parts.push({ n: g.failed, text: `${plural(g.failed, 'task', 'tasks')} failed` });
+    }
+  }
+  if (!parts.length) return null;
+  parts.sort((a, b) => b.n - a.n);
+  const words = parts.map((p) => p.text);
+  const list = words.length > 1 ? `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}` : words[0];
+  const groups = [...bySource.values()].sort((a, b) => (b.done + b.failed) - (a.done + a.failed));
+  const total = groups.reduce((n, g) => n + g.done + g.failed, 0);
+  const failed = groups.reduce((n, g) => n + g.failed, 0);
+  return { total, failed, groups, text: `${away ? 'While you were away' : 'Just in'}: ${list}.` };
+}
+/* @jarvis-catchup-end */
+
+/* How a batch of finished-but-unannounced tasks reaches the user. Exactly one result that landed
+   while Jarvis was open is announced by name (the "read it" offer, as before). Anything else — a
+   batch, or whatever accumulated while nobody was here — is ONE summary of counts. Every task in
+   the batch is marked delivered either way; unread (actually heard) is tracked separately. */
+function deliverFresh(fresh, away) {
+  if (!away && fresh.length === 1 && fresh[0].status === 'done') {
+    announceReady({ jobId: fresh[0].id, label: fresh[0].title });
+  } else {
+    const s = summarizeCatchup(fresh, { away });
+    if (s) announceCatchup(s);
+  }
+  for (const t of fresh) markDelivered(t.id);
+}
+/* The one summary bubble + one spoken line for a batch. "Read all" is an offer, not a default. */
+function announceCatchup(s) {
+  const rows = s.groups.map((g) => {
+    const name = g.source || 'Other tasks';
+    const bits = [];
+    if (g.done) bits.push(`${g.done} new`);
+    if (g.failed) bits.push(`${g.failed} failed`);
+    return `<li><b>${esc(name)}</b> — ${esc(bits.join(', '))}</li>`;
+  }).join('');
+  addConvo(assistantLabel(), 'bot',
+    `<div>${esc(s.text)} They’re in your work queue, marked <b>NEW</b>. Say <b>“read all my backlog”</b> ` +
+    `to hear them, or pick one from the queue.<ul>${rows}</ul>` +
+    `<div class="ans-chips" style="margin-top:6px"><span class="chip" data-catchup-read>Read all ↗</span>` +
+    `<span class="chip" data-catchup-report>Show queue ↗</span></div></div>`);
+  const box = $('convo').lastElementChild;
+  box?.querySelector('[data-catchup-read]')?.addEventListener('click', () => { pendingCatchupOffer = false; readAllBacklog(); });
+  box?.querySelector('[data-catchup-report]')?.addEventListener('click', () => { pendingCatchupOffer = false; taskReport(); });
+  pendingResultOfferId = null;
+  pendingCatchupOffer = true;
+  speak(`${s.text} Want me to read them?`);
+  setStatus(`${s.total} new result${s.total === 1 ? '' : 's'} waiting`);
+  renderShelfFromCache();
+}
 let shelfPolling = false, shelfPrimed = false, shelfTimer = null;
 let pendingResultOfferId = null;
+let pendingCatchupOffer = false;   // a "yes" right after the catch-up summary means "read them"
 const durableTaskResults = {};   // taskId → full row from /tasks, so finished items survive reloads
 async function pollShelf() {
   let anyRunning = false;
@@ -1647,14 +1740,18 @@ async function pollShelf() {
     });
     lastShelfJobs = jobs;
     renderShelf(jobs);
+    const fresh = [];   // finished and not yet announced — delivered as ONE batch below
     for (const t of tasks) {
       if (t.status === 'pending' || t.status === 'running' || t.status === 'queued' || t.status === 'summarizing') { anyRunning = true; continue; }
       if (t.delivered) continue;   // already pushed once — DB-durable, survives reloads (not brittle)
       // Voice-gated: never talk over the user. Leave it undelivered and announce on the next idle tick.
       if (mode === 'speaking' || mode === 'listening') { anyRunning = true; continue; }
-      if (t.status === 'done') announceReady({ jobId: t.id, label: t.title });   // render the result inline
-      markDelivered(t.id);   // mark once (done or error) so it never re-announces
+      fresh.push(t);
     }
+    // The first poll after opening is the catch-up: whatever landed while nobody was here is one
+    // summary of counts, never a readout. Later polls name a single result and batch the rest.
+    if (fresh.length) deliverFresh(fresh, !shelfPrimed);
+    shelfPrimed = true;
     if (mode !== 'speaking' && mode !== 'listening') setMode(anyRunning ? 'thinking' : 'idle');
   } catch (_) {}
   // Self-schedule: poll fast (3s) only while work is in flight; when idle, back off to

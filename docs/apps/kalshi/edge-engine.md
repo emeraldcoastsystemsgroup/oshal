@@ -78,7 +78,7 @@ book would poison the edge scan.)
 
 | Guard | Behavior |
 |---|---|
-| Live-money gate | The server reads the key's **detected** exchange (never a client-supplied flag) and refuses live orders unless `KALSHI_LIVE_ENABLED=true`. Default: demo only. |
+| Live-money gate | The server reads the key's **detected** exchange (never a client-supplied flag) and refuses live orders unless `KALSHI_LIVE_ENABLED=true` **in the api container**. Default: demo only. Compose forwards the flag from `.env` (`x-bot-env`, since 2026-09-04 — before that a host-side setting never reached the api and every live order was refused as "disabled"); after changing it, redeploy with `bash scripts/oshal-deploy.sh` so the api is recreated with the new env. |
 | Explicit confirm | `confirm` must be exactly `true` — not merely truthy — so a UI bug can't fabricate consent. |
 | Limit-only | Prices bounded to 1..99¢. No market orders (a footgun on thin prediction-market books). |
 | Size + cost caps | 100 contracts / $50 per order (`KALSHI_MAX_CONTRACTS`, `KALSHI_MAX_ORDER_COST_DOLLARS`). |
@@ -93,6 +93,20 @@ Endpoints: `GET /api/kalshi/portfolio`, `POST /api/kalshi/orders`, `DELETE /api/
 **Before you enable live orders**, read [calibration-verdict.md](./calibration-verdict.md) — the
 edge the scan currently shows did not survive adversarial review. Paper-trade first; the demo
 exchange exists precisely so fake money absorbs the mistakes.
+
+**To place a bet, as built.** The API key is never in `.env`; it lives in the per-user Kalshi
+connector card (`/utilities`, Key ID + PEM), and the card auto-detects which exchange it belongs to.
+Then either:
+
+1. **Paper (recommended):** paste a *demo* key (demo.kalshi.co) into a second Kalshi card and click
+   *make default*. Orders route to the demo exchange with no flag at all.
+2. **Real money:** keep the live key as the default, set `KALSHI_LIVE_ENABLED=true` in `.env`, run
+   `bash scripts/oshal-deploy.sh` (recreates the api with the flag), and reload the app — the
+   red "orders are blocked" banner disappears and *Bet* is enabled. Every order still needs the
+   confirm dialog, stays limit-only at 1..99¢, and is capped at 100 contracts / $50.
+
+The Scorecard tab's staking gate is separate: while a strategy is UNPROVEN or FAILING its
+*suggested* stake is 0% — the Bet button still lets you size a contract by hand.
 
 ## Known limitation: deploy lag
 
