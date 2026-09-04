@@ -109,6 +109,38 @@ Behaviour worth knowing:
 
 ### Reaching it from another network
 
+**Run a print service on that machine instead of trying to reach a central one.**
+
+An overlay (Headscale/Tailscale) carries unicast IP, not a broadcast domain — it is a mesh of
+point-to-point tunnels, so mDNS and WSD cannot cross it. Rather than fight that, put a service on
+each node:
+
+| Leg | What travels | Crosses the overlay? |
+|---|---|---|
+| A person's PC → their local print service | discovery, then the print job | **no** — same machine or its own LAN |
+| That service → the swarm intake | one unicast POST | **yes** — what an overlay is for |
+
+The person sees a printer in their own print dialog, with no address to type, no client software and
+no credential on their machine. Install it as a machine-level service so it runs before anyone signs
+in:
+
+```powershell
+# elevated, on the node
+setx OSHAL_PRINT_INTAKE_TOKEN "oshal_pat_..." /M
+.\scripts\install-startup-task.ps1 -AtStartup -DropDir C:\ProgramData\oshal-print-drop
+```
+
+That registration **refuses** two configurations rather than appearing to succeed: no `-DropDir`
+(SYSTEM's profile is not a person's folder), and a swarm target whose token is not in the *machine*
+environment (a SYSTEM task cannot see your user environment, so it would start and fail every
+delivery).
+
+If you would rather point a remote machine at one central printer, that works too — add it by
+address, since it will not appear on its own.
+
+### Discovery vs reachability, in one table
+
+
 An overlay (Headscale/Tailscale) gives **reachability, not discovery**. mDNS and WSD are link-local
 multicast and do not cross a layer-3 overlay, so a remote machine will not see the printer appear on
 its own — it adds it once, by address. That is why the address is in the name.
