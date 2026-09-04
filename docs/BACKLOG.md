@@ -680,3 +680,15 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 ### `swarm-cli` zsh completion
 - **Remaining:** execute the current completion in real zsh, covering sourced/autoloaded modes, command/state dispatch, and saved context completion.
 - **Done when:** `zsh -n` and real tab completion pass for top-level commands, completion shells, token actions, and `--context`; append evidence to the existing 2026-07-12 proof or delete the unsupported script.
+
+### Trading — dated/timed orders (ADR-136 D4)
+- **Remaining:** a manual decision plus a per-user `once: true` schedule (`taskType trading-order:<sub>:<decisionId>`) fired by the kernel trading dispatcher, which calls `placeDecisionOrder` and pauses; the ticket gets a "Place at date/time (ET)" option and the account page lists pending dated orders with cancel. Kernel touch gated by an env flag defaulting OFF.
+- **Done when:** a dated PAPER order placed from the ticket fires at the chosen ET time, lands in that book's ledger with its decision, and a cancelled one never fires; a real-DB spec proves the schedule pauses after one fire.
+
+### Trading — earnings-reaction event rules (ADR-136 D5)
+- **Remaining:** `oshal_trading_event_rules` (book_id, symbol, event=earnings, on_beat, on_miss, sizing, expiry; FORCE-RLS); a kernel watcher that polls EDGAR `submissions/CIK…json` for HELD names only inside the world-calendar earnings window and detects a new 8-K with item 2.02; fetch the primary document; the trading-analyst bot (hosted/BYO, cost-attributed) extracts revenue/EPS vs prior year and vs the company's own prior guidance → beat/miss/inline; the rule fires the mapped action as an operator-approved decision (paper auto; live per the book's confirm policy) with the first-print price reaction as a second gate. NOT a consensus-estimate service — no free keyless consensus source exists; say so on the surface.
+- **Done when:** a paper rule on a held name fires within 15 minutes of a real 2.02 filing with the classification, the numbers it read, and the filing URL in the decision rationale; a miss on the same rule sells; a rule past expiry never fires.
+
+### Trading — IPO playbook, Anthropic first (ADR-136 D6)
+- **Remaining:** an event watch for the PUBLIC S-1 (EDGAR full-text search for the issuer; alert + link); a COTP reminder sequence keyed to the pricing date (the platform cannot submit a Conditional Offer to Purchase — Schwab requires the client to submit it on schwab.com before 4 p.m. ET the day before pricing and CONFIRM after pricing); a day-one plan expressed as ordinary order types on the chosen account — no market-on-open; sized limit entries relative to the first-30-minute range/VWAP; a trailing stop after fill; a position cap (the operator's stated 10% of the IRA ≈ $46K sits inside the $50K notional guardrail).
+- **Done when:** the watch fires on the public S-1 filing; the reminder sequence fires at T-3/T-1 days and T-0 morning with the schwab.com link; the playbook's orders are dry-run-listable for the chosen account before pricing day.
