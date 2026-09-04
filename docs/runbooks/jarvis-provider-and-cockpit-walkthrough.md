@@ -133,7 +133,8 @@ See `src/app/bot-node-server.ts` (`maybeWrapBotNodeProviderFailover`, the
 
 There is **no** runtime auto-failover to OpenRouter or Gemini on a Codex 401.
 ADR-064 §5 *designs* genuinely-free public endpoints (OpenRouter `:free`, Groq,
-Cerebras, Google AI Studio) to sit in a per-user rotation as a "last resort"
+Cerebras, Google AI Studio, Mistral, Hugging Face Inference Providers) to sit in a
+per-user rotation as a "last resort"
 fallback, and ADR-064 is the "connect your own free tier" feature
 (`/api/connect/free-tier`). But that rotation is opt-in and per-user; it is **not**
 wired into the bot-node provider-stall resolver above, so when Codex's token fails
