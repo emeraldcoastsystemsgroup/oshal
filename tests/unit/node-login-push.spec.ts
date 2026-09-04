@@ -23,16 +23,16 @@ describe('@oshal/chat login push — what may leave the machine, and where', () 
     expect(isPushableLogin('codex')).toBe(true);
     expect(isPushableLogin('claude')).toBe(true);
     for (const other of ['gcloud', 'aws', '', undefined, 42]) expect(isPushableLogin(other)).toBe(false);
-    expect(loginFilePath('C:\\Users\\roger\\', 'codex')).toBe('C:\\Users\\roger/.codex/auth.json');
-    expect(loginFilePath('/home/roger', 'claude')).toBe('/home/roger/.claude/.credentials.json');
+    expect(loginFilePath('C:\\Users\\user\\', 'codex')).toBe('C:\\Users\\user/.codex/auth.json');
+    expect(loginFilePath('/home/user', 'claude')).toBe('/home/user/.claude/.credentials.json');
     expect(LOGIN_TARGETS.codex.importPath).toBe('/api/openai-codex/oauth/import');
     expect(LOGIN_TARGETS.claude.importPath).toBe('/api/claude-code/auth/import');
   });
 
   it('prefers the cockpit origin (where the OIDC cookie lives) and refuses plain http to a public host', () => {
-    expect(swarmBaseUrl({ cockpitBaseUrl: 'https://oshal.example.com/', controlPlaneUrl: 'http://192.168.1.248:35457' }))
+    expect(swarmBaseUrl({ cockpitBaseUrl: 'https://oshal.example.com/', controlPlaneUrl: 'http://192.168.50.20:35457' }))
       .toEqual({ ok: true, url: 'https://oshal.example.com' });
-    expect(swarmBaseUrl({ controlPlaneUrl: 'http://192.168.1.248:35457/' })).toEqual({ ok: true, url: 'http://192.168.1.248:35457' });
+    expect(swarmBaseUrl({ controlPlaneUrl: 'http://192.168.50.20:35457/' })).toEqual({ ok: true, url: 'http://192.168.50.20:35457' });
     expect(swarmBaseUrl({ controlPlaneUrl: 'http://localhost:35457' })).toMatchObject({ ok: true });
     expect(swarmBaseUrl({ controlPlaneUrl: 'http://swarm.local:35457' })).toMatchObject({ ok: true });
     expect(swarmBaseUrl({ controlPlaneUrl: 'http://oshal.example.com' })).toMatchObject({ ok: false, reason: 'plain_http_public' });
