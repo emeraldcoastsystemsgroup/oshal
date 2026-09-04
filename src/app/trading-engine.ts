@@ -468,7 +468,12 @@ export async function placeDecisionOrder(
     let effLimit = limitPrice;
     let effTif = d.time_in_force || undefined;
     let extendedHours = false;
-    if (String(process.env.TRADING_EXTENDED_HOURS ?? 'true').toLowerCase() !== 'false') {
+    // SCOPE (surface-audit 2026-09-03): this conversion exists because venues reject MARKET orders
+    // outside regular hours. It must apply to market orders ONLY — an operator's explicit price point
+    // (a GTC limit at $500, a stop, a trailing stop) is already a resting order the venue accepts, and
+    // rewriting it into a marketable day limit at last±0.3% would silently turn "only if it drops to
+    // $500" into "buy at the open at market". Non-market types pass through exactly as decided.
+    if (orderType === 'market' && String(process.env.TRADING_EXTENDED_HOURS ?? 'true').toLowerCase() !== 'false') {
       const session = await tradingSession();
       if (session === 'pre' || session === 'post') {
         // Price off the SAME book's data source (Schwab for live, Alpaca for paper) so the crossing
