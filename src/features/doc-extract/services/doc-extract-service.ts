@@ -17,6 +17,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — extractDocText(): format sniffing (magic bytes > extension > mime), PDF via the already-shipped pdf-parse dependency (lib entry, bypassing its debug-mode index), DOCX via the already-shipped yauzl (word/document.xml → text, no new dependency), UTF-8 fallback for text formats, bounded output, structured never-throw failures.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Per-call `maxChars` (default unchanged at MAX_TEXT_CHARS). The 20k cap is right for the original caller, which feeds extracted text straight into a prompt and pays for every character. It is wrong for a corpus ingest, where truncating at 20k silently drops the tail of a long document out of every future search — a failure nobody sees, unlike a rejected file. RAG upload passes its own cap; the prompt-feeding path keeps the small default.
  *
  * @module doc-extract-service
  */
@@ -45,6 +46,13 @@ export interface DocExtractInput {
   buffer: Buffer;
   /** MIME type as reported by the uploader (a hint, never trusted alone). */
   mime?: string;
+  /**
+   * Character cap for the extracted text; defaults to MAX_TEXT_CHARS.
+   * A caller that feeds a model wants the small default (context cost); a caller
+   * that feeds a chunked corpus wants a large one, because truncating there
+   * silently drops the tail of a document out of every future search.
+   */
+  maxChars?: number;
 }
 
 /** Successful extraction: bounded plain text plus what it was parsed as. */
@@ -117,8 +125,11 @@ export async function extractDocText(
       : decodeUtf8Text(input.buffer);
     const text = raw.replace(/\u0000/g, '').trim();
     if (!text) return { ok: false, format, reason: 'no readable text found in the file (it may be scanned images or empty)' };
-    const truncated = text.length > MAX_TEXT_CHARS;
-    return { ok: true, format, text: truncated ? text.slice(0, MAX_TEXT_CHARS) : text, truncated };
+    const cap = Number.isFinite(input.maxChars) && (input.maxChars as number) > 0
+      ? Math.floor(input.maxChars as number)
+      : MAX_TEXT_CHARS;
+    const truncated = text.length > cap;
+    return { ok: true, format, text: truncated ? text.slice(0, cap) : text, truncated };
   } catch (err) {
     const reason = (err as Error)?.message || 'unreadable file';
     logger.warn({ err, name: input.name, format }, 'document extraction failed — returning honest failure');

@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact connector owner subjects in RAG ACL metadata. Case/whitespace variants remain distinct principals instead of being trimmed into another owner's private corpus; only an empty subject falls through to the legacy owner/public behavior.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: reserve kernel memory namespaces from generic upload, ingest, and delete unless the exact caller is an authenticated admin.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: require an exact authenticated operator for every globally destructive collection deletion, including non-reserved collections.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-135 P0 — /upload actually extracts text. It did `f.buffer.toString('utf-8')` with no format detection while every upload surface advertises .pdf/.docx, so a PDF was embedded as mojibake: it ingested "successfully", polluted the collection with binary noise, and matched nothing a user searched for. The doc-extract slice already does this job properly (magic bytes over extension over MIME, pdf-parse, DOCX via yauzl, never throws) and had exactly one caller. Uploads now run through it with a corpus-sized character cap; a file that yields no readable text is REPORTED, not silently ingested — all files unreadable is a 422 naming each reason, a partial batch ingests the readable files and returns the rejections. The response and the knowledge-document record carry accepted/rejected/truncated so a surface can tell the user what actually landed.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -32,6 +33,7 @@ import {
 import { callerFromRequest, resolveRole, Role } from '@/features/governance';
 import { getUserTenantIds } from './connector-tenancy';
 import { classifyKnowledgeScope, type MemoryLayerService } from '@/features/memory';
+import { extractDocText } from '@/features/doc-extract';
 
 const logger = createChildLogger({ module: 'rag-routes' });
 
@@ -223,6 +225,55 @@ function firstNonEmptyString(...values: unknown[]): string {
 }
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+/**
+ * Character cap for one uploaded document. Far larger than the prompt-feeding
+ * default in doc-extract, because a corpus keeps what it is given and searches it
+ * later: truncating a long report here loses its tail from every future search
+ * with nothing to show a user. Config > env > default, nothing hardcoded downstream.
+ */
+const RAG_UPLOAD_MAX_CHARS = Math.max(1000, Number(process.env.RAG_UPLOAD_MAX_CHARS) || 500000);
+
+/** One file's extraction outcome, as reported back to the caller. */
+interface AcceptedUpload { name: string; format: string; characters: number }
+interface RejectedUpload { name: string; format: string; reason: string }
+
+/**
+ * @description Extract plain text from uploaded files, keeping the readable ones and
+ * reporting the rest. A file that cannot be parsed is never ingested as raw bytes —
+ * that is the defect this replaces, and silent binary noise in a corpus is worse than
+ * a rejection because nobody ever sees it.
+ * @param files - Multer in-memory files.
+ * @returns Texts to ingest plus per-file accepted/rejected/truncated detail.
+ */
+async function extractUploadedText(files: Express.Multer.File[]): Promise<{
+  texts: string[];
+  accepted: AcceptedUpload[];
+  rejected: RejectedUpload[];
+  truncated: string[];
+}> {
+  const texts: string[] = [];
+  const accepted: AcceptedUpload[] = [];
+  const rejected: RejectedUpload[] = [];
+  const truncated: string[] = [];
+  for (const file of files) {
+    const name = file.originalname || 'unnamed';
+    const result = await extractDocText({
+      name,
+      buffer: file.buffer,
+      mime: file.mimetype,
+      maxChars: RAG_UPLOAD_MAX_CHARS,
+    });
+    if (!result.ok) {
+      rejected.push({ name, format: result.format, reason: result.reason });
+      continue;
+    }
+    texts.push(result.text);
+    accepted.push({ name, format: result.format, characters: result.text.length });
+    if (result.truncated) truncated.push(name);
+  }
+  return { texts, accepted, rejected, truncated };
+}
 const VECTOR_MODEL_CATALOG = [
   {
     providerId: 'openai',
@@ -325,7 +376,12 @@ export function createRagRoutes(ragService: RagService, memoryService?: MemoryLa
 
       const collection = (req.body?.collection as string) || 'default';
       if (!allowKernelCollectionForAdmin(req, res, collection)) return;
-      const texts = files.map(f => f.buffer.toString('utf-8'));
+      const { texts, accepted, rejected, truncated } = await extractUploadedText(files);
+      if (texts.length === 0) {
+        logger.warn({ rejected }, 'RAG upload rejected - no file yielded readable text');
+        res.status(422).json({ error: 'No file could be read as text', rejected });
+        return;
+      }
       const acl = ragAclFromRequest(req);
       const result = await ragService.ingest(texts, collection, {
         source: 'upload',
@@ -338,20 +394,31 @@ export function createRagRoutes(ragService: RagService, memoryService?: MemoryLa
           taskId: typeof req.body?.taskId === 'string' ? req.body.taskId : undefined,
           ownerSub: acl.owner_sub || undefined,
           collection,
-          title: files.map((file) => file.originalname).join(', ').slice(0, 255) || `Upload to ${collection}`,
+          title: accepted.map((f) => f.name).join(', ').slice(0, 255) || `Upload to ${collection}`,
           source: 'rag-upload',
           format: 'file-upload',
           chunkCount: result.chunkCount,
           documentCount: result.documentCount,
           metadata: {
-            fileNames: files.map((file) => file.originalname),
-            fileCount: files.length,
+            fileNames: accepted.map((f) => f.name),
+            fileCount: accepted.length,
+            formats: accepted.map((f) => f.format),
+            rejected,
+            truncated,
           },
         });
       }
 
-      logger.info({ collection, chunkCount: result.chunkCount }, 'RAG upload complete');
-      res.json({ success: true, count: result.documentCount, chunks: result.chunkCount, collection });
+      logger.info({ collection, chunkCount: result.chunkCount, accepted: accepted.length, rejected: rejected.length }, 'RAG upload complete');
+      res.json({
+        success: true,
+        count: result.documentCount,
+        chunks: result.chunkCount,
+        collection,
+        accepted: accepted.map((f) => ({ name: f.name, format: f.format, characters: f.characters })),
+        rejected,
+        truncated,
+      });
     } catch (err) {
       logger.error({ err }, 'RAG upload failed');
       res.status(500).json({ error: 'RAG ingestion failed' });
