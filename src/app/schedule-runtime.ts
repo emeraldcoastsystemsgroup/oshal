@@ -83,6 +83,10 @@ export function createScheduleController(
       // Trading-autopilot schedules run the deterministic in-controller loop (no target
       // agent), so they likewise bypass the per-agent self-scheduling tool gate.
       if (isTradingSchedule(taskType)) return;
+      // The event-playbook / protected-lot leg (`trading-events:<sub>`, ADR-136 D6 + ADR-138 D3)
+      // is the same shape: a deterministic in-controller state machine with no target agent. Without
+      // this bypass, arming an IPO plan or a protected purchase threw "Agent Scheduler is off".
+      if (isTradingEventSchedule(taskType)) return;
       // Trading research/fast brain schedules run the analyst inline (no user self-scheduling).
       if (isResearchSchedule(taskType)) return;
       // The assessment batch is a system forecast pass — bypass the per-agent tool gate.
