@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { buildCatalogBlock } from '@/app/routes/jarvis-orchestrator';
+import { buildOpenWorkBlock } from '@/app/routes/jarvis-task-store';
 
 /** Minimal AppContext double — the catalog path only reaches for ctx.pool.query. */
 function ctxReturning(rows: Array<Record<string, unknown>>): never {
@@ -97,5 +98,24 @@ describe('Jarvis catalog block: the model sees the deployment it actually runs o
     // The old baked list named apps of ONE deployment — including one long since carved to the
     // store. Its return means the persona is authoritative again and store boxes go dark again.
     expect(persona).not.toMatch(/Little Monsters/);
+  });
+});
+
+describe('OPEN WORK block: results are dated records, not current state', () => {
+  const taskRow = (over: Record<string, unknown>) => ({
+    id: 't1', title: 'CRM pull', status: 'done', kind: 'complex',
+    result: 'stages new/working/won, 4 opportunities', created_at: new Date(Date.now() - 34 * 86400000),
+    ...over,
+  });
+
+  it('stamps every result with its age so a month-old pull cannot read as fresh', async () => {
+    const block = await buildOpenWorkBlock(ctxReturning([taskRow({})]) as never, 'sub-1');
+    expect(block).toMatch(/DONE \(34 days ago\)/);
+  });
+
+  it('scopes results to their own task and sends current-state questions to a fresh handoff', async () => {
+    const block = await buildOpenWorkBlock(ctxReturning([taskRow({})]) as never, 'sub-1');
+    expect(block).toMatch(/NOT the current state/i);
+    expect(block).toMatch(/fresh handoff/i);
   });
 });
