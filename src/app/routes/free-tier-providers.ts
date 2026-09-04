@@ -22,6 +22,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial catalog (OpenRouter, Gemini/AI Studio, Groq, Cerebras, Mistral) for ADR-064 free-tier connect + rotation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Gemini freeModels refreshed — Google zeroed free quota on gemini-2.0-flash (429 limit:0) and retired the 1.5 family (404), so every candidate was dead; live-probed replacements led by the self-updating gemini-flash-lite-latest alias.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Hugging Face Inference Providers lane — the OpenAI-compatible router (router.huggingface.co/v1) fronts a dozen vendors behind one HF token. Every candidate carries the `:cheapest` policy suffix so the thin monthly credit ($0.10 free / $2 PRO, HF pricing page 2026-09-04) buys the most tokens; candidates live-probed against GET /v1/models the same day. Replaces the ad-hoc "more" card on /free-models, so HF now rides connect validation, LRU rotation, and the wall cooldown like every other lane.
  *
  * @module free-tier-providers
  */
@@ -153,6 +154,35 @@ export const FREE_PROVIDERS: Record<string, FreeProvider> = {
       'Open the Mistral console (button below) and sign up.',
       'Create a key under API Keys (the experimental tier is free).',
       'Paste the key below and click Connect.',
+    ],
+  },
+  huggingface: {
+    id: 'huggingface',
+    label: 'Hugging Face (Inference Providers)',
+    clineProvider: 'huggingface',
+    // The OpenAI-compatible router: one HF token, server-side fan-out to Groq / Cerebras /
+    // Together / Fireworks / DeepInfra / Novita and friends. GET /v1/models lists what is live
+    // with per-provider pricing. The monthly credit is thin ($0.10 free, $2 PRO — HF pricing
+    // page, 2026-09-04), so every candidate carries the `:cheapest` policy suffix: the router then
+    // picks the lowest output price among live providers for that model instead of the fastest.
+    baseUrl: 'https://router.huggingface.co/v1',
+    // Live-probed 2026-09-04 (GET /v1/models, no auth needed): each served by 4+ live providers
+    // with tool calling; cheapest output $0.14 / $0.05 / $0.17 per M. The gpt-oss ids are
+    // REASONING models — the connect probe passes on a 2xx even when a 1-token budget yields no text.
+    freeModels: [
+      'openai/gpt-oss-20b:cheapest',
+      'meta-llama/Llama-3.1-8B-Instruct:cheapest',
+      'openai/gpt-oss-120b:cheapest',
+    ],
+    keyHelpUrl: 'https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained',
+    oauth: false,
+    note: 'One token, hundreds of open models. Small monthly credit ($0.10; $2 on PRO), then pay-as-you-go at provider rates.',
+    freeBlurb: 'Monthly inference credit on a router that fronts a dozen open-model providers.',
+    howTo: [
+      'Open Hugging Face token settings (button below) — signing up is free.',
+      'Create a fine-grained token with "Make calls to Inference Providers" enabled and copy it.',
+      'Paste the token below and click Connect.',
+      'Model availability follows what providers keep warm; the `:cheapest` suffix on the model id picks the lowest-priced live provider.',
     ],
   },
 };
