@@ -390,6 +390,88 @@ choice, not an architectural fork.
 
 ---
 
+## Amendment C — one inbox and a classifying ticket, replacing the multi-queue selector
+
+*Operator direction, 2026-09-03, after the XPS proof. **Supersedes D3.***
+
+> *"Have a generic swarm print inbox and the workflow to approve it — a new ticket called print
+> queue, and the queue's job is to get it classified. The queue will guess, maybe based on logon IP
+> data and print IP for user and context for bot, make a recommendation on how to classify, maybe
+> present a form in the ticket to check off and select, and the user approves it — then the function
+> gets called and payload delivered."*
+
+### D13 — one printer, one inbox; the destination is decided in the ticket
+
+D3 made the printer the selector: one advertised queue per destination. That is replaced by **one
+generic queue feeding one inbox**, because the decision is better made where the context and the
+human are:
+
+- Classification can use the **document's content**, which the print dialog cannot see.
+- It removes multi-queue identity management (N names, N UUIDs, N announcement streams) and with it
+  the whole P3 phase.
+- Adding a destination stops being a printer change. A new bot is a new option in a form, not a new
+  device on everyone's machine.
+- The printer stays one thing that does one thing — which is what made it work.
+
+What is lost, stated plainly: the one-click "print straight to X" affordance. Every document now
+passes through a decision. That is mitigated by remembered defaults (below), not by pretending the
+cost is zero.
+
+### D14 — `print-queue` is a classification ticket, not an ingestion ticket
+
+The ticket's job is to answer *where does this belong*, and to have a human confirm it. Ingestion is
+what happens after approval.
+
+**The recommendation** is assembled from four signals, in descending trustworthiness:
+
+| Signal | Use | Trust |
+|---|---|---|
+| Local session identity (localhost topology, Amendment B) | Who the document belongs to | **Authoritative** — the process runs as that person |
+| Originating machine / print IP mapped to a known user | A *suggested* owner | Hint only — never becomes `owner_sub` (D8 stands) |
+| Document content classified by the bot | Which specialist domains it belongs to | Reasoning, cost-attributed per ADR-036 |
+| Prior approved decisions for the same source | Pre-ticked defaults | Learned, and always overridable |
+
+**The form** rides in the ticket: proposed title, detected type, page/character count, a text preview,
+and a **multi-select** of destinations with the recommendation pre-ticked and a confidence note. The
+person ticks, unticks, retitles, approves. On approval the ingest runs and the payload is delivered;
+on rejection the staged document is discarded and the decision recorded.
+
+The approval gate is the `approval-gate` node from D5 — unchanged. What changed is that the gate now
+carries a **payload the human edits**, not merely a yes/no.
+
+### D15 — store close *and* far, on purpose
+
+> *"Data that is ultra close to a bot is going to get found more often than generic swarm memory,
+> just based on size and speed."*
+
+**This is correct for this engine, and it is the reason fan-out is a feature rather than a bug.**
+Retrieval fuses two per-collection rankings (vector and lexical) by reciprocal rank. A document's
+score therefore depends on *what it competes with inside the collection it was searched in*. The
+same document ranks high in a focused 50-document bot corpus and can be buried in a 50,000-document
+swarm corpus, for the identical query. Storing once and hoping the big corpus surfaces it is the
+weaker choice.
+
+So a document may be written to **several destinations at once** — typically a specialist bot's
+corpus *and* the swarm level when both should know it. Three rules keep that from becoming a mess:
+
+1. **One identity across copies.** Every copy carries the same content-hash `doc_id`
+   (`print:<sha256>`), so results dedupe by document rather than showing the same page three times,
+   and every copy is findable from the one id.
+2. **The fan-out set is recorded** in the package's own `user_sub`-keyed table. Core has no
+   per-document delete (G3), so the only way to ever retract a document is to know exactly where its
+   copies went. Writing that down at ingest time is the difference between "retractable later" and
+   "permanent by accident".
+3. **Fan-out is proposed, never silent.** The form shows every destination a copy will land in.
+   A person approving one destination has not approved three.
+
+**One constraint to build against:** the swarm-wide level (`swarm-knowledge` and its sibling
+namespaces) is kernel-reserved, and generic ingest into it is refused unless the caller is an admin.
+That is not an obstacle here — operator approval *is* that gate — but it does mean the swarm
+destination cannot be offered to a non-operator approver, and the form must reflect that rather than
+failing at write time.
+
+---
+
 ## Build state
 
 | Item | State |
@@ -397,7 +479,13 @@ choice, not an architectural fork.
 | P0 — `/api/rag/upload` extracts text (uploaded PDFs/DOCX) | **Shipped** (PR #273) with a real-boundary guard |
 | Configurable advertised formats | **Shipped** (PR #275), default unchanged |
 | XPS text recovery + companion `.txt` at spool time | **Shipped** (PR #275), guarded by suite 10 |
-| P1 store package, P2 forwarder, P3 multi-queue, P4 print-to-ticket | Not started |
+| P1 store package — inbox, `print-queue` classification ticket, approval form, fan-out ingest | Not started |
+| P2 edge forwarder (default OFF) | Not started |
+| ~~P3 multi-queue advertisement~~ | **Dropped** — superseded by Amendment C (one inbox) |
+| P4 print-to-ticket | Not started; largely subsumed by D14, since every print already becomes a ticket |
 
-Open questions 1 and 3 are answered above. Questions 2 (per-bot confidentiality), 4 (default
-approval posture) and 5 (phase-one scope) remain open.
+Open questions 1 and 3 are answered above. Question 5 (phase-one scope) is effectively answered by
+Amendment C: phase one is the inbox plus the classifying ticket. Questions 2 (per-bot
+confidentiality) and 4 (default approval posture) remain open — and note that D15's fan-out makes
+question 2 sharper, because a document copied into a bot corpus is copied into a corpus with no
+access control.
