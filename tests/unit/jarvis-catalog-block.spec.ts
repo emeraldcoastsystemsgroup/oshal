@@ -42,6 +42,10 @@ describe('Jarvis catalog block: the model sees the deployment it actually runs o
     const block = await buildCatalogBlock(ctxReturning([]));
     expect(block).toMatch(/supersedes any baked-in/i);
     expect(block).toMatch(/catalog keys/i);
+    // Freshness: the first live verification produced confident STALE numbers read out of an old
+    // OPEN WORK result. The block must say old task results never stand in for current data.
+    expect(block).toMatch(/FRESHNESS/);
+    expect(block).toMatch(/fresh handoff/i);
   });
 
   it('tells Jarvis how to reach each mode: delegate = hand work, handoff = point with the link', async () => {

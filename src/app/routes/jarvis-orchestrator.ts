@@ -19,6 +19,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credential forwarding from Jarvis/model delegation; credentials stay inside audited server-side provider operations.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry the turn's resolved endpoint through the whole turn: the in-process steps (haven passive learning, the legacy classify/synthesize path) now run on the same byoLlmConnection instead of silently falling to the controller's configured CLI harness, and the one bounded retry re-resolves to the NEXT usable endpoint rather than deliberately dropping the connection onto a provider a SEC-05 node refuses.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Let a CLI-lane failure reach the bounded retry: reportResolvedLlmFailure only answers for hosted connections, so a CLI turn (the demo operator's default brain) could never retry and surfaced the harness error instead of an answer.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Catalog freshness rule: on the first live verification Jarvis stopped shrugging but answered the CRM question from a STALE OPEN WORK result ("0 in docs out, 4 total" against a live 473/7/2) - the OPEN WORK guidance's "read the RESULT and report it" was over-applied to a fresh data question. The catalog now states that an old task result answers questions about that task only; current-state questions get a fresh handoff or the owning app's link.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | buildCatalogBlock: the effective-route catalog (curated + dynamically discovered store apps, ADR-085/087) is injected into every live bot turn. The live path had NO catalog - the plan guidance said "the catalog keys above" over a message that never carried one, and the persona's baked specialist list was the bot's only (stale, platform-only) world model, so a CRM-only deployment had a Jarvis that had never heard of its own CRM and shrugged at a pipeline question (operator report 2026-09-04). Bounded, degrades to '' - a catalog failure never blocks the turn.
  *
  * @module jarvis-orchestrator
@@ -491,7 +492,11 @@ export async function buildCatalogBlock(ctx: AppContext): Promise<string> {
       'what is listed here is what exists for this user. When a question belongs to one of these',
       'domains and you do not hold its data in this turn, never answer with a bare "I do not know" -',
       'hand the work off, or name the owning app and point the user to it (with its link). These',
-      'are also the "catalog keys" the multi-app plan directive refers to.',
+      'are also the "catalog keys" the multi-app plan directive refers to. FRESHNESS: a result',
+      'in OPEN WORK is a record of that past task - it answers questions about that task only.',
+      'For a question about the CURRENT state of a catalog domain (counts, totals, what is in a',
+      'stage or list right now), file a fresh handoff to pull live data, or point the user at',
+      'the owning app - never present an old task result as today\'s numbers.',
       ...lines,
     ].join('\n');
   } catch (err) {
