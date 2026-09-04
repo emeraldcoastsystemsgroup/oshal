@@ -62,6 +62,12 @@ export interface OshalChatConfig {
   backgroundWakeEnabled: boolean;
   /** Configurable assistant name used to build the exact local grammar "Hey <name>". */
   wakeAssistantName: string;
+  /** When true, this node advertises a print-to-rag printer on ITS OWN network segment while
+   *  connected — anyone on that intranet can print into the swarm with no client software and
+   *  no credential of their own. OFF by default: it is an outward-facing service. */
+  printServiceEnabled: boolean;
+  /** Spool folder the print service buffers documents in (blank → a folder beside the app). */
+  printServiceSpoolDir: string;
 }
 
 export const CURRENT_CONFIG_VERSION = 2;
@@ -87,6 +93,8 @@ const DEFAULT_CONFIG: OshalChatConfig = {
   enrollmentToken: '',
   backgroundWakeEnabled: false,
   wakeAssistantName: 'Jarvis',
+  printServiceEnabled: false,
+  printServiceSpoolDir: '',
 };
 
 /**
@@ -133,6 +141,7 @@ function readEnvSeed(): Partial<OshalChatConfig> {
     OSHAL_CONTROL_PLANE_URL, OSHAL_SHARED_SECRET, OSHAL_AUTH_HEADER, OSHAL_CLIENT_NAME,
     OSHAL_WORKER_ENABLED, OSHAL_FULL_JARVIS, OSHAL_COCKPIT_PATH, OSHAL_COCKPIT_BASE_URL,
     OSHAL_WAKE_NAME, OSHAL_ENROLLMENT_TOKEN, OSHAL_CLIENT_ID,
+    OSHAL_PRINT_SERVICE, OSHAL_PRINT_SERVICE_DIR,
   } = process.env;
 
   // A DEVICE-BOUND token names the device it may register as, so when the swarm mints the
@@ -175,6 +184,14 @@ function readEnvSeed(): Partial<OshalChatConfig> {
   }
   if (OSHAL_WAKE_NAME) {
     seed.wakeAssistantName = OSHAL_WAKE_NAME;
+  }
+  // Opt-in only: an installer that wants this node to serve its site's intranet sets it
+  // explicitly, exactly like worker mode. An ordinary launch leaves the printer off.
+  if (OSHAL_PRINT_SERVICE) {
+    seed.printServiceEnabled = OSHAL_PRINT_SERVICE !== 'false';
+  }
+  if (OSHAL_PRINT_SERVICE_DIR) {
+    seed.printServiceSpoolDir = OSHAL_PRINT_SERVICE_DIR;
   }
   return seed;
 }
