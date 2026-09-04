@@ -24,7 +24,7 @@ import { spawn } from 'child_process';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import {
-  forwardStep, metricsFor, normalizeConfig, runBacktest, snapshotConfig,
+  forwardStep, metricsFor, normalizeConfig, runBacktest, snapshotConfig, LAB_START_CASH,
   type EquityPoint, type WalkState,
 } from './trading-strategy-lab-sim';
 import {
@@ -68,14 +68,15 @@ export function buildSha(): string {
  * @param sub - Owner sub.
  * @param strategy - The strategy row.
  * @param windowDays - Optional window override.
+ * @param startCash - Optional starting capital (size the walk to a real account); default $100K reference.
  * @returns The persisted run row.
  */
-export async function backtestStrategy(pool: Pool, sub: string, strategy: StrategyRow, windowDays?: number): Promise<RunRow> {
+export async function backtestStrategy(pool: Pool, sub: string, strategy: StrategyRow, windowDays?: number, startCash?: number): Promise<RunRow> {
   await ensureLabSchema(pool);
   const cfg = normalizeConfig(strategy.config);
   const started = Date.now();
   try {
-    const sim = await runBacktest(cfg, { windowDays });
+    const sim = await runBacktest(cfg, { windowDays, startCash });
     // Snapshot the RESOLVED universe: an empty config universe means "the default", but
     // DEFAULT_UNIVERSE changes between deploys — a regression must replay the names this run saw.
     // For blends the resolution happens per component (snapshotConfig).
@@ -83,9 +84,12 @@ export async function backtestStrategy(pool: Pool, sub: string, strategy: Strate
     const run = await insertRun(pool, sub, {
       strategyId: strategy.id, kind: 'backtest', status: 'ok', feed: sim.feed, gitSha: buildSha(),
       windowStart: sim.windowStart, windowEnd: sim.windowEnd, bars: sim.bars,
-      configSnapshot: snapshot, metrics: { ...sim.metrics, fetchStart: sim.fetchStart, elapsedMs: Date.now() - started }, curve: sim.curve,
+      configSnapshot: snapshot, metrics: { ...sim.metrics, startCash: sim.startCash ?? LAB_START_CASH, fetchStart: sim.fetchStart, elapsedMs: Date.now() - started }, curve: sim.curve,
     });
-    if (!strategy.baselineRunId) await setBaseline(pool, sub, strategy.id, run.id);
+    // Only a REFERENCE-capital run may become the regression baseline: regressions replay at the
+    // baseline's capital, and a $20K account-sized run must not silently become the yardstick for
+    // a strategy the nightly walks measure at $100K.
+    if (!strategy.baselineRunId && (sim.startCash ?? LAB_START_CASH) === LAB_START_CASH) await setBaseline(pool, sub, strategy.id, run.id);
     logger.info({ strategyId: strategy.id, runId: run.id, bars: sim.bars, feed: sim.feed, elapsedMs: Date.now() - started }, 'lab backtest persisted');
     return run;
   } catch (err) {
@@ -166,7 +170,8 @@ export async function regressStrategy(pool: Pool, sub: string, strategy: Strateg
     // Pin the exact window the baseline saw: same fetch start (decision windows depend on it),
     // same end session. Same config + same window + immutable tape ⇒ identical numbers.
     const fetchStartDate = typeof baseline.metrics.fetchStart === 'string' ? baseline.metrics.fetchStart : baseline.windowStart;
-    const sim = await runBacktest(cfg, { fetchStartDate, endDate: baseline.windowEnd });
+    // Replay at the baseline's own capital (older baselines recorded none → the $100K reference).
+    const sim = await runBacktest(cfg, { fetchStartDate, endDate: baseline.windowEnd, startCash: (baseline.metrics as { startCash?: number }).startCash });
     const deltas = {
       totalReturnPct: round2(sim.metrics.totalReturnPct - Number(baseline.metrics.totalReturnPct ?? 0)),
       maxDrawdownPct: round2(sim.metrics.maxDrawdownPct - Number(baseline.metrics.maxDrawdownPct ?? 0)),
