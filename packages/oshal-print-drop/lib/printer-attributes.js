@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the Get-Printer-Attributes response set: an IPP Everywhere-shaped subset sufficient for the Microsoft IPP Class Driver, macOS, and CUPS to install the queue driverlessly. Deliberate choice: document-format-supported advertises application/pdf (plus octet-stream) and nothing raster, which makes every mainstream client transcode to PDF before sending — the server never has to render PWG raster. Includes the requested-attributes filter (group keywords like 'all'/'printer-description' return the full set).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | document-format-supported / -default come from configuration instead of being fixed to PDF. Measured on two real Windows jobs: the PDF the Microsoft IPP Class Driver produces is a RASTER wrapper — zero /Font objects, zero /BaseFont, JPEG-compressed page images (one 1928x1914 image for a 2-page job, 140 image tiles for a 5-page one) and not one character of extractable text. What the printer advertises decides what the client sends, so this attribute is the difference between receiving a searchable document and receiving a picture of one; it belongs in config where a deployment can trade fidelity against client compatibility. The default is unchanged.
  */
 'use strict';
 
@@ -20,9 +21,28 @@ const GROUP_KEYWORDS = new Set([
 ]);
 
 /**
+ * The broadly-compatible advertisement, and the one every mainstream client can
+ * satisfy without the server rendering raster. Callers that want a different
+ * trade-off pass their own list; a caller that passes none gets this.
+ */
+const DEFAULT_FORMATS = ['application/pdf', 'application/octet-stream'];
+
+/**
+ * @description The advertised formats for a request, defaulting when unset.
+ * @param {{formats?:string[]}} ctx Live printer context.
+ * @returns {string[]} A non-empty MIME list; the first entry is the default.
+ */
+function formatsFor(ctx) {
+  return Array.isArray(ctx.formats) && ctx.formats.length ? ctx.formats : DEFAULT_FORMATS;
+}
+
+/**
  * @description Build the printer-description side of the attribute set — identity,
- * state, protocol capabilities, and the PDF-only document-format contract.
- * @param {{name:string,info:string,location:string,uris:string[],uuidUri:string,upTimeSeconds:number,queuedJobCount:number}} ctx Live printer context.
+ * state, protocol capabilities, and the document-format contract. The advertised
+ * formats are configuration, not a constant: what a client is told this printer
+ * accepts decides what it SENDS, and therefore whether the job arrives as text or
+ * as a bitmap (see the change log).
+ * @param {{name:string,info:string,location:string,uris:string[],uuidUri:string,upTimeSeconds:number,queuedJobCount:number,formats:string[]}} ctx Live printer context; formats[0] is the advertised default.
  * @returns {Array<{tag:number,name:string,values:Array<*>}>} Description attributes.
  */
 function buildDescriptionAttributes(ctx) {
@@ -44,8 +64,8 @@ function buildDescriptionAttributes(ctx) {
     { tag: VALUE.CHARSET, name: 'charset-supported', values: ['utf-8'] },
     { tag: VALUE.NATURAL_LANGUAGE, name: 'natural-language-configured', values: ['en'] },
     { tag: VALUE.NATURAL_LANGUAGE, name: 'generated-natural-language-supported', values: ['en'] },
-    { tag: VALUE.MIME_MEDIA_TYPE, name: 'document-format-default', values: ['application/pdf'] },
-    { tag: VALUE.MIME_MEDIA_TYPE, name: 'document-format-supported', values: ['application/pdf', 'application/octet-stream'] },
+    { tag: VALUE.MIME_MEDIA_TYPE, name: 'document-format-default', values: [formatsFor(ctx)[0]] },
+    { tag: VALUE.MIME_MEDIA_TYPE, name: 'document-format-supported', values: formatsFor(ctx) },
     { tag: VALUE.BOOLEAN, name: 'printer-is-accepting-jobs', values: [true] },
     { tag: VALUE.INTEGER, name: 'queued-job-count', values: [ctx.queuedJobCount] },
     { tag: VALUE.KEYWORD, name: 'pdl-override-supported', values: ['attempted'] },
@@ -114,4 +134,4 @@ function filterRequested(attributes, requested) {
   return attributes.filter((attr) => wanted.has(attr.name));
 }
 
-module.exports = { buildPrinterAttributes, filterRequested, DELIMITER };
+module.exports = { buildPrinterAttributes, filterRequested, DELIMITER, DEFAULT_FORMATS };
