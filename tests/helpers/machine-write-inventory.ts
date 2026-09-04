@@ -277,6 +277,27 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
       + 'sink observes the SYSTEM sentinel and the task owner at the write boundary.',
   },
   {
+    id: 'remote-client-print-intake',
+    entryPoint: 'POST /api/remote-clients/:clientId/print-documents',
+    file: 'src/app/routes/remote-client-print-routes.ts',
+    auth: 'shared-bearer',
+    ownerScopedTables: [],
+    identity: {
+      kind: 'no-owner-scoped-write',
+      why:
+        'The kernel route performs no INSERT/UPDATE/DELETE of its own: it resolves the device owner '
+        + 'and forwards. The owner-scoped write (print_intake) belongs to the print-ingest STORE '
+        + 'package, which resolves x-oshal-user-sub through getTrustedServiceUserSub before its '
+        + 'INSERT — so the identity this route establishes is the one that reaches the row.',
+    },
+    behaviorallyProven: true,
+    note:
+      'tests/unit/remote-client-print-intake.spec.ts drives the real handler: a node that supplies its '
+      + 'own ownerSub is ignored in favour of the registry\'s, an unowned device never reaches the write, '
+      + 'and a missing SWARM_SERVICE_SECRET fails closed instead of filing unauthenticated. The real '
+      + 'decideNodeTokenScope is asserted on both the refused global path and the admitted node path.',
+  },
+  {
     id: 'sms-inbound',
     entryPoint: 'POST /api/sms/inbound',
     file: 'src/app/routes/sms-inbound-routes.ts',

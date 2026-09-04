@@ -705,6 +705,91 @@ refusals come with it, because both defaults are traps under SYSTEM:
 
 ---
 
+## Amendment H — the print service is part of the node, not a second install
+
+*Operator, 2026-09-04: "so I said to add it to the remote node, and when the remote node is up it is
+running the print service, and that service is then accessible on the intranet the remote node is
+running on … did you create that and build it into the remote node bots or not?"*
+
+No — Amendment G shipped a **scheduled task**, which is a different thing, and the difference
+matters. The `-AtStartup` task is a separate install with a separately placed credential
+(`setx OSHAL_PRINT_INTAKE_TOKEN /M`) that happens to run on the same machine as a node. It does not
+come up with the node, does not share the node's enrolment, does not stop when the node
+disconnects, and is invisible in the node's own UI. Amendment G described a per-node *topology*;
+this amendment builds it into the node.
+
+### D21 — the printer's lifecycle IS the node's connection lifecycle
+
+`packages/oshal-chat` (the node) now supervises the printer directly, in the same place it already
+decides to become a worker:
+
+- `connect()` starts the print service after enrolment, so the printer only ever exists on a node
+  that knows who owns it.
+- `teardownClient()` stops it. A printer still advertised after the node disconnects would accept
+  jobs it can no longer deliver — the exact silent failure this package keeps designing against.
+- It is **opt-in** (`printServiceEnabled`, default `false`, seedable by an installer as
+  `OSHAL_PRINT_SERVICE`). Advertising a service on someone's intranet is outward-facing, so it is
+  never on by default.
+
+The print service refuses to start rather than advertise a printer it cannot deliver from: no
+`clientId` yet, no node credential, or no `@oshal/print-drop` package alongside the node.
+
+### D22 — the intake lives on the NODE's plane, which is why no scope change was needed
+
+The prerequisite this ADR previously recorded — *"the print intake path must be admitted to the
+node-token scope (one narrow core change)"* — turned out to be **the wrong fix, and is withdrawn.**
+
+Reading `decideNodeTokenScope` end to end: a node-bound token is admitted only on
+`/api/remote-clients/<its own clientId>/*` plus the two handshake paths. `POST
+/api/print-ingest/documents` is refused `off-plane`. Admitting that global path to the node scope
+would have made it callable by **every** node — and since the app reads the owner from the caller,
+any node could then file into any person's knowledge. The narrow change would have opened a
+cross-user write.
+
+So the intake moved to the node's own plane instead:
+`POST /api/remote-clients/:clientId/print-documents`
+([src/app/routes/remote-client-print-routes.ts](../../src/app/routes/remote-client-print-routes.ts)).
+That path is already inside the node's scope, so **no change to `node-token-scope.ts` was required
+at all.**
+
+The route's real job is **identity translation**, and the split is what makes it safe:
+
+| Fact | Established by | Not trusted from |
+|---|---|---|
+| *which device* is filing | the node-bound token's binding | — |
+| *whose device* it is | the registry record's `ownerSub` | the request body |
+| what is filed | recovered text + job sidecar | never the spooled binary |
+
+A node therefore cannot file as anyone but its own registered owner, because it never supplies a
+sub at all. An **unowned** device is refused `409` rather than defaulted to an operator — a printed
+document is somebody's private knowledge, and guessing is worse than refusing.
+
+Core performs no write of its own: it forwards to the print-ingest **store package** with
+`x-oshal-user-sub`, which that package already resolves through `getTrustedServiceUserSub`. This
+keeps Rule 0c intact — the kernel does not import an application — and needed **zero** change to
+the store package. When print-ingest is not installed, the node is told
+`print_ingest_not_installed` (503) rather than a bare 404 it would read as a wrong URL and retry
+against forever.
+
+### Guards
+
+- `tests/unit/remote-client-print-intake.spec.ts` — drives the **real** `decideNodeTokenScope` on
+  both the refused global path and the admitted node path, so the constraint that shaped this
+  design stays visible if anyone "simplifies" it. Then drives the real handler: a node that
+  supplies its own `ownerSub` is ignored in favour of the registry's, an unowned device never
+  reaches the write, and a missing `SWARM_SERVICE_SECRET` fails closed instead of filing
+  unauthenticated.
+- `tests/unit/node-print-service.spec.ts` — pins the URL the node builds and asserts it against the
+  real scope decision, so the two halves cannot drift apart.
+- `tests/helpers/machine-write-inventory.ts` — the new machine-authenticated route is inventoried;
+  the discovery guard caught it automatically, which is the guard working.
+
+### What this does not change
+
+The central print-to-rag printer (Amendment F) still works and is still the right answer for
+machines on the swarm's own LAN that you do not want to install anything on. The two coexist; a
+site with a node no longer *needs* the central one.
+
 ## Build state
 
 | Item | State |
@@ -716,12 +801,15 @@ refusals come with it, because both defaults are traps under SYSTEM:
 | ~~P2 edge forwarder~~ | **Dropped** — superseded by Amendment F: the printer *is* the endpoint, so there is nothing to forward |
 | ~~P3 multi-queue advertisement~~ | **Dropped** — superseded by Amendment C (one inbox) |
 | P4 print-to-ticket | Not started; largely subsumed by D14, since every print already becomes a ticket |
+| Node-resident print service (D21) | **Shipped** — `printServiceEnabled` on the node, started/stopped with its connection |
+| Node-plane print intake (D22) | **Shipped** — `POST /api/remote-clients/:clientId/print-documents`, device→owner translation, 21 guards |
 
 **All five open questions are now answered** — see Amendments D and E. In short: fix core (done);
 per-bot is routing not privacy, with the human gate as the control; the printing host enrols as an
 edge node on a device-bound credential; everything queues and is approved by default; and phase one
 is the inbox plus the classifying ticket.
 
-Remaining prerequisites, neither of them assumptions: the print intake path must be admitted to the
-node-token scope (one narrow core change, its own PR), and edge enrolment must be proven working on
-a fresh machine before P2 depends on it.
+One prerequisite recorded here is **withdrawn**: the print intake path does not need admitting to
+the node-token scope, and must not be — see D22, which puts the intake on the node's own plane
+instead and needs no scope change at all. The remaining prerequisite stands: edge enrolment must
+be proven on a fresh machine, since the node-resident printer inherits that credential.

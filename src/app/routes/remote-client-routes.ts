@@ -77,6 +77,7 @@ import {
   type RecordRemoteTaskCostOnce,
 } from './remote-client-task-operations';
 import { registerRemoteClientWorkspaceRoutes } from './remote-client-workspace-routes';
+import { registerRemoteClientPrintRoutes } from './remote-client-print-routes';
 import { mayInjectRemoteTask, toRemoteTaskEnvelope } from './remote-client-mesh-task';
 export { buildRemoteTaskCostEvent } from './remote-client-task-operations';
 export { taskWorkspaceFolder } from './remote-client-workspace-routes';
@@ -238,6 +239,10 @@ function registerRemoteClientSurface(router: Router, context: RemoteClientRouteC
     recordCostOnce: context.recordCostOnce,
   });
   registerRemoteClientWorkspaceRoutes(router, requireDeviceAccess, { registry, isMachineCaller });
+  // A print service running INSIDE a node delivers here rather than to /api/print-ingest:
+  // a node-bound token is scoped to its own plane, and filing on the node's OWN plane is
+  // what lets core translate device -> owner before the document is filed (ADR-135 H).
+  registerRemoteClientPrintRoutes(router, requireDeviceAccess, { registry });
   router.get('/:clientId/swarm/next', requireDeviceAccess, handleClaimNextSwarmMessage);
   router.post('/:clientId/swarm/send', requireDeviceAccess, (req, res) => void handleSendSwarmMessage(req, res, context));
   router.post('/:clientId/chat', requireDeviceAccess, (req, res) => void handleChatTurn(req, res, context));

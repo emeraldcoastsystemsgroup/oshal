@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Full-Jarvis = ONLY Jarvis on screen (operator: "weird having the background app visible"): orb console starts HIDDEN, the cockpit is the sole window, sign-in redirects happen in-window (no separate window). Orb reappears only if the cockpit is closed, or if the cockpit fails to open (never an invisible process).
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Grant microphone: the cockpit's push-to-talk getUserMedia was silently denied by Electron (no permission handler), so voice turns recorded nothing → "didn't catch that" every time. Server STT itself was fine.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Per-app desktop launch: --app=<name> opens that cockpit app as its own window (operator: each app should be a real clickable Windows application, not a browser trick). Single-instance lock added — a second launch forwards its argv to the running instance (which opens/focuses the requested app window) instead of spawning a second Electron sharing the same profile (Chromium locks the session store; two instances silently corrupt cookies). --make-shortcuts=<a,b,c> writes real desktop .lnk entries per app via shell.writeShortcutLink and exits.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-135 amendment H: the print service now comes up WITH the node. Operator: "add it to the remote node, and when the remote node is up it is running the print service, and that service is then accessible on the intranet the remote node is running on." The standalone -AtStartup scheduled task was a SEPARATE install with a separately placed token that knew nothing about the node; this ties the printer to the node's own connection lifecycle, advertised on the node's LOCAL segment (so an overlay having no broadcast domain stops mattering) and delivering on the node's OWN plane with the node's OWN credential. Opt-in: it is an outward-facing service, so it is OFF unless printServiceEnabled.
  */
 
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray } from 'electron';
@@ -23,6 +24,7 @@ import { ConfigStore, type OshalChatConfig } from './config';
 import { MeshChatClient, type ChatReply, type MeshStatus } from './mesh-client';
 import { resolveEnrollmentIdentity } from './enrollment';
 import { TaskWorker, type WorkerEvent } from './worker';
+import { PrintService } from './print-service';
 import { accountStatus, launchLogin } from './auth-manager';
 import { connectHeadscale } from './vpn';
 import { ensureAgentClis } from './ensure-clis';
@@ -55,6 +57,10 @@ const store = new ConfigStore();
 let win: BrowserWindow | null = null;
 let client: MeshChatClient | null = null;
 let worker: TaskWorker | null = null;
+let printService: PrintService | null = null;
+
+/** Package root (compiled main lives at dist/main/), used to locate the bundled print-drop. */
+const PACKAGE_ROOT = join(__dirname, '..', '..');
 let tray: Tray | null = null;
 let quitting = false;
 
@@ -297,11 +303,26 @@ async function connect(): Promise<MeshStatus> {
     worker.start();
   }
 
+  // Serve this site's intranet: while the node is up it advertises a print-to-rag printer on
+  // its OWN network segment, so people on that segment print into the swarm with no client
+  // software and no credential. Discovery stays local (which is why an overlay having no
+  // broadcast domain stops mattering); only the delivery POST crosses it.
+  if (PrintService.enabled(config)) {
+    printService = new PrintService(config, PACKAGE_ROOT, (message: string) => send('worker:event', { type: 'log', message }));
+    printService.start();
+  }
+
   return { connected: true, clientId: config.clientId, agentId: config.targetAgentId || '(default chat agent)', lastError: null };
 }
 
 /** Stops the chat client + worker if running. */
 async function teardownClient(): Promise<void> {
+  // Stop the printer with the node: a printer still advertised after the node disconnects
+  // would accept jobs it can no longer deliver.
+  if (printService) {
+    printService.stop();
+    printService = null;
+  }
   if (worker) {
     worker.stop();
     worker = null;
