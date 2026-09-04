@@ -1,7 +1,9 @@
 # ADR-135 — Print-to-swarm and print-to-RAG: the printer is an intake surface
 
-**Status:** Proposed — written for operator review, nothing built. Supersedes nothing; completes the
-phase-2 line item in [BACKLOG](../BACKLOG.md) opened when `packages/oshal-print-drop` shipped.
+**Status:** Accepted 2026-09-03 (operator: *"yep i like the plan"*). Foundations built the same day —
+see [Amendment A](#amendment-a--printed-pdfs-have-no-text-layer-xps-does) and
+[Build state](#build-state). Completes the phase-2 line item in [BACKLOG](../BACKLOG.md) opened when
+`packages/oshal-print-drop` shipped.
 
 **Date:** 2026-09-03
 
@@ -200,6 +202,10 @@ Recommendation: the core fix, scoped to the extraction call and its guard, propo
 PR reviewed on its own merits** and not smuggled in with the package. Core is load-bearing; this is
 a small, well-bounded change to one route that already claims to do this.
 
+> **Amended.** D7 is right for *uploaded* documents and was shipped as written (PR #273). It does
+> **not** help *printed* ones: measurement showed the printed PDF is a page bitmap with no text at
+> all. See [Amendment A](#amendment-a--printed-pdfs-have-no-text-layer-xps-does).
+
 ### D8 — Provenance is untrusted, and identity is never inferred from the sidecar
 
 - Ingested chunks carry `provenance: 'print-drop'`, a content-hash `doc_id` (`print:<sha256>`), the
@@ -312,3 +318,86 @@ delete (G3), per-bot chunk ACLs (G2), collection-list scoping (G5), the ADR-090 
 The functional and technical specification — surfaces, data shapes, endpoints, manifest, failure
 modes and test plan — is in
 [docs/apps/print-ingest-spec.md](../apps/print-ingest-spec.md).
+
+---
+
+## Amendment A — printed PDFs have no text layer; XPS does
+
+*Added 2026-09-03, hours after the ADR was accepted. The operator asked whether a printed document
+would have to be read as an image. Measurement answered it, and the answer changes D7.*
+
+**Both real printed PDFs on the operator's machine contain zero extractable characters.**
+
+| | 2-page job | 5-page job |
+|---|---|---|
+| Extractable characters | **0** | **0** |
+| `/Font`, `/BaseFont` objects | 0 | 0 |
+| Image XObjects | 1, at 1928×1914 | 140 tiles |
+| Stream filters | DCTDecode (JPEG) | DCTDecode |
+
+The Microsoft IPP Class Driver **rasterizes**: it prints a picture of the page. So P0 as originally
+written — fix `/api/rag/upload` to extract text — is correct and necessary for **uploaded**
+documents, and does nothing whatsoever for **printed** ones. Left unamended, this ADR would have
+sent the build into OCR as the only path.
+
+### The cheaper answer: ask for a different format
+
+What a printer advertises in `document-format-supported` decides what the client sends. Windows'
+native spool format is **XPS**, which is the opposite of a bitmap: a ZIP of FixedPage XML whose
+`<Glyphs>` elements carry the characters in a `UnicodeString` attribute.
+
+Proven end to end the same day on a throwaway localhost queue (`Add-Printer -IppURL` against an
+instance on a spare port, a real print job): the document that arrives as a ~450 KB bitmap PDF
+arrives instead as a **64 KB XPS whose text extracts exactly**, with correct line breaks.
+
+**D12 — accept XPS and recover its text at spool time.** The advertised formats become
+configuration (default unchanged, PDF-only, which stays the broadly compatible choice). An XPS job
+lands a companion `.txt` beside the document and records `textFile`/`textCharacters`/`textPages` in
+the sidecar, so the ingest phase needs no parser, no model call, no per-page cost and no OCR. The
+extractor is dependency-free — a compact ZIP reader over Node's own `zlib` — because the utility's
+value is being installable with nothing.
+
+**OCR is now the exception, not the path.** A document that is genuinely images — a scan, a photo, a
+slide exported as a picture — still has no text layer, and the sidecar's `textError` says so rather
+than inventing one. That case is deferred until something real needs it, and the honest failure is
+what makes it safe to defer.
+
+**Consequence for the level design:** none. Destinations, approvals, provenance and the untrusted
+posture are unchanged. Only the question of *how text is obtained* moved, and it moved toward the
+cheaper end.
+
+### Amendment B — the operator's localhost topology
+
+The operator proposed, in the same message: *"maybe it's just really downloading the native
+application and running the print driver localhost to localhost, then having the local application
+bot classify and push to the swarm."*
+
+That is a better answer to **open question 3** (how the printing host authenticates) than any option
+originally listed, and it should be the default topology:
+
+- A per-user local instance means the printer is **bound to `127.0.0.1`** and never exposed to the
+  LAN, which removes the unauthenticated-LAN-write-surface risk entirely.
+- The local process runs **as the logged-in person**, so `owner_sub` becomes a real authenticated
+  identity instead of something inferred from a sidecar field an attacker controls (D8's hardest
+  constraint dissolves).
+- A shared LAN printer remains supported for the household case — it is the same code with a
+  different bind address and a shared identity, and it keeps the approval gate precisely because its
+  identity is weaker.
+
+Both halves of this were exercised during the XPS proof, which ran localhost-only end to end.
+Deciding between "one shared LAN printer" and "one local printer per person" is now a deployment
+choice, not an architectural fork.
+
+---
+
+## Build state
+
+| Item | State |
+|---|---|
+| P0 — `/api/rag/upload` extracts text (uploaded PDFs/DOCX) | **Shipped** (PR #273) with a real-boundary guard |
+| Configurable advertised formats | **Shipped** (PR #275), default unchanged |
+| XPS text recovery + companion `.txt` at spool time | **Shipped** (PR #275), guarded by suite 10 |
+| P1 store package, P2 forwarder, P3 multi-queue, P4 print-to-ticket | Not started |
+
+Open questions 1 and 3 are answered above. Questions 2 (per-bot confidentiality), 4 (default
+approval posture) and 5 (phase-one scope) remain open.
