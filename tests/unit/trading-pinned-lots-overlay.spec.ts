@@ -49,8 +49,8 @@ describe('rules normalizer', () => {
     expect(describeRules({ takeProfitPct: 10, stopPrice: 46, timeStopDays: 30 })).toBe('take profit +10% · stop at $46 · time stop 30d');
   });
   it('lot request ids are recognisable in the ledger', () => {
-    expect(isLotOrderClientId('106925151779924703909:lot-3b221362-tp-1')).toBe(true);
-    expect(isLotOrderClientId('106925151779924703909:auto-live-2026-09-04T13:35-AAPL-sell')).toBe(false);
+    expect(isLotOrderClientId('spec-user-0001:lot-3b221362-tp-1')).toBe(true);
+    expect(isLotOrderClientId('spec-user-0001:auto-live-2026-09-04T13:35-AAPL-sell')).toBe(false);
     expect(isLotOrderClientId(null)).toBe(false);
   });
 });
