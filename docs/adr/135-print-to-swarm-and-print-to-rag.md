@@ -658,6 +658,53 @@ for that document while the earlier failed one was retained → approved in the 
 
 ---
 
+## Amendment G — a print service per node, so discovery is always local
+
+*Operator, 2026-09-04: "what about doing it as a service on the remote node — then you print to a
+printer registered locally on your PC running as a print server, and it pushes the data to the
+ticket."*
+
+That is the general answer, and it dissolves the constraint in D19 rather than working around it.
+
+### D20 — run print-to-rag as a service on each node
+
+An overlay carries **unicast IP**, not a broadcast domain: Headscale/Tailscale is a mesh of
+point-to-point WireGuard tunnels, so there is nothing for a multicast packet to be flooded onto and
+mDNS/WSD cannot reach across it. Every design that tries to make one central printer *discoverable*
+from another network runs into that wall.
+
+So do not cross it. **Put a print service on each node.**
+
+| Leg | Traffic | Crosses the overlay? |
+|---|---|---|
+| A person's machine → the local print service | mDNS/WSD discovery, then IPP | **No** — same machine, or that machine's own LAN |
+| The print service → the swarm's intake | one unicast HTTPS POST | **Yes** — which is exactly what an overlay is for |
+
+Discovery is always a local-segment problem, solved locally. The overlay only ever carries the leg
+it is good at. A person on a remote site sees a printer in their own dialog, prints, and the
+document arrives in the swarm inbox — with no address to type, no client software, and no
+credential on their machine.
+
+This also makes the credential story per-node rather than per-person: the service holds the
+device-bound token from enrolment (D17), and it is the only thing on that site that has one.
+
+### What that requires of the service, and what was wrong
+
+`scripts/install-startup-task.ps1` registered a **logon** task tied to a user. That is right for a
+personal print-to-file printer and wrong for a print server: a machine nobody has signed into is
+simply not printing, and the failure reads as a broken printer rather than an unstarted one.
+
+`-AtStartup` now registers a machine-level task running as SYSTEM at boot, no sign-in required. Two
+refusals come with it, because both defaults are traps under SYSTEM:
+
+- **`-DropDir` is required.** SYSTEM's profile is not a person's folder; defaulting there would file
+  documents where nobody looks.
+- **A swarm-target service refuses to register without `OSHAL_PRINT_INTAKE_TOKEN` in the MACHINE
+  environment.** A task running as SYSTEM cannot see a user's environment, so it would start
+  cleanly and fail every delivery — the silent failure this package keeps designing against.
+
+---
+
 ## Build state
 
 | Item | State |
