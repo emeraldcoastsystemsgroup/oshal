@@ -24,6 +24,7 @@
 # 17 | maintainer@emeraldcoastsystemsgroup.com   | Forward OSHAL_JSON_BODY_LIMIT to the controller API only: the documented body-limits tuning knob never reached the container, so a customer's 1K-lead CSV import 413ed at the implicit 100kb default with no way to raise it from the host env.
 # 18 | maintainer@emeraldcoastsystemsgroup.com   | Forward FMCSA_WEBKEY to the controller API only: the intelligent-sales underwriting connector's env fallback (its admin-pasted setting wins when both exist). Guard entry added to compose-env-passthrough.spec.ts — the silent-env-var class this file has paid for four times.
 # 19 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: HF_TOKEN passthrough for the Hugging Face Inference Providers lane. Compose does not auto-forward .env; a pasted key that never reaches the container is the 2026-07-11 "working key, dead lane" defect.
+# 20 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: KALSHI_LIVE_ENABLED (+ the two order caps) passthrough. The Kalshi app's live-money gate reads process.env, and compose does not forward .env, so the flag set on the host never reached the api: a validated LIVE key had every order refused as "disabled". Default stays false — real money never opens by itself. Guard: tests/unit/compose-kalshi-live-gate.spec.ts.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -438,6 +439,14 @@ x-bot-env: &bot-env
   TRADING_AUTOPILOT_LIVE_EXT: ${TRADING_AUTOPILOT_LIVE_EXT:-}
   TRADING_CAPITAL_CAP_USD: ${TRADING_CAPITAL_CAP_USD:-}
   TRADING_HALT: ${TRADING_HALT:-}
+  # ── Kalshi (ADR-094) ──
+  # Live-money gate for the Kalshi app's order route (kalshi-portfolio.ts reads it). OFF by default.
+  # Which exchange a key belongs to is auto-detected; this only says whether a LIVE key may place
+  # orders. Passthrough because compose does not forward .env: set only there, the flag never reached
+  # the api and every live order was refused as "disabled" while the key validated fine (2026-09-04).
+  KALSHI_LIVE_ENABLED: ${KALSHI_LIVE_ENABLED:-false}
+  KALSHI_MAX_CONTRACTS: ${KALSHI_MAX_CONTRACTS:-}
+  KALSHI_MAX_ORDER_COST_DOLLARS: ${KALSHI_MAX_ORDER_COST_DOLLARS:-}
   # Earnings blackout (evidence: 07-14 proximity study). Mode-aware: paper|live|both|true. NOTE in
   # the armed ROTATION strategy this both refuses buys AND drops a held printing name off the
   # leaderboard (rotation sells it) — arming is a behavior change, soak on paper first.
