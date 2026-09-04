@@ -391,7 +391,7 @@ export async function placeDecisionOrder(
   // decision minted for book A while executing on book B — an order justified by the WRONG book's
   // decision, silently breaking the ADR-052 justification chain. Book B executing book A's id → 404.
   const d = (await pool.query(
-    `SELECT action, symbol, side, qty, order_type, limit_price, stop_price, trail_price, trail_percent, time_in_force
+    `SELECT action, symbol, side, qty, order_type, limit_price, stop_price, trail_price, trail_percent, time_in_force, extended_hours
        FROM oshal_trading_decisions WHERE decision_id=$1 AND user_sub=$2 AND book_id=$3`, [decisionId, sub, book.bookId])).rows[0];
   if (!d) throw new TradingError(404, 'decision_not_found', 'No such decision for this book.');
   if (d.action === 'hold' || !d.symbol || !d.side || !(Number(d.qty) > 0)) {
@@ -494,6 +494,9 @@ export async function placeDecisionOrder(
         extendedHours = true;
       }
     }
+    // ADR-138 D4: an operator's manual LIMIT decision may opt into pre/post-market eligibility (Alpaca
+    // extended-hours limit; Schwab SEAMLESS session). Only limit orders qualify at either venue.
+    if (d.extended_hours === true && effType === 'limit') extendedHours = true;
     result = await broker.placeOrder({
       userSub: sub, symbol, side: d.side, qty, type: effType,
       limitPrice: effLimit, stopPrice, trailPrice, trailPercent, timeInForce: effTif, extendedHours, clientOrderId,

@@ -59,6 +59,10 @@ import {
   type MtfDecision, type Position, type TradingMode, type TradingBook, type BrokerAccount, type RiskPolicy, type ExitOrder, type NameStrength, type EntryGuardInput, type EntryBlock,
 } from '@/features/trading';
 import { guardrails, placeDecisionOrder, ensureTradingSchema } from './trading-engine';
+// ADR-138 D3: protected (pinned) lots — the operator's manual buys with their own exit rules are
+// subtracted from the autopilot's view of the book before ANY decision, and their exit orders are
+// never cancelled by freeStaleSells.
+import { pinnedQtyBySymbol, subtractPinnedLots, isLotOrderClientId } from './trading-pinned-lots';
 // CHANGE LOG addendum (ADR-134 PR1): dispatch resolves the BOOK first under three hard rules
 // (bookId absent → legacy book; unresolvable → skip+ERROR, never a legacy fallback; flag-off +
 // non-legacy bookId → logged no-op hard-skip). runAutopilot and every helper thread the book:
@@ -328,7 +332,7 @@ async function freeStaleSells(ctx: AppContext, sub: string, bookOrMode: TradingB
   const book = typeof bookOrMode === 'string' ? legacyBook(sub, bookOrMode) : bookOrMode;
   const mode = book.kind;
   const rows = (await ctx.pool.query(
-    `SELECT broker_order_id, symbol FROM oshal_trading_orders
+    `SELECT broker_order_id, symbol, client_order_id FROM oshal_trading_orders
       WHERE user_sub=$1 AND book_id=$2 AND side='sell' AND broker_order_id IS NOT NULL AND status = ANY($3)`,
     [sub, book.bookId, IN_FLIGHT_STATUSES])).rows;
   const broker = getBrokerAdapter(mode, sub, bookBinding(book));
@@ -336,6 +340,8 @@ async function freeStaleSells(ctx: AppContext, sub: string, bookOrMode: TradingB
   for (const r of rows) {
     const sym = String(r.symbol).toUpperCase();
     if (!exitSymbols.has(sym)) continue;
+    // ADR-138 D3: a protected lot's take-profit/stop/trailing orders are NOT the autopilot's to cancel.
+    if (isLotOrderClientId(r.client_order_id)) continue;
     try {
       await broker.cancelOrder(String(r.broker_order_id));
       canceled += 1;
@@ -1172,7 +1178,17 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
       'autopilot fire: broker POSITIONS read FAILED — engine would believe the book is flat (re-buy the core, skip every stop); skipping this fire');
     return { scanned: 0, entries: 0, exits: 0, orders: [], errors: [{ symbol: '*', error: 'broker positions read failed' }], posture: policy.posture };
   }
-  const positions = positionsRead.positions;
+  // ADR-138 D3 — THE OVERLAY: subtract protected-lot shares from the autopilot's view. A symbol the
+  // operator pinned in full disappears; a partial pin leaves the residual. If the lot ledger cannot be
+  // read we fail CLOSED exactly like the positions read: acting on an unknown book could liquidate
+  // shares the operator explicitly protected.
+  const pinnedRead = await pinnedQtyBySymbol(ctx.pool, sub, book.bookId).then((m) => ({ ok: true as const, m })).catch((err) => ({ ok: false as const, err }));
+  if (!pinnedRead.ok) {
+    logger.warn({ sub, mode, err: pinnedRead.err }, 'autopilot fire: protected-lot ledger read FAILED — engine could sell pinned shares; skipping this fire');
+    return { scanned: 0, entries: 0, exits: 0, orders: [], errors: [{ symbol: '*', error: 'protected-lot ledger read failed' }], posture: policy.posture };
+  }
+  const positions = subtractPinnedLots(positionsRead.positions, pinnedRead.m);
+  if (pinnedRead.m.size) logger.info({ sub, mode, pinned: [...pinnedRead.m.entries()] }, 'protected lots subtracted from the autopilot view');
   // Snapshot the REAL equity for the honest day-P&L baseline (latest-per-ET-day ≈ that day's close)
   // BEFORE the sizing cap — the store is the truth source for recaps/guards and must never carry the
   // capped sizing fiction (07-07: capped paper equity=20000 was recorded and poisoned the day P&L).

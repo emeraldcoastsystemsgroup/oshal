@@ -517,6 +517,9 @@ export async function dispatchTradingEventSchedule(ctx: AppContext, schedule: Sc
   if (!eventPlansEnabled()) { logger.warn({ scheduleId: schedule.id }, 'TRADING_EVENT_PLANS is off — event plans not executed this fire'); return { success: true, scheduleId: schedule.id }; }
   const t0 = Date.now();
   const out = await tickEventPlans(ctx, sub);
-  logger.info({ sub, ...out, ms: Date.now() - t0 }, 'event plans tick');
+  // ADR-138 D3: protected lots ride the same cadence (dynamic import — the lot module imports this
+  // module's deps, so a static import would be a cycle).
+  const lots = await import('./trading-pinned-lots.js').then((m) => m.tickPinnedLots(ctx, sub)).catch((err) => { logger.error({ err, sub }, 'pinned lots tick failed'); return null; });
+  logger.info({ sub, ...out, lots, ms: Date.now() - t0 }, 'event plans + protected lots tick');
   return { success: true, scheduleId: schedule.id };
 }
