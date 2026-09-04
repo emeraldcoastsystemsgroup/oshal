@@ -6,12 +6,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — streams a print job's document data to the drop folder. Security posture: the job name is attacker-controlled network input, so it is sanitized to a safe character class and NEVER used as a path component uninspected; documents write to a dot-prefixed .part file and rename atomically so folder watchers only ever see complete files; a byte cap aborts oversized jobs (drain up to 2× the cap, then hard-destroy so a malicious endless stream cannot hold the socket). File extension comes from the declared MIME format, falling back to magic-byte sniffing (%PDF / %!PS / RaS2), never from the client-supplied name. A sidecar .json records job metadata for the later swarm-adoption phase.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Deterministic .part cleanup on abort. The discard/fail paths issued fs.rm while the write stream could still hold the handle — on Windows that delete silently fails (EBUSY) and a .part is left behind (caught by the byte-cap selftest going intermittently red). Cleanup now waits for the stream's close event and completes BEFORE the promise rejects, so the caller's error response is only sent once the folder is clean.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Versioned, transport-neutral sidecar schema, and no more doubled extensions. The sidecar is the hand-off record the swarm-adoption phase will ingest, so it now emits a fixed key set (empty string when a field is genuinely unknown, never omitted) plus the fields that identify a job's provenance: the originating computer, the document name, which transport delivered it (ipp | wsd) and which printer instance received it. sidecarVersion makes a later schema change detectable by a consumer instead of silently mis-parsed. Separately, a job named "Report.pdf" printed to PDF produced "Report.pdf.pdf" — a trailing extension identical to the chosen one is now dropped, and only that exact case, so "Report.docx" printed to PDF still records both.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Companion `.txt` for jobs that arrive with a text layer (XPS today). Measured on two real Windows jobs: the PDF the Microsoft IPP Class Driver produces is a raster wrapper with zero extractable characters, so a printed document routed to a corpus through PDF would need OCR; the same document sent as XPS carries its characters and extracts exactly. Writing the text here — after the atomic rename, so a watcher never sees a half-written pair — means the consumer needs no parser at all. `textFile`/`textCharacters`/`textPages` land in the sidecar on success and `textError` on a document with no text layer; neither is ever fatal to saving the document itself.
  */
 'use strict';
 
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { extractXpsText } = require('./xps-text');
 
 const EXTENSION_BY_FORMAT = {
   'application/pdf': 'pdf',
@@ -99,6 +101,31 @@ function uniquePath(dir, base, ext) {
     candidate = path.join(dir, `${base}-${n}.${ext}`);
   }
   return candidate;
+}
+
+/**
+ * @description Recover the document's text when the format carries one, and write it
+ * as a companion `.txt` beside the document. XPS is the case that matters: it is what
+ * Windows spools natively and it holds real characters, whereas the PDF the IPP class
+ * driver produces is a page bitmap. Doing this here means a consumer gets plain text
+ * with no parser, no model call and no OCR. Failure is reported, never thrown — a
+ * document that has no text layer is a fact about the document, not an error.
+ * @param {string} documentPath The saved document's absolute path.
+ * @param {string} extension The chosen file extension.
+ * @returns {{textFile:string,textCharacters:number,textPages:number}|{textError:string}|null} Sidecar fields, null when the format carries no text layer.
+ */
+function writeCompanionText(documentPath, extension) {
+  if (extension !== 'xps') return null;
+  let result;
+  try {
+    result = extractXpsText(fs.readFileSync(documentPath));
+  } catch (err) {
+    return { textError: err.message };
+  }
+  if (!result.ok) return { textError: result.reason };
+  const textPath = `${documentPath}.txt`;
+  fs.writeFileSync(textPath, result.text, 'utf8');
+  return { textFile: path.basename(textPath), textCharacters: result.text.length, textPages: result.pages };
 }
 
 /**
@@ -193,6 +220,7 @@ function finalizeSpool(tmpPath, meta, options, state, startedAt) {
   const named = stripRedundantExtension(sanitizeJobName(meta.jobName), extension);
   const filePath = uniquePath(options.dropDir, `${buildStamp(new Date(startedAt))}_${named}`, extension);
   fs.renameSync(tmpPath, filePath);
+  const text = writeCompanionText(filePath, extension) || {};
   writeSidecar(filePath, {
     sidecarVersion: 1,
     jobId: meta.jobId,
@@ -209,8 +237,9 @@ function finalizeSpool(tmpPath, meta, options, state, startedAt) {
     bytes: state.bytes,
     receivedAt: new Date(startedAt).toISOString(),
     durationMs: Date.now() - startedAt,
+    ...text,
   });
-  return { filePath, bytes: state.bytes, extension };
+  return { filePath, bytes: state.bytes, extension, ...text };
 }
 
 module.exports = { spoolDocument, sanitizeJobName, chooseExtension };

@@ -261,6 +261,7 @@ function handleGetPrinterAttributes(ctx, msg) {
     uuidUri: ctx.config.uuidUri,
     upTimeSeconds: Math.max(1, Math.floor((Date.now() - ctx.state.startedAt) / 1000)),
     queuedJobCount: pending,
+    formats: ctx.config.formats,
   });
   return { statusCode: STATUS.OK, groups: [{ tag: DELIMITER.PRINTER_ATTRIBUTES, attributes: filterRequested(attributes, requested) }] };
 }
