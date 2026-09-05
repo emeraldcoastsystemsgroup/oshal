@@ -88,11 +88,11 @@ UI is a 3-step ticket: pick a symbol (search plus a research card — price, cha
 
 Validation on the route: exactly one of `qty`/`notional` is required, never both; `symbol` is checked against the same allowlist/lookup the engine already uses before quoting a price; a missing or unresolvable `orderType` parameter set (e.g. a `limit` order with no `limit_price`) is a `400`, not a silently-defaulted `market` order — a manual ticket that quietly changes order type on a typo is worse than one that refuses. The route returns the minted `decisionId` and the resulting order status in one response so the ticket's confirm step can show the operator what actually happened, not just that a request was accepted.
 
-### D4. Dated/timed orders — DESIGNED (phase 2)
+### D4. Dated/timed orders — SHIPPED v1 (2026-09-04)
 
-A manual decision (D3) paired with a per-user `once: true` schedule (`taskType trading-order:<sub>:<decisionId>`) fired by the kernel's trading dispatcher, which calls `placeDecisionOrder` and then pauses. The account view shows pending dated orders with a cancel action.
+As built: `src/app/trading-dated-orders.ts` (kernel) stores one FORCE-RLS row per timed order — the operator's already-minted `operator` decision plus the fire instant — and `dispatchTradingEventSchedule` ticks them on the **same** per-user `trading-events:<sub>` leg the IPO playbooks and protected lots ride (every 5 minutes, 09:00–16:55 ET, weekdays; gated by `TRADING_EVENT_PLANS`). No new schedule type, no per-order schedule row, no cron change: the design's `once: true` schedule became "a row the existing leg fires once", which is smaller and needs no pause semantics. A due row fires exactly once through `deps.place` → `placeDecisionOrder` (guardrails, live gate, reservation arbiter unchanged; ONE requestId `dated-<id>` per decision, so a retry can never double-place). Safety: a window missed by more than `TRADING_DATED_LATE_MINUTES` (default 20) **expires** unfired — never a stale order; a closed market at the fire time (an exchange holiday) expires it too; an engine refusal is terminal (`error`, no retry). Fire times are Eastern wall-clocks converted by round-trip (no DST table) and refused when in the past, beyond `TRADING_DATED_MAX_DAYS` (default 30), a weekend, outside 09:00–16:55 ET, or off the 5-minute grid — what you pick is when it fires. Store (trading 1.9.2): `POST /decisions/manual` takes `fireAtEt {date,time}`, validated at parse time with the leg ensured *before* the mint (a 503 changes nothing), and answers `dated`; the ticket's step 2 asks Now / At a time (ET), a live timed order confirms before the mint (there is no Place step), step 3 shows Scheduled; `GET /dated` + `POST /dated/:id/cancel` back the account page's Timed orders card. Protection rides along: the lot's 2-day unfilled-entry release counts from the fire time (`notBefore`). Not built (BACKLOG): fire times outside regular hours (the leg cron would widen and existing schedule rows migrate), minute precision (a per-order schedule), and holiday awareness beyond "closed at fire time → expired".
 
-Done-when: a dated paper order placed from the ticket fires at the chosen ET time and appears in the ledger.
+Original design (kept for the record): a manual decision (D3) paired with a per-user `once: true` schedule (`taskType trading-order:<sub>:<decisionId>`) fired by the kernel's trading dispatcher, which calls `placeDecisionOrder` and then pauses. Done-when: a dated paper order placed from the ticket fires at the chosen ET time and appears in the ledger — proven by `tests/unit/trading-dated-orders.spec.ts` against the live Postgres through the injected place seam.
 
 ### D5. Event rules — earnings reaction — DESIGNED (phase 2)
 
@@ -126,7 +126,7 @@ The event watch itself is market-wide, not account-scoped, so it surfaces from *
 
 ### D8. Scope boundary
 
-Application code stays in the store package (Rule 0c). The only kernel touches in this ADR are the dated-order `taskType` (D4) and the EDGAR event watcher (D5) — both phase 2, and each gated by an env flag defaulting off.
+Application code stays in the store package (Rule 0c). The kernel touches in this ADR are the dated-order module (D4, shipped — it rides the existing `TRADING_EVENT_PLANS`-gated leg rather than introducing a new `taskType`) and the EDGAR event watcher (D5, phase 2, gated by an env flag defaulting off).
 
 ### D9. What is not changing
 
@@ -149,4 +149,4 @@ The engine's order path, guardrails, live gate, reservation arbiter, and book-di
 
 ## Status / open items
 
-D1-D3 and D7 shipped 2026-09-03 (trading 1.5.x-1.6.0, core #272). D6 v1 shipped 2026-09-04 (core #284, trading 1.7.0) with the COTP reminder sequence left in BACKLOG. D4 and D5 are designed but not built — each has its own BACKLOG entry with the done-when criteria stated above (see [BACKLOG.md](../BACKLOG.md)); neither is scheduled by this ADR.
+D1-D3 and D7 shipped 2026-09-03 (trading 1.5.x-1.6.0, core #272). D6 v1 shipped 2026-09-04 (core #284, trading 1.7.0) with the COTP reminder sequence left in BACKLOG. D4 v1 shipped 2026-09-04 (core `trading-dated-orders.ts`, trading 1.9.2) with its out-of-hours / minute-precision follow-ups in BACKLOG. D5 is designed but not built — its BACKLOG entry carries the done-when criteria stated above (see [BACKLOG.md](../BACKLOG.md)); it is not scheduled by this ADR.
