@@ -116,6 +116,19 @@ describe('OPEN WORK block: results are dated records, not current state', () => 
     expect(block).toMatch(/DONE \(34 days ago\)/);
   });
 
+  it('WITHHOLDS a stale result body - numbers the model cannot see cannot be quoted', async () => {
+    // Four live iterations proved guidance loses to visible numbers. Deterministic removal wins.
+    const block = await buildOpenWorkBlock(ctxReturning([taskRow({})]) as never, 'sub-1');
+    expect(block).not.toContain('4 opportunities');
+    expect(block).toMatch(/withheld as stale/);
+  });
+
+  it('keeps a recent result body - fresh work is still reportable directly', async () => {
+    const fresh = taskRow({ created_at: new Date(Date.now() - 2 * 86400000) });
+    const block = await buildOpenWorkBlock(ctxReturning([fresh]) as never, 'sub-1');
+    expect(block).toContain('4 opportunities');
+  });
+
   it('scopes results to their own task and sends current-state questions to a fresh handoff', async () => {
     const block = await buildOpenWorkBlock(ctxReturning([taskRow({})]) as never, 'sub-1');
     expect(block).toMatch(/NOT the current state/i);
