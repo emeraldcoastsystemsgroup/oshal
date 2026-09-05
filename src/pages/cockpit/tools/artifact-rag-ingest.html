@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<!-- ADR-139 Stage 3 — the kernel "Ingest to RAG" overlay.
+     Opened by send-to.js with ?artifact=<ref>. Pure glue on purpose: it resolves the handle in
+     the USER'S OWN session and drives the existing caller-ACL'd /api/rag/upload (doc-extract
+     guarded, kernel collections refused for non-admins server-side) — no new ingest surface. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ingest to RAG</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0f141a; color: #dbe4ee; font: 13.5px system-ui, sans-serif; }
+  .wrap { padding: 18px 20px 20px; }
+  h2 { margin: 0 0 4px; font-size: 15px; }
+  .art { color: #8fa1b3; font-size: 12px; margin-bottom: 12px; word-break: break-all; }
+  label { display: block; color: #8fa1b3; font-size: 12px; margin: 10px 0 4px; }
+  select, input { width: 100%; box-sizing: border-box; background: #151b23; border: 1px solid #2a3644; color: #dbe4ee; border-radius: 8px; padding: 8px 10px; font: 13px system-ui, sans-serif; }
+  .actions { display: flex; justify-content: flex-end; margin-top: 14px; }
+  button { background: #4da3ff; border: 1px solid #4da3ff; color: #08131c; font-weight: 600; border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: default; }
+  #status { margin-top: 10px; font-size: 12.5px; min-height: 16px; color: #8fa1b3; white-space: pre-wrap; }
+  #status.err { color: #ff7a7a; }
+  #status.ok { color: #4ecf8a; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>📚 Ingest to RAG</h2>
+  <div class="art" id="artInfo">Loading…</div>
+  <label for="coll">Collection</label>
+  <select id="coll"></select>
+  <label for="newColl">…or a new collection name</label>
+  <input type="text" id="newColl" maxlength="80" placeholder="(leave empty to use the selection above)" autocomplete="off">
+  <div class="actions"><button id="go">Ingest</button></div>
+  <div id="status"></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var ref = new URLSearchParams(location.search).get('artifact') || '';
+  var meta = null;
+  function status(msg, cls) { var s = $('status'); s.textContent = msg || ''; s.className = cls || ''; }
+
+  if (!/^art_[A-Za-z0-9_-]{8,64}$/.test(ref)) {
+    $('artInfo').textContent = 'Nothing to ingest — open this from a Send to… menu.';
+    $('go').disabled = true;
+  } else {
+    fetch('/api/artifacts/handles/' + encodeURIComponent(ref))
+      .then(function (r) { if (!r.ok) throw new Error('expired'); return r.json(); })
+      .then(function (j) { meta = j; $('artInfo').textContent = '📎 ' + j.name + ' (' + j.type + ')'; })
+      .catch(function () {
+        $('artInfo').textContent = 'This share expired — close this and use Send to… again.';
+        $('go').disabled = true;
+      });
+  }
+
+  fetch('/api/rag/collections')
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      var sel = $('coll');
+      sel.innerHTML = '';
+      ((j && j.collections) || []).forEach(function (c) {
+        var name = typeof c === 'string' ? c : (c && c.name);
+        if (!name) return;
+        var o = document.createElement('option');
+        o.value = name; o.textContent = name;
+        sel.appendChild(o);
+      });
+      if (!sel.options.length) {
+        var o = document.createElement('option');
+        o.value = 'default'; o.textContent = 'default';
+        sel.appendChild(o);
+      }
+    })
+    .catch(function () { /* the free-text field still works */ });
+
+  $('go').onclick = function () {
+    var collection = $('newColl').value.trim() || $('coll').value;
+    if (!collection) { status('Pick or name a collection.', 'err'); return; }
+    if (!meta) { status('The artifact is not ready.', 'err'); return; }
+    $('go').disabled = true;
+    status('Fetching the document…');
+    fetch('/api/artifacts/handles/' + encodeURIComponent(ref) + '/content')
+      .then(function (r) {
+        if (!r.ok) throw new Error('This share expired — close this and use Send to… again.');
+        return r.blob();
+      })
+      .then(function (blob) {
+        status('Ingesting into "' + collection + '"…');
+        var fd = new FormData();
+        fd.append('files', new File([blob], meta.name, { type: meta.type }));
+        fd.append('collection', collection);
+        return fetch('/api/rag/upload', { method: 'POST', body: fd });
+      })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); })
+      .then(function (res) {
+        if (res.ok) {
+          status('Ingested ✓ — ' + (res.j.chunks || 0) + ' chunk(s) into "' + collection + '". Searchable now; you can close this.', 'ok');
+          return;
+        }
+        $('go').disabled = false;
+        var detail = res.j.rejected && res.j.rejected.length ? ' (' + res.j.rejected[0].reason + ')' : '';
+        status((res.j.error || ('Ingest failed (' + res.status + ')')) + detail, 'err');
+      })
+      .catch(function (e) { $('go').disabled = false; status(e.message || 'Ingest failed.', 'err'); });
+  };
+})();
+</script>
+</body>
+</html>
