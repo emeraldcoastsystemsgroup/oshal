@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<!-- ADR-139 Stage 3 — the kernel "Summarize with Jarvis" overlay.
+     Opened by send-to.js with ?artifact=<ref>. Gets the document's TEXT via the owner-bound
+     doc-extract endpoint (the browser can't parse PDFs), then rides the surface's own Jarvis
+     rail: POST /api/jarvis/ask with the text as a doc attachment, poll /ask/result. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Summarize with Jarvis</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0f141a; color: #dbe4ee; font: 13.5px system-ui, sans-serif; }
+  .wrap { padding: 18px 20px 20px; }
+  h2 { margin: 0 0 4px; font-size: 15px; }
+  .art { color: #8fa1b3; font-size: 12px; margin-bottom: 10px; word-break: break-all; }
+  #status { font-size: 12.5px; min-height: 16px; color: #8fa1b3; }
+  #status.err { color: #ff7a7a; }
+  #answer { margin-top: 12px; background: #151b23; border: 1px solid #2a3644; border-radius: 8px; padding: 12px; white-space: pre-wrap; font-size: 13px; line-height: 1.5; display: none; max-height: 52vh; overflow: auto; }
+  .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid #2a3644; border-top-color: #4da3ff; border-radius: 50%; animation: sp 1s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>🤖 Summarize with Jarvis</h2>
+  <div class="art" id="artInfo">Loading…</div>
+  <div id="status"></div>
+  <div id="answer"></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var ref = new URLSearchParams(location.search).get('artifact') || '';
+  function status(msg, isErr, busy) {
+    $('status').innerHTML = (busy ? '<span class="spin"></span>' : '') + '';
+    $('status').appendChild(document.createTextNode(msg || ''));
+    $('status').className = isErr ? 'err' : '';
+  }
+  function fail(msg) { status(msg, true, false); }
+
+  if (!/^art_[A-Za-z0-9_-]{8,64}$/.test(ref)) { $('artInfo').textContent = ''; fail('Nothing to summarize — open this from a Send to… menu.'); return; }
+
+  var name = 'document';
+  fetch('/api/artifacts/handles/' + encodeURIComponent(ref))
+    .then(function (r) { if (!r.ok) throw new Error('This share expired — close this and use Send to… again.'); return r.json(); })
+    .then(function (j) {
+      name = j.name;
+      $('artInfo').textContent = '📎 ' + j.name + ' (' + j.type + ')';
+      status('Reading the document…', false, true);
+      return fetch('/api/artifacts/builtin/extract-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ref: ref })
+      });
+    })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (res) {
+      if (!res.ok) throw new Error(res.j.reason || res.j.error || 'Could not read this document.');
+      status('Asking Jarvis…', false, true);
+      return fetch('/api/jarvis/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: 'Summarize the attached document: the key points, any decisions, and any action items. Be concise.',
+          attachments: [{ kind: 'doc', name: name, text: res.j.text }]
+        })
+      });
+    })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (res) {
+      if (!res.ok || !res.j.jobId) throw new Error(res.j.error || 'Jarvis did not accept the request.');
+      var jobId = res.j.jobId;
+      var started = Date.now();
+      (function poll() {
+        if (Date.now() - started > 240000) { fail('Jarvis is taking too long — check the Jarvis surface for the answer.'); return; }
+        fetch('/api/jarvis/ask/result?jobId=' + encodeURIComponent(jobId))
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (j.status === 'pending') { setTimeout(poll, 2500); return; }
+            if (j.status === 'done') {
+              var text = j.reply || j.answer || j.text || j.message || '';
+              if (!text && typeof j === 'object') text = JSON.stringify(j, null, 2);
+              status('Done ✓', false, false);
+              $('answer').style.display = 'block';
+              $('answer').textContent = text;
+              return;
+            }
+            fail(j.error || 'Jarvis could not answer (' + (j.status || 'unknown') + ').');
+          })
+          .catch(function () { setTimeout(poll, 4000); });
+      })();
+    })
+    .catch(function (e) { fail(e.message || 'Summarize failed.'); });
+})();
+</script>
+</body>
+</html>
