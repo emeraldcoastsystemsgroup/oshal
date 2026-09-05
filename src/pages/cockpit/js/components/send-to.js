@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: the ONE shared "Send to…" component every surface loads (served at /api/artifacts/send-to.js). window.oshalSendTo(meta, anchorEl) fetches the caller-scoped menu for the artifact's MIME type, mints an owner-bound handle on pick, then dispatches: open mode navigates the TOP window to /cockpit/?app=<name>&artifact=<ref> (the shell forwards the ref to the surface iframe — D4a), post mode POSTs {ref} to the destination's own auth-gated endpoint and shows the outcome inline. Self-contained styling; Esc/outside-click dismiss; no framework dependencies so any classic-script surface can use it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2 (Amendment B): overlay dispatch — a kernel-registered action carrying `overlay` opens that page in an in-place iframe modal with the ref (no navigation, the source surface keeps its state). First user: the "Email it…" compose built-in.
  */
 
 (function () {
@@ -64,9 +65,29 @@
     });
   }
 
+  /** Amendment B: open a kernel overlay page in an in-place iframe modal — the source surface
+   *  keeps its state (no navigation). The page reads ?artifact= like any destination. */
+  function openOverlay(url) {
+    var wrap = el('div', 'position:fixed;inset:0;z-index:9998;background:rgba(4,8,12,.7);display:flex;align-items:center;justify-content:center;padding:20px;');
+    var box = el('div', 'position:relative;width:min(520px,96vw);background:#0f141a;border:1px solid #2a3644;border-radius:12px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.6);');
+    var x = el('button', 'position:absolute;top:8px;right:10px;z-index:1;background:rgba(0,0,0,.5);color:#dbe4ee;border:0;border-radius:7px;padding:3px 9px;cursor:pointer;font:13px system-ui,sans-serif;', '✕');
+    var f = document.createElement('iframe');
+    f.src = url;
+    f.style.cssText = 'width:100%;height:min(560px,88vh);border:0;display:block;';
+    x.onclick = function () { wrap.remove(); };
+    wrap.onclick = function (e2) { if (e2.target === wrap) wrap.remove(); };
+    box.appendChild(x); box.appendChild(f); wrap.appendChild(box);
+    document.body.appendChild(wrap);
+  }
+
   function dispatch(menu, meta, action) {
     statusLine(menu, 'Preparing…');
     mintHandle(meta).then(function (ref) {
+      if (action.overlay) {
+        closeMenu();
+        openOverlay(action.overlay + (action.overlay.indexOf('?') >= 0 ? '&' : '?') + 'artifact=' + encodeURIComponent(ref));
+        return;
+      }
       if (action.mode === 'open') {
         // D4a: navigate the SHELL, not this iframe — the cockpit forwards artifact= to the
         // destination surface. Same-origin, so window.top is reachable.

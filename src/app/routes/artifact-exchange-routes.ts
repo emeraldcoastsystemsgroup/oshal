@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1 routes: POST /handles mints an owner-bound claim ticket over a serve URL the caller can already read; GET /handles/:ref(/content) redeems it — content re-fetches the source SERVER-SIDE as the minting caller (service secret + sub over the loopback to this same server instance), so ownership is enforced at mint AND at use; GET /actions answers the "Send to…" menu for a MIME type; GET /send-to.js serves the one shared browser component. Mounted at /api/artifacts behind serviceSecretOr(requiresAuth). Enforcement for a dispatched action stays at the DESTINATION's own gate.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: the first kernel built-ins, registered at boot through the SAME registry interface apps use. kernel-storage → POST /builtin/save (redeem the handle, uploadBytes to the caller's oshal-local store under artifacts/). kernel-email → the compose overlay (GET /email-compose page; POST /builtin/email sends the artifact as an attachment over the caller's OWN mailbox — sendGmail else the Graph sibling else 409 — behind the standard confirm:true 428 gate). Factory now takes ctx (uploadBytes + connector-token lookups need the pool).
  */
 
 import * as path from 'node:path';
@@ -11,11 +12,18 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { confirmationRequiredPayload, hasExplicitWriteConfirmation } from '@/shared/security/explicit-write-confirmation';
 import {
   artifactActionsForType,
   mintArtifactHandle,
+  registerAppArtifactActions,
   resolveArtifactHandle,
+  type ArtifactHandleRecord,
 } from '@/shared/artifact-exchange';
+import type { AppContext } from '@/app/composition/app-context';
+import { uploadBytes } from './storage-browse';
+import { sendGmail, sendOutlookMail } from './email-routes';
+import { getValidAccessToken } from './connectors-routes';
 
 const logger = createChildLogger({ module: 'artifact-exchange-routes' });
 
@@ -73,13 +81,55 @@ async function fetchSourceAsOwner(
   }
 }
 
+/** @description The valid-recipient shape shared with the sibling app senders (one address, no CRLF). */
+function isValidRecipient(raw: unknown): boolean {
+  if (typeof raw !== 'string') return false;
+  const s = raw.trim();
+  return s.length >= 6 && s.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
 /**
- * @description Create the artifact-exchange routes (ADR-139 Stage 1). Mounted at /api/artifacts
- * behind serviceSecretOr(requiresAuth) in server.ts.
+ * @description Redeem a handle for a built-in action: owner-checked resolve, then the server-side
+ * owner re-fetch. Writes the failure response itself and returns null so callers stay short.
+ * @param req - The dispatching request. @param res - Its response. @param sub - The caller's sub.
+ * @returns The record + bytes, or null after an error response has been written.
+ */
+async function redeemForBuiltin(
+  req: Request,
+  res: Response,
+  sub: string,
+): Promise<{ rec: ArtifactHandleRecord; body: Buffer } | null> {
+  const ref = String((req.body as { ref?: unknown } | undefined)?.ref ?? '');
+  const rec = resolveArtifactHandle(ref, sub);
+  if (!rec) { res.status(404).json({ error: 'artifact handle not found' }); return null; }
+  const fetched = await fetchSourceAsOwner(req, rec.sourcePath, rec.ownerSub);
+  if (!fetched.ok || !fetched.body) {
+    const status = fetched.status === 503 ? 503 : fetched.status === 413 ? 413 : 502;
+    res.status(status).json({ error: status === 503 ? 'artifact relay unconfigured' : status === 413 ? 'artifact too large' : 'artifact source unavailable' });
+    return null;
+  }
+  return { rec, body: fetched.body };
+}
+
+/** Register the kernel built-in destinations — through the SAME interface apps use (ADR-139 D1). */
+function registerBuiltins(): void {
+  registerAppArtifactActions('kernel-email', {
+    accepts: [{ id: 'compose', label: 'Email it…', icon: '✉️', types: ['*/*'], mode: 'open', overlay: '/api/artifacts/email-compose' }],
+  });
+  registerAppArtifactActions('kernel-storage', {
+    accepts: [{ id: 'save', label: 'Save to OSHAL Storage', icon: '🗄️', types: ['*/*'], mode: 'post', endpoint: '/api/artifacts/builtin/save' }],
+  });
+}
+
+/**
+ * @description Create the artifact-exchange routes (ADR-139). Mounted at /api/artifacts behind
+ * serviceSecretOr(requiresAuth) in server.ts; registers the kernel built-in destinations at boot.
+ * @param ctx - App context (pool — the built-ins' storage/connector lookups ride it).
  * @returns Configured Express router.
  */
-export function createArtifactExchangeRoutes(): Router {
+export function createArtifactExchangeRoutes(ctx: AppContext): Router {
   const router = Router();
+  registerBuiltins();
 
   /** GET /actions?type=<mime> — the "Send to…" menu for one artifact type. Entries the caller
    *  may not ultimately use still fail closed at the destination's own gate on dispatch. */
@@ -144,6 +194,79 @@ export function createArtifactExchangeRoutes(): Router {
       logger.error({ err, ref: rec.ref }, 'artifact content relay failed');
       res.status(502).json({ error: 'artifact source unavailable' });
     }
+  });
+
+  /** POST /builtin/save — the kernel-storage destination: redeem the handle and write the bytes
+   *  into the caller's always-present oshal-local store under artifacts/. */
+  router.post('/builtin/save', async (req, res) => {
+    const sub = callerSub(req);
+    if (!sub) { res.status(401).json({ error: 'unauthenticated' }); return; }
+    const redeemed = await redeemForBuiltin(req, res, sub);
+    if (!redeemed) return;
+    try {
+      const saved = await uploadBytes(ctx, sub, 'oshal-local', 'artifacts', redeemed.rec.name, redeemed.body, redeemed.rec.type);
+      logger.info({ ref: redeemed.rec.ref, path: saved.path, bytes: redeemed.body.length }, 'artifact saved to oshal-local');
+      res.json({ ok: true, message: `Saved to OSHAL Storage → ${saved.path}` });
+    } catch (err) {
+      logger.error({ err, ref: redeemed.rec.ref }, 'artifact save failed');
+      res.status(502).json({ error: err instanceof Error ? err.message : 'save failed' });
+    }
+  });
+
+  /** POST /builtin/email — the kernel-email destination: send the artifact as an attachment over
+   *  the caller's OWN mailbox (sendGmail, else the Graph sibling, else 409). Approval-gated —
+   *  minting a handle is not consent to broadcast, so confirm:true is required (428 otherwise);
+   *  one explicit user action per send, exactly the app-side email discipline. */
+  router.post('/builtin/email', async (req, res) => {
+    const sub = callerSub(req);
+    if (!sub) { res.status(401).json({ error: 'unauthenticated' }); return; }
+    if (!hasExplicitWriteConfirmation(req.body)) {
+      res.status(428).json(confirmationRequiredPayload('artifact-email', 'Emailing an artifact'));
+      return;
+    }
+    const body = (req.body ?? {}) as { to?: unknown; subject?: unknown; note?: unknown };
+    const to = typeof body.to === 'string' ? body.to.trim() : '';
+    if (!isValidRecipient(to)) { res.status(400).json({ error: 'a valid "to" address is required' }); return; }
+    const redeemed = await redeemForBuiltin(req, res, sub);
+    if (!redeemed) return;
+    try {
+      const note = typeof body.note === 'string' ? body.note.slice(0, 2000).trim() : '';
+      const mail = {
+        to,
+        subject: (typeof body.subject === 'string' && body.subject.trim() ? body.subject.trim().slice(0, 300) : `${redeemed.rec.name} — sent from oshal`),
+        body: (note ? `${note}\n\n` : '') + `${redeemed.rec.name} is attached.\n\nSent from the oshal swarm.`,
+        attachment: { filename: redeemed.rec.name, contentBase64: redeemed.body.toString('base64'), mimeType: redeemed.rec.type },
+      };
+      const gtok = await getValidAccessToken(ctx.pool, sub, 'google');
+      if (gtok) {
+        const sent = await sendGmail(gtok, mail);
+        logger.info({ ref: redeemed.rec.ref, via: 'gmail', id: sent.id, bytes: redeemed.body.length }, 'artifact emailed');
+        res.json({ ok: true, via: 'gmail', id: sent.id, to });
+        return;
+      }
+      const mtok = (await getValidAccessToken(ctx.pool, sub, 'microsoft')) || (await getValidAccessToken(ctx.pool, sub, 'outlook'));
+      if (mtok) {
+        await sendOutlookMail(mtok, mail);
+        logger.info({ ref: redeemed.rec.ref, via: 'outlook', bytes: redeemed.body.length }, 'artifact emailed');
+        res.json({ ok: true, via: 'outlook', to });
+        return;
+      }
+      res.status(409).json({ error: 'no_mail_connection', message: 'Connect Google (Gmail) or Microsoft 365 in Utilities to send email.' });
+    } catch (err) {
+      logger.error({ err, ref: redeemed.rec.ref }, 'artifact email failed');
+      res.status(502).json({ error: err instanceof Error ? err.message : 'artifact email failed' });
+    }
+  });
+
+  /** GET /email-compose — the kernel "Email it…" overlay page (self-contained; opened by
+   *  send-to.js in an in-place iframe with ?artifact=<ref>). */
+  router.get('/email-compose', (_req: Request, res: Response) => {
+    res.sendFile(path.resolve(process.cwd(), 'src/pages/cockpit/tools/artifact-email-compose.html'), (err) => {
+      if (err) {
+        logger.error({ err }, 'failed to serve email-compose page');
+        res.status(404).send('email compose page not found');
+      }
+    });
   });
 
   /** GET /send-to.js — the one shared browser component every surface loads (classic script). */

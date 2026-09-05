@@ -188,6 +188,7 @@ function renderList(){
        <span class="meta">${e.type==='folder'?'':esc(fmtSize(e.size))}</span>
        <span class="acts">
          ${e.type==='file'?`<a class="btn ghost sm" href="${dlUrl(e)}" onclick="event.stopPropagation()">⬇</a>`:''}
+         ${e.type==='file'?`<button class="btn ghost sm" data-send="${i}" title="Send to another app">📤</button>`:''}
          ${(e.type==='file' && (state.provider==='dropbox' || state.provider==='google-drive'))?`<button class="btn del sm" data-del="${i}">✕</button>`:''}
        </span>
      </div>`
@@ -196,6 +197,41 @@ function renderList(){
     row.addEventListener('click', ()=> onEntry(state.entries[+row.getAttribute('data-i')])));
   Array.from($('list').querySelectorAll('[data-del]')).forEach(b =>
     b.addEventListener('click', (ev)=>{ ev.stopPropagation(); del(state.entries[+b.getAttribute('data-del')]); }));
+  Array.from($('list').querySelectorAll('[data-send]')).forEach(b =>
+    b.addEventListener('click', (ev)=>{ ev.stopPropagation(); sendTo(state.entries[+b.getAttribute('data-send')], b); }));
+}
+
+// ---- ADR-139 "Send to…" — every file here is an artifact; the shared component owns the menu ----
+let sendToLoader = null;
+function ensureSendTo(){
+  if (window.oshalSendTo) return Promise.resolve(true);
+  if (!sendToLoader){
+    sendToLoader = new Promise(res => {
+      const s = document.createElement('script');
+      s.src = '/api/artifacts/send-to.js';
+      s.onload = () => res(!!window.oshalSendTo);
+      s.onerror = () => res(false);
+      document.head.appendChild(s);
+    });
+  }
+  return sendToLoader;
+}
+function mimeFor(name){
+  const ext = (name.split('.').pop()||'').toLowerCase();
+  const m = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', webp:'image/webp', svg:'image/svg+xml', bmp:'image/bmp',
+    pdf:'application/pdf', txt:'text/plain', md:'text/markdown', csv:'text/csv', log:'text/plain', json:'application/json',
+    html:'text/html', xml:'text/xml', yaml:'text/yaml', yml:'text/yaml',
+    docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    mp4:'video/mp4', mov:'video/quicktime', mp3:'audio/mpeg', wav:'audio/wav' };
+  return m[ext] || 'application/octet-stream';
+}
+function sendTo(e, btn){
+  ensureSendTo().then(ok => {
+    if (!ok) return;
+    window.oshalSendTo({ type: mimeFor(e.name), name: e.name, source: dlUrl(e) }, btn);
+  });
 }
 
 function iconFor(name){

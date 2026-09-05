@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1 guards over the REAL shared modules (no doubles — the registry and handle store ARE the boundary): every malformed artifacts: declaration shape is refused (a loader that stops calling the validator, or a validator that goes permissive, goes red here); MIME-glob matching including parameters and case; registry replace-by-app + retract + stable menu order; and the handle store's isolation contract — mint validates the source path fail-closed, resolve refuses foreign subs and expired refs indistinguishably (injected clock), and the per-sub cap bounds a mint loop.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Stage 2 (Amendment B): overlay is KERNEL-RESERVED — a manifest declaring it must fail the load (or any app could point the in-place overlay at an arbitrary page), while a kernel boot registration passes it through to the menu.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -53,6 +54,7 @@ describe('artifacts: declaration validation (fail-closed at load)', () => {
       [{ accepts: [{ id: 'a', label: 'x', types: ['image/*'], mode: 'post', endpoint: '/api/../etc' }] }, /requires a root-relative/],
       [{ accepts: [{ id: 'a', label: 'x', types: ['image/*'], mode: 'open', endpoint: '/api/x' }] }, /open mode takes no endpoint/],
       [{ accepts: [GOOD.accepts[0], { ...GOOD.accepts[0] }] }, /duplicate id/],
+      [{ accepts: [{ id: 'a', label: 'x', types: ['image/*'], mode: 'open', overlay: '/api/artifacts/email-compose' }] }, /kernel-reserved/],
       [{ provides: [{ types: ['bogus'] }] }, /not a valid MIME glob/],
       [{ provides: [{ types: ['image/*'], list: 'http://x/y' }] }, /root-relative/],
     ];
@@ -91,6 +93,15 @@ describe('registry: replace-by-app, retract, stable menu', () => {
     const forPdf = artifactActionsForType('application/pdf');
     expect(forPdf).toHaveLength(1);
     expect(forPdf[0].endpoint).toBe('/api/rag/ingest-artifact');
+  });
+
+  it('kernel overlay registrations pass overlay through to the menu (manifests cannot reach here)', () => {
+    registerAppArtifactActions('app-a', {
+      accepts: [{ id: 'compose', label: 'Email it…', types: ['*/*'], mode: 'open', overlay: '/api/artifacts/email-compose' }],
+    });
+    const menu = artifactActionsForType('application/pdf');
+    expect(menu).toHaveLength(1);
+    expect(menu[0].overlay).toBe('/api/artifacts/email-compose');
   });
 
   it('re-register replaces; unregister empties the menu', () => {
