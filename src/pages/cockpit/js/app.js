@@ -48,6 +48,7 @@
  * 42 | maintainer@emeraldcoastsystemsgroup.com   | Mobile drawer closes on ANY ribbon-item tap: tapping the already-active view hit setActive's no-op early return, so switchView (and its drawer close) never ran and the drawer stayed open. Delegated listener on #ribbonContainer so it survives ribbon re-renders.
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | Honor `?ticket=<id>` on load: seed CockpitViewController.pendingTicketSelection and open the Tickets view so a global-search ticket hit lands on the RECORD. Every ticket hit previously linked to bare /cockpit/ - the right screen, the wrong (or no) row - and that is the half of the deep-link contract the API cannot fix by itself. Seeded before the first render rather than via focusTicket after it, because the post-render call races TicketView's list fetch and selects nothing.
  * 44 | maintainer@emeraldcoastsystemsgroup.com   | Keep the full-screen mobile chat sheet collapsed on cold start so a background-created chat task cannot cover the phone's primary surface controls
+ * 45 | maintainer@emeraldcoastsystemsgroup.com   | applyStatusBarPolicy(profile?.hideStatusBar === true) on the same durable root-attribute contract as the assistant orb (data-oshal-status-bar-hidden). It runs on every load, so a plain cockpit restores the bar; layout.css hides .status-bar on the attribute and the flex column reclaims the height for the app surface.
  */
 
 import { ThemeManager } from './theme-manager.js';
@@ -70,6 +71,7 @@ import {
 
 const ASSISTANT_HIDDEN_ATTR = 'data-oshal-assistant-hidden';
 const ASSISTANT_VISIBILITY_EVENT = 'oshal:assistant-visibility';
+const STATUS_BAR_HIDDEN_ATTR = 'data-oshal-status-bar-hidden';
 
 /**
  * Apply the focused app's global-assistant policy. The document attribute is
@@ -88,6 +90,20 @@ function applyGlobalAssistantPolicy(hidden) {
     document.getElementById('jarvisOrbPanel')?.remove();
   }
   window.dispatchEvent(new CustomEvent(ASSISTANT_VISIBILITY_EVENT, { detail: { hidden } }));
+}
+
+/**
+ * @description Hide or restore the cockpit's bottom status bar (bots/tickets/cost/queue) for the
+ * focused app. A CSS attribute on the root drives it, so it survives ribbon re-renders and is undone
+ * automatically when a normal cockpit (no app, or an app that does not set the flag) loads — this runs
+ * on every load with `profile?.hideStatusBar === true`, exactly like the assistant-orb policy.
+ * @param {boolean} hidden - Whether to hide the status bar for this app.
+ * @returns {void}
+ */
+function applyStatusBarPolicy(hidden) {
+  const root = document.documentElement;
+  if (hidden) root?.setAttribute(STATUS_BAR_HIDDEN_ATTR, 'true');
+  else root?.removeAttribute(STATUS_BAR_HIDDEN_ATTR);
 }
 
 /**
@@ -198,6 +214,7 @@ class CockpitApp {
       await this.ribbon?.ready;
       const profile = this.ribbon?.profile;
       applyGlobalAssistantPolicy(profile?.hideAssistant === true);
+      applyStatusBarPolicy(profile?.hideStatusBar === true);
       if (!profile) return;
 
       // Per-app skin: apply the focused app's theme for this page-load only, so each

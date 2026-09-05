@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Add a first-class deterministic service-route schedule target. The manifest contract separates prompt dispatch from a static POST to a package-owned service-auth route so scheduled package workers never masquerade as agent prompts.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | SwarmAppStaticUi.group — a manifest may split its ribbon's top tray into labelled bands. The cockpit renderer already grouped by this field and already gated it to the top section; the key simply had nowhere to come from, because synthesiseProfile's map dropped it. Optional, so every existing manifest is unchanged and an older core ignores it (flat ribbon) rather than failing the load.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: manifest.artifacts — the app's "Send to…" declarations (accepts/provides, from @/shared/artifact-exchange). Optional and additive (an older core ignores it); the VALUE is validated fail-closed at load, registered on activate, retracted on deactivate — the skill-profiles discipline.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | SwarmAppRibbonPolicy.hideStatusBar — the third per-app chrome flag beside hideChatPanel/hideAssistant: hide the cockpit's bottom bots/tickets/cost/queue status bar while the app is focused (operator 2026-09-04: that bar only means something to a swarm admin; a CRM or trading surface should be able to drop it). Optional and additive — absent = shown, an older core ignores it.
  */
 
 import type { SwarmAppRouteAuthMode } from '@/shared/route-auth';
@@ -412,6 +413,11 @@ export interface SwarmAppRibbonPolicy {
   /** Hide the cockpit's global Jarvis/DEV assistant orb while this app is focused.
    *  This does not affect an app-owned `ui.assistant` declaration. */
   hideAssistant?: boolean;
+  /** Hide the cockpit's bottom status bar (bots / tickets / cost / queue depth)
+   *  while this app is focused. That bar is operational telemetry — for an app
+   *  that is not ticket/queue-shaped (e.g. a CRM) it reads as stray chrome; a
+   *  debugging operator opens the Admin/ops surfaces instead. */
+  hideStatusBar?: boolean;
 }
 
 /**

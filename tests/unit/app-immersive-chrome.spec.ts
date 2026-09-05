@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cache-version pin advanced v25 → v26 (service-worker bump for the index.html auth-lapse guard now carrying ?returnTo through relogin).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Cache-version pin advanced v26 → v27 to match the current cockpit service worker after the mobile drawer cache bump.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Cache-version pin advanced v27 → v28 so the guard matches the current cockpit service worker after the latest shell-cache bump.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | hideStatusBar rides the same forwarding + omission assertions as hideChatPanel/hideAssistant, and a source pin holds app.js to applyStatusBarPolicy + the data-oshal-status-bar-hidden attribute.
  */
 
 /**
@@ -25,7 +26,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SwarmAppService } from '../../src/features/swarm-apps';
 import type { SwarmApplicationRecord } from '../../src/features/swarm-apps';
 
-function serviceWithRibbon(ribbon: { hideChatPanel?: boolean; hideAssistant?: boolean }) {
+function serviceWithRibbon(ribbon: { hideChatPanel?: boolean; hideAssistant?: boolean; hideStatusBar?: boolean }) {
   const record = {
     appId: 'immersive',
     name: 'immersive',
@@ -49,19 +50,26 @@ function serviceWithRibbon(ribbon: { hideChatPanel?: boolean; hideAssistant?: bo
 }
 
 describe('ribbon immersive policy', () => {
-  it('forwards chat-panel and global-assistant suppression into the cockpit profile', async () => {
-    const profile = await serviceWithRibbon({ hideChatPanel: true, hideAssistant: true })
+  it('forwards chat-panel, global-assistant and status-bar suppression into the cockpit profile', async () => {
+    const profile = await serviceWithRibbon({ hideChatPanel: true, hideAssistant: true, hideStatusBar: true })
       .synthesiseProfile('immersive');
 
-    expect(profile).toMatchObject({ hideChatPanel: true, hideAssistant: true });
+    expect(profile).toMatchObject({ hideChatPanel: true, hideAssistant: true, hideStatusBar: true });
   });
 
-  it('does not hide either surface unless the manifest explicitly requests it', async () => {
-    const profile = await serviceWithRibbon({ hideChatPanel: false, hideAssistant: false })
+  it('does not hide any of the three chrome surfaces unless the manifest explicitly requests it', async () => {
+    const profile = await serviceWithRibbon({ hideChatPanel: false, hideAssistant: false, hideStatusBar: false })
       .synthesiseProfile('immersive');
 
     expect(profile?.hideChatPanel).toBeUndefined();
     expect(profile?.hideAssistant).toBeUndefined();
+    expect(profile?.hideStatusBar).toBeUndefined();
+  });
+
+  it('app.js applies the status-bar policy on the same durable-attribute contract as the assistant', () => {
+    const app = readFileSync(new URL('../../src/pages/cockpit/js/app.js', import.meta.url), 'utf8');
+    expect(app).toContain('applyStatusBarPolicy(profile?.hideStatusBar === true)');
+    expect(app).toContain("const STATUS_BAR_HIDDEN_ATTR = 'data-oshal-status-bar-hidden'");
   });
 });
 
