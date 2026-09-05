@@ -219,7 +219,10 @@ is manual and reverse-dependency-checked.
   relay carries nothing)
 - `theme` (a known `COCKPIT_THEMES` skin id or a bundled `ui/*.css`), `sharedCss`,
   `ribbon` (`focused`, `hideFrameworkItems`, `defaultView`, `hideChatPanel`,
-  `hideAssistant`)
+  `hideAssistant`, `hideStatusBar` — the three `hide*` flags drop cockpit chrome
+  while the app is focused: the right-rail chat panel, the global assistant orb,
+  and the bottom bots/tickets/cost/queue status bar; each is off by default and
+  restored automatically when a plain cockpit loads)
 
 **Routes, data & how it rides the kernel queue**
 

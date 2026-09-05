@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Disabled chat-panel width animation in workspace focus so heavy header tools open at full working width immediately
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Fixed haywire Main↔Chat drag-resize: kill the chat-panel width transition during drag (was chasing the cursor) and disable iframe pointer-events so the embedded app surface stops swallowing mousemove
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Zen (full-window focus) mode: body.zen-mode hides all cockpit chrome (header, ribbon, status bar, chat rail, per-surface title bar) so the active surface gets the whole window — the desktop analogue of the phone full-bleed rules below. Plus the floating semi-transparent exit button.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | :root[data-oshal-status-bar-hidden="true"] .status-bar {display:none} — the manifest-declared per-app hide of the status bar (ribbon.hideStatusBar, set on the root by app.js). Zen mode hides it for everyone in a session; this drops it permanently for one app.
  */
 
 /* ===== Layout — Cockpit Shell (Apple Liquid Glass) ===== */
@@ -218,6 +219,10 @@ body {
 }
 
 /* ---------- Status Bar ---------- */
+/* Per-app hide (manifest ribbon.hideStatusBar → profile.hideStatusBar → app.js sets this root attr):
+   apps that are not ticket/queue-shaped drop the operational status bar entirely, and the flex column
+   reclaims its height for the app surface. */
+:root[data-oshal-status-bar-hidden="true"] .status-bar { display: none; }
 .status-bar {
   height: var(--status-bar-height);
   display: flex;
