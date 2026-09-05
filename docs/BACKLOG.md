@@ -178,6 +178,10 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
   eligible; and the lane's row in `docs/governance/real-boundary-regression-audit.md` cites that
   dated evidence instead of "pending an operator token".
 
+### Deploy — the api process exits during the bot-recreate storm
+- **Remaining:** on the 2026-09-05 deploy of f59494b7, while `oshal-deploy.sh` recreated the 34 bots the api sat above 200% CPU, host-port HTTP timed out for about three minutes, and the process then exited (exit 1) on `terminating connection due to idle-in-transaction timeout` raised through process-crash-guards (api log 04:43:20Z; `docker events` shows die then start). Docker restarted it in the same container, it was healthy about 40 s later, and the gate reported DEPLOYED with the advisory scan counting 19 error lines — so a deploy currently carries roughly a minute of api downtime that only the container's RestartCount records. Which transaction idles through the storm is not yet identified.
+- **Done when:** a full `oshal-deploy.sh` run on the dev box recreates every bot with the api container's RestartCount unchanged and zero `idle-in-transaction` error lines in the api log for that window, proven by a log/inspect probe recorded in the real-boundary audit; if the fix is pacing the recreate rather than closing the transaction, the deploy log says so.
+
 ## Security, tenancy, and trust boundaries
 
 ### The SEC/CORE/APP hardening-track identifiers have no definition anywhere in the repo
@@ -422,6 +426,11 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** Outlook reconnects and sends, at least one budget denial is proven, and unauthenticated `/api/swarm-execute` is rejected on the deployed stack.
 
 ## Shared product experience
+
+### ADR-139 artifact exchange — Stage 4: sources, the generic picker, and the NL leg
+- **Done already:** Stages 1–3 shipped and live-proven 2026-09-04/05 ([ADR-139](adr/139-artifact-exchange-send-to-registry.md) status row): the registry + owner-bound TTL handles + the shared `send-to.js` + cockpit `artifact=` forward; kernel destinations Email-it (compose overlay), Save-to-OSHAL-Storage, Ingest-to-RAG, Summarize-with-Jarvis; the files browser and Portrait Studio instrumented; `/api/files` rides the service rail so files-browser dispatches redeem (#322, guarded by `tests/unit/files-service-rail.spec.ts`).
+- **Remaining:** the SOURCE direction and the language leg. `provides:` declarations are parsed, validated, and registered but nothing consumes them — every app still hand-builds its own file picker (Portrait Studio's connected-files modal is the pattern that keeps getting copied). No NL resolution ("Jarvis, send this to X") against the registry. Only one app destination is registered (portrait-studio); AI Office and Switchboard registrations would make the menu genuinely cross-app for documents and media.
+- **Done when:** a generic "pick an artifact" kernel component (the `send-to.js` sibling) lists registered `provides:` sources and hands back a minted handle, adopted by at least one surface in place of its bespoke picker; a Jarvis turn resolves "send/ingest/email this <artifact>" through `/api/artifacts/actions` and dispatches with the destinations' own confirm gates intact (one live-proven turn); and at least two more app manifests register `accepts:`, each proven by one live dispatch landing pre-loaded.
 
 ### Surface theming — visual spot check across themes
 - **Done already:** [BUG-12](operations/bug-log.md) is fixed and gated — every governed surface links a theme source, sets a default `data-theme`, and declares no bare hex in `:root`; 315 hardcoded colours across 37 files were remapped onto framework tokens by semantic role. `tests/unit/surface-theming.spec.ts` is mutation-proved and fails on all three regressions.
@@ -681,6 +690,10 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** prove caller-scoped live reads for Dynatrace, ServiceNow, Datadog, and New Relic and retire the environment-global ServiceNow MCP; integrate the existing one-shot RCA engine; build the SecOps bot/store/surface; seed offline Trivy/FIPS assets and run a real self-scan.
 - **Done when:** connector/RCA traces are caller-attributed, findings are encrypted and owner-isolated, security review passes, and a live enclave scan files auditable results without fetching an unapproved database. See [ADR-069](adr/069-operations-and-secops-connectors.md).
 
+### TV surfaces — OSHAL Home in the Fire TV, Roku, and Samsung stores
+- **Remaining:** the Get oshal page's TV tile says the apps are not in any store, because they are not: Fire TV (`packages/oshal-firetv`), Roku (`packages/oshal-roku`) and Samsung (`packages/oshal-samsung-tv`) install only by developer-mode sideload from a build. The four-phase registration runbook exists (`docs/tv-surfaces/roku-and-samsung-registration.md`) but none of its phases is recorded as done for any of the three, and the Roku README records that its channel has not been built or tested on a device.
+- **Done when:** each app is installable from its platform store or that store's private/beta channel under the business developer account, a store-installed copy completes `/tv` pairing against the public swarm and speaks a Jarvis answer, and the TV tile links to the listings instead of the sideload guide.
+
 ## Application-package follow-ups
 
 ### SEC-06 application-store route, ownership, and CI closure
@@ -770,6 +783,26 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** the split shell boots from app.js on DOMContentLoaded (no inline `<script>`), but the moved view code still wires many actions through inline `onclick=` attributes, which strict CSP (no `unsafe-inline`/`unsafe-hashes`) blocks; convert to delegated listeners per view. Also: `subTabs()` stamps `#tabbody` with a generation and the journal/performance loaders honour it, but the Lab/Studio/Tuning/Recommendations/Algorithms/Capture loaders still paint without checking `tabStale(gen)`, so a slow response for the previous sub-tab can overwrite the one just selected (non-money surfaces; the account-money loaders are guarded).
 - **Done when:** the trading surface renders and every action works with `CSP_MODE=strict` on the dev box (zero CSP reports for /api/trading/*), and a spec proves every `async function load*` in tools/ui captures `tabGen()`/`RENDER_TOKEN` before its first await and bails after it.
 
+### Trading — the ticket's live price is a 5-second poll, not a stream (ADR-136 D3 tail)
+- **Remaining:** the Buy ticket re-polls `GET /api/trading/quote` every 5 s (Alpaca latest trade for paper, Schwab for a live account); nothing streams. A real stream terminates the venue websocket (Alpaca's IEX data stream on the free feed; the Schwab streamer for live) inside the kernel's market-data service and relays prints to the surface over the existing surface-bridge/SSE rail — never a venue socket opened from the browser, never a venue credential in the page.
+- **Done when:** the ticket and the account's positions table update within a second of a print without polling, the relay reconnects after a drop, and a spec proves no venue credential or raw socket URL reaches the browser.
+
+### Trading — market movers are bounded to the oshal universe + the caller's watchlist (1.9.0 tail)
+- **Remaining:** `GET /api/trading/reports/movers` ranks winners / losers / most volatile / most active over the platform universe plus the caller's watchlist from daily bars (end-of-day on the free IEX feed), and the surface labels that source. Whole-market movers need a market-wide screener source (a paid snapshot feed or screener API) behind the market-data connector, with the same fail-soft empty result when it is not configured.
+- **Done when:** with a configured paid feed the report covers the full US-equity asset directory and still states its source and as-of on the surface; without one it degrades to today's bounded report, never a blank.
+
+### Trading — cash accounts trade like margin accounts: settlement is not modeled
+- **Remaining:** the ticket and the autopilot size against buying power / cash exactly as the venue reports it. A cash account's T+1 settled-funds rule — and the good-faith-violation risk of selling and rebuying with unsettled proceeds — is modeled nowhere. Needs a per-book account type (cash / margin) from the broker adapter, settled-cash tracking per fill, and a sizing guard that refuses (or, per the book's policy, warns on) a buy funded by unsettled proceeds.
+- **Done when:** on a cash-type book the ticket shows settled vs unsettled cash, a buy that would need unsettled funds is refused with the settlement date named, the autopilot's sizing respects settled cash, and a real-DB spec proves both refusals.
+
 ### Deploy modes — `codebase` vs `codeless` development posture (ADR-137 amendment A)
 - **Remaining:** the operator's fourth axis is recorded, not built: a `codebase` swarm may modify its own code through the developer rails; a `codeless` swarm (installed from Docker images only) may not, and files defects to a tracker (repo issues or Bugzilla) instead. Needs a posture read in `resolveDeployPosture`, a gate on the oshal-developer / self-modification rails, and a defect-submission connector chosen and registered per `docs/partner-app-registration.md`.
 - **Done when:** `OSHAL_DEPLOY_MODE` (or a sibling `OSHAL_DEV_POSTURE`) resolves `codebase|codeless`; on `codeless` every self-modification rail refuses with a named reason and a defect ticket lands in the configured tracker from a real failing build; `tests/unit/deploy-mode.spec.ts` covers both; ADR-137's amendment table moves both rows from "recorded" to "built".
+
+### Node app — republish `@oshal/chat` with the changes since 0.2.0
+- **Remaining:** npm has `@oshal/chat@0.2.0` (published 2026-08-15). Core #300 (the print service runs in the node, ADR-135 amendment H) and #302 (satellite "Log in + push" for Codex and Claude) changed `packages/oshal-chat` without a version bump, so every one-click install (`npm install -g @oshal/chat` from `install-oshal-node.cmd`) still gets the 08-15 build, and the satellites already running are on it too. Recipe: `docs/runbooks/publishing-the-node-package.md`.
+- **Done when:** `package.json` carries the new version, `npm view @oshal/chat version` returns it, and a node installed from a fresh `install-oshal-node.cmd` on a machine with no checkout registers owned and exposes the in-node print service — recorded in the real-boundary audit as the first bare-machine proof of the npm path.
+
+### Node app — one-click installer for macOS and Linux
+- **Remaining:** `GET /api/join/node-installer` renders a Windows `.cmd` only, and the Get oshal Desktop tile says so. The node app itself installs from npm on macOS and Linux, and the five values the Windows script seeds (`OSHAL_CONTROL_PLANE_URL`, `OSHAL_SHARED_SECRET`, `OSHAL_ENROLLMENT_TOKEN`, `OSHAL_CLIENT_ID`, `OSHAL_CLIENT_NAME`) are platform-neutral, but no script renders them for a shell and the path has never been run on a Mac or Linux box.
+- **Done when:** the route renders a platform-appropriate script (`?platform=macos|linux` → a `.sh` carrying the same per-device token and nothing swarm-wide, refusing the same loopback and quotable-character cases), the Desktop tile offers it by detected platform, and one real macOS or Linux machine with no checkout registers owned through that file — recorded in the real-boundary audit.
