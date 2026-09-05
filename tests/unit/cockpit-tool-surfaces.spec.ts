@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the four new cockpit tool surfaces (budgets/notify/dlq/my-data). Pins the two properties the whole deploy-free approach rests on: (1) the cockpit's own express.static mount serves src/pages/cockpit/tools/*.html at /cockpit/tools/<name>.html AND it is behind requiresAuth, so no Express route and no image rebuild are needed and the pages are never anonymously readable; (2) each page consumes framework theme tokens read-only via the shared bootstrap (data-theme default on <html>, surface-themes.css, surface-theme.js) with surface-glass.css loaded AFTER its own styles, and composites any element that covers scrolling content over an opaque colour instead of using the deliberately-translucent --bg-card directly. Also pins that each ribbon entry's iframeUrl resolves to a file that exists — a typo there is a blank tool nobody notices.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add devices.html (Get oshal on your devices) to the guarded set, plus its own rules: the one-click installer is FETCHED and saved only on a 200 (a plain <a download> would save the route's 409 JSON under the installer's name), the credential notice precedes the fetch, the phone QR comes from the same-origin pairing route, and the computers list is the caller-scoped /api/remote-clients.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -20,7 +21,7 @@ const realFetch = globalThis.fetch;
 // to exactly the same standards as the four read surfaces — same auth, same theming, same load
 // order — because it is the ONE door a customer's staff sees, and a flash of untokened content or
 // an anonymous read there is worse than on a tool an end user never opens.
-const SURFACES = ['budgets', 'notify', 'dlq', 'my-data', 'platform'] as const;
+const SURFACES = ['budgets', 'notify', 'dlq', 'my-data', 'platform', 'devices'] as const;
 const TOOLS_DIR = path.join(process.cwd(), 'src/pages/cockpit/tools');
 const RIBBON_NAV = path.join(process.cwd(), 'src/pages/cockpit/js/components/RibbonNav.js');
 
@@ -148,5 +149,33 @@ describe('ribbon registration — every new tool entry points at a file that exi
     expect(gate).toBeGreaterThan(-1);
     expect(dlqEntry).toBeGreaterThan(gate);
     expect(ribbon).toContain('/api/cli-tokens/whoami');
+  });
+});
+
+describe('devices.html — the Get oshal page keeps the credential-download rules', () => {
+  const html = readSurface('devices');
+
+  it('fetches the one-click installer rather than linking it with a download attribute', () => {
+    // A refusal from /api/join/node-installer (loopback control plane, shared secret not retired)
+    // is JSON. A plain <a download> saves that JSON to Downloads under the installer's own name,
+    // which reads as a broken installer. Fetch first; save only a 200.
+    expect(html).toContain("fetch('/api/join/node-installer?name='");
+    expect(html).not.toMatch(/<a[^>]+href="\/api\/join\/node-installer/);
+  });
+
+  it('announces the credential BEFORE the file exists (the offline-autofill bookmarklet rule)', () => {
+    const confirmAt = html.indexOf('window.confirm(');
+    const fetchAt = html.indexOf("fetch('/api/join/node-installer");
+    expect(confirmAt).toBeGreaterThan(-1);
+    expect(fetchAt).toBeGreaterThan(confirmAt);
+  });
+
+  it('renders the phone QR from the same-origin pairing route, never a third-party image', () => {
+    expect(html).toContain('/api/tv/pair/qr?target=cockpit');
+    expect(html).not.toMatch(/<img[^>]+src="https?:\/\//);
+  });
+
+  it('lists computers from the caller-scoped /api/remote-clients', () => {
+    expect(html).toContain("fetch('/api/remote-clients'");
   });
 });

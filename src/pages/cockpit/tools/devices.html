@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Get oshal on your devices</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+<script src="/shared/ui/js/surface-theme.js"></script>
+<link rel="stylesheet" href="/fonts/codicon.css" />
+<style>
+  :root {
+    --bg: var(--bg-primary);
+    --panel: var(--bg-card);
+    --panel2: var(--bg-tertiary);
+    --line: var(--border-color);
+    --text: var(--text-primary);
+    --muted: var(--text-muted);
+    --accent: var(--accent-primary, #5b8cff);
+    --ok: var(--status-success, #36d399);
+    --warn: var(--status-warning, #f4bf50);
+    --bad: var(--status-error, #ff8585);
+    --chip: var(--bg-tertiary);
+    /* --bg-card is translucent by design; composite over the page colour wherever a panel covers
+       other content. */
+    --solid-panel: linear-gradient(var(--panel), var(--panel));
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 20px 90px; }
+  h1 { font-size: 25px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 22px; font-size: 13.5px; max-width: 84ch; }
+  .sub code { color: var(--text); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
+  .card { border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px 20px; background: var(--panel); }
+  .tile-head { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; }
+  .tile-head .codicon { font-size: 26px; color: var(--accent); }
+  .tile-head h2 { font-size: 19px; margin: 0; }
+  .card p { font-size: 13.5px; margin: 0 0 12px; color: var(--muted); }
+  .card p.lead { color: var(--text); }
+  .card p.fine { font-size: 12.5px; margin-top: 12px; }
+  .card h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 20px 0 8px; }
+  .card ol { margin: 0 0 12px; padding-left: 20px; font-size: 13.5px; color: var(--muted); }
+  .card ol li { margin-bottom: 5px; }
+  .card ol b { color: var(--text); }
+  .lbl { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 5px; }
+  input[type=text] { flex: 1 1 140px; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 9px; padding: 8px 11px; font: inherit; font-size: 13.5px; }
+  button, a.btn { cursor: pointer; border: 1px solid var(--line); background: var(--chip);
+    color: var(--text); border-radius: 9px; padding: 8px 15px; font: inherit; font-size: 13.5px;
+    font-weight: 600; text-decoration: none; display: inline-block; white-space: nowrap; }
+  button.primary, a.btn.primary { background: var(--accent); color: #04122e; border-color: transparent; }
+  button:disabled { opacity: .55; cursor: default; }
+  .actions { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
+  .msg { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; margin-top: 10px; min-height: 1.2em; }
+  .msg.ok { color: var(--ok); }
+  .msg.bad { color: var(--bad); }
+  .howto { border: 1px solid var(--ok); border-radius: 10px; padding: 12px 14px; margin-top: 12px;
+    background: var(--bg) var(--solid-panel); font-size: 13.5px; }
+  .howto b { display: block; margin-bottom: 8px; }
+  .howto ol { margin-bottom: 0; }
+  .list table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .list th, .list td { text-align: left; padding: 6px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .list th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  .list tr:last-child td { border-bottom: none; }
+  td.w { overflow-wrap: anywhere; }
+  .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 9px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .pill.yes { border-color: var(--ok); color: var(--ok); }
+  .pill.no { border-color: var(--warn); color: var(--warn); }
+  .empty { color: var(--muted); font-size: 13px; }
+  .qr { display: flex; justify-content: center; margin: 6px 0 10px; }
+  .qr img { width: 200px; height: 200px; border-radius: 10px; background: #fff; padding: 6px; }
+  code.url { display: block; text-align: center; font-size: 13px; overflow-wrap: anywhere; margin-bottom: 12px; }
+  code { background: var(--chip); border-radius: 5px; padding: 0 5px; font-size: 12.5px; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 28px; border-top: 1px solid var(--line);
+    padding-top: 12px; max-width: 90ch; }
+</style>
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+<div class="wrap">
+  <h1>Get oshal on your devices</h1>
+  <p class="sub">Your swarm lives at <code id="origin">this address</code>. Put it on the screens you
+  actually use: a desktop that does work for you, a phone that carries the cockpit, a TV that shows
+  and speaks Jarvis. Everything on this page points back at that same swarm, and none of it needs an
+  operator.</p>
+
+  <div class="tiles">
+
+    <section class="card" id="desktopTile">
+      <div class="tile-head"><span class="codicon codicon-device-desktop"></span><h2>Desktop</h2></div>
+      <p class="lead">Make a Windows PC a worker node. The swarm can then run a browser on it, execute
+      shell tasks and drive the screen, and only work dispatched to you ever reaches it.</p>
+      <label class="lbl" for="nodeName">Name this computer</label>
+      <div class="actions">
+        <input id="nodeName" type="text" value="my-computer" maxlength="40" autocomplete="off" spellcheck="false" />
+        <button class="primary" id="downloadBtn" type="button">Download installer</button>
+      </div>
+      <div class="msg" id="downloadMsg"></div>
+      <div class="howto" id="howto" hidden>
+        <b>Saved as <code>install-oshal-node.cmd</code>. Copy it to the PC and double-click it.</b>
+        <ol>
+          <li>Node.js 20 or newer must be installed on that PC first
+            (<a href="https://nodejs.org" target="_blank" rel="noreferrer">nodejs.org</a>, the LTS build).</li>
+          <li>Windows may ask whether to run a file from the internet. Choose <b>Run</b>.</li>
+          <li>It installs the node app, binds it to your account and starts it. The computer appears
+            below within a minute.</li>
+          <li>Delete the file afterwards. It holds a credential for that one computer.</li>
+        </ol>
+      </div>
+      <p class="fine">Windows only today. macOS and Linux are not one-click yet; the guide says what
+      exists for them.</p>
+      <h3>Your computers</h3>
+      <div id="computers" class="list"><span class="empty">Loading…</span></div>
+    </section>
+
+    <section class="card" id="phoneTile">
+      <div class="tile-head"><span class="codicon codicon-device-mobile"></span><h2>Phone</h2></div>
+      <p class="lead">The cockpit installs as an app on iPhone and Android. Scan, sign in, add it to
+      your Home Screen.</p>
+      <div class="qr"><img id="phoneQr" src="/api/tv/pair/qr?target=cockpit" width="200" height="200"
+        alt="QR code that opens the cockpit on your phone" /></div>
+      <code class="url" id="cockpitUrl"></code>
+      <ol>
+        <li><b>iPhone:</b> open it in Safari, tap <b>Share</b>, then <b>Add to Home Screen</b>.</li>
+        <li><b>Android:</b> open it in Chrome, tap the three-dot menu, then <b>Install app</b>
+          (older builds say <b>Add to Home screen</b>).</li>
+      </ol>
+      <p class="fine">Want the phone as the microphone for a TV? Open the
+      <a href="/api/jarvis/remote" target="_blank" rel="noreferrer">Jarvis remote</a> on it: push to
+      talk, and the TV shows and speaks the answer.</p>
+    </section>
+
+    <section class="card" id="tvTile">
+      <div class="tile-head"><span class="codicon codicon-broadcast"></span><h2>TV</h2></div>
+      <p class="lead">OSHAL Home turns a Fire TV, Roku or Samsung TV into a Jarvis screen. It shows and
+      speaks the answers, lists your tasks and live bots, and your phone is the microphone.</p>
+      <p>The TV apps are not in the app stores yet. Each one installs in the TV's developer mode from
+      a build, and the guide walks through it for each platform.</p>
+      <div class="actions">
+        <a class="btn primary" href="/api/help/devices" target="_blank" rel="noreferrer">How to install on a TV</a>
+        <a class="btn" href="/tv" target="_blank" rel="noreferrer">Approve a TV code</a>
+      </div>
+      <p class="fine">Already running the TV app? It shows a code on screen. <b>Approve a TV code</b>
+      signs that TV in to your account.</p>
+    </section>
+
+  </div>
+
+  <p class="foot">The desktop installer carries a credential bound to one computer and to you. It can
+  be revoked at any time, which disables that one computer and nothing else. The phone and TV codes
+  carry no secret at all; they only open pages on this swarm that still ask you to sign in.</p>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function setMsg(text, cls) {
+    var m = $('downloadMsg');
+    m.textContent = text || '';
+    m.className = 'msg' + (cls ? ' ' + cls : '');
+  }
+
+  $('origin').textContent = location.origin;
+  $('cockpitUrl').textContent = location.origin + '/cockpit/';
+
+  // The QR is rendered by the server on this origin and carries no secret. If the image cannot
+  // load, the address printed under it is the whole message, so just drop the picture.
+  $('phoneQr').addEventListener('error', function () { $('phoneQr').parentNode.hidden = true; });
+
+  // Same rule as the offline autofill bookmarklet and the Job Board button: say what is in the
+  // file BEFORE it exists, not after it has landed in Downloads.
+  var CREDENTIAL_NOTICE =
+    'The file you are about to download contains a credential for ONE computer, tied to your account.\n\n' +
+    'Anyone who runs it enrols a machine that receives work dispatched to you. Do not share it, and ' +
+    'delete it once the computer appears on this page. You can revoke it at any time; that disables ' +
+    'this one computer and nothing else.\n\nDownload it?';
+
+  async function download() {
+    var name = ($('nodeName').value || '').trim().slice(0, 40) || 'my-computer';
+    if (!window.confirm(CREDENTIAL_NOTICE)) return;
+    var btn = $('downloadBtn');
+    btn.disabled = true;
+    setMsg('Building your installer…');
+    try {
+      // Fetched rather than linked with a download attribute: a refusal from the route is JSON
+      // (409 when the cockpit was opened over localhost, or when the swarm still accepts its
+      // swarm-wide secret for nodes), and a plain <a download> would save that JSON to Downloads
+      // under the installer's own name. Save only a 200.
+      var res = await fetch('/api/join/node-installer?name=' + encodeURIComponent(name), { credentials: 'same-origin' });
+      if (!res.ok) {
+        var body = null;
+        try { body = await res.json(); } catch (e) { body = null; }
+        var why = (body && (body.message || body.error)) || ('The swarm refused (HTTP ' + res.status + ').');
+        if (res.status === 401) why = 'Your session has expired. Reload the cockpit and sign in again.';
+        setMsg(why, 'bad');
+        return;
+      }
+      var blob = await res.blob();
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'install-oshal-node.cmd';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+      $('howto').hidden = false;
+      setMsg('Saved to your Downloads folder as install-oshal-node.cmd.', 'ok');
+    } catch (e) {
+      setMsg('Could not reach the swarm: ' + (e && e.message ? e.message : e), 'bad');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  $('downloadBtn').addEventListener('click', download);
+  $('nodeName').addEventListener('keydown', function (e) { if (e.key === 'Enter') download(); });
+
+  function ago(iso) {
+    if (!iso) return 'never';
+    var s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+    if (s < 90) return 'just now';
+    if (s < 5400) return Math.round(s / 60) + ' min ago';
+    if (s < 172800) return Math.round(s / 3600) + ' h ago';
+    return Math.round(s / 86400) + ' d ago';
+  }
+
+  // Caller-scoped by the server: a basic user sees the computers bound to them, an operator sees
+  // every registered node. Polled so the new PC shows up here without a reload.
+  async function loadComputers() {
+    var box = $('computers');
+    try {
+      var res = await fetch('/api/remote-clients', { credentials: 'same-origin' });
+      if (!res.ok) {
+        box.innerHTML = '<span class="empty">Could not list your computers (HTTP ' + res.status + ').</span>';
+        return;
+      }
+      var data = await res.json();
+      var clients = Array.isArray(data.clients) ? data.clients : [];
+      if (!clients.length) {
+        box.innerHTML = '<span class="empty">None yet. The first one appears here about a minute after its installer runs.</span>';
+        return;
+      }
+      box.innerHTML = '<table><thead><tr><th>Computer</th><th>Status</th><th>Last heartbeat</th></tr></thead><tbody>'
+        + clients.map(function (c) {
+          var online = c.status === 'online' && c.healthy !== false;
+          return '<tr><td class="w">' + esc(c.clientName || c.clientId) + '</td>'
+            + '<td><span class="pill ' + (online ? 'yes' : 'no') + '">' + esc(c.status || 'unknown') + '</span></td>'
+            + '<td>' + esc(ago(c.lastHeartbeatAt || c.lastSeenAt)) + '</td></tr>';
+        }).join('')
+        + '</tbody></table>';
+    } catch (e) {
+      box.innerHTML = '<span class="empty">Could not reach the swarm.</span>';
+    }
+  }
+  loadComputers();
+  setInterval(loadComputers, 15000);
+})();
+</script>
+</body>
+</html>
