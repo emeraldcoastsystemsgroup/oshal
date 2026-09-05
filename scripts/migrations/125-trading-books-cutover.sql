@@ -7,7 +7,10 @@
 --
 -- Each swap: drop the legacy mode-keyed PK and promote the book-scoped unique index (created in
 -- PR1, already backfilled and agreeing under the bijection) to PRIMARY KEY. Guarded DO-blocks —
--- re-running is a no-op. The orders/signals/decisions tables keep BOTH unique indexes until the
+-- re-running is a no-op.
+-- conrelid compares via to_regclass(), never a literal ::regclass cast: the cast THROWS AT
+-- PLAN TIME on a box whose trading feature never created the table, and this file runs in
+-- the boot ladder like any other (the gsquared CRM box proved it, 2026-09-05). The orders/signals/decisions tables keep BOTH unique indexes until the
 -- follow-up hardening migration (their legacy indexes don't block a second book: mode is not
 -- their full key).
 
@@ -15,7 +18,7 @@ DO $$
 BEGIN
   -- equity_hwm: PK (user_sub, mode) → (user_sub, book_id)
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'oshal_trading_equity_hwm_pkey'
-               AND conrelid = 'oshal_trading_equity_hwm'::regclass
+               AND conrelid = to_regclass('oshal_trading_equity_hwm')
                AND pg_get_constraintdef(oid) LIKE '%(user_sub, mode)%') THEN
     ALTER TABLE oshal_trading_equity_hwm DROP CONSTRAINT oshal_trading_equity_hwm_pkey;
     ALTER TABLE oshal_trading_equity_hwm ALTER COLUMN book_id SET NOT NULL;
@@ -24,7 +27,7 @@ BEGIN
 
   -- rotation_state: PK (user_sub, mode) → (user_sub, book_id)
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'oshal_trading_rotation_state_pkey'
-               AND conrelid = 'oshal_trading_rotation_state'::regclass
+               AND conrelid = to_regclass('oshal_trading_rotation_state')
                AND pg_get_constraintdef(oid) LIKE '%(user_sub, mode)%') THEN
     ALTER TABLE oshal_trading_rotation_state DROP CONSTRAINT oshal_trading_rotation_state_pkey;
     ALTER TABLE oshal_trading_rotation_state ALTER COLUMN book_id SET NOT NULL;
@@ -33,7 +36,7 @@ BEGIN
 
   -- daily_equity: PK (user_sub, mode, et_day) → (user_sub, book_id, et_day)
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'oshal_trading_daily_equity_pkey'
-               AND conrelid = 'oshal_trading_daily_equity'::regclass
+               AND conrelid = to_regclass('oshal_trading_daily_equity')
                AND pg_get_constraintdef(oid) LIKE '%(user_sub, mode, et_day)%') THEN
     ALTER TABLE oshal_trading_daily_equity DROP CONSTRAINT oshal_trading_daily_equity_pkey;
     ALTER TABLE oshal_trading_daily_equity ALTER COLUMN book_id SET NOT NULL;
@@ -42,7 +45,7 @@ BEGIN
 
   -- peaks: PK (user_sub, mode, symbol) → (user_sub, book_id, symbol)
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'oshal_trading_peaks_pkey'
-               AND conrelid = 'oshal_trading_peaks'::regclass
+               AND conrelid = to_regclass('oshal_trading_peaks')
                AND pg_get_constraintdef(oid) LIKE '%(user_sub, mode, symbol)%') THEN
     ALTER TABLE oshal_trading_peaks DROP CONSTRAINT oshal_trading_peaks_pkey;
     ALTER TABLE oshal_trading_peaks ALTER COLUMN book_id SET NOT NULL;
@@ -51,7 +54,7 @@ BEGIN
 
   -- gate_blocks: PK (user_sub, mode, gate, symbol, et_day) → (user_sub, book_id, gate, symbol, et_day)
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'oshal_trading_gate_blocks_pkey'
-               AND conrelid = 'oshal_trading_gate_blocks'::regclass
+               AND conrelid = to_regclass('oshal_trading_gate_blocks')
                AND pg_get_constraintdef(oid) LIKE '%(user_sub, mode, gate, symbol, et_day)%') THEN
     ALTER TABLE oshal_trading_gate_blocks DROP CONSTRAINT oshal_trading_gate_blocks_pkey;
     ALTER TABLE oshal_trading_gate_blocks ALTER COLUMN book_id SET NOT NULL;
