@@ -32,12 +32,13 @@
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Cache bumped v27 -> v31, covering three shell changes shipped in one night: v29 the Jarvis reading scale + orb expand (jarvis-orb.js), v30 the focused-app rail (RibbonNav.js, precached, so without a bump the fix landed on the server and the browser kept serving the sixteen-icon shell - indistinguishable from not having fixed it), and v31 ribbon.css + RibbonNav.js again: the settings tray moved INSIDE the scrollable column. Pinned, it carried flex-shrink:0 and never yielded, so every settings icon came out of the application's tray and a customer's laptop showed four icons of app above a dozen of settings.
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Cache bumped v31 -> v32: the focused-app rail rendered TWO Settings buttons for the same screen. The hub is a member of this.views (that is how it stays navigable while withheld from the rail), so re-pushing it to force it last drew a second identical button. Tray selection is now a pure exported computeBottomTray() with fixtures, instead of three lines of inline filtering nothing could test.
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Cache bumped v33 -> v34 for ribbon.css + RibbonNav.js + jarvis-orb.js together (operator requests 2026-08-06): the rail pin (pinned stays expanded, unpinned hover-expands), the collapsed-icon clipping fix (8px side padding so a 24px icon survives the scrollbar squeezing the button to ~32px), and the orb's drag-to-move / right-click hide with the ?orb=show restore. All three files are precached — without the bump an installed PWA keeps serving the old shell and the pin simply never appears.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com   | Cache bumped v34 -> v35 for RibbonNav.js (precached): the bottom tray gains the Get oshal platform tool (/cockpit/tools/devices.html). Without the bump an installed PWA keeps serving the old rail and the entry never appears — on the phone, the very device the page exists to onboard.
  */
 
 /* global self, caches, fetch, Response */
 
 // Bump CACHE_VERSION on any change to the precached shell list so old caches are evicted.
-const CACHE_VERSION = 'oshal-cockpit-v34';
+const CACHE_VERSION = 'oshal-cockpit-v35';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 // The minimal app shell precached at install so the cockpit boots offline. Live data

@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Platform tools: add 'tool-run-trace' (Run Trace) — the caller-scoped run-trace waterfall surface (/api/trace/app) rides along on every cockpit, since tracing a ticket's execution timeline isn't owned by any one app.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Platform tools: add the four read surfaces for the shared platform services that shipped headless — Budgets (enforced spend caps), Notifications (per-topic routing prefs), Dead Letters (queue quarantine, operator-only), and My Data (export/delete). They are static pages under src/pages/cockpit/tools/, so they need no Express route. Added _loadOperatorState() (GET /api/cli-tokens/whoami) so the operator-only Dead Letters entry is not pinned into a basic user's rail — the routes self-gate server-side regardless, this only avoids offering a tool that can only answer 403.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Rail pin (operator request 2026-08-06): a pin toggle in the top-right corner holds the rail expanded; unpinned restores hover-expand. The preference is a UI setting and persists in localStorage (the ?app= URL contract forbids caching the PROFILE there, not this). State lives on the instance, not the DOM — render() rebuilds innerHTML on every profile/tool change, so the class and handler re-apply per render. Hidden on the mobile drawer, which is always full-width.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | Platform tools: add 'tool-devices' (Get oshal) — the desktop / phone / TV onboarding page, a static file under src/pages/cockpit/tools/ like the others. The one-click worker-node installer (GET /api/join/node-installer) shipped with no cockpit link at all — its only button lived on career-hunter's Job Board, and only while the user had zero nodes — and the phone PWA and the TV apps were promoted nowhere.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
@@ -460,6 +461,17 @@ export class RibbonNav {
         // profile — so a user stuck on a screen had no way in. Pinned here so every profile that
         // shows platform tools carries it.
         toolUi: { iframeUrl: '/api/help', sidebarLabel: 'Help' },
+      },
+      {
+        id: 'tool-devices',
+        icon: 'codicon codicon-device-mobile',
+        label: 'Get oshal',
+        section: 'bottom',
+        // "Put oshal on my desktop / phone / TV" (operator ask 2026-09-05): the one-click worker-node
+        // installer, the installable cockpit PWA with a QR, and the TV apps with their sign-in step, on
+        // one page. Every signed-in user gets it — nothing on it needs an operator, and the desktop
+        // download only ever carries that user's own per-device credential.
+        toolUi: { iframeUrl: '/cockpit/tools/devices.html', sidebarLabel: 'Get oshal on your devices' },
       },
       {
         id: 'tool-token-chase',
