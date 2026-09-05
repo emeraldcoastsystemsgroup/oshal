@@ -20,6 +20,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — cross-provider browse model (roots/browse/readBytes/previewFile) over Dropbox, GitHub repos+contents, and the OSHAL-local per-user dir, for the unified file browser with drill-down + preview.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add the 'career' root — the caller's OWN career-hunter store (generated résumé/cover packets under applications/, uploaded artifacts under uploads/, and the migrated lessons library under career-library/) so job-hunt artifacts are browsable/downloadable in Files ("artifacts in the user's folder system"). Read-only, sub-scoped, traversal-guarded; the store is on the api-output volume keyed by RAW sub (not the sha256 userfiles key).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Resolve Career stores through the installed app's exact-subject mapper and reject traversal or symlink escapes in both local file providers.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: uploadBytes gains the oshal-local branch (safeLocalPath-guarded write into the caller's always-present local store) — the "Save to OSHAL Storage" built-in's backend, and connector-free upload for the files surface.
  *
  * @module storage-browse
  */
@@ -393,6 +394,17 @@ export async function uploadBytes(
   ctx: AppContext, sub: string, provider: StorageProvider, dir: string, name: string, buf: Buffer, mime = 'application/octet-stream',
 ): Promise<{ ok: true; name: string; path: string; size?: number }> {
   const safeName = name.replace(/[^\w.\- ]/g, '_').slice(0, 120);
+  if (provider === 'oshal-local') {
+    // The always-available per-user local store (the same root browseLocal/readBytes serve),
+    // traversal-guarded by safeLocalPath. First consumer: the ADR-139 "Save to OSHAL Storage"
+    // built-in; also makes the files surface's upload work with zero connectors.
+    const cleanDir = String(dir || '').replace(/^[/\\]+|[/\\]+$/g, '');
+    const rel = cleanDir ? `${cleanDir}/${safeName}` : safeName;
+    const full = safeLocalPath(sub, rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, buf);
+    return { ok: true, name: safeName, path: rel, size: buf.length };
+  }
   if (provider === 'dropbox') {
     const tok = await getValidAccessToken(ctx.pool, sub, 'dropbox');
     if (!tok) throw new Error('Dropbox not connected.');

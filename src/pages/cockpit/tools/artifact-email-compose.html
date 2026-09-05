@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<!-- ADR-139 Stage 2 — the kernel "Email it…" compose overlay.
+     Opened by send-to.js in an iframe with ?artifact=<ref>; sends over the CALLER'S OWN mailbox
+     via POST /api/artifacts/builtin/email (confirm-gated server-side). Self-contained on purpose:
+     it renders inside any surface's overlay, so it carries its own styling and no dependencies. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Email it</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0f141a; color: #dbe4ee; font: 13.5px system-ui, sans-serif; }
+  .wrap { padding: 18px 20px 20px; }
+  h2 { margin: 0 0 4px; font-size: 15px; }
+  .art { color: #8fa1b3; font-size: 12px; margin-bottom: 12px; word-break: break-all; }
+  label { display: block; color: #8fa1b3; font-size: 12px; margin: 10px 0 4px; }
+  input, textarea { width: 100%; box-sizing: border-box; background: #151b23; border: 1px solid #2a3644; color: #dbe4ee; border-radius: 8px; padding: 8px 10px; font: 13px system-ui, sans-serif; }
+  textarea { resize: vertical; min-height: 56px; }
+  .actions { display: flex; justify-content: flex-end; margin-top: 14px; }
+  button { background: #4da3ff; border: 1px solid #4da3ff; color: #08131c; font-weight: 600; border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: default; }
+  #status { margin-top: 10px; font-size: 12.5px; min-height: 16px; color: #8fa1b3; }
+  #status.err { color: #ff7a7a; }
+  #status.ok { color: #4ecf8a; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>✉️ Email it</h2>
+  <div class="art" id="artInfo">Loading…</div>
+  <label for="to">To</label>
+  <input type="email" id="to" placeholder="name@example.com" autocomplete="email">
+  <label for="subject">Subject</label>
+  <input type="text" id="subject" maxlength="300" placeholder="(optional)">
+  <label for="note">Note (optional)</label>
+  <textarea id="note" maxlength="2000" placeholder="A line to go with it…"></textarea>
+  <div class="actions"><button id="send">Send</button></div>
+  <div id="status"></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var ref = new URLSearchParams(location.search).get('artifact') || '';
+  function status(msg, cls) { var s = $('status'); s.textContent = msg || ''; s.className = cls || ''; }
+
+  if (!/^art_[A-Za-z0-9_-]{8,64}$/.test(ref)) {
+    $('artInfo').textContent = 'Nothing to send — open this from a Send to… menu.';
+    $('send').disabled = true;
+  } else {
+    fetch('/api/artifacts/handles/' + encodeURIComponent(ref))
+      .then(function (r) { if (!r.ok) throw new Error('expired'); return r.json(); })
+      .then(function (j) { $('artInfo').textContent = '📎 ' + j.name + ' (' + j.type + ')'; })
+      .catch(function () {
+        $('artInfo').textContent = 'This share expired — close this and use Send to… again.';
+        $('send').disabled = true;
+      });
+  }
+
+  $('send').onclick = function () {
+    var to = $('to').value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { status('Enter a valid email address.', 'err'); return; }
+    $('send').disabled = true;
+    status('Sending…');
+    fetch('/api/artifacts/builtin/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ref: ref, confirm: true, to: to,
+        subject: $('subject').value.trim(),
+        note: $('note').value.trim()
+      })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); })
+      .then(function (res) {
+        if (res.ok) { status('Sent ✓ via ' + (res.j.via || 'your mailbox') + ' — you can close this.', 'ok'); return; }
+        $('send').disabled = false;
+        status(res.j.message || res.j.error || ('Send failed (' + res.status + ')'), 'err');
+      })
+      .catch(function () { $('send').disabled = false; status('Send failed — check your connection.', 'err'); });
+  };
+})();
+</script>
+</body>
+</html>

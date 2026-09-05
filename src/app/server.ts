@@ -172,6 +172,7 @@
  * 159 | maintainer@emeraldcoastsystemsgroup.com   | Wire one confined deterministic package-schedule registry into the shared scheduler and manifest activation lifecycle.
  * 160 | maintainer@emeraldcoastsystemsgroup.com   | Multi-provider login (ADR-126): registered /login/:provider next to /login (same loginHandler — it dispatches by path/provider), and made the callback state-mismatch recovery provider-aware via loginRestartPathForCallbackPath so a failed /callback/microsoft restarts the Microsoft flow instead of the generic /login.
  * 161 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: mount /api/artifacts (serviceSecretOr(requiresAuth)) — the artifact-exchange "Send to…" menu, owner-bound handle mint/redeem, and the shared send-to.js component.
+ * 162 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: pass ctx into createArtifactExchangeRoutes — the kernel built-in destinations (email compose, save to oshal-local) need the pool for connector tokens and storage writes.
  */
 
 require('dotenv').config();
@@ -1216,9 +1217,10 @@ function createApp(): express.Application {
   // implies full impersonation" reasoning was retired because bots hold the secret and are
   // injectable. swarm-cli login --secret uses this (operator only).
   app.use('/api/cli-tokens', serviceSecretOr(requiresAuth), createCliTokenRoutes(ctx.pool));
-  // ADR-139 Stage 1: the artifact exchange — "Send to…" menu resolution, owner-bound handle
-  // mint/redeem (the claim-ticket rail), and the one shared send-to.js browser component.
-  app.use('/api/artifacts', serviceSecretOr(requiresAuth), createArtifactExchangeRoutes());
+  // ADR-139: the artifact exchange — "Send to…" menu resolution, owner-bound handle mint/redeem
+  // (the claim-ticket rail), the shared send-to.js component, and the kernel built-in
+  // destinations (email compose overlay + save to oshal-local storage).
+  app.use('/api/artifacts', serviceSecretOr(requiresAuth), createArtifactExchangeRoutes(ctx));
   // LOCAL_AUTH flows (ADR-117): /invite + /logout pages, login/accept/bootstrap, and the
   // operator-or-trusted-service user administration API. Mounted below the GUC stamp so
   // admin reads ride the caller's RLS identity; the public legs are the front door and
