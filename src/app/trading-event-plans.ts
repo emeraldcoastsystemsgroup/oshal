@@ -21,6 +21,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — FORCE-RLS plan table, CRUD + arm/disarm/delete, dry-run, EDGAR full-text watch (S-1/F-1 → 424B4 pricing parse), the tick state machine with injectable deps (clock, session, EDGAR, broker, market data, order placement) so the real-DB spec drives every transition without a venue, and the 'trading-events:<sub>' schedule leg gated by TRADING_EVENT_PLANS.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | dispatchTradingEventSchedule also ticks the ADR-136 D4 dated orders (trading-dated-orders.ts) on this same 5-minute leg — one cadence, one gate (TRADING_EVENT_PLANS), one order path; dynamic import for the same cycle reason as the pinned lots.
  *
  * @module trading-event-plans
  */
@@ -520,6 +521,9 @@ export async function dispatchTradingEventSchedule(ctx: AppContext, schedule: Sc
   // ADR-138 D3: protected lots ride the same cadence (dynamic import — the lot module imports this
   // module's deps, so a static import would be a cycle).
   const lots = await import('./trading-pinned-lots.js').then((m) => m.tickPinnedLots(ctx, sub)).catch((err) => { logger.error({ err, sub }, 'pinned lots tick failed'); return null; });
-  logger.info({ sub, ...out, lots, ms: Date.now() - t0 }, 'event plans + protected lots tick');
+  // ADR-136 D4: dated (timed) operator orders ride the same 5-minute leg — fired once each through the
+  // engine at their chosen ET time (same dynamic-import reason as the lots).
+  const dated = await import('./trading-dated-orders.js').then((m) => m.tickDatedOrders(ctx, sub)).catch((err) => { logger.error({ err, sub }, 'dated orders tick failed'); return null; });
+  logger.info({ sub, ...out, lots, dated, ms: Date.now() - t0 }, 'event plans + protected lots + dated orders tick');
   return { success: true, scheduleId: schedule.id };
 }
