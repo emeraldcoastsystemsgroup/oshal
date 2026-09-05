@@ -1,6 +1,6 @@
 # ADR-140 — Local device access: a node-resident device broker (Bluetooth first)
 
-**Status:** Proposed — design only. Operator directed the shape 2026-09-04 (*"spec it out, let's do it,
+**Status:** Proposed — design only; **P0 gate CLEARED 2026-09-04** (amendment A). Operator directed the shape 2026-09-04 (*"spec it out, let's do it,
 desktop first, and yes printers, 3D printers, headphones"*). **No core code is built against this yet**;
 per Rule 0d the core is not touched until this ADR is accepted.
 
@@ -242,3 +242,70 @@ cost of P1 changes materially — which the operator should know before, not aft
   this a data-retention decision.
 - **Q3** — Does a device grant survive node **re-enrolment**? It should probably be revoked, since the
   credential changed, but that costs the owner a re-grant after every rotation.
+
+---
+
+## Amendment A — P0 ran, and it passed (2026-09-04)
+
+The ADR above recorded P0 as a gate with the caveat *"I have NOT run it on this machine."* It has now
+been run, on `PARENTPC`, with a throwaway Electron probe that paired nothing and cancelled every chooser
+it opened. **The gate is cleared and the design holds.**
+
+### What the probe proved
+
+| Check | Result |
+|---|---|
+| Electron / Chromium | **43.3.0 / Chrome 150.0.7871.212** |
+| `navigator.bluetooth` / `serial` / `usb` / `hid` in the renderer | all present (`object`) |
+| `window.isSecureContext` under `file://` | **true** — Web Bluetooth's secure-context requirement is satisfied without hosting the page |
+| `session.setDevicePermissionHandler` | **present** — the hook D3 relies on for automated reconnection is real |
+| `session.setBluetoothPairingHandler` | **present** |
+| `select-bluetooth-device` fired | **yes** — Chromium started a real scan and the Windows Bluetooth layer answered |
+| `select-serial-port` fired | **yes** |
+| Host Bluetooth hardware | **present and running** — 35 Bluetooth PnP devices, `bthserv` Running |
+
+`executeJavaScript(code, /* userGesture */ true)` is what let the probe call `requestDevice()` at all —
+both Web Bluetooth and Web Serial require a user gesture, and that flag is the sanctioned way for the main
+process to supply one. **P1 needs it; without it `requestDevice` rejects.**
+
+One incidental trap worth recording, because it cost the first probe run: **`ELECTRON_RUN_AS_NODE=1` in the
+environment makes the Electron binary run as plain Node**, at which point `require('electron')` fails with
+`MODULE_NOT_FOUND` and the failure looks like a broken Electron install. Clear it before launching.
+
+### The finding that matters more than the pass
+
+**The scan returned zero devices — and that is the ADR's central scoping claim, confirmed empirically
+rather than asserted.**
+
+This machine has two pairs of AirPods and a BT5.0 mouse paired and working. None of them appeared. That is
+not a bug and not a range problem:
+
+- **AirPods are Bluetooth Classic (A2DP/AVRCP)**, which Web Bluetooth **structurally cannot see** — the
+  spec covers BLE GATT only. The probe listed them via Windows PnP (`Dad's AirPods Avrcp Transport`,
+  `Jennfffer's AirPods - Find My Avrcp Transport`) while the Web Bluetooth scan showed nothing.
+- **Already-connected peripherals stop advertising** as connectable BLE devices, so a fresh scan does not
+  surface them either.
+
+So the transport table in the Context section is now evidence, not analysis: **headphones will never be
+reachable through the Bluetooth adapter, on this machine, today.** The audio-sink adapter (P3) is not a
+convenience — it is the *only* path to the headphone case, exactly as designed.
+
+### What P0 did NOT prove
+
+Stated plainly so nobody reads more into this than it earned:
+
+- **No device was actually connected.** The probe cancelled every chooser by design. A real GATT
+  read remains unproven until P1 has a device to target.
+- **No serial port was present** (`GetPortNames()` returned none — nothing plugged in), so the serial path
+  is proven only as far as the chooser firing. A real 3D printer is still needed for P2.
+- Grant **persistence across restarts** was not exercised; only the presence of the handler was.
+
+### Consequence for the phasing
+
+P0 is **done**. P1 can begin on the strength of it, and the "fallback is a native module per OS" risk the
+ADR carried is **retired** — Electron reaches both the radio and the serial bus on this platform.
+
+The one input still outstanding is item 3 in *What I need from the operator*: **a real BLE device to target
+for P1.** The empty scan makes that concrete rather than theoretical — a device that advertises as a BLE
+GATT peripheral (a heart-rate strap, a BLE thermometer, an ESP32 running a GATT service) is required, and
+the AirPods and BT mouse already on this machine will not serve, for the reason above.
