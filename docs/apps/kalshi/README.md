@@ -3,6 +3,9 @@
 Prediction-markets edge engine (`?app=kalshi`, and a **Kalshi Edge** tile in the default cockpit's
 Money group). Design decision is [ADR-094](../../adr/094-kalshi-prediction-markets-app.md).
 
+- [Operating guide](../../guides/kalshi.md) — **monitoring wins, the reports, cross-referencing the
+  ledger, and running a new algorithm through the judge.** Includes the one-command cross-reference
+  report (`scripts/oshal-kalshi-report.ts`).
 - [edge-engine.md](./edge-engine.md) — what's built, as-built: the public data client, the fee
   math, the price→outcome calibration, the poker-hand bet evaluator, the surface, the connector.
   Start here.
