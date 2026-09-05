@@ -127,27 +127,46 @@ BEGIN
 END $$;
 -- daily_equity additionally denormalizes the ref for the raw-pool host report scripts (ADR-124:
 -- they read as the enforcing role with no GUC — a join to the FORCE-RLS'd books table reads zero rows).
-ALTER TABLE oshal_trading_daily_equity ADD COLUMN IF NOT EXISTS book_ref TEXT;
-UPDATE oshal_trading_daily_equity SET book_ref = mode WHERE book_ref IS NULL;
+-- GUARDED (2026-09-05): the five side-store tables are RUNTIME-created by the trading feature.
+-- A deployment that never ran trading (the gsquared CRM box) has none of them, and the bare
+-- ALTER below killed its managed-postgres launcher gate — the whole stack refused to start.
+DO $$
+BEGIN
+  IF to_regclass('oshal_trading_daily_equity') IS NOT NULL THEN
+    ALTER TABLE oshal_trading_daily_equity ADD COLUMN IF NOT EXISTS book_ref TEXT;
+    UPDATE oshal_trading_daily_equity SET book_ref = mode WHERE book_ref IS NULL;
+  END IF;
+END $$;
 
 -- Book-scoped arbiters COEXIST with the legacy mode-scoped ones until the PR4 cutover (under the
 -- flag-off bijection they always agree; a rolled-back image still finds its old ON CONFLICT targets).
-CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_signals_dedup_book ON oshal_trading_signals (user_sub, book_id, content_hash);
-CREATE INDEX        IF NOT EXISTS idx_trd_signals_user_book  ON oshal_trading_signals (user_sub, book_id, observed_at DESC);
-CREATE INDEX        IF NOT EXISTS idx_trd_decisions_user_book ON oshal_trading_decisions (user_sub, book_id, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_orders_client_book ON oshal_trading_orders (user_sub, book_id, client_order_id);
-CREATE INDEX        IF NOT EXISTS idx_trd_pred_open_book     ON oshal_trading_predictions (book_id, created_at) WHERE resolved = false;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_hwm_book           ON oshal_trading_equity_hwm (user_sub, book_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_daily_eq_book      ON oshal_trading_daily_equity (user_sub, book_id, et_day);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_peaks_book         ON oshal_trading_peaks (user_sub, book_id, symbol);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_rotation_book      ON oshal_trading_rotation_state (user_sub, book_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_gate_blocks_book   ON oshal_trading_gate_blocks (user_sub, book_id, gate, symbol, et_day);
+DO $$
+DECLARE t text; stmt text;
+BEGIN
+  FOR t, stmt IN SELECT * FROM (VALUES
+    ('oshal_trading_signals',        'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_signals_dedup_book ON oshal_trading_signals (user_sub, book_id, content_hash)'),
+    ('oshal_trading_signals',        'CREATE INDEX IF NOT EXISTS idx_trd_signals_user_book ON oshal_trading_signals (user_sub, book_id, observed_at DESC)'),
+    ('oshal_trading_decisions',      'CREATE INDEX IF NOT EXISTS idx_trd_decisions_user_book ON oshal_trading_decisions (user_sub, book_id, created_at DESC)'),
+    ('oshal_trading_orders',         'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_orders_client_book ON oshal_trading_orders (user_sub, book_id, client_order_id)'),
+    ('oshal_trading_predictions',    'CREATE INDEX IF NOT EXISTS idx_trd_pred_open_book ON oshal_trading_predictions (book_id, created_at) WHERE resolved = false'),
+    ('oshal_trading_equity_hwm',     'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_hwm_book ON oshal_trading_equity_hwm (user_sub, book_id)'),
+    ('oshal_trading_daily_equity',   'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_daily_eq_book ON oshal_trading_daily_equity (user_sub, book_id, et_day)'),
+    ('oshal_trading_peaks',          'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_peaks_book ON oshal_trading_peaks (user_sub, book_id, symbol)'),
+    ('oshal_trading_rotation_state', 'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_rotation_book ON oshal_trading_rotation_state (user_sub, book_id)'),
+    ('oshal_trading_gate_blocks',    'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_gate_blocks_book ON oshal_trading_gate_blocks (user_sub, book_id, gate, symbol, et_day)')
+  ) AS v(tbl, ddl) LOOP
+    IF to_regclass(t) IS NOT NULL THEN EXECUTE stmt; END IF;
+  END LOOP;
+END $$;
 
--- gate_blocks gains the RLS it was missing by omission (schema-map finding).
-ALTER TABLE oshal_trading_gate_blocks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE oshal_trading_gate_blocks FORCE ROW LEVEL SECURITY;
+-- gate_blocks gains the RLS it was missing by omission (schema-map finding). Guarded: the
+-- table is runtime-created; on a trading-less box there is nothing to secure yet — the runtime
+-- rail creates it WITH this policy when the feature first runs.
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polname = 'oshal_trading_gate_blocks_owner_or_operator' AND polrelid = 'oshal_trading_gate_blocks'::regclass) THEN
+  IF to_regclass('oshal_trading_gate_blocks') IS NULL THEN RETURN; END IF;
+  ALTER TABLE oshal_trading_gate_blocks ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE oshal_trading_gate_blocks FORCE ROW LEVEL SECURITY;
+  IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polname = 'oshal_trading_gate_blocks_owner_or_operator' AND polrelid = to_regclass('oshal_trading_gate_blocks')) THEN
     CREATE POLICY oshal_trading_gate_blocks_owner_or_operator ON oshal_trading_gate_blocks
       AS PERMISSIVE FOR ALL
       USING (user_sub = current_setting('oshal.current_sub', true) OR current_setting('oshal.is_operator', true) = 'on')
