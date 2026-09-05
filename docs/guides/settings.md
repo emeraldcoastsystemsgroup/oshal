@@ -77,7 +77,9 @@ Below it: **RAG Service Endpoint**, **Default Swarm Collection**, **RAG Embeddin
 Embedding Model**, and **Code Server Workspace Root**. Then a row of actions — **Refresh Runtime
 Status** (re-probes and replaces the health card), **Open Full Config Admin** (opens the standalone
 config screen scrolled to its RAG section), and two links that stay hidden unless the server confirms
-you are a super-admin: **Manage swarm apps** and **Add a computer (remote node)**.
+you are a super-admin: **Manage swarm apps** and **Add a computer (remote node)**. A third link,
+**Get oshal on your devices**, is there for everyone and opens the same page as the ribbon's
+**Get oshal** entry — see [Get oshal on your devices](./devices.md).
 
 **Operator Preferences** — your theme picker and three approval toggles.
 

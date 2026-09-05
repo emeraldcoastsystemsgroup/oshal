@@ -34,6 +34,7 @@ the URL is authoritative — bookmark it and you land in the same place every ti
 | Reach infrastructure and stored secrets (operator) | [DevOps + Vault](./devops-vault.md) |
 | Change my theme, provider, model, or notifications | [Settings](./settings.md) |
 | Search my data, trace a run's cost, set a budget, export or delete my data, or rescue a stuck ticket | [Platform tools](./platform-tools.md) |
+| Put oshal on my desktop, phone, or TV | [Get oshal on your devices](./devices.md) |
 
 ## Guides that live with their app
 

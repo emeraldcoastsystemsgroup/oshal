@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed the retired Presentron + deprecated Google Search MCP service-runtime inputs, save requests, collect helpers, and health cards; the shared service-runtimes section now covers RAG only
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added the operator-only "Manage swarm apps" link (→ /applications) — the replacement entry for the retired cockpit header apps-grid button; revealed via the dev-console super-admin probe
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added the "Add a computer (remote node)" link (→ /api/join/, the join surface that mints enrollment + join codes) beside Manage swarm apps, revealed by the same probe — the surface existed since 07-08 but nothing in the cockpit linked to it, so adding a node meant knowing the URL by heart
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Added the "Get oshal on your devices" link (→ /cockpit/tools/devices.html) beside it, shown to everyone: the operator-gated join surface is the advanced path, and a basic user who came to Settings looking for "how do I put this on my desktop" found nothing.
  */
 
 import { createUiLogger, serializeUiError } from '../../../shared/ui-debug.js';
@@ -228,6 +229,9 @@ export class SettingsGlobalTab {
           </a>
           <a class="settings-cancel-btn" id="settingsAddComputerLink" href="/api/join/" target="_blank" rel="noreferrer" hidden>
             <i class="ph ph-laptop"></i> Add a computer (remote node)
+          </a>
+          <a class="settings-cancel-btn" id="settingsDevicesLink" href="/cockpit/tools/devices.html" target="_blank" rel="noreferrer">
+            <i class="ph ph-devices"></i> Get oshal on your devices
           </a>
         </div>
       </div>`;

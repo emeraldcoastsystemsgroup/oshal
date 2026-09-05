@@ -1,8 +1,8 @@
 # Platform tools — user guide (as-built)
 
-These six tools sit together in the **bottom section of the cockpit ribbon** on a plain
-**`/cockpit/`**: **Search**, **Run Trace**, **Budgets**, **Notifications**, **My Data**, and —
-for an operator — **Dead Letters**. Each also opens directly in its own browser tab:
+These tools sit together in the **bottom section of the cockpit ribbon** on a plain
+**`/cockpit/`**: **Get oshal**, **Search**, **Run Trace**, **Budgets**, **Notifications**, **My Data**,
+and — for an operator — **Dead Letters**. Each also opens directly in its own browser tab:
 
 | Ribbon label | Direct URL | Who sees it on the ribbon |
 |---|---|---|
@@ -11,6 +11,7 @@ for an operator — **Dead Letters**. Each also opens directly in its own browse
 | **Budgets** | `/cockpit/tools/budgets.html` | anyone signed in |
 | **Notifications** | `/cockpit/tools/notify.html` | anyone signed in |
 | **My Data** | `/cockpit/tools/my-data.html` | anyone signed in |
+| **Get oshal** | `/cockpit/tools/devices.html` | anyone signed in |
 | **Dead Letters** | `/cockpit/tools/dlq.html` | pinned for an operator account |
 
 When you open the cockpit focused on one app (`/cockpit/?app=<name>`), these tools normally leave the
@@ -18,6 +19,10 @@ rail — they collapse behind a single **Settings** entry (an app can ask to kee
 and a few do). Clicking it opens a card grid: *Your workspace* (Settings, Notifications, My Data,
 Budgets) and *Platform* (Search, Run Trace, Dead Letters and the other platform surfaces). Clicking a
 card switches the cockpit to that tool.
+
+**Get oshal** has its own guide — [Get oshal on your devices](./devices.md): the Windows worker-node
+installer and the list of your computers, the QR that installs the cockpit on a phone, and the TV
+apps with their sign-in step.
 
 They are the platform's own housekeeping screens rather than any one app's: find something you own,
 see where a ticket's time and money went, see the spend caps in force, choose where messages reach

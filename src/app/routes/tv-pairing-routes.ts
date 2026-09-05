@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Lazy-DDL chokepoint + tier-1 RLS (A1.2 follow-up): new ensureTvRevocationSchema creates tv_token_revocations if absent (DDL mirrors docker/postgres/migrations/003_tv_token_revocations.sql, which no automated runner applies — so this is the table's only fresh-deploy creation path) and appends buildOwnerRlsPolicyStatements so it is never policy-less. Fired once, non-fatally, at router creation when a pool is provided; the revoke/watermark paths keep their existing fail-open behavior.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | guc-strict fix: revocationWatermark queried FORCE-RLS tv_token_revocations from the auth middleware — BEFORE any request identity exists — so under OSHAL_DB_GUC_STRICT=deny the read silently returned no rows (not an error → the fail-open path) and minIat stayed 0: "sign out all my TVs" no longer invalidated anything. The watermark read now runs under runWithSystemIdentity (trusted pre-identity auth path, scoped to the sub already proven by the token's HMAC signature). Guard: tests/unit/token-middleware-rls.spec.ts.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Carry the approving session's verified issuer in newly signed TV tokens and restore it during authentication. Existing issuer-less tokens retain core access but cannot be guessed into an issuer-bound application account.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Pairing QR: `?target=cockpit` encodes the installable cockpit URL (the phone tile on the Get oshal page). The URL choice moved out of the handler into the exported pairingQrUrl so it is testable and the allowlist of targets lives in one place. Guard: tests/unit/tv-pairing-qr-target.spec.ts.
  */
 import { Router, RequestHandler, Request, Response } from 'express';
 import crypto from 'crypto';
@@ -166,6 +167,28 @@ function appOrigin(req: Request): string {
 }
 
 /**
+ * @description Picks the URL a pairing QR encodes. Every target is an auth-gated page on this
+ *   origin — the QR carries a place to go, never a secret — and an unknown target falls back to
+ *   the TV approval page, the QR's original purpose, rather than encoding the value it was given.
+ * @param origin - The app origin the URL is built on (see appOrigin).
+ * @param query - The raw query: `target` (`remote` | `cockpit`), `room` (remote only), `code`.
+ * @returns The absolute URL to encode.
+ */
+export function pairingQrUrl(
+  origin: string,
+  query: { target?: unknown; room?: unknown; code?: unknown },
+): string {
+  const target = String(query.target || '');
+  if (target === 'cockpit') return `${origin}/cockpit/`;
+  if (target === 'remote') {
+    const room = String(query.room || '').replace(/[^a-z0-9-]/gi, '');
+    return `${origin}/api/jarvis/remote` + (room ? `?room=${encodeURIComponent(room)}` : '');
+  }
+  const code = String(query.code || '').toUpperCase().replace(/\s/g, '');
+  return code ? `${origin}/tv?code=${encodeURIComponent(code)}` : `${origin}/tv`;
+}
+
+/**
  * @description Reads the TV token from wherever the client put it: the `oshal_tv` cookie (Fire TV
  * WebView via CookieManager), the `X-OSHAL-TV-Token` header, or `Authorization: Bearer` (native
  * Roku, which has no browser cookie jar). Cookie wins when both are present.
@@ -288,17 +311,10 @@ export function createTvPairingRoutes(requiresAuth: RequestHandler, pool?: Pool)
 
   // PUBLIC. Renders a scannable QR PNG so a TV (esp. native Roku, which can't draw an SVG) can show
   // a "scan to sign in" code. `?code=` → the /tv approval URL prefilled with the pairing code;
-  // `?target=remote` → the Jarvis phone push-to-talk URL. Encodes only auth-gated app URLs, no secret.
+  // `?target=remote` → the Jarvis phone push-to-talk URL; `?target=cockpit` → the installable
+  // cockpit (the phone tile on the Get oshal page). Encodes only auth-gated app URLs, no secret.
   router.get('/api/tv/pair/qr', async (req: Request, res: Response) => {
-    const origin = appOrigin(req);
-    let url = `${origin}/tv`;
-    if (String((req.query as { target?: string }).target || '') === 'remote') {
-      const room = String((req.query as { room?: string }).room || '').replace(/[^a-z0-9-]/gi, '');
-      url = `${origin}/api/jarvis/remote` + (room ? `?room=${encodeURIComponent(room)}` : '');
-    } else {
-      const code = String((req.query as { code?: string }).code || '').toUpperCase().replace(/\s/g, '');
-      if (code) url = `${origin}/tv?code=${encodeURIComponent(code)}`;
-    }
+    const url = pairingQrUrl(appOrigin(req), req.query as { target?: unknown; room?: unknown; code?: unknown });
     try {
       const png = await QRCode.toBuffer(url, { type: 'png', margin: 1, width: 480, color: { dark: '#0e0e16', light: '#ffffff' } });
       res.type('png').set('Cache-Control', 'no-store').send(png);
