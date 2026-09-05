@@ -989,3 +989,56 @@ inside a standing failure is the signal that is currently lost. And when a sched
 service-liveness claim is being checked, **verify with a tool that distinguishes "absent" from "no
 output"**: `Get-ScheduledTask`, not a grep over a command that may print nothing. An empty result is
 not evidence of absence — that mistake is what produced the first version of this entry.
+
+## BUG-23 — Career Hunter AI scoring was dead for 25 days behind two credential walls, and the board looked merely "quiet"
+- **Type:** Bug (silent degradation / credential posture) · **Priority:** High · **Status:** FIXED 2026-09-05 (store 1.12.4 + 1.12.5, core PR #302)
+- **Discovered:** 2026-09-04, from the operator's question "are the jobs still scraping every night". The scrape was fine; scoring had not run since 2026-08-10.
+
+**What the operator saw.** No new matches on the job board for weeks. The first thing a naive check
+finds — Postgres `career_postings` frozen at 2026-07-31 — is a dormant replay target and proves
+nothing; the SQLite corpus was ingesting 13–24k postings every night. The real signal was one row:
+the operator's `user_signals.max(ai_scored_at)` = 2026-08-10, while every boot catch-up logged
+`career-hunter cron: keyword score failed; cursor not advanced` and the title pass traceback
+`RuntimeError: No AI auth found. Log into Claude Code, or set ANTHROPIC_API_KEY.`
+
+**Root cause — two walls, not one.** Store commit `20168c9` (2026-08-06, an authz fix) sandboxed
+the engine child away from the box's mounted `~/.codex` / `~/.claude` logins by pointing
+`CODEX_HOME` / `CLAUDE_CONFIG_DIR` at an empty per-user directory, with no carve for the
+deployment's own logins, and the brokered per-user key (`OSHAL_CRED_ANTHROPIC`) was never presented
+under the name the engine reads (`ANTHROPIC_API_KEY`) — so the tenant path was a dead end too. The
+sandbox is enforced in **two** places: the runner (`career-engine-runner.ts`) and the launcher
+(`bin/oshal-jobhunter.js`), which rebuilds the Python child's environment itself.
+
+**Why the first fix did not fix it.** 1.12.4 opened the carve in the runner under ADR-127's two
+gates (`DEMO_MODE` + exact operator subject) and mapped the brokered key. A runner-level proof on
+the box was green — the runner's env for the operator showed no sandbox. The next live pass at
+04:02Z still raised `No AI auth found`, because the launcher re-applied its own wall two spawns
+down. A green proof at the wrong boundary is not closure evidence; the boundary that raised the
+error is the one to prove.
+
+**Fix.** 1.12.5: the runner states its verdict as `OSHAL_PORTAL_LOGINS=1` (set only under both
+gates; any caller-supplied copy is stripped) and the launcher lifts its wall only on that exact
+value, passing `HOME` through. Core PR #302 recorded the credential posture as ADR-137 amendment A
+(demo = portal fallback, tenant = per-user keys) and added the satellite "Log in + push" so a swarm
+whose browser is elsewhere can still be logged in.
+
+**Proof.** After the 1.12.5 restart the catch-up pass ran `python3 -m jobhunter score --min-keyword
+40 --first-seen-days 3 --limit 250` with four `codex exec` workers, and the operator's board gained
+53 AI-scored postings (fit 10–84) within six minutes — the first since 2026-08-10.
+
+**Guards.** Store: `career-no-sync-api.test.mjs` (wall vs carve at the runner, brokered-key
+mapping, verdict stripped for a guest), `career-portal-logins-launcher.test.mjs` (loads the real
+launcher: walled without the verdict, lifted only on `'1'`, near-misses stay walled). Core:
+`claude-code-demo-login-adoption.spec.ts`, `claude-code-credential-distribution-boundary.spec.ts`,
+`node-login-push.spec.ts`.
+
+**Lessons recorded.** (1) "Scrape fresh, scores stale" is the outage's signature — it is now the
+first row of the failure table in `career-hunter/docs/operations.md`, with the admin checks that
+would have caught it in a minute (`last_cron_score_at` only advances on a *successful* pass).
+(2) Prove at the boundary that raised the error. (3) The api restarts several times a day on this
+box; a scoring pass killed mid-run keeps its rows but not its cursor, so it re-runs at the next
+boot — progress accumulates, the cursor moves only on completion.
+
+**Still open (BACKLOG):** codex platform promotion on this box is blocked by an empty
+`ENCRYPTION_KEY`; the satellites run the pre-push node build; the user-targets browser round-trip
+(1.13.0) has not been exercised from a real session.
