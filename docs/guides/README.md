@@ -35,6 +35,7 @@ the URL is authoritative — bookmark it and you land in the same place every ti
 | Change my theme, provider, model, or notifications | [Settings](./settings.md) |
 | Search my data, trace a run's cost, set a budget, export or delete my data, or rescue a stuck ticket | [Platform tools](./platform-tools.md) |
 | Put oshal on my desktop, phone, or TV | [Get oshal on your devices](./devices.md) |
+| See whether the Kalshi scan is winning, read its record, and cross-reference the ledger | [Kalshi](./kalshi.md) |
 
 ## Guides that live with their app
 
