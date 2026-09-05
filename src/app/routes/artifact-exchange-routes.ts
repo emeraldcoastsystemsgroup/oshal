@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1 routes: POST /handles mints an owner-bound claim ticket over a serve URL the caller can already read; GET /handles/:ref(/content) redeems it — content re-fetches the source SERVER-SIDE as the minting caller (service secret + sub over the loopback to this same server instance), so ownership is enforced at mint AND at use; GET /actions answers the "Send to…" menu for a MIME type; GET /send-to.js serves the one shared browser component. Mounted at /api/artifacts behind serviceSecretOr(requiresAuth). Enforcement for a dispatched action stays at the DESTINATION's own gate.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: the first kernel built-ins, registered at boot through the SAME registry interface apps use. kernel-storage → POST /builtin/save (redeem the handle, uploadBytes to the caller's oshal-local store under artifacts/). kernel-email → the compose overlay (GET /email-compose page; POST /builtin/email sends the artifact as an attachment over the caller's OWN mailbox — sendGmail else the Graph sibling else 409 — behind the standard confirm:true 428 gate). Factory now takes ctx (uploadBytes + connector-token lookups need the pool).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 3: kernel-rag "Ingest to RAG" (overlay — pick a collection, then the page drives the EXISTING caller-ACL'd /api/rag/upload from the user's own session; no new ingest surface, the doc-extract fix already guards it) and kernel-jarvis "Summarize with Jarvis" (overlay — text via POST /builtin/extract-text, the doc-extract rail, then the surface's own /api/jarvis/ask + result poll). extract-text is read-only and owner-bound like every redeem.
  */
 
 import * as path from 'node:path';
@@ -21,6 +22,7 @@ import {
   type ArtifactHandleRecord,
 } from '@/shared/artifact-exchange';
 import type { AppContext } from '@/app/composition/app-context';
+import { extractDocText } from '@/features/doc-extract';
 import { uploadBytes } from './storage-browse';
 import { sendGmail, sendOutlookMail } from './email-routes';
 import { getValidAccessToken } from './connectors-routes';
@@ -111,6 +113,14 @@ async function redeemForBuiltin(
   return { rec, body: fetched.body };
 }
 
+/** MIME globs for text-bearing documents the doc-extract rail can read. */
+const DOC_TYPES = [
+  'application/pdf',
+  'text/*',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/msword',
+];
+
 /** Register the kernel built-in destinations — through the SAME interface apps use (ADR-139 D1). */
 function registerBuiltins(): void {
   registerAppArtifactActions('kernel-email', {
@@ -118,6 +128,22 @@ function registerBuiltins(): void {
   });
   registerAppArtifactActions('kernel-storage', {
     accepts: [{ id: 'save', label: 'Save to OSHAL Storage', icon: '🗄️', types: ['*/*'], mode: 'post', endpoint: '/api/artifacts/builtin/save' }],
+  });
+  registerAppArtifactActions('kernel-rag', {
+    accepts: [{ id: 'ingest', label: 'Ingest to RAG', icon: '📚', types: DOC_TYPES, mode: 'open', overlay: '/api/artifacts/rag-ingest' }],
+  });
+  registerAppArtifactActions('kernel-jarvis', {
+    accepts: [{ id: 'summarize', label: 'Summarize with Jarvis', icon: '🤖', types: DOC_TYPES, mode: 'open', overlay: '/api/artifacts/jarvis-summarize' }],
+  });
+}
+
+/** @description Serve one of the kernel overlay pages from cockpit/tools (bind-mounted). */
+function serveOverlayPage(res: Response, file: string): void {
+  res.sendFile(path.resolve(process.cwd(), 'src/pages/cockpit/tools', file), (err) => {
+    if (err) {
+      logger.error({ err, file }, 'failed to serve artifact overlay page');
+      res.status(404).send('overlay page not found');
+    }
   });
 }
 
@@ -258,16 +284,29 @@ export function createArtifactExchangeRoutes(ctx: AppContext): Router {
     }
   });
 
-  /** GET /email-compose — the kernel "Email it…" overlay page (self-contained; opened by
-   *  send-to.js in an in-place iframe with ?artifact=<ref>). */
-  router.get('/email-compose', (_req: Request, res: Response) => {
-    res.sendFile(path.resolve(process.cwd(), 'src/pages/cockpit/tools/artifact-email-compose.html'), (err) => {
-      if (err) {
-        logger.error({ err }, 'failed to serve email-compose page');
-        res.status(404).send('email compose page not found');
-      }
-    });
+  /** POST /builtin/extract-text — the artifact's readable text via the doc-extract rail
+   *  (owner-bound redeem like every built-in; read-only). The Jarvis summarize overlay's
+   *  source of truth for PDFs/DOCX the browser cannot parse itself. */
+  router.post('/builtin/extract-text', async (req, res) => {
+    const sub = callerSub(req);
+    if (!sub) { res.status(401).json({ error: 'unauthenticated' }); return; }
+    const redeemed = await redeemForBuiltin(req, res, sub);
+    if (!redeemed) return;
+    try {
+      const result = await extractDocText({ name: redeemed.rec.name, buffer: redeemed.body, mime: redeemed.rec.type });
+      if (!result.ok) { res.status(422).json({ error: 'unreadable', reason: result.reason, format: result.format }); return; }
+      res.json({ ok: true, name: redeemed.rec.name, text: result.text, truncated: !!result.truncated, format: result.format });
+    } catch (err) {
+      logger.error({ err, ref: redeemed.rec.ref }, 'artifact text extraction failed');
+      res.status(502).json({ error: 'text extraction failed' });
+    }
   });
+
+  /** The kernel overlay pages (self-contained; opened by send-to.js in an in-place iframe
+   *  with ?artifact=<ref>). */
+  router.get('/email-compose', (_req: Request, res: Response) => serveOverlayPage(res, 'artifact-email-compose.html'));
+  router.get('/rag-ingest', (_req: Request, res: Response) => serveOverlayPage(res, 'artifact-rag-ingest.html'));
+  router.get('/jarvis-summarize', (_req: Request, res: Response) => serveOverlayPage(res, 'artifact-jarvis-summarize.html'));
 
   /** GET /send-to.js — the one shared browser component every surface loads (classic script). */
   router.get('/send-to.js', (_req: Request, res: Response) => {
