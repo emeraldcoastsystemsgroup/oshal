@@ -12,7 +12,9 @@ REM
 REM The strategy stakes NOTHING until its sigma is measured rather than assumed.
 REM ===========================================================================
 setlocal
-cd /d C:\Projects\open-shal-swarm-harness-agent-llm
+REM 2026-09-04: run from THIS checkout. The hardcoded pre-cutover path meant every grader/forward
+REM change landed in the trunk was silently never run by the scheduled task.
+cd /d %~dp0..
 
 set LOGDIR=%~dp0..\output\kalshi
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
