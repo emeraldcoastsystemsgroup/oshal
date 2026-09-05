@@ -21,6 +21,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — FORCE-RLS lot table, rules normalizer (pct XOR price per leg; stop XOR trailing), intent/list/get/release, pinnedQtyBySymbol + the pure overlay, the tick state machine with injectable venue deps (shared with the event-plan leg), and the `lot-` request-id convention.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | createPinnedLotIntent accepts `notBefore` (ADR-136 D4: a TIMED entry is placed later by the leg) and stepPendingFill's "entry never placed within 2 days" release clock starts at max(createdAt, notBefore) — a protected order dated a week out is no longer released before it can fire.
  *
  * @module trading-pinned-lots
  */
@@ -114,13 +115,15 @@ function rowToLot(r: Record<string, unknown>): PinnedLotRow {
 
 /* ── CRUD ──────────────────────────────────────────────────────────────────── */
 /** @description Record the intent behind a manual BUY: the lot is born pending_fill and the leg watches its order. */
-export async function createPinnedLotIntent(pool: AppContext['pool'], sub: string, input: { book: TradingBook; decisionId: string; symbol: string; qty: number; rules: PinnedLotRules }): Promise<PinnedLotRow> {
+export async function createPinnedLotIntent(pool: AppContext['pool'], sub: string, input: { book: TradingBook; decisionId: string; symbol: string; qty: number; rules: PinnedLotRules; notBefore?: Date }): Promise<PinnedLotRow> {
   await ensurePinnedLotsSchema(pool);
   if (!hasExitRules(input.rules)) throw new TradingError(400, 'rules_required', 'A protected lot needs at least one exit rule.');
+  // notBefore (ADR-136 D4): a timed entry is placed later — the pending-fill release clock starts then.
+  const entry = { decisionId: input.decisionId, ...(input.notBefore ? { notBefore: input.notBefore.toISOString() } : {}) };
   const r = await pool.query(
     `INSERT INTO oshal_trading_pinned_lots (user_sub, book_id, book_ref, symbol, qty, rules, entry, timeline)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [sub, input.book.bookId, input.book.ref, input.symbol.toUpperCase(), input.qty, JSON.stringify(input.rules), JSON.stringify({ decisionId: input.decisionId }),
+    [sub, input.book.bookId, input.book.ref, input.symbol.toUpperCase(), input.qty, JSON.stringify(input.rules), JSON.stringify(entry),
       JSON.stringify([{ at: new Date().toISOString(), event: 'intent', detail: `${input.qty} ${input.symbol.toUpperCase()} on ${input.book.ref}: ${describeRules(input.rules)}` }])]);
   logger.info({ sub, lotId: r.rows[0].lot_id, symbol: input.symbol, book: input.book.ref }, 'pinned lot intent recorded');
   return rowToLot(r.rows[0]);
@@ -247,7 +250,9 @@ async function stepPendingFill(ctx: AppContext, sub: string, lot: PinnedLotRow, 
     `SELECT broker_order_id, status, filled_qty, filled_avg_price FROM oshal_trading_orders WHERE user_sub = $1 AND book_id = $2 AND decision_id = $3 ORDER BY created_at DESC LIMIT 1`,
     [sub, book.bookId, decisionId])).rows[0];
   if (!row) {
-    const ageMs = deps.now().getTime() - new Date(lot.createdAt).getTime();
+    // A timed entry (ADR-136 D4) is placed later: its "never placed" clock starts at the fire time, not at intent.
+    const notBefore = Date.parse(String((lot.entry ?? {}).notBefore ?? '')) || 0;
+    const ageMs = deps.now().getTime() - Math.max(new Date(lot.createdAt).getTime(), notBefore);
     if (ageMs > 2 * 86_400_000) { await patchLot(ctx.pool, sub, lot.lotId, { status: 'released' }, { event: 'released', detail: 'entry order never placed within 2 days' }); return 'released'; }
     return null;
   }
