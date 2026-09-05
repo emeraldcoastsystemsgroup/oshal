@@ -13,6 +13,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — GET /files (surface), GET /files/list, POST /files/upload (raw body, ?name=), GET /files/download (?path=), DELETE /files (?path=). Dropbox-backed via the per-user connector token; 409 when Dropbox isn't connected.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Unified file browser — GET /roots, GET /browse (drill-down folders/files), GET /preview (inline text/image), provider-aware GET /download across Dropbox/GitHub/OSHAL-local (via storage-browse). Upload now takes an optional ?dir= so it lands in the open Dropbox folder.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: POST /upload also accepts provider=oshal-local (uploadBytes grew the branch) — the always-present local store no longer needs a connector to receive a file.
  *
  * @module files-routes
  */
@@ -134,7 +135,7 @@ export function createFilesRoutes(ctx: AppContext, apiDir: string): Router {
     const name = String(req.query.name || '').replace(/[^\w.\- ]/g, '_').slice(0, 120);
     if (!name) { res.status(400).json({ error: 'name query param required' }); return; }
     const provider = String(req.query.provider || 'dropbox') as StorageProvider;
-    if (provider !== 'dropbox' && provider !== 'google-drive') { res.status(400).json({ error: 'upload supports dropbox or google-drive' }); return; }
+    if (provider !== 'dropbox' && provider !== 'google-drive' && provider !== 'oshal-local') { res.status(400).json({ error: 'upload supports oshal-local, dropbox, or google-drive' }); return; }
     const dir = String(req.query.dir || '').replace(/^\/+|\/+$/g, '');
     const body = req.body as Buffer;
     if (!body || !body.length) { res.status(400).json({ error: 'empty body' }); return; }

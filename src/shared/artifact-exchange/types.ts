@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: the artifact-exchange declaration types, the fail-closed manifest validator the swarm-app loader calls (a malformed artifacts: block fails the app load, never half-registers), and the MIME-glob matcher the menu uses. Pure module — no I/O — so the vitest guards cover every reject shape.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2 (Amendment B): `overlay` — a KERNEL-RESERVED dispatch shape (send-to.js opens the page in an in-place iframe overlay with the ref; the email compose built-in is the first user). Manifests may NOT declare it — the validator refuses it, so an app cannot point the overlay at an arbitrary page; kernel boot registrations bypass the manifest validator by construction.
  */
 
 /** The two dispatch modes an accepting app may declare (ADR-139 D4/D4a). */
@@ -31,6 +32,9 @@ export interface ArtifactAcceptDeclaration {
   mode: ArtifactActionMode;
   /** post mode only: the root-relative `/api/...` endpoint that receives `{ ref }`. */
   endpoint?: string;
+  /** KERNEL-RESERVED (Amendment B): an in-place overlay page send-to.js opens with `?artifact=<ref>`
+   *  instead of navigating. Refused in manifests — only kernel boot registrations may set it. */
+  overlay?: string;
 }
 
 /** @description A source declaration (phase 3 — parsed and validated now, consumed later). */
@@ -132,6 +136,7 @@ export function validateArtifactActionsDeclaration(decl: unknown): string | null
       if (a.mode !== 'open' && a.mode !== 'post') return acceptError(i, `mode must be one of: ${ARTIFACT_ACTION_MODES.join(', ')}`);
       if (a.mode === 'post' && !isSafeApiPath(a.endpoint)) return acceptError(i, 'post mode requires a root-relative /api/... endpoint (no scheme, no .., ≤200 chars)');
       if (a.mode === 'open' && a.endpoint !== undefined) return acceptError(i, 'open mode takes no endpoint — the cockpit navigates to the app surface (ADR-139 D4a)');
+      if (a.overlay !== undefined) return acceptError(i, 'overlay is kernel-reserved (Amendment B) — apps declare open or post');
     }
   }
   const provides = d.provides;
