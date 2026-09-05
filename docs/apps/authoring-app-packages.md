@@ -57,6 +57,7 @@ enforces this.
 | `foundation` | | `{persona}` layered under every bot |
 | `toolsDir` | | dir of bundled tools (default `tools/`) |
 | `ui.static` / `ui.dynamic` | | ribbon/toolbar surfaces |
+| `ribbon` | | cockpit chrome policy while the app is focused: `hideFrameworkItems: []`, `defaultView`, and the opt-in `hideChatPanel` / `hideAssistant` / `hideStatusBar` flags (right-rail chat, global assistant orb, bottom bots/tickets/cost/queue bar). All default to shown; a CRM or trading surface that is not ticket/queue-shaped sets `hideStatusBar: true` |
 | `routes` | | `[{module, factory, mountPath, auth, requiresAi?}]` — see below |
 | `schedules` | | recurring prompt jobs or confined deterministic service-route handlers — see below |
 | `takeout` | | package-owned Google Takeout slice declarations — see below |

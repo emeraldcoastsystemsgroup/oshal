@@ -36,6 +36,7 @@
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | Forward ui.static[].group into the synthesised ribbon items. RibbonNav has grouped on this field since the rail-pin work, but synthesiseProfile's static-item map listed the keys it copied, so a manifest declaring `group:` produced an identical flat ribbon with no error anywhere — the silent no-op that made the feature look unimplemented. Forwarded verbatim; the renderer stays the authority on where a heading is allowed.
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | listApps passes its caller to toSummary as the VIEWER, and the new getAppForViewer is the viewer-scoped counterpart to getApp. A public-scoped app keeps the owner_sub stamped at install, so both read paths were serializing the deployment operator's OIDC subject to every caller. The viewer is passed through even when undefined on purpose: global search lists with no caller and matches summary.ownerSub to find a user's own person-scoped apps, so unconditional redaction would have hidden those from their owner.
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: applyArtifactActions on activate / unregister on deactivate — the app's "Send to…" declarations join the shared registry with the skill-profiles discipline (replace-by-app, retract-on-absent, full teardown on toggle-off).
+ * 34 | maintainer@emeraldcoastsystemsgroup.com   | synthesiseProfile forwards ribbon.hideStatusBar (true → true, else undefined) exactly like hideChatPanel/hideAssistant, so the cockpit can drop the operational status bar for apps that are not ticket/queue-shaped.
  */
 
 import type { Pool } from 'pg';
@@ -672,6 +673,9 @@ export class SwarmAppService {
     /** When true, the cockpit hides its global Jarvis/DEV assistant orb while
      *  this app is focused. App-owned ui.assistant bubbles remain independent. */
     hideAssistant?: boolean;
+    /** When true, the cockpit hides its bottom status bar (bots/tickets/cost/queue)
+     *  while this app is focused — for apps that are not ticket/queue-shaped. */
+    hideStatusBar?: boolean;
     /** The app's primary bot, so the cockpit chat panel preselects it instead
      *  of the operator's last-used bot when this app is focused. */
     chatAgent?: { agentId: string; name: string };
@@ -783,6 +787,7 @@ export class SwarmAppService {
       displayName: manifest.displayName,
       description: manifest.description,
       hideChatPanel: ribbon.hideChatPanel === true ? true : undefined,
+      hideStatusBar: ribbon.hideStatusBar === true ? true : undefined,
       hideAssistant: ribbon.hideAssistant === true ? true : undefined,
       chatAgent,
       theme: manifest.theme,
