@@ -12,6 +12,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: ensureJarvisSchema / saveTaskPending / finishTask / findJarvisTaskSessionId / buildOpenWorkBlock / persistJarvisTurn / markJarvisSessionTaskStatus / mapJarvisTaskStatusFromTicketStatus / storedVisual (route decomposition, no behaviour change).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | jarvisFailureNoteForTicketStatus: an escalated/cancelled ticket left the shelf row's error column NULL, so a failed multi-app plan rendered as status 'error' with no message. Say the run stopped — never summarize an outcome that does not exist.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Stale DONE results are WITHHELD from the block (title + age stay): the fourth live iteration proved guidance cannot stop the model quoting numbers it can see - the month-old demo-era pull kept winning however it was framed. Deterministic beats instruction: past STALE_RESULT_DAYS the result text simply is not in the context.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | OPEN WORK results carry their AGE and are scoped to their own task. Live verification on the gsquared staging box: with no dates and a preamble commanding "read the RESULT and report it", Jarvis quoted a month-old demo-era CRM pull as the current pipeline ("0 in docs out, 4 opportunities" against a live 473/7/2) even after the catalog freshness rule shipped — the two guidances conflicted and this one won. Now they agree: a result answers questions about that task; current-state questions file a fresh handoff.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Persist captured deliverables on the task (files JSONB) so a finished task still offers its download after a reload, not only in the reply that happened to be on screen. Reset files alongside result/visual on re-file: a task re-run under the same id must never surface the previous run's links.
  *
@@ -164,6 +165,9 @@ export async function findJarvisTaskSessionId(
  * user asks — instead of saying "I don't have it" and re-filing. Async (DB-backed).
  * @returns A text block, or '' when the user has no recent work.
  */
+/** DONE results older than this leave the auto-injected prompt (title + age remain). */
+const STALE_RESULT_DAYS = 7;
+
 export async function buildOpenWorkBlock(ctx: AppContext, sub: string): Promise<string> {
   try {
     const rows = (await ctx.pool.query(
@@ -177,6 +181,13 @@ export async function buildOpenWorkBlock(ctx: AppContext, sub: string): Promise<
       const ageDays = r.created_at ? Math.floor((Date.now() - new Date(r.created_at).getTime()) / 86400000) : null;
       const age = ageDays == null ? '' : ageDays <= 0 ? ' (today)' : ageDays === 1 ? ' (1 day ago)' : ` (${ageDays} days ago)`;
       if (r.status === 'done' && r.result && r.result.trim()) {
+        // A stale result's TEXT never enters the prompt. Three guidance iterations on the
+        // gsquared box proved the model quotes whatever numbers it can see, however framed -
+        // the only reliable fix is that month-old numbers are not in the context at all. The
+        // task stays listed (title + age) so 'show me that report' still resolves by id.
+        if (ageDays != null && ageDays > STALE_RESULT_DAYS) {
+          return `- [${r.id}] ${r.title} — DONE${age}. (result withheld as stale — for current data file a fresh handoff; the user can still ask for this task's result by name)`;
+        }
         // Include the actual result so Jarvis can report it. Cap so the prompt stays bounded.
         return `- [${r.id}] ${r.title} — DONE${age}. RESULT:\n${r.result.trim().slice(0, 1500)}`;
       }
