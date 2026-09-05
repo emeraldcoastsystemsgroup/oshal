@@ -92,3 +92,36 @@ money hard-gated off. Given that every edge tested was an illusion, *not betting
 move*, and the machinery reliably arrives at it. The infrastructure (calibration engine, fee math,
 Kelly sizing, order placement, audit trail, paper-trading path) is sound and ready if a real edge
 is ever found. What it will not do is manufacture one.
+
+## Addendum 2026-09-04 — "bet against ourselves at the extremes?"
+
+Operator question, verbatim intent: if the model is extremely wrong, is it extremely right on the
+other side? Scored on the graded record (2,447 settled predictions, spread proxied at 2¢/6¢ from the
+wide-spread flag, fees included), the answer is *slightly*, not extremely:
+
+| Variant (flip our pick to the other side) | Bets | Flipped, proxy spread | If spread 2¢ worse |
+|---|---|---|---|
+| Everything, scan strategy | 828 | −$11.85 | −$28.41 |
+| Everything, weather strategy | 1,619 | +$5.34 | −$27.04 |
+| Scan picks with our P ≥ .90 or ≤ .10 | 79 | +$5.13 | +$3.55 |
+| Weather picks disagreeing with the market by 30+ pts | 153 | +$12.37 | +$7.78 (6¢ spread) |
+| Our longshots (price ≤ .20), either strategy | 1,077 | −$7.61 | −$29.15 |
+| Our mid-range (.40–.60), either strategy | 681 | −$3.64 | −$17.26 |
+
+Why the flip cannot be big: our loss was mostly fees + spread + being a few points optimistic. The
+mirror of "slightly overconfident, minus costs" is "slightly right, minus the same costs", and
+flipping means paying the OTHER side's ask — one minus our bid, not one minus our ask. Buying the side
+the market favours at the market's price is agreeing with the market, which the scorecard scores at
+zero by definition.
+
+Two of fourteen variants survive a 2¢ haircut, at 6–8¢ a contract. That is what dredging a losing
+record usually finds, so they are **pre-registered as zero-stake forward tests**, rules fixed today:
+
+- `contrarian-extreme` (kalshi package 1.1.2, `kalshi-scan-config.ts`): for every scan hand with our
+  P ≥ .90 or ≤ .10, the opposite side at its own ask (= 1 − our bid), claimed +.10 over the market.
+- `contrarian-weather-disagree` (`scripts/kalshi-contrarian.ts`): for every weather pick disagreeing
+  with the market by ≥ .30, the opposite side at its own ask, claimed +.10 over the market.
+
+Both are graded by the same daily grader against the market's Brier and appear on the Scorecard tab.
+Until one is PROVEN there it stakes nothing. The scheduled task that grades them had been running from
+the stale pre-cutover checkout since the trunk cutover; it now runs from this tree.

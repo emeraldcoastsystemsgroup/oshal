@@ -20,11 +20,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ENSO + NWS forecast logging, error-model build from collected pairs, pre-registered prediction writes, optional demo paper-trading.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pre-register the contrarian-weather-disagree sibling (scripts/kalshi-contrarian.ts) for every pick that disagrees with the market by 30+ points: the opposite side at ITS OWN ask, claimed +0.10 over the market, zero stake, immutable. Operator, 2026-09-04: "bet against ourselves at the extremes - forward test it". Same judge, same grader, nothing ordered.
  */
 
 import 'dotenv/config';
 import { Pool } from 'pg';
 import { hostDatabaseUrl } from './kalshi-db-url';
+import { CONTRARIAN_WEATHER_STRATEGY, contrarianWeatherRow, type ContrarianRow } from './kalshi-contrarian';
 import {
   buildErrorModel, evaluateWeatherMarkets, getEnsoState, getForecastHigh, listMarkets,
   parseBucket, parseMarketDate, WEATHER_CITIES, type ForecastErrorSample, type WeatherMarket, type WeatherPick,
@@ -68,6 +70,9 @@ async function main(): Promise<void> {
   console.log(`[forward] forecast-error samples collected so far: ${samples.length}`);
 
   const allPicks: WeatherPick[] = [];
+  // The pre-registered contrarian hypothesis (kalshi-contrarian.ts): the opposite side of every pick
+  // that disagrees with the market by 30+ points, priced at that side's OWN ask. Zero stake, same judge.
+  const allContrarian: ContrarianRow[] = [];
   let logged = 0;
 
   for (const [seriesTicker, city] of Object.entries(WEATHER_CITIES)) {
@@ -112,6 +117,11 @@ async function main(): Promise<void> {
         console.log(`[forward] ${city.city} ${date}: NWS ${fc.forecastF}°F (lead ${fc.leadDays}d, σ=${model.sigma.toFixed(1)}°${model.isPrior ? ' PRIOR' : ` measured n=${model.n}`}) → ${picks.length} picks`);
       }
       allPicks.push(...picks);
+      const byTicker = new Map(markets.map((m) => [m.ticker, m]));
+      for (const p of picks) {
+        const row = contrarianWeatherRow(p, byTicker.get(p.ticker));
+        if (row) allContrarian.push(row);
+      }
     }
   }
 
@@ -132,6 +142,23 @@ async function main(): Promise<void> {
     if ((r.rowCount ?? 0) > 0) recorded += 1;
   }
   console.log(`[forward] pre-registered ${recorded} NEW predictions (duplicates left untouched — a prediction is immutable)`);
+
+  // The contrarian sibling rides the same immutable ledger under its own strategy name, so the daily
+  // grader and the Scorecard tab treat it exactly like weather-enso — and can retire it the same way.
+  let contrarianRecorded = 0;
+  for (const c of allContrarian) {
+    const r = await pool.query(
+      `INSERT INTO kalshi_predictions
+        (strategy, ticker, event_ticker, series_ticker, predicted_prob, market_prob, edge_net,
+         stake_fraction, side, rationale, close_time)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (strategy, ticker) DO NOTHING RETURNING id`,
+      [CONTRARIAN_WEATHER_STRATEGY, c.ticker, c.eventTicker, c.seriesTicker, c.predictedProb, c.marketProb, c.edgeNet,
+        c.stakeFraction, c.side, JSON.stringify(c.rationale), c.closeTime],
+    );
+    if ((r.rowCount ?? 0) > 0) contrarianRecorded += 1;
+  }
+  console.log(`[forward] ${CONTRARIAN_WEATHER_STRATEGY}: ${allContrarian.length} picks disagreed with the market by 30+ points; pre-registered ${contrarianRecorded} NEW opposite-side predictions at zero stake`);
 
   const sized = allPicks.filter((p) => p.stakeFraction > 0);
   for (const p of allPicks.slice(0, 12)) {
