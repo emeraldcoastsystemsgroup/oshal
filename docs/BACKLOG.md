@@ -295,6 +295,30 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** after promotion, run a deliberately drifted worker through the default-on guarded path and retain the controller/bot result as deployment evidence.
 - **Done when:** the deployed worker self-corrects to the dispatched provider/model, a missing authoritative record is refused before task creation, and the returned result records `providerConfigSource: "authoritative-dispatch"` with the config version.
 
+### Manifest bots get an ADR-034 authoritative record at load
+- **Remaining:** the gsquared CRM boxes had an EMPTY `agent_config` table, so with push-on-dispatch
+  default-on every queue dispatch to any node bot failed closed ("Authoritative provider config was
+  required but no actionable record was available") while direct chat paths worked — found live
+  2026-09-04 chasing the Jarvis→sales-concierge handoff. Interim: records seeded by hand on both
+  boxes (openai-codex/gpt-5.5, matching their env truth). The durable fix: loading a manifest that
+  declares `bots:` seeds/updates each bot's `agent_config` record from its persona `runtime:` block
+  or the deployment default, so a fresh box is queue-dispatchable without hand seeding.
+- **Done when:** a clean-DB manifest load leaves a dispatchable record for every declared node bot,
+  a unit guard proves it (and goes red when seeding is dropped), and `dispatch-manifest-worker` to a
+  freshly loaded packaged bot succeeds on a box with no hand-seeded rows.
+
+### Queue-dispatched concierge answers carry the app's data context
+- **Remaining:** the ADR-083 rail now completes end to end for the CRM (Jarvis files the pull,
+  keyword call-out picks sales-concierge, the node executes and the ticket completes — proven live
+  2026-09-05 on the gsquared staging box), but the concierge answered honestly that it had no board
+  data: the bare swarm-execute prompt does not engage the package's route-backed board tools the
+  interactive path uses, so a data question completes without the data. The dispatch (or the bot
+  node's tool layer) needs to let the concierge reach its own deterministic board reads on ticket
+  work, per the ADR-036 boundary (server-side data access, model sees normalized results only).
+- **Done when:** the same Jarvis question ("how many opportunities are in docs out?") returns the
+  live count through the handoff rail on a box whose CRM holds a known stage distribution, with the
+  read executed by the package's own operation — never by handing the model a credential.
+
 ### Bot runtime consolidation
 - **Remaining:** choose one canonical implementation across `app.js`, `swarm-node.js`, and `bot-node-server.ts`; remove or explicitly demote the others.
 - **Done when:** config, dispatch, result, heartbeat, and authorization behavior are covered once and no supported deployment silently omits a capability because it selected a different runtime.
