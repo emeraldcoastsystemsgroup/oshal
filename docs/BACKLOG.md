@@ -8,6 +8,26 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 
 ## Promotion, deployment, and regression proof
 
+### Production core-deploy pipeline + version strategy (operator, 2026-09-05)
+- **Remaining:** deploying core to the customer production box (the gsquared CRM landscape) is a
+  proven but fully MANUAL procedure: merge to main, then on-box `git reset --hard <sha>` of the
+  release dir, an on-box `docker build` tagged `oshal-bot:sha-<sha>`, repoint `OSHAL_BOT_IMAGE`
+  in the root-owned env file, and `managed-postgres-compose.sh up` through the fail-closed
+  migration/RLS gate. Version identity today is the commit SHA on the image tag + label + the
+  release-dir checkout + per-run bootstrap evidence logs - honest, but there is no release
+  numbering for core, no image registry (every box builds its own bytes), no staging-to-production
+  promotion of a BUILT artifact, and rollback is a manual tag repoint. The 2026-09-05 launcher-gate
+  failure (migration 124 on a trading-less box) and the merged-but-never-deployed #164 both belong
+  to this gap: nothing tracks "what is main ahead of production" or promotes one tested artifact.
+- **Done when:** core has a named release identity (tag or channel) that a production box can be
+  AT, shown by a version endpoint/cockpit footer; the deploy promotes the SAME image artifact that
+  staging validated (registry pull or verified digest transfer - never a second on-box build of
+  different bytes); the procedure is one documented command with automatic pre-deploy DB/rollback
+  capture and a one-command rollback to the prior pinned image; a drift check reports release-dir
+  sha vs running image vs main; and the gsquared runbook (SETTING-UP-A-CUSTOMER / OPERATIONS)
+  replaces the manual step list with the pipeline. Store packages keep their own existing rail
+  (manifest `version:` + deploy.js parity) - this entry is the CORE artifact path.
+
 ### ADR-134 multi-account books — the pre-second-live-book observability pair
 - **Remaining:** the watchdog still greps hand-known schedule ids (`trading-watchdog.ps1`) and the three raw-pool host report scripts (`site-oshal-report.js`, `oshal-deck-data.js`, `oshal-report-journal.js`) render per-mode, not per-book. Safe today (one live book; `book_ref` is denormalized onto daily-equity/journal rows so legacy reads stay truthful), but a SECOND enabled live book must not run unattended behind a watchdog that can't see its beat or a report that merges its curve into another account's.
 - **Done when:** the watchdog derives the expected live schedule set FROM `oshal_trading_books` (never a hand list) and alerts per missing enabled-book beat; the three report scripts print a per-book breakdown + sum (proven by a real-DB run of their SQL as the enforcing role); both land BEFORE a second live book is enabled, enforced by a check in `scripts/trading-books-cutover.sh`.
