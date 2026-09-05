@@ -173,6 +173,7 @@
  * 160 | maintainer@emeraldcoastsystemsgroup.com   | Multi-provider login (ADR-126): registered /login/:provider next to /login (same loginHandler — it dispatches by path/provider), and made the callback state-mismatch recovery provider-aware via loginRestartPathForCallbackPath so a failed /callback/microsoft restarts the Microsoft flow instead of the generic /login.
  * 161 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: mount /api/artifacts (serviceSecretOr(requiresAuth)) — the artifact-exchange "Send to…" menu, owner-bound handle mint/redeem, and the shared send-to.js component.
  * 162 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: pass ctx into createArtifactExchangeRoutes — the kernel built-in destinations (email compose, save to oshal-local) need the pool for connector tokens and storage writes.
+ * 163 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 fix (found by stage-3 live verification): /api/files rides serviceSecretOr(requiresAuth) — the artifact-handle relay redeems a files-browser source by re-fetching /api/files/download as the minting caller over the internal rail, and the session-only mount 401'd that fetch, 502-ing every doc-hub "Send to…" dispatch.
  */
 
 require('dotenv').config();
@@ -1204,7 +1205,10 @@ function createApp(): express.Application {
   //  Assistant at /api/linkedin-assistant (its own no-post gate) stay core per ADR-093.)
   app.use('/api/devops', requiresAuth, createDevopsRoutes(ctx, apiDir));
   app.use('/api/forge', requiresAuth, createForgeRoutes(apiDir)); // Bot Forge — front door for agentic swarm injection (codex-packer engine)
-  app.use('/api/files', requiresAuth, createFilesRoutes(ctx, apiDir));
+  // serviceSecretOr: the ADR-139 handle relay redeems a files-browser artifact by re-fetching
+  // /api/files/download AS the minting caller over the internal rail — a session-only mount
+  // 401s that loopback fetch and every doc-hub "Send to…" dispatch dies as a 502.
+  app.use('/api/files', serviceSecretOr(requiresAuth), createFilesRoutes(ctx, apiDir));
   app.use('/api/judge', requiresAuth, createJudgeRoutes(ctx));  // shared LLM-judge/grading service — quality-judge concierge (a0…0053)
   // /api/storage now mounts from the storage app package (ADR-085 carve; auth: oidc in its manifest).
   // ADR-045 #2 — caller-scoped graph (replaces the retired external graph endpoint). The outer
