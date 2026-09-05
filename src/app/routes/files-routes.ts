@@ -14,12 +14,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — GET /files (surface), GET /files/list, POST /files/upload (raw body, ?name=), GET /files/download (?path=), DELETE /files (?path=). Dropbox-backed via the per-user connector token; 409 when Dropbox isn't connected.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Unified file browser — GET /roots, GET /browse (drill-down folders/files), GET /preview (inline text/image), provider-aware GET /download across Dropbox/GitHub/OSHAL-local (via storage-browse). Upload now takes an optional ?dir= so it lands in the open Dropbox folder.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: POST /upload also accepts provider=oshal-local (uploadBytes grew the branch) — the always-present local store no longer needs a connector to receive a file.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 fix: callerSub resolves the trusted service-rail identity first (getTrustedServiceUserSub) — the artifact-handle relay redeems files-browser sources by re-fetching /download as the minting caller over that rail, and the session-only resolution 401'd it (found live; the mount widened to serviceSecretOr in the same change).
  *
  * @module files-routes
  */
 import { Router, raw, type Request, type Response } from 'express';
 import * as path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
 import type { AppContext } from '@/app/composition/app-context';
 import { getValidAccessToken } from './connectors-routes';
 import { listRoots, browse, readBytes, previewFile, uploadBytes, deleteEntry, type StorageProvider } from './storage-browse';
@@ -32,8 +34,12 @@ const DBX = 'https://api.dropboxapi.com/2';
 const DBX_CONTENT = 'https://content.dropboxapi.com/2';
 const MAX_UPLOAD = 25 * 1024 * 1024; // 25 MB/file (MVP; chunked upload is future work)
 
-/** Signed-in caller's OIDC sub. */
+/** Signed-in caller's OIDC sub, or the trusted sub from an internal service-secret call —
+ *  the same precedence every app surface uses. The ADR-139 handle relay redeems files-browser
+ *  artifacts over the internal rail, so the trusted identity must resolve here. */
 function callerSub(req: Request): string | null {
+  const trusted = getTrustedServiceUserSub(req);
+  if (trusted) return trusted;
   const u = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user;
   return u?.sub ? String(u.sub) : null;
 }
