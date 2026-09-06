@@ -9,6 +9,7 @@
      matters — without it the surface would have no colors at all. -->
 <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
 <script src="/shared/ui/js/surface-theme.js"></script>
+<script src="/api/artifacts/send-to.js" defer></script>
 <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 <style>
   /* Keep the surface's own short alias names, but DERIVE them from the framework theme rather than
@@ -181,40 +182,28 @@ function renderList(){
       : state.provider==='github' ? 'No repos/files here yet.' : 'Nothing saved here yet — swarms drop artifacts in OSHAL Storage.';
     $('list').innerHTML = '<div class="empty">'+hint+'</div>'; return;
   }
+  // ADR-139 Amendment C: files are declared as artifacts via the STANDARD TAG — the shared
+  // send-to.js component injects the affordance (chip + right-click) and owns how it looks.
   $('list').innerHTML = state.entries.map((e,i) =>
-    `<div class="row" data-i="${i}">
+    `<div class="row" data-i="${i}"${e.type==='file'
+       ? ` data-artifact-source="${esc(dlUrl(e))}" data-artifact-type="${esc(mimeFor(e.name))}" data-artifact-name="${esc(e.name)}"`
+       : ''}>
        <span class="ic">${e.type==='folder'?'📂':iconFor(e.name)}</span>
        <span class="nm">${esc(e.name)}</span>
        <span class="meta">${e.type==='folder'?'':esc(fmtSize(e.size))}</span>
        <span class="acts">
          ${e.type==='file'?`<a class="btn ghost sm" href="${dlUrl(e)}" onclick="event.stopPropagation()">⬇</a>`:''}
-         ${e.type==='file'?`<button class="btn ghost sm" data-send="${i}" title="Send to another app">📤</button>`:''}
          ${(e.type==='file' && (state.provider==='dropbox' || state.provider==='google-drive'))?`<button class="btn del sm" data-del="${i}">✕</button>`:''}
        </span>
      </div>`
   ).join('');
   Array.from($('list').querySelectorAll('.row')).forEach(row =>
-    row.addEventListener('click', ()=> onEntry(state.entries[+row.getAttribute('data-i')])));
+    row.addEventListener('click', (ev)=> {
+      if (ev.target && ev.target.closest && ev.target.closest('[data-artifact-chip]')) return;
+      onEntry(state.entries[+row.getAttribute('data-i')]);
+    }));
   Array.from($('list').querySelectorAll('[data-del]')).forEach(b =>
     b.addEventListener('click', (ev)=>{ ev.stopPropagation(); del(state.entries[+b.getAttribute('data-del')]); }));
-  Array.from($('list').querySelectorAll('[data-send]')).forEach(b =>
-    b.addEventListener('click', (ev)=>{ ev.stopPropagation(); sendTo(state.entries[+b.getAttribute('data-send')], b); }));
-}
-
-// ---- ADR-139 "Send to…" — every file here is an artifact; the shared component owns the menu ----
-let sendToLoader = null;
-function ensureSendTo(){
-  if (window.oshalSendTo) return Promise.resolve(true);
-  if (!sendToLoader){
-    sendToLoader = new Promise(res => {
-      const s = document.createElement('script');
-      s.src = '/api/artifacts/send-to.js';
-      s.onload = () => res(!!window.oshalSendTo);
-      s.onerror = () => res(false);
-      document.head.appendChild(s);
-    });
-  }
-  return sendToLoader;
 }
 function mimeFor(name){
   const ext = (name.split('.').pop()||'').toLowerCase();
@@ -226,12 +215,6 @@ function mimeFor(name){
     xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     mp4:'video/mp4', mov:'video/quicktime', mp3:'audio/mpeg', wav:'audio/wav' };
   return m[ext] || 'application/octet-stream';
-}
-function sendTo(e, btn){
-  ensureSendTo().then(ok => {
-    if (!ok) return;
-    window.oshalSendTo({ type: mimeFor(e.name), name: e.name, source: dlUrl(e) }, btn);
-  });
 }
 
 function iconFor(name){
