@@ -1,9 +1,11 @@
 # ADR-141 — Application groups: one YAML binds installed apps into a themed front door with a setup dashboard
 
-**Status:** Proposed — design only. Operator direction 2026-09-05 (*"we are taking like 6 applications and
-binding them together and setting a toolbar … we need a way to define that outside the swarm directory …
-I guess it's a yaml"*). **No core code is built against this yet**; per Rule 0d the loader is not touched
-until this ADR is accepted. The Intelligent Career group is the first instance and the acceptance test.
+**Status:** Accepted — stage 1 built 2026-09-05 (operator: *"let's take this to completion tonight"*).
+Operator direction 2026-09-05 (*"we are taking like 6 applications and binding them together and setting
+a toolbar … we need a way to define that outside the swarm directory … I guess it's a yaml"*). Core
+ships the kind, the borrowed-surface resolver, `readiness:`, the shared dashboard and the verifier
+pass-through; the store ships the Intelligent Career group and its members' readiness probes. See
+"What is built" at the end. D7 (a story per role) stays a career-hunter BACKLOG item.
 
 **Date:** 2026-09-05
 
@@ -180,9 +182,33 @@ have a story". Tracked as its own BACKLOG item; it does not gate the group.
 
 ## What is built with this ADR
 
-Nothing in core. This ADR, its index row, and two BACKLOG items with done-when criteria: **Application
-groups stage 1** (the kind, the borrowed-surface resolver, `readiness:`, the shared dashboard, the
-Intelligent Career group and the member changes in D6) and **career-hunter — a story per role** (D7).
-The interim path that needs no core change — an Intelligent Career launcher package with hand-listed
-tiles and a bespoke dashboard inside career-hunter — is deliberately not taken: it would ship the exact
-copied-URL defect this ADR exists to remove.
+**Stage 1, core (2026-09-05).** `src/features/swarm-apps/services/swarm-app-group.ts` holds the whole
+group concern (the service was over its size budget): `kind: group` validation (D1 — every code key
+refused, members required, the toolbar borrows only from members, every setup step names a member and
+a toolbar surface), the `readiness:` validation (D3 — own mount, canonical path, session-admitting
+route, RFC 6901 pointers), and the resolvers. `activate()` fail-closes a group whose references do not
+resolve against its ACTIVE members (D2, member + surface named; the record lands inactive);
+`synthesiseProfile` renders a group as the kernel Setup tile followed by the borrowed member surfaces,
+resolved at synthesis so a moved surface is followed (D2). `GET /api/swarm/apps/:name/setup` hands the
+dashboard the plan; `GET /api/swarm/apps/:name/setup-dashboard` serves the ONE kernel page
+(`src/pages/cockpit/tools/app-group-setup.html`), which asks each member probe in the viewer's own
+session and opens the fix surface through the ribbon's `app-navigate` message (D4). The smoke verifier
+verifies a group through its members' own smokes and fails it by name otherwise. Guards:
+`tests/unit/swarm-app-groups.spec.ts` (loader, resolvers, the real service over a doubled repository,
+the verifier) and `tests/swarm-app-groups.spec.ts` (the permanent fixture group against the
+Playwright-managed server — real loader, real routes). Reference: the "Application groups" and
+"Per-user readiness" sections of `docs/apps/authoring-app-packages.md`.
+
+**Stage 1, store (2026-09-05).** `intelligent-career/oshal-app.yaml` is the first group (D5/D6):
+members career-hunter, portrait-studio, social, print-ingest; the seven setup steps of D1 backed by
+`readiness:` entries each member now declares over its own store — career-hunter (`resume` on the
+existing resume-state route; `stories` and `materials` on a new readiness route), portrait-studio
+(`portrait`), social (`facebook`, `signals`), print-ingest (`subscription`). career-hunter's ADR-139
+destination ("Add to Career profile", 1.14.0) is the Send-to leg. `HOST_APP_MAP` on the demo box
+points `career.oshal.ai` at the group.
+
+**Not built, by design.** D7 — the story-per-role review — remains a career-hunter BACKLOG item; its
+readiness step reads `roles[].stories[]` honestly today ("0 of N roles have a story") until that
+conversation ships. The interim path that needed no core change — a launcher package with hand-listed
+tiles and a bespoke dashboard — was not taken: it would have shipped the copied-URL defect this ADR
+exists to remove. Per-domain YAML repositories wait for a domain with its own owner (D5).

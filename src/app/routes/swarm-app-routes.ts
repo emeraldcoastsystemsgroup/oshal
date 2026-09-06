@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D7: wire the app-store remote rail (GET /catalog + operator-only POST /install-remote from app-store-remote.ts) BEFORE the /:name params so the literal segments aren't captured as app names.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: add framework-owned operator APIs for the user-by-app access matrix, assignment updates, and explicit-assignment clearing.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | GET /:name is now viewer-scoped (getAppForViewer) instead of serving the raw record. It had no visibility check of any kind, so any caller who could name an app — including a guest, for whom the mount-level requiresAuth is a no-op — received the installing operator's real OIDC subject. Not-visible now answers 404 like not-found, so it cannot be used to confirm another user's app exists.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | ADR-141: GET /:name/setup (the group setup-dashboard plan — manifest data only, probes are fetched by the page in the viewer's own session) and GET /:name/setup-dashboard (the ONE kernel-served setup / connection-status page every group gets, src/pages/cockpit/tools/app-group-setup.html). 404 for anything that is not an active group.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
@@ -516,6 +517,48 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAc
    * become orphans (offered for separate removal — nothing cascades). Surfaces render this
    * as the impact list + component picker before the user confirms an uninstall.
    */
+  /**
+   * GET /:name/setup — the ADR-141 setup-dashboard plan for an active GROUP: its steps with each
+   * member's readiness probe (path + RFC 6901 pointers) resolved against the ACTIVE members, and the
+   * ribbon surface to open per step. Manifest data only — the dashboard page fetches every probe
+   * itself, in the signed-in user's own session, so nothing here impersonates the caller. 404 for
+   * anything that is not an active group (indistinguishable from not-found, like GET /:name).
+   */
+  router.get('/:name/setup', async (req: Request, res: Response) => {
+    const name = String(req.params.name);
+    try {
+      const plan = await service.getGroupSetupPlan(name);
+      if (!plan) { res.status(404).json({ error: 'no active application group of that name' }); return; }
+      res.json(plan);
+    } catch (err: any) {
+      logger.error({ err, name }, 'Failed to build group setup plan');
+      res.status(500).json({ error: 'setup plan unavailable' });
+    }
+  });
+
+  /**
+   * GET /:name/setup-dashboard — the ONE kernel-served setup / connection-status page every group
+   * gets (ADR-141 D4). Self-contained HTML; it reads ?group=, fetches /setup, then probes each
+   * member in the viewer's session and opens the fix surface through the ribbon's app-navigate
+   * message. No group writes its own dashboard.
+   */
+  router.get('/:name/setup-dashboard', async (req: Request, res: Response) => {
+    const name = String(req.params.name);
+    try {
+      const plan = await service.getGroupSetupPlan(name);
+      if (!plan) { res.status(404).type('text/plain').send('no active application group of that name'); return; }
+      res.sendFile(path.resolve(process.cwd(), 'src/pages/cockpit/tools/app-group-setup.html'), (err) => {
+        if (err) {
+          logger.error({ err, name }, 'failed to serve group setup dashboard');
+          if (!res.headersSent) res.status(404).type('text/plain').send('setup dashboard not found');
+        }
+      });
+    } catch (err: any) {
+      logger.error({ err, name }, 'Failed to serve group setup dashboard');
+      res.status(500).type('text/plain').send('setup dashboard unavailable');
+    }
+  });
+
   router.get('/:name/uninstall-impact', async (req: Request, res: Response) => {
     const name = String(req.params.name);
     try {

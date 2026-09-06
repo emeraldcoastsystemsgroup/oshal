@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<!-- ADR-141 D4 — the ONE kernel setup / connection-status dashboard every application group gets.
+     Opened as the group's first ribbon tile with ?group=<name>. It reads the group's plan from
+     GET /api/swarm/apps/<group>/setup (manifest data: steps + each member's readiness probe), then
+     asks every probe ITSELF, in this signed-in user's own session — never a service secret, never a
+     PAT. A step is done only when the member's readyPointer resolves to boolean true; an HTTP error,
+     a missing pointer or a non-boolean is rendered as "can't check", never as done. "Fix" opens the
+     member surface inside the same ribbon through the cockpit's app-navigate message. -->
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css">
+<script src="/shared/ui/js/surface-theme.js"></script>
+<style>
+  body { margin: 0; background: var(--bg-primary, #0f141a); color: var(--text-primary, #dbe4ee); font: 14px system-ui, sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 22px 20px 32px; }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  .sub { color: var(--text-secondary, #8fa1b3); margin: 0 0 16px; }
+  .progress { height: 8px; border-radius: 4px; background: var(--bg-tertiary, #1b232d); overflow: hidden; margin: 0 0 18px; }
+  .progress > div { height: 100%; width: 0; background: var(--accent-primary, #4da3ff); transition: width .3s; }
+  .step { display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: start; padding: 12px 14px; margin: 0 0 8px; border: 1px solid var(--border-color, #2a3644); border-radius: 10px; background: var(--bg-card, #151b23); }
+  .step .mark { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; margin-top: 1px; border: 2px solid var(--border-color, #2a3644); color: var(--text-muted, #6d7d8e); }
+  .step.done .mark { background: var(--status-success, #4ecf8a); border-color: var(--status-success, #4ecf8a); color: #08131c; }
+  .step.todo .mark { border-color: var(--accent-primary, #4da3ff); color: var(--accent-primary, #4da3ff); }
+  .step.unknown .mark { border-color: var(--status-warning, #e0b74a); color: var(--status-warning, #e0b74a); }
+  .step .label { font-weight: 600; }
+  .step .app { color: var(--text-muted, #6d7d8e); font-size: 12px; margin-left: 6px; font-weight: 400; }
+  .step .detail { color: var(--text-secondary, #8fa1b3); font-size: 12.5px; margin-top: 3px; white-space: pre-wrap; }
+  .step.unknown .detail { color: var(--status-warning, #e0b74a); }
+  button { background: var(--accent-primary, #4da3ff); border: 1px solid var(--accent-primary, #4da3ff); color: #08131c; font-weight: 600; border-radius: 8px; padding: 7px 14px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  button.ghost { background: transparent; color: var(--text-primary, #dbe4ee); border-color: var(--border-color, #2a3644); }
+  button:disabled { opacity: .5; cursor: default; }
+  .banner { border: 1px solid var(--status-success, #4ecf8a); background: var(--bg-card, #151b23); border-radius: 10px; padding: 14px; margin: 0 0 14px; display: none; align-items: center; justify-content: space-between; gap: 12px; }
+  .banner.show { display: flex; }
+  .foot { display: flex; justify-content: space-between; align-items: center; color: var(--text-muted, #6d7d8e); font-size: 12px; margin-top: 14px; }
+  #error { color: var(--status-error, #ff7a7a); white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 id="title">Setup</h1>
+  <p class="sub" id="subtitle">Loading…</p>
+  <div class="banner" id="banner"><span>Everything is set up.</span><button id="open">Open</button></div>
+  <div class="progress"><div id="bar"></div></div>
+  <div id="steps"></div>
+  <div class="foot"><span id="count"></span><button class="ghost" id="refresh">Refresh</button></div>
+  <div id="error"></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var group = new URLSearchParams(location.search).get('group') || '';
+  var plan = null;
+
+  /** RFC 6901: resolve a pointer, reporting whether the location exists at all. */
+  function atPointer(value, pointer) {
+    if (pointer === '') return { found: true, value: value };
+    var parts = pointer.split('/').slice(1).map(function (p) { return p.replace(/~1/g, '/').replace(/~0/g, '~'); });
+    var cur = value;
+    for (var i = 0; i < parts.length; i++) {
+      if (cur === null || typeof cur !== 'object' || !Object.prototype.hasOwnProperty.call(cur, parts[i])) return { found: false };
+      cur = cur[parts[i]];
+    }
+    return { found: true, value: cur };
+  }
+
+  /** Ask one member probe in THIS session. Done only on boolean true; anything else is not-done or can't-check. */
+  function probe(step) {
+    if (!step.probe) return Promise.resolve({ state: 'unknown', detail: step.unavailable || 'This step cannot be checked right now.' });
+    return fetch(step.probe.path, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) {
+        if (r.status === 401) return { state: 'unknown', detail: 'Sign in again to check this step.' };
+        if (!r.ok) return { state: 'unknown', detail: step.appDisplayName + ' could not answer (HTTP ' + r.status + ').' };
+        return r.json().then(function (body) {
+          var ready = atPointer(body, step.probe.readyPointer);
+          var detail = step.probe.detailPointer ? atPointer(body, step.probe.detailPointer) : { found: false };
+          var line = detail.found && detail.value !== null && detail.value !== undefined ? String(detail.value) : '';
+          if (!ready.found || typeof ready.value !== 'boolean') {
+            return { state: 'unknown', detail: step.appDisplayName + ' answered, but not about this step.' };
+          }
+          return { state: ready.value ? 'done' : 'todo', detail: line };
+        }, function () { return { state: 'unknown', detail: step.appDisplayName + ' answered with something that is not JSON.' }; });
+      }, function () { return { state: 'unknown', detail: step.appDisplayName + ' is not reachable.' }; });
+  }
+
+  function navigate(tool) {
+    if (!tool || !window.parent || window.parent === window) return;
+    window.parent.postMessage({ type: 'app-navigate', tool: tool }, window.location.origin);
+  }
+
+  function render(results) {
+    var host = $('steps');
+    host.innerHTML = '';
+    var done = 0;
+    plan.steps.forEach(function (step, i) {
+      var r = results[i];
+      if (r.state === 'done') done += 1;
+      var el = document.createElement('div');
+      el.className = 'step ' + r.state;
+      var mark = document.createElement('div'); mark.className = 'mark';
+      mark.textContent = r.state === 'done' ? '✓' : r.state === 'unknown' ? '?' : String(i + 1);
+      var body = document.createElement('div');
+      var label = document.createElement('div'); label.className = 'label'; label.textContent = step.label;
+      var app = document.createElement('span'); app.className = 'app'; app.textContent = step.appDisplayName;
+      label.appendChild(app);
+      body.appendChild(label);
+      if (r.detail) { var d = document.createElement('div'); d.className = 'detail'; d.textContent = r.detail; body.appendChild(d); }
+      var action = document.createElement('div');
+      if (step.fix) {
+        var b = document.createElement('button');
+        b.textContent = r.state === 'done' ? 'Open' : 'Fix';
+        if (r.state === 'done') b.className = 'ghost';
+        b.onclick = function () { navigate(step.fix); };
+        action.appendChild(b);
+      }
+      el.appendChild(mark); el.appendChild(body); el.appendChild(action);
+      host.appendChild(el);
+    });
+    var total = plan.steps.length;
+    $('bar').style.width = total ? Math.round(done * 100 / total) + '%' : '0%';
+    $('count').textContent = total ? done + ' of ' + total + ' steps done' : 'This group declares no setup steps.';
+    var all = total > 0 && done === total;
+    $('banner').className = 'banner' + (all ? ' show' : '');
+    $('open').disabled = !plan.firstSurface;
+  }
+
+  function load() {
+    $('error').textContent = '';
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(group)) {
+      $('subtitle').textContent = 'Open this page from an application group.';
+      return;
+    }
+    fetch('/api/swarm/apps/' + encodeURIComponent(group) + '/setup', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (p) {
+        plan = p;
+        $('title').textContent = p.displayName + ' — setup';
+        document.title = p.displayName + ' setup';
+        $('subtitle').textContent = p.description || 'Everything this application needs from you, checked live.';
+        $('open').onclick = function () { navigate(p.firstSurface); };
+        return Promise.all(p.steps.map(probe)).then(render);
+      })
+      .catch(function (e) {
+        $('subtitle').textContent = 'The setup plan could not be loaded.';
+        $('error').textContent = String(e && e.message ? e.message : e);
+      });
+  }
+
+  $('refresh').onclick = load;
+  load();
+})();
+</script>
+</body>
+</html>

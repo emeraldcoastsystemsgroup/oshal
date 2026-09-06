@@ -37,6 +37,7 @@
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | listApps passes its caller to toSummary as the VIEWER, and the new getAppForViewer is the viewer-scoped counterpart to getApp. A public-scoped app keeps the owner_sub stamped at install, so both read paths were serializing the deployment operator's OIDC subject to every caller. The viewer is passed through even when undefined on purpose: global search lists with no caller and matches summary.ownerSub to find a user's own person-scoped apps, so unconditional redaction would have hidden those from their owner.
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: applyArtifactActions on activate / unregister on deactivate — the app's "Send to…" declarations join the shared registry with the skill-profiles discipline (replace-by-app, retract-on-absent, full teardown on toggle-off).
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | synthesiseProfile forwards ribbon.hideStatusBar (true → true, else undefined) exactly like hideChatPanel/hideAssistant, so the cockpit can drop the operational status bar for apps that are not ticket/queue-shaped.
+ * 35 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups: activate() fail-closes a `kind: group` whose borrowed toolbar surfaces or setup readiness do not resolve against its ACTIVE members (member + surface named; the record lands inactive); synthesiseProfile renders a group as its kernel setup-dashboard tile followed by the member surfaces its toolbar borrows (resolved at synthesis, so a member that moves a surface is followed); getGroupSetupPlan() hands the dashboard route the steps with each member's probe. autoLoadAll loads groups AFTER every app (orderGroupsLast) so directory order cannot fail-close a group's first boot. Resolution logic lives in swarm-app-group.ts (this file is over its 800-line budget); the static-item map moved there as staticRibbonItems.
  */
 
 import type { Pool } from 'pg';
@@ -70,6 +71,16 @@ import {
   registerAppArtifactActions,
   unregisterAppArtifactActions,
 } from '@/shared/artifact-exchange';
+import {
+  assertGroupResolvable,
+  groupDashboardTile,
+  isGroupManifest,
+  orderGroupsLast,
+  resolveGroupSetup,
+  resolveGroupToolbar,
+  staticRibbonItems,
+  type ResolvedGroupSetupStep,
+} from './swarm-app-group';
 import { readManifest, listManifestFiles, serializeManifest } from './swarm-app-loader';
 import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type SummaryViewer } from './swarm-app-record-view';
 import {
@@ -283,7 +294,11 @@ export class SwarmAppService {
    * retire" semantics without destroying history.
    */
   async autoLoadAll(): Promise<{ loaded: string[]; deactivated: string[]; failed: Array<{ path: string; error: string }> }> {
-    const files = listManifestFiles();
+    // ADR-141: a group activates only when its members are ACTIVE, so groups load after every
+    // app — directory order ("intelligent-career" sorts before "portrait-studio") must not decide
+    // whether a group's first boot fail-closes. Kind is peeked cheaply; a file that will not even
+    // parse stays in the first pass and fails there, exactly as before.
+    const files = orderGroupsLast(listManifestFiles());
     const loaded: string[] = [];
     const failed: Array<{ path: string; error: string }> = [];
     for (const f of files) {
@@ -726,14 +741,9 @@ export class SwarmAppService {
     // authority on where a heading is allowed, and already forces `''` on the pinned
     // bottom tray. Dropping the key here — which is what this map did before — made a
     // manifest-only `group:` edit a silent no-op, since nothing else reads ui.static.
-    const staticItems = (manifest.ui?.static ?? []).map(s => ({
-      id: `tool-${s.toolName}`,
-      icon: s.icon,
-      label: s.label,
-      section: (s.section === 'bottom' ? 'bottom' : 'top') as 'top' | 'bottom',
-      group: s.group,
-      toolUi: { iframeUrl: s.iframeUrl, sidebarLabel: s.label },
-    }));
+    // ADR-141: a group's tiles are its kernel setup dashboard plus surfaces BORROWED from its
+    // active members — resolved now, so a member that moved a surface is followed, never copied.
+    const staticItems = staticRibbonItems(await this.ribbonSurfaces(record));
 
     const FRAMEWORK_ITEMS = ['tickets', 'chat', 'calendar', 'addressbook', 'dashboard', 'logs', 'settings', 'operations'];
     const frameworkItems = FRAMEWORK_ITEMS.filter(id => !hide.has(id));
@@ -822,6 +832,63 @@ export class SwarmAppService {
   }
 
   /**
+   * @description The static surfaces an app's ribbon renders: its own `ui.static` for an app; for
+   * an ADR-141 group, the kernel setup dashboard tile followed by the member surfaces its toolbar
+   * borrows. Resolution here is lenient — a member toggled off since activation drops its tiles
+   * with a WARN (the dashboard still reports the member's steps as unavailable) rather than
+   * failing the whole profile.
+   * @param record - The app or group record.
+   * @returns Static surfaces in ribbon order.
+   */
+  private async ribbonSurfaces(record: SwarmApplicationRecord): Promise<SwarmAppStaticUi[]> {
+    if (!isGroupManifest(record.manifest)) return record.manifest.ui?.static ?? [];
+    const { tiles, missing } = resolveGroupToolbar(record.manifest, await this.activeMembers(record.manifest));
+    if (missing.length) logger.warn({ group: record.name, missing }, 'Group toolbar references did not resolve — tiles omitted');
+    return [groupDashboardTile(record.name), ...tiles];
+  }
+
+  /**
+   * @description Active manifests of a group's declared members, keyed by name. An inactive or
+   * uninstalled member is absent, which is what the resolvers treat as "does not provide".
+   * @param group - The group manifest.
+   * @returns Name → manifest for every ACTIVE member.
+   */
+  private async activeMembers(group: SwarmAppManifest): Promise<Map<string, SwarmAppManifest>> {
+    const members = new Map<string, SwarmAppManifest>();
+    for (const name of group.dependencies?.apps ?? []) {
+      const rec = await this.repo.findByName(name);
+      if (rec?.status === 'active') members.set(name, rec.manifest);
+    }
+    return members;
+  }
+
+  /**
+   * @description The setup-dashboard plan for an ADR-141 group: its steps with each member's
+   * readiness probe (path + pointers) resolved against the ACTIVE members, plus the ribbon surface
+   * to open for each. The dashboard page fetches the probes itself, in the signed-in user's own
+   * session — this method reads manifests only and never impersonates the caller.
+   * @param name - The group's name.
+   * @returns The plan, or null when no active group of that name is loaded.
+   */
+  async getGroupSetupPlan(name: string): Promise<null | {
+    group: string; displayName: string; description?: string; members: string[];
+    firstSurface?: string; steps: ResolvedGroupSetupStep[];
+  }> {
+    const record = await this.repo.findByName(name);
+    if (!record || record.status !== 'active' || !isGroupManifest(record.manifest)) return null;
+    const members = await this.activeMembers(record.manifest);
+    const firstSurface = resolveGroupToolbar(record.manifest, members).tiles[0]?.toolName;
+    return {
+      group: record.name,
+      displayName: record.manifest.displayName,
+      description: record.manifest.description,
+      members: [...members.keys()],
+      ...(firstSurface ? { firstSurface } : {}),
+      steps: resolveGroupSetup(record.manifest, members),
+    };
+  }
+
+  /**
    * @description Manifests of all currently-active apps. Used by the per-user
    * schedule reconciler to discover scope:'per-user' "polls" to register when a
    * user connects the required connector.
@@ -834,6 +901,10 @@ export class SwarmAppService {
   // ── Internal: activation / deactivation primitives ─────────────────────
 
   private async activate(record: SwarmApplicationRecord): Promise<void> {
+    // ADR-141 D2/D3: a group activates only when every borrowed surface and every setup readiness
+    // resolves against its ACTIVE members — it never renders a dead tile. Throws with the member
+    // and surface/readiness named; loadApp fail-closes the record to inactive.
+    if (isGroupManifest(record.manifest)) assertGroupResolvable(record.manifest, await this.activeMembers(record.manifest));
     // Package schema FIRST: bots/tools/UI may depend on the app's own tables existing.
     await this.applyPackageMigrations(record);
 
@@ -1294,7 +1365,10 @@ export class SwarmAppService {
   }
 
   private async registerUiSurfaces(manifest: SwarmAppManifest, appName: string): Promise<void> {
-    for (const s of manifest.ui?.static ?? []) {
+    // A group owns exactly one surface of its own — the kernel setup dashboard (ADR-141 D4). Its
+    // borrowed tiles are the members' surfaces, which the members register themselves.
+    const own = isGroupManifest(manifest) ? [groupDashboardTile(appName)] : manifest.ui?.static ?? [];
+    for (const s of own) {
       registerDynamicToolUI(s.toolName, s.label, s.icon, s.iframeUrl, appName);
     }
     const dyn = manifest.ui?.dynamic;

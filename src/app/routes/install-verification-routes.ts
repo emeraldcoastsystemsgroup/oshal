@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | CORE-05 installer verification API: named package smokes and one PAT-only live generation with durable cost-attribution proof.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-141: hand the verifier a member resolver so a `kind: group` is verified through its members' own smokes.
  */
 
 import crypto from 'crypto';
@@ -109,6 +110,8 @@ export function createInstallVerificationRoutes(
         noAi: isAiDisabled(),
         preOnboarding: req.body?.preOnboarding === true,
         fetchImpl: options.fetchImpl,
+        // ADR-141: a group is verified through its members' own smokes.
+        resolveMember: (name) => swarmApps.getApp(name),
       });
       logger.info(
         { requestedApps: names, failedApps: result.failedApps, pendingApps: result.pendingApps },
