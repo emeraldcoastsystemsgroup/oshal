@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: the ONE shared "Send to…" component every surface loads (served at /api/artifacts/send-to.js). window.oshalSendTo(meta, anchorEl) fetches the caller-scoped menu for the artifact's MIME type, mints an owner-bound handle on pick, then dispatches: open mode navigates the TOP window to /cockpit/?app=<name>&artifact=<ref> (the shell forwards the ref to the surface iframe — D4a), post mode POSTs {ref} to the destination's own auth-gated endpoint and shows the outcome inline. Self-contained styling; Esc/outside-click dismiss; no framework dependencies so any classic-script surface can use it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2 (Amendment B): overlay dispatch — a kernel-registered action carrying `overlay` opens that page in an in-place iframe modal with the ref (no navigation, the source surface keeps its state). First user: the "Email it…" compose built-in.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Amendment C: the STANDARD UX TAG. A surface declares an artifact by tagging its element (data-artifact-source + data-artifact-type [+ -name, + -ui]) and including this script once; the component auto-wires every tagged element — an injected 📤 chip (default) AND right-click — via a MutationObserver, so dynamically rendered lists are covered and HOW the affordance looks is a decision made HERE, centrally, changeable later without touching any surface. data-artifact-ui="context" opts out of the chip. The programmatic window.oshalSendTo(meta, anchorEl) API is unchanged.
  */
 
 (function () {
@@ -28,14 +29,21 @@
     return n;
   }
 
-  function menuShell(anchorEl) {
+  function menuShell(anchor) {
     var m = el('div',
       'position:fixed;z-index:9999;min-width:230px;max-width:320px;background:#151b23;color:#dbe4ee;' +
       'border:1px solid #2a3644;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.5);' +
       'padding:6px;font:13px system-ui,sans-serif;');
-    var r = anchorEl && anchorEl.getBoundingClientRect ? anchorEl.getBoundingClientRect() : null;
-    var top = r ? Math.min(window.innerHeight - 60, r.bottom + 6) : window.innerHeight / 3;
-    var left = r ? Math.min(window.innerWidth - 260, Math.max(8, r.left)) : window.innerWidth / 2 - 130;
+    var top, left;
+    if (anchor && typeof anchor.x === 'number' && typeof anchor.y === 'number') {
+      // A pointer position (right-click) rather than an element.
+      top = Math.min(window.innerHeight - 60, anchor.y + 4);
+      left = Math.min(window.innerWidth - 260, Math.max(8, anchor.x));
+    } else {
+      var r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+      top = r ? Math.min(window.innerHeight - 60, r.bottom + 6) : window.innerHeight / 3;
+      left = r ? Math.min(window.innerWidth - 260, Math.max(8, r.left)) : window.innerWidth / 2 - 130;
+    }
     m.style.top = top + 'px';
     m.style.left = left + 'px';
     return m;
@@ -149,4 +157,74 @@
       })
       .catch(function () { if (OPEN_MENU) statusLine(menu, 'Could not load destinations.', true); });
   };
+
+  // ── Amendment C: the standard UX tag ───────────────────────────────────────
+  // A surface tags an element with data-artifact-source (+ -type, optional -name/-ui) and
+  // includes this script once; everything below is central. Changing HOW the affordance looks
+  // (chip vs right-click vs something new) is an edit here, never in a surface.
+
+  function tagMeta(node) {
+    var source = node.getAttribute('data-artifact-source') || '';
+    var type = node.getAttribute('data-artifact-type') || '';
+    if (!source || !type) return null;
+    return { source: source, type: type, name: node.getAttribute('data-artifact-name') || '' };
+  }
+
+  /** The injected affordance — presentation v1 is a small corner/end chip. */
+  function injectChip(node, meta) {
+    var chip = el('button',
+      'background:rgba(15,20,26,.82);border:1px solid #2a3644;color:#dbe4ee;border-radius:7px;' +
+      'padding:2px 7px;font:12px system-ui,sans-serif;cursor:pointer;line-height:1.5;');
+    chip.type = 'button';
+    chip.textContent = '📤';
+    chip.title = 'Send to…';
+    chip.setAttribute('data-artifact-chip', '1');
+    chip.onclick = function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      window.oshalSendTo(meta, chip);
+    };
+    var tagName = node.tagName;
+    if (tagName === 'IMG' || tagName === 'VIDEO' || tagName === 'CANVAS') {
+      // Replaced elements cannot hold children — anchor the chip on the parent's corner.
+      var parent = node.parentElement;
+      if (!parent) return;
+      if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+      chip.style.position = 'absolute';
+      chip.style.right = '6px';
+      chip.style.top = '6px';
+      parent.appendChild(chip);
+    } else {
+      node.appendChild(chip);
+    }
+  }
+
+  function wireTagged(node) {
+    if (node.hasAttribute('data-artifact-wired')) return;
+    var meta = tagMeta(node);
+    if (!meta) return;
+    node.setAttribute('data-artifact-wired', '1');
+    // Right-click always works on a tagged element (the operator's "right click on the images").
+    node.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      window.oshalSendTo(tagMeta(node) || meta, { x: e.clientX, y: e.clientY });
+    });
+    if ((node.getAttribute('data-artifact-ui') || 'chip') !== 'context') injectChip(node, meta);
+  }
+
+  var decoratePending = null;
+  function decorateAll() {
+    decoratePending = null;
+    var nodes = document.querySelectorAll('[data-artifact-source]:not([data-artifact-wired])');
+    for (var i = 0; i < nodes.length; i++) wireTagged(nodes[i]);
+  }
+  function scheduleDecorate() {
+    if (decoratePending) return;
+    decoratePending = setTimeout(decorateAll, 120);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', decorateAll);
+  else decorateAll();
+  new MutationObserver(scheduleDecorate).observe(document.documentElement, { childList: true, subtree: true });
 })();
