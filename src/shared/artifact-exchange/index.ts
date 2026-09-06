@@ -11,6 +11,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial barrel.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 wave 2: export the shared package-side redeem (redeemArtifactViaRelay) — new app destinations import it instead of hand-copying the loopback idiom.
  *
  * @module shared/artifact-exchange
  */
@@ -41,3 +42,5 @@ export {
   artifactHandleCount,
 } from './handles';
 export type { ArtifactHandleRecord } from './handles';
+export { redeemArtifactViaRelay } from './redeem';
+export type { RedeemedArtifact, RedeemFailure } from './redeem';
