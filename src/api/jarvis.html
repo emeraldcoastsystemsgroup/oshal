@@ -24,6 +24,7 @@
 <script src="/shared/ui/js/surface-theme.js"></script>
 <link rel="stylesheet" href="/shared/ui/css/surface-reading.css" />
 <script src="/shared/ui/js/surface-reading.js"></script>
+<script src="/api/artifacts/send-to.js" defer></script>
 <style>
   :root {
     /* Short alias names DERIVED from the framework theme tokens (surface-themes.css) rather than
@@ -1779,6 +1780,15 @@ function workspaceChipHtml(taskId) {
    The URL shape is re-checked here even though the server validates it on the way out: this
    renders into the answer surface, and an absolute or protocol-relative URL reaching an <a href>
    from stored data is the one thing that would turn a task result into an off-site link. */
+function mimeForDeliverable(name) {
+  const ext = String(name || '').split('.').pop().toLowerCase();
+  const m = { pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json',
+    html: 'text/html', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', mp4: 'video/mp4', mp3: 'audio/mpeg' };
+  return m[ext] || 'application/octet-stream';
+}
 function downloadsHtml(files) {
   const list = Array.isArray(files) ? files.slice(0, 5) : [];
   const rows = list.filter((f) => f && typeof f.name === 'string'
@@ -1787,7 +1797,10 @@ function downloadsHtml(files) {
       const kb = Number(f.bytes) > 0 ? Math.max(1, Math.round(Number(f.bytes) / 1024)) : 0;
       const size = kb ? ` <span class="dl-size">${kb} KB</span>` : '';
       // `download` so it saves rather than navigating the panel away from the answer.
-      return `<a class="chip dl-chip" href="${esc(f.downloadUrl)}" download rel="noopener">`
+      // ADR-139 standard tag: every deliverable chip is a sendable artifact (the shared
+      // component injects the affordance; right-click also works).
+      return `<a class="chip dl-chip" href="${esc(f.downloadUrl)}" download rel="noopener"`
+        + ` data-artifact-source="${esc(f.downloadUrl)}" data-artifact-type="${esc(mimeForDeliverable(f.name))}" data-artifact-name="${esc(f.name)}">`
         + `<span aria-hidden="true">⤓</span> ${esc(f.name)}${size}</a>`;
     });
   return rows.length
