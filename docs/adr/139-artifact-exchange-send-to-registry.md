@@ -163,6 +163,60 @@ Apps that register nothing implement nothing and lose nothing. Source-side instr
 `oshalSendTo({ type, name, source }, anchorEl)` — added per surface, incrementally; the serve URL
 it points at is the owner-scoped route the surface already renders from.
 
+### D4b — Amendment C (operator direction, 2026-09-05): the standard UX tag
+
+The operator's rollout brief: *"integrate all applications that take files and images — a standard
+subscribe and a standard UX tag — and we can modify how it is displayed later: a button on the
+images, or a right-click, or a button below the document, I don't know yet."*
+
+The **standard subscribe** already exists (D1's `artifacts:` block + Amendment A's receive
+checklist). Amendment C adds its source-side twin — a **declarative tag** so a surface never
+hand-wires a send button again:
+
+```html
+<script src="/api/artifacts/send-to.js" defer></script>
+...
+<div class="row" data-artifact-source="/api/files/download?provider=…&path=…"
+     data-artifact-type="application/pdf"
+     data-artifact-name="Q3-report.pdf">…</div>
+```
+
+- `data-artifact-source` + `data-artifact-type` (required), `data-artifact-name` (optional) —
+  the same meta the programmatic API takes.
+- The shared component **auto-wires every tagged element**: an injected 📤 chip (corner-anchored
+  for `img`/`video`, appended for rows/cards) **and** right-click, via a MutationObserver so
+  dynamically rendered lists are covered. `data-artifact-ui="context"` opts out of the chip.
+- **How the affordance looks is decided in one file** (`send-to.js`), never in a surface — the
+  exact "modify how it is displayed later" property the operator asked for. Switching the fleet
+  from chips to hover actions, or long-press on touch, is a single central edit.
+- The programmatic `window.oshalSendTo(meta, anchorOrPoint)` API remains for surfaces that need
+  a bespoke trigger (Portrait Studio's gallery keeps its labeled button).
+
+First conversion: the files browser dropped its hand-wired button + loader (~25 lines) for three
+attributes and one script include — the integration cost a source surface now pays.
+
+**The two integration recipes, fixed** (every rollout item below is one of these):
+
+- **Source** = tag rendered elements + one `send-to.js` include. No JS, no menu code.
+- **Destination** = the *career idiom*: one `{ref}` import endpoint that redeems through the kernel
+  relay (loopback + service rail, as the caller) and delegates to the app's EXISTING upload
+  transaction (~30–50 lines), plus a manifest `accepts:` block. When the third app adopts, promote
+  the package-side redeem into a shared helper so it stops being copied.
+
+**Rollout roster (from the 2026-09-05 two-repo inventory):**
+
+| Wave | Destinations (accepts) | Sources (tag) |
+|---|---|---|
+| **1 — now** | presentations (Office files → outline import), little-monsters class materials (any file), print-ingest (text via the kernel extract-text) | presentations "My files" rows, Jarvis deliverable chips (already `/api/files/download` URLs), Video Studio rendered cards |
+| **2** | dnd character import (pdf/json), youtube-kids Takeout (zip/json), spaces scan import (video/ply/splat) | career submissions screenshots + resume/cover PDFs, switchboard compose image, venture-plan exports, dnd & game-show art, task-explorer Files tab, rag-center documents, little-monsters materials/lecture audio |
+| **3 — needs new mechanism or endpoint** | **lora** (no HTTP image-ingest exists — the dataset lives on the GPU box; needs a real ingest route first) | camera / payroll / ocean-lab / workflow-studio exports — these are **client-generated blobs** with no server URL, which the handle contract cannot point at today |
+| excluded | config/credential import lanes (manifests, auth.json, avatars — deliberately never artifact destinations); third-party imagery (posters, album art — not the user's artifacts) | |
+
+**Open mechanism item (wave 3 blocker):** a mint-with-bytes variant — `POST /api/artifacts/handles`
+accepting a small multipart body for client-generated files — would let blob-only exports
+(payroll NACHA files, CAD exports, canvas images) enter the exchange. Same owner/TTL semantics;
+bytes stored transiently instead of a locator. Decide when wave 3 starts, not before.
+
 ### D5 — Who integrates, day one and later
 
 | Destination | Types | Mode | Rides |
