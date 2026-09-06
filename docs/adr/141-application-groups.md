@@ -7,7 +7,7 @@ until this ADR is accepted. The Intelligent Career group is the first instance a
 
 **Date:** 2026-09-05
 
-**Related:** [ADR-085](085-app-store-and-package-format.md) (one app, one package; D11 global surface names),
+**Related:** [ADR-085](085-remote-app-packages-and-registries.md) (one app, one package; D11 global surface names),
 [ADR-097](097-app-suites-primary-categorization.md) (suites are a shelf, never a re-bundle — "meta-manifest
 listing app packages"), the ribbon-groups addendum in the career-hunter package (`group:` on `ui.static[]`),
 [ADR-139](139-artifact-exchange-send-to-registry.md) (Send to…, the rail that moves a document between
