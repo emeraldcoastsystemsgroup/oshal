@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Execute manifest-declared app smokes over the real HTTP boundary with package-local fixtures and deterministic assertions.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-141: a `kind: group` (no code, no smokes of its own) is verified THROUGH its members via options.resolveMember — every member must be installed, active and pass its own smokes, reported as `<member>/<smoke>`; without a resolver the group fails by name rather than passing empty.
  */
 
 import fs from 'fs';
@@ -12,6 +13,7 @@ import type {
   SwarmApplicationRecord,
   SwarmAppSmokeDeclaration,
 } from '../types';
+import { isGroupManifest } from './swarm-app-group';
 
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -63,6 +65,9 @@ export interface AppSmokeVerificationOptions {
   preOnboarding?: boolean;
   timeoutMs?: number;
   fetchImpl?: AppSmokeFetch;
+  /** ADR-141: resolves a group's member records — a group has no smokes of its own and is verified
+   *  THROUGH its members. Absent → a group fails by name (never silently passes). */
+  resolveMember?: (name: string) => Promise<SwarmApplicationRecord | null>;
 }
 
 /** @description Resolve one RFC 6901 JSON pointer. */
@@ -213,8 +218,45 @@ async function executeSmoke(
 }
 
 /**
+ * @description ADR-141: a group carries no code, so "is it operational" means "are its members" —
+ * every member must be installed, active and pass its OWN smokes; the member smokes are reported
+ * under the group prefixed `<member>/<smoke>`. A group with no member resolver fails by name: the
+ * CORE-05 rule that a smoke-less package never silently passes holds for groups too.
+ * @param requestedName - The group name as requested.
+ * @param record - The group's active record.
+ * @param options - Verification options (must carry `resolveMember`).
+ * @returns The group's aggregate result.
+ */
+async function verifyGroupThroughMembers(
+  requestedName: string,
+  record: SwarmApplicationRecord,
+  options: AppSmokeVerificationOptions,
+): Promise<AppSmokeApplicationResult> {
+  if (!options.resolveMember) {
+    return { appName: requestedName, status: 'failed', smokes: [], error: 'group members cannot be resolved by this verifier' };
+  }
+  const smokes: AppSmokeResult[] = [];
+  const errors: string[] = [];
+  for (const memberName of record.manifest.dependencies?.apps ?? []) {
+    const member = await options.resolveMember(memberName);
+    if (!member) { errors.push(`member ${memberName} is not installed`); continue; }
+    if (member.status !== 'active') { errors.push(`member ${memberName} is inactive`); continue; }
+    if (!member.manifest.smoke?.length) { errors.push(`member ${memberName} declares no smoke probes`); continue; }
+    for (const smoke of member.manifest.smoke) {
+      const result = await executeSmoke(member, smoke, options);
+      smokes.push({ ...result, name: `${memberName}/${result.name}` });
+    }
+  }
+  const status = errors.length || smokes.some((s) => s.status === 'failed')
+    ? 'failed'
+    : smokes.some((s) => s.status === 'pending') ? 'pending' : 'passed';
+  return { appName: requestedName, status, smokes, ...(errors.length ? { error: errors.join('; ') } : {}) };
+}
+
+/**
  * @description Execute every declared smoke for the exact installed app records supplied by the
  * control plane. Missing/inactive/no-smoke packages fail by name; no inferred green state exists.
+ * An ADR-141 group is verified through its members (see verifyGroupThroughMembers).
  */
 export async function verifyAppSmokes(
   records: Array<{ requestedName: string; record: SwarmApplicationRecord | null }>,
@@ -228,6 +270,10 @@ export async function verifyAppSmokes(
     }
     if (record.status !== 'active') {
       apps.push({ appName: requestedName, status: 'failed', smokes: [], error: 'app is inactive' });
+      continue;
+    }
+    if (isGroupManifest(record.manifest)) {
+      apps.push(await verifyGroupThroughMembers(requestedName, record, options));
       continue;
     }
     if (!record.manifest.smoke?.length) {

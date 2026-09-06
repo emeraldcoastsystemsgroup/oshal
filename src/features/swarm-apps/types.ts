@@ -23,6 +23,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | SwarmAppStaticUi.group — a manifest may split its ribbon's top tray into labelled bands. The cockpit renderer already grouped by this field and already gated it to the top section; the key simply had nowhere to come from, because synthesiseProfile's map dropped it. Optional, so every existing manifest is unchanged and an older core ignores it (flat ribbon) rather than failing the load.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: manifest.artifacts — the app's "Send to…" declarations (accepts/provides, from @/shared/artifact-exchange). Optional and additive (an older core ignores it); the VALUE is validated fail-closed at load, registered on activate, retracted on deactivate — the skill-profiles discipline.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | SwarmAppRibbonPolicy.hideStatusBar — the third per-app chrome flag beside hideChatPanel/hideAssistant: hide the cockpit's bottom bots/tickets/cost/queue status bar while the app is focused (operator 2026-09-04: that bar only means something to a swarm admin; a CRM or trading surface should be able to drop it). Optional and additive — absent = shown, an older core ignores it.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups: manifest.kind ('app' default | 'group'), the group-only `toolbar[]` (surfaces BORROWED from member apps by app + surface name — a reference the loader resolves, never a copied URL) and `setup[]` (the steps the kernel setup dashboard renders), and the per-user `readiness[]` block any package may declare — the session-authenticated sibling of `smoke:` (a route below the package's own mount + RFC 6901 pointers for done/detail). All optional and additive; an older core ignores them.
  */
 
 import type { SwarmAppRouteAuthMode } from '@/shared/route-auth';
@@ -587,10 +588,68 @@ export interface RagCollectionTeardown {
   deleteCollection(name: string): Promise<void>;
 }
 
+/** ADR-141: what a manifest IS. `app` (the default) ships code; `group` binds installed apps. */
+export type SwarmAppKind = 'app' | 'group';
+
+/**
+ * ADR-141 D2: one toolbar tile of a group, BORROWED from a member app by reference. The loader
+ * copies the member surface's label, icon and iframeUrl at resolution time — a renamed or removed
+ * surface fails the group's activation with both names, and it never renders a dead tile.
+ */
+export interface SwarmAppGroupToolbarEntry {
+  /** A member app (must appear in the group's `dependencies.apps`). */
+  app: string;
+  /** One of that member's `ui.static[].toolName` values (globally unique per ADR-085 D11). */
+  surface: string;
+  /** Ribbon band heading, as the ribbon-groups addendum defines it. */
+  group?: string;
+  /** Tray placement; defaults to `top`. */
+  section?: 'top' | 'bottom';
+}
+
+/**
+ * ADR-141 D4: one step of a group's setup dashboard. `readiness` names a `readiness[]` entry the
+ * member app declares; `fix` names a toolbar surface the dashboard opens so the person can complete
+ * the step without leaving the group.
+ */
+export interface SwarmAppGroupSetupStep {
+  label: string;
+  app: string;
+  readiness: string;
+  fix?: string;
+}
+
+/**
+ * ADR-141 D3: a per-user readiness probe — the session-authenticated sibling of `smoke:`. The path
+ * must sit below a route this same manifest declares and that route must admit a browser session,
+ * because readiness is a fact about a PERSON ("your resume is indexed") and the dashboard asks it in
+ * the signed-in user's own session — never with the service secret, never with a PAT.
+ */
+export interface SwarmAppReadinessDeclaration {
+  /** Slug a group's `setup[].readiness` refers to. */
+  name: string;
+  /** GET path below one of this package's own `routes[].mountPath`s. */
+  path: string;
+  /** RFC 6901 pointer into the JSON response; the step is done only when it resolves to `true`. */
+  readyPointer: string;
+  /** Optional pointer to a one-line status the dashboard shows under the step. */
+  detailPointer?: string;
+}
+
 /** The YAML manifest shape, as parsed from swarm-apps/*.yaml. */
 export interface SwarmAppManifest {
   name: string;
   displayName: string;
+  /** ADR-141: `group` = a code-less manifest that binds installed member apps into one front door.
+   *  Absent = `app`. A group may declare `toolbar`/`setup` and nothing that executes. */
+  kind?: SwarmAppKind;
+  /** ADR-141 D2 (groups only): tiles borrowed from member apps by app + surface name. */
+  toolbar?: SwarmAppGroupToolbarEntry[];
+  /** ADR-141 D4 (groups only): the steps the kernel setup dashboard renders for this group. */
+  setup?: SwarmAppGroupSetupStep[];
+  /** ADR-141 D3: per-user readiness probes a group's `setup[]` may reference. Validated fail-closed
+   *  at load exactly like `smoke:` (own mount, canonical path, valid pointers, session-admitting route). */
+  readiness?: SwarmAppReadinessDeclaration[];
   description?: string;
   version?: string;
   status?: 'active' | 'inactive';
