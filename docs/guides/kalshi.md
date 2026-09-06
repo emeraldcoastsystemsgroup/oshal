@@ -18,6 +18,7 @@ hands are still shown, and nothing is ordered without your confirmation.
 | The outcome of every hand Jarvis actually announced | **Alerts** tab — each announced hand carries WIN / LOSS (or *open* until it settles) and the one-contract P&L, with a **Record** line above the table: W – L, hit rate, average and total P&L, how many are still open. Paper numbers: an alert never places an order. |
 | What the scan believes right now | **Scan** tab — the ranked hands from the last snapshot, with true P, price, net edge, suggested stake, risk flags, and the snapshot's age. |
 | Real money: balance, positions, resting and past orders | **Account** tab, and `GET /api/kalshi/orders/history`. Every order attempt is audited, refusals included. |
+| The record as charts: the four books, KPI tiles, cumulative P&L per strategy, rolling hit rate vs breakeven, and when the next forward test reaches its verdict | **Trends** tab — inline charts over the ledger with a legend, crosshair tooltips and a table twin each. `GET /api/kalshi/trends?days=30` serves the series. **Real · auto** is shown as *not built*: an autopilot needs a PROVEN strategy first. |
 | The same, from Jarvis | Ask *"what did the Kalshi scan find?"* — Jarvis answers from the announced hands in his feed, not a fresh scan. Alerts arrive summarized ("16 new updates from Kalshi") and are read out only when you ask. |
 
 ## The reports
