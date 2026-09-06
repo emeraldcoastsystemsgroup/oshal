@@ -47,6 +47,7 @@ enforces this.
 |---|---|---|
 | `name` | ✅ | slug (lowercase, digits, dashes) — the app id |
 | `displayName` | ✅ | human name |
+| `kind` | | `app` (default) or `group` — a group carries no code and binds installed apps into one front door (ADR-141, see below) |
 | `version` | ✱ | semver |
 | `source` | ✱ | provenance: `{type: git-subdir, url, path, ref}` — installer pins `sha` |
 | `scope` | | `person` (default owner = installer) / `public` / `tenant` |
@@ -62,6 +63,8 @@ enforces this.
 | `schedules` | | recurring prompt jobs or confined deterministic service-route handlers — see below |
 | `takeout` | | package-owned Google Takeout slice declarations — see below |
 | `smoke` | | executable HTTP probes run by the installer — see below |
+| `readiness` | | per-user readiness probes a group's setup dashboard asks in the signed-in user's session — see below |
+| `toolbar` / `setup` | | group-only: surfaces borrowed from members by reference, and the setup-dashboard steps — see "Application groups" |
 | `migrations` | | `[path]` — applied idempotently on install |
 | `ticketType` + `workflow` | | rides the kernel queue (the app doesn't own the queue) |
 | `theme` | | a registered cockpit skin id, or a bundled `ui/*.css` |
@@ -202,6 +205,94 @@ Smoke declarations are validated by both the package CLI and the server loader:
 - An AI smoke must also have `requiresAi: true` on its owning route. During pre-onboarding it is
   pending; on a declared no-AI box the verifier instead proves the real route returns
   HTTP 503 with `ai_disabled` without spending a generation.
+
+## Per-user readiness (`readiness:`)
+
+`smoke:` proves a package is operational at install time, with the service secret. `readiness:` is
+its per-user sibling: it answers "what does this *person* still have to set up" — "your resume is
+indexed", "your Facebook is connected" — and a group's setup dashboard (below) asks it **in the
+signed-in user's own session**, never with the service secret and never with a PAT.
+
+```yaml
+routes:
+  - module: routes/example.js
+    factory: createExampleRoutes
+    mountPath: /api/example
+    auth: service-or-oidc
+
+readiness:
+  - name: resume                      # what a group's setup[].readiness refers to
+    path: /api/example/resume/state   # GET, below one of THIS package's routes
+    readyPointer: /hasResume          # RFC 6901; the step is done only when this is boolean true
+    detailPointer: /summary           # optional one-line status shown under the step
+```
+
+The loader validates it fail-closed exactly like `smoke:`: a canonical path below a route the same
+manifest declares, an owning route that admits a browser session (`oidc` or `service-or-oidc` —
+never service-only, operator or public), and valid pointers. Keep the probe honest: it must read the
+same store the fix surface writes, because a probe that answers from cached state lies to the
+dashboard. Anything other than boolean `true` at `readyPointer` is *not done*; an HTTP error or a
+missing pointer renders as "can't check", never as done.
+
+## Application groups (`kind: group`, ADR-141)
+
+A group is a manifest that carries **no code** and binds installed apps into one themed front door
+with one toolbar and a setup dashboard — the meta-manifest [ADR-097](../adr/097-app-suites-primary-categorization.md)
+named instead of a re-bundle. It ships, installs, catalogues and gates like any package.
+
+```yaml
+name: intelligent-career
+kind: group
+suite: ai-knowledge
+displayName: Intelligent Career
+theme: daylight
+dependencies:
+  apps: [career-hunter, portrait-studio, social, print-ingest]   # the members — all must be active
+toolbar:                                   # BORROWED by app + surface name; never a copied URL
+  - { app: career-hunter, surface: career-board }
+  - { app: career-hunter, surface: career-resume-studio, group: Resume }
+  - { app: portrait-studio, surface: portrait-studio, group: Presence }
+  - { app: career-hunter, surface: career-settings, section: bottom }
+setup:                                     # the kernel setup dashboard is rendered from this
+  - { label: Upload your resume, app: career-hunter, readiness: resume, fix: career-resume-studio }
+  - { label: Profile picture, app: portrait-studio, readiness: portrait, fix: portrait-studio }
+```
+
+What the loader enforces, fail-closed:
+
+- **No code.** `bots`, `tools`, `routes`, `migrations`, `schedules`, `workflow`, `ticketType`,
+  `takeout`, `smoke`, `readiness`, `ui`, `uses`, `artifacts`, `surface` all fail the load. A group
+  may bundle one thing of its own — a `ui/<theme>.css` skin.
+- **Members are `dependencies.apps`** (non-empty). The installer resolves them npm-style; the
+  reverse-dependency guard blocks a member's uninstall while the group is active.
+- **Toolbar tiles are references.** Each entry names a member and one of its `ui.static[].toolName`s;
+  the loader copies the member's label, icon and `iframeUrl` at activation and again at every
+  profile synthesis, so a member that moves a surface is followed. A tile whose member is not
+  active, or whose surface no longer exists, fails the group's activation with both names — it never
+  renders a dead tile. `group:` and `section:` mean what they mean on `ui.static`. A `label`,
+  `icon` or `iframeUrl` on a toolbar entry is rejected: that is the copied-URL launcher defect this
+  kind exists to remove.
+- **Setup steps** name a member, one of that member's `readiness` entries, and (optionally) a
+  toolbar surface as `fix`. A step whose member does not declare the readiness fails activation.
+- **Verification runs through the members.** `oshal-verify --apps <group>` executes every member's
+  own smokes (reported as `<member>/<smoke>`); a missing, inactive or smoke-less member fails the
+  group by name.
+
+What the kernel provides for free:
+
+- **The ribbon**: the group's first tile is the shared **Setup** dashboard
+  (`/api/swarm/apps/<group>/setup-dashboard`), followed by the borrowed tiles; `ribbon.defaultView`
+  may pick another tile. The cockpit needs no change — a group is rendered from the same profile an
+  app is.
+- **The setup / connection-status page**: one kernel page for every group. It reads the plan from
+  `GET /api/swarm/apps/<group>/setup` (manifest data only), asks each member probe itself in the
+  viewer's session, and shows done / not done / can't check with the detail line and a **Fix**
+  button that opens the member surface inside the same ribbon. No group writes its own dashboard; a
+  group that wants a different order changes `setup:`.
+- **A hostname**: point `HOST_APP_MAP` at the group (`career.oshal.ai=intelligent-career`) and the
+  subdomain lands on the group instead of one primary app.
+
+Groups do not nest: a group cannot list another group as a member.
 
 ## App access tiers
 

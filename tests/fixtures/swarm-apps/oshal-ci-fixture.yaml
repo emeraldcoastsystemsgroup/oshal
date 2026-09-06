@@ -61,6 +61,16 @@ routes:
     mountPath: /api/oshal-ci-fixture
     auth: oidc
 
+# ADR-141: one per-user readiness probe, so the fixture GROUP (oshal-ci-fixture-group.yaml) can
+# prove the setup-plan contract. The route module does not exist (see above), so the probe answers
+# through the app gate rather than a handler — which is exactly what the dashboard must render as
+# "can't check", never as done. The plan resolution is the thing under test here.
+readiness:
+  - name: fixture
+    path: /api/oshal-ci-fixture/readiness
+    readyPointer: /ready
+    detailPointer: /summary
+
 # hideFrameworkItems: gives the ribbon-synthesis specs something to assert against.
 ribbon:
   hideFrameworkItems: [calendar]

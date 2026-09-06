@@ -17,6 +17,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Validate manifest-contributed Takeout slices fail-closed: literal canonical suffixes only, confined compiled modules, bounded uncompressed bytes, unique stable ids/paths, and named handler exports.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | Validate both manifest schedule modes fail-closed. Deterministic service-route jobs must be framework-scoped static POSTs beneath an exactly service-authenticated package route; malformed cron, mixed prompt/route fields, dynamic interpolation, and oversized bodies are rejected at load.
  * 13 | maintainer@emeraldcoastsystemsgroup.com  | ADR-093 Tier 2: validate bots[].container/port fail-closed (service-name slug, sane port, port requires container, 'oshal-api' rejected) — a malformed node declaration must fail the load, not silently register the bot inline on a runtime the operator opted out of.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com  | ADR-141: readManifest validates `kind: group` (no code keys, members required, toolbar borrows only from members, setup steps name a member + a toolbar surface) and the per-user `readiness:` block (own mount, canonical path, session-admitting route, RFC 6901 pointers) — both fail closed at load, from swarm-app-group.ts.
  */
 
 import fs from 'fs';
@@ -38,6 +39,7 @@ import {
   type SwarmAppRouteAuthMode,
 } from '@/shared/route-auth';
 import { validateArtifactActionsDeclaration } from '@/shared/artifact-exchange';
+import { validateGroupManifest, validateReadinessDeclarations } from './swarm-app-group';
 import {
   SWARM_APP_BOT_HARNESS_TYPES,
   SWARM_APP_BOT_SPECIAL_API_TYPES,
@@ -909,6 +911,10 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   validateScheduleDeclarations(manifest, absPath);
   validateTakeoutDeclarations(manifest, absPath);
   validateSmokeDeclarations(manifest, absPath);
+  // ADR-141: a `kind: group` manifest carries no code and borrows member surfaces by reference;
+  // `readiness:` is the per-user sibling of `smoke:`. Both fail closed here, at load.
+  validateGroupManifest(manifest, absPath);
+  validateReadinessDeclarations(manifest, absPath);
 
   // ADR-085 D9: the assistant bubble is rendered BY THE FRAMEWORK, inside the cockpit's
   // authenticated origin. Its iframeUrl must therefore be same-origin and root-relative — an

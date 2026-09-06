@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export CORE-05 manifest smoke declarations and verifier contracts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export the APP-02 fail-closed package-audit mode resolver.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export the manifest Takeout slice declaration and lifecycle registrar port.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-141 application-group types, validators and resolvers.
  */
 
 export type {
@@ -25,6 +26,10 @@ export type {
   SwarmAppSmokeAuthMode,
   SwarmAppSmokeDeclaration,
   SwarmAppSmokeExpectation,
+  SwarmAppKind,
+  SwarmAppGroupToolbarEntry,
+  SwarmAppGroupSetupStep,
+  SwarmAppReadinessDeclaration,
   SwarmAppWorkflow,
   SwarmAppWorkflowStage,
   SwarmAppRibbonPolicy,
@@ -65,7 +70,20 @@ export {
   otherProvidersOf,
   assertToolNamesUnique,
   assertToolDependenciesResolvable,
+  // ADR-141 — application groups (`kind: group`) and per-user `readiness:`.
+  SWARM_APP_KINDS,
+  GroupResolutionError,
+  isGroupManifest,
+  orderGroupsLast,
+  groupDashboardTile,
+  staticRibbonItems,
+  validateGroupManifest,
+  validateReadinessDeclarations,
+  resolveGroupToolbar,
+  resolveGroupSetup,
+  assertGroupResolvable,
 } from './services';
+export type { ResolvedGroupSetupStep, ResolvedGroupToolbar } from './services';
 export type { AppAccessAssignment, AppAccessResolver, ResolvedAppAccess } from './services';
 export type {
   AppSmokeApplicationResult,

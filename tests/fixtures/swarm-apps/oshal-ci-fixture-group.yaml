@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# THE PERMANENT TEST FIXTURE GROUP (ADR-141)
+#
+# A `kind: group` that binds the permanent fixture app, so the shared specs can prove the
+# application-group contract end-to-end against the Playwright-managed server: the group loads,
+# its ribbon is the kernel setup-dashboard tile followed by the fixture app's surface BORROWED by
+# reference, its setup plan resolves the fixture's readiness probe, and the dashboard page serves.
+#
+# Loaded ONLY by the test server via SWARM_APPS_EXTRA_DIRS=tests/fixtures/swarm-apps — never a real
+# swarm. Not a product; it never carves.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: oshal-ci-fixture-group
+kind: group
+displayName: CI Fixture Group
+description: >-
+  Permanent test fixture for the ADR-141 application-group contract. Binds the permanent fixture
+  app; loaded only by the test server.
+version: 1.0.0
+status: active
+scope: public
+guestTier: blocked
+
+dependencies:
+  apps: [oshal-ci-fixture]
+
+toolbar:
+  - { app: oshal-ci-fixture, surface: oshal-ci-fixture-surface, group: Fixtures }
+
+setup:
+  - { label: Prove the fixture answers, app: oshal-ci-fixture, readiness: fixture, fix: oshal-ci-fixture-surface }
