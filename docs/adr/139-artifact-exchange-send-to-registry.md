@@ -4,7 +4,7 @@
 promotion; real-HTTP-guarded) and three destinations riding it (dnd character import, Kid Lens
 Takeout ingest, Spaces video reconstruction) plus the class-materials and career resume/cover
 sources — a pdf's menu offers eight destinations. Stage 4 (sources/`provides` + the generic picker,
-the NL leg) and the remaining rollout items are tracked in the BACKLOG's everything-rollout entry.
+the NL leg) and the remaining rollout items are tracked in the BACKLOG's "what is left" entry. **Rollout complete through wave 2 (2026-09-07)**: twelve destinations registered and ten source surfaces tagged, plus two operational pieces the rollout forced out — the shared package-side redeem (`redeemArtifactViaRelay`) so a new destination is ~30 lines, and `scripts/deploy-store-package.sh`, which copies a package onto a box without silently deactivating it (a bare `docker cp` overwrites `status:` and the loader then reconciles the DB toggle from it — that trap cost three debug cycles). Sources with no byte-serving URL (task-explorer's JSON preview envelope, rag-center documents, client-generated blobs) are deliberately NOT tagged: they wait on the mint-with-bytes decision.
 
 **Date:** 2026-09-04
 
