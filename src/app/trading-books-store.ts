@@ -15,6 +15,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — books table (deterministic legacy ids, composite (user_sub, account_id) FK, learn-book partial unique), legacy mint/backfill helpers, loadBook keyed (user_sub, book_id) — the WHERE is the wall under system identity — lifecycle invariants (createBook disabled-live + ownership check, deleteBook ledger/HWM/position refusal, updateBook account_id immutability), resetBreaker, and the per-fire multiAccountEnabled() flag read (never a module constant).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cash-account settlement (ADR-134 D8): the runtime rail adds oshal_trading_books.settlement_policy TEXT CHECK (refuse|warn) — the per-book override of TRADING_CASH_SETTLEMENT_POLICY; 'off' is deliberately NOT a column value (only the env can disarm the guard) and the CHECK is the DB-side pin. loadBook/listBooks join the bound account's account_type so TradingBook.accountType ('cash'|'margin'|null) rides every loaded book; updateBook accepts settlementPolicy (null clears it). No numbered migration: this rail IS the live path (dual-rail convergence, ADR-134 D1) and 126 is claimed by another item.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 pin retirement: loadLegacyBook(pool, sub, kind) - the legacy 'paper'/'live' books resolved through their DB ROW, which is what carries the account binding (and the enabled flag / capital cap / settlement policy). It falls back to the pure legacyBook() constructor ONLY when the row is genuinely ABSENT; a loadBook THROW (book_binding_undecryptable) propagates, because degrading an undecryptable binding into an UNBOUND book is exactly how a caller ends up addressing whichever account the venue happens to enumerate first. Callers that used `loadBook(...).catch(() => null) ?? legacyBook(...)` must use this instead.
  */
 
 import crypto from 'crypto';
@@ -49,9 +50,11 @@ export function legacyBookId(sub: string, kind: TradingMode): string {
 }
 
 /**
- * @description Pure legacy-book constructor for callers pinned to the two-book world (swing,
- * research, reconcile ledger, route mode aliases). No DB read: binding fields are NULL, which the
- * broker factory resolves exactly like today (env pin / first account / default connection).
+ * @description Pure legacy-book constructor for a user whose book ROWS do not exist yet (a fresh
+ * install) and for callers pinned to the two-book world with nothing to bind (paper/Alpaca). No DB
+ * read, so binding fields are NULL - and an unbound Schwab reader now REFUSES unless the connection
+ * enumerates exactly one account (selectSchwabAccount). Anything that may address a real Schwab
+ * account must use loadLegacyBook(), which reads the binding off the row.
  * @param sub - Owner sub.
  * @param kind - 'paper' | 'live'.
  * @returns The legacy TradingBook.
@@ -229,6 +232,27 @@ export async function loadBook(pool: AppContext['pool'], sub: string, bookId: st
     }
   }
   return toBook(r as BookRow, accountNumber);
+}
+
+/**
+ * @description Load a legacy 'paper'/'live' book through its DB ROW - the row is what carries the
+ * ADR-134 account binding, the enabled flag, the capital cap and the settlement policy, none of
+ * which the pure constructor can know. The row-less fallback is for a user whose books were never
+ * minted (a brand-new install), and it is taken ONLY when the row is genuinely ABSENT.
+ *
+ * A loadBook THROW is deliberately NOT caught. `loadBook` raises a named
+ * `book_binding_undecryptable` when a bound account number cannot be decrypted; swallowing that into
+ * the unbound constructor would hand the caller a book with `accountNumber: null`, and an unbound
+ * Schwab reader has no way to know which of a login's accounts it is addressing. Fail closed.
+ * @param pool - Postgres pool.
+ * @param sub - Owner sub.
+ * @param kind - Legacy book kind ('paper' | 'live').
+ * @returns The book from its row, or the pure legacy book when no row exists.
+ * @throws Whatever loadBook throws (notably book_binding_undecryptable) - never degraded to unbound.
+ */
+export async function loadLegacyBook(pool: AppContext['pool'], sub: string, kind: TradingMode): Promise<TradingBook> {
+  const row = await loadBook(pool, sub, legacyBookId(sub, kind));
+  return row ?? legacyBook(sub, kind);
 }
 
 /**

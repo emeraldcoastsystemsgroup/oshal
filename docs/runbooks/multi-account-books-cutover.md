@@ -23,7 +23,7 @@
 
    The script refuses unless: market closed; zero NULL `book_id` rows on all eight trading tables;
    discovery has run; and the legacy live book links to exactly ONE discovered account
-   (`SCHWAB_ACCOUNT_NUMBER` pin match, else the single discovered account). On `--arm` it applies
+Precondition 4 links the legacy live book to its discovered account: it passes when that book is already bound, or when exactly one discovered Schwab account is unheld by any other book. There is no environment pin — an unbound reader refuses rather than guessing.
    migration 125 (side-store PK swaps — without them a second live book's HWM write would raise
    `unique_violation` and the fail-closed breaker would keep the book halted), links the legacy
    book, flips the flag, recreates the api, and health-checks. It **never re-POSTs autopilot
@@ -61,7 +61,7 @@
 ## Deliberately deferred (BACKLOG-tracked, not silent)
 
 - The hardening tail of PR4: `book_id NOT NULL` + legacy mode-index/trigger drops on
-  orders/signals/decisions, `SCHWAB_ACCOUNT_NUMBER` env retirement, the config-overrides
+Precondition 4 links the legacy live book to its discovered account: it passes when that book is already bound, or when exactly one discovered Schwab account is unheld by any other book. There is no environment pin — an unbound reader refuses rather than guessing.
   book-less-active CHECK.
 
 ## Known one-time hazards (encountered and fixed during the build)
