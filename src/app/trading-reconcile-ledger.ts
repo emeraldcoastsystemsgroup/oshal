@@ -13,11 +13,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — transaction-based ledger reconcile (dry-run default). Matches every Schwab TRADE sell against ALL ledger sells (orderId OR qty+price+date, never filtering broker_order_id IS NOT NULL — the clobber/NULL case), books only truly-unbooked closes with FIFO cost basis from a full-history replay, and REFUSES any symbol where the unbooked-sell shares don't sum exactly to the excess (the SKHYV when-issued→regular-way ticker-conversion case). A separate operator-confirmed manualCloses path books a synthetic close a commingled venue history can't auto-map. created_at = the real trade date (never now()).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Trading engine extraction (ADR-085 pre-carve): import repoint only — recordOrder now comes from app/trading-engine.ts instead of the carvable route surface. Zero behavior change.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | reconcileLedger's venue reader carries the legacy book's account binding (the shape trading-reconcile.ts already used). Required by the Schwab account-pin retirement: an unbound reader now refuses instead of guessing which enumerated account to read.
  *
  * @module trading-reconcile-ledger
  */
 
 import type { AppContext } from './composition-root';
+import { loadLegacyBook } from './trading-books-store';
 import { getBrokerReader, type BrokerTransaction, type TradingMode } from '@/features/trading';
 import { recordOrder } from './trading-engine';
 import { createChildLogger } from '@/shared/logger';
@@ -160,7 +162,10 @@ export async function reconcileLedger(
   ctx: AppContext, sub: string, mode: TradingMode,
   opts: { apply: boolean; symbols?: string[]; manualCloses?: ManualClose[] },
 ): Promise<ReconcileReport> {
-  const broker = getBrokerReader(mode, sub);
+  // The reader must carry the legacy book's BINDING (trading-reconcile.ts already does this): an
+  // unbound Schwab reader refuses rather than guessing among the login's enumerated accounts.
+  const legacy = await loadLegacyBook(ctx.pool, sub, mode);
+  const broker = getBrokerReader(mode, sub, legacy.accountNumber ? { accountNumber: legacy.accountNumber, connectionKey: legacy.connectionKey } : undefined);
   if (!broker.configured() || !broker.getTransactions) {
     return { mode, apply: opts.apply, symbols: [], totalRealized: 0, bookedRows: 0 };
   }
