@@ -3,21 +3,23 @@
      Opened by send-to.js with ?artifact=<ref>. Gets the document's TEXT via the owner-bound
      doc-extract endpoint (the browser can't parse PDFs), then rides the surface's own Jarvis
      rail: POST /api/jarvis/ask with the text as a doc attachment, poll /ask/result. -->
-<html lang="en">
+<html lang="en" data-theme="midnight">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Summarize with Jarvis</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css">
+<script src="/shared/ui/js/surface-theme.js"></script>
 <style>
-  :root { color-scheme: dark; }
-  body { margin: 0; background: #0f141a; color: #dbe4ee; font: 13.5px system-ui, sans-serif; }
+  body { margin: 0; background: var(--bg-primary, #0f141a); color: var(--text-primary, #dbe4ee); font: 13.5px system-ui, sans-serif; }
   .wrap { padding: 18px 20px 20px; }
   h2 { margin: 0 0 4px; font-size: 15px; }
-  .art { color: #8fa1b3; font-size: 12px; margin-bottom: 10px; word-break: break-all; }
-  #status { font-size: 12.5px; min-height: 16px; color: #8fa1b3; }
-  #status.err { color: #ff7a7a; }
-  #answer { margin-top: 12px; background: #151b23; border: 1px solid #2a3644; border-radius: 8px; padding: 12px; white-space: pre-wrap; font-size: 13px; line-height: 1.5; display: none; max-height: 52vh; overflow: auto; }
-  .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid #2a3644; border-top-color: #4da3ff; border-radius: 50%; animation: sp 1s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  .art { color: var(--text-secondary, #8fa1b3); font-size: 12px; margin-bottom: 10px; word-break: break-all; }
+  #status { font-size: 12.5px; min-height: 16px; color: var(--text-secondary, #8fa1b3); }
+  #status.err { color: var(--status-error, #ff7a7a); }
+  #answer { margin-top: 12px; background: var(--bg-card, #151b23); border: 1px solid var(--border-color, #2a3644); border-radius: 8px; padding: 12px; white-space: pre-wrap; font-size: 13px; line-height: 1.5; display: none; max-height: 52vh; overflow: auto; }
+  .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border-color, #2a3644); border-top-color: var(--accent-primary, #4da3ff); border-radius: 50%; animation: sp 1s linear infinite; vertical-align: -2px; margin-right: 6px; }
   @keyframes sp { to { transform: rotate(360deg); } }
 </style>
 </head>
