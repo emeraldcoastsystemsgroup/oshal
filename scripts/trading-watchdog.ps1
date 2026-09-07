@@ -70,6 +70,60 @@
   requires the legacy live beat whenever any book is enabled (and now also raises 'legs-unreadable'
   when every live book is disabled, since blindness over a leg that runs exits is not a quiet state).
 
+  2026-09-06 revision 3 (ADR-134 D3.7, "catch a silently-wrong book, not just a dead process"): the
+  DECIDABLE half of this file moved into scripts/lib/trading-watchdog-checks.js - pure functions over
+  plain objects, docker-cp'd into the api container and required by the fetchers that run there, so
+  every threshold comparison is mutation-proved by tests/unit/trading-watchdog-checks.spec.ts instead
+  of being source-pinned inside a .ps1. What that bought:
+    G. PER-BOOK AUDIT (replaces the single-book check E). Every LIVE book from the same
+       oshal_trading_books roster B2(a) uses - enabled AND disabled, since a disabled book still runs
+       protective exits on real money - is read through the api's caller-scoped /account, /positions
+       and /orders with ?book=<ref> (the query-first param, oshal-applications/trading
+       src-routes/trading-accounts-routes.ts routeBook), and audited for: unprotected bleeders (the
+       old check E, now per book AND per symbol), stranded sells, HOLDING PAST THE STOP
+       (TRADING_WD_DEEP_LOSS_PCT, above every shipped posture's stopLossPct - the autopilot rests no
+       venue stops, so this reads "the loop's own exit did not happen", never "a stop is missing"),
+       NEGATIVE buying power / cash, an open-position count above a coarse anomaly floor, and
+       single-name concentration. Check E audited ONE book (?mode=live -> the legacy book); with three
+       live books on the roster that left two real-money accounts unwatched.
+    PER-SYMBOL SUPPRESSION with hysteresis ($symStateFile, decided by the module): one key per
+       condition per book per symbol - never a symbol-SET key, whose churn minted a new key every run
+       - re-alerting inside the window only when the condition WORSENS past a band, logging one
+       'recovered:' line and clearing the key when it clears. Keys are only reconciled for the books
+       and check kinds the run actually evaluated, so a book that could not be read never "recovers".
+    EMPTY, FAILED OR SLOW EXEC IS A FAILED CHECK. Every docker exec goes through Invoke-WdExec: a
+       non-zero exit, empty output, or a run past TRADING_WD_EXEC_TIMEOUT_SEC (default 60s, the
+       process is killed) raises 'check-infra-<name>' instead of parsing to nothing and reading
+       all-clear - the deadline is what stops one wedged /api/trading read from eating the whole run
+       and the alerts it had already raised. Same rule, same deadline, for every docker cp into the
+       container ('wd-checks-unavailable' / 'check-infra-<name>'), because a cp that fails silently
+       leaves the PREVIOUS run's file in place and prints a well-formed wrong result.
+       THE TWO DEADLINES ARE RELATED BY A FORMULA, not left to agree by luck: the container-side
+       audit is handed a BUDGET of (exec deadline - 10s slack) and gives each book an equal share,
+       and TRADING_WD_HTTP_TIMEOUT_SEC (default 20) caps a single read WITHIN that share. So the
+       fetcher always prints its per-book results before the host kills it, and one wedged book
+       costs only its own share. Before that formula (round-3 review, MEASURED against a real
+       hanging server at the shipped defaults) three wedged books took 126s against the 60s exec
+       deadline: the child was killed and the operator lost the wedged books' error lines AND the
+       healthy books' findings, getting one generic 'ran past its deadline' instead.
+       NOT bounded by a deadline, and honestly so: `docker inspect` (uptime), the two `docker logs`
+       reads (they need line-numbered arrays, which the process wrapper does not return) and the
+       final `oshal-send-alert.js` delivery exec (its body carries newlines and quotes that
+       ConvertTo-WdArgLine refuses by design). A wedged docker daemon can still park those.
+    CHECK F needs a REAL print: size, recency and a two-sided quote whose mid crosses the same
+       threshold, or it logs a skip instead of paging on one thin stale odd-lot print.
+  Thresholds are settings, never literals: -AlertPct/-GapAlertPct params, then TRADING_WD_* in the
+  operator-local .env, then the defaults in trading-watchdog-checks.js defaultSettings(). $AlertPct
+  resolves BEFORE $LiveAlertPct, because it is the live threshold's fallback.
+
+  CHANGE LOG (started 2026-09-06; earlier revisions remain described above and in Git)
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR                                     | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Move every DECIDABLE check into scripts/lib/trading-watchdog-checks.js (pure functions, mutation-proved by tests/unit/trading-watchdog-checks.spec.ts) and keep this file to fetching, delivery and Raise. Adds block G: the per-book audit of EVERY live book on the roster (the retired check E read only ?mode=live, so two real-money books had nothing watching them) - unprotected bleeders, stranded sells, holding past the stop, negative buying power/cash, position count and single-name concentration - with per-book/per-symbol suppression, a worsening band and one-shot recovery in $symStateFile. Every docker exec now goes through Invoke-WdExec, so an empty or failed exec raises check-infra-<name> instead of parsing to nothing and reading as all-clear; a missing checks module raises wd-checks-unavailable. Check F requires a real print (size, recency, quote-mid corroboration). Thresholds are settings: -params, then TRADING_WD_* in the operator-local .env, then the module defaults (which sit above every shipped risk posture).
+  2 | maintainer@emeraldcoastsystemsgroup.com   | Round-2 review fixes, all three on the real-money half. (a) $AlertPct now resolves BEFORE $LiveAlertPct: the other order meant TRADING_WD_ALERT_PCT=3 tightened the paper book and left the Schwab books on the param default of 5 - looser where it matters most. (b) Invoke-WdExec runs docker as a real child process with a DEADLINE (TRADING_WD_EXEC_TIMEOUT_SEC, default 60): block G reads three endpoints per book, so an api that answers /api/health while /api/trading is wedged could park the run on undici's 300s-per-request default, past the next scheduled runs, with api-down/engine-blind already raised and never emailed; the container-side fetcher additionally bounds ONE read (TRADING_WD_HTTP_TIMEOUT_SEC, default 20) so a single wedged book does not cost the others. (c) The TRADING_CORE_SYMBOLS and TRADING_MULTI_ACCOUNT reads go through Invoke-WdExec too (node -p with a 'wd:' sentinel, since printenv exits 1 on an unset variable) - an empty catch used to hand the checks an empty exemption set, which would have paged 'HOLDING PAST ITS STOP' on a deliberate :0 hold once per window per book; a failed core read now withholds every core-exempting check for the run and says so. Also: every docker cp into the container is fail-closed (a stale /tmp file otherwise yields a well-formed wrong result), block G's fallback alert has its own key so the beat check's does not swallow it, and an unparseable setting is reported as a warning instead of silently defaulting.
+  3 | maintainer@emeraldcoastsystemsgroup.com   | Round-3 review fixes. (a) CORRECTS SEQ 2's claim that TRADING_WD_HTTP_TIMEOUT_SEC alone kept one wedged book from costing the others: it does not, because two unrelated numbers cannot agree by luck. Measured against a real hanging server at the shipped defaults, THREE wedged books spent 126s inside a 60s exec deadline (20s per read x 2 attempts x 3 books), so the child was killed and every book's result - wedged and healthy alike - was thrown away. The audit is now handed a BUDGET derived from the exec deadline (Get-WdAuditBudgetSec = deadline - 10s slack), slices it equally per book, caps each read at min(HTTP_TIMEOUT_SEC, what is left of that book's share), and never retries a read that TIMED OUT (a wedge does not clear in 2s; retrying doubled the cost of exactly the failure the deadline exists to bound). The fetcher therefore always prints inside the deadline, and the deadline is a backstop again. (b) docker cp is deadline-bound too, through Invoke-WdProcess - it could not use Invoke-WdExec because a successful cp prints nothing - and Copy-WdChecksModule is now that one helper with its own alert key instead of a second copy of the same logic. ConvertTo-WdArgLine accordingly refuses only a double quote or a TRAILING backslash (a Windows path full of backslashes is exactly what cp needs). (c) The audit's suppression-state read no longer swallows its failure - an unreadable state file becomes a warning in the log, since it silently turns every open condition into a fresh page. The block-G gate is now marker-wrapped so the spec can EXECUTE the withholding wiring instead of pinning its source text.
+
   Register (every 10 minutes, windowless -- launch through trading-watchdog-hidden.vbs; a bare
   powershell action pops a visible console every run, which steals focus from desktop automation):
     schtasks /create /tn "OSHAL Trading Watchdog" /sc minute /mo 10 /f ^
@@ -84,6 +138,12 @@ param(
   # positions via the api's caller-scoped endpoints. Default: resolved at runtime from $Repo\.env
   # OSHAL_OPERATOR_SUBS (first entry) so the personal sub never lives in the committed file.
   [string]$LiveSub = '',
+  # Deep-bleed threshold for the REAL-MONEY books (check G). Defaults to .env
+  # TRADING_WD_LIVE_ALERT_PCT, else $AlertPct - so an operator can page later on live than on paper
+  # without touching this file. An explicitly passed -LiveAlertPct always wins over the .env.
+  [double]$LiveAlertPct = 0,
+  # The decidable checks module (pure functions; docker-cp'd into the api container each run).
+  [string]$ChecksModule = '',
   # Check F: pre-market SPY gap-down (percent vs prior close) that triggers the before-the-open alert.
   [double]$GapAlertPct = 1.0,
   # Check B2(a): where the books roster and the schedule store live (compose container names) and
@@ -98,6 +158,7 @@ param(
 )
 $ErrorActionPreference = 'Continue'
 if (-not $Repo) { $Repo = Split-Path -Parent $PSScriptRoot }
+if (-not $ChecksModule) { $ChecksModule = Join-Path $PSScriptRoot 'lib/trading-watchdog-checks.js' }
 if (-not $LiveSub) {
   # Operator-local .env, never committed: first OSHAL_OPERATOR_SUBS entry is the live-book owner.
   $dotEnv = Join-Path $Repo '.env'
@@ -108,6 +169,9 @@ if (-not $LiveSub) {
 }
 $stateDir = Join-Path $env:LOCALAPPDATA 'oshal'
 $stateFile = Join-Path $stateDir 'trading-watchdog-state.json'
+# Per-symbol/per-book suppression lives in its OWN file: $state's prune loop casts every value to
+# [datetime], which would delete these object values on the next run.
+$symStateFile = Join-Path $stateDir 'trading-watchdog-symbols.json'
 $logFile = Join-Path $stateDir 'trading-watchdog.log'
 if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Force $stateDir | Out-Null }
 function Log($m) { ("[{0}] {1}" -f (Get-Date -Format s), $m) | Add-Content $logFile; Write-Host $m }
@@ -164,6 +228,201 @@ function Raise($cond, $msg) {
   [void]$alerts.Add($msg)
   Log ("ALERT: " + $msg)
 }
+
+# ---- wd: settings + exec ----
+# Thresholds are configuration, never literals in this file: an explicit -Param wins, then
+# TRADING_WD_<NAME> in the operator-local .env (never committed), then the default the caller passes
+# (which is itself the module's default). Values parse under InvariantCulture so a non-US host locale
+# cannot turn '8.5' into 85.
+function Read-WdEnvSettings($path) {
+  $map = @{}
+  if ($path -and (Test-Path $path)) {
+    foreach ($line in Get-Content $path) {
+      if ($line -match '^\s*TRADING_WD_([A-Z0-9_]+)\s*=\s*(.*)$') { $map[$Matches[1]] = $Matches[2].Trim() }
+    }
+  }
+  return $map
+}
+function Get-WdSetting($name, $default) {
+  if ($script:WdEnv -and $script:WdEnv.ContainsKey($name)) {
+    $raw = [string]$script:WdEnv[$name]
+    $parsed = 0.0
+    if ([double]::TryParse($raw, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) { return $parsed }
+    Log ("ignoring TRADING_WD_" + $name + "='" + $raw + "' - not a number; using " + $default)
+  }
+  return $default
+}
+# The docker CLI as a REAL child process, so the deadline below can actually kill it. Overridable
+# only so the guard can drive a real process (a real exit code, real empty output, a real hang)
+# instead of stubbing a PowerShell function no timeout could ever terminate; production always uses
+# the docker on PATH.
+$script:WdDockerExe = 'docker'
+$script:WdDockerArgPrefix = @()
+# Win32 command-line quoting. An argument containing whitespace is quoted; one this file cannot
+# quote CORRECTLY is REFUSED (returns $null) rather than mis-quoted, because a silently mangled
+# argument is how a check ends up running against the wrong thing and reporting all-clear. Two
+# shapes are refused: a DOUBLE QUOTE (which needs the full Win32 backslash-doubling rule this file
+# does not implement) and a TRAILING backslash in an argument that has to be quoted, where the
+# backslash would escape the closing quote and swallow the argument after it. A backslash anywhere
+# else is accepted and must be: the host paths handed to `docker cp` are full of them.
+function ConvertTo-WdArgLine([string[]]$argv) {
+  $parts = New-Object System.Collections.ArrayList
+  foreach ($a in @($argv)) {
+    $s = [string]$a
+    if ($s -match '"') { return $null }
+    if ($s -match '\s') {
+      if ($s -match '\\$') { return $null }
+      [void]$parts.Add('"' + $s + '"')
+    } else { [void]$parts.Add($s) }
+  }
+  return ($parts -join ' ')
+}
+# Runs one child process to completion or KILLS it at the deadline. Both pipes are drained
+# ASYNCHRONOUSLY: a blocking ReadToEnd() deadlocks against a child that fills the other pipe's
+# buffer, which is one of the hangs this deadline exists to bound.
+function Invoke-WdProcess([string]$exe, [string]$line, [int]$limitSec) {
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = $exe
+  $psi.Arguments = $line
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.CreateNoWindow = $true
+  try {
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $so = $p.StandardOutput.ReadToEndAsync()
+    [void]$p.StandardError.ReadToEndAsync()
+    if (-not $p.WaitForExit($limitSec * 1000)) {
+      try { $p.Kill() } catch { Log ("could not kill a timed-out exec: " + $_.Exception.Message) }
+      $p.Dispose()
+      return @{ Started = $true; TimedOut = $true }
+    }
+    $p.WaitForExit()
+    $r = @{ Started = $true; TimedOut = $false; Code = $p.ExitCode; Text = ([string]$so.Result).Trim() }
+    $p.Dispose()
+    return $r
+  } catch {
+    Log ("could not start '" + $exe + "': " + $_.Exception.Message)
+    return @{ Started = $false; Error = $_.Exception.Message }
+  }
+}
+# EVERY docker exec goes through this. An exec that exits non-zero, returns nothing, OR RUNS PAST
+# ITS DEADLINE is a check that DID NOT RUN, and a check that did not run must never read as a check
+# that passed: the old sites parsed empty output to nothing and fell through their `if ($r.error)`
+# guards silently (the 'no silently healthy infrastructure-check result' rule, in code rather than
+# prose). The DEADLINE matters as much as the exit code: block G reads three endpoints per book, and
+# an api that answers /api/health while /api/trading is wedged (pool exhaustion, a hung broker call)
+# would otherwise park this run on undici's 300s-per-request default - past the next scheduled runs,
+# with every alert the run had already raised (api-down, engine-blind) still sitting unsent in
+# $alerts. Seconds from TRADING_WD_EXEC_TIMEOUT_SEC in the operator-local .env, default 60.
+function Invoke-WdExec($name, [string[]]$dockerArgs, $timeoutSec) {
+  $limit = if ($timeoutSec) { [int]$timeoutSec } elseif ($script:WdExecTimeoutSec) { [int]$script:WdExecTimeoutSec } else { 60 }
+  $line = ConvertTo-WdArgLine (@($script:WdDockerArgPrefix) + @($dockerArgs))
+  if ($null -eq $line) {
+    Raise ('check-infra-' + $name) ("The watchdog REFUSED to run its '" + $name + "' check: an argument contains a double quote or a backslash, which this file does not quote. A check that cannot run is NOT a passing check.")
+    return $null
+  }
+  $r = Invoke-WdProcess $script:WdDockerExe $line $limit
+  if (-not $r.Started) {
+    Raise ('check-infra-' + $name) ("The watchdog could not START its '" + $name + "' check (" + $script:WdDockerExe + "): " + [string]$r.Error + ". A check that cannot run is NOT a passing check.")
+    return $null
+  }
+  if ($r.TimedOut) {
+    Raise ('check-infra-' + $name) ("The watchdog's '" + $name + "' check RAN PAST its " + $limit + " second deadline and was KILLED - treated as a FAILED check, never a passing one. The api can answer /api/health while /api/trading is wedged, and the deadline is what stops one wedged read from eating the whole run along with the alerts it had already raised. Raise TRADING_WD_EXEC_TIMEOUT_SEC only if this box is genuinely that slow.")
+    return $null
+  }
+  if (($r.Code -ne 0) -or (-not $r.Text)) {
+    $what = if ($r.Text) { 'unusable output' } else { 'NOTHING' }
+    Raise ('check-infra-' + $name) ("The watchdog could not RUN its '" + $name + "' check: docker exec exited " + $r.Code + " and returned " + $what + ". A check that cannot run is NOT a passing check. Verify the container is up and that the docker CLI works from the scheduled task's account (container-name overrides: -ApiContainer / -DbContainer / -RedisContainer).")
+    return $null
+  }
+  return $r.Text
+}
+# Copies one host file into the api container, FAIL-CLOSED and DEADLINE-BOUND. A cp that silently
+# fails leaves the PREVIOUS run's file at that path, so the check then runs against a stale
+# request/state/script and prints a well-formed WRONG result - the worst shape a watchdog result can
+# have. It goes through Invoke-WdProcess for the same reason every exec does: a wedged docker daemon
+# must not park the run before the alerts already sitting in $alerts are delivered. (It cannot go
+# through Invoke-WdExec: a SUCCESSFUL docker cp prints nothing, which that wrapper correctly treats
+# as a failed check.) $alertKey lets a caller own the message key - the checks-module copy alerts as
+# 'wd-checks-unavailable', which names the actual consequence.
+function Copy-WdIntoApi($name, $local, $remote, $alertKey) {
+  $key = if ($alertKey) { [string]$alertKey } else { 'check-infra-' + $name }
+  $limit = if ($script:WdExecTimeoutSec) { [int]$script:WdExecTimeoutSec } else { 60 }
+  $line = ConvertTo-WdArgLine (@($script:WdDockerArgPrefix) + @('cp', $local, ($ApiContainer + ':' + $remote)))
+  if ($null -eq $line) {
+    Raise $key ("The watchdog REFUSED to copy " + $remote + " into " + $ApiContainer + ": a path contains a double quote or ends in a backslash, which this file does not quote. The '" + $name + "' check is treated as FAILED, never as passing.")
+    return $false
+  }
+  $r = Invoke-WdProcess $script:WdDockerExe $line $limit
+  $why = ''
+  if (-not $r.Started) { $why = "docker could not start (" + [string]$r.Error + ")" }
+  elseif ($r.TimedOut) { $why = "docker cp RAN PAST its " + $limit + " second deadline and was KILLED" }
+  elseif ($r.Code -ne 0) { $why = "docker cp exited " + $r.Code }
+  if ($why) {
+    Raise $key ("The watchdog could not copy " + $remote + " into " + $ApiContainer + " (" + $why + ") - the '" + $name + "' check would otherwise have run against the PREVIOUS run's copy of that file and printed a well-formed WRONG result. Treated as a failed check.")
+    return $false
+  }
+  return $true
+}
+# ---- wd: audit budget ----
+# The container-side audit's total wall-clock budget, DERIVED from the host deadline instead of
+# being a second, unrelated number. Round-3 review, MEASURED: with the shipped 20 second per-read
+# cap and the shipped 60 second exec deadline, THREE wedged books took 126 seconds - so the host
+# killed the child and threw away both the wedged books' own error lines and every healthy book's
+# findings, leaving the operator one generic 'ran past its deadline'. The fetcher now slices this
+# budget per book and always prints inside it, which is what makes the exec deadline a backstop
+# again instead of the normal outcome. The slack covers docker exec startup, node boot and printing.
+$script:WdAuditSlackSec = 10
+function Get-WdAuditBudgetSec {
+  $limit = if ($script:WdExecTimeoutSec) { [int]$script:WdExecTimeoutSec } else { 60 }
+  return [Math]::Max(5, $limit - $script:WdAuditSlackSec)
+}
+# ---- wd: end audit budget ----
+# ---- wd: end settings + exec ----
+
+# ---- wd: symbol state ----
+# The per-symbol suppression map is opaque JSON to PowerShell: the module DECIDES (raise / suppress
+# / recovered) and returns the next state; this file only persists it. A corrupt or missing file
+# starts empty - which can only cause an extra alert, never a missed one.
+function Read-WdSymbolState($path) {
+  if (-not (Test-Path $path)) { return '{}' }
+  try {
+    $raw = Get-Content $path -Raw
+    if (-not $raw -or -not $raw.Trim()) { return '{}' }
+    ($raw | ConvertFrom-Json) | Out-Null
+    return $raw.Trim()
+  } catch {
+    Log ("symbol-state file unreadable, starting empty (an extra alert is the safe failure): " + $_.Exception.Message)
+    return '{}'
+  }
+}
+function Write-WdSymbolState($path, $json) {
+  try { $json | Set-Content $path -Encoding ascii } catch { Log ("could not write the symbol-state file: " + $_.Exception.Message) }
+}
+# Alerts whose suppression the module already decided: deliver + log WITHOUT touching $state, whose
+# 60-minute key is the wrong (and second) suppressor for a per-symbol condition.
+function Add-WdAlert($cond, $msg) {
+  [void]$alerts.Add($msg)
+  Log ("ALERT [" + $cond + "]: " + $msg)
+}
+# ---- wd: end symbol state ----
+
+# ---- wd: threshold precedence ----
+$script:WdEnv = Read-WdEnvSettings (Join-Path $Repo '.env')
+# $PSBoundParameters, not the value: a defaulted [double] param is indistinguishable from an
+# operator passing the same number, so without this the .env would never be consulted.
+# THE ORDER IS LOAD-BEARING: $AlertPct resolves FIRST because it is the FALLBACK for the real-money
+# threshold. Shipped the other way round (2026-09-06 first cut), an operator who tightened only
+# TRADING_WD_ALERT_PCT=3 got 3 percent on the PAPER book and silently kept the param default of 5 on
+# the Schwab books - looser on the only checks that watch real money. The spec executes these exact
+# lines under real powershell against a real .env to pin the order, not just the mechanism.
+if (-not $PSBoundParameters.ContainsKey('AlertPct')) { $AlertPct = [double](Get-WdSetting 'ALERT_PCT' $AlertPct) }
+if (-not $PSBoundParameters.ContainsKey('LiveAlertPct')) { $LiveAlertPct = [double](Get-WdSetting 'LIVE_ALERT_PCT' $AlertPct) }
+if (-not $PSBoundParameters.ContainsKey('GapAlertPct')) { $GapAlertPct = [double](Get-WdSetting 'GAP_ALERT_PCT' $GapAlertPct) }
+# How long any single docker exec may run before it is killed and reported as a FAILED check.
+$script:WdExecTimeoutSec = [int](Get-WdSetting 'EXEC_TIMEOUT_SEC' 60)
+# ---- wd: end threshold precedence ----
 
 # ---- per-book beat derivation (ADR-134 D2 #7) ----
 # LIVE books for $sub straight from oshal_trading_books (psql as the DB superuser, RLS does not scope
@@ -363,6 +622,176 @@ foreach ($try in 1..3) {
 }
 if (-not $apiUp) { Raise 'api-down' 'OSHAL api is NOT responding on 127.0.0.1:35457 - the trading autopilot is NOT running. Bring the stack up (scripts/oshal-up.sh).' }
 
+# ---- wd: book audit ----
+# The container-side fetcher for block G. It is a FETCHER: every threshold comparison, key and
+# message comes from /tmp/oshal-wd-checks.js (scripts/lib/trading-watchdog-checks.js, copied in by
+# Copy-WdChecksModule), which is the file tests/unit/trading-watchdog-checks.spec.ts mutation-proves.
+# Reads go through the api's own caller-scoped endpoints with ?book=<ref> (query-first: the store's
+# routeBook reads req.query.book first), authenticated with the container's service secret plus the
+# canonical base64url sub header (the plain header is sent too, for a kernel that still prefers it) -
+# no broker credential ever touches the host. FAIL-CLOSED: a non-2xx or a payload whose array field
+# is missing becomes a per-book error, never an empty (healthy-looking) book.
+$auditJs = @'
+const fs = require("fs");
+const C = require("/tmp/oshal-wd-checks.js");
+const req = JSON.parse(fs.readFileSync("/tmp/wd-audit-request.json", "utf8"));
+let prior = {};
+const warnings = [];
+// NEVER a silent catch: an absent or truncated state file reads as "nothing was raised before",
+// which duplicate-pages every open condition. That is the safe direction, but it has to be VISIBLE
+// in the watchdog log or a cp that half-landed looks exactly like a quiet, healthy run.
+try { prior = JSON.parse(fs.readFileSync("/tmp/wd-audit-state.json", "utf8")); }
+catch (e) { prior = {}; warnings.push("prior suppression state unreadable (" + String((e && e.message) || e) + ") - conditions already raised this window may page again"); }
+const sub = String(req.sub || "");
+// The canonical encoded header is preferred by the kernel (authz.ts getTrustedServiceUserSub) and
+// the legacy plain one is still accepted; send both, and NEITHER when the sub is unknown - an empty
+// encoded header fails the decode closed rather than authenticating as nobody.
+const H = sub ? {"X-Service-Secret": process.env.SWARM_SERVICE_SECRET,
+                 "X-Oshal-User-Sub-B64": Buffer.from(sub, "utf8").toString("base64url"),
+                 "X-OSHAL-User-Sub": sub}
+              : {"X-Service-Secret": process.env.SWARM_SERVICE_SECRET};
+const base = "http://127.0.0.1:5000/api/trading";
+// TWO deadlines, and the SECOND one is what makes the promise true. httpMs
+// (TRADING_WD_HTTP_TIMEOUT_SEC, default 20) caps ONE read. bookDeadline caps everything this run
+// may spend on ONE BOOK - its share of the audit budget the host derives from the exec deadline
+// (Get-WdAuditBudgetSec). Without the per-book share, three wedged books at the shipped defaults
+// spent 126 seconds against a 60 second host deadline (round-3 review, measured): the child was
+// killed and the healthy books' findings died with it. Each read therefore gets whichever is
+// smaller, and a book whose share is gone reports THAT rather than borrowing the next book's time.
+let httpMs = 20000;
+let bookDeadline = Infinity;
+async function read(path, book, field) {
+  const left = bookDeadline - Date.now();
+  if (left <= 0) throw new Error(path + " was not read: this book's share of the audit budget was already spent (fail-closed - the other books keep theirs)");
+  const r = await fetch(base + path + "?book=" + encodeURIComponent(book), {headers: H, signal: AbortSignal.timeout(Math.max(250, Math.min(httpMs, left)))});
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j) throw new Error(path + " read failed (fail-closed): HTTP " + r.status + ((j && j.error) ? " " + j.error : ""));
+  if (field === "account" ? !j.account : !Array.isArray(j[field])) throw new Error(path + " payload has no usable " + field + " (fail-closed)");
+  return j;
+}
+(async () => {
+  const findings = [], errors = [], refs = [];
+  // A setting that will not parse is REPORTED, not silently defaulted: the module hands back the
+  // default and the operator sees the line in the watchdog log.
+  const settings = C.defaultSettings(req.settings, (k, v) =>
+    warnings.push("watchdog setting " + k + "=" + JSON.stringify(v) + " is not a number - the module default was used"));
+  settings.core = C.coreSymbolSet(req.coreHolds);
+  settings.rth = !!req.rth;
+  settings.nowMs = Date.now();
+  httpMs = Math.max(1000, Math.round(settings.httpTimeoutSec * 1000));
+  const auditBook = async (b) => C.evaluateBook(b, {
+    account: (await read("/account", b.ref, "account")).account,
+    positions: (await read("/positions", b.ref, "positions")).positions,
+    orders: (await read("/orders", b.ref, "orders")).orders}, settings);
+  const books = req.books || [];
+  // Every book gets an EQUAL share of the budget, so one wedged book cannot spend another book's
+  // time - the correlated case that matters here is three Schwab books stalling together.
+  const budgetMs = Math.max(2000, (Number(req.auditBudgetSec) || 50) * 1000);
+  const sliceMs = Math.max(1000, Math.floor(budgetMs / Math.max(1, books.length)));
+  for (const b of books) {
+    bookDeadline = Date.now() + sliceMs;
+    let ev = null;
+    try { ev = await auditBook(b); } catch (first) {
+      // ONE retry per book, then alert - the same rule the books/legs reads use. A broker read can
+      // fail transiently (a Schwab 502) and a page on every blip is the false-alarm spiral this
+      // file has fought since 2026-07-13; two failures in a row is a real problem. But NOT after a
+      // timeout: a wedge does not clear in two seconds, and retrying one DOUBLED the cost of
+      // exactly the failure the deadlines exist to bound. Nor when the book's share is nearly gone.
+      const msg = String((first && ((first.name || "") + " " + (first.message || ""))) || first);
+      const wedged = /timeout|abort/i.test(msg);
+      if (wedged || bookDeadline - Date.now() < 3000) {
+        errors.push({ref: b.ref, error: String((first && first.message) || first)});
+      } else {
+        await new Promise((r) => setTimeout(r, 2000));
+        try { ev = await auditBook(b); } catch (second) { errors.push({ref: b.ref, error: String((second && second.message) || second)}); }
+      }
+    }
+    if (!ev) continue;
+    refs.push(b.ref);
+    for (const f of ev.findings) findings.push(f);
+    for (const w of ev.warnings) warnings.push(w);
+  }
+  const d = C.decideAlerts(prior, findings, {nowMs: settings.nowMs, windowMin: settings.windowMin,
+    scope: {refs: refs, kinds: C.evaluatedKinds(settings.rth)}});
+  console.log(JSON.stringify({alerts: d.alerts, suppressed: d.suppressed, recovered: d.recovered,
+    state: d.state, warnings: warnings, errors: errors, books: refs}));
+})().catch(e => { console.log(JSON.stringify({error: String((e && e.message) || e)})); });
+'@
+
+# Copies the decidable-checks module into the api container. A module that is missing or cannot be
+# copied means blocks G and F cannot DECIDE anything - which is a failed check, not a quiet one.
+function Copy-WdChecksModule($path) {
+  if (-not (Test-Path $path)) {
+    Raise 'wd-checks-unavailable' ("The watchdog's decidable-checks module is MISSING at " + $path + " - the per-book audit (G) and the pre-market gap check (F) cannot run, so this run proves nothing about the books. Restore scripts/lib/trading-watchdog-checks.js or pass -ChecksModule.")
+    return $false
+  }
+  # One copy helper for every file this run puts in the container (fail-closed, deadline-bound);
+  # only the alert KEY differs, because 'the checks module is missing' is a different consequence
+  # from 'this one check's input is stale'.
+  return (Copy-WdIntoApi 'checks-module' $path '/tmp/oshal-wd-checks.js' 'wd-checks-unavailable')
+}
+
+# Block G: one exec, every live book. Writes the request + prior suppression state as files (a
+# here-string through -e would be at the mercy of PS 5.1 native-argument quoting), runs the fetcher,
+# and returns the parsed result - or $null, which Invoke-WdExec has already alerted about.
+function Invoke-WdBookAudit($books, $rthFlag, $coreSymbols, $priorState) {
+  $request = @{
+    sub = $LiveSub; rth = [bool]$rthFlag; coreHolds = [string]$coreSymbols
+    # DERIVED from the exec deadline below, never a second free-standing number: the fetcher slices
+    # this across the books and must always print INSIDE the deadline Invoke-WdExec enforces, or a
+    # wedged book takes the healthy books' findings down with it.
+    auditBudgetSec = (Get-WdAuditBudgetSec)
+    books = @(@($books) | ForEach-Object { @{ ref = [string]$_.Ref; enabled = [bool]$_.Enabled } })
+    settings = @{
+      alertPct = $LiveAlertPct; deepLossPct = (Get-WdSetting 'DEEP_LOSS_PCT' $null)
+      minPositionUsd = (Get-WdSetting 'MIN_POSITION_USD' $null); maxPositions = (Get-WdSetting 'MAX_POSITIONS' $null)
+      concentrationPct = (Get-WdSetting 'CONCENTRATION_PCT' $null); hysteresisPct = (Get-WdSetting 'HYSTERESIS_PCT' $null)
+      staleOrderMin = (Get-WdSetting 'STALE_ORDER_MIN' $null); windowMin = (Get-WdSetting 'ALERT_WINDOW_MIN' $null)
+      httpTimeoutSec = (Get-WdSetting 'HTTP_TIMEOUT_SEC' $null)
+    }
+  }
+  $reqFile = Join-Path $env:TEMP 'wd-audit-request.json'
+  $stFile = Join-Path $env:TEMP 'wd-audit-state.json'
+  ($request | ConvertTo-Json -Depth 5 -Compress) | Set-Content $reqFile -Encoding ascii
+  $priorState | Set-Content $stFile -Encoding ascii
+  $jsFile = Join-Path $env:TEMP 'wd-audit.js'
+  $auditJs | Set-Content $jsFile -Encoding ascii
+  # FAIL-CLOSED on every copy: a silently failed cp leaves the PREVIOUS run's book list and
+  # suppression state in the container, and the audit then prints a well-formed result about the
+  # wrong books - worse than no result at all.
+  if (-not (Copy-WdIntoApi 'book-audit' $reqFile '/tmp/wd-audit-request.json')) { return $null }
+  if (-not (Copy-WdIntoApi 'book-audit' $stFile '/tmp/wd-audit-state.json')) { return $null }
+  if (-not (Copy-WdIntoApi 'book-audit' $jsFile '/tmp/wd-audit.js')) { return $null }
+  $out = Invoke-WdExec 'book-audit' @('exec', $ApiContainer, 'node', '/tmp/wd-audit.js')
+  if ($null -eq $out) { return $null }
+  try { return ($out | ConvertFrom-Json) } catch {
+    Raise 'audit-parse' ("The watchdog could not parse its per-book audit output - treated as a REAL problem, not an all-clear: " + $out.Substring(0, [Math]::Min(300, $out.Length)))
+    return $null
+  }
+}
+
+# Delivery for block G. The module already decided suppression per key, so alerts go through
+# Add-WdAlert (not Raise, whose 60-minute key would suppress a WORSENING condition a second time).
+# A per-book READ failure is a real problem: a Schwab re-login gets the existing once-daily key,
+# anything else gets its own per-book key - never an empty healthy book.
+function Send-WdAuditAlerts($r, $statePath) {
+  if ($null -eq $r) { return }
+  if ($r.error) { Raise 'audit-error' ("The watchdog per-book audit FAILED before it could read any book - treated as a REAL problem (fail-closed): " + [string]$r.error); return }
+  foreach ($e in @($r.errors)) {
+    if ([string]$e.error -match 'not configured|broker_not_configured|unauthor|401|403|token|reconnect|expired|disconnect|auth') {
+      Raise ('live-relogin-' + (Get-Date -Format 'yyyy-MM-dd')) ("Book '" + [string]$e.ref + "' is UNREADABLE - the broker looks disconnected/expired (" + [string]$e.error + "). The watchdog cannot see that book's positions OR its protective orders until you re-login (the ~weekly Schwab refresh). Reconnect from the trading surface.")
+    } else {
+      Raise ('audit-error-' + [string]$e.ref) ("The watchdog audit of book '" + [string]$e.ref + "' FAILED - treated as a REAL problem (fail-closed), NOT an empty healthy book: " + [string]$e.error)
+    }
+  }
+  foreach ($a in @($r.alerts)) { Add-WdAlert ([string]$a.key) ([string]$a.message) }
+  foreach ($k in @($r.suppressed)) { Log ("suppressed (raised recently, not worsening): " + [string]$k) }
+  foreach ($k in @($r.recovered)) { Log ("recovered: " + [string]$k) }
+  foreach ($w in @($r.warnings)) { Log ("audit warning: " + [string]$w) }
+  if ($null -ne $r.state) { Write-WdSymbolState $statePath ($r.state | ConvertTo-Json -Depth 5 -Compress) }
+}
+# ---- wd: end book audit ----
+
 if ($apiUp) {
  # B0) PRESENCE-of-evidence checks. Deliberately NOT gated by $freshlyRecreated: a matched line is
  # PROOF at any uptime, and the recreate is the fault-INJECTION event -- on 2026-07-16 the api was
@@ -375,6 +804,9 @@ if ($apiUp) {
  # this, a recreate's cold-start DNS transient (measured 2026-07-16: two "venue clock unreachable" at
  # +20s/+108s, healthy by +171s) would page on EVERY deploy - and a watchdog that cries wolf on every
  # deploy is one nobody reads (the 07-13..07-15 false-alarm spiral this file already fought).
+ # The decidable checks run INSIDE the api container, next to the fetchers that call them.
+ $checksReady = Copy-WdChecksModule $ChecksModule
+
  $presence = docker logs $ApiContainer --since 25m 2>&1
  $lastOkLn = ($presence | Select-String 'autopilot run complete' | Select-Object -Last 1).LineNumber
  $StillBad = { param($pat) $ln = ($presence | Select-String $pat | Select-Object -Last 1).LineNumber; $ln -and ((-not $lastOkLn) -or ($lastOkLn -lt $ln)) }
@@ -389,6 +821,11 @@ if ($apiUp) {
  if ($freshlyRecreated) {
   Log ("skipped heartbeat + position checks (B/C/D/E): container (re)started " + [math]::Round($uptimeMin,1) + " min ago - the docker-log window is not yet populated and the api may be cold; check A (health) and F (gap) still run")
  } else {
+  # The LIVE book roster, read ONCE per run and shared by B2(a) (per-book beats) and G (per-book
+  # audit). $null = the read failed; both consumers fail closed on it in their own way.
+  $booksRead = Get-ExpectedLiveBooks $LiveSub
+  $liveBooks = if ($booksRead.Ok) { @($booksRead.Books) } else { $null }
+
   # B) autopilot heartbeat (either book) in the last 20 minutes. Only TWO scheduler lines prove
   # the loop is ALIVE-AND-WELL: "autopilot run complete" (fired every ~5 min inside the tradable
   # session) and "autopilot skipped - market closed" (fired outside it, and on weekday holidays).
@@ -430,8 +867,6 @@ if ($apiUp) {
     # and each "autopilot run complete" line is matched on its own "scheduleId". Outside RTH the
     # paper beat is sufficient (live stands down). See Test-LiveBookBeats for the fail-closed rules.
     if ($rth) {
-      $booksRead = Get-ExpectedLiveBooks $LiveSub
-      $liveBooks = if ($booksRead.Ok) { @($booksRead.Books) } else { $null }
       # The leg read runs EVEN WHEN the books read failed, against the same legacy 'live' book
       # Test-LiveBookBeats assumes in that case. Skipping it made a plain DB blip raise
       # 'legs-unreadable' too, naming a Redis store the run had never consulted.
@@ -440,8 +875,12 @@ if ($apiUp) {
       if (@($legBooks).Count -gt 0) { $legRead = Get-AutopilotLegRefs $LiveSub $legBooks }
       $liveLegs = if ($null -ne $legRead) { $legRead.Legs } else { $null }
       $pausedLegs = if ($null -ne $legRead) { $legRead.Paused } else { @{} }
-      $multiFlag = ''
-      try { $multiFlag = docker exec $ApiContainer printenv TRADING_MULTI_ACCOUNT 2>$null | Select-Object -First 1 } catch { Log ("could not read TRADING_MULTI_ACCOUNT from " + $ApiContainer + ": " + $_.Exception.Message) }
+      # Through Invoke-WdExec like every other exec, and via `node -p` rather than printenv:
+      # printenv exits 1 for an UNSET variable, which is indistinguishable from a failed exec. The
+      # 'wd:' sentinel makes "read fine, value empty" a non-empty output, so only a real exec
+      # failure raises check-infra-multi-account-flag.
+      $multiRaw = Invoke-WdExec 'multi-account-flag' @('exec', $ApiContainer, 'node', '-p', "'wd:'+(process.env.TRADING_MULTI_ACCOUNT||'')")
+      $multiFlag = if ($null -ne $multiRaw) { ($multiRaw -replace '^wd:', '').Trim() } else { '' }
       Test-LiveBookBeats $recentLogs $liveBooks $liveLegs $multiFlag $BeatWindowMin $pausedLegs
     }
     # (b) Any run that completed WITH a non-empty errors[] array. Regex: "errors":[ followed by a
@@ -460,8 +899,18 @@ if ($apiUp) {
   # bleeder" - a false positive). Read the list from the container and exclude those symbols from the
   # bleed filters below. (WD_CORE_HOLDS is passed as the raw "SYM:qty,SYM:qty" string; the JS strips
   # the ':qty'.)
-  $coreHolds = ''
-  try { $coreHolds = docker exec $ApiContainer printenv TRADING_CORE_SYMBOLS 2>$null | Select-Object -First 1 } catch {}
+  # Read through Invoke-WdExec (same node -p + 'wd:' sentinel as the flag above): an EMPTY catch
+  # here used to turn a failed exec into an empty core-hold set, which silently unexempted every
+  # deliberate hold - and the new deep-loss check would then page "HOLDING PAST ITS STOP" once per
+  # window per book for a :0 operator hold, the exact 2026-07-13 SKHY false positive in a louder
+  # form. A check that cannot read its own exemption list must not conclude: $coreKnown gates every
+  # loss conclusion below (C/D and G), and check-infra-core-holds has already said so out loud.
+  # ---- wd: core holds ----
+  $coreRaw = Invoke-WdExec 'core-holds' @('exec', $ApiContainer, 'node', '-p', "'wd:'+(process.env.TRADING_CORE_SYMBOLS||'')")
+  $coreKnown = ($null -ne $coreRaw)
+  $coreHolds = if ($coreKnown) { ($coreRaw -replace '^wd:', '').Trim() } else { '' }
+  if (-not $coreKnown) { Log 'core-hold list UNREADABLE - the position checks that exempt TRADING_CORE_SYMBOLS (paper C/D and the per-book audit G) are WITHHELD this run; running them blind would page on every deliberate hold.' }
+  # ---- wd: end core holds ----
 
   # C + D) paper book: unprotected bleeders + stranded sells (direct Alpaca from the host via the container env)
   $checkJs = @'
@@ -483,9 +932,16 @@ const core=new Set(String(process.env.WD_CORE_HOLDS||"").split(",").map(x=>x.spl
 '@
   $tmp = Join-Path $env:TEMP 'wd-check.js'
   $checkJs | Set-Content $tmp -Encoding ascii
-  docker cp $tmp ($ApiContainer + ':/tmp/wd-check.js') 2>$null | Out-Null
-  $out = docker exec -e WD_ALERT_PCT=$AlertPct -e WD_CORE_HOLDS=$coreHolds $ApiContainer node /tmp/wd-check.js 2>$null
-  try {
+  # Through Invoke-WdExec: an exec that returns NOTHING used to parse to $null and fall through every
+  # if ($r.error) / if ($r.bleed) test below without a sound - a check that did not run reading as
+  # a check that PASSED. That is the rule this wrapper exists to make impossible. The cp is
+  # fail-closed for the same reason (a stale /tmp/wd-check.js still prints a well-formed result).
+  $out = $null
+  if ($coreKnown -and (Copy-WdIntoApi 'paper-positions' $tmp '/tmp/wd-check.js')) {
+    $out = Invoke-WdExec 'paper-positions' @('exec', '-e', ('WD_ALERT_PCT=' + $AlertPct.ToString([Globalization.CultureInfo]::InvariantCulture)), '-e', ('WD_CORE_HOLDS=' + $coreHolds), $ApiContainer, 'node', '/tmp/wd-check.js')
+  }
+  if ($null -ne $out) {
+   try {
     $r = $out | ConvertFrom-Json
     if ($r.error) { Raise 'check-error' ("watchdog position check failed: " + $r.error) }
     # Suppression keys must be STABLE across runs, so key on the SYMBOL SET only. The full
@@ -502,71 +958,39 @@ const core=new Set(String(process.env.WD_CORE_HOLDS||"").split(",").map(x=>x.spl
       $staleKey = 'stale-' + ((@($r.stale) | ForEach-Object { ($_ -split ' ')[0] } | Sort-Object) -join ',')
       Raise $staleKey ("STRANDED sell order(s) older than 30 min (limit the market fell away from - the 07-07 lockout signature): " + (@($r.stale) -join '; '))
     }
-  } catch { Raise 'check-parse' ("watchdog could not parse position check output: " + ($out | Out-String).Substring(0, [Math]::Min(200, ($out | Out-String).Length))) }
+   } catch { Raise 'check-parse' ("watchdog could not parse position check output: " + ($out | Out-String).Substring(0, [Math]::Min(200, ($out | Out-String).Length))) }
+  }
 
-  # E) LIVE book (Schwab, real money): the same unprotected-bleeder + stranded-sell checks.
-  # Added 2026-07-08 when the live cap went to the FULL account (52K) - until then the watchdog
-  # audited paper only, which the 07-08 incident review flagged as the remaining gap. Reads go
-  # through the api's own caller-scoped endpoints (positions from Schwab, working sells from the
-  # order ledger) using the container's service secret - no broker keys touch the host.
-  $liveJs = @'
-const SEC=process.env.SWARM_SERVICE_SECRET, SUB=process.env.WD_LIVE_SUB;
-const H={"X-Service-Secret":SEC,"X-OSHAL-User-Sub":SUB};
-const base="http://127.0.0.1:5000/api/trading";
-const core=new Set(String(process.env.WD_CORE_HOLDS||"").split(",").map(x=>x.split(":")[0].trim().toUpperCase()).filter(Boolean));
-(async()=>{
-  // FAIL-CLOSED: a Schwab-disconnected book returns HTTP 503 with {error:...}. The old
-  // (pj&&pj.positions)||[] read that as an EMPTY (=healthy) book, silencing the real-money safety
-  // net exactly during the weekly token-expiry window. Assert response.ok AND an array payload;
-  // otherwise return an explicit error so the PS side raises instead of reading "all clear".
-  const pr=await fetch(base+"/positions?mode=live",{headers:H});
-  const pj=await pr.json().catch(()=>null);
-  if(!pr.ok||!pj||!Array.isArray(pj.positions)){console.log(JSON.stringify({error:"live positions read failed (fail-closed): HTTP "+pr.status+((pj&&pj.error)?" "+pj.error:"")}));return;}
-  const pos=pj.positions;
-  const or=await fetch(base+"/orders?mode=live",{headers:H});
-  const oj=await or.json().catch(()=>null);
-  if(!or.ok||!oj||!Array.isArray(oj.orders)){console.log(JSON.stringify({error:"live orders read failed (fail-closed): HTTP "+or.status+((oj&&oj.error)?" "+oj.error:"")}));return;}
-  const orders=oj.orders;
-  const working=orders.filter(o=>o.side==="sell"&&["pending","accepted","partially_filled"].includes(o.status));
-  const sells=new Set(working.map(o=>String(o.symbol).toUpperCase()));
-  const pct=Number(process.env.WD_ALERT_PCT||5);
-  const bleed=pos.filter(p=>{const cost=p.qty*p.avgEntryPrice;const plpc=cost>0?(p.unrealizedPl/cost)*100:0;
-      return plpc<=-pct&&!sells.has(String(p.symbol).toUpperCase())&&!core.has(String(p.symbol).toUpperCase());})
-    .map(p=>{const cost=p.qty*p.avgEntryPrice;return p.symbol+" "+((p.unrealizedPl/cost)*100).toFixed(1)+"% ($"+Number(p.unrealizedPl).toFixed(0)+")";});
-  const now=Date.now();
-  const stale=working.filter(o=>now-Date.parse(o.created_at)>30*60*1000)
-    .map(o=>o.symbol+" x"+o.qty+(o.limit_price?" limit@"+o.limit_price:"")+" age="+Math.round((now-Date.parse(o.created_at))/60000)+"min");
-  console.log(JSON.stringify({bleed,stale}));
-})().catch(e=>{console.log(JSON.stringify({error:String(e&&e.message||e)}))});
-'@
-  $tmpL = Join-Path $env:TEMP 'wd-check-live.js'
-  $liveJs | Set-Content $tmpL -Encoding ascii
-  docker cp $tmpL ($ApiContainer + ':/tmp/wd-check-live.js') 2>$null | Out-Null
-  $outL = docker exec -e WD_ALERT_PCT=$AlertPct -e WD_LIVE_SUB=$LiveSub -e WD_CORE_HOLDS=$coreHolds $ApiContainer node /tmp/wd-check-live.js 2>$null
-  try {
-    $rl = $outL | ConvertFrom-Json
-    if ($rl.error) {
-      # A Schwab auth/config failure is the EXPECTED weekly re-login, not a code fault - give it a
-      # once-daily key + reconnect text so it does not repeat hourly. Anything else is treated as a
-      # REAL problem (fail-closed): the live safety net is down, NOT an all-clear.
-      if ($rl.error -match 'not configured|broker_not_configured|unauthor|401|403|token|reconnect|expired|disconnect|auth') {
-        Raise ('live-relogin-' + (Get-Date -Format 'yyyy-MM-dd')) ("LIVE (real-money) book is UNREADABLE - Schwab looks disconnected/expired (" + $rl.error + "). The watchdog cannot see live positions OR protective orders until you re-login (the ~weekly Schwab refresh). Reconnect Schwab from the trading surface.")
-      } else {
-        Raise 'live-check-error' ("watchdog LIVE position check failed - treated as a REAL problem (fail-closed), NOT an empty healthy book: " + $rl.error)
-      }
+  # G) EVERY LIVE BOOK (Schwab, real money) - replaces the single-book check E (2026-07-08..2026-09-06),
+  # which audited only ?mode=live, i.e. the legacy book: with three live books on the roster that left
+  # two real-money accounts with NOTHING watching them. Same reads (positions from the broker, working
+  # sells from the order ledger, through the api's caller-scoped endpoints with the container's service
+  # secret - no broker keys on the host), now per book and with the account snapshot as well, and every
+  # conclusion decided by scripts/lib/trading-watchdog-checks.js:
+  #   bleed / deep-loss (RTH-only, same reasoning as the paper book: pre- and post-market a live
+  #     position with no resting sell is expected, not a protection failure - the 07-15 AMAT spam)
+  #   stranded-sell / negative funds / position count / concentration (true at any hour)
+  # Suppression is per book AND per symbol with a worsening band, so a persisting condition pages once
+  # per window instead of every 10 minutes, and a DEEPENING one still pages.
+  # $coreKnown: see the core-hold read above - without the exemption list every deliberate hold
+  # reads as a bleeder and a stop-buster. check-infra-core-holds already alerted, so this is a
+  # NAMED withholding, never a silent skip.
+  # ---- wd: audit gate ----
+  if ($checksReady -and $coreKnown) {
+    $auditBooks = if ($null -ne $liveBooks) { @($liveBooks) } else { @(@{ Ref = 'live'; BookId = ''; Enabled = $true }) }
+    if ($null -eq $liveBooks) {
+      # Its OWN key: the beat check above raises 'books-unreadable' from the same run, and a shared
+      # key meant this more specific text ("the audit fell back too") was swallowed by the 60-minute
+      # suppressor and never reached the operator.
+      Raise 'books-unreadable-audit' ("Watchdog could NOT read the live books from oshal_trading_books (docker exec " + $DbContainer + " psql) - treated as a REAL problem (fail-closed): the per-book position/account audit ALSO falls back to the legacy 'live' book, so any OTHER live book's positions, working sells and account shape are unwatched until the read works.")
     }
-    # RTH-only, same reasoning as the paper book: pre/post-market a live position with no resting
-    # sell is expected, not an unprotected-risk failure (the 07-15 real-money AMAT spam was pre-open).
-    if ($rth -and $rl.bleed -and @($rl.bleed).Count -gt 0) {
-      $k = 'live-bleed-' + ((@($rl.bleed) | ForEach-Object { ($_ -split ' ')[0] } | Sort-Object) -join ',')
-      Raise $k ("LIVE (REAL MONEY) position(s) down more than " + $AlertPct + " percent during regular hours: " + (@($rl.bleed) -join '; ') + ". NOTE: the live strategy exits via MARKET orders at each 5-min run and rests NO protective stops on the venue - so 'no working sell' is normal, and this is only a real failure if the loop is NOT exiting them. Confirm the autopilot is firing (look for any 'live-loop-silent' or 'run errors' alert) and that the synthetic stop should have triggered. Core/':0' holds are excluded; manual Schwab stops are invisible to the ledger.")
+    if (@($auditBooks).Count -gt 0) {
+      $auditResult = Invoke-WdBookAudit $auditBooks $rth $coreHolds (Read-WdSymbolState $symStateFile)
+      Send-WdAuditAlerts $auditResult $symStateFile
     }
-    if ($rl.stale -and @($rl.stale).Count -gt 0) {
-      $k = 'live-stale-' + ((@($rl.stale) | ForEach-Object { ($_ -split ' ')[0] } | Sort-Object) -join ',')
-      Raise $k ("LIVE (REAL MONEY) stranded sell order(s) older than 30 min: " + (@($rl.stale) -join '; '))
-    }
-  } catch { Raise 'live-check-parse' ("watchdog could not parse LIVE check output: " + ($outL | Out-String).Substring(0, [Math]::Min(200, ($outL | Out-String).Length))) }
- } # end: else (container not freshly recreated) - B/C/D/E
+  }
+  # ---- wd: end audit gate ----
+ } # end: else (container not freshly recreated) - B/C/D/G
 
   # F) PRE-MARKET GAP ALERT (08:00-09:29 ET only). SPY's pre-market tape is the futures proxy we
   # have: if it is gapping down >= GapAlertPct vs yesterday's close, tell the operator BEFORE the
@@ -574,8 +998,12 @@ const core=new Set(String(process.env.WD_CORE_HOLDS||"").split(",").map(x=>x.spl
   # ONLY - the trading algorithm is untouched (live==paper parity); the human decides. Added
   # 2026-07-08 night before the first full-account (52K) open, operator ask: "watch pre-market,
   # look at futures, stop the buy" - the automated entry-filter version goes through paper first.
-  if ($et.Hour -ge 8 -and ($et.Hour -lt 9 -or ($et.Hour -eq 9 -and $et.Minute -lt 30))) {
+  # $checksReady gates it: the gap DECISION (real size, real recency, quote-mid corroboration) is
+  # the module's, and wd-checks-unavailable has already alerted - running the fetcher without it
+  # would only add a second alert for the same cause.
+  if ($checksReady -and $et.Hour -ge 8 -and ($et.Hour -lt 9 -or ($et.Hour -eq 9 -and $et.Minute -lt 30))) {
     $gapJs = @'
+const C=require("/tmp/oshal-wd-checks.js");
 const k=process.env.ALPACA_PAPER_KEY_ID||process.env.ALPACA_KEY_ID, s=process.env.ALPACA_PAPER_SECRET_KEY||process.env.ALPACA_SECRET_KEY;
 const H={"APCA-API-KEY-ID":k,"APCA-API-SECRET-KEY":s};
 (async()=>{
@@ -585,28 +1013,42 @@ const H={"APCA-API-KEY-ID":k,"APCA-API-SECRET-KEY":s};
   const bars=(bj&&bj.bars)||[];
   const prior=bars.filter(b=>String(b.t).slice(0,10)<today).pop();
   const tj=await (await fetch("https://data.alpaca.markets/v2/stocks/SPY/trades/latest?feed=iex",{headers:H})).json();
-  const tr=tj&&tj.trade;
-  if(!prior||!tr){console.log(JSON.stringify({skip:"no prior close or no trade"}));return;}
-  if(String(tr.t).slice(0,10)!==today){console.log(JSON.stringify({skip:"no pre-market print yet"}));return;}
-  const gap=(Number(tr.p)/Number(prior.c)-1)*100;
-  console.log(JSON.stringify({gap:Number(gap.toFixed(2)),last:tr.p,priorClose:prior.c,asOf:tr.t}));
+  const qj=await (await fetch("https://data.alpaca.markets/v2/stocks/SPY/quotes/latest?feed=iex",{headers:H})).json();
+  // The DECISION is the module's: a gap pages only on a print with real size, real recency and a
+  // two-sided quote whose mid crosses the same threshold (one thin stale odd-lot print is the
+  // classic pre-market false alarm). Everything here is fetching.
+  const r=C.assessGapPrint({trade:tj&&tj.trade,quote:qj&&qj.quote,priorClose:prior?prior.c:null,
+    todayIso:today,nowMs:now.getTime(),minSize:Number(process.env.WD_GAP_MIN_SIZE||100),
+    maxAgeMin:Number(process.env.WD_GAP_MAX_AGE_MIN||15),gapPct:Number(process.env.WD_GAP_PCT||1)});
+  if(r.skip){console.log(JSON.stringify(r));return;}
+  console.log(JSON.stringify(Object.assign({priorClose:prior.c,asOf:tj.trade.t},r)));
 })().catch(e=>{console.log(JSON.stringify({error:String(e&&e.message||e)}))});
 '@
     $tmpG = Join-Path $env:TEMP 'wd-check-gap.js'
     $gapJs | Set-Content $tmpG -Encoding ascii
-    docker cp $tmpG ($ApiContainer + ':/tmp/wd-check-gap.js') 2>$null | Out-Null
-    $outG = docker exec $ApiContainer node /tmp/wd-check-gap.js 2>$null
-    try {
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $outG = $null
+    if (Copy-WdIntoApi 'premarket-gap' $tmpG '/tmp/wd-check-gap.js') {
+     $outG = Invoke-WdExec 'premarket-gap' @('exec',
+      '-e', ('WD_GAP_PCT=' + $GapAlertPct.ToString($inv)),
+      '-e', ('WD_GAP_MIN_SIZE=' + ([double](Get-WdSetting 'GAP_MIN_PRINT_SIZE' 100)).ToString($inv)),
+      '-e', ('WD_GAP_MAX_AGE_MIN=' + ([double](Get-WdSetting 'GAP_MAX_PRINT_AGE_MIN' 15)).ToString($inv)),
+      $ApiContainer, 'node', '/tmp/wd-check-gap.js')
+    }
+    if ($null -ne $outG) {
+     try {
       $rg = $outG | ConvertFrom-Json
-      if ($null -ne $rg.gap -and [double]$rg.gap -le (-1 * $GapAlertPct)) {
+      if ($rg.alert) {
         $k = 'premarket-gap-' + (Get-Date -Format 'yyyy-MM-dd')
-        Raise $k ("PRE-MARKET GAP DOWN: SPY " + $rg.gap + " percent vs yesterday's close (" + $rg.last + " vs " + $rg.priorClose + ", as of " + $rg.asOf + "). The open fire WILL place new entries unless you halt. To skip today's buying: edit .env TRADING_HALT=true then 'docker compose -f docker-compose.oshal-local.yml up -d --force-recreate --no-deps oshal-api' (~90s). Instant hard stop instead: 'docker stop " + $ApiContainer + "' (stops EVERYTHING incl. exits - prefer the halt).")
+        Raise $k ("PRE-MARKET GAP DOWN: SPY " + $rg.gap + " percent vs yesterday's close (" + $rg.last + " vs " + $rg.priorClose + ", quote mid " + $rg.mid + " = " + $rg.midGap + " percent, print size " + $rg.size + " as of " + $rg.asOf + "). The open fire WILL place new entries unless you halt. To skip today's buying: edit .env TRADING_HALT=true then 'docker compose -f docker-compose.oshal-local.yml up -d --force-recreate --no-deps oshal-api' (~90s). Instant hard stop instead: 'docker stop " + $ApiContainer + "' (stops EVERYTHING incl. exits - prefer the halt).")
       }
       # Surface skip reasons + a malformed response so a silently-broken F check is visible in the log
       # (was an empty `catch {}` - the one before-the-open warning could never-fire with no trace).
       elseif ($rg.skip) { Log ("gap check skipped: " + $rg.skip) }
       elseif ($rg.error) { Log ("gap check error (SPY pre-market read): " + $rg.error) }
-    } catch { Log ("gap check output unparseable: " + ($outG | Out-String).Trim()) }
+      else { Log ("gap check: SPY " + $rg.gap + " percent (mid " + $rg.midGap + " percent), no alert") }
+     } catch { Log ("gap check output unparseable: " + ($outG | Out-String).Trim()) }
+    }
   }
 }
 
