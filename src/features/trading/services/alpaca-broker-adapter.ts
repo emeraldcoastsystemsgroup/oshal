@@ -22,13 +22,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — Alpaca v2 account/positions/orders (place/get/cancel), fetch-based, per-mode base URL + key pair, normalized status mapping, client_order_id idempotency.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | listOrders(from,to) over /v2/orders?status=all — the venue-side record used to re-find an order whose stored broker id is missing or belongs to the other book.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cash-account settlement (ADR-134 D8): getAccount() reports accountType from Alpaca's `multiplier` via the pure alpacaAccountType() ('1' → cash, '2'/'4' → margin, absent → undefined). Alpaca paper accounts are margin (multiplier 2/4), so the settlement guard no-ops there — paper sizing is byte-identical. Alpaca exposes no settled/unsettled split, so those fields stay absent (a cash-type Alpaca book is ledger-derived).
  *
  * @module alpaca-broker-adapter
  */
 
 import { createChildLogger } from '@/shared/logger';
 import type {
-  BrokerAdapter, BrokerAccount, BrokerProviderType, OrderRequest, OrderResult,
+  BrokerAdapter, BrokerAccount, BrokerAccountType, BrokerProviderType, OrderRequest, OrderResult,
   OrderStatus, Position, PortfolioHistory, TradingMode,
 } from './broker-adapter';
 
@@ -126,6 +127,21 @@ interface AlpacaAccount {
   last_equity?: string;
   currency?: string;
   status?: string;
+  /** Buying-power multiplier: '1' = cash account, '2' = Reg-T margin, '4' = pattern-day-trader margin. */
+  multiplier?: string;
+}
+
+/**
+ * @description Alpaca's account type from its buying-power `multiplier` (ADR-134 D8): 1 = cash,
+ * >1 = margin. Absent/unparseable → undefined (the caller treats an unknown LIVE type as cash,
+ * fail-closed, and an unknown PAPER type as margin).
+ * @param multiplier - The `multiplier` string from GET /v2/account.
+ * @returns 'cash' | 'margin' | undefined.
+ */
+export function alpacaAccountType(multiplier: string | undefined): BrokerAccountType | undefined {
+  const m = Number(multiplier);
+  if (multiplier == null || multiplier === '' || !Number.isFinite(m) || m <= 0) return undefined;
+  return m > 1 ? 'margin' : 'cash';
 }
 
 /** The Alpaca-backed trade-execution rail, bound to one book (paper|live). */
@@ -291,6 +307,7 @@ export class AlpacaBrokerAdapter implements BrokerAdapter {
       lastEquity: a.last_equity != null ? Number(a.last_equity) : undefined,
       currency: a.currency || 'USD',
       status: a.status,
+      accountType: alpacaAccountType(a.multiplier),
     };
   }
 

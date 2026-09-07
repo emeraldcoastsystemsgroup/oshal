@@ -30,13 +30,14 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | getPositions() now derives unrealizedIntradayPl + changeToday from the prior-session close (fillIntradayChange) instead of Schwab's currentDayProfitLoss, which double-counted same-day realized P&L on round-tripped symbols and inflated the live desk's "Today $" column to bogus five-figure sums. Display-only fields (no trade/exit logic reads them); mirrors Alpaca's unrealized_intraday_pl/change_today semantics.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | getTransactions(fromIso,toIso,symbol?) — settled TRADE executions for reconciling closes done outside the engine (a manual sell). GET /accounts/{hash}/transactions?types=TRADE&startDate&endDate; Schwab needs the exact ISO+millis+Z form (= toISOString()) and caps the window ~60d, so we chunk at 55d, tolerate a per-chunk failure (log+skip, never abort), and dedup by activityId. normalizeTransaction picks the single non-fee non-cash security leg and infers side from the SIGNED amount CROSS-CHECKED against the cost sign (spec documents no sign → disagreement trusts cost; multi-leg/ambiguous → null/skip). Read-only; per the ADR-052 rail pattern.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Class-share symbology at the wire boundary: orders go out via toSchwabSymbol (BRK.B → BRK/B — Schwab rejects the engine's dot form as an invalid symbol), positions/orders/transactions come back via fromSchwabSymbol so the engine's exemption sets, exits, and ledger all match on ONE notation. Found by the read-only quote probe for the 2026-07-26 BRK.B core proposal; guard: tests/unit/schwab-symbology.spec.ts.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Cash-account settlement (ADR-134 D8): getAccount() now also returns accountType (securitiesAccount.type CASH→'cash', MARGIN→'margin'), settledCash and unsettledCash via the pure schwabSettlementFigures(). SEMANTICS: on a Schwab CASH account `cashAvailableForTrading` INCLUDES unsettled sale proceeds (Schwab lets a cash account buy with them — the good-faith violation is selling before they settle), so it is NOT the settled figure; settled = cashAvailableForTrading − unsettledCash when both are present, else cashAvailableForWithdrawal (already-settled money by definition), else absent. `status`, `cash`, `buyingPower` (which still falls back to cashAvailableForTrading) and `equity` are byte-unchanged.
  *
  * @module schwab-broker-adapter
  */
 
 import { createChildLogger } from '@/shared/logger';
 import type {
-  BrokerAdapter, BrokerAccount, BrokerProviderType, BrokerTransaction, OrderRequest, OrderResult,
+  BrokerAdapter, BrokerAccount, BrokerAccountType, BrokerProviderType, BrokerTransaction, OrderRequest, OrderResult,
   OrderStatus, Position, TradingMode,
 } from './broker-adapter';
 import { SchwabMarketData, toSchwabSymbol, fromSchwabSymbol } from './schwab-market-data';
@@ -166,15 +167,51 @@ interface SchwabAccountDetail {
   securitiesAccount?: {
     accountNumber?: string;
     type?: string;
-    currentBalances?: {
-      cashBalance?: number;
-      liquidationValue?: number;
-      buyingPower?: number;
-      availableFunds?: number;
-      cashAvailableForTrading?: number;
-    };
+    currentBalances?: SchwabCurrentBalances;
     positions?: SchwabPosition[];
   };
+}
+
+/** The Trader API `currentBalances` block — the union of the CashBalance and MarginBalance shapes we read. */
+export interface SchwabCurrentBalances {
+  cashBalance?: number;
+  liquidationValue?: number;
+  buyingPower?: number;
+  availableFunds?: number;
+  /** CASH accounts: cash the venue lets you trade with — INCLUDES unsettled sale proceeds (see schwabSettlementFigures). */
+  cashAvailableForTrading?: number;
+  /** CASH accounts: money that can leave the account today — settled by definition. */
+  cashAvailableForWithdrawal?: number;
+  /** CASH accounts: sale proceeds still inside the T+n settlement window. */
+  unsettledCash?: number;
+}
+
+/**
+ * @description The settlement facts a Schwab balances block carries, normalized (ADR-134 D8).
+ * Schwab's `cashAvailableForTrading` on a CASH account counts unsettled proceeds (a cash account MAY
+ * buy with them; the good-faith violation is selling that purchase before the proceeds settle), so
+ * settled cash is derived as cashAvailableForTrading − unsettledCash when both are present; failing
+ * that, cashAvailableForWithdrawal (withdrawable money is settled by definition); failing that,
+ * absent — the caller falls back to its own ledger. Never negative.
+ * @param b - The `currentBalances` block (either account shape).
+ * @returns settledCash / unsettledCash, each undefined when the venue gave no basis for it.
+ */
+export function schwabSettlementFigures(b: SchwabCurrentBalances | undefined): { settledCash?: number; unsettledCash?: number } {
+  if (!b) return {};
+  const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+  const unsettled = num(b.unsettledCash);
+  const tradable = num(b.cashAvailableForTrading);
+  const withdrawable = num(b.cashAvailableForWithdrawal);
+  let settled: number | undefined;
+  if (tradable !== undefined && unsettled !== undefined) settled = Math.max(0, tradable - unsettled);
+  else if (withdrawable !== undefined) settled = Math.max(0, withdrawable);
+  return { settledCash: settled, unsettledCash: unsettled };
+}
+
+/** Map Schwab's securitiesAccount.type onto the broker-neutral account type (unknown strings → undefined). */
+function schwabAccountType(type: string | undefined): BrokerAccountType | undefined {
+  const t = String(type || '').toUpperCase();
+  return t === 'CASH' ? 'cash' : t === 'MARGIN' ? 'margin' : undefined;
 }
 
 /** One leg of a Schwab transaction (the security leg, or a fee/cash leg). */
@@ -456,6 +493,9 @@ export class SchwabBrokerAdapter implements BrokerAdapter {
       equity: Number(b.liquidationValue ?? cash),
       currency: 'USD',
       status: a.securitiesAccount?.type,
+      // ADR-134 D8: the venue's settlement facts ride along (undefined on a MARGIN block, which has none).
+      accountType: schwabAccountType(a.securitiesAccount?.type),
+      ...schwabSettlementFigures(a.securitiesAccount?.currentBalances),
     };
   }
 

@@ -29,6 +29,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added listOrders(fromIso, toIso). A row can hold no broker id (Schwab returns it only in a Location header, and placeOrder falls back to a pending result without one) or the WRONG id (the pre-migration-065 cross-book upsert stamped the other book's id onto it). getOrder can never resolve such a row, so it strands non-terminal forever and blocks the symbol's future exits. The venue's own order record is the only authority, which makes enumeration a first-class capability rather than a recovery hack — it is what finally makes placeOrder's "reconcile will find it" true.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Futures extension (ADR-116): add 'tradovate' (the intended live futures rail) and 'paper' (the built-in vendor-neutral paper simulator) to BrokerProviderType so PaperFuturesBrokerAdapter can implement this same contract for the futures asset class. Equities rails and equity-only order semantics are unchanged; the futures adapter carries its own multiplier/short handling.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | TradingBook (ADR-134 multi-account books): the account-scoped book contract every ledger write, guard, and adapter binding keys on. Legacy books carry refs 'paper'/'live' so derived id text stays byte-identical; NULL binding fields mean today's legacy resolution exactly.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Cash-account settlement (ADR-134 D8): BrokerAccount gains optional accountType ('cash'|'margin'), settledCash and unsettledCash — the venue's own settlement facts, surfaced by the adapters that expose them (Schwab); TradingBook gains optional accountType (from the bound account's discovered type) and settlementPolicy (the per-book refuse|warn override). All optional so every existing literal keeps compiling and paper/margin behavior is byte-identical.
  *
  * @module broker-adapter
  */
@@ -65,7 +66,14 @@ export interface TradingBook {
   learn: boolean;
   /** Disabled books take no NEW risk; protective exits + reconcile keep running while positions remain. */
   enabled: boolean;
+  /** The bound account's type (oshal_trading_accounts.account_type, lower-cased); null/absent = unknown (legacy books). */
+  accountType?: BrokerAccountType | null;
+  /** Per-book cash-settlement override (ADR-134 D8): 'refuse' | 'warn'; null/absent = the fleet env default. */
+  settlementPolicy?: 'refuse' | 'warn' | null;
 }
+
+/** Brokerage account type as the venue reports it. Cash accounts settle T+n; margin accounts may buy against unsettled funds. */
+export type BrokerAccountType = 'cash' | 'margin';
 
 /** Order side. buy opens a long / covers a short; sell closes a long / opens a short. */
 export type OrderSide = 'buy' | 'sell';
@@ -201,6 +209,12 @@ export interface BrokerAccount {
   currency: string;
   /** Broker-native account status (e.g. 'ACTIVE'). */
   status?: string;
+  /** Account type when the venue reports it (Schwab securitiesAccount.type; Alpaca from the margin multiplier). */
+  accountType?: BrokerAccountType;
+  /** Cash that is SETTLED and spendable without touching unsettled sale proceeds (venue-reported; absent when the rail has no such figure). */
+  settledCash?: number;
+  /** Sale proceeds not yet settled (venue-reported; absent when the rail has no such figure). */
+  unsettledCash?: number;
 }
 
 /**
