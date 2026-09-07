@@ -41,6 +41,37 @@ bash scripts/app-store-drift-check.sh
 `scripts/oshal-up.sh` runs it automatically (advisory) right after the deploy-parity check, so a
 fresh bring-up surfaces stale packages immediately.
 
+## Copying one package onto a box (without deactivating it)
+
+For a single package, use [`scripts/deploy-store-package.sh`](../../scripts/deploy-store-package.sh)
+rather than a bare `docker cp`:
+
+```bash
+bash scripts/deploy-store-package.sh print-ingest            # one or more packages
+bash scripts/deploy-store-package.sh portrait-studio --no-restart
+```
+
+**Why it exists.** `docker cp pkg/. …/deployed-apps/pkg/` overwrites `oshal-app.yaml` — including
+`status:` — and the loader reconciles the `swarm_applications` toggle from that manifest at boot. So
+re-copying a package that ships `status: inactive` (print-ingest, youtube-kids), or any package an
+operator toggled on, **silently deactivates it**, and every route it owns then answers
+`503 Application inactive`. That trap cost three separate debug cycles on 2026-09-05/06. The script
+captures the live state from both places that decide it, copies, restores it, then stop+starts and
+verifies — and only ever RESTORES a state that was already live, never invents one.
+
+Three box behaviours it encodes, each found by running it here:
+
+- `docker cp` needs **opposite** path handling per half on Windows: the container path must not be
+  converted (`MSYS_NO_PATHCONV=1`) while the host path must be a real Windows path (`cygpath -w`),
+  or docker reads a bogus drive (`GetFileAttributesEx C:\c:`).
+- **stop+start, never `docker restart`** — a plain restart left the published port unanswered past
+  180s and needed a stop+start to recover.
+- It polls **`/health`**, not `/api/health`: `/api/health` hangs on this box while `/health` answers
+  200, which is also why `api-bounce.sh` burns its window and reports a false failure.
+
+Past its readiness deadline it WARNS with the verification commands rather than implying the copy
+failed — the bytes and the preserved activation are already on the box at that point.
+
 ## Fixing drift
 
 Re-stage the package into the volume via a helper container (the ADR-085 deploy pattern — direct
