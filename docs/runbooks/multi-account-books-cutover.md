@@ -1,10 +1,7 @@
 # Multi-account trading books — operating & cutover runbook (ADR-134)
 
-**State as of 2026-08-27:** PR1 (core foundation) + PR2 (per-book strategies) are merged and
-deployed flag-off; PR3 (the Accounts & books surface, `intelligent-trades` 1.2.0) is deployed to
-the workspace volume. `TRADING_MULTI_ACCOUNT` is **false** — the platform behaves exactly like the
-two-book world until the cutover below runs. The ADR is
-[134-multi-account-trading-books.md](../adr/134-multi-account-trading-books.md).
+**State as of 2026-09-06:** PR1–PR3 are merged and deployed; the cutover HAS RUN on the operator box — `TRADING_MULTI_ACCOUNT` is **true** in the api container and `oshal_trading_books` carries a second enabled live book (`b-6690e236`, MARGIN …1886) beside the legacy `live` book, with `b-77146871` (CASH …8271) present but disabled. The observability pair (per-book watchdog beats + per-book report scripts) landed 2026-09-06 — after that second book was enabled, so the cutover precondition below protects fresh installs rather than this box.
+
 
 ## The operator's path to N accounts
 
@@ -63,9 +60,6 @@ two-book world until the cutover below runs. The ADR is
 
 ## Deliberately deferred (BACKLOG-tracked, not silent)
 
-- Watchdog per-book beat assertions derived from the books table, and multi-book breakdowns in the
-  three host report scripts — required before a SECOND live book runs unattended; the denormalized
-  `book_ref` column landed in PR1/PR2 so the scripts keep telling the truth for legacy books today.
 - The hardening tail of PR4: `book_id NOT NULL` + legacy mode-index/trigger drops on
   orders/signals/decisions, `SCHWAB_ACCOUNT_NUMBER` env retirement, the config-overrides
   book-less-active CHECK.
