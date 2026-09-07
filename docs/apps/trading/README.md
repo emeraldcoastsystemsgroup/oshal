@@ -38,6 +38,7 @@ gravity model is ADR-054; the swarm itself is ADR-052.
 - [intraday.md](./intraday.md) — intraday / swing dispatch.
 - [signal-dataset.md](./signal-dataset.md) — the trading signal dataset contract (consumed by
   `src/features/world-data/`).
+- [studio-parity-proof.md](./studio-parity-proof.md) — **live proof run (2026-09-06)** of the Strategy Studio design → refine → refine → apply → revert cycle on the PAPER book through the live model rail: every request, trimmed response, the one upstream 503 and its retry, and the reproduction recipe.
 
 Related: [../../backlog/trading-advisor.md](../../backlog/trading-advisor.md) — open work.
 [../../runbooks/daily-trade-recap-pipeline.md](../../runbooks/daily-trade-recap-pipeline.md) —
