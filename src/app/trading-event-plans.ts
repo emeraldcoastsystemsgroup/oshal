@@ -23,6 +23,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — FORCE-RLS plan table, CRUD + arm/disarm/delete, dry-run, EDGAR full-text watch (S-1/F-1 → 424B4 pricing parse), the tick state machine with injectable deps (clock, session, EDGAR, broker, market data, order placement) so the real-DB spec drives every transition without a venue, and the 'trading-events:<sub>' schedule leg gated by TRADING_EVENT_PLANS.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | dispatchTradingEventSchedule also ticks the ADR-136 D4 dated orders (trading-dated-orders.ts) on this same 5-minute leg — one cadence, one gate (TRADING_EVENT_PLANS), one order path; dynamic import for the same cycle reason as the pinned lots.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-136 D4 follow-up: the leg fires EVERY MINUTE across the extended session (TRADING_EVENTS_CRON, default '* 7-19 * * 1-5' ET — Schwab's SEAMLESS session opens 07:00) so dated orders fire at minute precision; plans + pinned lots step only on a FULL tick (the fire minute divisible by TRADING_EVENTS_FULL_TICK_MINUTES, default 5 — stateless, minute-aligned, no in-process memory, so a restart or a second replica cannot double- or skip-step). legWindowFromCron() derives the accepted dated-order window from this cron so there is ONE source of truth; a plans/lots failure no longer skips the dated tick; migrateEventLegSchedules() rewrites existing per-user 'trading-events:<sub>' rows to the current cron/timezone at scheduler boot (create-or-replace keeps id/status/executionCount) so users never re-arm.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-136 D5: the earnings-reaction rules tick rides this leg's FULL tick (EDGAR reads for held names in their window), gated by TRADING_EARNINGS_RULES on top of this leg's own gate, and dynamic-imported for the same cycle reason as the lots.
  *
  * @module trading-event-plans
  */
@@ -589,7 +590,11 @@ export async function dispatchTradingEventSchedule(ctx: AppContext, schedule: Sc
   // ADR-136 D6 remainder: COTP reminders on the FULL tick only — they are hour-granular and the leg
   // cron fires every minute (same dynamic-import reason as the lots).
   const reminders = full ? await import('./trading-event-reminders.js').then((m) => m.tickEventReminders(ctx, sub)).catch((err) => { logger.error({ err, sub }, 'event reminders tick failed'); return null; }) : null;
-  logger.info({ sub, full, plans: out, lots, dated, reminders, ms: Date.now() - t0 }, 'trading-events leg tick');
+  // ADR-136 D5: earnings-reaction rules on the FULL tick only — each fire reads EDGAR for held names
+  // inside their window, so the 5-minute cadence is the budget (same dynamic-import reason as the lots).
+  // Gated twice: this leg's own TRADING_EVENT_PLANS, and TRADING_EARNINGS_RULES (default false).
+  const earnings = full ? await import('./trading-earnings-rules.js').then((m) => m.tickEarningsRules(ctx, sub)).catch((err) => { logger.error({ err, sub }, 'earnings rules tick failed'); return null; }) : null;
+  logger.info({ sub, full, plans: out, lots, dated, reminders, earnings, ms: Date.now() - t0 }, 'trading-events leg tick');
   return { success: true, scheduleId: schedule.id };
 }
 
