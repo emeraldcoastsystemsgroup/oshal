@@ -39,6 +39,7 @@ import {
 } from '@/features/trading';
 import { loadBook } from './trading-books-store';
 import { placeDecisionOrder, guardrails, TradingError } from './trading-engine';
+import { alertFirstS1, alertNotifierFrom, normalizePricingDate, type EventAlert } from './trading-event-alerts';
 
 const logger = createChildLogger({ module: 'trading-event-plans' });
 
@@ -114,6 +115,8 @@ export interface EventPlanParams {
   issuer: string; ticker?: string | null; ipoPrice?: number | null;
   maxPremiumPct: number; sizePctOfEquity?: number | null; notionalUsd?: number | null;
   takeProfitPct: number; stopLossPct: number; timeStopDays: number; entryDeadlineDays: number;
+  /** The operator's expected pricing date, YYYY-MM-DD (EDGAR does not publish it) — drives the COTP reminders. */
+  pricingDate?: string | null;
 }
 /** One plan row as the routes/UI see it. */
 export interface EventPlanRow {
@@ -149,6 +152,7 @@ export function normalizeEventPlanParams(raw: unknown): EventPlanParams {
     notionalUsd: notional && notional > 0 ? notional : null,
     takeProfitPct: clamp(num(r.takeProfitPct), 1, 200, 10), stopLossPct: clamp(num(r.stopLossPct), 1, 90, 10),
     timeStopDays: Math.round(clamp(num(r.timeStopDays), 1, 365, 30)), entryDeadlineDays: Math.round(clamp(num(r.entryDeadlineDays), 1, 30, 2)),
+    pricingDate: normalizePricingDate(r.pricingDate),
   };
 }
 
@@ -331,6 +335,8 @@ export interface EventPlanDeps {
   broker: (book: TradingBook, sub: string) => EventBroker;
   latestTrade: (book: TradingBook, sub: string, ticker: string) => Promise<{ price: number; asOf: Date } | null>;
   place: (pool: AppContext['pool'], sub: string, book: TradingBook, decisionId: string, requestId: string) => Promise<OrderResult>;
+  /** Optional delivery seam for owner-facing alerts — production leaves it unset (the real two rails); a spec injects a fake. */
+  notify?: (ctx: AppContext, sub: string, planId: string, alert: EventAlert) => Promise<unknown>;
 }
 const bindingOf = (b: TradingBook) => b.accountNumber ? { accountNumber: b.accountNumber, connectionKey: b.connectionKey } : undefined;
 
@@ -428,6 +434,9 @@ async function stepWatching(ctx: AppContext, sub: string, plan: EventPlanRow, de
   const pricing = hits.filter((h) => /^424B[14]/.test(h.form)).sort((a, b) => b.date.localeCompare(a.date))[0];
   if (s1 && !filings.s1) filings.s1 = { form: s1.form, date: s1.date, url: s1.url };
   if (pricing && !filings.pricing) filings.pricing = { form: pricing.form, date: pricing.date, url: pricing.url };
+  // ADR-136 D6 remainder: the first-seen S-1 alert. alertNotifierFrom(deps) keeps the injectable
+  // delivery seam — a caller/spec that carries `notify` gets it; production gets the two real rails.
+  if (s1 && !plan.filings.s1) await alertFirstS1(ctx, sub, plan, s1, alertNotifierFrom(deps));
   let ipoPrice = plan.params.ipoPrice ?? plan.ipoPrice; let ticker = plan.params.ticker ?? plan.ticker;
   if (pricing && (!ipoPrice || !ticker)) {
     const text = await deps.fetchText(pricing.url);
@@ -577,7 +586,10 @@ export async function dispatchTradingEventSchedule(ctx: AppContext, schedule: Sc
   // ADR-136 D4: dated (timed) operator orders tick on EVERY fire of the leg — fired once each through
   // the engine at their chosen ET minute (same dynamic-import reason as the lots).
   const dated = await import('./trading-dated-orders.js').then((m) => m.tickDatedOrders(ctx, sub)).catch((err) => { logger.error({ err, sub }, 'dated orders tick failed'); return null; });
-  logger.info({ sub, full, plans: out, lots, dated, ms: Date.now() - t0 }, 'trading-events leg tick');
+  // ADR-136 D6 remainder: COTP reminders on the FULL tick only — they are hour-granular and the leg
+  // cron fires every minute (same dynamic-import reason as the lots).
+  const reminders = full ? await import('./trading-event-reminders.js').then((m) => m.tickEventReminders(ctx, sub)).catch((err) => { logger.error({ err, sub }, 'event reminders tick failed'); return null; }) : null;
+  logger.info({ sub, full, plans: out, lots, dated, reminders, ms: Date.now() - t0 }, 'trading-events leg tick');
   return { success: true, scheduleId: schedule.id };
 }
 
