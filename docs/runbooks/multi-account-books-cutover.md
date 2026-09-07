@@ -69,8 +69,6 @@ two-book world until the cutover below runs. The ADR is
 - The hardening tail of PR4: `book_id NOT NULL` + legacy mode-index/trigger drops on
   orders/signals/decisions, `SCHWAB_ACCOUNT_NUMBER` env retirement, the config-overrides
   book-less-active CHECK.
-- `trading-schedule-dispatch.ts` decomposition (882 code lines — past the 800 threshold it already
-  exceeded before ADR-134).
 
 ## Known one-time hazards (encountered and fixed during the build)
 
