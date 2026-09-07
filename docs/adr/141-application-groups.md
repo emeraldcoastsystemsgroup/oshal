@@ -5,7 +5,7 @@ Operator direction 2026-09-05 (*"we are taking like 6 applications and binding t
 a toolbar … we need a way to define that outside the swarm directory … I guess it's a yaml"*). Core
 ships the kind, the borrowed-surface resolver, `readiness:`, the shared dashboard and the verifier
 pass-through; the store ships the Intelligent Career group and its members' readiness probes. See
-"What is built" at the end. D7 (a story per role) stays a career-hunter BACKLOG item.
+"What is built" at the end. D7 (a story per role) shipped 2026-09-07 in career-hunter 1.16.0.
 
 **Date:** 2026-09-05
 
@@ -150,13 +150,17 @@ toolbar is the union of the four members' surfaces with nothing hand-copied.
 
 "A story on my bullet, or at least a good story per job title — that's how we collect real job history"
 is the piece with the most product value and the least existing coverage, and it is a career-hunter
-feature: the engine's interview loop (`interview.py`, `interview_bank.py`) is built and orphaned, the
-profile already holds `roles[].deliverables`, and Strengthen already renders bullets. The design: revive
-the multi-turn interview as the **resume review conversation** in Strengthen; every answer that carries
-evidence becomes a `story` attached to a role (`roles[].stories[]`, with the bullet it supports), the
-review walks role by role until each title has at least one story, the resume and cover generators cite
-stories as evidence, and the group's "Review your resume story by story" readiness reads "N of M roles
-have a story". Tracked as its own BACKLOG item; it does not gate the group.
+feature. Every answer that carries evidence becomes a `story` attached to a role (`roles[].stories[]`,
+with the bullet it supports), the review walks role by role until each title has at least one story, the
+resume and cover generators cite stories as evidence, and the group's "Review your resume story by
+story" readiness reads "N of M roles have a story".
+
+**Correction, recorded when this was built (2026-09-07).** This decision originally said to *revive the
+engine's orphaned interview loop* for it. That was wrong about what those modules are: `interview.py`
+assesses an interview **transcript** for skill calibration, and `interview_bank.py` matches interview
+questions to a **posting**. Neither walks roles. The rail that actually fit was Strengthen's existing
+ask-answer-augment loop, and the review shipped as a new `stories` module beside `gaps.py` — which owns
+the skill-theme axis and is deliberately untouched. Shipped in career-hunter 1.16.0; see "What is built".
 
 ## Consequences
 
@@ -207,8 +211,17 @@ existing resume-state route; `stories` and `materials` on a new readiness route)
 destination ("Add to Career profile", 1.14.0) is the Send-to leg. `HOST_APP_MAP` on the demo box
 points `career.oshal.ai` at the group.
 
-**Not built, by design.** D7 — the story-per-role review — remains a career-hunter BACKLOG item; its
-readiness step reads `roles[].stories[]` honestly today ("0 of N roles have a story") until that
-conversation ships. The interim path that needed no core change — a launcher package with hand-listed
-tiles and a bespoke dashboard — was not taken: it would have shipped the copied-URL defect this ADR
-exists to remove. Per-domain YAML repositories wait for a domain with its own owner (D5).
+**D7, the story review (career-hunter 1.16.0, 2026-09-07).** `engine/jobhunter/stories.py` walks the
+profile's roles, asks about the first one with no story using that role's OWN bullet, and attaches the
+answer to the role and to the bullet it supports. Two rules keep it honest: a model may only cite a
+bullet the role actually carries (anything else falls back to a deterministic word-overlap match), and
+with no provider reachable the answer is stored verbatim with that same match — so the review works on a
+box with no AI, and each story records which path wrote it. `GET /stories` and `POST /stories/answer`
+drive it, Strengthen renders it, and `profile.summary()` emits an `EVIDENCE:` line per role so tailored
+resumes and covers cite the story instead of restating the bullet. A story the model flags as carrying no
+real evidence is kept but never cited. Guard: `career-hunter/tests/career-stories-contract.py` (21 checks
+against a real profile file, both provider outcomes) driven by `career-stories.test.mjs`.
+
+**Not taken, by design.** The interim path that needed no core change — a launcher package with
+hand-listed tiles and a bespoke dashboard — would have shipped the copied-URL defect this ADR exists to
+remove. Per-domain YAML repositories wait for a domain with its own owner (D5).
