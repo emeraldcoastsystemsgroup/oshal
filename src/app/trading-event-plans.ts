@@ -22,14 +22,16 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — FORCE-RLS plan table, CRUD + arm/disarm/delete, dry-run, EDGAR full-text watch (S-1/F-1 → 424B4 pricing parse), the tick state machine with injectable deps (clock, session, EDGAR, broker, market data, order placement) so the real-DB spec drives every transition without a venue, and the 'trading-events:<sub>' schedule leg gated by TRADING_EVENT_PLANS.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | dispatchTradingEventSchedule also ticks the ADR-136 D4 dated orders (trading-dated-orders.ts) on this same 5-minute leg — one cadence, one gate (TRADING_EVENT_PLANS), one order path; dynamic import for the same cycle reason as the pinned lots.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-136 D4 follow-up: the leg fires EVERY MINUTE across the extended session (TRADING_EVENTS_CRON, default '* 7-19 * * 1-5' ET — Schwab's SEAMLESS session opens 07:00) so dated orders fire at minute precision; plans + pinned lots step only on a FULL tick (the fire minute divisible by TRADING_EVENTS_FULL_TICK_MINUTES, default 5 — stateless, minute-aligned, no in-process memory, so a restart or a second replica cannot double- or skip-step). legWindowFromCron() derives the accepted dated-order window from this cron so there is ONE source of truth; a plans/lots failure no longer skips the dated tick; migrateEventLegSchedules() rewrites existing per-user 'trading-events:<sub>' rows to the current cron/timezone at scheduler boot (create-or-replace keeps id/status/executionCount) so users never re-arm.
  *
  * @module trading-event-plans
  */
 
 import * as crypto from 'crypto';
+import { CronExpressionParser } from 'cron-parser';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
-import type { ScheduleRecord, ScheduleDispatchResult } from '@/features/scheduling';
+import type { ScheduleRecord, ScheduleDispatchResult, ScheduleService } from '@/features/scheduling';
 import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import {
   getBrokerAdapter, getMarketData, liveTradingEnabled, tradingSession, isTickStale,
@@ -40,10 +42,58 @@ import { placeDecisionOrder, guardrails, TradingError } from './trading-engine';
 
 const logger = createChildLogger({ module: 'trading-event-plans' });
 
-/** Cron for the executor leg (ET): every 5 minutes, 09:00–16:55, weekdays. 09:00 catches a 424B4 posted overnight. */
-export const EVENT_PLANS_CRON = '*/5 9-16 * * 1-5';
+/**
+ * Cron for the executor leg (ET clock): every minute, 07:00–19:59, weekdays — the extended session a
+ * live Schwab account can trade (SEAMLESS opens 07:00; Alpaca paper could start 04:00 — widen with
+ * the env). Config → env TRADING_EVENTS_CRON → this default. Dated orders fire at minute precision on
+ * every fire; plans + pinned lots step only on a full tick (see {@link isFullTick}). The accepted
+ * dated-order window is DERIVED from this cron ({@link legWindowFromCron}) — never a second setting.
+ */
+export const EVENT_PLANS_CRON = process.env.TRADING_EVENTS_CRON || '* 7-19 * * 1-5';
 /** The leg's timezone (the cron above is an ET clock). */
 export const EVENT_PLANS_TIMEZONE = 'America/New_York';
+const ET_MINUTE_FMT = new Intl.DateTimeFormat('en-US', { timeZone: EVENT_PLANS_TIMEZONE, minute: 'numeric' });
+
+/** @description Minutes between full ticks (plans + pinned lots). Config → env TRADING_EVENTS_FULL_TICK_MINUTES → default 5. */
+export function fullTickMinutes(): number { const n = Math.floor(Number(process.env.TRADING_EVENTS_FULL_TICK_MINUTES)); return Number.isFinite(n) && n >= 1 ? n : 5; }
+
+/**
+ * @description Whether a fire at `at` is a FULL tick — its Eastern minute is divisible by
+ * {@link fullTickMinutes}. Stateless and minute-aligned by construction (the same semantics as the
+ * v1 `*\/5` cron), so an api restart or a second replica can neither double-step nor skip a step.
+ * @param at - The fire instant (the schedule's due time, not the wall clock — runner jitter never moves a full tick).
+ * @returns True when plans + pinned lots should step on this fire.
+ */
+export function isFullTick(at: Date): boolean {
+  const mm = Number(ET_MINUTE_FMT.formatToParts(at).find((p) => p.type === 'minute')?.value ?? NaN);
+  return Number.isFinite(mm) && mm % fullTickMinutes() === 0;
+}
+
+/**
+ * @description The instant a fired schedule was DUE (`nextRunAt` as popped from the next-run index),
+ * falling back to the clock when the record carries none — the minute the cron named, so the full-tick
+ * decision is the cron's, not the runner's poll jitter.
+ * @param schedule - The fired schedule record.
+ * @returns The fire instant.
+ */
+export function scheduleFireInstant(schedule: Pick<ScheduleRecord, 'nextRunAt'>): Date {
+  const ms = schedule.nextRunAt ? Date.parse(schedule.nextRunAt) : NaN;
+  return Number.isFinite(ms) ? new Date(ms) : new Date();
+}
+
+/**
+ * @description The wall-clock window (ET minutes-of-day, inclusive) the leg's cron fires inside —
+ * first fire minute to last fire minute of a day. This IS the accepted dated-order window: what the
+ * leg cannot tick it must not accept. For the default '* 7-19 * * 1-5' → 07:00–19:59; for the v1
+ * '*\/5 9-16 * * 1-5' → 09:00–16:55 (the hand-typed v1 window, now derived).
+ * @param cron - A 5-field cron (defaults to {@link EVENT_PLANS_CRON}).
+ * @returns `{ startMin, endMin }`.
+ */
+export function legWindowFromCron(cron: string = EVENT_PLANS_CRON): { startMin: number; endMin: number } {
+  const f = CronExpressionParser.parse(cron).fields;
+  const hours = f.hour.values.map(Number), minutes = f.minute.values.map(Number);
+  return { startMin: Math.min(...hours) * 60 + Math.min(...minutes), endMin: Math.max(...hours) * 60 + Math.max(...minutes) };
+}
 const EDGAR_UA = 'oshal-trading/1.0 (maintainer@emeraldcoastsystemsgroup.com)';
 const EDGAR_SEARCH = 'https://efts.sec.gov/LATEST/search-index';
 
@@ -507,9 +557,11 @@ async function mintDecision(pool: AppContext['pool'], sub: string, book: Trading
 /* ── schedule leg ──────────────────────────────────────────────────────────── */
 /**
  * @description The 'trading-events:<sub>' leg. Refuses to act while TRADING_EVENT_PLANS is off
- * (logged, success — the schedule is not an error, the flag is a choice).
+ * (logged, success — the schedule is not an error, the flag is a choice). Fires every minute: dated
+ * orders tick on EVERY fire (minute precision); plans + pinned lots step only on a full tick
+ * ({@link isFullTick}), and a plans/lots failure never skips the dated tick.
  * @param ctx - App context.
- * @param schedule - The fired schedule (taskData.userSub).
+ * @param schedule - The fired schedule (taskData.userSub; nextRunAt = the due minute).
  * @returns Dispatch result.
  */
 export async function dispatchTradingEventSchedule(ctx: AppContext, schedule: ScheduleRecord): Promise<ScheduleDispatchResult> {
@@ -517,13 +569,42 @@ export async function dispatchTradingEventSchedule(ctx: AppContext, schedule: Sc
   if (!sub) return { success: false, scheduleId: schedule.id, error: 'event schedule missing userSub' };
   if (!eventPlansEnabled()) { logger.warn({ scheduleId: schedule.id }, 'TRADING_EVENT_PLANS is off — event plans not executed this fire'); return { success: true, scheduleId: schedule.id }; }
   const t0 = Date.now();
-  const out = await tickEventPlans(ctx, sub);
-  // ADR-138 D3: protected lots ride the same cadence (dynamic import — the lot module imports this
+  const full = isFullTick(scheduleFireInstant(schedule));
+  const out = full ? await tickEventPlans(ctx, sub).catch((err) => { logger.error({ err, sub }, 'event plans tick failed'); return null; }) : null;
+  // ADR-138 D3: protected lots ride the full-tick cadence (dynamic import — the lot module imports this
   // module's deps, so a static import would be a cycle).
-  const lots = await import('./trading-pinned-lots.js').then((m) => m.tickPinnedLots(ctx, sub)).catch((err) => { logger.error({ err, sub }, 'pinned lots tick failed'); return null; });
-  // ADR-136 D4: dated (timed) operator orders ride the same 5-minute leg — fired once each through the
-  // engine at their chosen ET time (same dynamic-import reason as the lots).
+  const lots = full ? await import('./trading-pinned-lots.js').then((m) => m.tickPinnedLots(ctx, sub)).catch((err) => { logger.error({ err, sub }, 'pinned lots tick failed'); return null; }) : null;
+  // ADR-136 D4: dated (timed) operator orders tick on EVERY fire of the leg — fired once each through
+  // the engine at their chosen ET minute (same dynamic-import reason as the lots).
   const dated = await import('./trading-dated-orders.js').then((m) => m.tickDatedOrders(ctx, sub)).catch((err) => { logger.error({ err, sub }, 'dated orders tick failed'); return null; });
-  logger.info({ sub, ...out, lots, dated, ms: Date.now() - t0 }, 'event plans + protected lots + dated orders tick');
+  logger.info({ sub, full, plans: out, lots, dated, ms: Date.now() - t0 }, 'trading-events leg tick');
   return { success: true, scheduleId: schedule.id };
+}
+
+/**
+ * @description Rewrite every existing per-user 'trading-events:<sub>' schedule whose cron or timezone
+ * differs from the current leg definition. Runs once at scheduler boot: the dispatch path cannot
+ * self-migrate (dispatchAndPersist re-saves the pre-dispatch record after the handler returns), and
+ * the store's ensureEventSchedule only creates. createSchedule is create-or-replace — the same
+ * ownerSub + taskType resolves to the same id, so status, executionCount and createdAt survive and
+ * the store's next-run index is re-scored to the new cron's next minute. Per-row failures are logged
+ * and skipped; the counts are the deploy-time evidence.
+ * @param svc - The scheduling service (list + create).
+ * @returns How many legs were scanned and how many rewritten.
+ */
+export async function migrateEventLegSchedules(svc: Pick<ScheduleService, 'listSchedules' | 'createSchedule'>): Promise<{ scanned: number; migrated: number }> {
+  const legs = (await svc.listSchedules({ scope: 'all' })).filter((r) => isTradingEventSchedule(r.taskType));
+  let migrated = 0;
+  for (const r of legs) {
+    if (r.cron === EVENT_PLANS_CRON && r.timezone === EVENT_PLANS_TIMEZONE) continue;
+    try {
+      await svc.createSchedule({ taskType: r.taskType, schedule: EVENT_PLANS_CRON, timezone: EVENT_PLANS_TIMEZONE, ownerSub: r.ownerSub ?? null, queue: r.queue ?? 'intelligent-trades', taskData: r.taskData });
+      migrated++;
+      logger.info({ scheduleId: r.id, from: r.cron, to: EVENT_PLANS_CRON }, 'trading-events leg cron migrated');
+    } catch (err) {
+      logger.error({ err, scheduleId: r.id, cron: r.cron }, 'trading-events leg cron migration failed for one leg — it keeps its old cron until the next boot or arm');
+    }
+  }
+  logger.info({ scanned: legs.length, migrated, cron: EVENT_PLANS_CRON }, 'trading-events legs migrated');
+  return { scanned: legs.length, migrated };
 }
