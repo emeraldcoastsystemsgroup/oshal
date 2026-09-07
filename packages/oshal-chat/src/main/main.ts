@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Per-app desktop launch: --app=<name> opens that cockpit app as its own window (operator: each app should be a real clickable Windows application, not a browser trick). Single-instance lock added — a second launch forwards its argv to the running instance (which opens/focuses the requested app window) instead of spawning a second Electron sharing the same profile (Chromium locks the session store; two instances silently corrupt cookies). --make-shortcuts=<a,b,c> writes real desktop .lnk entries per app via shell.writeShortcutLink and exits.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-135 amendment H: the print service now comes up WITH the node. Operator: "add it to the remote node, and when the remote node is up it is running the print service, and that service is then accessible on the intranet the remote node is running on." The standalone -AtStartup scheduled task was a SEPARATE install with a separately placed token that knew nothing about the node; this ties the printer to the node's own connection lifecycle, advertised on the node's LOCAL segment (so an overlay having no broadcast domain stops mattering) and delivering on the node's OWN plane with the node's OWN credential. Opt-in: it is an outward-facing service, so it is OFF unless printServiceEnabled.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: auth:push / auth:swarm-status / auth:login-and-push — the vendor login runs HERE (its CLI listens on the localhost redirect, like VS Code), the node notices the file the CLI writes, and pushes it to the swarm under the user's verified OIDC session. Restores the "log in to Codex / Claude and the swarm has it" flow for a swarm whose browser is on a satellite.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | The print service starts BEFORE the mesh handshake, not after it. Proven on the operator's box 2026-09-06: with printServiceEnabled=true the node restarted and spawned NO print-drop child at all, because register() throws on a non-2xx (a swarm with REMOTE_CLIENT_REQUIRE_NODE_TOKEN refuses a shared-secret node with 401), client.start() rejects, and connect() returned before the printer was ever reached. The printer is a LOCAL service - it advertises on this machine's own segment and needs the swarm only to DELIVER - so an unreachable or not-yet-enrolled swarm must not remove it from everyone's print dialog. print-drop KEEPS an undeliverable document and names the reason, so nothing is lost meanwhile.
  */
 
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray } from 'electron';
@@ -289,6 +290,18 @@ async function connect(): Promise<MeshStatus> {
     console.warn(`[oshal] enrollment could not be completed: ${enrollment.error}`);
   }
 
+  // The printer is a LOCAL service: it advertises on THIS machine's own network segment and
+  // needs the swarm only to DELIVER. Start it BEFORE the mesh handshake and never behind it —
+  // proven on 2026-09-06 that it was unreachable in practice, because register() throws on a
+  // non-2xx (a swarm with REMOTE_CLIENT_REQUIRE_NODE_TOKEN refuses a shared-secret node 401),
+  // client.start() rejects, and connect() returned before the printer was ever started. A node
+  // that cannot reach the swarm yet must still offer the printer: print-drop KEEPS an
+  // undeliverable document and names the reason, so nothing is lost while enrolment is sorted.
+  if (PrintService.enabled(config)) {
+    printService = new PrintService(config, PACKAGE_ROOT, (message: string) => send('worker:event', { type: 'log', message }));
+    printService.start();
+  }
+
   client = new MeshChatClient(config, {
     onReply: (reply: ChatReply) => send('chat:reply', reply),
     onStatus: (status: MeshStatus) => send('mesh:status', status),
@@ -304,15 +317,6 @@ async function connect(): Promise<MeshStatus> {
     await ensureAgentClis({ onLog: (message: string) => send('worker:event', { type: 'log', message }) });
     worker = new TaskWorker(config, { onEvent: (event: WorkerEvent) => send('worker:event', event) });
     worker.start();
-  }
-
-  // Serve this site's intranet: while the node is up it advertises a print-to-rag printer on
-  // its OWN network segment, so people on that segment print into the swarm with no client
-  // software and no credential. Discovery stays local (which is why an overlay having no
-  // broadcast domain stops mattering); only the delivery POST crosses it.
-  if (PrintService.enabled(config)) {
-    printService = new PrintService(config, PACKAGE_ROOT, (message: string) => send('worker:event', { type: 'log', message }));
-    printService.start();
   }
 
   return { connected: true, clientId: config.clientId, agentId: config.targetAgentId || '(default chat agent)', lastError: null };

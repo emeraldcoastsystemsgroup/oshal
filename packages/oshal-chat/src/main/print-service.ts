@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the print service that comes up WITH the node (ADR-135 amendment H). Operator: "add it to the remote node, and when the remote node is up it is running the print service, and that service is then accessible on the intranet the remote node is running on." The standalone -AtStartup task was a separate install with a separate hand-placed token; this makes the printer part of the node's own lifecycle, advertised on the node's LOCAL segment (which is why an overlay's lack of a broadcast domain stops mattering) and delivering on the node's OWN control-plane path with the node's OWN credential.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The IPP port is now EXPLICIT (printServicePort, OSHAL_PRINT_SERVICE_PORT, default 631) instead of leaning on print-drop's default. A machine can already be running a standalone print-drop, and two instances on one port is an EADDRINUSE that only the loser's own log reports - the node would restart three times and give up while the operator saw no printer and no reason.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ELECTRON_RUN_AS_NODE=1 on the child. Found by live test on the operator's box: with the flag on and every gate passing, NO printer ever appeared. In the Electron main process process.execPath is ELECTRON.EXE, not node, so spawning it with a script path starts a GUI app that fails instantly; buildLocalNodeProcessEnv() is a strict allowlist that does not carry the flag, so the child could never run as node. The unit guard passed throughout because it drove start() from a plain node process, where execPath IS node - it never crossed the Electron boundary whose failure it claimed to cover (CLAUDE.md integration-boundary corollary). lastSpawn is exposed so the guard can now assert the env the child is actually given.
  *
  * @module main/print-service
  */
@@ -68,6 +70,8 @@ export function nodePrintIntakeUrl(config: OshalChatConfig): string {
  */
 export class PrintService {
   private child: ChildProcess | null = null;
+  /** How the child was last launched. Exposed so a guard can assert the Electron env flag. */
+  lastSpawn: { command: string; args: string[]; env: NodeJS.ProcessEnv } | null = null;
   private restarts = 0;
   private stopping = false;
 
@@ -107,20 +111,33 @@ export class PrintService {
     const spoolDir = this.config.printServiceSpoolDir || join(this.packageRoot, 'print-spool');
     if (!existsSync(spoolDir)) mkdirSync(spoolDir, { recursive: true });
 
+    // The port is explicit rather than left to print-drop's 631 default: a machine can already
+    // be running a standalone print-drop, and two instances on one port is an EADDRINUSE the
+    // loser only reports in its own log.
+    const port = Number(this.config.printServicePort) || 631;
     const args = [
       entry,
       '--target', 'swarm',
       '--intake-url', nodePrintIntakeUrl(this.config),
       '--dir', spoolDir,
+      '--port', String(port),
     ];
 
     // The node's own credential travels in the environment, never on the command line —
     // an argv is world-readable in the process table.
+    //
+    // ELECTRON_RUN_AS_NODE is REQUIRED, not optional. In the Electron main process
+    // `process.execPath` is electron.exe, not node, so spawning it with a script path starts a
+    // GUI app that immediately fails — the printer never appeared and the only symptom was the
+    // restart budget quietly running out. buildLocalNodeProcessEnv() is a strict allowlist that
+    // does not carry this flag, so it has to be set here.
     const env = {
       ...buildLocalNodeProcessEnv(),
+      ELECTRON_RUN_AS_NODE: '1',
       OSHAL_PRINT_INTAKE_TOKEN: this.config.sharedSecret,
     };
 
+    this.lastSpawn = { command: process.execPath, args, env };
     this.child = spawn(process.execPath, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     this.child.stdout?.on('data', (chunk: Buffer) => this.log(chunk.toString().trimEnd()));
     this.child.stderr?.on('data', (chunk: Buffer) => this.log(chunk.toString().trimEnd()));
