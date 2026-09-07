@@ -15,6 +15,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — EDGAR ticker→CIK map (cached) + latest-annual revenue/net-income via companyconcept, YoY growth + net margin, short summary for the analyst prompt. Keyless, User-Agent set, null on any failure.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-136 D5: export lookupCik(symbol) so the kernel earnings watcher resolves a CIK through THIS lookup instead of fetching a second ticker table, and fix the poisoned cache it would otherwise inherit — loadCikMap() assigned `cikByTicker = map` even when the EDGAR fetch returned null, so ONE transient outage at first use made every later lookup return null for the life of the process (fundamentals silently absent from every analyst prompt; an armed earnings rule would never detect). A failed or empty fetch is now never cached (the last good map is kept and the next call retries) and a good map ages out after EDGAR_TICKER_CACHE_MS (default 24h), so a newly listed ticker resolves without a restart.
  *
  * @module fundamentals
  */
@@ -37,6 +38,13 @@ export interface Fundamentals {
 }
 
 let cikByTicker: Map<string, string> | null = null;
+let cikLoadedAt = 0;
+
+/** How long a good ticker→CIK map is reused. Config → env EDGAR_TICKER_CACHE_MS → default 24h. */
+function cikCacheMs(): number {
+  const n = Number(process.env.EDGAR_TICKER_CACHE_MS);
+  return Number.isFinite(n) && n > 0 ? n : 86_400_000;
+}
 
 async function edgar<T>(url: string): Promise<T | null> {
   try {
@@ -46,14 +54,37 @@ async function edgar<T>(url: string): Promise<T | null> {
   } catch { return null; }
 }
 
-/** Load + cache the SEC ticker→CIK (zero-padded to 10) map. */
+/**
+ * Load + cache the SEC ticker→CIK (zero-padded to 10) map. A FAILED fetch is never cached: EDGAR has
+ * outages, and caching the resulting empty map for the process lifetime made every later lookup miss
+ * silently (fundamentals absent from every prompt, an armed earnings rule that never detects). A good
+ * map ages out after {@link cikCacheMs} so a newly listed ticker resolves without a restart.
+ */
 async function loadCikMap(): Promise<Map<string, string>> {
-  if (cikByTicker) return cikByTicker;
+  if (cikByTicker && cikByTicker.size > 0 && Date.now() - cikLoadedAt < cikCacheMs()) return cikByTicker;
   const data = await edgar<Record<string, { cik_str: number; ticker: string }>>('https://www.sec.gov/files/company_tickers.json');
   const map = new Map<string, string>();
   if (data) for (const row of Object.values(data)) map.set(String(row.ticker).toUpperCase(), String(row.cik_str).padStart(10, '0'));
+  if (map.size === 0) {
+    logger.warn({ cached: cikByTicker?.size ?? 0 }, 'EDGAR ticker→CIK fetch returned nothing — not caching; the next lookup retries');
+    return cikByTicker ?? map;
+  }
   cikByTicker = map;
+  cikLoadedAt = Date.now();
   return map;
+}
+
+/**
+ * @description The SEC CIK for a ticker, zero-padded to 10 digits — the id every EDGAR submissions /
+ * XBRL URL needs. Exported so the kernel's earnings-rule watcher (ADR-136 D5) reuses THIS cached
+ * lookup rather than fetching a second copy of the ticker table.
+ * @param symbol - Ticker (case-insensitive).
+ * @returns The 10-digit CIK, or null when the symbol is not an SEC registrant (or EDGAR is unreachable).
+ */
+export async function lookupCik(symbol: string): Promise<string | null> {
+  const s = String(symbol || '').trim().toUpperCase();
+  if (!s) return null;
+  return (await loadCikMap()).get(s) ?? null;
 }
 
 /** The latest two annual (FY/10-K) USD values for a concept, newest first. */
