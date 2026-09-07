@@ -25,6 +25,7 @@
 # 18 | maintainer@emeraldcoastsystemsgroup.com   | Forward FMCSA_WEBKEY to the controller API only: the intelligent-sales underwriting connector's env fallback (its admin-pasted setting wins when both exist). Guard entry added to compose-env-passthrough.spec.ts — the silent-env-var class this file has paid for four times.
 # 19 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: HF_TOKEN passthrough for the Hugging Face Inference Providers lane. Compose does not auto-forward .env; a pasted key that never reaches the container is the 2026-07-11 "working key, dead lane" defect.
 # 20 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: KALSHI_LIVE_ENABLED (+ the two order caps) passthrough. The Kalshi app's live-money gate reads process.env, and compose does not forward .env, so the flag set on the host never reached the api: a validated LIVE key had every order refused as "disabled". Default stays false — real money never opens by itself. Guard: tests/unit/compose-kalshi-live-gate.spec.ts.
+# 21 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: TRADING_EVENTS_CRON / TRADING_EVENTS_FULL_TICK_MINUTES / TRADING_DATED_REGULAR_ET / TRADING_MARKET_HOLIDAYS (ADR-136 D4 follow-up). Compose does not forward .env, so without an anchor entry a host value never reaches the api and the code silently runs its defaults.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -455,6 +456,13 @@ x-bot-env: &bot-env
   # ADR-136 D6 event playbooks (IPO plans): the per-user 'trading-events' schedule leg only EXECUTES
   # while this is true. Plans can be designed and armed regardless; nothing fires until it is on.
   TRADING_EVENT_PLANS: ${TRADING_EVENT_PLANS:-false}
+  # ADR-136 D4 follow-up — the trading-events leg cron (ET), full-tick cadence, regular-session window,
+  # operator holidays. Compose does not forward .env; blank = the code default
+  # ('* 7-19 * * 1-5' / 5 / 09:30-16:00 / none). The dated-order window is DERIVED from the cron.
+  TRADING_EVENTS_CRON: ${TRADING_EVENTS_CRON:-}
+  TRADING_EVENTS_FULL_TICK_MINUTES: ${TRADING_EVENTS_FULL_TICK_MINUTES:-}
+  TRADING_DATED_REGULAR_ET: ${TRADING_DATED_REGULAR_ET:-}
+  TRADING_MARKET_HOLIDAYS: ${TRADING_MARKET_HOLIDAYS:-}
   # Extended-hours knobs — these were NOT forwarded before 2026-07-12, so they were untunable from
   # .env and silently ran on code defaults (EXTENDED_HOURS defaulted to ON). Default is now OFF:
   # the free Alpaca plan is IEX-only, and IEX is a venue that OPERATES 08:00-17:00 ET — it prints

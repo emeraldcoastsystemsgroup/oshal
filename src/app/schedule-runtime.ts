@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the schedule dispatch callback + the enablement gate in runWithSystemIdentity so scheduled DB work (ticket/trading/world/series writes, tool-enablement reads) keeps operator visibility once OSHAL_DB_GUC_STRICT denies the identity-less case. Per-user home actions re-scope to the owner sub inside home-schedule-dispatch (nested, mirrors the interactive path).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch active manifest service-route schedules through their deterministic loopback worker instead of the generic orchestrator, with the same system-schedule gate bypass as other kernel-owned deterministic branches.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Wire the assistant's reminder path: hand the scheduler service to jarvis-schedule-intent (only when the runner is enabled) and bypass the per-agent scheduler tool gate for the jarvis-reminder taskType — a user scheduling their own prompt through the assistant, re-run with autoApprove:false so the fire-time approval gates own execution. A jarvis-reminder falls through to the generic orchestrator dispatch, which is the intended behaviour (run the prompt as if the user had typed it then).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-136 D4 follow-up: when the runner is enabled, migrate existing per-user 'trading-events:<sub>' legs to the current cron/timezone (migrateEventLegSchedules) BEFORE the first poll — the stale-repair pass re-saves records it read, so a migration racing the first cycle could be overwritten; sequencing the start after the migration settles removes that race. Non-fatal: a failed migration still starts the runner and is logged at error.
  */
 
 import type { AppContext } from './composition-root';
@@ -25,7 +26,7 @@ import { DEFAULT_CHAT_AGENT_ID } from '@/features/chat-orchestration';
 import { createChildLogger } from '@/shared/logger';
 import { isHomeSchedule, dispatchHomeSchedule, setHomeScheduleService } from './home-schedule-dispatch';
 import { isTradingSchedule, dispatchTradingSchedule, setTradingScheduleService } from './trading-schedule-dispatch';
-import { isTradingEventSchedule, dispatchTradingEventSchedule } from './trading-event-plans';
+import { isTradingEventSchedule, dispatchTradingEventSchedule, migrateEventLegSchedules } from './trading-event-plans';
 import { isResearchSchedule, dispatchTradingResearch } from './trading-research-dispatch';
 import { isAssessSchedule, dispatchTradingAssess } from './trading-assess-dispatch';
 import { isReviewSchedule, dispatchTradingReview } from './trading-review-dispatch';
@@ -129,8 +130,15 @@ export function createScheduleController(
   const runner = new ScheduleRunner(service, pollIntervalMs);
 
   if (process.env.ENABLE_AGENT_SCHEDULER === 'true') {
-    runner.start(true);
-    logger.info({ pollIntervalMs }, 'Agent scheduler runner started');
+    // Existing trading-events legs carry the cron they were armed with; rewrite them to the current
+    // leg definition BEFORE the first poll, so the stale-repair pass cannot re-save a pre-migration
+    // record over the migrated one. Non-fatal — the runner starts either way.
+    void migrateEventLegSchedules(service)
+      .catch((err) => logger.error({ err }, 'trading-events leg cron migration failed (non-fatal) — legs keep their current cron until the next boot or arm'))
+      .finally(() => {
+        runner.start(true);
+        logger.info({ pollIntervalMs }, 'Agent scheduler runner started');
+      });
   } else {
     logger.info('Agent scheduler runner auto-start disabled');
   }

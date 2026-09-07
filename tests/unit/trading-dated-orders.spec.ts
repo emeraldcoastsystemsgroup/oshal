@@ -4,17 +4,19 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D4 dated orders, against the live oshal Postgres (real FORCE-RLS table, real rows): the ET wall-clock → instant conversion round-trips across DST and refuses the spring-forward gap; validateFireAt refuses past / too-far / weekend / outside 09:00–16:55 ET / off-grid times; a due order fires EXACTLY once through the injected place seam with one requestId; a cancelled order never fires; a window missed by more than the grace EXPIRES unfired; an engine refusal is terminal (no retry). Run with --no-file-parallelism (concurrent schema bootstrap races).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-136 D4 follow-up: minute precision (09:37 accepted), the window derived from the leg cron (07:00–19:59 ET) and proven to AGREE with cron-parser's actual fires of EVENT_PLANS_CRON in America/New_York (first fire 07:00, last 19:59, none at 20:00 or Saturday, 60 s steps); the extended-session rule (pre/post only for limit + extendedHours + day; market / GTC / non-ext refused) and its FAIL-CLOSED form (no order shape → refused, so the 1.9.2 store call cannot widen the window); NYSE holidays refused BY NAME (Labor Day 3 days out; Thanksgiving + observed Independence Day with injected clocks; a TRADING_MARKET_HOLIDAYS one-off); an early-close afternoon (2026-11-27 15:00) is ACCEPTED and the runtime places it when the venue says 'post' (only 'closed' expires) — the as-built "early closes are runtime-only" sentence, guarded. Real-DB: a 07:30 pre-session limit+ext+day row fires exactly once when the session is 'pre'. Source pins: the engine honours a decision's extended_hours on a LIMIT outside the TRADING_EXTENDED_HOURS branch (so a dated ext limit places with the flag off).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
 import crypto from 'crypto';
 import { readFileSync } from 'fs';
 import * as path from 'path';
+import { CronExpressionParser } from 'cron-parser';
 import {
   ensureDatedOrdersSchema, etWallToInstant, etWallParts, validateFireAt, formatEt, createDatedOrder, listDatedOrders, getDatedOrder,
-  cancelDatedOrder, tickDatedOrders, DATED_WINDOW,
+  cancelDatedOrder, tickDatedOrders, datedWindow, regularSession,
 } from '../../src/app/trading-dated-orders';
-import type { EventPlanDeps } from '../../src/app/trading-event-plans';
+import { EVENT_PLANS_CRON, EVENT_PLANS_TIMEZONE, type EventPlanDeps } from '../../src/app/trading-event-plans';
 import { createPinnedLotIntent, ensurePinnedLotsSchema, getPinnedLot, tickPinnedLots } from '../../src/app/trading-pinned-lots';
 import { ensureBooksSchema, ensureLegacyBooks, legacyBook } from '../../src/app/trading-books-store';
 import { ensureTradingSchema, TradingError } from '../../src/app/trading-engine';
@@ -65,10 +67,20 @@ afterAll(async () => {
 });
 
 describe('the leg fires dated orders — dispatchTradingEventSchedule ticks them on the same cadence/gate as plans + lots', () => {
-  it('source pin: the event-plans dispatch dynamically imports trading-dated-orders and calls tickDatedOrders', () => {
+  it('source pin: the event-plans dispatch dynamically imports trading-dated-orders and calls tickDatedOrders on EVERY fire (outside the full-tick branch)', () => {
     const plans = readFileSync(path.resolve(__dirname, '../../src/app/trading-event-plans.ts'), 'utf8');
     expect(plans).toContain("await import('./trading-dated-orders.js').then((m) => m.tickDatedOrders(ctx, sub))");
     expect(plans.indexOf('m.tickDatedOrders(ctx, sub)')).toBeGreaterThan(plans.indexOf("if (!eventPlansEnabled())"));
+    expect(plans).toContain('const full = isFullTick(');
+    expect(plans).toContain("const dated = await import('./trading-dated-orders.js')");
+  });
+  it('source pin: the engine honours a decision\'s extended_hours on a LIMIT outside the TRADING_EXTENDED_HOURS branch — a dated ext limit places with the flag off', () => {
+    const engine = readFileSync(path.resolve(__dirname, '../../src/app/trading-engine.ts'), 'utf8');
+    const flag = engine.indexOf("process.env.TRADING_EXTENDED_HOURS");
+    const ext = engine.indexOf("if (d.extended_hours === true && effType === 'limit') extendedHours = true;");
+    expect(flag).toBeGreaterThan(0); expect(ext).toBeGreaterThan(flag);
+    const between = engine.slice(engine.lastIndexOf('if (', flag), ext);
+    expect((between.match(/\{/g) ?? []).length).toBe((between.match(/\}/g) ?? []).length);   // the flag block is closed before the ext line
   });
 });
 
@@ -87,21 +99,62 @@ describe('Eastern wall-clock → instant', () => {
   });
 });
 
-describe('validateFireAt — the leg can only honour what it ticks', () => {
+describe('validateFireAt — the leg can only honour what it ticks, the venue only what it accepts', () => {
   const at = (d: string, t: string) => etWallToInstant(d, t);
-  it('accepts a weekday 5-minute-grid time inside 09:00–16:55 ET within the horizon', () => {
+  const EXT = { orderType: 'limit', extendedHours: true, timeInForce: 'day' };
+  const MKT = { orderType: 'market', extendedHours: false, timeInForce: 'day' };
+  it('accepts ANY weekday minute inside the regular session within the horizon (the 5-minute grid is gone)', () => {
     expect(() => validateFireAt(FIRE, NOW)).not.toThrow();
-    expect(() => validateFireAt(at('2026-09-09', '09:00'), NOW)).not.toThrow();
-    expect(() => validateFireAt(at('2026-09-09', '16:55'), NOW)).not.toThrow();
-    expect(DATED_WINDOW).toEqual({ startMin: 540, endMin: 1015, stepMin: 5 });
+    expect(() => validateFireAt(at('2026-09-09', '09:37'), NOW, MKT)).not.toThrow();
+    expect(() => validateFireAt(at('2026-09-09', '09:30'), NOW, MKT)).not.toThrow();
+    expect(() => validateFireAt(at('2026-09-09', '15:59'), NOW, MKT)).not.toThrow();
+    expect(datedWindow()).toEqual({ startMin: 7 * 60, endMin: 19 * 60 + 59 });
+    expect(regularSession()).toEqual({ startMin: 9 * 60 + 30, endMin: 16 * 60 });
   });
-  it('refuses the past, the far future, weekends, outside the window, and off-grid minutes', () => {
+  it('refuses the past, the far future, weekends, and outside the leg window (07:00–19:59 ET)', () => {
     expect(() => validateFireAt(at('2026-09-04', '13:55'), NOW)).toThrow(/a minute from now/);
     expect(() => validateFireAt(at('2026-10-30', '09:35'), NOW)).toThrow(/within 30 days/);
     expect(() => validateFireAt(at('2026-09-12', '09:35'), NOW)).toThrow(/trading days/);
-    expect(() => validateFireAt(at('2026-09-09', '08:55'), NOW)).toThrow(/9:00 AM and 4:55 PM/);
-    expect(() => validateFireAt(at('2026-09-09', '17:00'), NOW)).toThrow(/9:00 AM and 4:55 PM/);
-    expect(() => validateFireAt(at('2026-09-09', '09:37'), NOW)).toThrow(/5-minute grid/);
+    expect(() => validateFireAt(at('2026-09-09', '06:59'), NOW, EXT)).toThrow(/7:00 AM and 7:59 PM/);
+    expect(() => validateFireAt(at('2026-09-09', '20:00'), NOW, EXT)).toThrow(/7:00 AM and 7:59 PM/);
+  });
+  it('pre/post-market: only a limit + extended-hours + day order; market, GTC and non-ext limit are refused', () => {
+    expect(() => validateFireAt(at('2026-09-09', '07:00'), NOW, EXT)).not.toThrow();
+    expect(() => validateFireAt(at('2026-09-09', '07:30'), NOW, EXT)).not.toThrow();
+    expect(() => validateFireAt(at('2026-09-09', '19:59'), NOW, EXT)).not.toThrow();
+    expect(() => validateFireAt(at('2026-09-09', '07:30'), NOW, MKT)).toThrow(/extended hours/);
+    expect(() => validateFireAt(at('2026-09-09', '07:30'), NOW, { ...EXT, timeInForce: 'gtc' })).toThrow(/extended hours/);
+    expect(() => validateFireAt(at('2026-09-09', '07:30'), NOW, { ...EXT, extendedHours: false })).toThrow(/extended hours/);
+    expect(() => validateFireAt(at('2026-09-09', '16:00'), NOW, MKT)).toThrow(/extended hours/);   // the close is 'post'
+    expect(() => validateFireAt(at('2026-09-09', '16:30'), NOW, { orderType: 'stop', extendedHours: true, timeInForce: 'day' })).toThrow(/extended hours/);
+  });
+  it('FAILS CLOSED: a caller that omits the order shape (the 1.9.2 store) cannot widen the window', () => {
+    expect(() => validateFireAt(at('2026-09-09', '07:30'), NOW)).toThrow(/extended hours/);
+    expect(() => validateFireAt(at('2026-09-09', '16:30'), NOW)).toThrow(/extended hours/);
+    expect(() => validateFireAt(at('2026-09-09', '09:37'), NOW)).not.toThrow();
+  });
+  it('refuses an exchange holiday BY NAME: Labor Day (3 days out), Thanksgiving and the observed Independence Day (injected clocks), an operator one-off', () => {
+    expect(() => validateFireAt(at('2026-09-07', '10:00'), NOW, MKT)).toThrow(/closed on Mon, Sep 7, 2026 \(Labor Day\)/);
+    expect(() => validateFireAt(at('2026-11-26', '10:00'), new Date('2026-11-20T18:00:00Z'), MKT)).toThrow(/Thanksgiving Day/);
+    expect(() => validateFireAt(at('2026-07-03', '10:00'), new Date('2026-06-25T18:00:00Z'), MKT)).toThrow(/Independence Day/);
+    const prev = process.env.TRADING_MARKET_HOLIDAYS; process.env.TRADING_MARKET_HOLIDAYS = '2026-09-09=Spec closure';
+    try { expect(() => validateFireAt(FIRE, NOW, MKT)).toThrow(/Spec closure/); }
+    finally { if (prev === undefined) delete process.env.TRADING_MARKET_HOLIDAYS; else process.env.TRADING_MARKET_HOLIDAYS = prev; }
+    expect(() => validateFireAt(FIRE, NOW, MKT)).not.toThrow();
+  });
+  it('an early-close afternoon (Fri 2026-11-27, 13:00 close) is ACCEPTED at 15:00 — early closes are runtime-only, by design', () => {
+    expect(() => validateFireAt(at('2026-11-27', '15:00'), new Date('2026-11-20T18:00:00Z'), MKT)).not.toThrow();
+  });
+  it('AGREES with the leg: cron-parser fires of EVENT_PLANS_CRON in America/New_York start 07:00, end 19:59, step 60 s, skip Saturday', () => {
+    const win = datedWindow();
+    const e = CronExpressionParser.parse(EVENT_PLANS_CRON, { currentDate: new Date('2026-09-08T23:59:30Z'), tz: EVENT_PLANS_TIMEZONE }); // Tue 19:59:30 ET
+    const first = e.next().toDate(), second = e.next().toDate();
+    expect(etWallParts(first)).toMatchObject({ y: 2026, m: 9, d: 9, hh: Math.floor(win.startMin / 60), mm: win.startMin % 60 });
+    expect(second.getTime() - first.getTime()).toBe(60_000);
+    const late = CronExpressionParser.parse(EVENT_PLANS_CRON, { currentDate: new Date('2026-09-11T23:58:30Z'), tz: EVENT_PLANS_TIMEZONE });  // Fri 19:58:30 ET
+    const last = late.next().toDate(), afterWeekend = late.next().toDate();
+    expect(etWallParts(last)).toMatchObject({ d: 11, hh: Math.floor(win.endMin / 60), mm: win.endMin % 60 });
+    expect(etWallParts(afterWeekend)).toMatchObject({ d: 14, weekday: 1, hh: 7, mm: 0 });   // nothing at 20:00, nothing Sat/Sun
   });
 });
 
@@ -182,6 +235,29 @@ describe('dated orders — schedule → fire once → never twice; cancel; expir
     // 3 days after the FIRE time with still no order: now it is genuinely never-placed → released.
     await tickPinnedLots(ctx(), SUB, venue.deps(new Date(FIRE.getTime() + 3 * 86_400_000)));
     expect((await getPinnedLot(pool as never, SUB, timed.lotId))?.status).toBe('released');
+  });
+
+  it('a 07:30 PRE-session limit + extended-hours day order is accepted and fires exactly once when the venue session is pre', async () => {
+    const pre = etWallToInstant('2026-09-09', '07:30');
+    await expect(createDatedOrder(pool as never, SUB, { book, decisionId: crypto.randomUUID(), symbol: 'MSFT', side: 'buy', qty: 5, orderType: 'limit', fireAt: pre }, NOW)).rejects.toThrow(/extended hours/);
+    const row = await createDatedOrder(pool as never, SUB, { book, decisionId: crypto.randomUUID(), symbol: 'MSFT', side: 'buy', qty: 5, orderType: 'limit', fireAt: pre, extendedHours: true, timeInForce: 'day' }, NOW);
+    expect(row).toMatchObject({ status: 'pending', fireAt: pre.toISOString() });
+    expect(row.timeline[0].detail).toContain('extended hours');
+    const venue = fakePlace();
+    const out = await tickDatedOrders(ctx(), SUB, venue.deps(new Date(pre.getTime() + 60_000), 'pre'));
+    expect(out.transitions).toEqual([`${row.datedId}:fired`]);
+    expect(venue.calls).toEqual([{ decisionId: row.decisionId, requestId: `dated-${row.datedId.slice(0, 8)}` }]);
+    await tickDatedOrders(ctx(), SUB, venue.deps(new Date(pre.getTime() + 2 * 60_000), 'pre'));
+    expect(venue.calls.length).toBe(1);
+  });
+
+  it('an early-close afternoon order (2026-11-27 15:00) is accepted and PLACES when the venue reports post — only closed expires', async () => {
+    const nov20 = new Date('2026-11-20T18:00:00Z'); const fire = etWallToInstant('2026-11-27', '15:00');
+    const row = await createDatedOrder(pool as never, SUB, { book, decisionId: crypto.randomUUID(), symbol: 'MSFT', side: 'buy', qty: 5, orderType: 'market', fireAt: fire }, nov20);
+    const venue = fakePlace();
+    const out = await tickDatedOrders(ctx(), SUB, venue.deps(new Date(fire.getTime() + 60_000), 'post'));
+    expect(out.transitions).toEqual([`${row.datedId}:fired`]);
+    expect(venue.calls.length).toBe(1);
   });
 
   it('an engine refusal is terminal: status error, no retry on the next tick', async () => {
