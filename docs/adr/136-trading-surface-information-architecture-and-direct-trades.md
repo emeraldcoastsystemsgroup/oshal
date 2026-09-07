@@ -84,7 +84,7 @@ A new route `POST /api/trading/decisions/manual` mints an operator-authored deci
 
 Price points *are* order types — nothing new is invented at the venue: "buy if it drops to X" is a limit GTC order; "buy on a breakout above X" is a stop GTC order; "protect with a trailing stop" is a `trailing_stop` order.
 
-UI is a 3-step ticket: pick a symbol (search plus a research card — price, chart, signal model, fundamentals) → size and price rule → confirm (names the account; live requires an explicit confirm, matching every other live-order path).
+UI is a 3-step ticket: pick a symbol (search plus a research card — price, chart, signal model, fundamentals) → size and price rule → confirm (names the account; live requires an explicit confirm, matching every other live-order path). The ticket's price is the 5 s `/quote` poll today; [ADR-143](143-market-data-stream.md) records the poll → stream decision (Alpaca-backed books stream IEX prints via a kernel-terminated websocket and a store SSE relay; Schwab books keep polling; display-only, the order path unchanged) — build pending.
 
 Validation on the route: exactly one of `qty`/`notional` is required, never both; `symbol` is checked against the same allowlist/lookup the engine already uses before quoting a price; a missing or unresolvable `orderType` parameter set (e.g. a `limit` order with no `limit_price`) is a `400`, not a silently-defaulted `market` order — a manual ticket that quietly changes order type on a typo is worse than one that refuses. The route returns the minted `decisionId` and the resulting order status in one response so the ticket's confirm step can show the operator what actually happened, not just that a request was accepted.
 
@@ -149,4 +149,4 @@ The engine's order path, guardrails, live gate, reservation arbiter, and book-di
 
 ## Status / open items
 
-D1-D3 and D7 shipped 2026-09-03 (trading 1.5.x-1.6.0, core #272). D6 v1 shipped 2026-09-04 (core #284, trading 1.7.0) with the COTP reminder sequence left in BACKLOG. D4 v1 shipped 2026-09-04 (core `trading-dated-orders.ts`, trading 1.9.2) with its out-of-hours / minute-precision follow-ups in BACKLOG. D5 is designed but not built — its BACKLOG entry carries the done-when criteria stated above (see [BACKLOG.md](../BACKLOG.md)); it is not scheduled by this ADR.
+D1-D3 and D7 shipped 2026-09-03 (trading 1.5.x-1.6.0, core #272). D6 v1 shipped 2026-09-04 (core #284, trading 1.7.0) with the COTP reminder sequence left in BACKLOG. D4 v1 shipped 2026-09-04 (core `trading-dated-orders.ts`, trading 1.9.2) with its out-of-hours / minute-precision follow-ups in BACKLOG. D5 is designed but not built — its BACKLOG entry carries the done-when criteria stated above (see [BACKLOG.md](../BACKLOG.md)); it is not scheduled by this ADR. The ticket's live price remains a poll; the stream decision is ADR-143 (recorded 2026-09-06, not yet built).

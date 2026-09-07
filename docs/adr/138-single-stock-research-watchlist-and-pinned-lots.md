@@ -32,7 +32,7 @@ Operator direction (2026-09-04, verbatim intent): buy one stock and keep a watch
 
 `GET /api/trading/research/:symbol` (store route, auth-gated, book query-first per the ADR-134 D3.9 convention) aggregates, for the selected account's data rail:
 
-- **Quote** — current price/change, off the same feed the chart uses.
+- **Quote** — current price/change, off the same feed the chart uses. — [ADR-143](143-market-data-stream.md) decides how that quote becomes a stream for Alpaca-backed books (kernel-terminated IEX websocket → store SSE relay); until that wave ships it is the existing 5 s poll.
 - **Fundamentals** — the EDGAR `fundamentalsSummary` (revenue YoY, net margin).
 - **News** — `recentNews`, last 7 days, headline/source/url/time.
 - **Filings** — from EDGAR submissions: the latest 10-K, the latest 10-Q, and the last 12 8-Ks with their item codes decoded into plain words ("Results of operations", "Material agreement", "Officer/director change", "Other events", …) and links to the primary documents.
