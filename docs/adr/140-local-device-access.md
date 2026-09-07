@@ -1,6 +1,6 @@
 # ADR-140 — Local device access: a node-resident device broker (Bluetooth first)
 
-**Status:** Proposed — design only; **P0 gate CLEARED 2026-09-04** (amendment A). Operator directed the shape 2026-09-04 (*"spec it out, let's do it,
+**Status:** Proposed — design only; **P0 gate CLEARED 2026-09-04** (amendment A). **Reframed 2026-09-05 (amendment B): this is OUTBOUND — the swarm acting on the physical world — not device sensing.** Operator directed the shape 2026-09-04 (*"spec it out, let's do it,
 desktop first, and yes printers, 3D printers, headphones"*). **No core code is built against this yet**;
 per Rule 0d the core is not touched until this ADR is accepted.
 
@@ -309,3 +309,96 @@ The one input still outstanding is item 3 in *What I need from the operator*: **
 for P1.** The empty scan makes that concrete rather than theoretical — a device that advertises as a BLE
 GATT peripheral (a heart-rate strap, a BLE thermometer, an ESP32 running a GATT service) is required, and
 the AirPods and BT mouse already on this machine will not serve, for the reason above.
+
+---
+
+## Amendment B — the direction was the point: this is the swarm's HANDS, not its senses
+
+*Operator, 2026-09-05: "you're right, I was just thinking about the opposite direction. I print to RAG,
+but I may want the swarm to print to a printer, or print to a 3D printer, or move a robot over
+Bluetooth."*
+
+That reframing is the ADR's actual purpose, and it corrects the emphasis above. ADR-135 built **inbound**:
+a document leaves the physical world and enters the swarm. Everything the operator has since described is
+**outbound**: the swarm reaches back out and *causes something to happen*.
+
+Restated, this ADR is not "device access". It is **the swarm's hands**.
+
+### What exists, by direction
+
+| Direction | Capability | State |
+|---|---|---|
+| Device → swarm | Print to RAG / print to swarm | **Shipped** (ADR-135), proven live |
+| Swarm → hub devices | Lights, locks, plugs, scenes, thermostat | **Shipped** — the `home` store package v1.1.0 (`status: active`), `oshal-local-home-bot` running |
+| Swarm → **printer** | Print a document the swarm produced | **Does not exist** |
+| Swarm → **3D printer** | Send a job, report progress | **Does not exist** |
+| Swarm → **robot / BLE actuator** | Move something | **Does not exist** |
+
+Verified for the negative rows: `sendToPrinter`, `webContents.print`, `getPrintersAsync`, `ipp://` and CUPS
+have **zero occurrences** in `src/`. The swarm has an IPP *server* (it can be printed *to*) and no IPP
+*client* (it cannot print). The asymmetry was invisible until the operator named it.
+
+### The consequence for D5: `actuate` is the centre, not a footnote
+
+D5 classified operations `read | write | actuate` and treated `actuate` as the dangerous edge case. Under
+the corrected framing, **`actuate` is the feature**. Everything the operator wants is in that column, so
+its confirm gate is the primary safety control of this ADR rather than a caveat attached to one.
+
+The precedent to copy is already shipped and should not be re-invented: the `home` package states
+*"Destructive actions (locks, garage, thermostat) are confirmed first."* Outbound device actions inherit
+that rule verbatim.
+
+### Outbound printing is the cheapest first hand, and it is verified
+
+Probed on `PARENTPC` with Electron 43.3.0 (enumeration only — nothing was printed, no paper consumed):
+
+| Check | Result |
+|---|---|
+| `webContents.getPrintersAsync()` | **present**, returned real printers |
+| `webContents.print()` / `printToPDF()` | **both present** |
+| Printers visible to the node | `HP Smart Tank 5100 series [HP70399F]`, `Oshal Print to File Printer`, `Microsoft Print to PDF`, `OneNote (Desktop)` |
+
+The node sees the operator's **actual physical printer**. So "the swarm prints a document" needs no IPP
+client, no CUPS binding, and no Bluetooth code at all — it is `getPrintersAsync()` plus `print({deviceName})`
+on a node that is already running, owned, and credentialed.
+
+**This is Door 1 from the operator's own rule** (*"if it can connect to my computer I can use it"*): Windows
+has already abstracted every printer it can reach — USB, network, **and Bluetooth** — into a system printer.
+A Bluetooth printer is therefore reachable *without the Bluetooth adapter being touched*, which is the same
+conclusion the transport table reached for headphones, arrived at from the opposite direction.
+
+It also closes a pleasing loop: ADR-135 made a printer an input to the swarm; this makes the swarm an input
+to a printer.
+
+### Revised phasing
+
+The original order led with a BLE sensor read, which is now the *least* aligned with what the operator
+asked for. Re-ordered so each phase delivers one of the named outbound capabilities:
+
+| Phase | Scope | Done when |
+|---|---|---|
+| ~~P0~~ | Electron reaches radio + serial | **Done** — amendment A |
+| **P1** | **Outbound print** — the swarm prints a document to a chosen system printer, confirm-gated | A swarm-generated document comes out of the HP Smart Tank, attributed to the node's owner |
+| **P2** | **3D printer** over serial — read temperature/progress (`read`), send a job (`actuate`, confirmed) | A real 3D printer reports state and accepts a job from the swarm |
+| **P3** | **BLE actuation** — move a robot | A BLE peripheral responds to a swarm-dispatched command through its own GATT profile |
+| **P4** | Audio sink + input selection (headphones, mic) | Jarvis speaks to a chosen output and listens on a chosen input |
+| **P5** | Device catalog surface + per-device allowlists | An owner sees every device across their nodes and edits its allowlist |
+
+P1 is deliberately first because it is provable **today** on hardware already present, it exercises the
+whole spine (node broker, owner attribution, confirm gate, task-rail dispatch) end to end, and it carries
+the least physical risk — the worst outcome is a wasted sheet of paper.
+
+### Two things this amendment does NOT claim
+
+- **Nothing was printed.** The probe enumerated printers and stopped. That an enumerated printer accepts a
+  job is unproven until P1.
+- **`read` is not abandoned.** Sensors remain in scope; they simply are not what the operator asked for
+  first, and the phasing now says so.
+
+### One scoping question this raises
+
+A 3D printer job and a robot movement are **long-running and physical**. Print-to-RAG could treat delivery
+as fire-and-forget because the worst failure was a document sitting in a spool folder. An `actuate` that
+half-completes leaves a hot nozzle or a robot mid-motion. **P2 must therefore define cancellation and a
+failure posture before it defines the happy path** — that is a design obligation, not an implementation
+detail, and it is recorded here so P2 cannot quietly skip it.
