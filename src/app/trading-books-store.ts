@@ -14,6 +14,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — books table (deterministic legacy ids, composite (user_sub, account_id) FK, learn-book partial unique), legacy mint/backfill helpers, loadBook keyed (user_sub, book_id) — the WHERE is the wall under system identity — lifecycle invariants (createBook disabled-live + ownership check, deleteBook ledger/HWM/position refusal, updateBook account_id immutability), resetBreaker, and the per-fire multiAccountEnabled() flag read (never a module constant).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cash-account settlement (ADR-134 D8): the runtime rail adds oshal_trading_books.settlement_policy TEXT CHECK (refuse|warn) — the per-book override of TRADING_CASH_SETTLEMENT_POLICY; 'off' is deliberately NOT a column value (only the env can disarm the guard) and the CHECK is the DB-side pin. loadBook/listBooks join the bound account's account_type so TradingBook.accountType ('cash'|'margin'|null) rides every loaded book; updateBook accepts settlementPolicy (null clears it). No numbered migration: this rail IS the live path (dual-rail convergence, ADR-134 D1) and 126 is claimed by another item.
  */
 
 import crypto from 'crypto';
@@ -60,6 +61,7 @@ export function legacyBook(sub: string, kind: TradingMode): TradingBook {
     bookId: legacyBookId(sub, kind), ref: kind, kind, broker: null,
     accountNumber: null, connectionKey: null, capitalCapUsd: null,
     learn: kind === 'paper', enabled: true,
+    accountType: null, settlementPolicy: null,
   };
 }
 
@@ -96,10 +98,14 @@ async function bootstrapBooks(pool: AppContext['pool']): Promise<void> {
         enabled         BOOLEAN NOT NULL DEFAULT true,
         learn           BOOLEAN NOT NULL DEFAULT false,
         capital_cap_usd NUMERIC(18,2),
+        settlement_policy TEXT CHECK (settlement_policy IN ('refuse','warn')),
         created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
         CHECK (account_id IS NULL OR broker IS NOT NULL),
         FOREIGN KEY (user_sub, account_id) REFERENCES oshal_trading_accounts (user_sub, account_id)
       )`,
+      // ADR-134 D8: the per-book settlement override. The CHECK is the DB-side half of "only the env
+      // can turn the guard off" — a raw UPDATE to 'off' is refused here, not just at the route.
+      `ALTER TABLE oshal_trading_books ADD COLUMN IF NOT EXISTS settlement_policy TEXT CHECK (settlement_policy IN ('refuse','warn'))`,
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_books_ref  ON oshal_trading_books (user_sub, ref)',
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_trd_books_acct ON oshal_trading_books (user_sub, account_id) WHERE account_id IS NOT NULL',
       // The single-learning-book rule is a DB invariant, not a code-path promise.
@@ -142,7 +148,7 @@ async function bootstrapBooks(pool: AppContext['pool']): Promise<void> {
     ],
     requirements: [{
       table: 'oshal_trading_books',
-      columns: ['book_id', 'user_sub', 'ref', 'label', 'kind', 'broker', 'account_id', 'connection_key', 'enabled', 'learn', 'capital_cap_usd', 'created_at'],
+      columns: ['book_id', 'user_sub', 'ref', 'label', 'kind', 'broker', 'account_id', 'connection_key', 'enabled', 'learn', 'capital_cap_usd', 'settlement_policy', 'created_at'],
     }],
   });
 }
@@ -170,13 +176,23 @@ interface BookRow {
   book_id: string; ref: string; kind: TradingMode; broker: 'schwab' | 'alpaca' | null;
   account_id: string | null; connection_key: string | null; enabled: boolean; learn: boolean;
   capital_cap_usd: string | null;
+  settlement_policy?: string | null;
+  /** Joined from oshal_trading_accounts (discovery stores Schwab's CASH/MARGIN verbatim). */
+  account_type?: string | null;
+}
+/** Lower-case the discovered account type onto the broker-neutral union; anything else is unknown (null). */
+function accountTypeOf(raw: string | null | undefined): 'cash' | 'margin' | null {
+  const t = String(raw || '').toLowerCase();
+  return t === 'cash' || t === 'margin' ? t : null;
 }
 function toBook(r: BookRow, accountNumber: string | null): TradingBook {
+  const sp = r.settlement_policy === 'refuse' || r.settlement_policy === 'warn' ? r.settlement_policy : null;
   return {
     bookId: r.book_id, ref: r.ref, kind: r.kind, broker: r.broker,
     accountNumber, connectionKey: r.connection_key,
     capitalCapUsd: r.capital_cap_usd != null ? Number(r.capital_cap_usd) : null,
     learn: !!r.learn, enabled: !!r.enabled,
+    accountType: accountTypeOf(r.account_type), settlementPolicy: sp,
   };
 }
 
@@ -194,7 +210,7 @@ export async function loadBook(pool: AppContext['pool'], sub: string, bookId: st
   await ensureBooksSchema(pool);
   const r = (await pool.query(
     `SELECT b.book_id, b.ref, b.kind, b.broker, b.account_id, b.connection_key, b.enabled, b.learn,
-            b.capital_cap_usd, a.account_number_enc
+            b.capital_cap_usd, b.settlement_policy, a.account_number_enc, a.account_type
        FROM oshal_trading_books b
        LEFT JOIN oshal_trading_accounts a ON a.account_id = b.account_id AND a.user_sub = b.user_sub
       WHERE b.user_sub = $1 AND b.book_id = $2`,
@@ -237,10 +253,15 @@ export async function getBookByRef(pool: AppContext['pool'], sub: string, ref: s
  */
 export async function listBooks(pool: AppContext['pool'], sub: string): Promise<TradingBook[]> {
   await ensureBooksSchema(pool);
+  // The accounts join carries ONLY account_type (ADR-134 D8) — never the encrypted binding, which
+  // list surfaces must not decrypt (readers are built from loadBook, never from a list row).
   const rows = (await pool.query(
-    `SELECT book_id, ref, kind, broker, account_id, connection_key, enabled, learn, capital_cap_usd
-       FROM oshal_trading_books WHERE user_sub=$1
-      ORDER BY (ref IN ('paper','live')) DESC, created_at ASC`, [sub])).rows;
+    `SELECT b.book_id, b.ref, b.kind, b.broker, b.account_id, b.connection_key, b.enabled, b.learn,
+            b.capital_cap_usd, b.settlement_policy, a.account_type
+       FROM oshal_trading_books b
+       LEFT JOIN oshal_trading_accounts a ON a.account_id = b.account_id AND a.user_sub = b.user_sub
+      WHERE b.user_sub=$1
+      ORDER BY (b.ref IN ('paper','live')) DESC, b.created_at ASC`, [sub])).rows;
   return rows.map((r) => toBook(r as BookRow, null));
 }
 
@@ -286,21 +307,27 @@ export async function createBook(pool: AppContext['pool'], sub: string, accountI
  * @param pool - Postgres pool.
  * @param sub - Owner sub.
  * @param bookId - The book.
- * @param patch - label / enabled / capitalCapUsd only.
+ * @param patch - label / enabled / capitalCapUsd / settlementPolicy only ('refuse' | 'warn' | null = fleet
+ *   default; any other value is refused here AND by the column CHECK — 'off' is env-only by design).
  */
 export async function updateBook(
   pool: AppContext['pool'], sub: string, bookId: string,
-  patch: { label?: string; enabled?: boolean; capitalCapUsd?: number | null },
+  patch: { label?: string; enabled?: boolean; capitalCapUsd?: number | null; settlementPolicy?: 'refuse' | 'warn' | null },
 ): Promise<TradingBook | null> {
   await ensureBooksSchema(pool);
+  if (patch.settlementPolicy !== undefined && patch.settlementPolicy !== null && patch.settlementPolicy !== 'refuse' && patch.settlementPolicy !== 'warn') {
+    throw new Error(`settlement_policy_invalid: expected 'refuse', 'warn' or null (got ${String(patch.settlementPolicy)})`);
+  }
   await pool.query(
     `UPDATE oshal_trading_books SET
        label = COALESCE($3, label),
        enabled = COALESCE($4, enabled),
-       capital_cap_usd = CASE WHEN $5::boolean THEN $6::numeric ELSE capital_cap_usd END
+       capital_cap_usd = CASE WHEN $5::boolean THEN $6::numeric ELSE capital_cap_usd END,
+       settlement_policy = CASE WHEN $7::boolean THEN $8::text ELSE settlement_policy END
      WHERE user_sub=$1 AND book_id=$2`,
     [sub, bookId, patch.label?.slice(0, 120) ?? null, patch.enabled ?? null,
-      patch.capitalCapUsd !== undefined, patch.capitalCapUsd ?? null]);
+      patch.capitalCapUsd !== undefined, patch.capitalCapUsd ?? null,
+      patch.settlementPolicy !== undefined, patch.settlementPolicy ?? null]);
   return loadBook(pool, sub, bookId);
 }
 
