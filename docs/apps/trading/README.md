@@ -31,6 +31,7 @@ gravity model is ADR-054; the swarm itself is ADR-052.
   run it, the NinjaTrader fill rules that make results comparable (next-bar-open entries, intrabar
   stop triggers, gap fills), the trader's nine optimization objectives, the multi-market overlay,
   and the honest limits list to read before quoting any number.
+- [futures-phasing.md](./futures-phasing.md) — **the ADR-116 remaining work, phased** (2026-09-06): what exists on disk today, five independently shippable phases (evidence rail → staged optimizer + walk-forward out-of-sample → archives into `market_bars` → durable paper book with stop triggers, behind an operator approval gate → cockpit coverage), the evidence gate, and the stop-line: a negative out-of-sample result closes the live items as "do not build live", which is an acceptable end state. Nothing in it enables a live futures order.
 - [advisor.md](./advisor.md) — the trading advisor: what it does and how to operate it.
 - [advisor-deep-dive.md](./advisor-deep-dive.md) — deep dive into the advisor pipeline
   ([HTML](./advisor-deep-dive.html)).

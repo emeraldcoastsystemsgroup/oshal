@@ -1,6 +1,6 @@
 # ADR-116 — Futures extension layer: recreate a futures strategy + execution inside oshal
 
-**Status:** Accepted (foundation shipped 2026-07-24; strategy port + live rail deferred — see BACKLOG)
+**Status:** Accepted (foundation shipped 2026-07-24; strategy port + live rail deferred — see BACKLOG) Remaining work is phased with an evidence gate and a stop-line in [futures-phasing.md](../apps/trading/futures-phasing.md) (2026-09-06); no live rail is scheduled.
 
 ## Context
 
