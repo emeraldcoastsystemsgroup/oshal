@@ -8,6 +8,7 @@
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Bot tier recreates in BATCHES (recreate_bots; same OSHAL_UP_BATCH_SIZE/SETTLE knobs as oshal-up.sh, 0=single-shot): the one-shot force-recreate of ~34 bots is the same concurrent cold-start spike that OOM-crashed the 6 GB engine twice on 2026-07-23; rollback path batches too.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Initial — THE one verified deploy command, born from the 2026-07-19 deploy incident. Encodes every lesson: build from COMMITTED HEAD (git archive) and stamp the image with the commit; classify app services by their compose-declared image (oshal-bot:latest) so infra can never be swept into a recreate (the incident: a hand-typed name filter missed the oshal- prefix and force-recreated the DB); NEVER pipe `docker compose up` (SIGPIPE killed a recreate mid-flight); --remove-orphans (stale name conflict); api first + FULLY up (healthy + auto-load, the oshal-up.sh contract) then bots; deploy-parity-check is a HARD gate here (advisory in oshal-up); auto-rollback to the pre-deploy image on any post-recreate failure.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | The rollback path never checked ITSELF. `docker tag`, the api recreate and `recreate_bots` inside rollback() were fire-and-forget, and wait_api's failure was only LOGGED — so a rollback that left no serving api exited 1, the SAME code as a deploy that failed safely. That is not hypothetical: on 2026-07-29 the docker engine answered 500 on the network step, the forward deploy rolled back, the rollback's own api never came up, and the run ended `ROLLED BACK with parity drift — investigate` + exit 1 while the box sat with no api container — the operator found out from `docker ps`, not from the tool. Every rollback step is now checked and any failure yields a distinct **exit 3** with a named recovery order (oshal-up.sh, then api-bounce.sh, then parity). Exit 1 now MEANS "the previous image is serving". Guard: tests/unit/deploy-rollback-outcome.spec.ts. (Note for the record: the script was never the source of an exit-0 false green — it does exit non-zero; a piped invocation masks it, which is why CLAUDE.md says never pipe these.)
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | npm publish parity is REPORTED in preflight (scripts/npm-parity-check.sh). The client packages ship to the world on a different rail than this stack, so npm staleness must never block a container deploy - but it went unnoticed for three weeks: @oshal/chat sat at 0.2.0 on npm while #300 (node print service) and #302 (satellite login push) landed IN that package and package.json was never bumped, so the version numbers MATCHED while the code differed and nothing could notice. The deploy is where that now gets said out loud. Publishing stays an explicit, irreversible act: bash scripts/npm-publish.sh --publish.
 # =============================================================================
 #
 # Usage:  bash scripts/oshal-deploy.sh [--skip-build] [--no-rollback] [--allow-unpushed] [--dry-run]
@@ -79,6 +80,21 @@ HEAD_SHA=$(git rev-parse HEAD)
 git fetch --quiet origin main 2>/dev/null || log "warn: fetch failed — comparing against last-known origin/main"
 if [ "$HEAD_SHA" != "$(git rev-parse origin/main)" ] && [ "$ALLOW_UNPUSHED" -ne 1 ]; then
   fail2 "HEAD != origin/main — push first (or --allow-unpushed for an emergency)"
+fi
+
+# npm publish parity - a REPORT, never a gate. The client packages ship to the world on a
+# different rail than this stack, so npm staleness must not block a container deploy; but it
+# went unnoticed for three weeks once (@oshal/chat sat at 0.2.0 while #300 and #302 landed in
+# it), so the deploy is where it gets said out loud. Publishing stays an explicit act:
+# bash scripts/npm-publish.sh --publish
+if [ -x scripts/npm-parity-check.sh ] || [ -f scripts/npm-parity-check.sh ]; then
+  npm_parity_out=$(bash scripts/npm-parity-check.sh 2>&1); npm_parity_rc=$?
+  case "$npm_parity_rc" in
+    0) log "npm parity: every publishable package matches the registry" ;;
+    1) log "npm parity: DRIFTED - the npm client is behind this repo (deploy continues)"
+       echo "$npm_parity_out" | sed 's/^/    /' | tee -a "$RUN_LOG" ;;
+    *) log "npm parity: UNKNOWN (registry unreachable or npm missing) - not treated as in-sync" ;;
+  esac
 fi
 
 # ── Rollback anchor: whatever :latest is NOW is what we return to on failure.
