@@ -68,9 +68,10 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** deploy the current alert-triage implementation and exercise A1 approval, A2 autonomous containment, refusal, and rollback against the live ticket path.
 - **Done when:** one dated drill records correct transitions and audit fields for all four legs, with no restart, privilege widening, or unapproved mutation. See [ADR-119](adr/119-autonomous-health-ticket-processing.md).
 
-### Strategy Studio and Bot Forge conversational parity
-- **Remaining:** run a real Studio design/refine/apply/revert cycle; add edit-in-place for an existing Forge pack only if that follow-up is commissioned.
-- **Done when:** two refinements update one strategy row through a live LLM session and the applied strategy reverts cleanly; if Forge edit-in-place is commissioned, it re-emits the same pack rather than a duplicate.
+### Strategy Studio and Bot Forge conversational parity — Studio half PROVEN 2026-09-06
+- **Proven:** a live design → refine → refine → apply (paper) → revert cycle updated ONE strategy row (same id; library 84 → 85 → 85 → 85 → 84 rows) through the model rail, and the paper book's active strategy read exactly as before the run — [studio-parity-proof.md](apps/trading/studio-parity-proof.md).
+- **Remaining:** Bot Forge edit-in-place for an existing pack, only if that follow-up is commissioned.
+- **Done when:** if Forge edit-in-place is commissioned, it re-emits the same pack rather than a duplicate.
 
 ### Nightly tasks still launched from the ADR-115 archive
 - **Remaining:** make keepalive, recap, and signal launchers self-locating, repoint their actual Task Scheduler actions to this trunk, and explicitly retain or relocate the private Evidence-Nightly job. (Kalshi done 2026-09-04: `kalshi-forward-daily.cmd` cd's to `%~dp0..`, the task action names `C:\Projects\oshal`, and it test-ran from there with exit 0. Still on the archive path: JobHunterSwarmSync, OSHAL Claude token keepalive, OSHAL Signal Labeler, OSHAL-Evidence-Nightly.)
