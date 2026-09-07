@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Stale-guard the recap-data.json fallback: only use its numbers when its date matches the report day. A frozen prior-day copy could otherwise silently supply the headline P/L when the DB equity row is missing (the failure mode behind the June-30-labeled July-6 email).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Honesty rails: "changes" (strategy-journal entries since the prior session — knob turns, universe changes, incidents) and "ops" (date-guarded ops-notes.json from the runner: lateness, restarts, outages) now ride in deck-data so the report SAYS what changed and what broke.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | One BOOK, not one mode (ADR-134 D2 #7): the headline equity and the four order/decision reads were keyed on mode, so with two live books enabled mode='live' merged two accounts' curves and fills into one headline. The headline book is OSHAL_TRADING_BOOK (default = OSHAL_TRADING_MODE, i.e. the legacy 'paper' ref — byte-identical output today); its id resolves via the roster, else the DB-side md5 derivation for the legacy refs, else DECK_DATA_FAIL naming the unknown ref. The deck also carries books[] + booksTotal (per-book breakdown via scripts/lib/trading-book-report.js) for the journal + site. OSHAL_DECK_OUT_DIR overrides the output directory (the real-CLI spec must never overwrite the operator's deck-data.json). The per-book reads fail LOUD (BOOKS_READ_FAIL on stderr); a silent empty books[] would strip the journal's books clause with no trace.
  */
 /*
  * oshal-deck-data.js — EXTRACTION for the DETAILED daily trade-recap deck.
@@ -29,12 +30,32 @@ try { require('dotenv').config({ quiet: true }); } catch {}
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const books = require('./lib/trading-book-report');
 
-const OUT_DIR = path.join(__dirname, '..', 'packages', 'oshal-vids-operator', 'out');
+// OSHAL_DECK_OUT_DIR: where recap-data.json is read and deck-data.json is written (default: the
+// operator video package's out/ directory, as before).
+const OUT_DIR = process.env.OSHAL_DECK_OUT_DIR || path.join(__dirname, '..', 'packages', 'oshal-vids-operator', 'out');
 const RECAP = path.join(OUT_DIR, 'recap-data.json');
 const OUT = path.join(OUT_DIR, 'deck-data.json');
 const SUB = process.env.OSHAL_USER_SUB || 'example-user-sub';
 const MODE = process.env.OSHAL_TRADING_MODE || 'paper';
+// The HEADLINE book (ADR-134): a book ref — 'paper' / 'live' (the legacy books) or a 'b-…' ref.
+// Default = OSHAL_TRADING_MODE so the legacy pipeline's bytes do not change. One book, never a mode:
+// two live books share mode='live' and a mode read merges two accounts into one headline.
+const BOOK = process.env.OSHAL_TRADING_BOOK || MODE;
+
+/**
+ * @description Fallback for a per-book read that must not abort the whole deck, but must NEVER
+ * fail silently: an empty books[] with no trace is the "report lies" failure this section exists
+ * to prevent. Logs BOOKS_READ_FAIL to stderr (the CLI convention these scripts already use for
+ * *_FAIL lines) and yields the caller's empty shape.
+ * @param what - short label naming the read that failed (appears in the log line)
+ * @param empty - the empty value to substitute so the deck still renders its other sections
+ * @returns {(e: unknown) => unknown} A .catch() handler.
+ */
+function loudFallback(what, empty) {
+  return (e) => { console.error(`BOOKS_READ_FAIL ${what}:`, (e && e.message) || e); return empty; };
+}
 
 function envFirst(...names) { for (const n of names) { const v = process.env[n]; if (v) return v.trim(); } return ''; }
 const KEY_ID = envFirst('ALPACA_PAPER_KEY_ID', 'ALPACA_KEY_ID', 'ALPACA_KEY', 'ALPAKA_KEY');
@@ -101,13 +122,22 @@ function readOpsNotes(targetDate) {
   const q = (sql, params) => client.query(sql, params).then((r) => r.rows).catch(() => []);
   const ET = "AT TIME ZONE 'America/New_York'";
   let trades = [], whyThemes = [], sentTop = [], sentHeadlines = [], optimize = [], decisionStats = {}, totalSignals = 0, changes = [];
+  let bookSummary = { books: [], total: {} };
   try {
     await client.query("SELECT set_config('oshal.is_operator','on',false)");
+
+    // Resolve the headline book to ONE book id (roster, else the DB-side legacy derivation).
+    // An unknown ref fails loud: a silent remap would report a different account's money.
+    const bookId = await books.resolveBookId(client, SUB, BOOK);
+    if (!bookId) {
+      const visible = await books.bookRoster(client, SUB).catch(loudFallback('roster (unknown-ref diagnostic)', []));
+      throw new Error(`OSHAL_TRADING_BOOK="${BOOK}" is not a book of this sub (roster refs: ${visible.map((b) => b.ref).join(', ') || 'none visible'})`);
+    }
 
     // HONEST headline P/L from our own close-equity snapshots (phantom-proof; see note above).
     const eqRows = await q(
       `SELECT et_day::text AS d, equity::float AS e FROM oshal_trading_daily_equity
-        WHERE user_sub=$1 AND mode=$2 AND et_day <= $3::date ORDER BY et_day DESC LIMIT 6`, [SUB, MODE, targetDate]);
+        WHERE user_sub=$1 AND book_id=$2 AND et_day <= $3::date ORDER BY et_day DESC LIMIT 6`, [SUB, bookId, targetDate]);
     const closeEquity = ((eqRows.find((r) => r.d === targetDate) || {}).e) ?? liveEquity;
     const priorClose = ((eqRows.find((r) => r.d < targetDate) || {}).e) ?? null;
     if (closeEquity != null) {
@@ -131,14 +161,14 @@ function readOpsNotes(targetDate) {
               d.confidence::float AS confidence, left(d.rationale, 300) AS rationale, d.indicators
          FROM oshal_trading_orders o
          LEFT JOIN oshal_trading_decisions d ON d.decision_id = o.decision_id
-        WHERE o.mode=$1 AND (o.created_at ${ET})::date = $2::date
-        ORDER BY o.created_at`, [MODE, targetDate]);
+        WHERE o.user_sub=$1 AND o.book_id=$2 AND (o.created_at ${ET})::date = $3::date
+        ORDER BY o.created_at`, [SUB, bookId, targetDate]);
 
     whyThemes = await q(
       `SELECT coalesce(indicators->>'reason','signal-driven') AS theme, count(*)::int AS n, round(avg(confidence)::numeric,2)::float AS avg_conf
          FROM oshal_trading_decisions
-        WHERE mode=$1 AND (created_at ${ET})::date = $2::date
-        GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, [MODE, targetDate]);
+        WHERE user_sub=$1 AND book_id=$2 AND (created_at ${ET})::date = $3::date
+        GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, [SUB, bookId, targetDate]);
 
     const ds = await q(
       `SELECT count(*)::int AS total,
@@ -146,8 +176,17 @@ function readOpsNotes(targetDate) {
               count(*) FILTER (WHERE action='sell')::int AS sells,
               count(*) FILTER (WHERE action='hold')::int AS holds,
               round(avg(confidence)::numeric,2)::float AS avg_conf
-         FROM oshal_trading_decisions WHERE mode=$1 AND (created_at ${ET})::date = $2::date`, [MODE, targetDate]);
+         FROM oshal_trading_decisions WHERE user_sub=$1 AND book_id=$2 AND (created_at ${ET})::date = $3::date`, [SUB, bookId, targetDate]);
     decisionStats = ds[0] || {};
+
+    // Per-book breakdown + sum across books (ADR-134 D2 #7) — the journal and the weekly page
+    // render it; the headline above stays ONE book.
+    const [closes, fillRows, roster] = await Promise.all([
+      books.perBookCloseAndPrior(client, SUB, targetDate).catch(loudFallback('perBookCloseAndPrior', { close: [], prior: [] })),
+      books.perBookFills(client, SUB, targetDate).catch(loudFallback('perBookFills', [])),
+      books.bookRoster(client, SUB).catch(loudFallback('bookRoster', [])),
+    ]);
+    bookSummary = books.summarizeBooks(closes, fillRows, roster);
 
     const sc = await q(`SELECT count(*)::int AS n FROM oshal_trading_signals WHERE (observed_at ${ET})::date = $1::date`, [targetDate]);
     totalSignals = (sc[0] && sc[0].n) || 0;
@@ -184,7 +223,7 @@ function readOpsNotes(targetDate) {
     const td = await q(
       `SELECT count(DISTINCT (created_at ${ET})::date)::int AS n
          FROM oshal_trading_orders
-        WHERE mode=$1 AND (created_at ${ET})::date <= $2::date`, [MODE, targetDate]);
+        WHERE user_sub=$1 AND book_id=$2 AND (created_at ${ET})::date <= $3::date`, [SUB, bookId, targetDate]);
     if (ytd && !ytd.error) ytd.days = (td[0] && td[0].n) || 0;
   } finally { client.release(); await pool.end(); }
 
@@ -198,6 +237,9 @@ function readOpsNotes(targetDate) {
     date: label,
     generatedAt: new Date().toISOString(),
     mode: MODE,
+    bookRef: BOOK, // the ONE book every headline figure below describes
+    books: bookSummary.books,      // per-book day close / P-L / fills (all the sub's books)
+    booksTotal: bookSummary.total, // sum across books — a total, never a blend
     results: {
       pl: dayResults ? dayResults.pl : (recap.pl ?? null),
       pct: dayResults ? dayResults.pct : (recap.pct ?? null),
@@ -220,6 +262,7 @@ function readOpsNotes(targetDate) {
     book: dayResults ? dayResults.positions : (recap.positions ?? null),
     positionsDetail: livePositions.map((p) => ({ sym: p.symbol, qty: Number(p.qty), avg: round2(Number(p.avg_entry_price)), mv: round2(Number(p.market_value)), pl: round2(Number(p.unrealized_pl)), plpc: round2(Number(p.unrealized_plpc) * 100) })),
   };
+  fs.mkdirSync(OUT_DIR, { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(deck, null, 2));
-  console.log('DECK_DATA_OK', OUT, '| trades=' + trades.length, 'whyThemes=' + whyThemes.length, 'sentiment=' + sentTop.length, 'optimize=' + optimize.length, 'changes=' + changes.length, 'ops=' + (deck.ops ? deck.ops.notes.length : 0), 'ytd=' + (ytd && ytd.retPct != null ? ytd.retPct + '%' : 'n/a'));
+  console.log('DECK_DATA_OK', OUT, '| book=' + BOOK, 'books=' + bookSummary.books.length, 'trades=' + trades.length, 'whyThemes=' + whyThemes.length, 'sentiment=' + sentTop.length, 'optimize=' + optimize.length, 'changes=' + changes.length, 'ops=' + (deck.ops ? deck.ops.notes.length : 0), 'ytd=' + (ytd && ytd.retPct != null ? ytd.retPct + '%' : 'n/a'));
 })().catch((e) => { console.error('DECK_DATA_FAIL', e.message || e); process.exit(1); });

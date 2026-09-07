@@ -45,6 +45,12 @@ scripts/
 # context so every app (walmart, uber, spotify, duffel, …) survives a container
 # recreate. New oshal-*.js CLIs are included automatically.
 !scripts/oshal-*.js
+# The weekly report publisher execs scripts/site-oshal-report.js INSIDE the api container
+# (scripts/publish-oshal-report-weekly.ps1), but the name does not match the oshal-*.js glob
+# above, so the image never contained it and the weekly page could not be generated on the box.
+# Guard: tests/unit/trading-book-report-scripts.spec.ts asserts both this allowlist entry and
+# the Dockerfile COPY, and the cutover script probes for the file at runtime.
+!scripts/site-oshal-report.js
 # The CLIs' shared helpers (exact-user-subject, connector-token-crypto) were extracted to
 # scripts/lib/ on 2026-08-05 and 36 require() sites now point there — but this allowlist never
 # learned that, so every image built after the extraction shipped CLIs that die at require()

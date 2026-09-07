@@ -5,6 +5,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — generates the weekly "oshal report" post from the platform's own ledgers plus the strategy journal, replacing a hand-written page that silently went a week stale.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Public-posture consistency (2026-09-06 review): the books section and the footer render the shared enabledOnly() view — ENABLED books plus a total over exactly those — matching the journal clause's rule; the page was naming a disabled account (the cash IRA) the journal row deliberately omitted, and quoting an "all books" total that counted it. Each bullet composes the shared renderBookMove instead of slicing the ref off renderBookLine's output, so a change to that module's prefix can no longer truncate the public page.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Per-book rendering (ADR-134 D2 #7): the equity read goes through scripts/lib/trading-book-report.js and groups by book instead of mode='paper', a "The books" section lists every book's week move plus an all-books total, and the footer names which books are paper vs live. Live-book dollars are percent-only unless OSHAL_REPORT_LIVE_DOLLARS=true (this page is public). The paper week-move sentence is derived from the 'paper' series so its bytes are unchanged. Both per-book reads fail LOUD (BOOKS_READ_FAIL on stderr) rather than yielding a silent empty books[]: an unlogged fallback would drop the books section AND the week-move sentence with no trace, which is the report-lies failure this section exists to prevent.
  */
 /*
  * site-oshal-report.js — generate the weekly oshal report post for the site.
@@ -28,9 +30,26 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { Pool } = require('pg');
+const books = require('./lib/trading-book-report');
 
 const SUB = process.env.OSHAL_USER_SUB || '';
 const APPS_REPO = process.env.OSHAL_APPS_REPO || 'C:\\Projects\\oshal-applications';
+// Public posture: live-book dollars appear only when OSHAL_REPORT_LIVE_DOLLARS=true (default false).
+const LIVE_DOLLARS = books.liveDollarsFromEnv();
+
+/**
+ * @description Fallback for a per-book read that must not abort the whole page, but must NEVER
+ * fail silently: an empty books[] with no trace is the "report lies" failure this section exists
+ * to prevent (it would also silently drop the paper week-move sentence, which is derived from the
+ * same per-book series). Logs BOOKS_READ_FAIL to stderr — the convention this CLI already uses for
+ * its *_FAIL lines — and yields the caller's empty shape.
+ * @param what - short label naming the read that failed (appears in the log line)
+ * @param empty - the empty value to substitute so the rest of the page still renders
+ * @returns {(e: unknown) => unknown} A .catch() handler.
+ */
+function booksReadFail(what, empty) {
+  return (e) => { console.error(`BOOKS_READ_FAIL ${what}:`, (e && e.message) || e); return empty; };
+}
 
 /** @description Parse `--k=v` argv into a plain object. @returns {Record<string,string>} */
 function parseArgs() {
@@ -80,6 +99,30 @@ function appStoreCommits(since, through) {
   } catch { return null; }
 }
 
+/**
+ * @description Render the per-book section: one bullet per ENABLED book with a close in the window
+ * (kind, week move, dollars only for paper or when OSHAL_REPORT_LIVE_DOLLARS=true) and an all-books
+ * total. Disabled books are omitted — the same rule the journal clause (renderBooksText) applies, so
+ * the public page and the journal row can never name a different set of accounts.
+ * @param {{books:Array<object>, total:{equity:number|null, pl:number|null, pct:number|null, books:number}}} summary - From summarizeBookSeries.
+ * @param {boolean} liveDollars - Whether live-book dollar figures may be printed.
+ * @returns {string} HTML fragment, or '' when no enabled book has a close in the window.
+ */
+function renderBooksSection(summary, liveDollars) {
+  const view = books.enabledOnly(summary);
+  if (!view.books.length) return '';
+  const li = (s) => `        <li>${s}</li>`;
+  // Compose from renderBookMove: the ref is rendered here (bolded), the move by the shared module.
+  const items = view.books.map((b) => li(`<strong>${esc(b.ref)}</strong> (${esc(b.kind)}) ${esc(books.renderBookMove(b, liveDollars))}`));
+  const t = view.total;
+  items.push(li(`<strong>all books</strong> ${esc(books.pctText(t.pct))} across ${t.books} book${t.books === 1 ? '' : 's'}`));
+  return `      <h2>The books</h2>
+      <p>Each book is one account; the total is the sum across them, not a blend. Live books are shown as percent moves${liveDollars ? ' and dollars' : ' only'}.</p>
+      <ul>
+${items.join('\n')}
+      </ul>`;
+}
+
 (async () => {
   const args = parseArgs();
   const days = Math.max(1, parseInt(args.days || '7', 10));
@@ -91,7 +134,7 @@ function appStoreCommits(since, through) {
   const client = await pool.connect();
   const q = (sql, p) => client.query(sql, p).then((r) => r.rows).catch(() => []);
   const ET = "AT TIME ZONE 'America/New_York'";
-  let ticketRows = [], llm = {}, journal = [], equity = [];
+  let ticketRows = [], llm = {}, journal = [], perBook = [], roster = [];
   try {
     await client.query("SELECT set_config('oshal.is_operator','on',false)");
     ticketRows = await q(
@@ -107,11 +150,12 @@ function appStoreCommits(since, through) {
       `SELECT et_day::text AS day, kind, summary, source FROM oshal_trading_strategy_journal
         WHERE user_sub=$1 AND et_day BETWEEN $2::date AND $3::date
         ORDER BY et_day ASC, id ASC`, [SUB, since, through]);
-    equity = await q(
-      `SELECT et_day::text AS day, equity::float AS e FROM oshal_trading_daily_equity
-        WHERE user_sub=$1 AND mode='paper' AND et_day BETWEEN $2::date AND $3::date
-        ORDER BY et_day ASC`, [SUB, since, through]);
+    // Per BOOK, never per mode: two live books share mode='live' and a mode read merges their curves.
+    perBook = await books.perBookEquitySeries(client, SUB, since, through).catch(booksReadFail('perBookEquitySeries', []));
+    roster = await books.bookRoster(client, SUB).catch(booksReadFail('bookRoster', []));
   } finally { client.release(); await pool.end(); }
+  const bookSummary = books.summarizeBookSeries(perBook, roster);
+  const equity = perBook.filter((r) => r.ref === 'paper');
 
   const totalTickets = ticketRows.reduce((s, r) => s + r.n, 0);
   // The app-store repo lives on the HOST; this usually runs inside the api container, where the
@@ -145,6 +189,9 @@ function appStoreCommits(since, through) {
 ${reports.map((r) => li(esc(r.summary))).join('\n') || li('<em>No session report was journaled this week.</em>')}
       </ul>`);
 
+  const booksSection = renderBooksSection(bookSummary, LIVE_DOLLARS);
+  if (booksSection) sections.push(booksSection);
+
   if (changes.length) {
     sections.push(`      <h2>What changed</h2>
       <ul>
@@ -166,6 +213,14 @@ ${ticketRows.map((r) => li(`<strong>${num(r.n)}</strong> ${esc(r.ticket_type)}`)
   }
 
   const range = `${mdy(since)}–${mdy(through).replace(/^[A-Za-z]+ /, '')}, ${through.slice(0, 4)}`;
+  // Enabled books only — the same set the section renders, so the footer cannot name an account the
+  // page never showed (and vice versa).
+  const shown = books.enabledOnly(bookSummary).books;
+  const paperRefs = shown.filter((b) => b.kind === 'paper').map((b) => b.ref);
+  const liveRefs = shown.filter((b) => b.kind !== 'paper').map((b) => b.ref);
+  const postureNote = liveRefs.length
+    ? ` (paper: ${esc(paperRefs.join(', ') || 'none')}; live: ${esc(liveRefs.join(', '))}, shown as percent${LIVE_DOLLARS ? ' and dollars' : ' only'})`
+    : '';
   const lede = `A weekly, numbers-first status on the Open Swarm build — every figure below is pulled from the platform's own ledgers, not estimated: the ticket store, the per-call cost table the bots write as they work, the trading equity store, and the app-store git history. The narrative comes from the platform's own strategy journal, which the nightly pipeline writes to whether the week was eventful or quiet.`;
 
   const html = `<!doctype html>
@@ -199,7 +254,7 @@ ${stats.map((s) => `        <div class="stat"><b>${esc(s.b)}</b><span>${esc(s.s)
 
 ${sections.join('\n\n')}
 
-      <p style="opacity:.7;font-size:.9rem;margin-top:32px">Trading figures are from a <strong>paper</strong> book unless stated otherwise — this is a build log, not a track record. Generated ${esc(mdy(through))} from the platform's ledgers and journal; no figure on this page was typed by hand.</p>
+      <p style="opacity:.7;font-size:.9rem;margin-top:32px">Trading figures are from a <strong>paper</strong> book unless stated otherwise${postureNote} — this is a build log, not a track record. Generated ${esc(mdy(through))} from the platform's ledgers and journal; no figure on this page was typed by hand.</p>
     </div>
   </section>
 
@@ -212,5 +267,6 @@ ${sections.join('\n\n')}
   const outPath = args.out || path.join('/app', 'out', 'oshal-report.html');
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, html);
-  console.log(`OSHAL_REPORT_OK ${outPath} | ${since}..${through} | tickets=${totalTickets} runs=${llm.runs || 0} cost=$${Number(llm.cost || 0).toFixed(2)} commits=${commits == null ? 'n/a' : commits} journal=${journal.length} (reports=${reports.length}, changes=${changes.length}, incidents=${incidents.length})`);
+  const booksOk = bookSummary.books.filter((b) => b.equity != null).map((b) => `${b.ref}:${books.pctText(b.pct)}`).join(',') || 'none';
+  console.log(`OSHAL_REPORT_OK ${outPath} | ${since}..${through} | tickets=${totalTickets} runs=${llm.runs || 0} cost=$${Number(llm.cost || 0).toFixed(2)} commits=${commits == null ? 'n/a' : commits} journal=${journal.length} (reports=${reports.length}, changes=${changes.length}, incidents=${incidents.length}) books=${booksOk} allBooks=${books.pctText(bookSummary.total.pct)}`);
 })();

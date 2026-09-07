@@ -249,6 +249,12 @@ COPY scripts/routability-critical-bots.txt ./scripts/
 # plaid, trading, …) — baked so app search/booking survives a container recreate.
 # Glob picks up new oshal-*.js automatically (allowlisted in .dockerignore).
 COPY scripts/oshal-*.js ./scripts/
+# The weekly site report generator. scripts/publish-oshal-report-weekly.ps1 execs it IN the api
+# container (/app/scripts/site-oshal-report.js) with no docker cp, but the oshal-*.js glob never
+# matched its name, so every image shipped without it (verified live 2026-09-06: absent). Needs the
+# matching `!scripts/site-oshal-report.js` allowlist entry in .dockerignore — a COPY of an excluded
+# path fails the build outright. Runtime guard: scripts/trading-books-cutover.sh precondition 5(c).
+COPY scripts/site-oshal-report.js ./scripts/
 # Their shared helpers. 36 require('./lib/…') sites across the CLIs above resolve here; without
 # this COPY every one of them dies at load ("Cannot find module './lib/exact-user-subject'"),
 # and the in-process bridge (provider-operation-clients) takes the eats/purchasing/rides/travel
