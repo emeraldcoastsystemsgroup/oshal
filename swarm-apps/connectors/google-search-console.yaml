@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Google Search Console connector (marketing engine, ADR-133): read-only sites + search-analytics query over the caller's ONE google connection (credProvider: google — same broker key as gmail/youtube). The searchanalytics resource is a POST-verb READ (Google's query endpoint is POST) declared safety action:read so it is never confirm-gated. Needs the webmasters.readonly scope added to GOOGLE_CONNECT_SCOPES + a reconnect.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Mark the Simple Icons slug `googlesearchconsole` VERIFIED. It was declared but never verified, so the catalog curation gate counted it as invalid icon metadata and the whole audit exited non-zero. Verified by running scripts/connectors/enrich-openapi-icons.ts against the live Simple Icons catalog (a copy, so the enricher could not reformat this file); it derived the same slug independently from provider identity and declared hosts.
 # -----------------------------------------------------------------------------
 
 provider: google-search-console
@@ -49,4 +50,4 @@ metadata:
   icon: googlesearchconsole
   iconTitle: Google Search Console
   iconSource: simple-icons
-  iconVerified: false
+  iconVerified: true

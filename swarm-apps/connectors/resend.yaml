@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Resend connector (marketing engine, ADR-133): pasted API key held per-user in the encrypted connection store (auth oauth2 = static Bearer, the token-paste convention), read tier for domains/audiences, and one confirm-gated high-risk send-email action (POST /emails) so every outbound email rides the audited connector-writes rail.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Mark the Simple Icons slug `resend` VERIFIED, same audit gate and same independent verification through scripts/connectors/enrich-openapi-icons.ts against the live Simple Icons catalog.
 # -----------------------------------------------------------------------------
 
 provider: resend
@@ -71,4 +72,4 @@ metadata:
   icon: resend
   iconTitle: Resend
   iconSource: simple-icons
-  iconVerified: false
+  iconVerified: true

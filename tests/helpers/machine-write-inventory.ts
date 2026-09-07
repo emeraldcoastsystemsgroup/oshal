@@ -12,6 +12,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Documented signed tool/Claude/runtime machine surfaces and their reviewed no-owner-write identity posture without weakening discovery
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Inventory both CORE-05 install-verification machine surfaces: service-auth package smokes own no database write, while PAT-only live verification forwards the exact caller into the ordinary owner-scoped chat-task write rail.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Inventory connector-oauth-ceremony.ts, which the 2026-08-06 connectors-routes decomposition split out. It carries the Meta signed_request HMAC check but no database access at all, so it takes the webhook-ingress-core shape: no-owner-scoped-write, with the deletion identity left where the DELETE lives. Discovery caught this the way it is meant to — the guard went red the moment a machine-auth surface appeared without an entry.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Inventory artifact-exchange-routes.ts (ADR-139). It authenticates a machine caller over the service rail and threads that sub explicitly, but owns no owner-scoped write: the handle ledger and destination registry are in-process Maps, the storage built-in writes the caller's own filesystem path, and the email built-in only reads their connector token. Same no-owner-scoped-write shape as connector-oauth-ceremony-core.
  */
 
 /**
@@ -586,6 +587,33 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
       'Pre-identity by construction. The real public bootstrap endpoint now creates its first admin '
       + 'over HTTP against an identity-capturing pool and proves the local_users INSERT runs under '
       + 'the SYSTEM sentinel while carrying the deterministic local user_sub.',
+  },
+  {
+    id: 'artifact-exchange-core',
+    entryPoint: 'POST /api/artifacts/handles (mint) + GET /handles/:ref(/content) + the kernel built-ins under /api/artifacts/builtin/*',
+    file: 'src/app/routes/artifact-exchange-routes.ts',
+    auth: 'service-secret',
+    ownerScopedTables: [],
+    identity: {
+      kind: 'no-owner-scoped-write',
+      why:
+        'The ADR-139 relay resolves the acting caller with getTrustedServiceUserSub and then passes '
+        + 'that sub EXPLICITLY into everything it calls, but none of those calls is an owner-scoped '
+        + 'database write. The handle ledger is an in-process Map (BY_REF in shared/artifact-exchange/'
+        + 'handles.ts) and the destination registry is another (BY_APP in registry.ts), so a mint and a '
+        + 'redeem touch no table at all. The kernel-storage built-in writes bytes through '
+        + 'uploadBytes(ctx, sub, "oshal-local", …), whose oshal-local branch is a filesystem write under '
+        + "that caller's own store path — not a row. The kernel-email built-in only SELECTs the caller's "
+        + 'connector token (getValidAccessToken) before sending over their own mailbox. Every write that '
+        + 'a dispatched action ultimately performs happens at the DESTINATION, behind the gate that '
+        + 'destination owns, which is where the identity decision lives.',
+    },
+    behaviorallyProven: true,
+    note:
+      'Discovery caught this the way it is meant to: the guard went red the moment ADR-139 wave 2 gave '
+      + 'the relay a machine-auth surface with no entry. The redeem boundary is behaviourally crossed by '
+      + 'tests/unit/artifact-redeem-relay.spec.ts, which stands a REAL http server in for the relay and '
+      + 'proves the headers actually sent and the fail-closed ordering.',
   },
 ];
 
