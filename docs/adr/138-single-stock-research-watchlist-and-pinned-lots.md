@@ -51,7 +51,7 @@ A new table `oshal_trading_watchlist` (owner RLS; `symbol`, `note`, `added_at`) 
 
 A manual purchase (ADR-136 D3's `POST /api/trading/decisions/manual`) may now declare protection rules at purchase time: take-profit (price or percent), stop-loss (price, percent, or a trailing-stop percent), and an optional time stop. The route records a **pinned-lot intent** keyed to the manual decision, rather than placing exits itself.
 
-A new kernel leg, `trading-pinned-lots`, riding the existing per-user `trading-events` schedule (the same 5-minute ET cadence D6/event playbooks already use — no new schedule kind), watches the entry order. On fill it:
+A new kernel leg, `trading-pinned-lots`, riding the existing per-user `trading-events` schedule (the leg fires every minute since the ADR-136 D4 follow-up; pinned lots step on its full tick — every 5 minutes by default, `TRADING_EVENTS_FULL_TICK_MINUTES` — inside 07:00–19:59 ET — no new schedule kind), watches the entry order. On fill it:
 
 1. Records the lot — book, symbol, qty, avg fill price — in a new lots table.
 2. Places the declared exits as venue-resident GTC orders through the same `placeDecisionOrder` path every other order uses: a take-profit SELL LIMIT, and either a STOP SELL or a TRAILING_STOP SELL. Lot orders carry a `lot-` request-id prefix.

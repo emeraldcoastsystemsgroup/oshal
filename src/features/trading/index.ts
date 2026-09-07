@@ -16,6 +16,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-116 optimization objectives (futures-fitness): the nine NT8 OptimizationFitness ports, the FITNESS_FUNCTIONS registry, fitnessNames(), the -1e10 min-trades sentinel and the C# banker's-rounding helper.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export the Globex session + holiday calendar (futures-session-calendar): session-bucket predicate/counters, trading-day count, and the rule-computed US futures holiday schedule that expectedBarCount, the gap detector, and the mock source now share.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the three backtester modelling additions (BACKLOG rows 402/414/415): futures-targets (Export-generation Target-1 partial + post-target MFE stop move), futures-margin (cited performance-bond spec, fundable-size cap, maintenance call, notional/leverage), and futures-regime-gate (the R10 daily-ADX gate), plus the stop engine's %ATR buffer resolver.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Export the NYSE full-closure calendar (nyse-holidays): the static 2026/2027 table, nyseHolidayOn() with the additive TRADING_MARKET_HOLIDAYS override, and the horizon constants the refresh-guard spec reads — consumed by the kernel's validateFireAt so a timed order on an exchange holiday is refused by name at scheduling time (ADR-136 D4 follow-up).
  *
  * @module trading
  */
@@ -89,6 +90,12 @@ export {
   SESSION_CLOSE_MINUTE, SESSION_OPEN_MINUTE, EARLY_CLOSE_MINUTE, easterSunday, usFuturesHolidays,
   sessionDayKind, isSessionBucket, countSessionBuckets, tradingDaysBetween,
 } from './services/futures-session-calendar';
+// NYSE full-closure calendar (equities) — static table + operator override; refused at scheduling by validateFireAt.
+export type { MarketHoliday } from './services/nyse-holidays';
+export {
+  NYSE_FULL_CLOSURES, NYSE_TABLE_HORIZON, NYSE_TABLE_REFRESH_LEAD_DAYS, MARKET_HOLIDAYS_ENV,
+  nyseHolidays, nyseHolidayOn, operatorMarketHolidays, nyseTableDaysRemaining,
+} from './services/nyse-holidays';
 // Completeness validator — rollover-aware, session-discounted gap check (the gap-checker reborn).
 export type { BarGap, ContractCompleteness } from './services/futures-completeness';
 export {
