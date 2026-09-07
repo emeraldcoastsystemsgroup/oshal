@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — writes the daily "the report ran" journal entry so the record has at least one entry EVERY day, not only on days a human wrote something. Idempotent per day, so a re-run or a recovery re-publish never duplicates the day.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Per-book breakdown (ADR-134 D2 #7): when deck-data carries books[]/booksTotal, the summary gains a compact "books: <ref> <pct> / … ; all books <pct>" clause for ENABLED books, placed right after the headline-book figures and before fills/video so the 500-char cap can never drop the total. Live-book dollars are percent-only unless OSHAL_REPORT_LIVE_DOLLARS=true — journal 'report' rows are rendered verbatim on the public weekly page.
  */
 /*
  * oshal-report-journal.js — record that the daily report ran, in the journal itself.
@@ -25,9 +26,12 @@
  */
 const fs = require('fs');
 const { Pool } = require('pg');
+const books = require('./lib/trading-book-report');
 
 const SUB = process.env.OSHAL_USER_SUB || '';
 const SOURCE = 'daily-report';
+// Public posture: live-book dollars only when OSHAL_REPORT_LIVE_DOLLARS=true (default false).
+const LIVE_DOLLARS = books.liveDollarsFromEnv();
 const DEFAULT_DECK = '/app/packages/oshal-vids-operator/out/deck-data.json';
 
 /** @description Parse `--k=v` argv into a plain object. @returns {Record<string,string>} */
@@ -60,6 +64,12 @@ function composeSummary(d, hasVideo, note) {
   if (r.equity != null) bits.push(`equity $${Number(r.equity).toLocaleString('en-US')}`);
   if (r.pl != null) bits.push(`day ${money(r.pl)}${r.pct != null ? ` (${r.pct}%)` : ''}`);
   if (d && d.ytd && d.ytd.retPct != null) bits.push(`${d.ytd.retPct}% since inception`);
+  // Per-book clause (enabled books only, compact) BEFORE fills/video: the 500-char cap truncates
+  // from the end, so the all-books total can never be the part that falls off.
+  if (d && Array.isArray(d.books) && d.books.length) {
+    const clause = books.renderBooksText({ books: d.books, total: d.booksTotal || {} }, { liveDollars: LIVE_DOLLARS });
+    if (clause) bits.push(clause);
+  }
   const fills = r.fills != null ? r.fills : (d && d.trades ? d.trades.length : null);
   if (fills != null) bits.push(`${fills} fills`);
   bits.push(hasVideo ? 'narrated video + deck' : 'numbers + deck, no video this session');
