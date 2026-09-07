@@ -17,6 +17,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Moved routes/trading-routes-core.ts → app/trading-engine.ts and made it THE engine module (trading engine extraction, ADR-085 pre-carve): placeDecisionOrder (verbatim from trading-routes.ts, live_blocked gate intact) and resolveMaturedPredictions (verbatim from trading-routes-algo-builders.ts) moved in; ensureTradingSchema + the shared helpers re-exported so the 8 dispatch/reconcile loops depend only on engine modules, never the carvable route surface. Pure code motion — zero behavior change, no order-path/gate/env semantics touched.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Submission reservation: placeDecisionOrder claims the clientOrderId in the ledger (INSERT ... ON CONFLICT DO NOTHING) BEFORE the venue call, refusing the loser of a race with 409 duplicate_submission; any throw before recordOrder releases the still-'submitting' claim. Fixes the 2026-08-18 live twin orders (two same-fire paths shared a minute-bucketed clientOrderId; Alpaca rejects a reused client-order-id server-side but Schwab HAS no client-order-id, so the duplicate placed for real and the recordOrder upsert overwrote the filled row with the rejected twin — three fills vanished from the ledger). recordOrder's conflict branch now also completes qty/order_type/prices/tif/submitted_at, since with a reservation row it is the branch every normal fill takes.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book re-key (PR1): placeDecisionOrder/recordOrder/analyzeAndRecordDecision accept a TradingBook or the legacy mode (normalizing to the legacy book — byte-identical under the flag-off bijection, keeping deployed store twins working). The decision lookup, feed-loop dedup, reservation arbiter, release DELETE, and order upsert all key (user_sub, book_id); mode is still written on every row; the live_blocked gate condition and string are byte-unchanged. rebindOrder preserves a row's own book identity through re-record. bindingOf threads a bound account to the factory, which ignores it while the flag is off.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Cash-account settlement backstop (ADR-134 D8): placeDecisionOrder calls assertSettledFunding for every BUY AFTER the guardrail check + broker construction and BEFORE the submission reservation, so operator, pinned-lot, event-playbook and autonomous buys on a cash-type book all meet the same wall (422 settlement_blocked / 503 settlement_unknown under 'refuse'; a logged warning under 'warn'). SELLs perform zero extra I/O (protective exits untouched); margin/paper books are byte-identical. The guard only refuses or warns — it never places, cancels or resizes. Nothing else in the order path moved.
  *
  * @module trading-engine
  */
@@ -30,6 +31,7 @@ import {
   type TradingMode, type TradingBook, type OrderResult,
 } from '@/features/trading';
 import { legacyBook, legacyBookId } from './trading-books-store';
+import { assertSettledFunding } from './trading-settlement';
 import { resolveUserLlmConnection } from './routes/free-tier-rotation';
 import { executeBotOrInline } from './routes/inline-bot-execution';
 import { guardrails, guardrailViolation, TradingError, type SignalRow } from './routes/trading-routes-helpers';
@@ -424,6 +426,13 @@ export async function placeDecisionOrder(
   if (violation) throw new TradingError(422, 'guardrail_blocked', violation);
   const broker = getBrokerAdapter(mode, sub, bindingOf(book));
   if (!broker.configured()) throw new TradingError(503, 'broker_not_configured', `Set the ${mode} broker keys first.`);
+  // CASH-ACCOUNT SETTLEMENT (ADR-134 D8): a BUY on a cash-type book may not be funded by unsettled
+  // sale proceeds. Sits here — after guardrails, before the reservation — so every author (operator,
+  // pinned lot, event playbook, autopilot) meets the same wall and a refusal leaves no ledger row to
+  // release. Sells return with zero I/O. Refuse-or-warn only: nothing is placed, cancelled or resized.
+  await assertSettledFunding(pool, sub, book, d.side, symbol, qty, refPrice, {
+    readAccount: () => broker.getAccount(), priceOf: (s) => getMarketData(mode, sub).latestPrice(s),
+  });
   const clientOrderId = `${sub}:${requestId}`.slice(0, 128);
 
   // SUBMISSION RESERVATION — claim the clientOrderId in the ledger BEFORE any venue work. Two paths
