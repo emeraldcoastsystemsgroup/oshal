@@ -256,7 +256,7 @@ footer a:hover{color:var(--cyan)}</style>
 <nav class="crumbs wrap" aria-label="Breadcrumb"><a href="/">oshal</a><span>/</span><a href="/product/">Applications</a><span>/</span><a href="/product/knowledge/">Knowledge</a><span>/</span><span aria-current="page" style="color:var(--body)">Intelligent Career</span></nav>
 
 <header class="page"><div class="wrap">
-  <p class="eyebrow">Knowledge · Store package · v1.9.1</p>
+  <p class="eyebrow">Knowledge · Store package · v1.15.0</p>
   <h1>Intelligent Career</h1>
   <div class="split">
     <div>
@@ -267,15 +267,15 @@ footer a:hover{color:var(--cyan)}</style>
       </div>
       <p class="cta-note">Opens at <code>career.oshal.ai</code> &mdash; the app lives in the hostname, so a first login lands you right back on it. On your own box it is <code>?app=career-hunter</code>.</p>
       <div style="margin-top:36px">
-        <p class="eyebrow">12 screens in the ribbon · opens on <code>career-board</code></p>
-        <div class="pills" style="margin-top:14px"><span class="pill screen">Mobile</span><span class="pill screen">Job Board</span><span class="pill screen">Submissions</span><span class="pill screen">Recruiters</span><span class="pill screen">Insights</span><span class="pill screen">Strengthen</span><span class="pill screen">Resume Studio</span><span class="pill screen">Profile Studio</span><span class="pill screen">Portrait Studio</span><span class="pill screen">Approvals</span><span class="pill screen">Companies</span><span class="pill screen">Career Settings</span></div>
+        <p class="eyebrow">13 screens in the ribbon · opens on <code>career-board</code></p>
+        <div class="pills" style="margin-top:14px"><span class="pill screen">Mobile</span><span class="pill screen">Search Jobs</span><span class="pill screen">Job Board</span><span class="pill screen">Submissions</span><span class="pill screen">Recruiters</span><span class="pill screen">Insights</span><span class="pill screen">Strengthen</span><span class="pill screen">Resume Studio</span><span class="pill screen">Profile Studio</span><span class="pill screen">Portrait Studio</span><span class="pill screen">Approvals</span><span class="pill screen">Companies</span><span class="pill screen">Career Settings</span></div>
       </div>
     </div>
     <aside class="aside">
       <h3>At a glance</h3>
       <div class="facts">
       <div><div class="k">Shelf</div><div class="v"><a href="/product/knowledge/">Knowledge</a></div></div>
-      <div><div class="k">Version</div><div class="v"><code>1.9.1</code></div></div>
+      <div><div class="k">Version</div><div class="v"><code>1.15.0</code></div></div>
       <div><div class="k">Ships as</div><div class="v">An installable store package</div></div>
       <div><div class="k">Opens at</div><div class="v"><code>career.oshal.ai</code></div></div>
       <div><div class="k">Queued work</div><div class="v">Registers the <code>career-application</code> ticket type</div></div>
@@ -289,7 +289,7 @@ footer a:hover{color:var(--cyan)}</style>
 </div></header>
 <section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">What it does</p><h2>The rest of the story.</h2></div>
-      <p class="lede">Single-tenant, multi-user (per-user isolation); multi-tenant ready.</p></div></section>
+      <p class="lede">Any document in the swarm can be sent here (ADR-139 Send to…) and absorbed into your profile. Single-tenant, multi-user (per-user isolation); multi-tenant ready.</p></div></section>
 <section><div class="wrap"><div class="sec-head">
       <p class="eyebrow">On screen</p><h2>What it looks like.</h2></div>
       <figure class="shot">
@@ -310,7 +310,7 @@ footer a:hover{color:var(--cyan)}</style>
         app declares in its manifest, which is why it can be told to you plainly.</p></div>
       <ol class="flow"><li>
       <span class="step">01</span>
-      <div><h3>You open it, or the assistant does</h3><p>Opening <code>?app=career-hunter</code> loads its 12 screens into the shared cockpit, starting on <code>career-board</code>. The ribbon, the ticket list and the assistant are already there — the app contributes views, not a second application to log into.</p></div>
+      <div><h3>You open it, or the assistant does</h3><p>Opening <code>?app=career-hunter</code> loads its 13 screens into the shared cockpit, starting on <code>career-board</code>. The ribbon, the ticket list and the assistant are already there — the app contributes views, not a second application to log into.</p></div>
     </li><li>
       <span class="step">02</span>
       <div><h3>Or you just ask</h3><p>The assistant classifies what you asked for and hands it to the bot that owns that domain. You do not pick the app, and you do not learn a command — routing is by declared capability, not by keyword matching a menu.</p></div>
@@ -352,19 +352,25 @@ footer a:hover{color:var(--cyan)}</style>
       <p>Ask what someone said. Turns your Jarvis ambient transcripts into recall with receipts — an exact count, the verbatim quoted lines, and play-it-back…</p>
       <span class="more">Learn more &rarr;</span>
     </a>
+    <a class="card" href="/product/apps/intelligent-career/">
+      <span class="top"><span class="tag">Knowledge</span><span class="badge">Store</span></span>
+      <h3>Intelligent Career</h3>
+      <p>One front door for your job search: the board, search, resume and strengthen tools, your profile picture, your LinkedIn and Facebook presence, and…</p>
+      <span class="more">Learn more &rarr;</span>
+    </a>
     <a class="card" href="/product/apps/job-apply/">
       <span class="top"><span class="tag">Knowledge</span><span class="badge">Store</span></span>
       <h3>Job Apply</h3>
       <p>Submit an approved, packet-ready job application by driving your real browser on a desktop worker node — push a ticket, it queues, the career-hunter…</p>
       <span class="more">Learn more &rarr;</span>
     </a>
-    <a class="card" href="/product/apps/world/">
+    <a class="card" href="/product/apps/print-ingest/">
       <span class="top"><span class="tag">Knowledge</span><span class="badge">Store</span></span>
-      <h3>World Intelligence</h3>
-      <p>Shared world intelligence (ADR-061 Layer B) - multi-source news feeds classified into a bias-aware sentiment graph (political + economic +…</p>
+      <h3>Print Ingest</h3>
+      <p>Print a document to the swarm and decide where it belongs</p>
       <span class="more">Learn more &rarr;</span>
     </a></div>
-      <p style="margin-top:22px"><a href="/product/knowledge/">All 4 knowledge apps &rarr;</a></p>
+      <p style="margin-top:22px"><a href="/product/knowledge/">All 6 knowledge apps &rarr;</a></p>
     </div></section>
 
 <section><div class="wrap">

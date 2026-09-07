@@ -10,10 +10,21 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prevented Playwright webServer from inheriting generic PORT so mock-oidc test runs do not hijack the operator runtime on 3456
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Default the test webServer to FORCE_LLM_PROVIDER=noop: without it the server boots the claude-code provider and throws an uncaught "no ANTHROPIC_API_KEY / OAuth session" at boot on a keyless box (CI), so the webServer exits 1 and every e2e spec fails before it runs. noop needs no vendor creds; override still honored.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | MOCK_OIDC runs get a deterministic SESSION_SECRET when none is configured: a clean checkout has no .env, MOCK_OIDC boots without a session secret, and every HMAC-minting path (TV pairing approve, guest cookies) 500s "TV pairing requires SESSION_SECRET" — the 2026-07-09 firetv-tv-pairing quarantine. Same keyless-CI class as the noop default above; real values always win, and non-mock runs are untouched.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | The webServer reaches Postgres through its PUBLISHED port. `.env`'s DATABASE_URL names the compose service host, which does not resolve off-container, so the managed server ran DB-less and every database-backed e2e skipped — a green run that proved nothing (it is why the swarm-apps framework spec and the ADR-141 group spec could only be proven against the live stack). Resolution lives in tests/helpers/host-database-url.ts, guarded by tests/unit/host-database-url.spec.ts.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | BASE_URL pins the IPv4 loopback 127.0.0.1 instead of the hostname "localhost": on this host a stale wslrelay squats ::1 ports (docs/runbooks/localhost-wedge-wslrelay.md), so clients resolving localhost→::1 got ECONNREFUSED ::1:3456 (258 hits in the 2026-07-23 ci-local --head e2e run) while the webServer stayed reachable over IPv4. ci-local's NODE_OPTIONS=--dns-result-order=ipv4first mitigation demonstrably did not cover Playwright's request contexts or Chromium; naming the IPv4 address removes name resolution from the failure surface entirely. tests/helpers/test-origins.ts moves in the same change so URL-host waits keep matching.
  */
 
 import { defineConfig } from '@playwright/test';
+import { config as loadEnvFile } from 'dotenv';
+import { hostReachableDatabaseUrl } from './tests/helpers/host-database-url';
+
+// The managed server calls dotenv itself, and dotenv NEVER overrides an already-set variable —
+// so the one value that must be corrected has to be computed here. `.env` names the compose
+// service host (oshal-db) because that is what the containers use; off-container it is ENOTFOUND,
+// so the managed server booted DB-less and every database-backed e2e skipped or failed. A skipped
+// suite is indistinguishable from a passing one, which is why this was invisible.
+loadEnvFile();
+const HOST_DATABASE_URL = hostReachableDatabaseUrl(process.env.DATABASE_URL);
 
 const MOCK_OIDC_ENABLED = ['true', '1', 'yes'].includes((process.env.MOCK_OIDC ?? '').toLowerCase().trim());
 // The webServer env below defaults MOCK_OIDC to 'true' when unset, so the server can run
@@ -64,6 +75,9 @@ const config = defineConfig({
       // store migration is that ANY app can carve. tests/fixtures/swarm-apps/oshal-ci-fixture.yaml
       // is not a product, ships no code, and can never carve. UNSET in production.
       SWARM_APPS_EXTRA_DIRS: process.env.SWARM_APPS_EXTRA_DIRS ?? 'tests/fixtures/swarm-apps',
+      // Reach the compose Postgres through its published port (see the import block above).
+      // Omitted entirely when nothing is configured, so a misconfigured run still fails loudly.
+      ...(HOST_DATABASE_URL ? { DATABASE_URL: HOST_DATABASE_URL } : {}),
       // Boot the keyless provider by default so the test server starts on a box with no
       // vendor creds (CI). Without this the default claude-code provider throws at boot
       // (no ANTHROPIC_API_KEY / OAuth) and Playwright reports "webServer was not able to

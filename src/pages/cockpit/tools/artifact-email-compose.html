@@ -3,26 +3,28 @@
      Opened by send-to.js in an iframe with ?artifact=<ref>; sends over the CALLER'S OWN mailbox
      via POST /api/artifacts/builtin/email (confirm-gated server-side). Self-contained on purpose:
      it renders inside any surface's overlay, so it carries its own styling and no dependencies. -->
-<html lang="en">
+<html lang="en" data-theme="midnight">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Email it</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css">
+<script src="/shared/ui/js/surface-theme.js"></script>
 <style>
-  :root { color-scheme: dark; }
-  body { margin: 0; background: #0f141a; color: #dbe4ee; font: 13.5px system-ui, sans-serif; }
+  body { margin: 0; background: var(--bg-primary, #0f141a); color: var(--text-primary, #dbe4ee); font: 13.5px system-ui, sans-serif; }
   .wrap { padding: 18px 20px 20px; }
   h2 { margin: 0 0 4px; font-size: 15px; }
-  .art { color: #8fa1b3; font-size: 12px; margin-bottom: 12px; word-break: break-all; }
-  label { display: block; color: #8fa1b3; font-size: 12px; margin: 10px 0 4px; }
-  input, textarea { width: 100%; box-sizing: border-box; background: #151b23; border: 1px solid #2a3644; color: #dbe4ee; border-radius: 8px; padding: 8px 10px; font: 13px system-ui, sans-serif; }
+  .art { color: var(--text-secondary, #8fa1b3); font-size: 12px; margin-bottom: 12px; word-break: break-all; }
+  label { display: block; color: var(--text-secondary, #8fa1b3); font-size: 12px; margin: 10px 0 4px; }
+  input, textarea { width: 100%; box-sizing: border-box; background: var(--bg-card, #151b23); border: 1px solid var(--border-color, #2a3644); color: var(--text-primary, #dbe4ee); border-radius: 8px; padding: 8px 10px; font: 13px system-ui, sans-serif; }
   textarea { resize: vertical; min-height: 56px; }
   .actions { display: flex; justify-content: flex-end; margin-top: 14px; }
-  button { background: #4da3ff; border: 1px solid #4da3ff; color: #08131c; font-weight: 600; border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+  button { background: var(--accent-primary, #4da3ff); border: 1px solid var(--accent-primary, #4da3ff); color: #08131c; font-weight: 600; border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
   button:disabled { opacity: .55; cursor: default; }
-  #status { margin-top: 10px; font-size: 12.5px; min-height: 16px; color: #8fa1b3; }
-  #status.err { color: #ff7a7a; }
-  #status.ok { color: #4ecf8a; }
+  #status { margin-top: 10px; font-size: 12.5px; min-height: 16px; color: var(--text-secondary, #8fa1b3); }
+  #status.err { color: var(--status-error, #ff7a7a); }
+  #status.ok { color: var(--status-success, #4ecf8a); }
 </style>
 </head>
 <body>

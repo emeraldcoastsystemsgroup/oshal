@@ -275,7 +275,12 @@ describe('the scrape targets match the deployment', () => {
     // anchor, not because anyone remembered a step. If the label leaves the anchor, every
     // future bot is born unmonitored.
     const compose = read(STACK_COMPOSE);
-    const anchor = compose.slice(compose.indexOf('x-bot-common: &bot-common'), compose.indexOf('x-bot-env:'));
+    // Both boundaries are searched from the ANCHOR onward: the file's CHANGE LOG header now
+    // mentions `x-bot-env:` (SEQ 19/20), and an unanchored indexOf found that comment first —
+    // slicing backwards to an empty string and reporting the label missing while it was present.
+    const anchorStart = compose.indexOf('x-bot-common: &bot-common');
+    expect(anchorStart, 'the x-bot-common anchor must exist').toBeGreaterThan(-1);
+    const anchor = compose.slice(anchorStart, compose.indexOf('x-bot-env:', anchorStart));
     expect(anchor, 'x-bot-common must label its containers `oshal.tier: worker`').toMatch(/labels:\s+oshal\.tier:\s*worker/);
     // The controller overrides the tier — alert-rules.yml scopes the worker rules to
     // job="oshal-swarm-bots" and liveness to job="oshal-core".
