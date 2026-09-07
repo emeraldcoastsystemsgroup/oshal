@@ -36,9 +36,9 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** after the cutover has run and a full week is clean: `book_id NOT NULL` + legacy mode unique-index and fill-trigger drops on orders/signals/decisions, the config-overrides book-less-active CHECK, and `SCHWAB_ACCOUNT_NUMBER` retirement from compose/`.env.example` (with README/ROADMAP/counts reconciliation in the same change).
 - **Done when:** the cutover spec's legacy-shaped book-less INSERT is REJECTED on the live schema, `git grep SCHWAB_ACCOUNT_NUMBER` hits only the ADR/runbook history, and a deploy marker refuses `oshal-deploy.sh` auto-rollback past the PR1 image boundary.
 
-### trading-schedule-dispatch.ts decomposition
-- **Remaining:** 882 code lines — past the 800-line decomposition threshold it already exceeded before ADR-134 (827 on 2026-08-14). The book threading added ~55 lines to an already-oversized module.
-- **Done when:** the file is split along its own section seams (exits/rotation/entries/pop-catcher vs the schedule entry + run loop) with zero behavior change, each new module under 500 code lines, and the existing dispatch-touching specs green without edits.
+### Trading DB specs race on schema bootstrap
+- **Remaining:** running the trading unit specs WITHOUT `--no-file-parallelism` fails three pre-existing specs (trading-books-schema, trading-event-plans, trading-pinned-lots) in `beforeAll` with `trigger "trg_trd_signals_book_fill" … already exists` — the trading schema bootstrap takes the no-lock path, so two concurrent bootstraps collide. Observed 2026-09-06. The dispatch golden-plan spec works around it locally with a single retry; the underlying files were outside that item's ownership.
+- **Done when:** the bootstrap takes an advisory lock (or tolerates the concurrent create) and the same ten-file trading set is green without `--no-file-parallelism`.
 
 ### Codeless k8s install — first live-cluster proof (ADR-129)
 - **Remaining:** run `oshal-install.sh --mode 4` (or `-Kubernetes`) end-to-end on a real second machine — the dev laptop is excluded on purpose (Docker Desktop k8s beside the 44-container swarm is the documented OOM pairing). Then publish the OCI chart (`bash scripts/publish-chart.sh` + the one-time GHCR visibility flip) so the installer's OCI-first path goes live.

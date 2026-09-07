@@ -83,3 +83,5 @@ Unchanged: the engine's single order path, guardrails, live gate, and reservatio
 ## Status / open items
 
 D1-D5 shipped 2026-09-04. Guard specs: the D3 overlay pure-function spec, the D3 lot-state-machine real-DB spec against injected venue fakes, and the D3 source guard on overlay ordering in `trading-schedule-dispatch.ts` — all three are the closure evidence for the ring-fence claim; no part of D3 is considered done without them passing. Nothing in this ADR is deferred to a later phase.
+
+2026-09-06: the dispatch decomposition kept the D3 overlay (`subtractPinnedLots` right after the positions read) and the `freeStaleSells` lot-order skip inside `src/app/trading-schedule-dispatch.ts`, so the D3 source guard (`tests/unit/trading-pinned-lots-overlay.spec.ts`) runs unedited.
