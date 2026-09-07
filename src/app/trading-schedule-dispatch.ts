@@ -44,6 +44,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Trading engine extraction (ADR-085 pre-carve): import repoint only — guardrails/placeDecisionOrder/ensureTradingSchema now come from app/trading-engine.ts instead of the carvable route surface. Zero behavior change; order semantics, gates, schedule pins and TRADING_* env reads untouched.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Sector lean becomes a knob: rotateSleeve now runs rankUniverse through applySectorTilt(TRADING_SECTOR_TILT) so "lean harder on materials" is a dial over the ranking instead of percentages hand-baked into TRADING_CORE_SYMBOLS (which pinned capital in ETFs that sit outside the ranked universe and so never rotate out). Unset/empty tilt → byte-identical ranking. All logic lives in features/trading/services/sector-tilt.ts; this file is past the 800-line decomposition threshold and takes only the import + call.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | DECOMPOSITION (zero behavior change) — the 890-code-line monolith is carved along its own section seams into four kernel legs: trading-dispatch-world-gate.ts (world-sentiment gate + earnings blackout), trading-dispatch-rail.ts (bookBinding, persistDecision/placeManaged, loadInFlight, the decision mappers, capAccount), trading-dispatch-core.ts (coreConfig/coreTradePlan/sizingPrice/ensureCore) and trading-dispatch-rotation.ts (rotationConfig/rankUniverse/rotateSleeve/rotateBlendSleeve), plus trading-dispatch-exits-entries.ts (computeExits/placeEntries and the 2a-pop block as placePopCatches). This entry keeps runAutopilot, freeStaleSells, logRunTicket, dispatchTradingSchedule and the ScheduleService handle byte-identical, and re-exports the pre-split public surface (loadInFlight/InFlight, coreConfig/CoreConfig, coreTradePlan/CoreTrade, sizingPrice, ensureCore, rotationConfig, rankUniverse) so every importer compiles unchanged. History for the moved code stays in SEQ 1-19 above. Every leg logs as module 'trading-schedule-dispatch' (the watchdog contract). Guards: tests/unit/trading-dispatch-golden-plan.spec.ts (real-Postgres golden plan, written against the unsplit file), tests/unit/trading-dispatch-decomposition.spec.ts.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | The autopilot's legacy-book branches resolve through loadLegacyBook (the DB row, which carries the account binding) instead of the pure constructor. Required by the Schwab account-pin retirement: an UNBOUND reader now refuses rather than guessing among the login's enumerated accounts, and this fire drives protective exits, so an unbound legacy live book here would have silenced them.
  *
  * @module trading-schedule-dispatch
  */
@@ -67,7 +68,7 @@ import { pinnedQtyBySymbol, subtractPinnedLots, isLotOrderClientId } from './tra
 // legacy books), capAccount takes LEAST(env, book cap), a disabled book keeps protective exits
 // while rotation/pop/entries are skipped, and BOTH breaker call sites fail CLOSED on an
 // evaluation error (halted, never null→not-halted).
-import { legacyBook, legacyBookId, loadBook, ensureLegacyBooks, multiAccountEnabled } from './trading-books-store';
+import { legacyBook, legacyBookId, loadBook, ensureLegacyBooks, multiAccountEnabled, loadLegacyBook } from './trading-books-store';
 import { reconcileOpenOrders } from './trading-reconcile';
 import { ensureRotationStateTable, loadLastRotated, saveLastRotated } from './trading-rotation-store';
 import { recordDailyEquity } from './trading-daily-equity-store';
@@ -436,15 +437,19 @@ export async function dispatchTradingSchedule(ctx: AppContext, schedule: Schedul
   const rawBookId = td.bookId ? String(td.bookId) : null;
   let book: TradingBook;
   if (!rawBookId) {
-    await ensureLegacyBooks(ctx.pool, sub).catch(() => { /* mint is lazy-best-effort; legacyBook() needs no row */ });
-    book = legacyBook(sub, mode);
+    await ensureLegacyBooks(ctx.pool, sub).catch(() => { /* mint is lazy-best-effort; the row is what carries the binding */ });
+    // The legacy book must come from its DB ROW: the row carries the account binding, and an unbound
+    // Schwab reader now REFUSES rather than guessing which enumerated account to use. A decrypt
+    // failure propagates deliberately — degrading to an unbound book is the one shape that refusal
+    // cannot interpret, and this fire drives protective exits.
+    book = await loadLegacyBook(ctx.pool, sub, mode);
   } else if (!multiAccountEnabled()) {
     if (rawBookId !== legacyBookId(sub, 'paper') && rawBookId !== legacyBookId(sub, 'live')) {
       logger.warn({ scheduleId: schedule.id, bookId: rawBookId }, 'TRADING_MULTI_ACCOUNT is off - per-book schedule hard-skipped (no fallback to the legacy book)');
       return { success: true, scheduleId: schedule.id };
     }
     mode = rawBookId === legacyBookId(sub, 'live') ? 'live' : 'paper';
-    book = legacyBook(sub, mode);
+    book = await loadLegacyBook(ctx.pool, sub, mode);
   } else {
     const loaded = await loadBook(ctx.pool, sub, rawBookId).catch((err) => { logger.error({ err, scheduleId: schedule.id, bookId: rawBookId }, 'book load failed'); return null; });
     if (!loaded) {

@@ -31,6 +31,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | getTransactions(fromIso,toIso,symbol?) — settled TRADE executions for reconciling closes done outside the engine (a manual sell). GET /accounts/{hash}/transactions?types=TRADE&startDate&endDate; Schwab needs the exact ISO+millis+Z form (= toISOString()) and caps the window ~60d, so we chunk at 55d, tolerate a per-chunk failure (log+skip, never abort), and dedup by activityId. normalizeTransaction picks the single non-fee non-cash security leg and infers side from the SIGNED amount CROSS-CHECKED against the cost sign (spec documents no sign → disagreement trusts cost; multi-leg/ambiguous → null/skip). Read-only; per the ADR-052 rail pattern.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Class-share symbology at the wire boundary: orders go out via toSchwabSymbol (BRK.B → BRK/B — Schwab rejects the engine's dot form as an invalid symbol), positions/orders/transactions come back via fromSchwabSymbol so the engine's exemption sets, exits, and ledger all match on ONE notation. Found by the read-only quote probe for the 2026-07-26 BRK.B core proposal; guard: tests/unit/schwab-symbology.spec.ts.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Cash-account settlement (ADR-134 D8): getAccount() now also returns accountType (securitiesAccount.type CASH→'cash', MARGIN→'margin'), settledCash and unsettledCash via the pure schwabSettlementFigures(). SEMANTICS: on a Schwab CASH account `cashAvailableForTrading` INCLUDES unsettled sale proceeds (Schwab lets a cash account buy with them — the good-faith violation is selling before they settle), so it is NOT the settled figure; settled = cashAvailableForTrading − unsettledCash when both are present, else cashAvailableForWithdrawal (already-settled money by definition), else absent. `status`, `cash`, `buyingPower` (which still falls back to cashAvailableForTrading) and `equity` are byte-unchanged.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 pin retirement: SCHWAB_ACCOUNT_NUMBER is GONE from this adapter and account selection is the exported pure `selectSchwabAccount()`. The unbound branch no longer takes "the env pin else the FIRST account the venue enumerates" - on a login with several accounts that silently decided which real-money account was read and traded. It is now single-or-refuse: exactly one enumerated account is used, anything else throws naming how many were seen and telling the operator to bind the book. Bound behaviour (exact match, fail-closed) is unchanged, and because every account-scoped call resolves the hash first the refusal is identical on read paths and order paths. Guard: tests/unit/trading-schwab-account-binding.spec.ts.
  *
  * @module schwab-broker-adapter
  */
@@ -42,10 +43,11 @@ import type {
 } from './broker-adapter';
 import { SchwabMarketData, toSchwabSymbol, fromSchwabSymbol } from './schwab-market-data';
 
-// CHANGE LOG addendum (ADR-134 PR1): constructor takes an optional boundAccountNumber — when set,
+// CHANGE LOG addendum (ADR-134): the constructor takes an optional boundAccountNumber — when set,
 // accountHash() is an EXACT enumeration match that fails closed (never first-account fallback), and
 // the hash cache keys per (sub, bound account) so one user's second account can never read a stale
-// hash minted by the first. Unbound behavior (env pin / first) is byte-unchanged.
+// hash minted by the first. UNBOUND is now single-account-or-refuse (selectSchwabAccount): there is no
+// env pin and no first-of-many, so an unbound reader can never guess which real account it addresses.
 const logger = createChildLogger({ module: 'schwab-broker-adapter' });
 
 /** Cross-order account-hash cache (keyed by userSub, short TTL). Each live order builds a FRESH
@@ -208,6 +210,41 @@ export function schwabSettlementFigures(b: SchwabCurrentBalances | undefined): {
   return { settledCash: settled, unsettledCash: unsettled };
 }
 
+/** One row of Schwab's `/accounts/accountNumbers` enumeration (the account → hashValue map). */
+export interface SchwabAccountRef {
+  accountNumber?: string;
+  hashValue?: string;
+}
+
+/**
+ * @description Choose which enumerated Schwab account this adapter addresses — the ONE place that
+ * decision is made, so it is provable without a venue. Both rules fail closed:
+ *   • BOUND book (ADR-134): an EXACT `accountNumber` match, else throw. Falling through to another
+ *     account would trade the WRONG real account on a partial or foreign enumeration.
+ *   • UNBOUND book: the single enumerated account, else throw. There is deliberately no env pin and
+ *     no "first of many" — that fallback silently decided which of an operator's real accounts was
+ *     read and traded (one connected login can enumerate a legacy account, a margin account and a
+ *     cash IRA). Refusing is the safe answer; binding the book removes the ambiguity for good.
+ * @param list - The `/accounts/accountNumbers` rows, in venue order.
+ * @param bound - The book's bound account number, or null for a legacy/unbound book.
+ * @returns The chosen enumeration row (its `hashValue` addresses account-scoped calls).
+ * @throws When the enumeration is empty, when a bound account is absent from it, or when an unbound
+ *   book faces more than one account — that message names the count and the remedy.
+ */
+export function selectSchwabAccount(list: SchwabAccountRef[], bound: string | null): SchwabAccountRef {
+  const rows = Array.isArray(list) ? list : [];
+  if (!rows.length) throw new Error('Schwab returned no accounts for this connection.');
+  if (bound) {
+    const exact = rows.find((a) => a.accountNumber === bound);
+    if (!exact) throw new Error(`Schwab bound account …${bound.slice(-4)} is not in this connection's enumeration (${rows.length} accounts) — refusing to fall back to another account.`);
+    return exact;
+  }
+  if (rows.length !== 1) {
+    throw new Error(`Schwab connection enumerates ${rows.length} accounts and this book is not bound to one — refusing to guess which real-money account to use. Bind the book to its account in the trading surface (Accounts & books).`);
+  }
+  return rows[0];
+}
+
 /** Map Schwab's securitiesAccount.type onto the broker-neutral account type (unknown strings → undefined). */
 function schwabAccountType(type: string | undefined): BrokerAccountType | undefined {
   const t = String(type || '').toUpperCase();
@@ -348,8 +385,11 @@ export class SchwabBrokerAdapter implements BrokerAdapter {
 
   /**
    * @description Resolve (and cache) the encrypted account hash Schwab keys account-scoped calls by.
-   * Picks SCHWAB_ACCOUNT_NUMBER when set (to disambiguate multiple accounts), else the first.
+   * Selection is `selectSchwabAccount`: a bound book matches its account exactly, an unbound book
+   * requires the connection to enumerate exactly one. Every account-scoped call — reads and order
+   * placement alike — resolves the hash here first, so an unbound refusal stops both.
    * @returns The account hashValue.
+   * @throws The selectSchwabAccount refusal, or when the chosen row carries no hashValue.
    */
   private async accountHash(): Promise<string> {
     // ADR-134: the cache is keyed per (sub, bound account) — a userSub-only key would hand one
@@ -357,19 +397,9 @@ export class SchwabBrokerAdapter implements BrokerAdapter {
     const key = `${this.userSub || 'default'}:${this.boundAccountNumber ?? 'legacy'}`;
     const cached = ACCOUNT_HASH_CACHE.get(key);
     if (cached && cached.exp > Date.now()) return cached.hash;
-    const rows = await this.api<Array<{ accountNumber?: string; hashValue?: string }>>('GET', '/accounts/accountNumbers');
+    const rows = await this.api<SchwabAccountRef[]>('GET', '/accounts/accountNumbers');
     const list = Array.isArray(rows) ? rows : [];
-    if (!list.length) throw new Error('Schwab returned no accounts for this connection.');
-    let chosen: { accountNumber?: string; hashValue?: string } | undefined;
-    if (this.boundAccountNumber) {
-      // Bound book: EXACT match, fail-closed. Falling through to first-account would trade the
-      // WRONG real account on a partial/foreign enumeration — the fire skips instead.
-      chosen = list.find((a) => a.accountNumber === this.boundAccountNumber);
-      if (!chosen) throw new Error(`Schwab bound account …${this.boundAccountNumber.slice(-4)} is not in this connection's enumeration (${list.length} accounts) — refusing to fall back to another account.`);
-    } else {
-      const want = (process.env.SCHWAB_ACCOUNT_NUMBER || '').trim();
-      chosen = (want && list.find((a) => a.accountNumber === want)) || list[0];
-    }
+    const chosen = selectSchwabAccount(list, this.boundAccountNumber);
     if (!chosen?.hashValue) throw new Error('Schwab account has no hashValue (cannot address account-scoped calls).');
     logger.info({ mode: this._mode, account: `…${String(chosen.accountNumber || '').slice(-4)}`, accounts: list.length, bound: Boolean(this.boundAccountNumber) }, 'schwab account resolved');
     ACCOUNT_HASH_CACHE.set(key, { hash: chosen.hashValue, exp: Date.now() + ACCOUNT_HASH_TTL_MS });

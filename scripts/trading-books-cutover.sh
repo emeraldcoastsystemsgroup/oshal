@@ -8,6 +8,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — precondition-gated cutover: refuses unless (a) zero NULL book_ids on every user-bearing trading table, (b) broker-account discovery has run, (c) the legacy live book links unambiguously to its discovered account (SCHWAB_ACCOUNT_NUMBER match, else the SINGLE discovered account; ambiguity refuses), (d) --arm was passed. Then: applies migration 125 (side-store PK swaps — without them a second live book's HWM write raises unique_violation and the fail-closed breaker halts it), links the legacy book, flips TRADING_MULTI_ACCOUNT=true in .env, recreates the api (env changes need a recreate), and post-checks flag visibility + health. NEVER re-POSTs autopilot schedules (a blind re-POST forks a digest twin id that double-fires the real account — adversarial-review blocker; legacy schedules keep their ids, new books get their legs minted by the store autopilot route when enabled). Post-cutover rollback doctrine: flag-off + roll-forward ONLY (per-book schedules hard-skip flag-off by PR1 design).
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Every docker target is an env knob: TRADING_DB_CONTAINER / TRADING_DB_USER / TRADING_DB_NAME / TRADING_API_CONTAINER (compose defaults). Precondition 5 parameterised the api and redis names while the psql chokepoint and the post-cutover health/flag probes still carried literals, so the file contradicted itself on a nonstandard compose project.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Precondition 5 — the observability pair (ADR-134 D2 #7) must exist BEFORE a second live book can be armed: (a) the host watchdog derives its expected live set FROM oshal_trading_books (no hand-known '_live' grep), (b) that watchdog is actually scheduled on the host (schtasks task TRADING_WATCHDOG_TASK_NAME, or TRADING_WATCHDOG_TASK_QUERY for a non-Windows host), (c) the RUNNING api image carries the per-book report module + site-oshal-report.js and the three report scripts require it (a runtime probe, not a Dockerfile pin — the image is what the weekly publisher execs), (d) the Redis schedule store the watchdog maps legs from answers PING. Each refusal names its remediation. Probe (c) greps each of the three scripts SEPARATELY: `grep -q pat f1 f2 f3` exits 0 on ANY match, which would have passed the gate with two scripts still un-repointed.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 pin retirement: precondition 4 no longer reads SCHWAB_ACCOUNT_NUMBER out of .env. The adapter's unbound rule is now single-account-or-refuse, so there is no pin left to disambiguate a multi-account login with and no first-of-many to preserve. It passes two ways - the legacy live book is ALREADY bound (the post-cutover state on this box), or exactly ONE discovered Schwab account is unheld by any book and gets linked - and otherwise refuses with 'bind by hand'. The link UPDATE only runs in the second case, and it skips an account another book already holds.
 #
 # Usage:
 #   bash scripts/trading-books-cutover.sh            # dry-run: print every precondition verdict
@@ -98,19 +99,23 @@ acct_count=$($PSQL "SELECT count(*) FROM oshal_trading_accounts WHERE broker='sc
 [ "$acct_count" != "0" ] || fail "no discovered Schwab accounts — connect Schwab (all accounts checked on the consent screen), then POST /api/trading/accounts/discover"
 note "discovered schwab accounts: $acct_count ✓"
 
-# ── Precondition 4: the legacy live book links to exactly ONE discovered account ─────────────────
-PIN=$(grep -E '^SCHWAB_ACCOUNT_NUMBER=' .env 2>/dev/null | cut -d= -f2- | tr -d '\r' || true)
-if [ -n "$PIN" ]; then
-  # The env pin decides — exactly the adapter's own selection rule, so linking cannot change
-  # which account trades. Match via last4 (numbers are encrypted at rest; the pin is plaintext env).
-  LINK_WHERE="a.account_last4 = right('$PIN', 4)"
+# ── Precondition 4: the legacy live book resolves to exactly ONE account — never a guess ─────────
+# SCHWAB_ACCOUNT_NUMBER is RETIRED: the adapter's unbound rule is single-account-or-refuse, so there
+# is no pin left to disambiguate a multi-account login with. Two ways to pass — the legacy live book
+# is ALREADY bound to its account, or exactly one discovered Schwab account is unheld by any book and
+# can be linked to it. Anything else refuses; the operator binds by hand in the trading surface
+# (Accounts & books), which is the only place that can know which real account the legacy book is.
+UNHELD="NOT EXISTS (SELECT 1 FROM oshal_trading_books b WHERE b.user_sub = a.user_sub AND b.account_id = a.account_id)"
+LINK_LEGACY=0
+bound_n=$($PSQL "SELECT count(*) FROM oshal_trading_books WHERE ref = 'live' AND account_id IS NOT NULL")
+if [ "$bound_n" != "0" ]; then
+  note "legacy live book already bound to its discovered account ($bound_n) ✓"
 else
-  [ "$acct_count" = "1" ] || fail "no SCHWAB_ACCOUNT_NUMBER pin and $acct_count accounts discovered — ambiguous legacy-book link; set the pin or bind by hand"
-  LINK_WHERE="true"
+  free_n=$($PSQL "SELECT count(*) FROM oshal_trading_accounts a WHERE a.broker='schwab' AND $UNHELD")
+  [ "$free_n" = "1" ] || fail "the legacy live book is unbound and $free_n discovered Schwab accounts are unheld — ambiguous legacy-book link; bind the book by hand in the trading surface (Accounts & books) before arming"
+  LINK_LEGACY=1
+  note "legacy live book links unambiguously to the single unheld discovered account ✓"
 fi
-link_n=$($PSQL "SELECT count(*) FROM oshal_trading_accounts a WHERE a.broker='schwab' AND $LINK_WHERE")
-[ "$link_n" = "1" ] || fail "legacy live-book link matched $link_n accounts (want exactly 1)"
-note "legacy live book links unambiguously ✓"
 
 check_observability_pair
 
@@ -123,12 +128,18 @@ fi
 note "applying migration 125 (side-store PK swaps)…"
 docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 < scripts/migrations/125-trading-books-cutover.sql
 
-note "linking the legacy live book to its discovered account…"
-$PSQL "UPDATE oshal_trading_books b
-          SET account_id = a.account_id, broker = 'schwab', connection_key = a.connection_key
-         FROM oshal_trading_accounts a
-        WHERE b.ref = 'live' AND b.account_id IS NULL
-          AND a.user_sub = b.user_sub AND a.broker = 'schwab' AND $LINK_WHERE"
+if [ "$LINK_LEGACY" = "1" ]; then
+  note "linking the legacy live book to the single unheld discovered account…"
+  $PSQL "UPDATE oshal_trading_books b
+            SET account_id = a.account_id, broker = 'schwab', connection_key = a.connection_key
+           FROM oshal_trading_accounts a
+          WHERE b.ref = 'live' AND b.account_id IS NULL
+            AND a.user_sub = b.user_sub AND a.broker = 'schwab'
+            AND NOT EXISTS (SELECT 1 FROM oshal_trading_books b2
+                             WHERE b2.user_sub = a.user_sub AND b2.account_id = a.account_id)"
+else
+  note "legacy live book is already bound — nothing to link"
+fi
 
 note "flipping TRADING_MULTI_ACCOUNT=true in .env…"
 if grep -qE '^TRADING_MULTI_ACCOUNT=' .env; then

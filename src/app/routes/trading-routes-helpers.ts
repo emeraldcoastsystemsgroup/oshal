@@ -8,6 +8,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from trading-routes.ts (1000-line cap decomposition): callerSub, resolveMode, servePage, the guardrails (Guardrails/guardrails/guardrailViolation), TradingError, and the SignalRow shape. Code moved verbatim — zero behavior change.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 pin retirement: the resolveBook ALIAS branch ('paper'/'live'/absent) now calls the shared loadLegacyBook() instead of `loadBook(...).catch(() => null) ?? legacyBook(...)`. That catch swallowed loadBook's named book_binding_undecryptable throw and handed the route an UNBOUND legacy book, which is the one shape a Schwab reader cannot interpret safely - it would have to guess which of the login's accounts it is addressing. A missing ROW still falls back (fresh install); a THROW now surfaces.
  *
  * @module trading-routes-helpers
  */
@@ -60,20 +61,21 @@ export function resolveMode(raw: unknown): TradingMode {
  * @param raw - The raw `book` (or `mode`) value from a query/body field.
  * @returns The resolved TradingBook.
  * @throws TradingError 400 on an unknown/foreign ref; 404-shaped refusal stays a 400 to avoid
- *   existence probing across users.
+ *   existence probing across users. An alias whose book row exists but whose account binding cannot
+ *   be decrypted propagates that named failure rather than degrading to an unbound book.
  */
 export async function resolveBook(pool: { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> }, sub: string, raw: unknown): Promise<TradingBook> {
-  const { legacyBook, legacyBookId, loadBook, getBookByRef } = await import('../trading-books-store.js');
+  const { loadLegacyBook, loadBook, getBookByRef } = await import('../trading-books-store.js');
   const v = String(raw ?? '').trim().toLowerCase();
   // ALIASES RESOLVE THROUGH THE DB ROW (surface-audit finding 2026-09-03): the pure legacyBook()
   // constructor hard-codes enabled:true, so alias-addressed routes ignored a legacy book the
   // operator had set to view-only — "Stop trading" showed on screen while route-driven buys still
   // executed. The row carries the real enabled/capital-cap/binding; the pure constructor remains
-  // only the bootstrap fallback for a user whose books were never minted.
+  // only the bootstrap fallback for a user whose books were never minted. loadLegacyBook is that
+  // rule, WITHOUT the `.catch(() => null)` this branch used to carry: a decrypt failure now
+  // surfaces instead of quietly becoming an unbound book (ADR-134 pin retirement).
   if (!v || v === 'paper' || v === 'live') {
-    const kind = (v === 'live' ? 'live' : 'paper') as 'paper' | 'live';
-    const row = await loadBook(pool as never, sub, legacyBookId(sub, kind)).catch(() => null);
-    return row ?? legacyBook(sub, kind);
+    return loadLegacyBook(pool as never, sub, (v === 'live' ? 'live' : 'paper') as 'paper' | 'live');
   }
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
   const book = isUuid ? await loadBook(pool as never, sub, v) : await getBookByRef(pool as never, sub, String(raw).trim());

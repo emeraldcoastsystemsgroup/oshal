@@ -515,11 +515,12 @@ x-bot-env: &bot-env
   # retry next fire. Per-order API cost is minimized by the cross-order account-hash cache.
   TRADING_MAX_ORDERS_PER_RUN: ${TRADING_MAX_ORDERS_PER_RUN:-}
   # Charles Schwab LIVE rail (per-user OAuth connector, ADR-052): approved production App Key/Secret,
-  # the exact callback registered in the Schwab portal, + optional account picker / sandbox base.
+  # the exact callback registered in the Schwab portal, + the optional sandbox base. There is NO
+  # account picker: which account a book addresses comes from the book's binding (ADR-134), and an
+  # unbound book on a multi-account login refuses rather than guessing.
   SCHWAB_CLIENT_ID_PRD: ${SCHWAB_CLIENT_ID_PRD:-}
   SCHWAB_CLIENT_SECRET_PRD: ${SCHWAB_CLIENT_SECRET_PRD:-}
   SCHWAB_CLIENT_CALL_BACK: ${SCHWAB_CLIENT_CALL_BACK:-}
-  SCHWAB_ACCOUNT_NUMBER: ${SCHWAB_ACCOUNT_NUMBER:-}
   SCHWAB_TRADER_BASE_URL: ${SCHWAB_TRADER_BASE_URL:-}
   # Live-book market data (quotes + price history) reads the Market Data API on the SAME Schwab
   # connection — no separate credential. Base is overridable for the developer sandbox.

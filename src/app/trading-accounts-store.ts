@@ -15,6 +15,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — accounts table (encrypted number + HMAC digest identity + last4, owner-pair unique for the books composite FK, RLS at the DDL chokepoint), discoverBrokerAccounts over every schwab connection with age-out-not-delete semantics, masked list reads.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 pin retirement: discovery no longer reads SCHWAB_ACCOUNT_NUMBER to decide which discovered account is 'the legacy live one'. The books-by-account_id check already covers a legacy live book that is BOUND (the post-cutover state), and with the pin gone there is nothing to compare an unbound one against - guessing here is the same defect the adapter's selection rule just lost. An account no book holds gets the documented DISABLED view-only book.
  */
 
 import crypto from 'crypto';
@@ -189,12 +190,14 @@ export async function discoverBrokerAccounts(pool: AppContext['pool'], sub: stri
         // book so the switcher/summary can show its real balances and positions immediately.
         // Disabled = view-only — the engine refuses BUYs on a disabled book, dispatch takes no new
         // risk, and ENABLING (the act that trades) stays an explicit confirm-gated operator step.
-        // The legacy live account is skipped: the 'live' legacy book already covers it.
+        // An account some book already holds is skipped — including the legacy 'live' book once it
+        // is bound, which is what covers the legacy account (ADR-134 pin retirement: there is no
+        // SCHWAB_ACCOUNT_NUMBER left to recognise an UNBOUND legacy account by, and inventing one
+        // here would re-create exactly the guess the adapter's selection rule just lost).
         try {
           const already = (await pool.query(
             `SELECT 1 FROM oshal_trading_books WHERE user_sub=$1 AND account_id=$2`, [sub, String(row.account_id)])).rows.length;
-          const isLegacyLive = (process.env.SCHWAB_ACCOUNT_NUMBER || '').trim() === a.accountNumber;
-          if (!already && !isLegacyLive) {
+          if (!already) {
             const { createBook } = await import('./trading-books-store.js');
             const label = `${a.type || 'Account'} …${a.accountNumber.slice(-4)}`;
             await createBook(pool, sub, String(row.account_id), label);
