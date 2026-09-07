@@ -565,8 +565,9 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** paper and live share one guarded algorithm/config path, historical and shadow evidence records impact, and promotion requires the existing explicit confirmation. See [ADR-052](adr/052-stock-trading-swarm.md).
 
 ### Trading platform surface and engine expansion
-- **Remaining:** add asset/sector mix and active stop/take-profit panels, default to the full supported universe, and design futures/intraday/long sleeves plus a roughly 200-symbol multi-market universe.
-- **Done when:** the [`trading`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/trading) surface exposes allocations/exits for the actual engine universe and every added sleeve is paper-proven behind kernel risk gates.
+- **Done (intelligent-trades 1.11.0, 2026-09-07):** the asset/sector allocation panel, the active stop/take-profit panel, and "default to the full supported universe" — arming no longer pins `DEFAULT_UNIVERSE` into any leg's `taskData`, the ceiling is `TRADING_UNIVERSE_MAX_PIN` and refuses rather than truncates, and `GET /autopilot` reports `universeSource`. Recorded as-built in [ADR-136](adr/136-trading-surface-information-architecture-and-direct-trades.md) D10.
+- **Remaining:** design futures/intraday/long sleeves plus a roughly 200-symbol multi-market universe. The sleeves ADR must be numbered **144** — 142 and 143 are both taken.
+- **Done when:** every added sleeve is paper-proven behind kernel risk gates.
 
 ### SK Hynix sleeve graduation
 - **Remaining:** after reliable permanent-ticker history exists, remove the temporary core exemption and evaluate the position through the normal sleeve/risk model.
