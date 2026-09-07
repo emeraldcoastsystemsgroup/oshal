@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Full-Jarvis mode settings: fullJarvisEnabled (open the swarm-hosted cockpit on launch) + cockpitPath, seedable via OSHAL_FULL_JARVIS / OSHAL_COCKPIT_PATH
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | cockpitBaseUrl (OSHAL_COCKPIT_BASE_URL): sign-in + cockpit must target the swarm's PUBLIC origin when OIDC lives behind a tunnel — the IdP sets the session cookie there, never on the LAN control-plane origin
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Version desktop settings and make the hosted Full-Jarvis surface the default for new/unset profiles without overriding an explicit orb-only choice.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | printServicePort (OSHAL_PRINT_SERVICE_PORT) so a node can advertise its print-to-rag printer alongside a standalone print-drop already holding 631. A non-numeric env value is REJECTED rather than becoming NaN and landing the printer on a random port.
  */
 
 import { app } from 'electron';
@@ -68,6 +69,10 @@ export interface OshalChatConfig {
   printServiceEnabled: boolean;
   /** Spool folder the print service buffers documents in (blank → a folder beside the app). */
   printServiceSpoolDir: string;
+  /** IPP port the print service listens on. 631 is the IPP standard and the print-drop default;
+   *  change it when a standalone print-drop already holds 631 on this machine (two instances on
+   *  one port is an EADDRINUSE the loser only reports in its log). */
+  printServicePort: number;
 }
 
 export const CURRENT_CONFIG_VERSION = 2;
@@ -95,6 +100,7 @@ const DEFAULT_CONFIG: OshalChatConfig = {
   wakeAssistantName: 'Jarvis',
   printServiceEnabled: false,
   printServiceSpoolDir: '',
+  printServicePort: 631,
 };
 
 /**
@@ -141,7 +147,7 @@ function readEnvSeed(): Partial<OshalChatConfig> {
     OSHAL_CONTROL_PLANE_URL, OSHAL_SHARED_SECRET, OSHAL_AUTH_HEADER, OSHAL_CLIENT_NAME,
     OSHAL_WORKER_ENABLED, OSHAL_FULL_JARVIS, OSHAL_COCKPIT_PATH, OSHAL_COCKPIT_BASE_URL,
     OSHAL_WAKE_NAME, OSHAL_ENROLLMENT_TOKEN, OSHAL_CLIENT_ID,
-    OSHAL_PRINT_SERVICE, OSHAL_PRINT_SERVICE_DIR,
+    OSHAL_PRINT_SERVICE, OSHAL_PRINT_SERVICE_DIR, OSHAL_PRINT_SERVICE_PORT,
   } = process.env;
 
   // A DEVICE-BOUND token names the device it may register as, so when the swarm mints the
@@ -192,6 +198,11 @@ function readEnvSeed(): Partial<OshalChatConfig> {
   }
   if (OSHAL_PRINT_SERVICE_DIR) {
     seed.printServiceSpoolDir = OSHAL_PRINT_SERVICE_DIR;
+  }
+  if (OSHAL_PRINT_SERVICE_PORT) {
+    const port = Number(OSHAL_PRINT_SERVICE_PORT);
+    // A non-numeric value must not silently become NaN and land the printer on a random port.
+    if (Number.isInteger(port) && port > 0 && port < 65536) seed.printServicePort = port;
   }
   return seed;
 }
