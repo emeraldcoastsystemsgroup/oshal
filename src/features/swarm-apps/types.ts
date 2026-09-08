@@ -636,6 +636,20 @@ export interface SwarmAppReadinessDeclaration {
   detailPointer?: string;
 }
 
+/**
+ * The guest-seed contract: a POST route below one of this package's own `routes[].mountPath`s that
+ * core calls ONCE when an anonymous guest session starts, with the service secret and
+ * `x-oshal-user-sub` set to the fresh guest sub. The app plants ITS OWN demo data for that sub —
+ * guest-mode seeding is the developer's responsibility, not core's. Owner-route auth must admit the
+ * service secret (`service` or `service-or-oidc`), because the caller is core, not a browser session
+ * — the exact mirror of `readiness:`, whose route must instead admit a session. Validated fail-closed
+ * at load. Absent = the app seeds nothing for guests.
+ */
+export interface SwarmAppGuestSeedDeclaration {
+  /** POST path below one of this package's own `routes[].mountPath`s. */
+  path: string;
+}
+
 /** The YAML manifest shape, as parsed from swarm-apps/*.yaml. */
 export interface SwarmAppManifest {
   name: string;
@@ -650,6 +664,10 @@ export interface SwarmAppManifest {
   /** ADR-141 D3: per-user readiness probes a group's `setup[]` may reference. Validated fail-closed
    *  at load exactly like `smoke:` (own mount, canonical path, valid pointers, session-admitting route). */
   readiness?: SwarmAppReadinessDeclaration[];
+  /** The guest-seed hook (guest-seed contract): the route core calls on guest-start so this app
+   *  plants its own demo data for the fresh guest. Validated fail-closed at load (own mount,
+   *  canonical path, service-admitting route). Absent = this app seeds nothing for guests. */
+  guestSeed?: SwarmAppGuestSeedDeclaration;
   description?: string;
   version?: string;
   status?: 'active' | 'inactive';

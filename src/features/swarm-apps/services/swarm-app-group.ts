@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups. A `kind: group` manifest carries NO code and binds installed member apps into one front door: its `toolbar[]` BORROWS member surfaces by app + surface name (a reference the loader resolves — never a copied URL, so a renamed surface fails the group instead of leaving a dead tile), its `setup[]` drives the ONE kernel setup dashboard from the members' per-user `readiness:` probes (the session-authenticated sibling of `smoke:`). Static validation (loader) and resolution against the active members (service: fail-closed at activation, lenient-with-warning at profile synthesis) both live here so the service stays under its size budget.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guest-seed contract: validateGuestSeedDeclaration validates the manifest's `guestSeed:` hook fail-closed at load, mirroring readiness but requiring a SERVICE-admitting owner route (service | service-or-oidc) — core, not a browser session, is the caller (it POSTs with the service secret + x-oshal-user-sub = the guest sub). An app that declares a guest seed behind a session-only route would be uncallable by the orchestrator, so that's a load error, not a silent no-op.
  */
 
 import fs from 'fs';
@@ -12,6 +13,7 @@ import { resolveRouteAuthMode } from '@/shared/route-auth';
 import type {
   SwarmAppGroupSetupStep,
   SwarmAppGroupToolbarEntry,
+  SwarmAppGuestSeedDeclaration,
   SwarmAppManifest,
   SwarmAppReadinessDeclaration,
   SwarmAppStaticUi,
@@ -31,6 +33,10 @@ const GROUP_FORBIDDEN_KEYS = [
 
 /** Route auth modes that admit a browser session — the only ones a readiness probe may sit behind. */
 const SESSION_ADMITTING_MODES = new Set(['oidc', 'service-or-oidc']);
+
+/** Route auth modes that admit the service secret — the only ones a guest-seed hook may sit behind
+ *  (core POSTs it with the service secret + the guest sub, never as a browser session). */
+const SERVICE_ADMITTING_MODES = new Set(['service', 'service-or-oidc']);
 
 /** Thrown when a group names a member, surface or readiness that the active members do not provide. */
 export class GroupResolutionError extends Error {
@@ -271,6 +277,39 @@ export function validateReadinessDeclarations(manifest: SwarmAppManifest, absPat
     }
     if (!isJsonPointer(decl.readyPointer) || decl.readyPointer === '') throw new Error(`Manifest ${absPath}: ${at}.readyPointer must be a non-empty RFC 6901 pointer`);
     if (decl.detailPointer !== undefined && !isJsonPointer(decl.detailPointer)) throw new Error(`Manifest ${absPath}: ${at}.detailPointer, when present, must be an RFC 6901 pointer`);
+  }
+}
+
+/**
+ * @description Validate the manifest's `guestSeed:` hook fail-closed at load. Unlike `readiness:`
+ * (an array of per-user probes behind a session route), a guest seed is a SINGLE `{path}` behind a
+ * SERVICE-admitting route: core calls it with the service secret + `x-oshal-user-sub` = the guest
+ * sub, so a session-only owner route would make the app's own seed uncallable — a load error, not a
+ * silent miss. The path must be concrete/canonical and owned by one of this manifest's own routes.
+ * @param manifest - The parsed manifest.
+ * @param absPath - Manifest file path, for error messages.
+ */
+export function validateGuestSeedDeclaration(manifest: SwarmAppManifest, absPath: string): void {
+  if (manifest.guestSeed === undefined) return;
+  if (!isPlainObject(manifest.guestSeed)) {
+    throw new Error(`Manifest ${absPath}: guestSeed, when present, must be an object {path}`);
+  }
+  const unknown = Object.keys(manifest.guestSeed).filter((k) => k !== 'path');
+  if (unknown.length) throw new Error(`Manifest ${absPath}: guestSeed has unknown field(s): ${unknown.join(', ')}`);
+  const decl = manifest.guestSeed as unknown as SwarmAppGuestSeedDeclaration;
+  if (!isCanonicalPath(decl.path)) {
+    throw new Error(`Manifest ${absPath}: guestSeed.path must be a concrete canonical root-relative path`);
+  }
+  const routes = manifest.routes ?? [];
+  const owner = routes
+    .filter((route) => decl.path === route.mountPath.replace(/\/+$/, '') || decl.path.startsWith(`${route.mountPath.replace(/\/+$/, '')}/`))
+    .sort((a, b) => b.mountPath.length - a.mountPath.length)[0];
+  if (!owner) {
+    throw new Error(`Manifest ${absPath}: guestSeed.path "${decl.path}" is not owned by a declared routes[].mountPath — a guest seed plants data into this package's OWN store`);
+  }
+  const mode = resolveRouteAuthMode(owner);
+  if (!SERVICE_ADMITTING_MODES.has(mode)) {
+    throw new Error(`Manifest ${absPath}: guestSeed.path is owned by ${owner.mountPath} (auth: ${mode}) — core calls a guest seed with the service secret, so its route must admit service auth (service or service-or-oidc)`);
   }
 }
 
