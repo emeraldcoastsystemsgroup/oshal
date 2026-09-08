@@ -19,6 +19,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — GET /api/connect/liveness (auth-gated, caller-scoped): per-provider live grant check with a 15-minute cache, deps-injectable probe for unit guards (no live calls in tests), and statuses ok | needs_reconnect | unknown the utilities surface renders as distinct badges.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The probe cache moves to ./connector-liveness-cache so a connection WRITE can invalidate it (this module imports connector-tenancy, so the cache could not live here without a cycle). Behaviour of the route is unchanged except that a reconnect no longer leaves a stale needs_reconnect answer standing for the rest of the TTL.
  *
  * @module connector-liveness
  */
@@ -28,13 +29,17 @@ import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
 import type { AppContext } from '@/app/composition/app-context';
 import { accessibleConnections, resolveConnectionRow, type ConnectionRow } from './connector-tenancy';
+import {
+  getCachedLiveness, setCachedLiveness, resetConnectorLivenessCacheForTesting,
+  type LivenessStatus,
+} from './connector-liveness-cache';
 import { getValidAccessToken } from './connectors-routes';
 import { fetchAccount } from './connector-account-lookup';
 
 const logger = createChildLogger({ module: 'connector-liveness' });
 
-/** How a probed grant stands with its provider. */
-export type LivenessStatus = 'ok' | 'needs_reconnect' | 'unknown';
+/** How a probed grant stands with its provider. Declared in the cache module (one definition). */
+export type { LivenessStatus };
 
 /** One provider's probe outcome. */
 export interface ProviderLiveness {
@@ -61,16 +66,9 @@ const defaultDeps: LivenessDeps = {
   fetchAccount,
 };
 
-/** Cache: (sub|provider) → last probe. 15 minutes, per the G14 done-when. */
-const CACHE_TTL_MS = 15 * 60 * 1000;
-const cache = new Map<string, { status: LivenessStatus; detail?: string; checkedAt: number }>();
-
-/**
- * @description Clear the probe cache — for unit guards only.
- */
-export function resetConnectorLivenessCacheForTesting(): void {
-  cache.clear();
-}
+// The probe cache lives in ./connector-liveness-cache so that connector-tenancy's connection
+// WRITE can invalidate it without an import cycle (this module already imports that one).
+export { resetConnectorLivenessCacheForTesting };
 
 /**
  * @description Probe whether the provider still honors the caller's grant for one provider.
@@ -144,15 +142,14 @@ export function createConnectorLivenessRoutes(ctx: AppContext, deps: LivenessDep
       const providers = Array.from(new Set(rows.map((r) => r.provider)));
       const results: ProviderLiveness[] = [];
       for (const provider of providers) {
-        const key = `${sub}|${provider}`;
-        const hit = cache.get(key);
-        if (!fresh && hit && Date.now() - hit.checkedAt < CACHE_TTL_MS) {
+        const hit = fresh ? undefined : getCachedLiveness(sub, provider);
+        if (hit) {
           results.push({ provider, status: hit.status, detail: hit.detail, checkedAt: hit.checkedAt, cached: true });
           continue;
         }
         const probe = await probeProviderLiveness(ctx.pool, sub, provider, deps);
         const entry = { status: probe.status, detail: probe.detail, checkedAt: Date.now() };
-        cache.set(key, entry);
+        setCachedLiveness(sub, provider, entry);
         results.push({ provider, ...entry, cached: false });
       }
       logger.info({ sub, providers: results.length, needsReconnect: results.filter((r) => r.status === 'needs_reconnect').length }, 'liveness sweep complete');
