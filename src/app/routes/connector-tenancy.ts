@@ -23,11 +23,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-042 Phase 1: oshal_tenants + oshal_tenant_memberships, tenant_id/connected_by_sub on oshal_connections, partial unique indexes (personal vs shared), personal∪shared resolution (household-first), tenant-aware upsert, and minimal household management helpers.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Multi-account-per-provider (ADR-113 section 4) made DETERMINISTIC. Resolution used to fall back to the first row of an updated_at DESC list, so with two accounts of one provider and no explicit default "the user's Gmail token" changed identity every time an access token was refreshed. Extracted the rule into the pure, exported pickConnection() — explicit selector, then the marked default, then the only candidate, then a STABLE tiebreak (shared-before-personal, then created_at, then connection_id) — and made upsertConnection seed exactly one is_default per (ownership scope, provider) so the marked-default branch is the normal path. Added created_at to the resolved row, the scope-default seed to the bootstrap (mirroring migration 101), and disconnectConnections() so removing an account re-seeds the scope default instead of leaving the scope defaultless.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | BUG-13: isConnectionExpired() - the single definition of "this login needs re-consent", so the /list projection, the Identity Hub inventory and any future consumer cannot each invent their own. Deliberately NOT `expiry < now`: getValidAccessToken renews silently whenever a refresh token exists, so a lapsed access token on a refreshable grant is the NORMAL steady state (a Google access token lasts an hour), and only a lapsed grant with nothing to renew it is actually broken.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | upsertConnection invalidates the connector-liveness probe cache for the provider it just wrote. The cache memoises the PROVIDER's answer about a grant for 15 minutes; reconnecting replaces the grant, so without this a successful reconnect kept reporting needs_reconnect until the TTL lapsed — from the operator's seat, indistinguishable from the reconnect having failed.
  */
 
 import { createChildLogger } from '@/shared/logger';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { reconcilePerUserSchedules } from '../per-user-schedule-reconcile';
+import { invalidateConnectorLiveness } from './connector-liveness-cache';
 
 const logger = createChildLogger({ module: 'connector-tenancy' });
 
@@ -302,6 +304,11 @@ export async function upsertConnection(pool: any, c: {
   // stable-order fallback). Conditional: a user who already chose a default keeps it when they
   // connect a second account, and a silent re-auth of the same account changes nothing.
   await seedScopeDefault(pool, c.provider, c.tenantId || null, c.userSub);
+  // The grant just changed, so every memoised liveness probe for this provider is now answering
+  // about a grant that no longer exists. Without this, a SUCCESSFUL reconnect kept reading
+  // `needs_reconnect` on the Connections screen for the rest of the 15-minute TTL — identical,
+  // from the operator's seat, to the reconnect having silently failed.
+  invalidateConnectorLiveness(c.provider);
   // Connecting an account may activate per-user "polls" that loaded apps declared
   // (manifest schedules with scope:'per-user' + requiresConnection===provider).
   // Fire-and-forget — never blocks or fails the connection write.
