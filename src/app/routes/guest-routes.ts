@@ -6,14 +6,23 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guest-mode entry routes (Phase 1). Public `/guest` landing with a "Continue as guest" button, plus POST /api/guest/start (mint cookie → cockpit) and POST /api/guest/end (clear). All inert (404) when ENABLE_GUEST_MODE is off.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | `?next=<relative-path>` deep links: /guest carries a sanitized next through the start form (action query string, so no body-parser dependency) and /api/guest/start redirects there instead of /cockpit/; an already-authenticated visitor (guest or real) hitting /guest with a next skips the landing entirely. Lets the marketing sites deep-link a specific app surface (e.g. ?app=jarvis) through the guest gate instead of bouncing anonymous visitors to Google login. next is same-origin only: must start with a single '/', no '\', no CR/LF, ≤300 chars — else ignored.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guest-start now honors HOST_APP_MAP on the no-`next` default. A themed subdomain (career.oshal.ai, finance.oshal.ai, …) landed the guest on the bare /cockpit/ — the generic all-apps ribbon — because the fallback ignored the per-host map that the root `/` handler already applies. So `career.oshal.ai/guest` dropped the app the visitor came for. It now resolves the same landing path root `/` does (resolveHostLandingPath), so the subdomain lands on its app; an explicit `next` still wins, and a single-host deployment (no map entry) is unchanged (/cockpit/).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guest-seed contract: after minting a fresh guest, fan out to every installed app that declares `guestSeed:` (runGuestSeeds) so each app plants its OWN demo data for this guest — guest-mode DATA seeding moves to the app developer; core only marries the fresh identity to the seed. Fire-and-forget beside the existing core seed (which still owns the framework's own tickets demo and, until the finance/career apps carry their own hook, their data). The app registry is built after these routes mount, so the active-manifest list is a REQUEST-time getter injected as GuestRoutesDeps.
  */
 
 import { Router, type Request, type Response } from 'express';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import type { SwarmAppManifest } from '@/features/swarm-apps';
 import { isGuestModeEnabled, setGuestCookie, clearGuestCookie } from '@/shared/middleware/guest-session';
 import { resolveHostLandingPath } from '../host-app-map';
 import { seedGuestDemoData } from './guest-demo-seed';
+import { runGuestSeeds } from './guest-seed-orchestrator';
+
+/** Runtime hooks the guest routes need but cannot see at mount time (the app registry is built after
+ *  these routes mount). `getActiveManifests` is read at REQUEST time, when boot has settled. */
+export interface GuestRoutesDeps {
+  getActiveManifests?: () => Promise<SwarmAppManifest[]>;
+}
 
 const logger = createChildLogger({ module: 'guest-routes' });
 
@@ -77,7 +86,7 @@ function guestLandingHtml(next: string | null): string {
  * @description Registers the public guest landing page + guest session endpoints.
  * Returns a router whose handlers 404 when guest mode is disabled.
  */
-export function createGuestRoutes(pool?: Pool): Router {
+export function createGuestRoutes(pool?: Pool, deps?: GuestRoutesDeps): Router {
   const router = Router();
 
   const guard = (_req: Request, res: Response, nextFn: () => void): void => {
@@ -118,6 +127,15 @@ export function createGuestRoutes(pool?: Pool): Router {
     // Plant the shared fake finance account so the read-only Finance app shows data.
     // Fire-and-forget — never block the redirect on a seed hiccup.
     if (pool) void seedGuestDemoData(pool, sub);
+    // Guest-seed contract: fan out to each installed app's own `guestSeed:` hook AS this guest, over
+    // the loopback service rail. Fire-and-forget and fenced inside runGuestSeeds — never blocks the
+    // redirect, never throws. The active-manifest list is read now (post-boot), via the injected dep.
+    if (deps?.getActiveManifests) {
+      void deps
+        .getActiveManifests()
+        .then((manifests) => runGuestSeeds({ guestSub: sub, port: req.socket.localPort, manifests }))
+        .catch((err) => logger.info({ err: (err as Error).message, sub }, 'Guest seed fan-out skipped (non-fatal)'));
+    }
     res.redirect(302, next);
   });
 

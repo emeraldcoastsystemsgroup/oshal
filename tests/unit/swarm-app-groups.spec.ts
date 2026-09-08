@@ -121,6 +121,44 @@ describe('readManifest — readiness: fails closed like smoke:', () => {
   });
 });
 
+// The guest-seed contract mirrors readiness, but INVERTED on auth: core calls the seed with the
+// service secret (never a session), so its owning route must admit SERVICE auth. A seed behind a
+// session-only route would be uncallable by the orchestrator — so that is a load error, not a
+// silent miss.
+describe('readManifest — guestSeed: fails closed (mirror of readiness, service-admitting)', () => {
+  const SEED_YAML = (auth: string, seedPath = '/api/s1/guest-seed') => [
+    'name: s1',
+    'displayName: S1',
+    'suite: ai-knowledge',
+    'routes:',
+    `  - { module: routes/x.js, factory: createX, mountPath: /api/s1, auth: ${auth} }`,
+    `guestSeed: { path: ${seedPath} }`,
+    '',
+  ].join('\n');
+
+  it('accepts a guest seed below the package\'s own service-admitting route (sanity)', () => {
+    expect(readManifest(writeManifest(SEED_YAML('service-or-oidc'))).guestSeed?.path).toBe('/api/s1/guest-seed');
+    expect(readManifest(writeManifest(SEED_YAML('service'))).guestSeed?.path).toBe('/api/s1/guest-seed');
+  });
+
+  it('rejects a seed behind a session-only route — core calls it with the service secret', () => {
+    expect(() => readManifest(writeManifest(SEED_YAML('oidc'))))
+      .toThrow(/must admit service auth/);
+  });
+
+  it('rejects a seed path not owned by the package\'s own routes', () => {
+    expect(() => readManifest(writeManifest(SEED_YAML('service', '/api/other/guest-seed'))))
+      .toThrow(/not owned by a declared routes\[\]\.mountPath/);
+  });
+
+  it('rejects a non-canonical seed path and an unknown field', () => {
+    expect(() => readManifest(writeManifest(SEED_YAML('service', '/api/s1/../escape'))))
+      .toThrow(/must be a concrete canonical root-relative path/);
+    expect(() => readManifest(writeManifest(SEED_YAML('service').replace('{ path: /api/s1/guest-seed }', '{ path: /api/s1/guest-seed, when: nightly }'))))
+      .toThrow(/unknown field\(s\): when/);
+  });
+});
+
 describe('resolvers — borrow by reference, name what is missing', () => {
   it('copies label/icon/iframeUrl from the member and applies the group band/section', () => {
     const members = new Map([['m1', member('m1', 'm1-home', 'thing')], ['m2', member('m2', 'm2-inbox', 'mail')]]);
