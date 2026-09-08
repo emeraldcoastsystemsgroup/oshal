@@ -26,6 +26,7 @@ export {
   staticRibbonItems,
   validateGroupManifest,
   validateReadinessDeclarations,
+  validateGuestSeedDeclaration,
   resolveGroupToolbar,
   resolveGroupSetup,
   assertGroupResolvable,

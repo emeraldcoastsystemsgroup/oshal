@@ -816,8 +816,14 @@ function createApp(): express.Application {
   // shared/middleware/guest-capability-matrix.ts for the tier list.
   app.use(createGuestGuard());
 
-  // Public guest entry: the /guest landing page + POST /api/guest/start|end.
-  app.use(createGuestRoutes(ctx.pool));
+  // Public guest entry: the /guest landing page + POST /api/guest/start|end. The guest-seed
+  // fan-out (guest-seed contract) needs the ACTIVE app registry, which is constructed later in
+  // boot — so pass a REQUEST-time getter that reads it through the holder below. A guest request
+  // only ever arrives after boot has settled, so the holder is populated by then.
+  const guestSeedRegistry: { svc?: SwarmAppService } = {};
+  app.use(createGuestRoutes(ctx.pool, {
+    getActiveManifests: () => guestSeedRegistry.svc?.getActiveManifests() ?? Promise.resolve([]),
+  }));
 
   // Facebook OAuth callback alias — the FB app registers /auth/facebook/callback;
   // forward (preserving ?code&state) to the connectors handler that exchanges + stores.
@@ -1089,6 +1095,9 @@ function createApp(): express.Application {
     },
     takeoutSliceRegistry,
   );
+  // Late-bind the guest-seed fan-out to the now-constructed app registry (see the guest routes
+  // mount above) so guest-start can read the active manifests' `guestSeed:` hooks at request time.
+  guestSeedRegistry.svc = swarmAppService;
   // Per-user "polls" (connector-scoped manifest schedules) + the nightly oshal-dev
   // docs-quality schedule (ADR-081, gated on OSHAL_DEV_OWNER_SUB) — extracted verbatim
   // to swarm-app-schedule-wiring.ts; both run at this exact point in boot as before.
