@@ -212,6 +212,15 @@
       },
 
       {
+        "id": "tool-sports-edge-home",
+        "icon": "codicon codicon-symbol-event",
+        "label": "Sports Edge",
+        "section": "top",
+        "group": "Sports",
+        "toolUi": { "iframeUrl": "/api/sports-edge/", "sidebarLabel": "Sports Edge" }
+      },
+
+      {
         "id": "tool-travel-concierge",
         "icon": "codicon codicon-globe",
         "label": "Travel",
