@@ -19,6 +19,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Recognize the Outlook connector's stable `outlook` id as the Microsoft OAuth dialect when deriving its account label from the OIDC id_token.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add 'resend' (GENERIC_VERIFY against GET /domains, label by the first verified domain) and a bespoke 'bluesky' branch (kalshi shape) — the pasted secret is "identifier:app-password"; no bearer whoami exists, so validate via a real com.atproto.server.createSession POST; label = handle, id = DID.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Add 'ringcentral' branch — GET /restapi/v1.0/account/~/extension/~ labels the connection by contact email (else name + extension number); id = the extension id the screen-pop presence events are scoped to. Throws on a non-OK lookup so a bad token fails the connect loudly.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Add a bespoke 'espn-fantasy' branch (bluesky shape): the pasted secret is "SWID:espn_s2"; no bearer whoami exists, so validate by calling the real fan API for that SWID with both cookies set. SWID is normalised to its braced form so either paste works; an unknown SWID or a wrong/expired espn_s2 answers 404 and fails closed. Label = the fan's display name, id = the braced SWID.
  *
  * @module connector-account-lookup
  */
@@ -233,6 +234,38 @@ export async function fetchAccount(provider: string, tok: { access_token?: strin
       const j = (await r.json()) as { did?: string; handle?: string };
       if (!j.did) return { email: null, id: null };
       return { email: j.handle ? `Bluesky · @${j.handle}` : 'Bluesky', id: j.did };
+    } catch {
+      return { email: null, id: null };
+    }
+  }
+  if (provider === 'espn-fantasy') {
+    // accessToken is the combined "SWID:espn_s2" secret (two-value shape; SWID is a braced GUID and
+    // contains no ':', so the FIRST-colon split is safe). ESPN publishes no OAuth and no bearer
+    // whoami for fantasy — the only credential that exists is this pair of ACCOUNT SESSION cookies,
+    // so validate by calling the real fan API for that SWID with both cookies set. An unknown SWID
+    // answers 404 {"message":"fan not found"} (verified live), and a wrong/expired espn_s2 fails the
+    // same way, so a bad paste fails closed rather than storing a credential that cannot read
+    // anything.
+    const i2 = accessToken.indexOf(':');
+    if (i2 < 1 || i2 >= accessToken.length - 1) return { email: null, id: null };
+    const swidRaw = accessToken.slice(0, i2).trim();
+    const s2 = accessToken.slice(i2 + 1).trim();
+    if (!swidRaw || !s2) return { email: null, id: null };
+    // ESPN accepts the SWID with or without its braces in the cookie, but the fan API path wants
+    // the braced form; normalise so either paste works.
+    const swid = swidRaw.startsWith('{') ? swidRaw : `{${swidRaw}}`;
+    const url = `https://fan.api.espn.com/apis/v2/fans/${encodeURIComponent(swid)}`
+      + '?configuration=SITE_EDITION&displayEvents=true&displayNow=true&recLimit=5'
+      + '&featureFlags=expandAthlete&source=ESPN.COM+-+FANTASY_LM&lang=en&section=espn&region=us&profile=espn';
+    try {
+      const r = await fetch(url, {
+        headers: { Cookie: `SWID=${swid}; espn_s2=${s2}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!r.ok) return { email: null, id: null };
+      const j = (await r.json()) as { displayName?: string; profile?: { displayName?: string } };
+      const name = j.displayName || j.profile?.displayName || '';
+      return { email: name ? `ESPN Fantasy · ${name}` : 'ESPN Fantasy', id: swid };
     } catch {
       return { email: null, id: null };
     }

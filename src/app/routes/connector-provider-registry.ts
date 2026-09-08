@@ -13,6 +13,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Let the Outlook connector reuse the already-configured Microsoft/Outlook OIDC client as documented, while preserving connector-specific credential precedence and refusing to mix an incomplete dedicated pair with another app's secret.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Add the bluesky (identifier + app-password paste, bespoke createSession validation) and resend (API-key paste, GENERIC_VERIFY) token connectors for the marketing engine's outbound rails (ADR-133), categorized social/email.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | RingCentral OAuth entry (screen-pop spec): PKCE S256 + Basic token auth over the GENERIC exchange/refresh paths; scopes deliberately EMPTY because a RingCentral app's permissions are fixed at registration and unrequested scope= values fail the authorize call. Creds RINGCENTRAL_CLIENT_ID/SECRET; server host env-selectable for the devtest sandbox; category communication.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Add the 'espn-fantasy' connector (category 'media') for the Sports Edge Fantasy tab: two-value paste of the SWID + espn_s2 cookies, stored "SWID:espn_s2". ESPN publishes NO OAuth for fantasy, so the only credential that exists is a pair of ACCOUNT SESSION cookies — unscoped, with no per-app revocation — which is why the entry says so at the point someone would otherwise assume it is an API key. The PUBLIC half of the fantasy API (the full player universe including ESPN's own projections) needs no credential; this connector exists solely for a private league, which answers 401 without it.
  * -----------------------------------------------------------------------------
  *
  * @module connector-provider-registry
@@ -536,6 +537,21 @@ export const PROVIDERS: Record<string, ProviderDef> = {
   // private-key PEM (stored "keyId:PEM"; PEM has no ':' so the first-colon split is safe). No
   // bearer token exists — validation SIGNS a real /portfolio/balance call (bespoke fetchAccount).
   kalshi: { label: 'Kalshi (Prediction Markets)', auth: 'token', flavor: 'generic', authUrl: '', tokenUrl: '', scopes: [], authParams: {}, scopeSep: ' ', redirectPath: '/api/connect/kalshi/callback', tokenHelpUrl: 'https://kalshi.com/account/api-keys' },
+  // ESPN Fantasy (the Sports Edge Fantasy tab): two-value paste — the SWID cookie as the card's
+  // `email` field + the espn_s2 cookie as the token (stored "SWID:espn_s2"; SWID is a braced GUID
+  // and contains no ':', so the first-colon split is safe).
+  //
+  // ⚠ THIS IS NOT AN API KEY. ESPN publishes no OAuth for fantasy, so the only credential that
+  // exists is a pair of ACCOUNT SESSION COOKIES: not scoped to fantasy, no per-app revocation, and
+  // no expiry the user controls. Treat a stored espn_s2 as a full-account credential — it must
+  // never reach a model prompt, a CLI environment, or a task workspace, and the only way a user
+  // can revoke it is to sign out of ESPN everywhere. The public half of the fantasy API (the whole
+  // player universe including ESPN's own projections) needs NO credential at all; this connector
+  // exists solely for a PRIVATE league, which answers 401 without it.
+  //
+  // No bearer whoami exists — validation calls the real fan API for that SWID with both cookies
+  // (bespoke fetchAccount branch); a wrong or expired pair fails closed.
+  'espn-fantasy': { label: 'ESPN Fantasy', auth: 'token', flavor: 'generic', authUrl: '', tokenUrl: '', scopes: [], authParams: {}, scopeSep: ' ', redirectPath: '/api/connect/espn-fantasy/callback', tokenHelpUrl: 'https://fantasy.espn.com/football/league' },
   // Finnhub: a plain API key (NO OAuth, NO redirect URL) that drives the fundamental event overlay —
   // /stock/earnings gives actual-vs-consensus surprises, the deterministic input the overlay needs.
   // Free-tier key from the dashboard; validated on paste against /quote before storing (BYO account).
@@ -615,6 +631,8 @@ export const CONNECTOR_CATEGORY: Record<string, string> = {
   plaid: 'finance',
   // Prediction-markets connector (Kalshi event contracts) for the ?app=kalshi edge scanner.
   kalshi: 'finance',
+  // ESPN Fantasy league reads for the Sports Edge Fantasy tab (sports media, not a brokerage).
+  'espn-fantasy': 'media',
 };
 
 /**
