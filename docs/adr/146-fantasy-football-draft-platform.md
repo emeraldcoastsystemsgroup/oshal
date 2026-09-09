@@ -197,6 +197,33 @@ endpoint reports **week 1** (checked live 2026-09-09) — the whole season is st
   become mandatory. This is also why `ff_rosters` holds every team's roster and not just the operator's —
   the trade finder is worthless without the other nine.
 
+**Correction, same day — a meaningful part of P0 is already built, and the ADR above undersold it.**
+Verified against the running box and the package source on 2026-09-09: sports-edge is installed at
+**0.4.1, active**, its `sports_fantasy_calls` / `_leagues` / `_projections` tables exist, and
+`sports-fantasy-routes.ts` already serves `/api/sports-edge/fantasy/` — `status`, `link`,
+league unlink, **`lineup` (the optimal lineup and start/sit calls, written to the ledger before
+kickoff)**, `record`, and `grade`. Behind them are `applyScoring` (league `scoringItems`, no stat
+dictionary), `optimiseLineup`, `startSitCalls`, `distilProjections`, `readLeagueSettings`, `readTeams`
+and `findOwnTeam`, plus a cached shared projection refresh. **The credential rule is already
+implemented the way this ADR would have asked for**: cookies resolved from the broker per request,
+used on the outbound call, never logged, returned, stored, or placed where a model can read them.
+
+What is NOT built, and is what P0 actually means from here:
+
+1. **Rest-of-season `SV`** — the shipped advisor optimises ONE week; `MV` over `W_remaining` is what
+   waivers and trades need.
+2. **The `P(win)` objective (Amendment A)** — the shipped lineup maximises expected points, which is
+   the wrong objective for a team that is behind.
+3. **Waivers with a bid**, **the two-sided trade finder**, and **streaming** — none exist, and the
+   trade finder additionally needs every team's roster, not just the caller's.
+4. **Matchup awareness** — `mMatchup` is not read, so there is no opponent projection to be an
+   underdog against.
+
+And one honest caveat: **none of the shipped half has ever run against a real league.** There is no
+`espn-fantasy` row in `oshal_connections` on this box — the credential has never been pasted, so every
+one of those routes has only ever been exercised against fixtures.
+
+
 ## Open questions for the operator
 
 1. **Is the skill extraction taken now, or does fantasy-football start by duplicating the client and
