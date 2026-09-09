@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the SEC-05 seeding deadlock. EncryptedConfigManager refuses EVERY secret read/write while a plaintext secrets.json exists; POST /api/config/migrate removes it, and bot-entrypoint.sh's copy-if-missing seed then restored it on the next container start, so a migrated controller silently went back to refusing credential imports (observed live 2026-09-08 — a Codex import that had just succeeded failed again after one restart). This spec EXECUTES the seeding block out of the real script under a real shell against temp directories, rather than asserting on its text: the defect was in what the loop DID, and a substring check would have passed against the broken version.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Consolidated the collision twin (PRs #372/#373 landed two guard specs for one code path — see docs/operations/concurrent-session-collision-2026-09-08.md): folded bot-entrypoint-secrets-seed.spec.ts's one extra case in — an EXISTING runtime secrets.json is never clobbered by the seed (the copy-if-missing contract, which the 2026-08-12 force-copy regression once broke) — and retired that file. This spec is now the single guard for the seeding path.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -46,9 +47,15 @@ function seedingBlock(): string {
 /**
  * @description Runs the real seeding block with a seed dir holding all three files.
  * @param encryptedPresent - Whether the config dir already has secrets.enc.json.
- * @returns Which files exist in the config dir afterwards, plus the block's output.
+ * @param existingRuntimeSecrets - When set, a runtime secrets.json with this content is
+ *   already in the config dir before the block runs (the copy-if-missing contract case).
+ * @returns Which files exist in the config dir afterwards, the block's output, and the
+ *   final content of the config dir's secrets.json (undefined when absent).
  */
-function runSeed(encryptedPresent: boolean): { seeded: string[]; out: string } {
+function runSeed(
+  encryptedPresent: boolean,
+  existingRuntimeSecrets?: string,
+): { seeded: string[]; out: string; secretsContent?: string } {
   const shell = findShell();
   if (!shell) throw new Error('no POSIX shell available — cannot verify the entrypoint seeding block');
   const root = mkdtempSync(path.join(tmpdir(), 'oshal-seed-'));
@@ -61,12 +68,17 @@ function runSeed(encryptedPresent: boolean): { seeded: string[]; out: string } {
       writeFileSync(path.join(seed, f), '{"from":"seed"}');
     }
     if (encryptedPresent) writeFileSync(path.join(config, 'secrets.enc.json'), '{"v":1}');
+    if (existingRuntimeSecrets !== undefined) {
+      writeFileSync(path.join(config, 'secrets.json'), existingRuntimeSecrets);
+    }
 
     const script = `set -e\nTEST_SEED="$1"\nCONFIG_DIR="$2"\n${seedingBlock()}`;
     const out = execFileSync(shell, ['-c', script, 'sh', seed, config], { encoding: 'utf8' });
     const seeded = ['global-config.json', 'secrets.json', 'llm-config.json']
       .filter((f) => existsSync(path.join(config, f)));
-    return { seeded, out };
+    const secretsPath = path.join(config, 'secrets.json');
+    const secretsContent = existsSync(secretsPath) ? readFileSync(secretsPath, 'utf8') : undefined;
+    return { seeded, out, secretsContent };
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -92,6 +104,14 @@ describe('bot-entrypoint config seed — must not undo an encrypted migration', 
 
   it('still says out loud what it skipped, so a silent no-op is not mistaken for seeding', () => {
     expect(runSeed(true).out).toContain('encrypted secrets.enc.json is already present');
+  });
+
+  it('never clobbers an existing runtime secrets.json (copy-if-missing contract)', () => {
+    // Folded from the collision twin (bot-entrypoint-secrets-seed.spec.ts, retired): runtime
+    // config edited after first seed must survive every later start — the 2026-08-12 force-copy
+    // regression broke exactly this, silently resetting provider config each boot.
+    const { secretsContent } = runSeed(false, '{"runtime":"edited"}');
+    expect(secretsContent).toBe('{"runtime":"edited"}');
   });
 });
 
