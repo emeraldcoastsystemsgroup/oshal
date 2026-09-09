@@ -5,9 +5,10 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Round-2 review fixes, each with the boundary that proves it: real child processes drive Invoke-WdExec (empty output, non-zero exit, a DEADLINE that kills a hung child, a refused argument) instead of a stubbed PowerShell function no timeout could kill; the threshold-precedence lines are executed under real powershell against a real .env so the ORDER is pinned (AlertPct before LiveAlertPct - the other way round left the Schwab books on the param default); the core-hold section is executed with a failing exec to prove $coreKnown withholds every core-exempting check; the ps1's docker invocations are enumerated from the real PowerShell AST rather than a regex a `try { $x = docker exec ... }` site could slip past; the container-side fetcher's per-read deadline is proven against a REAL hanging http server (one wedged book errors, the others are still audited); plus the hysteresis band measured from the last alert and the materiality of the position-count floor.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Round-3 review fixes, each proven where it broke. The fetcher case that mattered is reproduced at the SHIPPED per-read cap: three wedged books plus a healthy one against the real hanging server must finish inside the audit budget and the healthy book must still be audited (the round-2 case only passed because it shrank the per-read cap to 1s, hiding that 3 books x 20s x 2 attempts overruns the 60s host deadline); a mutation removes the per-book clamp and asserts the same run overruns. Get-WdAuditBudgetSec is executed under real powershell to pin budget < deadline. docker cp is driven as a REAL child process for its three outcomes (clean exit, non-zero exit, a killed hang) and for the caller-owned alert key, and the AST walk now requires ZERO raw docker cp sites. The block-G withholding is EXECUTED over the marker-wrapped gate for all four (checksReady, coreKnown) combinations plus the failed-roster fallback, instead of being pinned by exact source text. Plus: a Windows path survives ConvertTo-WdArgLine while a trailing backslash is still refused, an unreadable suppression-state file surfaces as a warning, the two account findings re-page when they double, and dust no longer produces warnings.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guards the bleed scope: an empty allow-list means every book (fail-open, asserted for blank/whitespace/undefined), a listed book fires, an unlisted one stays silent, DEEP-LOSS still fires on the excluded book, and refs are trimmed without the colon-splitting coreSymbolSet does to symbols. Two mutations: failing closed on an empty list silences every book, and dropping the scope check re-alerts the hand-traded one. The .env plumbing is executed under real powershell against a real .env file, including that an unset key yields "" rather than "False". Two neighbouring real-process cases gain the 30s allowance their sibling already carried - they were passing at ~4.9s against the 5s default and two more spawns in this file tipped them over.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the guard for the watchdog's DECIDABLE checks (scripts/lib/trading-watchdog-checks.js) and the PowerShell plumbing that carries them. Every check is MUTATION-PROVED: the shipped module's bytes are read, one condition is inverted or removed, the mutant is loaded from a temp file, and the case asserts the mutant no longer reports the finding (so a guard that could not fail is impossible) - the repo file is never written and its sha256 is compared before and after. Plus the real boundaries: a REAL http server standing in for the api proves the container-side fetcher's fail-closed reads, the ?book= query-first param and the trusted-service headers; REAL powershell.exe executes the ps1's own settings/exec/symbol-state sections against a real .env and a real state file (empty exec -> check-infra, .env precedence, corrupt state file); and the whole ps1 is parsed by the real PowerShell parser. Threshold floors are re-derived from src/features/trading/services/portfolio.ts so a posture change cannot silently start paging.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
@@ -621,6 +622,12 @@ describe('watchdog fetcher: the REAL http boundary the container-side audit cros
 });
 
 describe('watchdog PowerShell plumbing (real powershell.exe, real files)', () => {
+  // EVERY case in this block spawns real powershell.exe (several spawn two, and one drives a real
+  // hanging http server). The 5s default was never right for that and they were passing at ~4.9s;
+  // adding cases to the same file tipped three of them at once. One allowance for the block, so a
+  // slow box reports a real failure instead of a stopwatch reading.
+  vi.setConfig({ testTimeout: 30_000 });
+
   const section = (start: string, end: string): string => {
     const a = watchdogSource.indexOf(start); const b = watchdogSource.indexOf(end, a);
     if (a < 0 || b < 0) throw new Error(`watchdog source markers missing: ${start} -> ${end}`);
@@ -678,9 +685,7 @@ describe('watchdog PowerShell plumbing (real powershell.exe, real files)', () =>
     writeFileSync(envFile, ['TRADING_WD_LIVE_ALERT_PCT=1', ''].join('\n'));
     const unset = probe(body);
     expect(unset.out, unset.err).toContain('BLEED=[]');
-    // Two real powershell.exe spawns; the 5s default is not enough on a loaded box (its sibling
-    // below carries the same allowance for the same reason).
-  }, 30_000);
+  });
 
   it('an EMPTY exec raises check-infra instead of reading as all-clear', () => {
     const r = probe([...asDocker,
@@ -703,9 +708,7 @@ describe('watchdog PowerShell plumbing (real powershell.exe, real files)', () =>
       'Write-Host ("OUT=" + $out)']);
     expect(ok.out, ok.err).toContain('OUT=ok-payload');
     expect(ok.out).not.toContain('RAISE');
-    // Real powershell.exe spawns: the 5s default is too tight on a loaded box (matching the
-    // 30s allowance the audit-budget sibling in this block already carries).
-  }, 30_000);
+  });
 
   it('an exec that HANGS is killed at its deadline and reported as a failed check', () => {
     // The failure this exists for: the api answers /api/health while /api/trading is wedged, so
@@ -824,9 +827,7 @@ describe('watchdog PowerShell plumbing (real powershell.exe, real files)', () =>
     expect(bound.out, 'an explicitly passed -AlertPct outranks the .env, and is still the live fallback').toContain('ALERT=5');
     expect(bound.out).toContain('LIVE=5');
     rmSync(dir, { recursive: true, force: true });
-    // Real powershell.exe spawns: the 5s default is too tight on a loaded box (matching the
-    // 30s allowance the audit-budget sibling in this block already carries).
-  }, 30_000);
+  });
 
   it('a core-hold read that FAILS withholds every core-exempting check instead of exempting nothing', () => {
     // TRADING_CORE_SYMBOLS is the exemption list for every loss conclusion. Read through an empty
