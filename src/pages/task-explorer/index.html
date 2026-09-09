@@ -156,6 +156,9 @@
     </main>
   </div>
 
+  <!-- ADR-139: the shared "Send to..." component. Loading it is the whole integration -
+       every tagged artifact on this page inherits every registered destination. -->
+  <script src="/api/artifacts/send-to.js"></script>
   <script type="module" src="/task-explorer/task-explorer.js"></script>
 </body>
 </html>

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: the ONE shared "Send to…" component every surface loads (served at /api/artifacts/send-to.js). window.oshalSendTo(meta, anchorEl) fetches the caller-scoped menu for the artifact's MIME type, mints an owner-bound handle on pick, then dispatches: open mode navigates the TOP window to /cockpit/?app=<name>&artifact=<ref> (the shell forwards the ref to the surface iframe — D4a), post mode POSTs {ref} to the destination's own auth-gated endpoint and shows the outcome inline. Self-contained styling; Esc/outside-click dismiss; no framework dependencies so any classic-script surface can use it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2 (Amendment B): overlay dispatch — a kernel-registered action carrying `overlay` opens that page in an in-place iframe modal with the ref (no navigation, the source surface keeps its state). First user: the "Email it…" compose built-in.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Amendment D (mint-with-bytes): a surface whose artifact has no byte-serving URL can now send it anyway — pass a Blob as meta.blob, or tag the element with data-artifact-blob="<blob: or data: URL>" instead of data-artifact-source. The component fetches that URL in the page (blob:/data: ONLY — an http URL there would launder an arbitrary cross-surface fetch into an artifact) and mints over POST /handles/upload. Everything downstream — the menu, every dispatch mode, every destination — is unchanged, because a handle is a handle.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Amendment C: the STANDARD UX TAG. A surface declares an artifact by tagging its element (data-artifact-source + data-artifact-type [+ -name, + -ui]) and including this script once; the component auto-wires every tagged element — an injected 📤 chip (default) AND right-click — via a MutationObserver, so dynamically rendered lists are covered and HOW the affordance looks is a decision made HERE, centrally, changeable later without touching any surface. data-artifact-ui="context" opts out of the chip. The programmatic window.oshalSendTo(meta, anchorEl) API is unchanged.
  */
 
@@ -60,17 +61,41 @@
     s.style.color = isErr ? '#ff7a7a' : '#8fa1b3';
   }
 
+  function readMinted(r) {
+    return r.json().then(function (j) {
+      if (!r.ok) throw new Error(j.error || ('mint failed (' + r.status + ')'));
+      return j.ref;
+    });
+  }
+
+  /** Amendment D: the artifact's own bytes, when the surface has them rather than a URL.
+   *  meta.blob is a Blob/File; meta.blobUrl is a blob:/data: URL to read one from. */
+  function artifactBlob(meta) {
+    if (meta.blob) return Promise.resolve(meta.blob);
+    var u = meta.blobUrl || '';
+    if (u.indexOf('blob:') !== 0 && u.indexOf('data:') !== 0) {
+      return Promise.reject(new Error('an artifact needs a source path, a blob, or a blob:/data: URL'));
+    }
+    return fetch(u).then(function (r) { return r.blob(); });
+  }
+
+  function mintWithBytes(meta) {
+    return artifactBlob(meta).then(function (blob) {
+      var fd = new FormData();
+      fd.append('type', meta.type);
+      fd.append('name', meta.name || 'artifact');
+      fd.append('file', blob, meta.name || 'artifact');
+      return fetch('/api/artifacts/handles/upload', { method: 'POST', body: fd }).then(readMinted);
+    });
+  }
+
   function mintHandle(meta) {
+    if (!meta.source) return mintWithBytes(meta);
     return fetch('/api/artifacts/handles', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source: meta.source, type: meta.type, name: meta.name || '' })
-    }).then(function (r) {
-      return r.json().then(function (j) {
-        if (!r.ok) throw new Error(j.error || ('mint failed (' + r.status + ')'));
-        return j.ref;
-      });
-    });
+    }).then(readMinted);
   }
 
   /** Amendment B: open a kernel overlay page in an in-place iframe modal — the source surface
@@ -128,7 +153,7 @@
    */
   window.oshalSendTo = function (meta, anchorEl) {
     closeMenu();
-    if (!meta || !meta.type || !meta.source) return;
+    if (!meta || !meta.type || (!meta.source && !meta.blob && !meta.blobUrl)) return;
     var menu = menuShell(anchorEl);
     OPEN_MENU = menu;
     menu.appendChild(el('div', 'padding:5px 9px 7px;font-weight:600;font-size:12px;color:#8fa1b3;', 'Send to…'));
@@ -165,9 +190,15 @@
 
   function tagMeta(node) {
     var source = node.getAttribute('data-artifact-source') || '';
+    var blobUrl = node.getAttribute('data-artifact-blob') || '';
     var type = node.getAttribute('data-artifact-type') || '';
-    if (!source || !type) return null;
-    return { source: source, type: type, name: node.getAttribute('data-artifact-name') || '' };
+    if ((!source && !blobUrl) || !type) return null;
+    return {
+      source: source,
+      blobUrl: blobUrl,
+      type: type,
+      name: node.getAttribute('data-artifact-name') || ''
+    };
   }
 
   /** The injected affordance — presentation v1 is a small corner/end chip. */
@@ -216,7 +247,7 @@
   var decoratePending = null;
   function decorateAll() {
     decoratePending = null;
-    var nodes = document.querySelectorAll('[data-artifact-source]:not([data-artifact-wired])');
+    var nodes = document.querySelectorAll('[data-artifact-source]:not([data-artifact-wired]),[data-artifact-blob]:not([data-artifact-wired])');
     for (var i = 0; i < nodes.length; i++) wireTagged(nodes[i]);
   }
   function scheduleDecorate() {
