@@ -33,7 +33,10 @@ body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
 .dot.online { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
 .dot.offline { background: var(--err); }
-.topbar .ghost-btn { margin-left: auto; }
+/* The first title-bar button takes the slack, so brand/status stay left and the
+   button cluster sits together on the right. */
+.topbar .ghost-btn { margin-left: 6px; }
+.topbar .ghost-btn:first-of-type { margin-left: auto; }
 
 /* Frameless window controls (no native title bar). No-drag so they stay clickable. */
 .winctl { display: flex; gap: 4px; -webkit-app-region: no-drag; }

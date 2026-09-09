@@ -531,6 +531,9 @@ function init() {
   $('wakePauseBtn').addEventListener('click', toggleBackgroundWakePause);
   $('connectionsBtn').addEventListener('click', () => oshal.openConnections());
   $('jarvisBtn').addEventListener('click', openJarvis);
+  // Same action from the title bar, so the cockpit is reachable from the Config screen too —
+  // the orb controls that hold #jarvisBtn are not rendered there.
+  $('jarvisTopBtn')?.addEventListener('click', openJarvis);
   $('winMin') && $('winMin').addEventListener('click', () => oshal.minimizeWindow());
   $('winClose') && $('winClose').addEventListener('click', () => oshal.closeWindow());
 

@@ -46,10 +46,15 @@ import {
 // (and the wake listener reclaims the microphone) only when the LAST one closes, so
 // the app never becomes an invisible, unquittable process.
 const cockpitHooks: CockpitWindowHooks = {
+  // The console used to HIDE itself here. That made the two windows mutually exclusive, so
+  // reaching the cockpit meant closing the console — while showNodeWindow() (a second launch,
+  // or the tray) could still raise the console back OVER an open cockpit, leaving two frameless
+  // windows stacked with no obvious way out. They are now peers: each carries its own controls
+  // and a button that raises the other.
   onOpen: () => {
-    if (win && !win.isDestroyed()) win.hide();
     void wakeService.setSurfaceOwnsMicrophone(true);
   },
+  onShowConsole: () => showNodeWindow(),
   onClosed: () => {
     if (hasOpenCockpitSurface()) return;
     if (win && !win.isDestroyed()) win.show();
