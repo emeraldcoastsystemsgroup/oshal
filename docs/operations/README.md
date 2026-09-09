@@ -12,3 +12,6 @@ retained as historical artifacts, not the active intake path.
   support, SLA, and incident-response posture.
 - [bug-log.md](./bug-log.md) — interim in-repo bug log (system of record is Jira via the `jira`
   connector); Jira-ready entries. Seeded 2026-07-18 from the documentation honesty sweep.
+- [concurrent-session-collision-2026-09-08.md](./concurrent-session-collision-2026-09-08.md) —
+  two agent sessions fixed the same defect two minutes apart: what duplicated, what one fix fed
+  the other, and what is still open.
