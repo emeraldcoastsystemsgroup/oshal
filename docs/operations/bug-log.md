@@ -913,8 +913,12 @@ one request against `/-/healthy` plus an `up` query — and warn loudly otherwis
 cannot be closure evidence for the scraper **running**; per the integration-boundary rule those are
 different boundaries needing different guards.
 
-## BUG-22 — The nightly gate has failed twelve consecutive nights, emailed every time, and nothing changed
-- **Type:** Bug (process / ignored signal) · **Priority:** High · **Status:** OPEN
+## BUG-22 — The nightly gate has failed 46 consecutive runs, emailed every time, and nothing changed
+- **Type:** Bug (process / ignored signal) · **Priority:** High · **Status:** OPEN — prevention SHIPPED
+  and two of five gates fixed 2026-09-09; `unit`, `e2e-green` and `trivy` are BACKLOG-quarantined.
+  See the progress note at the end of this entry. The count in this title was **twelve** when the
+  entry was written on 2026-08-13; it is **46** as of 2026-09-09 and the first failure is
+  **2026-07-27**, not 2026-08-02 — both corrected from the run log, not re-estimated.
 - **Discovered:** 2026-08-13, while establishing why BUG-15 and BUG-17 reached `main` unannounced.
   **This entry is the corrected version of a claim that was wrong twice over, and the correction is
   the finding** — recorded here in full so it is not repeated.
@@ -989,6 +993,54 @@ inside a standing failure is the signal that is currently lost. And when a sched
 service-liveness claim is being checked, **verify with a tool that distinguishes "absent" from "no
 output"**: `Get-ScheduledTask`, not a grep over a command that may print nothing. An empty result is
 not evidence of absence — that mistake is what produced the first version of this entry.
+
+### Progress 2026-09-09 — prevention shipped, two gates fixed, three quarantined
+
+**The streak was worse than this entry recorded, and the correction came from the log, not a
+re-estimate.** `scripts/ci/ci-gate-streak.mjs` parses the run-outcome lines in `ci-local.log` and
+reports **46 consecutive failed runs, first failure 2026-07-27** — the 12 nights above were the tail
+of a streak that had already been running for a week when this entry was written.
+
+**Prevention (the fix this entry asked for) is shipped.** The alert said the same sentence every
+night, so a gate breaking *inside* the standing failure was indistinguishable from the standing
+failure. The subject now leads with what changed — `OSHAL LOCAL CI FAILED - NEW: image-smoke
+(night 46)`, or `no change from last run`, or `no new failures; FIXED: secret-scan` — and the body
+separates newly-red from already-known and names the streak with its start date. The headline is
+also written to `ci-local.log`, so the answer to "is anything new?" survives an api container that
+is down and cannot send mail. Guard: `tests/unit/ci-gate-streak.spec.ts` (14 cases) pins the streak
+arithmetic and the newly-red set against **verbatim real log lines interleaved with per-gate noise**,
+because parsing that real shape is the boundary a wrong summary would corrupt silently. Newness is
+measured against the previous run only — measuring against the whole streak would mark a flapping
+gate as new every other night, which is the noise this exists to remove.
+
+**Two gates fixed:**
+- `secret-scan` — the single finding was a secret-shaped test fixture in
+  `tests/unit/node-installer.spec.ts`: a high-entropy PAT-shaped literal standing in for a minted
+  token, which the spec only ever used to assert literal propagation. (Not reproduced here — the
+  point of the fix was to stop that shape existing in the tree.) **The fix had
+  existed as open PR #230 since 2026-08-17 and sat unmerged for three weeks** while the gate failed on
+  it nightly. That is this bug in miniature: a red gate nobody reads produces a fix nobody lands.
+  Merged as `c56bcc77`. ⚠ **Not re-verified by scan** — the docker daemon was saturated by the
+  in-flight nightly and returned `500`; the next scheduled run is the proof.
+- `local-secret-hygiene` — two plaintext `.env` backups (`.env.bak-before-encryption-key`,
+  `.env.bak-before-codex-redirect`) left in the repo root by the ENCRYPTION_KEY work. Gitignored, so
+  the source-only scan never saw them — which is precisely the risk the gate exists for. Moved
+  (not deleted) to `%LOCALAPPDATA%\oshal\env-backups\` with a README; the live `.env` was verified
+  newer than both first. Gate re-run: passes.
+
+**Three quarantined, each with a dated BACKLOG entry and done-when criteria**, per this entry's own
+"fix it or explicitly quarantine it" requirement: `trivy` (a CVE-budget decision, and the last report
+on disk is from 2026-07-09 — the current finding set is not actually known), `unit` + `e2e-green`
+(never triaged; no run log preserves which specs fail), and the host contention below.
+
+**A fourth finding, and it undermines all of the above.** The 2026-09-08 run shows the gate is
+partly measuring the host. It started at 23:30 against a box with **0.4 GB free of 15.7 GB**:
+`head-src` took 2144 s and failed, which **skipped seven gates including `unit` and `e2e-green`**;
+`secret-scan` logged `cannot allocate memory` against dozens of files it could not read; `image-build`
+ran 55+ minutes against the 68 s the same gate took in that morning's manual run. **A gate that
+cannot allocate memory reports on the host, in the same red a real defect would use.** Until that is
+separated, a red night is not evidence about the code — which means part of this 46-run streak may
+never have been about the code at all.
 
 ## BUG-23 — Career Hunter AI scoring was dead for 25 days behind two credential walls, and the board looked merely "quiet"
 - **Type:** Bug (silent degradation / credential posture) · **Priority:** High · **Status:** FIXED 2026-09-05 (store 1.12.4 + 1.12.5, core PR #302)
