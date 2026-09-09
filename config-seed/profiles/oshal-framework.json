@@ -1,9 +1,15 @@
 {
   "name": "oshal-framework",
   "displayName": "OSHAL",
-  "description": "Unified home cockpit. Jarvis is the pinned front door; every app surface is grouped in the scrollable middle rail — including Connections (connectors / cloud / identity / files), Security (security center / devops+vault) and Optimization (optimizer / test lab / eval wall), which used to crowd the pinned bottom tray as 'Cloud & Ops'. Only the base essentials (tickets, calendar, swarm messages, settings, operations) stay pinned at the bottom. Focusing a single app via /applications or ?app=<name> still narrows the ribbon to just that app.",
+  "description": "Unified home cockpit. Home is the landing view — every installed app as a tile, shelved by suite (ADR-145); Jarvis is pinned beside it; every app surface is grouped in the scrollable middle rail — including Connections (connectors / cloud / identity / files), Security (security center / devops+vault) and Optimization (optimizer / test lab / eval wall), which used to crowd the pinned bottom tray as 'Cloud & Ops'. Only the base essentials (tickets, calendar, swarm messages, settings, operations) stay pinned at the bottom. Focusing a single app via /applications or ?app=<name> still narrows the ribbon to just that app.",
   "ribbon": {
     "items": [
+      {
+        "id": "home",
+        "icon": "codicon codicon-home",
+        "label": "Home",
+        "section": "home"
+      },
       {
         "id": "tool-jarvis-home",
         "icon": "codicon codicon-sparkle",
@@ -469,5 +475,5 @@
       "group": "Little Monsters"
     }
   },
-  "defaultView": "tool-jarvis-home"
+  "defaultView": "home"
 }
