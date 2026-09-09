@@ -24,6 +24,7 @@
 # 17 | maintainer@emeraldcoastsystemsgroup.com   | Scheduled-source truth: fetch origin/main once, pin its immutable commit SHA across the node export, secret scan, image build, logs, and alerts, and label the fail-loud HEAD fallback when fetch is unavailable. Interactive --head continues to judge HEAD. The windowless VBS launcher now waits and propagates the gate's real exit code to Task Scheduler.
 # 18 | maintainer@emeraldcoastsystemsgroup.com   | Refuse ignored plaintext credential backups before source-only scanning and direct operators to the redacted key-schema exporter.
 # 19 | maintainer@emeraldcoastsystemsgroup.com   | BUG-22: the failure alert said the same sentence for 38 consecutive nights, so a NEW gate breaking inside the standing failure was indistinguishable from the standing failure. The subject now leads with what CHANGED ("NEW: image-smoke (night 38)" / "no change from last run") and the body separates newly-red from already-known and names the streak. Derived from the run log by scripts/ci/ci-gate-streak.mjs — no new state to keep. The headline is also written to the log, so the signal survives an api container that is down and cannot send mail.
+# 20 | maintainer@emeraldcoastsystemsgroup.com   | Collapse duplicate gate names before writing the run-outcome line. The 2026-09-08 run re-executed a block (a mid-run edit to this file shifted the running shell's byte offset) and recorded `unpushed-commits` plus three *-skipped names twice, which made the new alert headline unreadable. That line is the durable record every later streak comparison reads, so a duplicate written here is wrong in the log forever.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -527,6 +528,17 @@ if [ "${#FAILED_GATES[@]}" -eq 0 ]; then
   log "=== LOCAL CI: ALL GATES GREEN ==="
   exit 0
 fi
+
+# Collapse duplicates, preserving first-occurrence order. A gate normally appends once, but the
+# 2026-09-08 run re-executed a block and logged `unpushed-commits` and three *-skipped names twice,
+# which made the alert headline unreadable. The outcome line is the DURABLE record every later
+# streak comparison reads, so a duplicate written here is wrong in the log forever.
+DEDUPED_GATES=()
+for _gate in "${FAILED_GATES[@]}"; do
+  case " ${DEDUPED_GATES[*]-} " in *" $_gate "*) continue ;; esac
+  DEDUPED_GATES+=("$_gate")
+done
+FAILED_GATES=("${DEDUPED_GATES[@]}")
 
 log "=== LOCAL CI: FAILED gates: ${FAILED_GATES[*]} ==="
 
