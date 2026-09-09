@@ -1104,3 +1104,43 @@ boot — progress accumulates, the cursor moves only on completion.
 **Still open (BACKLOG):** codex platform promotion on this box is blocked by an empty
 `ENCRYPTION_KEY`; the satellites run the pre-push node build; the user-targets browser round-trip
 (1.13.0) has not been exercised from a real session.
+
+## BUG-24 — A unit spec went red on a calendar date, with no code change behind it
+
+- **Type:** Bug (test time bomb / false red) · **Priority:** Medium · **Status:** FIXED 2026-09-09 (PR #396)
+- **Discovered:** 2026-09-09, in a sweep of the reds on `main` after an unrelated feature landed.
+
+**What it looked like.** `tests/unit/trading-dated-orders.spec.ts` failed one case —
+`a PROTECTED timed entry is not released before it can fire` — with
+`expected 'released' to be 'pending_fill'`. It reads exactly like a regression in the
+protected-lot release clock, which is safety-adjacent trading code.
+
+**Root cause — the calendar, not the code.** The case pinned `notBefore` to a hardcoded
+`FIRE = etWallToInstant('2026-09-09', '09:35')` but ticked at `Date.now() + 3 days`, while
+`createPinnedLotIntent` stamps `createdAt` from the real clock with no injection seam. The release
+rule is `max(createdAt, notBefore) + 2 days`. Written 2026-09-04, `now + 3d` (09-07) sat before
+`notBefore + 2d` (09-11) and it passed. On 2026-09-09 — the very date `FIRE` named — `now + 3d`
+(09-12) moved past it, so the lot released **correctly** and the assertion failed. The trading code
+was right the whole time.
+
+**Why no tick value could have fixed it.** The case needed a moment both 3 days after intent *and*
+before the fire time. Once the real clock reached `FIRE`, no such moment existed; the premise itself
+had expired.
+
+**Fix.** `notBefore` now moves with the real clock. The guard keeps its teeth — mutating
+`stepPendingFill` back to `createdAt`-only (dropping the `Math.max`) still fails the case with the
+identical message, so the change removed the calendar dependency and nothing else.
+
+**The tell, for next time.** A hardcoded future date compared against `Date.now()` in the same
+assertion. The rest of that spec passes explicit clocks and is safe; `grep -n "Date.now()"` found
+exactly the one line.
+
+**Investigated and NOT a defect — recorded so nobody re-chases it.** When that spec's Postgres is
+unreachable, vitest prints `Tests 22 skipped (22)`, which looks like a guard quietly disappearing.
+It is not. `beforeAll` throws a named error (`trading-dated-orders requires the live oshal Postgres
+at … bring the stack up with bash scripts/oshal-up.sh`), vitest marks the FILE `FAIL`, reports
+`Test Files 1 failed (1)`, and the run **exits 1** — verified by pointing `OSHAL_TEST_DSN` at a dead
+port. The "skipped" count is only how vitest labels individual cases when a `beforeAll` throws. A
+grep that filters to the `Tests` line alone hides the failure and the exit code; read `Test Files`
+and the exit status, not the test tally. Sixteen specs share this DSN gate and all fail loudly the
+same way.
