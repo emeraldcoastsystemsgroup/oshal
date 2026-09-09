@@ -1007,7 +1007,17 @@ failure. The subject now leads with what changed — `OSHAL LOCAL CI FAILED - NE
 (night 46)`, or `no change from last run`, or `no new failures; FIXED: secret-scan` — and the body
 separates newly-red from already-known and names the streak with its start date. The headline is
 also written to `ci-local.log`, so the answer to "is anything new?" survives an api container that
-is down and cannot send mail. Guard: `tests/unit/ci-gate-streak.spec.ts` (14 cases) pins the streak
+is down and cannot send mail.
+
+**Two corrections found by pointing it at the real log, both shipped the same day.** (1) When an
+early gate fails, `ci-local.sh` records skip markers and every downstream gate silently *leaves* the
+failing set — so the first draft would have reported `unit lint e2e-green trivy` as **FIXED** on
+2026-09-09, a night none of them executed. A skipped gate is not a passing gate, and claiming a green
+nobody measured is worse than the flat wording this replaced; skip markers now suppress the claim and
+the alert says the gates DID NOT RUN. (2) Duplicate gate names are collapsed at both ends — the
+2026-09-08 run re-executed a block and logged four names twice.
+
+Guard: `tests/unit/ci-gate-streak.spec.ts` (18 cases) pins the streak
 arithmetic and the newly-red set against **verbatim real log lines interleaved with per-gate noise**,
 because parsing that real shape is the boundary a wrong summary would corrupt silently. Newness is
 measured against the previous run only — measuring against the whole streak would mark a flapping
