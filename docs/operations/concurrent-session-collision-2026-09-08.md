@@ -129,9 +129,21 @@ swarm**) works end to end and is the working alternative meanwhile.
 
 ## Open follow-ups
 
-- **De-duplicate the two seed guards**, keeping B's "never clobbers runtime config" case.
+- ✅ **De-duplicate the two seed guards** — DONE 2026-09-09 (PR #385):
+  `config-seed-encrypted-guard.spec.ts` survives (it alone covers the compose inline-command
+  path) and absorbed B's "never clobbers runtime config" case; the twin spec is retired. 5/5.
 - **#373 is not running on this box.** It changes `src/app/server*.ts`, which is baked into the
   image; the api is still on the image built at 20:59Z. Neither B's parsing fix nor A's
   `bot-entrypoint.sh` change takes effect until the next `scripts/oshal-deploy.sh`. Deploy first,
-  then retry the flow **once**.
-- **The token exchange itself** — see the BACKLOG entry.
+  then retry the flow **once**. *2026-09-09 status:* the deploy was staged and HELD — a concurrent
+  session held the shared checkout mid-work, and the deploy script's reset-to-`origin/main`
+  prerequisite requires a quiet tree. Tracked as the pending cycle in
+  [the pre-deploy checklist](../runbooks/pre-deploy-checklist.md); container-level mitigations
+  (patched entrypoint copy, `.env` port pin) keep the box correct meanwhile.
+- **The token exchange itself** — see the BACKLOG entry. One more datum settled since this doc
+  was written: the "listener skipped" log B cited **did occur** — session B's transcript captured
+  `Invalid OPENAI_CODEX_CALLBACK_PORT` with `rawPort:""` at 04:30:00Z in the container created
+  ~04:28, whose logs B's own 04:39 recreate then destroyed; and the 04:40 container this doc
+  checked had the port already pinned in `.env`, so its healthy listener does not show the empty
+  variable is harmless. The hedge above ("may have occurred in an earlier container") is resolved
+  in that direction.
