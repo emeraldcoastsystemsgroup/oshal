@@ -29,6 +29,7 @@ import {
   readManifest,
   serializeManifest,
   compileWorkflowSpec,
+  buildHomePlan,
   type SwarmAppScope,
   type SwarmAppManifest,
 } from '@/features/swarm-apps';
@@ -239,6 +240,24 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAc
     } catch (err: any) {
       logger.error({ err, name }, 'Failed to update app access assignment');
       res.status(err instanceof TypeError ? 400 : 500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /home-plan — the ADR-145 D9 cross-app landing plan: one card per active group (aggregating
+   * its members' probes, so a grouped app is not also listed loose) plus one per active app no
+   * shown group covers. MANIFEST DATA ONLY — every status/readiness probe is asked by the page
+   * itself, in the signed-in user's own session, exactly as the group setup dashboard does. Core
+   * neither impersonates the caller nor reads an app's tables (ADR-145 D6).
+   *
+   * Declared BEFORE /:name so "home-plan" can never be captured as an app name.
+   */
+  router.get('/home-plan', async (_req: Request, res: Response) => {
+    try {
+      res.json({ apps: buildHomePlan(await service.getActiveManifests()) });
+    } catch (err: any) {
+      logger.error({ err }, 'Failed to build the home plan');
+      res.status(500).json({ error: 'home plan unavailable' });
     }
   });
 

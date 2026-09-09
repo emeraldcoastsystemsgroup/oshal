@@ -80,12 +80,22 @@ export {
   staticRibbonItems,
   validateGroupManifest,
   validateReadinessDeclarations,
+  validateSummaryDeclaration,
   validateGuestSeedDeclaration,
   resolveGroupToolbar,
   resolveGroupSetup,
   assertGroupResolvable,
 } from './services';
 export type { ResolvedGroupSetupStep, ResolvedGroupToolbar } from './services';
+export {
+  buildHomePlan,
+  coerceSummaryPayload,
+  coerceTone,
+  atPointer,
+  MAX_SUMMARY_TILES,
+  MAX_SUMMARY_ITEMS,
+} from './services';
+export type { HomePlanEntry, HomePlanSummaryProbe, HomePlanTodo } from './services';
 export type { AppAccessAssignment, AppAccessResolver, ResolvedAppAccess } from './services';
 export type {
   AppSmokeApplicationResult,

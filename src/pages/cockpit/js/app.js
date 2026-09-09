@@ -348,7 +348,7 @@ class CockpitApp {
     void this.ribbon.ready.then(() => {
       if (this.pendingView || this.viewController.currentView) return;
       const requestedTicketId = readRequestedTicketId();
-      const initialView = requestedTicketId ? 'tickets' : (this.ribbon?.getActive?.() || 'tickets');
+      const initialView = requestedTicketId ? 'tickets' : (this.ribbon?.getActive?.() || 'home');
       // Seed the selection BEFORE the first render so TicketView picks it up from
       // initialSelectedTicketId on its own load pass. Calling focusTicket AFTER switchView races
       // the list fetch and selects nothing.
