@@ -5,18 +5,21 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1 routes: POST /handles mints an owner-bound claim ticket over a serve URL the caller can already read; GET /handles/:ref(/content) redeems it — content re-fetches the source SERVER-SIDE as the minting caller (service secret + sub over the loopback to this same server instance), so ownership is enforced at mint AND at use; GET /actions answers the "Send to…" menu for a MIME type; GET /send-to.js serves the one shared browser component. Mounted at /api/artifacts behind serviceSecretOr(requiresAuth). Enforcement for a dispatched action stays at the DESTINATION's own gate.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: the first kernel built-ins, registered at boot through the SAME registry interface apps use. kernel-storage → POST /builtin/save (redeem the handle, uploadBytes to the caller's oshal-local store under artifacts/). kernel-email → the compose overlay (GET /email-compose page; POST /builtin/email sends the artifact as an attachment over the caller's OWN mailbox — sendGmail else the Graph sibling else 409 — behind the standard confirm:true 428 gate). Factory now takes ctx (uploadBytes + connector-token lookups need the pool).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Amendment D (mint-with-bytes): POST /handles/upload — a multipart sibling of the locator mint, for a source that has no byte-serving URL to point at (a client-generated export; a route that answers a JSON preview envelope rather than the file). Authorization runs BEFORE multer buffers attacker-controlled bytes, the per-request limit is the shared inline cap, and the per-sub byte budget is enforced in the handle store. Redeem is unchanged for every caller and every destination: readArtifactBytes serves a carried payload directly and otherwise relays as before, so the built-ins and the package-side redeemArtifactViaRelay needed no change at all.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 3: kernel-rag "Ingest to RAG" (overlay — pick a collection, then the page drives the EXISTING caller-ACL'd /api/rag/upload from the user's own session; no new ingest surface, the doc-extract fix already guards it) and kernel-jarvis "Summarize with Jarvis" (overlay — text via POST /builtin/extract-text, the doc-extract rail, then the surface's own /api/jarvis/ask + result poll). extract-text is read-only and owner-bound like every redeem.
  */
 
 import * as path from 'node:path';
 import { Router } from 'express';
-import type { Request, Response } from 'express';
+import type { NextFunction, Request, Response } from 'express';
+import multer from 'multer';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
 import { confirmationRequiredPayload, hasExplicitWriteConfirmation } from '@/shared/security/explicit-write-confirmation';
 import {
   artifactActionsForType,
   mintArtifactHandle,
+  mintInlineArtifactHandle,
   registerAppArtifactActions,
   resolveArtifactHandle,
   type ArtifactHandleRecord,
@@ -33,6 +36,13 @@ const logger = createChildLogger({ module: 'artifact-exchange-routes' });
 const MAX_CONTENT_BYTES = Math.max(1_000_000, parseInt(process.env.ARTIFACT_MAX_CONTENT_BYTES || '52428800', 10) || 52_428_800);
 /** Hard deadline on the internal source fetch — a hung source must not hold the relay open. */
 const SOURCE_FETCH_TIMEOUT_MS = 30_000;
+/** Per-request ceiling on a mint-with-bytes upload. Mirrors the handle store's own cap, which is
+ *  the authority — this one only stops multer buffering past it. */
+const MAX_INLINE_BYTES = Math.max(64_000, parseInt(process.env.ARTIFACT_INLINE_MAX_BYTES || '10485760', 10) || 10_485_760);
+
+/** Multipart reader for the mint-with-bytes route. Memory storage: these bytes are going straight
+ *  into an in-memory handle, so a temp file would only add a path to clean up. */
+const inlineUpload = multer({ storage: multer.memoryStorage(), limits: { files: 1, fileSize: MAX_INLINE_BYTES } });
 
 /**
  * @description Signed-in caller's OIDC sub, or the trusted sub from an internal service-secret
@@ -83,6 +93,23 @@ async function fetchSourceAsOwner(
   }
 }
 
+/**
+ * @description The artifact's bytes for a resolved handle, whichever kind it is: a mint-with-bytes
+ * handle carries them, a locator handle is relayed as its minting owner. Every consumer of a handle
+ * goes through here, which is why Amendment D needed no change in any destination.
+ * @param req - The redeeming request (only used for the loopback relay).
+ * @param rec - The resolved handle record.
+ * @returns Status, content type, and bytes.
+ */
+async function readArtifactBytes(
+  req: Request,
+  rec: ArtifactHandleRecord,
+): Promise<{ ok: boolean; status: number; contentType: string; body: Buffer | null }> {
+  if (rec.bytes) return { ok: true, status: 200, contentType: rec.type, body: rec.bytes };
+  if (!rec.sourcePath) return { ok: false, status: 502, contentType: '', body: null };
+  return fetchSourceAsOwner(req, rec.sourcePath, rec.ownerSub);
+}
+
 /** @description The valid-recipient shape shared with the sibling app senders (one address, no CRLF). */
 function isValidRecipient(raw: unknown): boolean {
   if (typeof raw !== 'string') return false;
@@ -104,7 +131,7 @@ async function redeemForBuiltin(
   const ref = String((req.body as { ref?: unknown } | undefined)?.ref ?? '');
   const rec = resolveArtifactHandle(ref, sub);
   if (!rec) { res.status(404).json({ error: 'artifact handle not found' }); return null; }
-  const fetched = await fetchSourceAsOwner(req, rec.sourcePath, rec.ownerSub);
+  const fetched = await readArtifactBytes(req, rec);
   if (!fetched.ok || !fetched.body) {
     const status = fetched.status === 503 ? 503 : fetched.status === 413 ? 413 : 502;
     res.status(status).json({ error: status === 503 ? 'artifact relay unconfigured' : status === 413 ? 'artifact too large' : 'artifact source unavailable' });
@@ -186,6 +213,45 @@ export function createArtifactExchangeRoutes(ctx: AppContext): Router {
     }
   });
 
+  /** POST /handles/upload — Amendment D: mint a handle that CARRIES the artifact, for a source
+   *  with no byte-serving URL to point at. Multipart, one `file` part. Authorization runs first so
+   *  multer never buffers an anonymous caller's bytes; the size limit is enforced twice (multer per
+   *  request, the handle store per sub). Owner binding, TTL and redeem are the locator mint's. */
+  router.post(
+    '/handles/upload',
+    (req: Request, res: Response, next: NextFunction) => {
+      if (!callerSub(req)) { res.status(401).json({ error: 'unauthenticated' }); return; }
+      next();
+    },
+    (req: Request, res: Response, next: NextFunction) => {
+      inlineUpload.single('file')(req, res, (err: unknown) => {
+        if (!err) { next(); return; }
+        const tooLarge = err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE';
+        if (!tooLarge) logger.warn({ err }, 'artifact inline upload rejected');
+        res.status(tooLarge ? 413 : 400).json({
+          error: tooLarge ? `artifact is too large to carry (${MAX_INLINE_BYTES} bytes max)` : 'a single "file" part is required',
+        });
+      });
+    },
+    (req: Request, res: Response) => {
+      const sub = callerSub(req) as string;
+      const file = (req as Request & { file?: { buffer: Buffer; originalname?: string; mimetype?: string } }).file;
+      if (!file?.buffer) { res.status(400).json({ error: 'a single "file" part is required' }); return; }
+      const body = (req.body ?? {}) as { type?: unknown; name?: unknown };
+      try {
+        const record = mintInlineArtifactHandle({
+          ownerSub: sub,
+          bytes: file.buffer,
+          type: String(body.type || file.mimetype || ''),
+          name: typeof body.name === 'string' && body.name ? body.name : file.originalname,
+        });
+        res.status(201).json({ ref: record.ref, type: record.type, name: record.name, bytes: file.buffer.length, expiresAt: new Date(record.expiresAt).toISOString() });
+      } catch (err) {
+        res.status(400).json({ error: err instanceof Error ? err.message : 'handle mint failed' });
+      }
+    },
+  );
+
   /** GET /handles/:ref — metadata (owner only; foreign/expired/missing are one 404). */
   router.get('/handles/:ref', (req, res) => {
     const sub = callerSub(req);
@@ -204,7 +270,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext): Router {
     const rec = resolveArtifactHandle(String(req.params.ref || ''), sub);
     if (!rec) { res.status(404).json({ error: 'artifact handle not found' }); return; }
     try {
-      const fetched = await fetchSourceAsOwner(req, rec.sourcePath, rec.ownerSub);
+      const fetched = await readArtifactBytes(req, rec);
       if (!fetched.ok || !fetched.body) {
         const status = fetched.status === 503 ? 503 : fetched.status === 413 ? 413 : 502;
         logger.warn({ ref: rec.ref, sourceStatus: fetched.status }, 'artifact source fetch failed');
