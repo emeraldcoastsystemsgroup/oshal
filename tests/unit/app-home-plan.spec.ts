@@ -190,3 +190,30 @@ describe('buildHomePlan — a group stands for its members, which are never also
     expect(plan[0].members).toEqual(['m1']);
   });
 });
+
+// The Home view sections by ADR-097 suite — the operator's correction 2026-09-09: "you don't have
+// to make new groups, the groups ARE the suites". Pure, so it is tested without a DOM.
+describe('sectionBySuite — the sidebar shelves, as tiles', () => {
+  const e = (name: string, suite?: string) => ({ name, displayName: name, suite } as any);
+
+  it('emits shelves in the shared shelf order, skipping empty ones', async () => {
+    const { sectionBySuite } = await import('@/pages/cockpit/js/views/AppsHomeView.js' as any);
+    const shelves = sectionBySuite([e('a', 'ai-finance'), e('b', 'platform'), e('c', 'ai-finance')]);
+    expect(shelves.map((s: any) => s.key)).toEqual(['platform', 'ai-finance']);
+    expect(shelves[1].entries.map((x: any) => x.name)).toEqual(['a', 'c']);
+  });
+
+  it('never DROPS an app with a missing or unknown suite — it lands in Other', async () => {
+    const { sectionBySuite } = await import('@/pages/cockpit/js/views/AppsHomeView.js' as any);
+    const shelves = sectionBySuite([e('good', 'ai-home'), e('bare'), e('typo', 'ai-productivty')]);
+    const other = shelves.find((s: any) => s.key === 'other');
+    expect(other.entries.map((x: any) => x.name).sort()).toEqual(['bare', 'typo']);
+    expect(shelves[shelves.length - 1].key).toBe('other');
+  });
+
+  it('returns nothing for an empty or non-array plan rather than throwing', async () => {
+    const { sectionBySuite } = await import('@/pages/cockpit/js/views/AppsHomeView.js' as any);
+    expect(sectionBySuite([])).toEqual([]);
+    expect(sectionBySuite(undefined as any)).toEqual([]);
+  });
+});

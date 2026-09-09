@@ -6,6 +6,21 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-145 D9: the cross-app Home view. One card per installed group/app showing what happened (the app's own summary probe, or its jarvis_tasks when it declares none) and what still needs you (its readiness probes). Every probe is asked HERE, in the signed-in user's own session — core never impersonates the caller and never reads an app's tables.
  */
 
+/**
+ * ADR-097 suite shelves — the grouping axis for this view (operator, 2026-09-09: "the groups are
+ * the suites"). Order and labels are kept identical to the installed/Discover list in
+ * src/pages/applications/index.html; if you change one, change both.
+ */
+export const SUITES = [
+  ['platform', 'Platform'],
+  ['ai-productivity', 'AI Productivity'],
+  ['ai-knowledge', 'AI Knowledge'],
+  ['ai-finance', 'AI Finance'],
+  ['ai-creative', 'AI Creative'],
+  ['ai-home', 'AI Home & Lifestyle'],
+  ['ai-engineering', 'AI Engineering'],
+];
+
 /** ADR-145 D7: never open more than this many probes at once — a box can run 59 active apps. */
 const MAX_IN_FLIGHT = 6;
 /** ADR-145 D7: a probe that does not answer in this long renders "can't check", not a fact. */
@@ -71,6 +86,29 @@ export function groupTasksByAppPrefix(rows) {
     byPrefix.get(key).push(row);
   }
   return byPrefix;
+}
+
+/**
+ * @description Section plan entries onto the ADR-097 suite shelves, in the shared shelf order.
+ * A suite with no installed app is omitted entirely; anything carrying an unknown or missing
+ * suite lands in a trailing "Other" shelf rather than being dropped, so a package can never
+ * disappear from the page by mis-declaring one field.
+ * @param {Array<object>} entries - Plan entries from GET /api/swarm/apps/home-plan.
+ * @returns {Array<{key: string, label: string, entries: Array<object>}>} Non-empty shelves, in order.
+ */
+export function sectionBySuite(entries) {
+  const known = new Set(SUITES.map(([key]) => key));
+  const buckets = new Map(SUITES.map(([key]) => [key, []]));
+  const other = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (entry && known.has(entry.suite)) buckets.get(entry.suite).push(entry);
+    else if (entry) other.push(entry);
+  }
+  const shelves = SUITES
+    .filter(([key]) => buckets.get(key).length)
+    .map(([key, label]) => ({ key, label, entries: buckets.get(key) }));
+  if (other.length) shelves.push({ key: 'other', label: 'Other', entries: other });
+  return shelves;
 }
 
 /** Run `jobs` with bounded concurrency; every job resolves (never rejects). */
@@ -162,7 +200,12 @@ export class AppsHomeView {
     const tasks = await askProbe('/api/jarvis/tasks');
     const byPrefix = groupTasksByAppPrefix(tasks.ok ? (tasks.body?.tasks || tasks.body || []) : []);
 
-    grid.innerHTML = entries.map((e) => this.skeleton(e)).join('');
+    // Sectioned by ADR-097 suite — the sidebar's own shelves, rendered as tiles.
+    grid.innerHTML = sectionBySuite(entries).map((shelf) => `
+      <section class="apps-home-shelf">
+        <h3 class="apps-home-shelf-label">${esc(shelf.label)}</h3>
+        <div class="apps-home-tiles-grid">${shelf.entries.map((e) => this.skeleton(e)).join('')}</div>
+      </section>`).join('');
     grid.addEventListener('click', (ev) => {
       const target = ev.target.closest('[data-open]');
       if (target) this.navigateToView(`tool-${target.getAttribute('data-open')}`);
