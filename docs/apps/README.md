@@ -77,6 +77,12 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
   planner, :8060).
 - [career-hunter-native-migration-plan.md](./career-hunter-native-migration-plan.md) —
   career-hunter (completed reference migration).
+- [fantasy-football-spec.md](./fantasy-football-spec.md) — **SPEC (nothing built):** the fantasy football
+  draft engine, league site and live-draft node assistant. The value model and the roster-construction engine
+  in full — league-rule scoring (ESPN publishes raw stats, never points), replacement level from the league's
+  own shape, tiers by cliff, VONA, and the marginal weekly-optimal-lineup value that is what "build from the
+  team out" means mechanically — plus the data model, the commissioner controls, the node loop and six named
+  guards. Decisions in [ADR-146](../adr/146-fantasy-football-draft-platform.md).
 - [print-ingest-spec.md](./print-ingest-spec.md) — **SPEC (nothing built):** the swarm half of print
   adoption — printing a document becomes an intake gesture, with the destination chosen by *which
   printer queue you print to* rather than a driver dialog. Functional spec (the five queues, the
