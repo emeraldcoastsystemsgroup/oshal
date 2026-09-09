@@ -26,12 +26,22 @@ export {
   staticRibbonItems,
   validateGroupManifest,
   validateReadinessDeclarations,
+  validateSummaryDeclaration,
   validateGuestSeedDeclaration,
   resolveGroupToolbar,
   resolveGroupSetup,
   assertGroupResolvable,
 } from './swarm-app-group';
 export type { ResolvedGroupSetupStep, ResolvedGroupToolbar } from './swarm-app-group';
+export {
+  buildHomePlan,
+  coerceSummaryPayload,
+  coerceTone,
+  atPointer,
+  MAX_SUMMARY_TILES,
+  MAX_SUMMARY_ITEMS,
+} from './app-home-plan';
+export type { HomePlanEntry, HomePlanSummaryProbe, HomePlanTodo } from './app-home-plan';
 export type {
   AppSmokeApplicationResult,
   AppSmokeFetch,

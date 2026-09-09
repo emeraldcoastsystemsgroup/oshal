@@ -1,6 +1,12 @@
-# ADR-145: The app status contract — every app reports its own highlights and todos, and one page renders them
+# ADR-145: The app summary contract — every app reports its own highlights and todos, and one page renders them
 
-- Status: Proposed — designed, nothing built
+- Status: Accepted — BUILT 2026-09-09 (core: the `summary:` contract, the Home plan, and the cockpit Home view)
+- **Amendment A (2026-09-09, recorded at build time): the manifest key is `summary:`, not `status:`.**
+  `status` is already a field on `SwarmAppManifest` — the app's install state (`active` | `inactive`) —
+  so the name in the original draft could not be used; TypeScript caught it as a duplicate identifier on
+  the first compile. Everything else in D1–D9 stands as written; read `status:` below as `summary:` — the code is the authority.
+  D9 (the global Home) was NOT deferred in the end — the operator asked for the landing page directly,
+  so it shipped in the same change as the contract.
 - Date: 2026-09-08
 - Related: [ADR-141](141-application-groups.md) (application groups; `readiness:` is the contract this
   extends), [ADR-144](144-guest-seed-contract.md) (the mutation sibling — same declare-a-route shape),
@@ -58,7 +64,7 @@ consumes is worse than no declaration, and it is what this ADR is written to avo
 An app reports about itself through a declared route, exactly as it already declares readiness. The kernel
 renders. Core never learns an app's schema.
 
-### D1 — A `status:` manifest declaration, the reporting sibling of `readiness:`
+### D1 — A `summary:` manifest declaration, the reporting sibling of `readiness:`
 
 ```yaml
 status:
@@ -71,12 +77,12 @@ Validated at load by the same fail-closed rules as `readiness:`
 ([`validateReadinessDeclarations`](../../src/features/swarm-apps/services/swarm-app-group.ts)): the path
 must sit below one of **this manifest's own** `routes[].mountPath`s, be canonical (no traversal, encoded
 or otherwise), carry valid RFC 6901 pointers, and — the load-bearing half — its owning route must **admit
-a browser session**. A `status:` behind a service-only route is a load error, because status is a fact
+a browser session**. A `summary:` behind a service-only route is a load error, because status is a fact
 about a *person* and the page asks it as that person. This is the mirror of ADR-144's `guestSeed:`, whose
 route must instead admit the service secret.
 
 One difference from `readiness:`, deliberately: `readiness:` is an *array* of named probes because a
-group's `setup[]` references them individually. `status:` is a **single declaration per app** — one app,
+group's `setup[]` references them individually. `summary:` is a **single declaration per app** — one app,
 one card. An app that wants five numbers returns five tiles, not five probes.
 
 ### D2 — The response is tiles and items, bounded and fail-closed
@@ -116,7 +122,7 @@ The fetch discipline is unchanged and non-negotiable: the page asks every probe 
 own session** (`credentials: 'same-origin'`), never with a service secret and never with a PAT.
 
 Rendering order is highlights, then "What still needs you" with the existing `N of M steps done` count.
-An app with a `status:` and no `readiness:` shows only the first section; the reverse shows only the
+An app with a `summary:` and no `readiness:` shows only the first section; the reverse shows only the
 second; today's groups keep today's page until their members declare anything.
 
 ### D4 — The page addresses an app or a group, so an app in no group still reports
@@ -132,14 +138,14 @@ costs one branch and touches nothing else.
 
 ### D5 — An app that declares nothing still gets a card, built from `jarvis_tasks`
 
-With no `status:` block, the kernel composes items from the app's own recent `jarvis_tasks` rows for this
+With no `summary:` block, the kernel composes items from the app's own recent `jarvis_tasks` rows for this
 user — the existing `App: …` title-prefix convention (core #305) — most recent three, each carrying its
 age the way `buildOpenWorkBlock` already does.
 
 This is the **only** data the kernel reads on an app's behalf, and it is kernel-owned data: `jarvis_tasks`
 is a core table with a core schema, not an app's store. It is what keeps the page useful on day one
 instead of empty until 51 packages ship an update, and it gives an app a zero-cost upgrade path — file
-tasks titled `<App>: …` and you appear; declare `status:` when you want numbers.
+tasks titled `<App>: …` and you appear; declare `summary:` when you want numbers.
 
 ### D6 — What the kernel must never do
 
@@ -148,7 +154,7 @@ Stated as rules because each one is a design temptation that would work in a dem
 1. **Never query an app's tables.** The reason one page renders four unrelated schemas today is that it
    cannot. A kernel that reads `ps_portraits` is a kernel that breaks when portrait-studio migrates.
 2. **Never hold app schema knowledge** — no per-app formatter, no `if (app === 'kalshi')`.
-3. **Never call a status probe with the service secret or a PAT.** Per-user data is read in the user's own
+3. **Never call a summary probe with the service secret or a PAT.** Per-user data is read in the user's own
    session or not at all; this is what makes RLS and ownership hold without core enforcing them.
 4. **Never render an unresolvable pointer as fact.** "Can't check" is a legitimate, honest state; a green
    check an app did not assert is not.
@@ -160,7 +166,7 @@ Stated as rules because each one is a design temptation that would work in a dem
 - **One probe's failure never blocks another** — `allSettled`, the discipline `DashboardHomeView` already
   uses and the reason it degrades per-card today.
 - **Probes are GET and must be side-effect free.** The kernel may call one on every page load, every
-  refresh, and concurrently for the same user in two tabs. Declaring a `status:` that mutates is a bug in
+  refresh, and concurrently for the same user in two tabs. Declaring a `summary:` that mutates is a bug in
   the app.
 
 ### D8 — What this is not
@@ -206,24 +212,24 @@ page, then widen), and because it forces two decisions this ADR does not have to
 
 ## What would be built
 
-Core, one PR, additive — no app declares `status:` on merge, so the page behaves exactly as it does today
+Core, one PR, additive — no app declares `summary:` on merge, so the page behaves exactly as it does today
 until one does:
 
-- `SwarmAppStatusDeclaration` + `status?:` on `SwarmAppManifest` ([src/features/swarm-apps/types.ts](../../src/features/swarm-apps/types.ts))
-- `validateStatusDeclaration` beside the readiness validator ([swarm-app-group.ts](../../src/features/swarm-apps/services/swarm-app-group.ts)),
+- `SwarmAppSummaryDeclaration` + `status?:` on `SwarmAppManifest` ([src/features/swarm-apps/types.ts](../../src/features/swarm-apps/types.ts))
+- `validateSummaryDeclaration` beside the readiness validator ([swarm-app-group.ts](../../src/features/swarm-apps/services/swarm-app-group.ts)),
   plus the pure coercion for D2's caps/enums/truncation
-- `getAppStatusPlan(name)` — resolves a group **or** an app to members + each one's status/readiness probes
+- `buildHomePlan(manifests)` — resolves a group **or** an app to members + each one's status/readiness probes
   ([swarm-app-service.ts](../../src/features/swarm-apps/services/swarm-app-service.ts))
 - the generalised dashboard route ([swarm-app-routes.ts](../../src/app/routes/swarm-app-routes.ts)) and the
   `jarvis_tasks` fallback read
 - the highlights section in [app-group-setup.html](../../src/pages/cockpit/tools/app-group-setup.html)
 
-Store, per app, independently: a `status:` block and one session-authenticated GET. kalshi is the obvious
+Store, per app, independently: a `summary:` block and one session-authenticated GET. kalshi is the obvious
 first adopter — it already computes every number this contract asks for.
 
 **Guards** (per the guard-per-fix directive, in the same change):
 
-- manifest validation fails closed on a `status:` that is unowned, non-canonical, service-only, or carries
+- manifest validation fails closed on a `summary:` that is unowned, non-canonical, service-only, or carries
   a malformed pointer — extends `tests/unit/swarm-app-groups.spec.ts`, the file that already proves this
   for `readiness:` and `guestSeed:`
 - a pure spec for D2: caps truncate, unknown tone degrades to `neutral` and never escalates, a wrong-typed
@@ -242,12 +248,12 @@ schemas, and it would convert every app migration into a core regression.
 state core must then store, age, and evict), duplicates `jarvis_tasks`, and makes core responsible for
 data it cannot interpret. The pull-from-a-declared-route shape is already proven here.
 
-**Extend `readiness:` to carry numbers instead of adding `status:`.** Rejected: `readiness:` is
+**Extend `readiness:` to carry numbers instead of adding `summary:`.** Rejected: `readiness:` is
 boolean-by-contract (`readyPointer` resolves to `true` or the step is not done) and a group's `setup[]`
 references entries by name. Overloading it would either break that contract or bolt an optional shape onto
 every existing probe. Two declarations with one page is cleaner than one declaration with two meanings.
 
-**Ship the `status:` field now, render it later.** Rejected explicitly — that is the `settings:` outcome:
+**Ship the `summary:` field now, render it later.** Rejected explicitly — that is the `settings:` outcome:
 a documented manifest key that nothing consumes, which package authors then work around by re-implementing
 it themselves.
 

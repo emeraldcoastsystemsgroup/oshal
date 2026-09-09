@@ -24,6 +24,7 @@ import {
   ConnectorDiscoverView,
 } from './views/index.js';
 import { DashboardHomeView } from './views/DashboardHomeView.js';
+import { AppsHomeView } from './views/AppsHomeView.js';
 
 /**
  * @description Manage cockpit main-content view routing, ticket handoffs, and bot-to-rail context transitions.
@@ -124,6 +125,9 @@ export class CockpitViewController {
       case 'addressbook':
         await this.renderAddressBookView(container);
         break;
+      case 'home':
+        await this.renderAppsHomeView(container);
+        break;
       case 'dashboard':
         await this.renderDashboardView(container);
         break;
@@ -213,6 +217,16 @@ export class CockpitViewController {
     });
     this.activeViewInstance = view;
     await view.render();
+  }
+
+  // Render the ADR-145 cross-app Home: one card per installed group/app.
+  async renderAppsHomeView(container) {
+    const view = new AppsHomeView({
+      navigateToView: (viewId) => this.getRibbon()?.setActive(viewId),
+      showToast: (message, type) => this.showToast(message, type),
+    });
+    this.activeViewInstance = view;
+    await view.render(container);
   }
 
   // Render the cockpit Dashboard workbench with homepage summary.
