@@ -1,6 +1,7 @@
 # ADR-146: Fantasy football — its own package, one kernel skill, and a draft assistant that needs no new rail
 
-- Status: Proposed — designed, nothing built
+- Status: Proposed — designed, nothing built. **Amended the same day** (Amendment A: managing comes
+  before drafting) after the operator reported the draft already happened.
 - Date: 2026-09-09
 - Related: [ADR-085](085-remote-app-packages-and-registries.md) (one app, one package),
   [ADR-090](090-skills-as-first-class-packages.md) + [kernel skills](../apps/kernel-skills.md) (the package-facing API and
@@ -162,6 +163,40 @@ of them; a draft engine gets the same standard of proof before anyone calls it a
   package; core learning what a fantasy league is; an autopick path; and a claim of edge that has not
   beaten straight-ADP drafting on completed seasons.
 
+## Amendment A — managing comes before drafting (operator, 2026-09-09)
+
+The operator's draft has already happened, and the decisions above were written as though it had not.
+Their account: *"we have been positioned last … we picked up running backs first round 2 times that were
+specifically left over by the other team owners … because we missed the first 2 rounds maybe first 4."*
+An autopicked roster of other managers' leftovers is the starting position, and ESPN's public season
+endpoint reports **week 1** (checked live 2026-09-09) — the whole season is still ahead of it.
+
+**None of D1–D5 changes.** What changes is the order, and one dependency.
+
+- **Phase order.** The management engine is P0; the league site and commissioner controls P1; the
+  draft-specific layer (tiers, VONA, the draft simulator, auction) and the live-draft node move to P2,
+  where they are still needed — next pre-season, and for mocks.
+- **The math barely moves, which is why this is a re-order and not a redesign.** `MV(c|R)` — the change
+  in the points your *starting* lineup scores over the remaining weeks — is the same function whether the
+  candidate is a draft pick, a waiver claim, or the incoming half of a trade. Drafting and managing differ
+  only in the set of remaining weeks. Everything genuinely draft-shaped (VONA, tiers, the draft simulator,
+  auction inflation) sits on top of it and can wait.
+- **One piece has to be added, and it is the piece this roster most needs: the objective.** Maximising
+  expected points is correct only for a team that is already good. A week is head-to-head, so the target
+  is `P(win) = Φ((μ_you − μ_opp)/√(σ²_you + σ²_opp))`, and differentiating that says an underdog's win
+  probability rises with variance while a favourite's falls. A team built from leftovers that plays the
+  safe lineup every week converges on finishing 7th. The same logic one level up maximises P(playoffs)
+  over a simulated remaining schedule. This is derived, not a heuristic, and it is why the engine's
+  recommendation will sometimes cost mean points on purpose — so it must always show the mean-maximising
+  lineup beside it, with the win-probability difference that justifies the swap.
+- **The credential moved onto the critical path.** The draft engine needed none — pool, ADP and
+  projections are public. Managing needs *your* roster and *your opponents'*, which in a private league
+  means the two ESPN account cookies, and the operator has separately reported that ESPN team "having
+  some issues". **Manual roster entry is therefore a first-class input, not a fallback**: every weekly
+  recommendation must be reachable from hand-typed rosters, guarded so the connector can never silently
+  become mandatory. This is also why `ff_rosters` holds every team's roster and not just the operator's —
+  the trade finder is worthless without the other nine.
+
 ## Open questions for the operator
 
 1. **Is the skill extraction taken now, or does fantasy-football start by duplicating the client and
@@ -170,5 +205,9 @@ of them; a draft engine gets the same standard of proof before anyone calls it a
 2. **Does P1 ship single-operator (you are the commissioner and every team's manager) or multi-member from
    the start?** Single-operator is the whole near-term ask and avoids nineteen migrations' worth of
    identity work; multi-member is a different schema from day one.
-3. **Package name and suite** — `fantasy-football` under `ai-productivity`, or something else, and whether
+3. **What are the league's scoring rules and roster slots, and is there a usable ESPN credential — or
+   is the first pass hand-typed?** P0 cannot rank a waiver claim without knowing what a reception is
+   worth, and cannot find a trade without the other nine rosters. This is the only input that blocks
+   building anything.
+4. **Package name and suite** — `fantasy-football` under `ai-productivity`, or something else, and whether
    the group with sports-edge is `intelligent-sports` or the two ship ungrouped for now.
