@@ -653,6 +653,35 @@ describe('watchdog PowerShell plumbing (real powershell.exe, real files)', () =>
     '$script:WdDockerArgPrefix = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command")',
   ];
 
+  // BLEED_BOOKS is a STRING setting, so it cannot ride Get-WdSetting (that parses doubles) and is
+  // read straight off the parsed .env map. This crosses the real boundary that would break: real
+  // powershell.exe, a real .env file, the shipped Read-WdEnvSettings, and the exact expression the
+  // audit request uses. The watchdog hard-exits outside 08:00-19:59 ET, so this is the only way to
+  // prove the wiring without waiting for a market session.
+  it('reads TRADING_WD_BLEED_BOOKS off the .env into the audit request, and blanks when unset', () => {
+    const envFile = join(scratch, 'wd-probe.env');
+    const body = [
+      `$script:WdEnv = Read-WdEnvSettings ${JSON.stringify(envFile)}`,
+      `$v = [string]$(if ($script:WdEnv -and $script:WdEnv.ContainsKey('BLEED_BOOKS')) { $script:WdEnv['BLEED_BOOKS'] } else { '' })`,
+      `Write-Host ('BLEED=[' + $v + ']')`,
+      `Write-Host ('ALERT=' + (Get-WdSetting 'LIVE_ALERT_PCT' 5))`,
+    ];
+
+    writeFileSync(envFile, ['TRADING_WD_LIVE_ALERT_PCT=1', 'TRADING_WD_BLEED_BOOKS=live', 'UNRELATED=x', ''].join('\n'));
+    const set = probe(body);
+    expect(set.out, set.err).toContain('BLEED=[live]');
+    // The numeric sibling must still resolve through Get-WdSetting from the same file.
+    expect(set.out).toContain('ALERT=1');
+
+    // Unset must produce the empty string the module reads as "every book" - never 'False' or
+    // 'System.Object', which is what a naive $null-to-string would emit.
+    writeFileSync(envFile, ['TRADING_WD_LIVE_ALERT_PCT=1', ''].join('\n'));
+    const unset = probe(body);
+    expect(unset.out, unset.err).toContain('BLEED=[]');
+    // Two real powershell.exe spawns; the 5s default is not enough on a loaded box (its sibling
+    // below carries the same allowance for the same reason).
+  }, 30_000);
+
   it('an EMPTY exec raises check-infra instead of reading as all-clear', () => {
     const r = probe([...asDocker,
       '$out = Invoke-WdExec "book-audit" @("exit 0")',
@@ -674,7 +703,9 @@ describe('watchdog PowerShell plumbing (real powershell.exe, real files)', () =>
       'Write-Host ("OUT=" + $out)']);
     expect(ok.out, ok.err).toContain('OUT=ok-payload');
     expect(ok.out).not.toContain('RAISE');
-  });
+    // Real powershell.exe spawns: the 5s default is too tight on a loaded box (matching the
+    // 30s allowance the audit-budget sibling in this block already carries).
+  }, 30_000);
 
   it('an exec that HANGS is killed at its deadline and reported as a failed check', () => {
     // The failure this exists for: the api answers /api/health while /api/trading is wedged, so
@@ -793,7 +824,9 @@ describe('watchdog PowerShell plumbing (real powershell.exe, real files)', () =>
     expect(bound.out, 'an explicitly passed -AlertPct outranks the .env, and is still the live fallback').toContain('ALERT=5');
     expect(bound.out).toContain('LIVE=5');
     rmSync(dir, { recursive: true, force: true });
-  });
+    // Real powershell.exe spawns: the 5s default is too tight on a loaded box (matching the
+    // 30s allowance the audit-budget sibling in this block already carries).
+  }, 30_000);
 
   it('a core-hold read that FAILS withholds every core-exempting check instead of exempting nothing', () => {
     // TRADING_CORE_SYMBOLS is the exemption list for every loss conclusion. Read through an empty
@@ -977,5 +1010,54 @@ describe('watchdog wiring: the ps1 uses what this module decides', () => {
   it('stays pure ASCII (PowerShell 5.1 mojibakes anything else)', () => {
     expect(/^[\x00-\x7f]*$/.test(watchdogSource)).toBe(true);
     expect(/^[\x00-\x7f]*$/.test(moduleSource)).toBe(true);
+  });
+});
+
+describe('watchdog checks: the bleed alert is scoped to the books something MANAGES', () => {
+  const healthy = { account: { equity: 100_000, cash: 50_000, buyingPower: 50_000 }, positions: [], orders: [] };
+  const bleeding = { ...healthy, positions: [position('AAPL', { unrealizedPl: -900 })] };
+  const MANAGED = { ref: 'live', enabled: true };
+  const BY_HAND = { ref: 'b-77146871', enabled: true };
+
+  it('an EMPTY allow-list means every book — an unset setting must not mute a safety check', () => {
+    for (const raw of ['', '   ', undefined as unknown as string]) {
+      const st = settings({ bleedBooks: C.bleedBookSet(raw) });
+      expect(kindsOf(C.evaluateBook(MANAGED, bleeding, st)), `raw=${JSON.stringify(raw)}`).toEqual(['bleed']);
+      expect(kindsOf(C.evaluateBook(BY_HAND, bleeding, st)), `raw=${JSON.stringify(raw)}`).toEqual(['bleed']);
+    }
+  });
+
+  it('a non-empty list fires on a listed book and stays silent on an unlisted one', () => {
+    const st = settings({ bleedBooks: C.bleedBookSet('live') });
+    expect(kindsOf(C.evaluateBook(MANAGED, bleeding, st))).toEqual(['bleed']);
+    // The hand-traded book: every position legitimately has no working sell, so "nothing is
+    // exiting this" is the operator's own strategy, not a defect.
+    expect(C.evaluateBook(BY_HAND, bleeding, st).findings).toEqual([]);
+  });
+
+  it('scoping bleed does NOT mute deep-loss on the excluded book', () => {
+    // The safety property. A position past every shipped stop is worth saying out loud even on a
+    // book the operator trades by hand — silencing it would turn a UX fix into a real blind spot.
+    const deep = { ...healthy, positions: [position('AAPL', { unrealizedPl: -2_500 })], orders: [order('AAPL')] };
+    const st = settings({ bleedBooks: C.bleedBookSet('live') });
+    expect(kindsOf(C.evaluateBook(BY_HAND, deep, st))).toEqual(['deep-loss']);
+  });
+
+  it('the allow-list is refs, trimmed, and never symbol-style split on a colon', () => {
+    expect([...C.bleedBookSet(' live , b-77146871 ')]).toEqual(['live', 'b-77146871']);
+    expect([...C.bleedBookSet('b-77:146871')]).toEqual(['b-77:146871']);
+  });
+
+  it('MUTATION: an empty allow-list failing CLOSED would silence every book', () => {
+    const M = mutant('const bleedScoped = !settings.bleedBooks || settings.bleedBooks.size === 0 || settings.bleedBooks.has(ref);',
+      'const bleedScoped = !!settings.bleedBooks && settings.bleedBooks.has(ref);');
+    const st = settings({ bleedBooks: C.bleedBookSet('') });
+    expect(M.evaluateBook(MANAGED, bleeding, st).findings).toEqual([]);
+  });
+
+  it('MUTATION: dropping the scope check re-alerts the hand-traded book', () => {
+    const M = mutant('if (settings.rth && bleedScoped) {', 'if (settings.rth) {');
+    const st = settings({ bleedBooks: C.bleedBookSet('live') });
+    expect(kindsOf(M.evaluateBook(BY_HAND, bleeding, st))).toEqual(['bleed']);
   });
 });
