@@ -17,7 +17,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the connector is registered as a token connector in the 'media' category, the SWID:espn_s2 split, brace normalisation, both cookies actually sent, and fail-closed on a malformed paste, a rejected pair, and a network error.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The connectors page must offer BOTH fields. The card shipped with only a single token box, because the surface's two-field list is hardcoded and espn-fantasy was not in it — so there was nowhere to enter the SWID, and the pair the connector stores could never be formed from the page. Reported by the operator as the card being unusable.
  */
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchAccount } from '@/app/routes/connector-account-lookup';
 import { CONNECTOR_CATEGORY, PROVIDERS } from '@/app/routes/connector-provider-registry';
@@ -114,5 +117,34 @@ describe('espn-fantasy credential validation', () => {
     const { calls } = stubFetch(() => ok({ displayName: 'Roger' }));
     await fetchAccount('espn-fantasy', { access_token: '{ABC-123}:aaa:bbb:ccc' });
     expect(String((calls[0].init?.headers as Record<string, string>).Cookie)).toContain('espn_s2=aaa:bbb:ccc');
+  });
+});
+
+describe('the connectors page can actually enter this credential', () => {
+  // The surface decides which token connectors get a second field from a HARDCODED list, so a
+  // registry entry alone is not enough to make a two-value connector enterable. This reads the
+  // shipped page rather than a copy of the list: the bug was that the page and the registry
+  // disagreed, and a test written against a re-declared constant would have agreed with itself.
+  const page = readFileSync(resolve(__dirname, '../../src/api/utilities.html'), 'utf8');
+
+  it('OFFERS BOTH BOXES — one box means the SWID has nowhere to go and the paste is half a credential', () => {
+    const twoField = page.match(/var TWO_FIELD_TOKEN = \{[\s\S]*?\};/)?.[0] ?? '';
+    expect(twoField).toContain("'espn-fantasy'");
+    expect(twoField).toMatch(/SWID/);
+  });
+
+  it('names the two cookies instead of calling them an API token, which ESPN does not issue', () => {
+    // A user told to paste a "Personal Access Token" goes looking for an ESPN developer key. There
+    // is none, for anyone, ever — so the generic wording sends them somewhere that does not exist.
+    expect(page).toMatch(/var TOKEN_FIELD_LABEL = \{[^}]*'espn-fantasy'/);
+    expect(page).toContain('espn_s2 cookie value');
+  });
+
+  it('says on the card that these are account session cookies with no per-app revocation', () => {
+    // The one thing a user cannot discover for themselves, and the reason this connector is not
+    // interchangeable with an API key. It belongs where the paste happens, not only in an ADR.
+    const note = page.slice(page.indexOf('var TOKEN_NOTE'), page.indexOf('var TOKEN_NOTE') + 1200);
+    expect(note).toMatch(/account session cookies/i);
+    expect(note).toMatch(/revoke|revocation/i);
   });
 });

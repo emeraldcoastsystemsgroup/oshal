@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exposed worker events, local-account auth, verified sign-in, and connectors-hub APIs
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Exposed openJarvis — opens the full swarm-hosted cockpit window (full-Jarvis mode)
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: exposed authLoginAndPush / authPush / authSwarmStatus — the Codex and Claude rows can push the login this machine holds into the swarm.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Exposed espnConnect / espnStatus / espnForget. ESPN publishes no OAuth for fantasy, so the credential is a cookie pair captured from a real sign-in window; only presence and an outcome cross this bridge, never the cookies.
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
@@ -37,6 +38,12 @@ const api = {
   authLoginAndPush: (id: string) => ipcRenderer.invoke('auth:login-and-push', id),
   authPush: (id: string) => ipcRenderer.invoke('auth:push', id),
   authSwarmStatus: (id: string) => ipcRenderer.invoke('auth:swarm-status', id),
+
+  // ESPN Fantasy — captured from a real ESPN sign-in window rather than a CLI file. The renderer
+  // only ever sees presence and an outcome; the cookies themselves never cross this bridge.
+  espnConnect: () => ipcRenderer.invoke('espn:connect'),
+  espnStatus: () => ipcRenderer.invoke('espn:status'),
+  espnForget: () => ipcRenderer.invoke('espn:forget'),
 
   // Verified identity + web connectors hub.
   signIn: () => ipcRenderer.invoke('identity:signin'),
