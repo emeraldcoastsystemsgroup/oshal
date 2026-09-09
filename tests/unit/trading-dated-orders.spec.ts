@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D4 dated orders, against the live oshal Postgres (real FORCE-RLS table, real rows): the ET wall-clock → instant conversion round-trips across DST and refuses the spring-forward gap; validateFireAt refuses past / too-far / weekend / outside 09:00–16:55 ET / off-grid times; a due order fires EXACTLY once through the injected place seam with one requestId; a cancelled order never fires; a window missed by more than the grace EXPIRES unfired; an engine refusal is terminal (no retry). Run with --no-file-parallelism (concurrent schema bootstrap races).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-136 D4 follow-up: minute precision (09:37 accepted), the window derived from the leg cron (07:00–19:59 ET) and proven to AGREE with cron-parser's actual fires of EVENT_PLANS_CRON in America/New_York (first fire 07:00, last 19:59, none at 20:00 or Saturday, 60 s steps); the extended-session rule (pre/post only for limit + extendedHours + day; market / GTC / non-ext refused) and its FAIL-CLOSED form (no order shape → refused, so the 1.9.2 store call cannot widen the window); NYSE holidays refused BY NAME (Labor Day 3 days out; Thanksgiving + observed Independence Day with injected clocks; a TRADING_MARKET_HOLIDAYS one-off); an early-close afternoon (2026-11-27 15:00) is ACCEPTED and the runtime places it when the venue says 'post' (only 'closed' expires) — the as-built "early closes are runtime-only" sentence, guarded. Real-DB: a 07:30 pre-session limit+ext+day row fires exactly once when the session is 'pre'. Source pins: the engine honours a decision's extended_hours on a LIMIT outside the TRADING_EXTENDED_HOURS branch (so a dated ext limit places with the flag off).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | De-fuse a dated time bomb in the PROTECTED-timed-entry case. It pinned notBefore to the hardcoded FIRE (2026-09-09 09:35 ET) but ticked the clock at Date.now() + 3 days, while createPinnedLotIntent stamps createdAt from the REAL clock with no injection seam. Written 2026-09-04 it passed; on 2026-09-09 the calendar reached FIRE, Date.now() + 3d moved past notBefore + 2d, the lot correctly released, and the assertion failed - a green-to-red flip with no code change behind it. Worse, its premise (a moment both 3 days after intent AND before the fire time) had become unreachable, so no tick value could fix it. notBefore now moves with the real clock. The guard keeps its teeth: mutating the release clock back to createdAt-only (dropping Math.max in stepPendingFill) still fails it with the same message.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
@@ -224,16 +225,23 @@ describe('dated orders — schedule → fire once → never twice; cancel; expir
 
   it('a PROTECTED timed entry is not released before it can fire: the lot release clock starts at notBefore', async () => {
     const rules = { takeProfitPct: 10, stopLossPct: 5 };
-    const timed = await createPinnedLotIntent(pool as never, SUB, { book, decisionId: crypto.randomUUID(), symbol: 'MSFT', qty: 5, rules, notBefore: FIRE });
+    // The release clock is max(createdAt, notBefore) + 2 days, and createPinnedLotIntent stamps
+    // createdAt from the REAL clock with no injection seam. So notBefore has to move with the real
+    // clock too: a hardcoded FIRE made this test pass only until the calendar reached it. It went
+    // red on 2026-09-09 -- the very date FIRE named -- because by then "3 days after intent" was
+    // already past "FIRE + 2 days", so the timed lot correctly released and the test's premise
+    // (a moment both 3 days after intent AND before the fire time) had become impossible.
+    const notBefore = new Date(Date.now() + 5 * 86_400_000);
+    const timed = await createPinnedLotIntent(pool as never, SUB, { book, decisionId: crypto.randomUUID(), symbol: 'MSFT', qty: 5, rules, notBefore });
     const plain = await createPinnedLotIntent(pool as never, SUB, { book, decisionId: crypto.randomUUID(), symbol: 'MSFT', qty: 5, rules });
-    expect(timed.entry).toMatchObject({ notBefore: FIRE.toISOString() });
+    expect(timed.entry).toMatchObject({ notBefore: notBefore.toISOString() });
     const venue = fakePlace();
     // 3 days after intent, before the fire time: the plain lot is released (never placed), the timed one waits.
     await tickPinnedLots(ctx(), SUB, venue.deps(new Date(Date.now() + 3 * 86_400_000)));
     expect((await getPinnedLot(pool as never, SUB, plain.lotId))?.status).toBe('released');
     expect((await getPinnedLot(pool as never, SUB, timed.lotId))?.status).toBe('pending_fill');
-    // 3 days after the FIRE time with still no order: now it is genuinely never-placed → released.
-    await tickPinnedLots(ctx(), SUB, venue.deps(new Date(FIRE.getTime() + 3 * 86_400_000)));
+    // 3 days after notBefore with still no order: now it is genuinely never-placed → released.
+    await tickPinnedLots(ctx(), SUB, venue.deps(new Date(notBefore.getTime() + 3 * 86_400_000)));
     expect((await getPinnedLot(pool as never, SUB, timed.lotId))?.status).toBe('released');
   });
 

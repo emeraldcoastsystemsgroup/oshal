@@ -13,6 +13,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Inventory both CORE-05 install-verification machine surfaces: service-auth package smokes own no database write, while PAT-only live verification forwards the exact caller into the ordinary owner-scoped chat-task write rail.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Inventory connector-oauth-ceremony.ts, which the 2026-08-06 connectors-routes decomposition split out. It carries the Meta signed_request HMAC check but no database access at all, so it takes the webhook-ingress-core shape: no-owner-scoped-write, with the deletion identity left where the DELETE lives. Discovery caught this the way it is meant to — the guard went red the moment a machine-auth surface appeared without an entry.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Inventory artifact-exchange-routes.ts (ADR-139). It authenticates a machine caller over the service rail and threads that sub explicitly, but owns no owner-scoped write: the handle ledger and destination registry are in-process Maps, the storage built-in writes the caller's own filesystem path, and the email built-in only reads their connector token. Same no-owner-scoped-write shape as connector-oauth-ceremony-core.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Inventory guest-seed-orchestrator.ts (ADR-144 guest-seed contract). Discovery caught it the moment the guest-seed work landed a machine-auth surface under src/app/routes with no entry. It is the inventory's first OUTBOUND caller rather than an inbound route: nothing authenticates TO it, it PRESENTS the service rail on the loopback and stamps x-oshal-user-sub = the fresh guest sub. It owns no database access at all, so it takes the no-owner-scoped-write shape - but it is precisely the place the accountable identity for every downstream app seed is established, which is the question this inventory exists to answer.
  */
 
 /**
@@ -614,6 +615,37 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
       + 'the relay a machine-auth surface with no entry. The redeem boundary is behaviourally crossed by '
       + 'tests/unit/artifact-redeem-relay.spec.ts, which stands a REAL http server in for the relay and '
       + 'proves the headers actually sent and the fail-closed ordering.',
+  },
+  {
+    id: 'guest-seed-orchestrator',
+    entryPoint: 'runGuestSeeds() — not an inbound route: an OUTBOUND fan-out that POSTs the guestSeed hook each active app declares, on the loopback origin',
+    file: 'src/app/routes/guest-seed-orchestrator.ts',
+    auth: 'service-secret',
+    ownerScopedTables: [],
+    identity: {
+      kind: 'no-owner-scoped-write',
+      why:
+        'This is the first entry that PRESENTS the service rail rather than accepting it, and it is the '
+        + 'exact place the accountable identity for a guest seed is established: runGuestSeeds builds '
+        + "headers ONCE as { 'x-service-secret': secret, 'x-oshal-user-sub': opts.guestSub } and sends "
+        + 'them to every hook, so each app writes its seed rows under the fresh guest sub, behind that '
+        + "app's own gate, on the ordinary owner-scoped rail. The orchestrator itself touches no "
+        + 'database: the file imports no pool and issues no query — it reduces manifests to their '
+        + 'declared hooks (guestSeedTargets) and awaits fetch. Two fail-closed properties matter for '
+        + 'the identity question. The secret is read from process.env.SWARM_SERVICE_SECRET, NEVER from '
+        + 'a caller header, so a request cannot supply the credential that would let it choose whose '
+        + 'guest gets seeded; and the sub is opts.guestSub, minted by the guest-start path, not read '
+        + 'off the wire. Missing secret or missing port returns [] with a log line rather than falling '
+        + 'back to an ambient operator write — the failure mode that took production down twice.',
+    },
+    behaviorallyProven: true,
+    note:
+      'The identity marriage is behaviourally driven by tests/unit/guest-seed-orchestrator.spec.ts, '
+      + "which asserts the exact headers on each outbound call (x-service-secret plus x-oshal-user-sub "
+      + '= the guest sub), that one hook failing or throwing cannot abort the others or escape, and '
+      + 'that a missing secret or port no-ops instead of proceeding identity-less. Same shape as '
+      + 'artifact-exchange-core: the write that ultimately happens belongs to the DESTINATION app, behind '
+      + 'the gate that app owns, under the sub stamped here.',
   },
 ];
 
