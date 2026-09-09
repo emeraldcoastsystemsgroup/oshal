@@ -240,12 +240,14 @@ the spec", so docs cannot drift from the running behavior.
 
 ## 3. Connect and credentials
 
-Source: `src/app/routes/connectors-routes.ts`, `src/app/routes/connector-account-lookup.ts`,
-`src/app/routes/connector-spec-routes.ts`
+Source: `src/app/routes/connectors-routes.ts` (route facade), `src/app/routes/connector-provider-registry.ts`,
+`src/app/routes/connector-oauth-ceremony.ts`, `src/app/routes/connector-token-crypto.ts`,
+`src/app/routes/connector-account-lookup.ts`, `src/app/routes/connector-spec-routes.ts`
 
 ### 3.1 OAuth providers
 
-The `PROVIDERS` registry in `connectors-routes.ts` defines every OAuth-capable provider. Each
+The `PROVIDERS` registry in `connector-provider-registry.ts` defines every OAuth-capable provider
+(`connectors-routes.ts` remains the stable route facade after the hub's decomposition). Each
 entry declares `authUrl`, `tokenUrl`, `scopes`, `scopeSep`, `redirectPath`, `flavor`, and optional
 flags:
 
@@ -253,19 +255,25 @@ flags:
   with AES-256-GCM under `SESSION_SECRET`, and stored in a short-lived HttpOnly cookie
   (`oshalpkce_<provider>`, 10 min) — not in the `state` param (which was bloating X's authorize
   URL). The verifier is recovered at callback via `readPkceVerifier()`, then the cookie is cleared.
-- `tokenAuth: 'basic'` — Twitter, Spotify, PayPal, and SmartThings require HTTP Basic on the
-  token endpoint (client_id:client_secret base64), not a form body.
+- `tokenAuth: 'basic'` — Twitter, Spotify, Schwab, SmartThings, PayPal, and RingCentral require
+  HTTP Basic on the token endpoint (client_id:client_secret base64), not a form body.
 - `allowTokenFallback: true` — SmartThings accepts a pasted Personal Access Token when the OAuth
   app (`SMARTTHINGS_CLIENT_ID`) is not configured, so the connector is immediately usable without
   partner app registration.
 
 The CSRF `state` is an HMAC-signed, time-boxed (10-minute) token — no server-side store needed.
-`signState` encodes `{ provider, sub, ts }` as a base64url JSON body signed with
-`HMAC-SHA256(SESSION_SECRET)`. `verifyState` rejects bad signatures and expired states.
+`signState` encodes `{ provider, sub, ts }` (plus optional `tenant` for a shared/household
+connect and `label` for a nicknamed account, ADR-042/ADR-113) as a base64url JSON body signed
+with `HMAC-SHA256(SESSION_SECRET)`. `verifyState` rejects bad signatures and expired states.
 
-Access and refresh tokens are stored in `oshal_connections` (Postgres), encrypted at rest with
-AES-256-GCM. The key is `SHA-256(SESSION_SECRET)`. The `iv:authTag:ciphertext` blob format is
-the envelope.
+Access and refresh tokens are stored in `oshal_connections` (Postgres), AES-256-GCM encrypted
+at rest under **per-user envelope encryption** (`connector-token-crypto.ts`, default ON since
+2026-07-20): each owner has a DEK in `oshal_user_deks`, wrapped under the deployment KEK, and
+current blobs are versioned (`v2:` per-user, `hkdf1:` domain-separated shared). The legacy
+single key `SHA-256(SESSION_SECRET)` survives only as the read-path for pre-envelope blobs.
+A DEK-store failure denies by default. This matches
+[connectors-tenant-isolation.md](connectors-tenant-isolation.md), which is authoritative for
+the crypto posture.
 
 ### 3.2 Token-paste providers (generic flavor)
 
@@ -616,12 +624,13 @@ User → /api/connect/<provider>/start → OAuth consent → /callback
 
 | Component | Flag | Default | State |
 | --- | --- | --- | --- |
-| `/api/connectors/<provider>` spec routes | `CONNECTOR_SPEC_ROUTES=on` | off | Built; mounts every validated catalog spec at startup |
+| `/api/connectors/<provider>` spec routes | `CONNECTOR_SPEC_ROUTES=on` | off | Built; two stable delegate routes (`GET /:provider/_resources`, `POST /:provider/:resource`) that lazy-load and validate the spec per request — specs are NOT mounted at startup |
 | `/api/hooks/:provider/:event` webhook ingress | `CONNECTOR_WEBHOOKS=on` | off for a bare process; on in the local compose profile | Built; needs migration 056 (`oshal_webhook_deliveries`) |
 | Existing bespoke routes (`/api/spotify`, etc.) | — | always on | Unaffected; parallel to spec routes |
 
-The connector catalog lives in `swarm-apps/connectors/` (307 YAML specs in the 2026-07-23
-public-trunk audit). The audit gate, rather than this snapshot count, is authoritative. The specs
+The connector catalog lives in `swarm-apps/connectors/`; the generated index
+[docs/connectors/README.md](../connectors/README.md) and the audit gate carry the authoritative
+count — never a number typed here. The specs
 span productivity (Gmail, Google Calendar, Google Drive, Notion, Airtable, Asana, Todoist,
 ClickUp), communication (Slack, Discord, Outlook, Zoom, Intercom), dev/ops (GitHub, GitLab,
 Bitbucket, Vercel, Netlify, Sentry, PagerDuty, WakaTime, OpenAI), finance (Stripe, Coinbase,

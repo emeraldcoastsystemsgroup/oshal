@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.coingecko.com/api/v3` |
 | **Auth** | API key in header `x-cg-pro-api-key` |
+| **Description** | CoinGecko — reads coins markets, coin detail, simple price, search via api.coingecko.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://openlibrary.org` |
 | **Auth** | None |
+| **Description** | Open Library — reads search, work, author, isbn via openlibrary.org. No credential needed — a public API. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

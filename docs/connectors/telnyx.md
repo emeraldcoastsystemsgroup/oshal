@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.telnyx.com/v2` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Telnyx — reads message, phone numbers, messaging profiles via api.telnyx.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

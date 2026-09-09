@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.turso.tech/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Turso — reads databases, database, groups via api.turso.tech. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Turso (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

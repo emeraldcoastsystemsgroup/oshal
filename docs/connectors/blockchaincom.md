@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://blockchain.info` |
 | **Auth** | None |
+| **Description** | Blockchain.com — reads rawaddr, rawtx, ticker via blockchain.info. No credential needed — a public API. |
 | **Icon** | Blockchain.com (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

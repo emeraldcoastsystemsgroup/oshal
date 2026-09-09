@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://cloud.mongodb.com/api/atlas/v2` |
 | **Auth** | HTTP Basic (username/password) |
+| **Description** | MongoDB Atlas — reads groups, group, clusters, cluster via cloud.mongodb.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | MongoDB (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

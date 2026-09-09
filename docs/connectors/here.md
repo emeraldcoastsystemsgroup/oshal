@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://geocode.search.hereapi.com/v1` |
 | **Auth** | API key in query param `apiKey` |
+| **Description** | HERE — reads geocode, discover via geocode.search.hereapi.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | HERE (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

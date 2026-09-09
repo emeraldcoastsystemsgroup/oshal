@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.pingdom.com/api/3.1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Pingdom — reads checks, check, outage summary via api.pingdom.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Pingdom (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

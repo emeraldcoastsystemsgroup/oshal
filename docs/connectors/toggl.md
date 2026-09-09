@@ -8,7 +8,8 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.track.toggl.com/api/v9` |
 | **Auth** | HTTP Basic (username/password) |
-| **Icon** | Toggl Track (verified) |
+| **Description** | Toggl Track — reads me, workspaces, projects, time entries via api.track.toggl.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
+| **Icon** | Toggl (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

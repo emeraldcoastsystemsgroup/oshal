@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://transit.land/api/v2` |
 | **Auth** | API key in query param `api_key` |
+| **Description** | Transitland — reads stops, routes, feeds via transit.land. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

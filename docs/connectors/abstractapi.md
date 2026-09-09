@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://ipgeolocation.abstractapi.com/v1` |
 | **Auth** | API key in query param `api_key` |
+| **Description** | AbstractAPI — reads geolocate via ipgeolocation.abstractapi.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Abstract (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.prod.whoop.com/developer` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | WHOOP — reads me, recovery, cycles via api.prod.whoop.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 5, 5/s |
 | **Retry** | up to 3, honors Retry-After |
 | **Pagination** | cursor (`nextToken`) |

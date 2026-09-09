@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.tryfinch.com/employer` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Finch — reads directory, company, individual, employment via api.tryfinch.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

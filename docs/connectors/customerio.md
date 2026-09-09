@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.customer.io/v1` |
 | **Auth** | HTTP Basic (username/password) |
+| **Description** | Customer.io — reads campaigns, segments, newsletters, broadcasts and 1 more via api.customer.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

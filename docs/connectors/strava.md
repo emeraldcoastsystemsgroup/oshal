@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://www.strava.com/api/v3` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Strava — reads me, activities, stats via www.strava.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Strava (verified) |
 | **Rate limit** | burst 5, 5/s |
 | **Retry** | up to 3, honors Retry-After |

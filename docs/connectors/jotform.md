@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.jotform.com` |
 | **Auth** | API key in header `APIKEY` |
+| **Description** | Jotform — reads list forms, get form, get form submissions via api.jotform.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

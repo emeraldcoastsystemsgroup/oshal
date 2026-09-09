@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://hub.docker.com/v2` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Docker Hub — reads user, repositories, repository, tags and 1 more via hub.docker.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Docker (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

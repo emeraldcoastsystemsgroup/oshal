@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://boardgamegeek.com/xmlapi2` |
 | **Auth** | None |
+| **Description** | BoardGameGeek — reads thing, search, hot via boardgamegeek.com. No credential needed — a public API. |
 | **Icon** | BoardGameGeek (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

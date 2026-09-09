@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.mailgun.net/v3` |
 | **Auth** | HTTP Basic (username/password) |
+| **Description** | Mailgun — reads domains, events, stats, bounces and 1 more via api.mailgun.net. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Mailgun (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

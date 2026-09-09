@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://pro-api.coinmarketcap.com/v1` |
 | **Auth** | API key in header `X-CMC_PRO_API_KEY` |
+| **Description** | CoinMarketCap — reads listings latest, quotes latest via pro-api.coinmarketcap.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | CoinMarketCap (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

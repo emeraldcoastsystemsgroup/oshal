@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.pocketsmith.com/v2` |
 | **Auth** | API key in header `X-Developer-Key` |
+| **Description** | PocketSmith — reads me, accounts, transactions via api.pocketsmith.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

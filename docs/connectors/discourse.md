@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://your-forum.example.com` |
 | **Auth** | API key in header `Api-Key` |
+| **Description** | Discourse — reads latest topics, top topics, topic, category topics and 2 more via your-forum.example.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Discourse (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

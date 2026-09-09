@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.printful.com` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Printful — reads store products, orders, products via api.printful.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

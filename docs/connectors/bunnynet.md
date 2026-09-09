@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.bunny.net` |
 | **Auth** | API key in header `AccessKey` |
+| **Description** | Bunny.net — reads pull zones, pull zone, storage zones, dns zones and 2 more via api.bunny.net. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

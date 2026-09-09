@@ -8,7 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://ws.api.video` |
 | **Auth** | OAuth2 (bearer) |
-| **Icon** | Xiaohongshu (verified) |
+| **Description** | api.video — reads videos, video, live streams via ws.api.video. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

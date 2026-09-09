@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.coincap.io/v2` |
 | **Auth** | None |
+| **Description** | CoinCap — reads assets, asset detail, rates, markets via api.coincap.io. No credential needed — a public API. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

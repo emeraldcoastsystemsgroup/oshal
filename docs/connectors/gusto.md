@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.gusto.com/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Gusto — reads me, employees, payrolls via api.gusto.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Gusto (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

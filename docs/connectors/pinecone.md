@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.pinecone.io` |
 | **Auth** | API key in header `Api-Key` |
+| **Description** | Pinecone — reads indexes, index, collections via api.pinecone.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.usebouncer.com/v1.1` |
 | **Auth** | API key in header `x-api-key` |
+| **Description** | Bouncer — reads email verify, me credits via api.usebouncer.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

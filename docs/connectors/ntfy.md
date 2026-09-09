@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://ntfy.sh` |
 | **Auth** | None |
+| **Description** | ntfy — reads health, topic json, topic raw via ntfy.sh. No credential needed — a public API. |
 | **Icon** | ntfy (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

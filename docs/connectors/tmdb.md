@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.themoviedb.org/3` |
 | **Auth** | API key in query param `api_key` |
+| **Description** | Movies & TV (TMDB) — reads search movies, where to watch, recommendations, trending via api.themoviedb.org. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | The Movie Database (verified) |
 | **Rate limit** | burst 20, 20/s |
 | **Retry** | up to 3, honors Retry-After |

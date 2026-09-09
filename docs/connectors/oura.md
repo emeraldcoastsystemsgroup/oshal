@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.ouraring.com/v2` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Oura Ring — reads me, daily activity, sleep via api.ouraring.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 5, 5/s |
 | **Retry** | up to 3, honors Retry-After |
 | **Pagination** | cursor (`next_token`) |

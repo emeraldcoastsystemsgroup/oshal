@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.courier.com` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Courier — reads messages, lists, brands via api.courier.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

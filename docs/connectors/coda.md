@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://coda.io/apis/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Coda — reads docs, doc tables via coda.io. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Coda (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

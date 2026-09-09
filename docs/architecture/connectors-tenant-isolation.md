@@ -86,6 +86,20 @@ provider-intent lane, the target validates the schema-bounded intent and consume
 the matching credential before any persona, memory, task, or model input is built.
 Generic prompts cannot ask the broker for arbitrary providers.
 
+**One deliberate exception to "the raw value stays server-side":**
+`GET /api/connect/:provider/access-token`
+([connectors-routes.ts](../../src/app/routes/connectors-routes.ts)) returns the
+**caller's own** fresh access token — the designed selector API of ADR-042/ADR-113
+that lets a user's own tools act on their connected account. Its scope is the same
+as everything above: `requiresAuth` only (the fleet service secret does not reach
+it — the mount is not `serviceSecretOr`), resolution over the caller's accessible
+rows under FORCE RLS, and a household member may fetch a shared connection's token
+(the ADR-042 shared model). The model/broker boundary is not crossed — the token
+goes to the account owner's browser or PAT-authed CLI, never a model context.
+Threat-model note: this widens an XSS on the app origin from "drive the API as the
+user" to "exfiltrate a durable provider token", which is why CSP and the
+session-cookie posture matter on any deployment exposing this surface.
+
 ## Task and workspace context
 
 Conversation and task stores scope reads and writes by task ID plus the persisted

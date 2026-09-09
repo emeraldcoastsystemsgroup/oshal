@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://sonarcloud.io/api` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | SonarCloud — reads projects, issues, measures, quality gate status and 1 more via sonarcloud.io. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | SonarCloud (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

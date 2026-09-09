@@ -10,7 +10,6 @@
 | **Auth** | API key in query param `token` |
 | **Description** | Earnings actual-vs-consensus surprises, forward earnings + economic calendars with estimates. The consensus half of the fundamental event overlay. |
 | **Tags** | `finance`, `market-data`, `fundamentals`, `events` |
-| **Icon** | Finnhub |
 | **Rate limit** | burst 30, 1/s |
 | **Retry** | up to 3, honors Retry-After |
 

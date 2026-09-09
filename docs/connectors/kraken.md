@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.kraken.com/0` |
 | **Auth** | None |
+| **Description** | Kraken — reads ticker, asset pairs, ohlc, depth via api.kraken.com. No credential needed — a public API. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 
