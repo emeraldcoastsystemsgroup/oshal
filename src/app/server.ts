@@ -174,6 +174,7 @@
  * 161 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: mount /api/artifacts (serviceSecretOr(requiresAuth)) — the artifact-exchange "Send to…" menu, owner-bound handle mint/redeem, and the shared send-to.js component.
  * 162 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: pass ctx into createArtifactExchangeRoutes — the kernel built-in destinations (email compose, save to oshal-local) need the pool for connector tokens and storage writes.
  * 163 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 fix (found by stage-3 live verification): /api/files rides serviceSecretOr(requiresAuth) — the artifact-handle relay redeems a files-browser source by re-fetching /api/files/download as the minting caller over the internal rail, and the session-only mount 401'd that fetch, 502-ing every doc-hub "Send to…" dispatch.
+ * 164 | maintainer@emeraldcoastsystemsgroup.com   | resolveOpenAiCodexCallbackPort delegates its raw-port read to resolveConfiguredOpenAiCodexCallbackPort (server-auth-helpers seq 4): the compose-forwarded EMPTY OPENAI_CODEX_CALLBACK_PORT parsed to NaN and silently skipped the :1455 codex callback listener, so every cockpit codex login ended at ERR_EMPTY_RESPONSE on localhost:1455. One reader now owns the ""-means-default rule.
  */
 
 require('dotenv').config();
@@ -1821,7 +1822,9 @@ function startServer(): void {
  * @returns Callback port number, or null when callback listener should be skipped
  */
 function resolveOpenAiCodexCallbackPort(primaryPort: number): number | null {
-  const rawPort = process.env.OPENAI_CODEX_CALLBACK_PORT ?? String(DEFAULT_OPENAI_CODEX_CALLBACK_PORT);
+  // Single source of truth for the port string — it treats ""/whitespace as unset,
+  // so a compose-forwarded empty var can no longer silently skip the listener.
+  const rawPort = resolveConfiguredOpenAiCodexCallbackPort();
   const parsedPort = parseInt(rawPort, 10);
 
   if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {

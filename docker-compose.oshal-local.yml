@@ -824,7 +824,13 @@ services:
     # This is the SWARM CONTROLLER — runs dist/app/server.js, NOT the any-bot.
     command: >
       sh -c "cp -n /app/config-seed/global-config.json /app/output/global-config.json 2>/dev/null;
-             cp -n /app/config-seed/secrets.json /app/output/secrets.json 2>/dev/null;
+             # SEC-05: EncryptedConfigManager refuses EVERY secret operation while a plaintext
+             # secrets.json exists. POST /api/config/migrate converts it to secrets.enc.json and
+             # deletes the plaintext -- and this copy-if-missing put it straight back on the next
+             # start, silently un-migrating the controller (seen live 2026-09-08: a Codex import
+             # that had just succeeded failed again after one restart). Seed it only until an
+             # encrypted envelope exists; bot nodes hold no ENCRYPTION_KEY and are unaffected.
+             [ -f /app/output/secrets.enc.json ] || cp -n /app/config-seed/secrets.json /app/output/secrets.json 2>/dev/null;
              echo 'Waiting for Postgres to accept queries...';
              for i in 1 2 3 4 5 6 7 8 9 10; do
                node -e \"const {Pool}=require('pg');new Pool({connectionString:process.env.DATABASE_URL}).query('SELECT 1').then(()=>{process.exit(0)}).catch(()=>{process.exit(1)})\" && break;
@@ -1340,6 +1346,14 @@ services:
       # bots must never receive the deployment-wide key. Without this explicit pass-through,
       # setting ENCRYPTION_KEY in .env is silently invisible inside the controller container.
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      # OpenAI Codex OAuth (ADR-127 swarm-side login). The service reads all three, but none of
+      # them were forwarded, so they were unsettable on a compose deployment: resolveRedirectUri()
+      # fell through to deriving from APP_URL and produced https://<public-host>:1455/auth/callback,
+      # which OpenAI's client refuses - its allowlist is loopback only, which is why the api runs a
+      # dedicated listener on :1455. Pin OPENAI_CODEX_REDIRECT_URI in .env to that loopback URL.
+      OPENAI_CODEX_REDIRECT_URI: ${OPENAI_CODEX_REDIRECT_URI:-}
+      OPENAI_CODEX_CLIENT_ID: ${OPENAI_CODEX_CLIENT_ID:-}
+      OPENAI_CODEX_CALLBACK_PORT: ${OPENAI_CODEX_CALLBACK_PORT:-}
       # Global JSON body cap (SECURITY-HARDENING §4, body-limits.ts) — CONTROLLER ONLY.
       # jsonBodyLimit() reads it; unforwarded, an operator raising the cap in the host
       # env is silently ignored and a large lead-import CSV keeps 413ing at the 100kb

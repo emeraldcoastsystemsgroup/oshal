@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from server.ts (1000-line cap decomposition): legacy /auth/* redirect helpers, OpenAI Codex callback-port detection, OIDC state-mismatch recovery, and the onboarding-completed lookup. Verbatim moves — call sites and route registrations stay in server.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | buildOidcLoginRestartPath (and its state decoder) moved to @/shared/middleware/oidc so guardedCallback can share it; re-exported here so server.ts's import is unchanged. The shared version also sanitizes the decoded returnTo (open-redirect gate) now that /login actually honors it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Re-export loginRestartPathForCallbackPath (ADR-126 multi-provider login) so server.ts's state-mismatch recovery can map /callback/<provider> back to /login/<provider> through its existing auth-helpers import.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | resolveConfiguredOpenAiCodexCallbackPort treats ""/whitespace as unset (default 1455): the compose passthrough `${OPENAI_CODEX_CALLBACK_PORT:-}` forwards an EMPTY string on every deployment that doesn't set the var, the old `??`-only fallback parsed it to NaN, server.ts skipped the :1455 listener, and the codex OAuth redirect died as ERR_EMPTY_RESPONSE (observed live 2026-09-09). server.ts now delegates its port parse here — one reader, guarded by tests/unit/openai-codex-callback-port.spec.ts.
  */
 
 import express from 'express';
@@ -73,11 +74,16 @@ export function isLikelyOpenAiCodexCallback(req: express.Request): boolean {
 }
 
 /**
- * @description Returns the configured OpenAI Codex callback port, falling back to the historical default.
+ * @description Returns the configured OpenAI Codex callback port, falling back to the historical
+ * default. An EMPTY value counts as unset: compose forwards `${OPENAI_CODEX_CALLBACK_PORT:-}`,
+ * so every deployment without the var explicitly set delivers "" — under the old `??`-only
+ * fallback that parsed to NaN, the :1455 listener was skipped, and the vendor's loopback-only
+ * redirect had nobody listening (ERR_EMPTY_RESPONSE at the end of every codex login).
  * @returns Callback port as a string for host-header comparison.
  */
 export function resolveConfiguredOpenAiCodexCallbackPort(): string {
-  return process.env.OPENAI_CODEX_CALLBACK_PORT ?? String(DEFAULT_OPENAI_CODEX_CALLBACK_PORT);
+  const raw = (process.env.OPENAI_CODEX_CALLBACK_PORT ?? '').trim();
+  return raw.length > 0 ? raw : String(DEFAULT_OPENAI_CODEX_CALLBACK_PORT);
 }
 
 /**
