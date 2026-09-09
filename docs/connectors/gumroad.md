@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.gumroad.com/v2` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Gumroad — reads me, products, get product, sales via api.gumroad.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Gumroad (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

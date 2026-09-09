@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://yourstore.example.com/wp-json/wc/v3` |
 | **Auth** | HTTP Basic (username/password) |
+| **Description** | WooCommerce — reads products, orders, customers, product via yourstore.example.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | WooCommerce (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

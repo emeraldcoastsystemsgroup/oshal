@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://cockroachlabs.cloud/api/v1` |
 | **Auth** | API key in header `Authorization` |
+| **Description** | CockroachDB Cloud — reads clusters, cluster, backups via cockroachlabs.cloud. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Cockroach Labs (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

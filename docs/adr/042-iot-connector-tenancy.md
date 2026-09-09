@@ -1,6 +1,6 @@
 # ADR 042 — IoT / Connector Tenancy (Personal + Shared)
 
-- **Status:** Accepted — **Phase 1 built** (app-layer: schema + personal∪shared resolution + household management API + `/utilities` selector; backward-compatible). Phase 2 (RLS) and Phase 3 (provisioning/invites + per-tenant cost) pending. Migration validated on live Postgres (partial indexes + both ON CONFLICT targets + personal/shared coexistence).
+- **Status:** Accepted — **Phase 1 built** (app-layer: schema + personal∪shared resolution + household management API + `/utilities` selector; backward-compatible). **Phase 2 (RLS) SHIPPED**: `oshal_connections` carries ENABLE + FORCE ROW LEVEL SECURITY with the Tier-2 dual policy (migration `060-platform-rls-tenancy.sql`; owner-role half of multi-account in `101-connections-multi-account.sql`) — [connectors-tenant-isolation.md](../architecture/connectors-tenant-isolation.md) is the as-built record. Phase 3 (provisioning/invites + per-tenant cost) pending. Migration validated on live Postgres (partial indexes + both ON CONFLICT targets + personal/shared coexistence).
 - **Date:** 2026-06-17
 - **Owner:** maintainer@emeraldcoastsystemsgroup.com
 - **Extends:** [ADR-035 Multi-Tenant SaaS Foundation](035-multi-tenant-saas-foundation.md), [ADR-038 Swarms Bundled by Type](038-swarms-bundled-by-type.md), [ADR-036 Bot-Owned Application Architecture](036-bot-owned-application-architecture.md)
@@ -14,6 +14,14 @@ controls that user's devices via the per-user connector token.
 
 **Multi-user isolation is already built and traced end-to-end** (it is *not* what
 this ADR adds):
+
+> **Superseded details (as-built note, 2026-09-09):** the mechanics in the bullets below are the
+> 2026-06-17 state and two have since been retired: `UNIQUE(user_sub, provider)` was dropped for
+> per-account partial unique indexes (multi-account, ADR-113 §4), and the
+> `resolveBotCreds`/`.oshal-cred-<provider>` workspace carrier was removed in favor of the
+> audited token broker (`resolveServerOperationCreds` — see
+> [connector-backed-apps.md](../connector-backed-apps.md)). The isolation *property* still holds;
+> the enforcement moved.
 
 - `oshal_connections` is keyed **`UNIQUE(user_sub, provider)`** — one row per user.
 - The chat path threads the authenticated caller's `sub`:

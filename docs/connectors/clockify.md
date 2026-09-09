@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.clockify.me/api/v1` |
 | **Auth** | API key in header `X-Api-Key` |
+| **Description** | Clockify — reads workspaces, projects, user via api.clockify.me. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Clockify (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.honeycomb.io/1` |
 | **Auth** | API key in header `X-Honeycomb-Team` |
+| **Description** | Honeycomb — reads datasets, columns, triggers via api.honeycomb.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

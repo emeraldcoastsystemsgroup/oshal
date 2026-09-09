@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://www.mapquestapi.com` |
 | **Auth** | API key in query param `key` |
+| **Description** | MapQuest — reads geocode address, route via www.mapquestapi.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

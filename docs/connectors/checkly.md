@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.checklyhq.com/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Checkly — reads checks, check groups, check results via api.checklyhq.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

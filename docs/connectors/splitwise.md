@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://secure.splitwise.com/api/v3.0` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Splitwise — reads current user, groups, expenses via secure.splitwise.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

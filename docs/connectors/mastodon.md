@@ -5,9 +5,10 @@
 | | |
 | --- | --- |
 | **Provider** | `mastodon` |
-| **Version** | 1.0.0 |
+| **Version** | 1.1.0 |
 | **Base URL** | `https://mastodon.social/api/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Mastodon — reads verify credentials, home timeline, public timeline, notifications and 2 more via mastodon.social. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Mastodon (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

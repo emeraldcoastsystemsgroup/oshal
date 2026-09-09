@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documented native GitHub Issues ticket intake, trusted feed routing, and optional no-history REST reconciliation
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Clarified that free REST recovery reconciles missed issue lifecycle updates
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Docs-audit drift fix: the generated README preamble over-claimed the paste route for the whole catalog — /api/connect/<provider>/token 404s ("not a token connector") for any provider without a hub PROVIDERS entry, and only the CONNECTOR_<PROVIDER>_TOKEN env fallback covers every spec. The preamble now says exactly that.
  */
 
 /**
@@ -61,8 +62,10 @@ const readme = `# Connector catalog (ADR-065)
 ## Adding a connector
 1. Write \`swarm-apps/connectors/<provider>.yaml\` (or draft from an OpenAPI doc via \`specFromOpenApi\`).
 2. Run this script — regenerates docs + this index, and runs the audit gate (0 errors required).
-3. Auto-mounts at \`/api/connectors/<provider>\` (\`CONNECTOR_SPEC_ROUTES=on\`); connect a token via
-   \`/api/connect/<provider>/token\` (paste) or \`CONNECTOR_<PROVIDER>_TOKEN\` env. Broker token wins.
+3. Auto-mounts at \`/api/connectors/<provider>\` (\`CONNECTOR_SPEC_ROUTES=on\`). Credentials: the
+   \`CONNECTOR_<PROVIDER>_TOKEN\` env fallback works for every spec; the per-user paste route
+   \`/api/connect/<provider>/token\` works only for providers also registered in the hub's
+   \`PROVIDERS\` registry (it 404s otherwise). Broker token wins over env.
 
 ## Catalog (${specs.length})
 | Connector | Provider | Auth | Pagination | Doc |

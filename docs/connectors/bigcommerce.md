@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.bigcommerce.com/stores/hash/v3` |
 | **Auth** | API key in header `X-Auth-Token` |
+| **Description** | BigCommerce — reads customers, orders, order, products and 2 more via api.bigcommerce.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | BigCommerce (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

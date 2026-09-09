@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.steampowered.com` |
 | **Auth** | API key in query param `key` |
+| **Description** | Steam — reads player summaries, owned games, friend list via api.steampowered.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Steam (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

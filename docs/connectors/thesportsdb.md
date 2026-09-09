@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://www.thesportsdb.com/api/v1/json/3` |
 | **Auth** | None |
+| **Description** | TheSportsDB — reads search teams, lookup team, next league events via www.thesportsdb.com. No credential needed — a public API. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

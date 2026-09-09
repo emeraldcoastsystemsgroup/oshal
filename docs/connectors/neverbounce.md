@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.neverbounce.com/v4` |
 | **Auth** | API key in query param `key` |
+| **Description** | NeverBounce — reads single check, account info via api.neverbounce.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

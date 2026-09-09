@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://app.posthog.com/api` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | PostHog — reads organizations, projects, insights, events and 2 more via app.posthog.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | PostHog (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

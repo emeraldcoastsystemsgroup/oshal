@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.cloudinary.com/v1_1/yourcloud` |
 | **Auth** | HTTP Basic (username/password) |
+| **Description** | Cloudinary — reads image resources, video resources, usage via api.cloudinary.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Cloudinary (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

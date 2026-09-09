@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.braintreegateway.com` |
 | **Auth** | HTTP Basic (username/password) |
+| **Description** | Braintree — reads customers, customer, transactions, transaction and 2 more via api.braintreegateway.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Braintree (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.pdfmonkey.io/api/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | PDFMonkey — reads list documents, list document cards via api.pdfmonkey.io. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

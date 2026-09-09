@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://opensky-network.org/api` |
 | **Auth** | None |
+| **Description** | OpenSky Network — reads states all, flights all via opensky-network.org. No credential needed — a public API. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

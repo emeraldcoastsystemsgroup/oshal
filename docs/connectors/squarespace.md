@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.squarespace.com/1.0` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Squarespace — reads orders, inventory, products via api.squarespace.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Squarespace (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

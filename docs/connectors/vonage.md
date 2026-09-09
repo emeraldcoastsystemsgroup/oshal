@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://rest.nexmo.com` |
 | **Auth** | API key in query param `api_key` |
+| **Description** | Vonage — reads account numbers, search messages, search message via rest.nexmo.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Vonage (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

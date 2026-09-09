@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.bugsnag.com` |
 | **Auth** | API key in header `Authorization` |
+| **Description** | Bugsnag — reads organizations, projects, errors, error and 2 more via api.bugsnag.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Bugsnag (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

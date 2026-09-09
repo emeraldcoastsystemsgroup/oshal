@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://www.deviantart.com/api/v1/oauth2` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | DeviantArt — reads whoami, browse popular, gallery all via www.deviantart.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | DeviantArt (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

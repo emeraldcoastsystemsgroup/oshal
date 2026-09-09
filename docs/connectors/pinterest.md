@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.pinterest.com/v5` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Pinterest — reads me, boards, pins, board pins via api.pinterest.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Pinterest (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

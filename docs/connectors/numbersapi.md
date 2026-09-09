@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://numbersapi.com` |
 | **Auth** | None |
+| **Description** | Numbers API — reads number fact, math fact, random trivia via numbersapi.com. No credential needed — a public API. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

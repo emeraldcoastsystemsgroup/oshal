@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://a.klaviyo.com/api` |
 | **Auth** | API key in header `Authorization` |
+| **Description** | Klaviyo — reads profiles, lists, segments, campaigns and 2 more via a.klaviyo.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

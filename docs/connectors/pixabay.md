@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://pixabay.com/api` |
 | **Auth** | API key in query param `key` |
+| **Description** | Pixabay — reads image search, video search, editors choice via pixabay.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Pixabay (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

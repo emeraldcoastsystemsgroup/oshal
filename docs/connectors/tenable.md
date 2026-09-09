@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://cloud.tenable.com` |
 | **Auth** | API key in header `X-ApiKeys` |
+| **Description** | Tenable — reads scans, scan, assets, vulnerabilities and 1 more via cloud.tenable.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 5, 5/s |
 | **Retry** | up to 3, honors Retry-After |
 

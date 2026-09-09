@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://yourcompany.jfrog.io/artifactory/api` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | JFrog Artifactory — reads ping, version, repositories, repository and 2 more via yourcompany.jfrog.io. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | JFrog (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

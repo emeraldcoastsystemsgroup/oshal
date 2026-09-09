@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.monzo.com` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Monzo — reads whoami, accounts, balance, transactions and 1 more via api.monzo.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Monzo (verified) |
 | **Rate limit** | burst 5, 5/s |
 | **Retry** | up to 3, honors Retry-After |

@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api2.frontapp.com` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Front — reads conversations, conversation, conversation messages, inboxes and 2 more via api2.frontapp.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

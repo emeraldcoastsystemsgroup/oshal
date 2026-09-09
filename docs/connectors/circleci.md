@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://circleci.com/api/v2` |
 | **Auth** | API key in header `Circle-Token` |
+| **Description** | CircleCI — reads me, project, pipelines, pipeline and 2 more via circleci.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | CircleCI (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

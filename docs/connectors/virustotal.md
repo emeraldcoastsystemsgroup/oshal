@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://www.virustotal.com/api/v3` |
 | **Auth** | API key in header `x-apikey` |
+| **Description** | VirusTotal — reads domain, ip, file, url via www.virustotal.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | VirusTotal (verified) |
 | **Rate limit** | burst 4, 4/s |
 | **Retry** | up to 3, honors Retry-After |

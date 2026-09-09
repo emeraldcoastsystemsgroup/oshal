@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.mercury.com/api/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Mercury — reads accounts, account, transactions via api.mercury.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

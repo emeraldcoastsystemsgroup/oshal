@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.lemonsqueezy.com/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Lemon Squeezy — reads stores, products, orders, subscriptions via api.lemonsqueezy.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Lemon Squeezy (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

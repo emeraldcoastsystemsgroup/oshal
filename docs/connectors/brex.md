@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://platform.brexapis.com/v2` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Brex — reads card transactions, accounts, users via platform.brexapis.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Brex (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.brevo.com/v3` |
 | **Auth** | API key in header `api-key` |
+| **Description** | Brevo — reads contacts, lists, email campaigns, senders and 2 more via api.brevo.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Brevo (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
