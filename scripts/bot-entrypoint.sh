@@ -12,6 +12,7 @@
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | Corrected BOT_RUNTIME comments to match the current bot-node controller/worker split so docs and entrypoint guidance agree.
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | Refuse the unsigned legacy any-bot HTTP runtime whenever delegation verification/signing material enables the task-bound security posture.
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | 2026-08-12 seeding repair (comment-only here): Step 1b's copy-IF-MISSING is now the ONLY config seeding path — the compose x-bot-common command had force-copied (`cp -f`) the seed over /app/output on EVERY start, which made this guard dead code and silently reset runtime provider config each boot. Compose now execs this entrypoint directly; the same change split the 14 concierge bots off the shared api-output volume (each bot's /app/output is private, so the fixed bot-persona.json path in Step 2 no longer races across containers).
+# 9 | maintainer@emeraldcoastsystemsgroup.com   | Step 1b no longer re-seeds plaintext secrets.json once the encrypted store exists: after the ENCRYPTION_KEY migration deletes /app/output/secrets.json (by design), the next container start saw it "missing", re-copied the stale seed, and re-tripped the fail-closed LEGACY_PLAINTEXT_SECRETS_PRESENT guard on every secret operation — which is what broke the codex OAuth login. secrets.enc.json present ⇒ the encrypted store owns secrets; only the non-secret seed files still copy-if-missing.
 # =============================================================================
 #
 # @description Bot startup entrypoint for per-container architecture.
@@ -58,6 +59,17 @@ SEED_DIR="/app/config-seed"
 if [ -d "$SEED_DIR" ]; then
   for f in global-config.json secrets.json llm-config.json; do
     if [ -f "$SEED_DIR/$f" ] && [ ! -f "$CONFIG_DIR/$f" ]; then
+      # SEC-05 deadlock guard: EncryptedConfigManager REFUSES every secret read/write while a
+      # plaintext secrets.json exists (LEGACY_PLAINTEXT_SECRETS_PRESENT). POST /api/config/migrate
+      # converts it to secrets.enc.json and deletes the plaintext -- and this copy-if-missing then
+      # restored it on the very next start, re-breaking every secret operation. Observed 2026-09-08:
+      # a migrated controller went back to refusing Codex credential imports after one restart.
+      # Only the CONTROLLER holds ENCRYPTION_KEY, so only it has secrets.enc.json; bot nodes have
+      # no key and still need the plaintext seed, which this leaves untouched.
+      if [ "$f" = "secrets.json" ] && [ -f "$CONFIG_DIR/secrets.enc.json" ]; then
+        echo "[bot-entrypoint] Skipping $f seed: encrypted secrets.enc.json is already present"
+        continue
+      fi
       cp "$SEED_DIR/$f" "$CONFIG_DIR/$f"
       echo "[bot-entrypoint] Seeded $f from shared config-seed"
     fi
