@@ -18,7 +18,7 @@ import { sharedSecretRetired } from '@/features/remote-client';
 
 const VALID = {
   controlPlaneUrl: 'http://192.168.1.5:35457',
-  token: 'oshal_pat_AbCdEf0123456789-_',
+  token: 'test-token',
   clientId: 'node-2f1c9e2a-0000-4a1b-9c3d-5e6f70819200',
   nodeName: 'roger-laptop',
   nodePackage: '@oshal/chat',
