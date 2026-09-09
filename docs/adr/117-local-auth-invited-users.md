@@ -48,7 +48,10 @@ middleware set wholesale (same `{authMiddleware, requiresAuth, loginHandler}` co
   accept — the PAT trade). Accepting sets the password and signs the user in. Re-inviting is
   also the admin-driven password-reset path. The admin API **always returns a copyable invite
   link**; if platform SMTP (`SMTP_*` env, nodemailer) is configured it also emails the link.
-  No SMTP → the flows still work, the admin hands over the link.
+  No SMTP → the flows still work, the admin hands over the link. *(As-built, the shipped code
+  added a second delivery rail after acceptance: with no SMTP, invitations and reset links fall
+  back to the operator's connected Gmail; both rails failing degrades to the copyable link —
+  see [docs/security/local-auth.md](../security/local-auth.md#how-an-invitation-actually-leaves-the-box).)*
 - **Bootstrap:** on a fresh install, /login offers "create the administrator account" —
   race-guarded to the single first row. The installer is the first admin (their email should
   be in `OSHAL_OPERATOR_EMAILS`, which the installer already writes).
@@ -70,7 +73,12 @@ recorded so a code cannot be replayed; eight single-use recovery codes are minte
 enrolment. Emailed codes were rejected as the primary factor because email is the same channel
 as the invite and reset links, so an attacker holding the mailbox would satisfy both factors.
 See [docs/security/local-auth.md](../security/local-auth.md#two-step-sign-in-totp).
-Self-service password reset remains deferred — it needs an enumeration-safe response shape.
+
+**Self-service password reset — SHIPPED 2026-07-31** with exactly the enumeration-safe shape
+this ADR deferred it for: `POST /api/local-auth/forgot` answers identically whether or not the
+address exists, delivery never blocks the response (no timing oracle), requests are rate-limited
+per IP and silently capped per email, and a reset never clears a two-step factor. See
+[docs/security/local-auth.md](../security/local-auth.md#the-flows) for the operator view.
 
 ## Consequences
 

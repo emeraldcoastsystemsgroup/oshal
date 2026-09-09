@@ -9,6 +9,10 @@ Security posture, hardening guidance, and control evidence for OSHAL.
   control evidence.
 - [local-auth.md](./local-auth.md) — the LOCAL_AUTH invited-user login (ADR-117): setup,
   invite/reset/disable flows, and what it deliberately does not do yet.
+- [entra-local-hybrid.md](./entra-local-hybrid.md) — the Entra/local hybrid login and the
+  Entra→local identity bridge: an allowlisted Microsoft door onto the same canonical local subs.
+- [guest-mode.md](./guest-mode.md) — guest mode (`ENABLE_GUEST_MODE`, default off): the anonymous
+  identity rail, the tier lockdown, anchored mutation grants, and the cost posture.
 - [http-delegation.md](./http-delegation.md) — Ed25519 controller-to-bot task delegation,
   shared replay protection, role-separated key rollout, and rotation/recovery operations.
 - [workload-delegation.md](./workload-delegation.md) — SEC-01 workload-to-API user delegation,

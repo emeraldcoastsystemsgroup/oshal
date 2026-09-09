@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.helpscout.net/v2` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Help Scout — reads conversations, conversation, conversation threads, mailboxes and 2 more via api.helpscout.net. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Help Scout (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://demo.docusign.net/restapi/v2.1/accounts/acct` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | DocuSign — reads list envelopes, get envelope, list templates, list folders via demo.docusign.net. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

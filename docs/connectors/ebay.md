@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.ebay.com/buy/browse/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | eBay — reads item summary search, item via api.ebay.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | eBay (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

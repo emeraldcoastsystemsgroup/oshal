@@ -231,11 +231,21 @@ the Cloud Resource Manager / Compute / Billing REST APIs (e.g.
 **read-only**; expand `GCP_SCOPES` only after implementing an exact server-side write operation and
 its approval gate. Never expand scopes merely to let an autonomous bot/CLI act.
 
-Register its **own** OAuth client (NOT the login client — the consent screen must
-authorize the cloud-platform scope):
+**As-built default: no new client.** `providerCreds('gcp')` falls back
+`GCP_CLIENT_ID || OIDC_CLIENT_ID` (`src/app/routes/connector-provider-registry.ts`), so by
+default the connector **reuses the existing Google OAuth client** that already serves login and
+the Google connector — scopes are requested per flow, so one client serves all three. To use the
+default: add the `…/api/connect/gcp/callback` redirect URI to that client and allow the
+cloud-platform scope on its consent screen; nothing new is registered.
 
-1. At **https://console.cloud.google.com/apis/credentials** (signed in as
-   `maintainer@emeraldcoastsystemsgroup.com`; Rule 0 has no connector-registration exception):
+Register a **dedicated** client (`GCP_CLIENT_ID`/`GCP_CLIENT_SECRET`) only when you want to
+isolate the restricted `cloud-platform` scope's app-review from the login app (e.g. for a public
+launch). Ownership note: the existing GCP org/project is the **recorded, deliberate Rule 0
+exception** (owned by the personal operator account that stood up hosting + domain — see the
+DevOps/Operator CLI section); Rule 0's business-email rule still governs every *new* partner-app
+registration, including a dedicated GCP client if you create one:
+
+1. At **https://console.cloud.google.com/apis/credentials**:
    - Enable the **Cloud Resource Manager API** (and any others a bot will call).
    - Configure the OAuth consent screen (add yourself as a test user).
    - *Create credentials → OAuth client ID → Web application.*

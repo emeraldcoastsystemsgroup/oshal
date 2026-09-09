@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.exchangerate.host` |
 | **Auth** | API key in query param `access_key` |
+| **Description** | exchangerate.host — reads live, convert via api.exchangerate.host. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

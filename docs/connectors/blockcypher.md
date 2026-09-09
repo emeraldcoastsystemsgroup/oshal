@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.blockcypher.com/v1` |
 | **Auth** | API key in query param `token` |
+| **Description** | BlockCypher — reads chain info, address, tx via api.blockcypher.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

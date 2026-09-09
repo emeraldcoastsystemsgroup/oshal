@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://gitea.example.com/api/v1` |
 | **Auth** | API key in header `Authorization` |
+| **Description** | Gitea — reads current user, repos, repo, issues and 2 more via gitea.example.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Gitea (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

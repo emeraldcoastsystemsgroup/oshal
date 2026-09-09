@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://management.azure.com` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Microsoft Sentinel — reads incidents, incident, bookmarks via management.azure.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 5, 5/s |
 | **Retry** | up to 3, honors Retry-After |
 

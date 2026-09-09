@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.nasa.gov` |
 | **Auth** | API key in query param `api_key` |
+| **Description** | NASA Open APIs — reads apod, neo feed, mars photos via api.nasa.gov. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | NASA (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

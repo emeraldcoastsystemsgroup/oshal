@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.vultr.com/v2` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Vultr — reads account, instances, instance, block storage and 2 more via api.vultr.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Vultr (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

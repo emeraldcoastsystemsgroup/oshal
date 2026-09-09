@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://www.wikidata.org/w/api.php` |
 | **Auth** | None |
+| **Description** | Wikidata — reads get entities, search entities via www.wikidata.org. No credential needed — a public API. |
 | **Icon** | Wikidata (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

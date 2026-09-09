@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://openapi.etsy.com/v3/application` |
 | **Auth** | API key in header `x-api-key` |
+| **Description** | Etsy — reads shop, active listings, shop listings via openapi.etsy.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Etsy (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

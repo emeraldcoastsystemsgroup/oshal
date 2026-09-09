@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.wistia.com/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Wistia — reads medias, projects, media via api.wistia.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Wistia (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

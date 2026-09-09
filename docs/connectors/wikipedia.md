@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://en.wikipedia.org/w/api.php` |
 | **Auth** | None |
+| **Description** | Wikipedia — reads search, page extract, opensearch via en.wikipedia.org. No credential needed — a public API. |
 | **Icon** | Wikipedia (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

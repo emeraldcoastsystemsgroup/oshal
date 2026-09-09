@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.supabase.com/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Supabase — reads organizations, projects, project api keys, project functions and 1 more via api.supabase.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Supabase (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

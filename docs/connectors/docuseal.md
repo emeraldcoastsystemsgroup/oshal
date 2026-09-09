@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.docuseal.co` |
 | **Auth** | API key in header `X-Auth-Token` |
+| **Description** | DocuSeal — reads list templates, list submissions, list submitters via api.docuseal.co. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

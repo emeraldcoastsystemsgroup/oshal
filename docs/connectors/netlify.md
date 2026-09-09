@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.netlify.com/api/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Netlify — reads me, sites via api.netlify.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Netlify (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

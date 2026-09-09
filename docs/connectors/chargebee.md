@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://yoursite.chargebee.com/api/v2` |
 | **Auth** | HTTP Basic (username/password) |
+| **Description** | Chargebee — reads customers, customer, subscriptions, invoices and 2 more via yoursite.chargebee.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://your-nocodb.example.com/api/v2` |
 | **Auth** | API key in header `xc-token` |
+| **Description** | NocoDB — reads bases, tables, records via your-nocodb.example.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

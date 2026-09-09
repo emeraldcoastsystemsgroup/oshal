@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://YOUR-DEPLOYMENT.kb.us-central1.gcp.cloud.es.io` |
 | **Auth** | API key in header `Authorization` |
+| **Description** | Elastic Security — reads detection rules, detection rule, signals index, fleet agents and 1 more via your-deployment.kb.us-central1.gcp.cloud.es.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Elastic (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

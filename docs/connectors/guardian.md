@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://content.guardianapis.com` |
 | **Auth** | API key in query param `api-key` |
+| **Description** | The Guardian — reads search, sections, tags via content.guardianapis.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | The Guardian (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.recruitee.com/c/companyid` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Recruitee — reads offers, candidates, departments via api.recruitee.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

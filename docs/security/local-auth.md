@@ -31,6 +31,8 @@ LOCAL_AUTH=true
 MOCK_OIDC=false            # required — the api refuses to boot with both on
 SESSION_SECRET=<openssl rand -hex 32>
 APP_URL=https://crm.example.com          # REQUIRED for emailed links (must be absolute)
+# LOCAL_AUTH_PUBLIC_URL=https://crm.example.com   # optional — wins over APP_URL for the links
+#                                                  # (use when the login host differs from APP_URL)
 OSHAL_OPERATOR_SUBS=<your sub>           # also the invitation sender identity
 # OPTIONAL — only when this box has its OWN mail server. Without it, invitations
 # send through the platform's Gmail connector instead (see below).

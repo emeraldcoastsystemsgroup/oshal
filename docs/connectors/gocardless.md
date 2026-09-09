@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://bankaccountdata.gocardless.com/api/v2` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | GoCardless Bank Account Data — reads institutions, account, transactions via bankaccountdata.gocardless.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

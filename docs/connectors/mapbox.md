@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.mapbox.com` |
 | **Auth** | API key in query param `access_token` |
+| **Description** | Mapbox — reads geocode via api.mapbox.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Mapbox (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

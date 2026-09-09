@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api-web.nhle.com/v1` |
 | **Auth** | None |
+| **Description** | NHL — reads standings now, club schedule season, player landing via api-web.nhle.com. No credential needed — a public API. |
 | **Icon** | NHL (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

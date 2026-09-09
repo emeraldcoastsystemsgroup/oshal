@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://dev.dixa.io/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Dixa — reads conversations, agents, end users via dev.dixa.io. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

@@ -1,8 +1,10 @@
 # Connector spec — declaring a connector instead of hand-writing one
 
-> Part of [ADR-065](adr/065-connector-runtime-and-spec.md). Phase 1 (the runtime) is built; the
-> declarative `connector.yaml` + generator described here is Phase 2. This doc is the target shape so
-> the runtime's API stays aligned with what the spec will generate.
+> Part of [ADR-065](adr/065-connector-runtime-and-spec.md). **Both phases are built**: the runtime
+> (Phase 1) and the declarative `connector.yaml` catalog + import/curation pipeline this doc
+> describes (Phase 2, marked BUILT in ADR-065) — the specs live in `swarm-apps/connectors/` with
+> the generated index at [docs/connectors/README.md](connectors/README.md). This doc is the
+> authoring guide for those specs.
 
 ## Why
 

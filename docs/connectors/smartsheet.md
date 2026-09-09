@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.smartsheet.com/2.0` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Smartsheet — reads sheets, get sheet, folders via api.smartsheet.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

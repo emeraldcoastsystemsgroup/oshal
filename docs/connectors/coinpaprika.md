@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.coinpaprika.com/v1` |
 | **Auth** | None |
+| **Description** | Coinpaprika — reads coins, tickers, ticker detail via api.coinpaprika.com. No credential needed — a public API. |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
 

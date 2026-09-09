@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.fastly.com` |
 | **Auth** | API key in header `Fastly-Key` |
+| **Description** | Fastly — reads current user, services, service, service versions and 2 more via api.fastly.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Fastly (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

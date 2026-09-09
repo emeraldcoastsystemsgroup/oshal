@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.sumologic.com/api/v1` |
 | **Auth** | HTTP Basic (username/password) |
+| **Description** | Sumo Logic — reads collectors, search job, monitors, dashboards and 2 more via api.sumologic.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Sumo Logic (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.upstash.com/v2` |
 | **Auth** | HTTP Basic (username/password) |
+| **Description** | Upstash — reads redis databases, redis database, kafka clusters via api.upstash.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Upstash (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

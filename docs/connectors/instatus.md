@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.instatus.com/v1` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Instatus — reads pages, incidents, components via api.instatus.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Instatus (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

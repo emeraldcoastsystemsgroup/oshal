@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://your-org.zulipchat.com/api/v1` |
 | **Auth** | HTTP Basic (username/password) |
+| **Description** | Zulip — reads users, streams, messages via your-org.zulipchat.com. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Zulip (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |

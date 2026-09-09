@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.fitbit.com` |
 | **Auth** | OAuth2 (bearer) |
+| **Description** | Fitbit — reads me, day activity, sleep via api.fitbit.com. OAuth: the operator registers the provider app once, then each user connects their own account. |
 | **Icon** | Fitbit (verified) |
 | **Rate limit** | burst 5, 5/s |
 | **Retry** | up to 3, honors Retry-After |

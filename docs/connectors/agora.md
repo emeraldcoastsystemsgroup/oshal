@@ -8,6 +8,7 @@
 | **Version** | 1.0.0 |
 | **Base URL** | `https://api.agora.io/dev/v1` |
 | **Auth** | HTTP Basic (username/password) |
+| **Description** | Agora — reads channel, projects via api.agora.io. Bring your own key: each user pastes their own token, held per-user in the encrypted connection store. |
 | **Icon** | Agora (verified) |
 | **Rate limit** | burst 10, 10/s |
 | **Retry** | up to 3, honors Retry-After |
