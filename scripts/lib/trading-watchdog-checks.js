@@ -108,6 +108,23 @@ function coreSymbolSet(raw) {
 }
 
 /**
+ * @description Parses the operator's bleed-alert book allow-list ("live,b-77146871") into a set of
+ * book refs. The BLEED finding says "nothing is exiting this position" - which is only a defect for
+ * a book something is supposed to be managing. On a book the operator trades by hand, every open
+ * position legitimately has no working sell, so the check reports the operator's own strategy back
+ * to them as a failure.
+ *
+ * EMPTY MEANS EVERY BOOK, deliberately. This gates a safety check, so an unset, blank or unreadable
+ * value must fail OPEN (alert on everything) rather than silently muting the one book that needed
+ * watching. Only a non-empty list narrows it.
+ * @param {string} raw - TRADING_WD_BLEED_BOOKS as the operator set it.
+ * @returns {Set<string>} Book refs (possibly empty, meaning "no restriction").
+ */
+function bleedBookSet(raw) {
+  return new Set(String(raw || '').split(',').map((x) => String(x).trim()).filter(Boolean));
+}
+
+/**
  * @description True when an order row is a SELL that the LEDGER still calls working, per the one
  * shared status list. Unknown/absent status is NOT working (a filled/rejected order protects
  * nothing). READ THIS AS "the ledger says an exit is working", never "the venue holds an exit":
@@ -337,11 +354,17 @@ function evaluateBook(book, data, settings) {
     out.push(finding('stranded-sell', ref, s.symbol, s.ageMin, null,
       'Book ' + ref + ' has a STRANDED sell: ' + s.symbol + ' x' + s.qty + (s.limitPrice === null ? '' : ' limit@' + s.limitPrice) + ' still working after ' + s.ageMin + ' min (a limit the market fell away from - the 2026-07-07 lockout signature, where the stranded order blocks the position from ever exiting). Cancel or reprice it.' + off));
   }
-  if (settings.rth) {
+  // The bleed check is scoped to the books something is MANAGING (see bleedBookSet): an empty set
+  // means every book, a non-empty one means only these. Deep-loss is deliberately NOT scoped - a
+  // position past its stop is worth saying out loud on a hand-traded book too.
+  const bleedScoped = !settings.bleedBooks || settings.bleedBooks.size === 0 || settings.bleedBooks.has(ref);
+  if (settings.rth && bleedScoped) {
     for (const b of findBleeders(positions, sells, settings.core, settings.alertPct, settings.minPositionUsd)) {
       out.push(finding('bleed', ref, b.symbol, Math.abs(b.plPct), settings.hysteresisPct,
         'Book ' + ref + ': ' + b.symbol + ' is down ' + pct(b.plPct) + ' percent ($' + usd(b.pl) + ') during regular hours with NO working sell. The strategy exits via market orders each run and rests no stops, so this is a failure only if the loop is not exiting it - confirm the autopilot is firing for this book (look for a live-loop-silent / live-exits-silent / run-errors alert).' + off));
     }
+  }
+  if (settings.rth) {
     for (const d of findDeepLosses(positions, settings.core, settings.deepLossPct, settings.minPositionUsd)) {
       out.push(finding('deep-loss', ref, d.symbol, Math.abs(d.plPct), settings.hysteresisPct,
         'Book ' + ref + ' is HOLDING PAST ITS STOP: ' + d.symbol + ' is down ' + pct(d.plPct) + ' percent ($' + usd(d.pl) + '), deeper than the watchdog floor of ' + settings.deepLossPct + ' percent (TRADING_WD_DEEP_LOSS_PCT, set above every shipped posture stopLossPct). The percent is the WHOLE broker position, including any operator-pinned lot. Exit it by hand or confirm why the loop is not.' + off));
@@ -474,7 +497,7 @@ function defaultSettings(raw, onInvalid) {
 
 module.exports = {
   WORKING_ORDER_STATUSES, WatchdogDataError,
-  toNumber, requireArray, requireSymbol, coreSymbolSet,
+  toNumber, requireArray, requireSymbol, coreSymbolSet, bleedBookSet,
   isWorkingSell, workingSellSymbols, normalizePositions, materialPositions,
   findBleeders, findDeepLosses, findStrandedSells, assessAccount,
   finding, evaluateBook, evaluatedKinds, decideAlerts, assessGapPrint, defaultSettings,

@@ -676,6 +676,7 @@ async function read(path, book, field) {
   const settings = C.defaultSettings(req.settings, (k, v) =>
     warnings.push("watchdog setting " + k + "=" + JSON.stringify(v) + " is not a number - the module default was used"));
   settings.core = C.coreSymbolSet(req.coreHolds);
+  settings.bleedBooks = C.bleedBookSet(req.bleedBooks);
   settings.rth = !!req.rth;
   settings.nowMs = Date.now();
   httpMs = Math.max(1000, Math.round(settings.httpTimeoutSec * 1000));
@@ -737,6 +738,9 @@ function Copy-WdChecksModule($path) {
 function Invoke-WdBookAudit($books, $rthFlag, $coreSymbols, $priorState) {
   $request = @{
     sub = $LiveSub; rth = [bool]$rthFlag; coreHolds = [string]$coreSymbols
+    # Which books the BLEED finding may fire on. A STRING, so it cannot go through Get-WdSetting
+    # (that parses doubles); read straight off the parsed .env map. Blank = every book (fail-open).
+    bleedBooks = [string]$(if ($script:WdEnv -and $script:WdEnv.ContainsKey('BLEED_BOOKS')) { $script:WdEnv['BLEED_BOOKS'] } else { '' })
     # DERIVED from the exec deadline below, never a second free-standing number: the fetcher slices
     # this across the books and must always print INSIDE the deadline Invoke-WdExec enforces, or a
     # wedged book takes the healthy books' findings down with it.
