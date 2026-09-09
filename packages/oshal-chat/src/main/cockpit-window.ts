@@ -10,11 +10,12 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | window.open children get frame:false too; fetchAuthenticatedUser retries a few times so a transient api blip doesn't falsely force the sign-in window
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Single-window sign-in: openFullJarvis just loads the cockpit URL and lets the OIDC redirect happen in-window (returnTo preserved). Dropped the pre-auth check + separate sign-in window (it was stranding the user in a small framed popup showing the cockpit).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | autoplayPolicy:'no-user-gesture-required' so Jarvis's async server-TTS audio actually plays (Chromium blocks autoplay by default).
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | The window the operator was actually stuck in was the SIGN-IN window (main.ts signIn): 520x680, frame:false, modal:true with the console as parent — and it never got the injected chrome, so it had no drag region and no close button while ALSO blocking input to its parent, which is why neither window responded. At 520px wide the cockpit renders its mobile layout, so after the OIDC redirect it reads as "a Jarvis window without a container", and it only closes when GET /api/user returns a sub — otherwise it sits there indefinitely. Extracted attachFramelessControls() so every frameless window showing swarm pages gets the same pill; the sign-in window takes the two-button variant (no Config, since a modal blocks the parent it would raise).
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Operator report: with the node console raised over an open cockpit, NEITHER window could be moved or closed. Both are frame:false, and the cockpit window's only controls were CSS+a button injected into the SWARM-SERVED page: the drag handle was `header.header-bar`, which `body.zen-mode` (the header's own arrows-out button, persisted in sessionStorage) sets to display:none — so one click permanently removed the drag region, leaving an 8px invisible strip, and the lone close button was a 30x26 near-transparent glyph sitting in the same row as the cockpit's own header icons. Replaced with an always-present control pill (its body is the drag handle, so a window is movable even with every page chrome hidden) carrying Config / minimize / close. Minimize and Config reach the main process WITHOUT a preload — the remote page keeps zero Node access — by opening an `oshal:` URL that setWindowOpenHandler intercepts and denies. Guard: tests/unit/node-window-controls.spec.ts.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Per-app windows (openCockpitApp): any cockpit app (?app=<name>) opens as its OWN frameless window keyed by name — open/focus semantics per app, several apps side by side, each alt-tabbable with its app title. createCockpitWindow generalized to build-and-return (title + close callback params); openFullJarvis keeps its dedicated window + the native-wake delivery contract unchanged.
  */
 
-import { BrowserWindow, type WebContents } from 'electron';
+import { BrowserWindow, type BrowserWindowConstructorOptions, type WebContents } from 'electron';
 import { buildCockpitAppPath, prettifyAppTitle } from './app-launch';
 import type { ConfigStore } from './config';
 
@@ -61,7 +62,8 @@ export const CONTROL_MINIMIZE = 'oshal:minimize';
  *
  * Guarded so re-injection on navigation never stacks duplicates.
  */
-export const SHELL_CONTROLS_JS = `(() => {
+export function shellControlsJs(withConsoleButton: boolean): string {
+  return `(() => {
   if (document.getElementById('oshal-wincontrols')) return;
   const pill = document.createElement('div');
   pill.id = 'oshal-wincontrols';
@@ -91,18 +93,58 @@ export const SHELL_CONTROLS_JS = `(() => {
     pill.appendChild(b);
     return b;
   };
-  mk('\\u2699 Config', 'Show the OSHAL Node console', () => window.open('${CONTROL_SHOW_CONSOLE}'));
+  ${withConsoleButton
+    ? `mk('\\u2699 Config', 'Show the OSHAL Node console', () => window.open('${CONTROL_SHOW_CONSOLE}'));`
+    : ''}
   mk('\\u2500', 'Minimize', () => window.open('${CONTROL_MINIMIZE}'));
   mk('\\u2715', 'Close this window', () => window.close(), '#c0392b');
   document.body.appendChild(pill);
 })();`;
+}
 
-/** Attach the frameless-shell CSS + close button to a webContents, re-run on each navigation. */
-function injectShellChrome(contents: WebContents): void {
+/** Attach the frameless-shell CSS + control pill to a webContents, re-run on each navigation. */
+function injectShellChrome(contents: WebContents, withConsoleButton = true): void {
+  const controls = shellControlsJs(withConsoleButton);
   contents.on('did-finish-load', () => {
     void contents.insertCSS(SHELL_INTEGRATION_CSS);
-    void contents.executeJavaScript(SHELL_CONTROLS_JS).catch(() => undefined);
+    void contents.executeJavaScript(controls).catch(() => undefined);
   });
+}
+
+/**
+ * @description Gives ANY frameless window showing swarm pages its window controls: the
+ *   injected pill, and the handler that turns the pill's `oshal:` commands into main-process
+ *   calls without ever navigating. Every frameless window this app opens must go through
+ *   here — the sign-in window did not, and being frameless AND modal it left the whole app
+ *   unresponsive with no visible way out.
+ * @param win The frameless window.
+ * @param opts hooks for the Config button; withConsoleButton=false drops it (a modal blocks
+ *   the parent it would raise); childOptions applies to window.open children.
+ * @returns void
+ */
+export function attachFramelessControls(
+  win: BrowserWindow,
+  opts: {
+    hooks?: CockpitWindowHooks;
+    withConsoleButton?: boolean;
+    childOptions?: BrowserWindowConstructorOptions;
+  } = {},
+): void {
+  const withConsoleButton = opts.withConsoleButton !== false;
+  injectShellChrome(win.webContents, withConsoleButton);
+  win.webContents.setWindowOpenHandler(({ url: target }) => {
+    // The injected pill "opens" these to reach the main process without a preload. They are
+    // commands, never navigations, so every one of them is denied.
+    if (target.startsWith(CONTROL_URL_PREFIX)) {
+      if (target === CONTROL_SHOW_CONSOLE) opts.hooks?.onShowConsole?.();
+      else if (target === CONTROL_MINIMIZE) win.minimize();
+      return { action: 'deny' };
+    }
+    return opts.childOptions
+      ? { action: 'allow', overrideBrowserWindowOptions: opts.childOptions }
+      : { action: 'allow' };
+  });
+  win.webContents.on('did-create-window', (child) => injectShellChrome(child.webContents, withConsoleButton));
 }
 
 /**
@@ -183,31 +225,20 @@ function createCockpitWindow(url: string, title: string, hooks: CockpitWindowHoo
       autoplayPolicy: 'no-user-gesture-required',
     },
   });
-  injectShellChrome(win.webContents);
   win.webContents.on('did-frame-finish-load', () => { void deliverPendingNativeWake(); });
   win.webContents.on('did-finish-load', () => { void deliverPendingNativeWake(); });
   // window.open children (the cockpit opens its app surfaces / OAuth popups as
   // popups) must ALSO be frameless + carry the close button, or they show the
   // default white Windows title bar — which is the frame the operator still saw.
-  win.webContents.setWindowOpenHandler(({ url: target }) => {
-    // The injected control pill "opens" these to reach the main process without a preload.
-    // They are commands, never navigations, so every one of them is denied.
-    if (target.startsWith(CONTROL_URL_PREFIX)) {
-      if (target === CONTROL_SHOW_CONSOLE) hooks?.onShowConsole?.();
-      else if (target === CONTROL_MINIMIZE) win.minimize();
-      return { action: 'deny' };
-    }
-    return {
-    action: 'allow',
-    overrideBrowserWindowOptions: {
+  attachFramelessControls(win, {
+    hooks,
+    childOptions: {
       frame: false,
       backgroundColor: '#0b1020',
       autoHideMenuBar: true,
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
     },
-    };
   });
-  win.webContents.on('did-create-window', (child) => injectShellChrome(child.webContents));
   win.on('closed', () => {
     onClosed();
     hooks?.onClosed?.();

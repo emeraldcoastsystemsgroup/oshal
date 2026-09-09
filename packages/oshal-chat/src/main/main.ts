@@ -32,7 +32,7 @@ import { isPushableLogin } from './login-push-core';
 import { pushLoginToSwarm, snapshotLogin, swarmLoginStatus, waitForLoginThenPush } from './swarm-login-push';
 import { connectHeadscale } from './vpn';
 import { ensureAgentClis } from './ensure-clis';
-import { closeFullJarvis, hasOpenCockpitSurface, notifyNativeWake, openCockpitApp, openFullJarvis, type CockpitWindowHooks } from './cockpit-window';
+import { attachFramelessControls, closeFullJarvis, hasOpenCockpitSurface, notifyNativeWake, openCockpitApp, openFullJarvis, type CockpitWindowHooks } from './cockpit-window';
 import {
   BackgroundWakeService,
   WindowsSystemSpeechWakeDetector,
@@ -369,7 +369,11 @@ async function signIn(): Promise<{ ok: boolean; sub?: string; email?: string; er
       frame: false,
       webPreferences: { contextIsolation: true, nodeIntegration: false },
     });
-    // Frameless: Escape cancels the sign-in (there is no native close button).
+    // Frameless AND modal: without controls this window blocked its own parent with no visible
+    // way out. It gets the same injected pill as every other frameless swarm window, minus the
+    // Config button — being modal it would raise a console it is itself blocking.
+    attachFramelessControls(authWin, { withConsoleButton: false });
+    // Escape also cancels the sign-in.
     authWin.webContents.on('before-input-event', (_e, input) => {
       if (input.type === 'keyDown' && input.key === 'Escape') authWin.close();
     });
