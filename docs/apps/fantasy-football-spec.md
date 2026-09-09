@@ -1,6 +1,7 @@
 # fantasy-football — functional and technical specification
 
-**Status:** Specification for review. Nothing built. The decisions and their rationale are in
+**Status:** Specification for review. **Part of P0 already ships** in sports-edge and must not be rebuilt
+(§1.7); the rest is unbuilt. The decisions and their rationale are in
 [ADR-146](../adr/146-fantasy-football-draft-platform.md); this document is the buildable detail.
 
 **Scope:** a store package that manages a fantasy football team and the league around it — the value
@@ -109,6 +110,23 @@ A separate surface, not buttons sprinkled through the app:
 | **P1** | the league site and the commissioner surface. |
 | **P2** | the draft-specific layer — tiers, VONA, the draft simulator, auction max-bid — plus the live-draft node assistant. Needed next pre-season and for mocks. |
 | **P3** | automation of the weekly loop, still confirm-gated: claims queued for approval, a Monday alert when the recommendation changes. |
+
+### 1.7 What already ships
+
+Verified on the box 2026-09-09 (sports-edge **0.4.1, active**), so that P0 is understood as the gap and
+not the whole engine:
+
+| already built, in `sports-edge` | not built |
+|---|---|
+| `applyScoring` from the league's own `scoringItems` (2.2.1) | rest-of-season `SV` / `MV` (2.2.4) — the shipped optimiser is one week |
+| `optimiseLineup` + `startSitCalls` (2.2.6, mean-maximising) | the `P(win)` objective and the spread it needs (2.2.2, 2.2.5) |
+| projection distilling with a cached shared refresh | waivers with a bid (2.2.7) |
+| league link/unlink, own-team resolution from `SWID` | the two-sided trade finder (2.2.8) and the other teams' rosters it needs |
+| the ledger — calls registered before kickoff, then graded (2.2.11) | streaming (2.2.9); matchup reads (`mMatchup`), so nothing knows who you play |
+| the credential rule, implemented: resolved per request, used outbound, never logged/stored/returned | |
+
+**Caveat:** none of the shipped half has run against a real league — there is no `espn-fantasy` row in
+`oshal_connections` on this box, so those routes have only ever seen fixtures.
 
 ---
 
