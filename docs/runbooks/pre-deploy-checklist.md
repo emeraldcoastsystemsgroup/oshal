@@ -111,6 +111,24 @@ These are already merged and take effect the moment the new image runs. They are
 
 ---
 
+## Cycle log — next deploy — PENDING (opened 2026-09-09)
+
+**1. Codex OAuth halves of #372/#373 go live on this deploy.** Both are baked-in paths
+(`scripts/bot-entrypoint.sh`, `src/app/server*.ts`), so the running box has been carried by
+container-level mitigations since 2026-09-09 (patched entrypoint `docker cp`'d into
+`oshal-local-api`, `OPENAI_CODEX_CALLBACK_PORT=1455` pinned in `.env`) — the deploy is what makes
+them real. After it: verify the `:1455` listener line in the api boot log, zero
+`LEGACY_PLAINTEXT_SECRETS_PRESENT` across an api restart, and then the operator performs **ONE**
+browser retry of `GET /api/openai-codex/oauth/start` — a single attempt, per the standing
+no-brute-force instruction — to test the still-open token exchange (BACKLOG: *"Codex swarm-side
+OAuth — the token exchange fails at the last step"*).
+
+**2. Why this cycle did not run on 2026-09-09:** the deploy was staged and then HELD — a
+concurrent session held the shared checkout (HEAD on its own branch, a 257-file docs generator
+run in flight), and `oshal-deploy.sh`'s reset-to-`origin/main` prerequisite would have destroyed
+that in-progress work. A deploy needs a quiet tree the same way a cutover does: no unreleased
+COLLABORATE claims, HEAD on `main`, dirt classified.
+
 ## Cycle log — 2026-08-01 — EXECUTED
 
 **This cycle ran.** `main` deployed (772740e, then a8ea1ef), 34/34 healthy, parity clean.
