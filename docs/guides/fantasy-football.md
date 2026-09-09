@@ -37,7 +37,14 @@ your roster, your opponents' rosters, the schedule and your league's scoring rul
    owners — you never look up a team id.
 
 **Path B — let the desktop node capture them** (Config → Accounts → ESPN Fantasy → *Log in + push*).
-The node opens a real ESPN sign-in window and pushes the pair for you. This path is built but is not
+The node opens a real ESPN sign-in window and pushes the pair for you.
+
+> **In that window, do not use the person icon in the top-right.** Its dropdown opens, and its
+> **Log In** item closes the dropdown and does nothing — verified 2026-09-09 by reproducing it in the
+> node's own Electron window and screenshotting the result. Use the **Log In** button in the
+> **Customize ESPN** card down the right-hand side of the page instead. That one hands you to
+> MyDisney and redirects back signed in, and it is the path that produced this swarm's first working
+> ESPN connection. The window closes itself once the pair is captured. This path is built but is not
 yet running on any machine here — see the BACKLOG entry *"The ESPN 'Log in + push' button has not
 reached a running node"* for exactly what is missing.
 
@@ -125,6 +132,7 @@ The app degrades rather than lying, but the messages are worth knowing:
 | what you see | what it means |
 |---|---|
 | *"Connect ESPN Fantasy to read a private league."* | You have no ESPN connection stored — **or** ESPN could not be reached at all. Those two are not yet told apart; if you know you are connected, suspect the network before re-pasting cookies. |
+| The sign-in window's account dropdown closes when you click **Log In** | Known: the person-icon path does not work in the node's window. Use the **Log In** button in the Customize ESPN card instead (above). |
 | *"ESPN would not return that league right now."* | You are connected, and ESPN refused or did not answer. Usually transient; the league id being wrong looks the same. |
 | *"No opponent could be read for this week"* | Either a genuine bye, or the schedule read failed. The lineup shown is then simply the highest-projected one — safe, just not opponent-aware. |
 | Projection date in the footer is old | ESPN's ~39 MB player feed could not be refreshed, so a cached one is being used. A stale cache beats a blank screen, and the date is there so you can judge. |
