@@ -867,6 +867,32 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **The credential moved onto the critical path.** The draft engine needed none — pool, ADP and projections are public. Managing needs YOUR roster and your opponents', which in a private league means the two ESPN account cookies, and the operator has reported that team "having some issues". So **manual roster entry is a first-class input, not a fallback**: every weekly recommendation must be reachable from hand-typed rosters, with a guard that goes red if the connector ever becomes mandatory.
 - **Done when:** (P0) for a real league — connector-read or hand-typed — the weekly board produces a start/sit with the win probability it buys against the mean-maximising lineup, a waiver board ranked by rest-of-season swap value with a bid and a drop for each, and at least one two-sided trade showing both managers' gain; a guard proves an underdog is never handed the lower-variance lineup and that no proposal surfaces with `Δ_them ≤ 0`; and the ledger grades a completed week against what was actually started; (P1) a commissioner creates a league, sets scoring and roster slots, invites a member, and edits a roster, entirely from the surface, with every commissioner action in the audit trail and a spec proving a second league's admin can neither read nor write the first; (P2) a backtest over a completed season reports the draft engine's rosters against straight-ADP rosters across at least 100 simulated drafts with a loss reported as a loss, and a mock ESPN draft on an enrolled node feeds picks back with the recommendation updating within seconds, guarded so the session cookie never leaves the machine.
 
+### The node's ESPN sign-in window makes the user hunt for the one control that works
+
+- **Found 2026-09-09, with a live workaround already in hand.** `connectEspnFantasy` opens
+  `https://www.espn.com/fantasy/` and leaves the user to find a way in. The obvious control — the
+  **person icon** top-right — opens its dropdown and then does nothing at all when **Log In** is
+  clicked: the dropdown closes and no login appears. Reproduced inside the node's own Electron window
+  and screenshotted at +600 ms / +2 s / +5 s. The control that DOES work is the **Log In** button in
+  the *Customize ESPN* card in the right-hand rail, which hands off to MyDisney and redirects back;
+  that path produced this swarm's first working `espn-fantasy` connection (`connected`, SWID
+  resolved, 2026-09-09 22:45 UTC).
+- **Not ESPN being broken, and not the OneID error it logs.** The same page in a fresh real Chrome
+  opens the MyDisney overlay from the same click, and `[OneID] ERROR Session not established` appears
+  in the *working* Chrome run too — it is noise. Disabling `ThirdPartyStoragePartitioning`,
+  `TrackingProtection3pcd` and `PartitionedCookies` changed nothing. What differs is our window:
+  Electron's Client Hints carry no `Google Chrome` brand (`[Not;A=Brand, Chromium]`), which is the
+  untested remaining hypothesis rather than a conclusion.
+- **Remaining:** stop landing on a page where the first thing a user reaches for is dead. Either open
+  the login entry point directly (the Customize-ESPN button is a normal link into MyDisney with a
+  redirect back — capture that URL and load it), or keep the current landing page and put one line of
+  in-window guidance on it. Whichever, the person-icon path should not be the thing a first-time user
+  finds first.
+- **Done when:** a user who has never connected reaches an ESPN login form from *Log in + push*
+  without hunting, on a fresh node profile; the guide's instruction matches what the window actually
+  does; and if the direct-URL route is taken, a guard pins the URL so an ESPN change breaks a test
+  rather than the button.
+
 ### Fantasy — the app cannot tell "not connected" from "ESPN unreachable"
 
 - **Found 2026-09-09** while the box had no working DNS (the operator read it as an ESPN outage; it was the
