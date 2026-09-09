@@ -113,17 +113,18 @@ A separate surface, not buttons sprinkled through the app:
 
 ### 1.7 What already ships
 
-Verified on the box 2026-09-09 (sports-edge **0.4.1, active**), so that P0 is understood as the gap and
-not the whole engine:
+Verified on the box 2026-09-09 (sports-edge **0.6.0, active** after store #150), so that P0 is understood
+as the gap and not the whole engine:
 
 | already built, in `sports-edge` | not built |
 |---|---|
-| `applyScoring` from the league's own `scoringItems` (2.2.1) | rest-of-season `SV` / `MV` (2.2.4) — the shipped optimiser is one week |
-| `optimiseLineup` + `startSitCalls` (2.2.6, mean-maximising) | the `P(win)` objective and the spread it needs (2.2.2, 2.2.5) |
-| projection distilling with a cached shared refresh | waivers with a bid (2.2.7) |
-| league link/unlink, own-team resolution from `SWID` | the two-sided trade finder (2.2.8) and the other teams' rosters it needs |
-| the ledger — calls registered before kickoff, then graded (2.2.11) | streaming (2.2.9); matchup reads (`mMatchup`), so nothing knows who you play |
+| `applyScoring` from the league's own `scoringItems` (2.2.1) | waivers with a bid (2.2.7) |
+| `optimiseLineup` + `startSitCalls` (2.2.6) | rest-of-season `SV`/`MV` (2.2.4) — the optimiser still values one week at a time |
+| projection distilling with a cached shared refresh | the two-sided trade finder (2.2.8) and the other teams' rosters it needs |
+| league link/unlink, own-team resolution from `SWID` | streaming (2.2.9) |
+| the ledger — calls registered before kickoff, then graded (2.2.11) | |
 | the credential rule, implemented: resolved per request, used outbound, never logged/stored/returned | |
+| **the `P(win)` objective and the matchup read (2.2.2, 2.2.5, 2.2.6) — shipped 0.6.0, 2026-09-09** | |
 
 **Caveat:** none of the shipped half has run against a real league — there is no `espn-fantasy` row in
 `oshal_connections` on this box, so those routes have only ever seen fixtures.
