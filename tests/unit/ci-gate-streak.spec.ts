@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - guard for BUG-22's prevention. The defect was not a crash; it was an alert whose wording never changed, so these pin the two claims the alert now makes and that a wrong parse would silently corrupt: the streak count, and which gates are red for the first time tonight.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cases for the duplicate-gate line (verbatim from the corrupted 2026-09-09 run) and for the skipped-is-not-fixed rule, including the inverse: a run that measured the gate still reports FIXED.
  */
 
 /**
@@ -53,6 +54,22 @@ describe('parsing the run log', () => {
   it('reads a log written with CRLF line endings', () => {
     expect(parseRunOutcomes(REAL_LOG.replace(/\n/g, '\r\n'))).toHaveLength(3);
   });
+
+  it('collapses duplicate gate names in a line already written to the log', () => {
+    // Verbatim from ci-local.log. A mid-run edit to ci-local.sh shifted the running shell's byte
+    // offset, it re-executed a block, and four gate names were appended twice. Lines already in
+    // the log are never rewritten, so the parser has to survive them.
+    const outcomes = parseRunOutcomes(
+      '[2026-09-09T02:22:02] === LOCAL CI: FAILED gates: head-src node-gates-skipped secret-scan'
+      + ' local-secret-hygiene unpushed-commits image-build kernel-skills-image-skipped'
+      + ' image-smoke-skipped trivy-skipped unpushed-commits kernel-skills-image-skipped'
+      + ' image-smoke-skipped trivy-skipped ===',
+    );
+    expect(outcomes[0].failed).toEqual([
+      'head-src', 'node-gates-skipped', 'secret-scan', 'local-secret-hygiene', 'unpushed-commits',
+      'image-build', 'kernel-skills-image-skipped', 'image-smoke-skipped', 'trivy-skipped',
+    ]);
+  });
 });
 
 describe('the streak count', () => {
@@ -99,6 +116,33 @@ describe('what is newly red — the signal BUG-22 lost', () => {
     expect(summary.headline).toBe('no change from last run (night 2)');
   });
 
+  it('never calls a SKIPPED gate fixed — it was not measured', () => {
+    // The real 2026-09-09 shape: head-src failed, so unit/lint/e2e-green never ran and silently
+    // left the failing set. Reporting them as FIXED is a green nobody measured, which is worse
+    // than the flat wording this replaced.
+    const log = [
+      '[2026-09-08T00:00:00] === LOCAL CI: FAILED gates: unit lint e2e-green trivy secret-scan ===',
+      '[2026-09-09T02:22:02] === LOCAL CI: FAILED gates: head-src node-gates-skipped secret-scan'
+      + ' trivy-skipped ===',
+    ].join('\n');
+    const summary = summarizeGateStreak(log);
+    expect(summary.skipped).toEqual(['node-gates-skipped', 'trivy-skipped']);
+    expect(summary.headline).toBe('NEW: head-src node-gates-skipped trivy-skipped (night 2)');
+    const body = renderAlertBody(summary);
+    expect(body).toContain('DID NOT RUN');
+    expect(body).not.toContain('FIXED SINCE LAST RUN');
+  });
+
+  it('still says FIXED when the run actually measured the gate', () => {
+    const log = [
+      '[2026-09-07T00:00:00] === LOCAL CI: FAILED gates: unit secret-scan trivy ===',
+      '[2026-09-08T00:00:00] === LOCAL CI: FAILED gates: unit trivy ===',
+    ].join('\n');
+    const summary = summarizeGateStreak(log);
+    expect(summary.skipped).toEqual([]);
+    expect(renderAlertBody(summary)).toContain('FIXED SINCE LAST RUN: secret-scan.');
+  });
+
   it('reports a gate that went green as fixed, so progress is not invisible', () => {
     const log = [
       '[2026-09-07T00:00:00] === LOCAL CI: FAILED gates: unit secret-scan trivy ===',
@@ -107,6 +151,21 @@ describe('what is newly red — the signal BUG-22 lost', () => {
     const summary = summarizeGateStreak(log);
     expect(summary.newlyGreen).toEqual(['secret-scan']);
     expect(summary.headline).toContain('FIXED: secret-scan');
+  });
+
+  it('does not double-count a duplicated gate when diffing against the previous run', () => {
+    // The doubled line must diff as though it were clean: `image-build` is genuinely new,
+    // and the repeated `unpushed-commits` must appear once in already-known, never in both.
+    const log = [
+      '[2026-09-08T00:00:00] === LOCAL CI: FAILED gates: unpushed-commits trivy-skipped ===',
+      '[2026-09-09T02:22:02] === LOCAL CI: FAILED gates: unpushed-commits image-build'
+      + ' trivy-skipped unpushed-commits trivy-skipped ===',
+    ].join('\n');
+    const summary = summarizeGateStreak(log);
+    expect(summary.newlyRed).toEqual(['image-build']);
+    expect(summary.alreadyKnown).toEqual(['unpushed-commits', 'trivy-skipped']);
+    expect(summary.current).toEqual(['unpushed-commits', 'image-build', 'trivy-skipped']);
+    expect(summary.headline).toBe('NEW: image-build (night 2)');
   });
 
   it('claims nothing is new when there is no previous run to compare against', () => {
