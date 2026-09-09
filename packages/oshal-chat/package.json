@@ -1,6 +1,6 @@
 {
   "name": "@oshal/chat",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Local desktop node that joins the OSHAL swarm as an A2A remote client: a Jarvis-style orb you talk to, that also runs swarm-dispatched tasks locally with your own signed-in CLIs (codex/claude/gcloud/aws).",
   "license": "AGPL-3.0-or-later",
   "main": "dist/main/main.js",
