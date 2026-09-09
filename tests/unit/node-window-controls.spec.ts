@@ -13,9 +13,12 @@ import {
   CONTROL_MINIMIZE,
   CONTROL_SHOW_CONSOLE,
   CONTROL_URL_PREFIX,
-  SHELL_CONTROLS_JS,
   SHELL_INTEGRATION_CSS,
+  shellControlsJs,
 } from '../../packages/oshal-chat/src/main/cockpit-window';
+
+/** The cockpit variant of the pill (Config + minimize + close). */
+const SHELL_CONTROLS_JS = shellControlsJs(true);
 
 const SRC = path.join(process.cwd(), 'packages/oshal-chat/src/main');
 
@@ -35,7 +38,7 @@ interface FakeEl {
 }
 
 /** Runs the injected script the way Electron does, over a minimal document/window. */
-function runInjection(existing: FakeEl | null = null): {
+function runInjection(existing: FakeEl | null = null, script = SHELL_CONTROLS_JS): {
   body: FakeEl; opened: string[]; closes: number[];
 } {
   const make = (): FakeEl => {
@@ -58,7 +61,7 @@ function runInjection(existing: FakeEl | null = null): {
   };
   const windowObj = { open: (u: string) => { opened.push(u); }, close: () => { closes.push(1); } };
   // eslint-disable-next-line no-new-func
-  new Function('document', 'window', SHELL_CONTROLS_JS)(document, windowObj);
+  new Function('document', 'window', script)(document, windowObj);
   return { body, opened, closes };
 }
 
@@ -139,5 +142,30 @@ describe('@oshal/chat cockpit window — wiring the controls need', () => {
     expect(topbar).toContain('id="jarvisTopBtn"');
     const js = readFileSync(path.join(process.cwd(), 'packages/oshal-chat/src/renderer/renderer.js'), 'utf8');
     expect(js).toContain("$('jarvisTopBtn')");
+  });
+});
+
+describe('@oshal/chat sign-in window — the one that trapped the operator', () => {
+  const main = readFileSync(path.join(SRC, 'main.ts'), 'utf8');
+
+  it('gets the control pill too — it is frameless AND modal, so no controls froze the app', () => {
+    // parent: win + modal: true means this window blocks input to the console while it is up.
+    // Frameless with nothing to click, that reads as "I cannot move or close either window".
+    const signIn = main.slice(main.indexOf('async function signIn'), main.indexOf('async function signOut'));
+    expect(signIn).toContain('modal: true');
+    expect(signIn).toContain('attachFramelessControls(authWin');
+    expect(signIn).toContain('withConsoleButton: false');
+  });
+
+  it('drops Config but keeps a drag handle, minimize and close', () => {
+    const { body, opened, closes } = runInjection(null, shellControlsJs(false));
+    const pill = body.children[0];
+    expect(pill.style.WebkitAppRegion).toBe('drag');
+    const buttons = pill.children;
+    expect(buttons.map((b) => b.title)).toEqual(['Minimize', 'Close this window']);
+    buttons[0].onclick?.();
+    buttons[1].onclick?.();
+    expect(opened).toEqual([CONTROL_MINIMIZE]);
+    expect(closes).toHaveLength(1);
   });
 });
