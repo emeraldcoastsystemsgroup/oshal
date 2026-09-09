@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A, node half: the Electron-free logic behind "Log in + push" — which vendor login files are pushable, where the swarm accepts them, the vendor shapes we accept, the plain-http rule for the destination, how a finished browser login is detected (the vendor CLI writes its file), and how the swarm's answer is classified. Kept pure so core's vitest guards it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the ESPN Fantasy target and its pure halves — cookie-pair extraction from a jar listing and the connector's import body. Kept here, beside the vendor logins, so both live under the same vitest guard; ESPN is deliberately NOT folded into PushableLogin, because it is a connector credential rather than a vendor CLI file and shares none of the file-shape logic. A connector answer names the account in `account`, so that is accepted alongside `email`.
  */
 
 /** The two vendor logins the swarm can adopt (codex via platform promotion, claude via ADR-137 A). */
@@ -35,6 +36,72 @@ export const LOGIN_TARGETS: Readonly<Record<PushableLogin, LoginTarget>> = {
     statusPath: '/api/claude-code/auth/status',
   },
 };
+
+/**
+ * The ESPN Fantasy connector, which is a DIFFERENT SHAPE from the vendor logins above and cannot
+ * reuse them. Codex and Claude are adopted by reading a file their CLI wrote after its own browser
+ * redirect. ESPN publishes no CLI and no OAuth at all: the only credential that exists is a pair of
+ * browser cookies, so it is captured from a real signed-in session's cookie jar instead.
+ *
+ * ⚠ These are ACCOUNT SESSION cookies, not a scoped token — no per-app revocation, and signing out
+ * of ESPN everywhere is the only way to kill them. They are read once, posted straight to the
+ * connector under the user's own swarm session, and never written to disk by this node.
+ */
+export const ESPN_TARGET = {
+  id: 'espn-fantasy' as const,
+  label: 'ESPN Fantasy',
+  /** The connector's token-paste endpoint: `email` carries the SWID, `token` the espn_s2. */
+  importPath: '/api/connect/espn-fantasy/token',
+  /** Where the user signs in. A real page in a real window — this node never handles the password. */
+  loginUrl: 'https://www.espn.com/fantasy/',
+  /** Cookie jar to read from, and the domain that owns the pair. */
+  cookieDomain: '.espn.com',
+  /**
+   * A PARTITIONED session, deliberately not the default one. The node clears defaultSession cookies
+   * on swarm sign-out, so sharing the jar would silently wipe the ESPN login every time the user
+   * signed out of the swarm.
+   */
+  partition: 'persist:espn-fantasy',
+};
+
+/** The two cookies that authenticate an ESPN fantasy read. Both are required; one alone is useless. */
+export interface EspnCookiePair {
+  swid: string;
+  espnS2: string;
+}
+
+/**
+ * @description Pull the SWID/espn_s2 pair out of a cookie jar listing, normalising the SWID to its
+ * braced form so a paste from either place behaves identically.
+ * @param cookies - Cookies as Electron's session API returns them.
+ * @returns The pair, or null while either half is still missing — which is the normal state before
+ * the user has finished signing in, not an error.
+ */
+export function readEspnCookies(
+  cookies: ReadonlyArray<{ name?: string; value?: string }>,
+): EspnCookiePair | null {
+  let swid = '';
+  let espnS2 = '';
+  for (const c of cookies || []) {
+    const name = String(c?.name || '');
+    const value = String(c?.value || '').trim();
+    if (!value) continue;
+    if (name === 'SWID') swid = value;
+    else if (name === 'espn_s2' || name === 'ESPN_S2') espnS2 = value;
+  }
+  if (!swid || !espnS2) return null;
+  return { swid: swid.startsWith('{') ? swid : `{${swid}}`, espnS2 };
+}
+
+/**
+ * @description The body the connector's token-paste route expects. It stores `email:token`, which
+ * the Sports Edge package splits on the FIRST colon — safe because a braced GUID contains none.
+ * @param pair - The captured cookies.
+ * @returns The POST body.
+ */
+export function espnImportBody(pair: EspnCookiePair): Record<string, unknown> {
+  return { email: pair.swid, token: pair.espnS2, label: 'ESPN Fantasy (captured from browser login)' };
+}
 
 /** Snapshot of a vendor login file used to notice that a browser login has completed. */
 export interface LoginFileSnapshot {
@@ -179,7 +246,10 @@ export function importRequestBody(id: PushableLogin, parsed: Record<string, unkn
 export function classifyPushResponse(status: number, body: unknown): PushOutcome {
   const record = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
   const error = typeof record.error === 'string' ? record.error : undefined;
-  const email = typeof record.email === 'string' ? record.email : undefined;
+  // `email` is what the vendor import routes return; `account` is what the connector token route
+  // returns for the same idea. Reading both lets one classifier serve both without a second copy.
+  const email = typeof record.email === 'string' ? record.email
+    : typeof record.account === 'string' ? record.account : undefined;
   const hint = typeof record.hint === 'string' ? record.hint : typeof record.detail === 'string' ? record.detail : undefined;
   if (status >= 200 && status < 300 && record.success !== false) {
     return { ok: true, status, needsSignIn: false, refused: false, email };

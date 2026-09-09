@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-135 amendment H: the print service now comes up WITH the node. Operator: "add it to the remote node, and when the remote node is up it is running the print service, and that service is then accessible on the intranet the remote node is running on." The standalone -AtStartup scheduled task was a SEPARATE install with a separately placed token that knew nothing about the node; this ties the printer to the node's own connection lifecycle, advertised on the node's LOCAL segment (so an overlay having no broadcast domain stops mattering) and delivering on the node's OWN plane with the node's OWN credential. Opt-in: it is an outward-facing service, so it is OFF unless printServiceEnabled.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: auth:push / auth:swarm-status / auth:login-and-push — the vendor login runs HERE (its CLI listens on the localhost redirect, like VS Code), the node notices the file the CLI writes, and pushes it to the swarm under the user's verified OIDC session. Restores the "log in to Codex / Claude and the swarm has it" flow for a swarm whose browser is on a satellite.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | The print service starts BEFORE the mesh handshake, not after it. Proven on the operator's box 2026-09-06: with printServiceEnabled=true the node restarted and spawned NO print-drop child at all, because register() throws on a non-2xx (a swarm with REMOTE_CLIENT_REQUIRE_NODE_TOKEN refuses a shared-secret node with 401), client.start() rejects, and connect() returned before the printer was ever reached. The printer is a LOCAL service - it advertises on this machine's own segment and needs the swarm only to DELIVER - so an unreachable or not-yet-enrolled swarm must not remove it from everyone's print dialog. print-drop KEEPS an undeliverable document and names the reason, so nothing is lost meanwhile.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | espn:connect / espn:status / espn:forget — the Sports Edge fantasy connector's credential is a pair of ESPN account session cookies, not a token, so it is captured from a real ESPN sign-in window on this machine instead of asking the user to open DevTools and copy two values by hand. The window runs in its own partition (a swarm sign-out clears defaultSession, which would otherwise wipe the ESPN jar as a side effect).
  */
 
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray } from 'electron';
@@ -28,6 +29,7 @@ import { resolveEnrollmentIdentity } from './enrollment';
 import { TaskWorker, type WorkerEvent } from './worker';
 import { PrintService } from './print-service';
 import { accountStatus, launchLogin } from './auth-manager';
+import { connectEspnFantasy, espnLoginStatus, forgetEspnLogin } from './espn-cookie-login';
 import { isPushableLogin } from './login-push-core';
 import { pushLoginToSwarm, snapshotLogin, swarmLoginStatus, waitForLoginThenPush } from './swarm-login-push';
 import { connectHeadscale } from './vpn';
@@ -504,6 +506,13 @@ function registerIpc(): void {
   ipcMain.handle('auth:push', (_event, id: string) => pushLoginToSwarm(store, id));
   ipcMain.handle('auth:swarm-status', (_event, id: string) => swarmLoginStatus(store, id));
   ipcMain.handle('auth:login-and-push', (_event, id: string) => loginAndPush(id));
+
+  // ESPN Fantasy has no OAuth at all, so its "login" is a real ESPN sign-in window whose cookie jar
+  // is read once and posted to the user's own connector. Separate handlers from auth:*, because it
+  // is a connector credential rather than one of the vendor CLI logins accountStatus() enumerates.
+  ipcMain.handle('espn:connect', () => connectEspnFantasy(store, { parent: win }));
+  ipcMain.handle('espn:status', () => espnLoginStatus());
+  ipcMain.handle('espn:forget', () => forgetEspnLogin());
 
   // Verified identity via the swarm's OIDC login.
   ipcMain.handle('identity:signin', () => signIn());

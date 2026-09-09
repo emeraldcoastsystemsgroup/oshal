@@ -141,6 +141,16 @@
       <h2>Accounts on this machine</h2>
       <p class="hint">Log into the tools you want the swarm to use through this node. The browser popup runs here, on your computer; credentials stay in your home folder. For Codex and Claude, <strong>Push to swarm</strong> hands the login this machine holds to the swarm so its bots run on it — accepted only by a demo-mode swarm whose operator you are, under your signed-in identity.</p>
       <div id="accounts" class="accounts"></div>
+
+      <div class="account" id="espnRow">
+        <span class="acct-dot off" id="espnDot"></span>
+        <span class="acct-label">ESPN Fantasy</span>
+        <span class="acct-state" id="espnState">not signed in</span>
+        <button id="espnConnectBtn" class="ghost-btn small" type="button">Log in + push</button>
+        <button id="espnForgetBtn" class="ghost-btn small" type="button" disabled>Forget here</button>
+      </div>
+      <p class="warn-text">ESPN publishes no OAuth for fantasy. Its only credential is a pair of <strong>account session cookies</strong> — they are not scoped to this app, cannot be revoked per app, and signing out of ESPN everywhere is the only way to kill them. "Log in + push" opens ESPN's own sign-in page here, reads that pair from the window it created, and stores it encrypted in your connector. <strong>Forget here</strong> clears this machine's copy only; it does not revoke anything at ESPN.</p>
+
       <button id="connectionsBtn" class="ghost-btn" type="button">Manage web connections (Gmail, SmartThings…)</button>
 
       <h2>Headscale (optional)</h2>

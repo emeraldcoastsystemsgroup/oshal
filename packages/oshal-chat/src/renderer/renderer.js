@@ -369,7 +369,7 @@ async function toggleBackgroundWakePause() {
 function showSettings(show) {
   $('settings').classList.toggle('hidden', !show);
   $('orbView').classList.toggle('hidden', show);
-  if (show) { refreshAccounts(); }
+  if (show) { refreshAccounts(); refreshEspn(); }
 }
 async function loadConfig() {
   const cfg = await oshal.getConfig();
@@ -470,6 +470,42 @@ async function loginAccount(b, id) {
   }
   setTimeout(refreshAccounts, 800);
 }
+/* ===================== ESPN Fantasy =====================
+   Not one of the CLI accounts above: ESPN has no OAuth for fantasy, so the credential is a pair of
+   session cookies read out of a real ESPN sign-in window. The renderer never handles them — it asks
+   the main process to capture and push, and shows what came back. */
+async function refreshEspn() {
+  const s = await oshal.espnStatus();
+  $('espnDot').className = 'acct-dot ' + (s.present ? 'on' : 'off');
+  $('espnState').textContent = s.present ? 'signed in here' : 'not signed in';
+  $('espnConnectBtn').textContent = s.present ? 'Push to swarm' : 'Log in + push';
+  $('espnForgetBtn').disabled = !s.present;
+}
+async function connectEspn() {
+  const b = $('espnConnectBtn');
+  b.disabled = true;
+  setMsg('Sign in to ESPN in the window that opened — this node captures the fantasy cookies when it lands.', '');
+  let res = await oshal.espnConnect();
+  // The connector is stored under the user's own swarm session, so an expired one means "sign in",
+  // not "the capture failed" — and the cookies are already in hand, so the retry costs nothing.
+  if (res.needsSignIn) {
+    const signed = await oshal.signIn();
+    if (signed.ok) res = await oshal.espnConnect();
+  }
+  if (res.ok) setMsg('ESPN Fantasy connected' + (res.email ? ' as ' + res.email : '') + ' — private-league reads work now.', 'ok');
+  else if (res.reason === 'cancelled') setMsg('ESPN sign-in cancelled — nothing was stored.', '');
+  else setMsg(res.detail || res.reason || 'ESPN connect failed.', 'err');
+  b.disabled = false;
+  refreshEspn();
+}
+async function forgetEspn() {
+  const res = await oshal.espnForget();
+  setMsg(res.ok
+    ? 'Cleared the ESPN login held on this machine. The connector still holds what was already pushed, and ESPN itself is unchanged — sign out of ESPN to revoke.'
+    : (res.detail || 'Could not clear the ESPN login.'), res.ok ? 'ok' : 'err');
+  refreshEspn();
+}
+
 async function signIn() {
   setMsg('Opening sign-in…', '');
   const res = await oshal.signIn();
@@ -530,6 +566,8 @@ function init() {
   $('backgroundWakeEnabled').addEventListener('change', changeBackgroundWake);
   $('wakePauseBtn').addEventListener('click', toggleBackgroundWakePause);
   $('connectionsBtn').addEventListener('click', () => oshal.openConnections());
+  $('espnConnectBtn').addEventListener('click', connectEspn);
+  $('espnForgetBtn').addEventListener('click', forgetEspn);
   $('jarvisBtn').addEventListener('click', openJarvis);
   // Same action from the title bar, so the cockpit is reachable from the Config screen too —
   // the orb controls that hold #jarvisBtn are not rendered there.

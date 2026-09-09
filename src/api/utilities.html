@@ -455,11 +455,14 @@ function cardHtml(p) {
     // or mangles a pasted multi-line secret at the first line break in some browsers — the same
     // "paste a blob" pattern already used for cxJson below, not a new one.
     var isMultiline = MULTILINE_TOKEN[p.id];
-    var tokPlaceholder = isMultiline ? 'Paste the full private key (PEM) — every line, BEGIN through END' : (emailLabel ? 'API token' : 'Personal Access Token');
+    var tokPlaceholder = isMultiline ? 'Paste the full private key (PEM) — every line, BEGIN through END'
+      : (TOKEN_FIELD_LABEL[p.id] || (emailLabel ? 'API token' : 'Personal Access Token'));
     var tokField = isMultiline
       ? '<textarea id="tok-' + p.id + '" class="tokin" rows="6" style="width:100%;box-sizing:border-box;font-family:monospace;font-size:11px;" placeholder="' + esc(tokPlaceholder) + '"></textarea>'
       : '<input id="tok-' + p.id + '" class="tokin" type="password" placeholder="' + esc(tokPlaceholder) + '" />';
-    body += '<div class="meta">' + (p.platformDefault ? 'Use your own token' : (emailLabel ? 'Connect with your account id + API token' : 'Paste a Personal Access Token')) + help + '</div>' +
+    var tokNote = TOKEN_NOTE[p.id]
+      || (p.platformDefault ? 'Use your own token' : (emailLabel ? 'Connect with your account id + API token' : 'Paste a Personal Access Token'));
+    body += '<div class="meta">' + esc(tokNote) + help + '</div>' +
       '<div class="tokrow"><input id="lbl-' + p.id + '" class="tokin" placeholder="Label — optional" />' +
       emailInput +
       (isMultiline ? '' : tokField) +
@@ -531,12 +534,24 @@ function reconnectToken(providerId) {
 // Token connectors needing a second (account-id) field — provider id -> field label.
 // kalshi: the "token" field takes the downloaded RSA private-key PEM (paste the whole file;
 // the backend rebuilds the newlines), the second field takes the API Key ID.
-var TWO_FIELD_TOKEN = { jira: 'Atlassian account email', twilio: 'Twilio Account SID', kalshi: 'Kalshi API Key ID' };
+var TWO_FIELD_TOKEN = { jira: 'Atlassian account email', twilio: 'Twilio Account SID', kalshi: 'Kalshi API Key ID',
+  // ESPN Fantasy is two-value like the rest: the SWID identifies the account and espn_s2
+  // authenticates it. Without this entry the card renders ONE box, so there is nowhere to put
+  // the SWID and the pasted half can never form the SWID:espn_s2 secret the connector stores.
+  'espn-fantasy': 'SWID cookie, e.g. {1A2B3C4D-...}' };
 // Providers whose "token" is itself multi-line (a PEM key, not a short string) — these get a
 // <textarea> instead of the single-line type=password <input>, which some browsers truncate
 // or mangle a multi-line paste into (confirmed 2026-07-13: reproduces "missing BEGIN/END
 // markers" when a pasted PEM is cut at the first line break).
 var MULTILINE_TOKEN = { kalshi: true };
+// Per-provider wording for the token box and the line above it. The generic copy says "API token"
+// and "Personal Access Token", which is exactly wrong for ESPN Fantasy: ESPN publishes no API key
+// for fantasy at all, and a user hunting for one finds nothing. Naming the two cookies — and saying
+// out loud that they are ACCOUNT SESSION cookies with no per-app revocation — is the honest card.
+var TOKEN_FIELD_LABEL = { 'espn-fantasy': 'espn_s2 cookie value' };
+var TOKEN_NOTE = {
+  'espn-fantasy': 'ESPN has no OAuth or API key for fantasy. The credential is the SWID + espn_s2 pair from a signed-in espn.com session — account session cookies, not a scoped key: they cannot be revoked for this app alone, and signing out of ESPN everywhere is the only way to kill them. The desktop node can capture them for you (Config → Accounts → ESPN Fantasy → Log in + push).',
+};
 
 async function saveToken(id) {
   var el = document.getElementById('tok-' + id);
