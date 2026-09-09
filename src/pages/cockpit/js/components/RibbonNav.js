@@ -24,6 +24,7 @@ const PROFILE_LS_KEY = 'oshal-ui-profile';
 
 /** Framework default ribbon items — used when no profile file exists. */
 const HARDCODED_VIEWS = [
+  { id: 'home',       icon: 'codicon codicon-home',                label: 'Home',         section: 'top' },
   { id: 'tickets',    icon: 'codicon codicon-tag',                 label: 'Tickets',      section: 'top' },
   { id: 'forge',      icon: 'codicon codicon-tools',               label: 'Bot Forge',    section: 'top' },
   { id: 'chat',       icon: 'codicon codicon-comment-discussion',  label: 'Chat',         section: 'top' },

@@ -637,6 +637,38 @@ export interface SwarmAppReadinessDeclaration {
 }
 
 /**
+ * ADR-145 D1: the app's per-user status probe — the REPORTING sibling of `readiness:`. One per app
+ * (an app is one card), and like readiness it must sit below a route this same manifest declares
+ * that admits a browser session, because status is a fact about a PERSON and the home page asks it
+ * in the signed-in user's own session — never with the service secret, never with a PAT.
+ */
+export interface SwarmAppSummaryDeclaration {
+  /** GET path below one of this package's own `routes[].mountPath`s. */
+  path: string;
+  /** RFC 6901 pointer to an array of headline tiles (see SwarmAppSummaryTile). */
+  tilesPointer?: string;
+  /** RFC 6901 pointer to an array of line items (see SwarmAppSummaryItem). */
+  itemsPointer?: string;
+}
+
+/** ADR-145 D2: one headline number. `value` is a STRING — "116W-215L" and "-$18.24" are real. */
+export interface SwarmAppSummaryTile {
+  label: string;
+  value: string;
+  tone?: SwarmAppSummaryTone;
+}
+
+/** ADR-145 D2: one line item; `fix` names a surface in the SAME app, rendered as a button. */
+export interface SwarmAppSummaryItem {
+  text: string;
+  tone?: SwarmAppSummaryTone;
+  fix?: string;
+}
+
+/** Closed enum. An unrecognised tone degrades to 'neutral' — a wrong tone must never ESCALATE. */
+export type SwarmAppSummaryTone = 'neutral' | 'good' | 'warn';
+
+/**
  * The guest-seed contract: a POST route below one of this package's own `routes[].mountPath`s that
  * core calls ONCE when an anonymous guest session starts, with the service secret and
  * `x-oshal-user-sub` set to the fresh guest sub. The app plants ITS OWN demo data for that sub —
@@ -664,6 +696,10 @@ export interface SwarmAppManifest {
   /** ADR-141 D3: per-user readiness probes a group's `setup[]` may reference. Validated fail-closed
    *  at load exactly like `smoke:` (own mount, canonical path, valid pointers, session-admitting route). */
   readiness?: SwarmAppReadinessDeclaration[];
+  /** ADR-145 D1: this app's per-user status probe, rendered as its card on the Home view.
+   *  Validated fail-closed at load exactly like `readiness:` (own mount, canonical path,
+   *  session-admitting route, valid pointers). Absent = the card falls back to jarvis_tasks. */
+  summary?: SwarmAppSummaryDeclaration;
   /** The guest-seed hook (guest-seed contract): the route core calls on guest-start so this app
    *  plants its own demo data for the fresh guest. Validated fail-closed at load (own mount,
    *  canonical path, service-admitting route). Absent = this app seeds nothing for guests. */

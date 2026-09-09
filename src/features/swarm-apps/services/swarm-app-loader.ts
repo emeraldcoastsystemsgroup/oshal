@@ -39,7 +39,7 @@ import {
   type SwarmAppRouteAuthMode,
 } from '@/shared/route-auth';
 import { validateArtifactActionsDeclaration } from '@/shared/artifact-exchange';
-import { validateGroupManifest, validateReadinessDeclarations, validateGuestSeedDeclaration } from './swarm-app-group';
+import { validateGroupManifest, validateReadinessDeclarations, validateGuestSeedDeclaration, validateSummaryDeclaration } from './swarm-app-group';
 import {
   SWARM_APP_BOT_HARNESS_TYPES,
   SWARM_APP_BOT_SPECIAL_API_TYPES,
@@ -915,6 +915,7 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   // `readiness:` is the per-user sibling of `smoke:`. Both fail closed here, at load.
   validateGroupManifest(manifest, absPath);
   validateReadinessDeclarations(manifest, absPath);
+  validateSummaryDeclaration(manifest, absPath);
   // Guest-seed contract: the manifest's `guestSeed:` hook, fail-closed like smoke/readiness.
   validateGuestSeedDeclaration(manifest, absPath);
 

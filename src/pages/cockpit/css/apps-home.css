@@ -1,0 +1,222 @@
+/* ===== Home — the ADR-145 cross-app landing view =====
+   Every colour is a framework theme token so the view is native to all cockpit themes;
+   tone-* carries the closed neutral|good|warn enum and never invents a fourth state. */
+
+.apps-home {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.apps-home-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.apps-home-head h2 {
+  margin: 0;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.apps-home-head p {
+  margin: 0;
+  grid-column: 1;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.apps-home-head button {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  padding: 7px 14px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.apps-home-head button:hover { border-color: var(--border-color-hover); }
+
+.apps-home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.apps-home-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 10px);
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.apps-home-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.apps-home-card-head h3 {
+  margin: 0;
+  flex: 1;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.apps-home-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.apps-home-open,
+.apps-home-fix {
+  padding: 5px 12px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.apps-home-fix { border-color: var(--accent-primary); color: var(--accent-primary); }
+.apps-home-open:hover,
+.apps-home-fix:hover { background: var(--bg-card-hover); }
+
+.apps-home-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 8px;
+}
+
+.apps-home-tile {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 8px);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.apps-home-tile-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.apps-home-tile strong {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.apps-home-tile.tone-good strong { color: var(--status-success); }
+.apps-home-tile.tone-warn strong { color: var(--status-warning); }
+
+.apps-home-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.apps-home-items li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.apps-home-items li span { flex: 1; }
+.apps-home-items li.tone-good span { color: var(--status-success); }
+.apps-home-items li.tone-warn span { color: var(--status-warning); }
+
+.apps-home-todos {
+  border-top: 1px solid var(--border-color);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.apps-home-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.apps-home-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent-primary);
+}
+
+.apps-home-count {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.apps-home-todo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.apps-home-todo > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.apps-home-todo strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.apps-home-todo span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.apps-home-loading,
+.apps-home-quiet {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}

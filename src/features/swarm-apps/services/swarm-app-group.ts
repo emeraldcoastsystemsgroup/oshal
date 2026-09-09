@@ -17,6 +17,7 @@ import type {
   SwarmAppManifest,
   SwarmAppReadinessDeclaration,
   SwarmAppStaticUi,
+  SwarmAppSummaryDeclaration,
 } from '../types';
 
 /** The closed manifest-kind vocabulary (ADR-141 D1). */
@@ -277,6 +278,50 @@ export function validateReadinessDeclarations(manifest: SwarmAppManifest, absPat
     }
     if (!isJsonPointer(decl.readyPointer) || decl.readyPointer === '') throw new Error(`Manifest ${absPath}: ${at}.readyPointer must be a non-empty RFC 6901 pointer`);
     if (decl.detailPointer !== undefined && !isJsonPointer(decl.detailPointer)) throw new Error(`Manifest ${absPath}: ${at}.detailPointer, when present, must be an RFC 6901 pointer`);
+  }
+}
+
+/**
+ * @description Fail-closed validation of a package's `status:` block (ADR-145 D1) — the REPORTING
+ * sibling of `readiness:`, and validated by the same rules: a single object (one app, one card),
+ * a canonical path below one of the package's OWN routes, valid RFC 6901 pointers, and a
+ * session-admitting owner route, because the Home view asks every probe in the signed-in user's
+ * own session. At least one of tilesPointer/itemsPointer must be present — a status declaration
+ * that can produce neither a tile nor an item is a dead field, and the `settings:` precedent
+ * (declared, documented, consumed by nothing) is exactly what ADR-145 exists to avoid repeating.
+ * @param manifest - The parsed manifest.
+ * @param absPath - Its path, for the error message.
+ */
+export function validateSummaryDeclaration(manifest: SwarmAppManifest, absPath: string): void {
+  if (manifest.summary === undefined) return;
+  if (!isPlainObject(manifest.summary)) {
+    throw new Error(`Manifest ${absPath}: summary, when present, must be an object {path, tilesPointer?, itemsPointer?}`);
+  }
+  const unknown = Object.keys(manifest.summary).filter((k) => !['path', 'tilesPointer', 'itemsPointer'].includes(k));
+  if (unknown.length) throw new Error(`Manifest ${absPath}: summary has unknown field(s): ${unknown.join(', ')}`);
+  const decl = manifest.summary as unknown as SwarmAppSummaryDeclaration;
+  if (!isCanonicalPath(decl.path)) {
+    throw new Error(`Manifest ${absPath}: summary.path must be a concrete canonical root-relative path`);
+  }
+  const routes = manifest.routes ?? [];
+  const owner = routes
+    .filter((route) => decl.path === route.mountPath.replace(/\/+$/, '') || decl.path.startsWith(`${route.mountPath.replace(/\/+$/, '')}/`))
+    .sort((a, b) => b.mountPath.length - a.mountPath.length)[0];
+  if (!owner) {
+    throw new Error(`Manifest ${absPath}: summary.path "${decl.path}" is not owned by a declared routes[].mountPath — status is what this package reports about its OWN store`);
+  }
+  const mode = resolveRouteAuthMode(owner);
+  if (!SESSION_ADMITTING_MODES.has(mode)) {
+    throw new Error(`Manifest ${absPath}: summary.path is owned by ${owner.mountPath} (auth: ${mode}) — a status probe runs AS THE SIGNED-IN USER, so its route must admit a browser session (oidc or service-or-oidc)`);
+  }
+  for (const key of ['tilesPointer', 'itemsPointer'] as const) {
+    const pointer = decl[key];
+    if (pointer !== undefined && (!isJsonPointer(pointer) || pointer === '')) {
+      throw new Error(`Manifest ${absPath}: summary.${key}, when present, must be a non-empty RFC 6901 pointer`);
+    }
+  }
+  if (decl.tilesPointer === undefined && decl.itemsPointer === undefined) {
+    throw new Error(`Manifest ${absPath}: summary must declare at least one of tilesPointer / itemsPointer — a probe that can yield neither is a field nothing consumes`);
   }
 }
 
