@@ -23,6 +23,7 @@
 # 16 | maintainer@emeraldcoastsystemsgroup.com   | New `unpushed-commits` gate: scripts/check-unpushed-commits.sh fails when a local ref carries commits that exist nowhere but this disk. The worktree-strays gate (entry 10) covers linked worktrees only and skips the PRIMARY checkout by design, so the shapes that actually strand work here were invisible — a commit on the shared checkout's branch, a local branch left ahead of origin, and a detached HEAD carrying a commit (the push-by-SHA recipe's failure mode, where a stale branch pointer pushes "successfully" while the real commit stays local). Runs unconditionally next to secret-scan rather than inside the NODE_GATES_OK block: ref state is repo plumbing and stays judgeable even when the HEAD export fails, which is exactly when work is most likely to be sitting uncommitted-or-unpushed.
 # 17 | maintainer@emeraldcoastsystemsgroup.com   | Scheduled-source truth: fetch origin/main once, pin its immutable commit SHA across the node export, secret scan, image build, logs, and alerts, and label the fail-loud HEAD fallback when fetch is unavailable. Interactive --head continues to judge HEAD. The windowless VBS launcher now waits and propagates the gate's real exit code to Task Scheduler.
 # 18 | maintainer@emeraldcoastsystemsgroup.com   | Refuse ignored plaintext credential backups before source-only scanning and direct operators to the redacted key-schema exporter.
+# 19 | maintainer@emeraldcoastsystemsgroup.com   | BUG-22: the failure alert said the same sentence for 38 consecutive nights, so a NEW gate breaking inside the standing failure was indistinguishable from the standing failure. The subject now leads with what CHANGED ("NEW: image-smoke (night 38)" / "no change from last run") and the body separates newly-red from already-known and names the streak. Derived from the run log by scripts/ci/ci-gate-streak.mjs — no new state to keep. The headline is also written to the log, so the signal survives an api container that is down and cannot send mail.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -528,6 +529,27 @@ if [ "${#FAILED_GATES[@]}" -eq 0 ]; then
 fi
 
 log "=== LOCAL CI: FAILED gates: ${FAILED_GATES[*]} ==="
+
+# BUG-22: an alert that reads identically every night is wallpaper — the streak ran 38 nights and
+# a gate that broke INSIDE it was invisible. Derive the streak and the newly-red set from the run
+# log (the line above is already in it) so the subject can lead with what CHANGED. Best-effort:
+# a failed summary must never suppress the alert, so fall back to the flat wording.
+ALERT_SUBJECT="OSHAL LOCAL CI FAILED"
+ALERT_BODY="Failed gates: ${FAILED_GATES[*]} (source $SOURCE_REF $SOURCE_SHORT_SHA; posture=$SOURCE_POSTURE). Full log: $RUN_LOG on ${COMPUTERNAME:-this machine}."
+if [ -f "$REPO_DIR/scripts/ci/ci-gate-streak.mjs" ]; then
+  STREAK_OUT="$(timeout 60 node "$REPO_DIR/scripts/ci/ci-gate-streak.mjs" \
+    "$LOG" "$SOURCE_REF" "$SOURCE_SHORT_SHA" "$SOURCE_POSTURE" "$RUN_LOG" "${COMPUTERNAME:-this machine}" 2>/dev/null)"
+  if [ -n "$STREAK_OUT" ]; then
+    ALERT_SUBJECT="$(printf '%s' "$STREAK_OUT" | sed -n '1p')"
+    ALERT_BODY="$(printf '%s' "$STREAK_OUT" | sed -n '2p')"
+  else
+    log "alert: streak summary unavailable - using flat wording"
+  fi
+fi
+# Log the headline too. When the api container is down there is no mail at all, and this is then
+# the only place the "is anything NEW?" answer exists.
+log "=== $ALERT_SUBJECT ==="
+
 # Email only on failure, only in scheduled mode (the trading watchdog's alert
 # rail). MSYS_NO_PATHCONV is load-bearing: without it Git Bash rewrites
 # /app/scripts/... into a C:/Program Files/... path that doesn't exist in the
@@ -535,8 +557,7 @@ log "=== LOCAL CI: FAILED gates: ${FAILED_GATES[*]} ==="
 if [ "$SCHEDULED" = "1" ]; then
   if docker exec oshal-local-api true >/dev/null 2>&1; then
     MSYS_NO_PATHCONV=1 timeout 120 docker exec oshal-local-api node /app/scripts/oshal-send-alert.js \
-      "OSHAL LOCAL CI FAILED" \
-      "Failed gates: ${FAILED_GATES[*]} (source $SOURCE_REF $SOURCE_SHORT_SHA; posture=$SOURCE_POSTURE). Full log: $RUN_LOG on ${COMPUTERNAME:-this machine}." \
+      "$ALERT_SUBJECT" "$ALERT_BODY" \
       || log "alert: send failed"
   else
     log "alert: api container down - failure recorded in log only"
