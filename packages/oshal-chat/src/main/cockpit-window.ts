@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | window.open children get frame:false too; fetchAuthenticatedUser retries a few times so a transient api blip doesn't falsely force the sign-in window
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Single-window sign-in: openFullJarvis just loads the cockpit URL and lets the OIDC redirect happen in-window (returnTo preserved). Dropped the pre-auth check + separate sign-in window (it was stranding the user in a small framed popup showing the cockpit).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | autoplayPolicy:'no-user-gesture-required' so Jarvis's async server-TTS audio actually plays (Chromium blocks autoplay by default).
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Operator report: with the node console raised over an open cockpit, NEITHER window could be moved or closed. Both are frame:false, and the cockpit window's only controls were CSS+a button injected into the SWARM-SERVED page: the drag handle was `header.header-bar`, which `body.zen-mode` (the header's own arrows-out button, persisted in sessionStorage) sets to display:none — so one click permanently removed the drag region, leaving an 8px invisible strip, and the lone close button was a 30x26 near-transparent glyph sitting in the same row as the cockpit's own header icons. Replaced with an always-present control pill (its body is the drag handle, so a window is movable even with every page chrome hidden) carrying Config / minimize / close. Minimize and Config reach the main process WITHOUT a preload — the remote page keeps zero Node access — by opening an `oshal:` URL that setWindowOpenHandler intercepts and denies. Guard: tests/unit/node-window-controls.spec.ts.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Per-app windows (openCockpitApp): any cockpit app (?app=<name>) opens as its OWN frameless window keyed by name — open/focus semantics per app, several apps side by side, each alt-tabbable with its app title. createCockpitWindow generalized to build-and-return (title + close callback params); openFullJarvis keeps its dedicated window + the native-wake delivery contract unchanged.
  */
 
@@ -32,35 +33,68 @@ let pendingNativeWake: { phrase: string; detectedAt: string; expiresAt: number }
  * a thin top strip keeps headerless pages (e.g. /api/jarvis/) draggable, and both
  * leave room at the top-right for the injected close button.
  */
-const SHELL_INTEGRATION_CSS = `
-header.header-bar { -webkit-app-region: drag; padding-right: 52px; }
+export const SHELL_INTEGRATION_CSS = `
+header.header-bar { -webkit-app-region: drag; padding-right: 132px; }
 header.header-bar button, header.header-bar a, header.header-bar input, header.header-bar select { -webkit-app-region: no-drag; }
 body::after { content: ''; position: fixed; top: 0; left: 0; right: 0; height: 8px; z-index: 2147483646; -webkit-app-region: drag; }
 `;
 
+/** URLs the injected controls "open" so the main process can act. Never navigated to. */
+export const CONTROL_URL_PREFIX = 'oshal:';
+/** Raise the node console. */
+export const CONTROL_SHOW_CONSOLE = 'oshal:console';
+/** Minimize this cockpit window. */
+export const CONTROL_MINIMIZE = 'oshal:minimize';
+
 /**
- * Injected into the page context: a borderless window has no native controls, so
- * add one app-colored close button (top-right) that closes the window. The drag
- * strip already gives move + double-click-to-maximize (native drag-region behavior).
+ * Injected into the page context: a borderless window has no native controls, so the
+ * shell supplies its own. This is a PILL, not a lone button, and the pill's own body is
+ * a drag region — that is the part that matters. The page's header was previously the
+ * only real drag handle, and `body.zen-mode` hides it (and remembers that in
+ * sessionStorage), so a single click on the cockpit's arrows-out button left a window
+ * that could not be moved at all. The pill is injected by the shell, so no page state
+ * can hide it.
+ *
+ * Minimize and Config need the main process. Rather than give a swarm-served page a
+ * preload (it deliberately has none), they open an `oshal:` URL that
+ * setWindowOpenHandler intercepts and denies — the navigation never happens.
+ *
  * Guarded so re-injection on navigation never stacks duplicates.
  */
-const SHELL_CONTROLS_JS = `(() => {
-  if (document.getElementById('oshal-winclose')) return;
-  const btn = document.createElement('button');
-  btn.id = 'oshal-winclose';
-  btn.setAttribute('aria-label', 'Close');
-  btn.textContent = '\\u2715';
-  Object.assign(btn.style, {
-    position: 'fixed', top: '6px', right: '8px', zIndex: '2147483647',
-    width: '30px', height: '26px', lineHeight: '24px', textAlign: 'center',
-    padding: '0', border: '0', borderRadius: '7px', cursor: 'pointer',
-    font: '13px system-ui, sans-serif', color: '#aab3d0',
-    background: 'rgba(120,140,190,0.14)', WebkitAppRegion: 'no-drag',
+export const SHELL_CONTROLS_JS = `(() => {
+  if (document.getElementById('oshal-wincontrols')) return;
+  const pill = document.createElement('div');
+  pill.id = 'oshal-wincontrols';
+  Object.assign(pill.style, {
+    position: 'fixed', top: '5px', right: '8px', zIndex: '2147483647',
+    display: 'flex', alignItems: 'center', gap: '2px', padding: '3px 4px',
+    borderRadius: '9px', border: '1px solid rgba(150,170,220,0.22)',
+    background: 'rgba(14,18,34,0.82)', backdropFilter: 'blur(6px)',
+    font: '12px system-ui, sans-serif',
+    WebkitAppRegion: 'drag',
   });
-  btn.onmouseenter = () => { btn.style.background = '#c0392b'; btn.style.color = '#fff'; };
-  btn.onmouseleave = () => { btn.style.background = 'rgba(120,140,190,0.14)'; btn.style.color = '#aab3d0'; };
-  btn.onclick = () => window.close();
-  document.body.appendChild(btn);
+  const mk = (label, title, onClick, hover) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.title = title;
+    b.setAttribute('aria-label', title);
+    Object.assign(b.style, {
+      height: '22px', padding: label.length > 2 ? '0 9px' : '0 7px',
+      border: '0', borderRadius: '6px', cursor: 'pointer',
+      font: 'inherit', color: '#dfe6fb', background: 'transparent',
+      WebkitAppRegion: 'no-drag',
+    });
+    b.onmouseenter = () => { b.style.background = hover || 'rgba(150,170,220,0.24)'; };
+    b.onmouseleave = () => { b.style.background = 'transparent'; };
+    b.onclick = onClick;
+    pill.appendChild(b);
+    return b;
+  };
+  mk('\\u2699 Config', 'Show the OSHAL Node console', () => window.open('${CONTROL_SHOW_CONSOLE}'));
+  mk('\\u2500', 'Minimize', () => window.open('${CONTROL_MINIMIZE}'));
+  mk('\\u2715', 'Close this window', () => window.close(), '#c0392b');
+  document.body.appendChild(pill);
 })();`;
 
 /** Attach the frameless-shell CSS + close button to a webContents, re-run on each navigation. */
@@ -113,6 +147,8 @@ async function deliverPendingNativeWake(): Promise<boolean> {
 export interface CockpitWindowHooks {
   onOpen?: () => void;
   onClosed?: () => void;
+  /** Raise the node console — the injected pill's "Config" button. */
+  onShowConsole?: () => void;
 }
 
 /**
@@ -153,7 +189,15 @@ function createCockpitWindow(url: string, title: string, hooks: CockpitWindowHoo
   // window.open children (the cockpit opens its app surfaces / OAuth popups as
   // popups) must ALSO be frameless + carry the close button, or they show the
   // default white Windows title bar — which is the frame the operator still saw.
-  win.webContents.setWindowOpenHandler(() => ({
+  win.webContents.setWindowOpenHandler(({ url: target }) => {
+    // The injected control pill "opens" these to reach the main process without a preload.
+    // They are commands, never navigations, so every one of them is denied.
+    if (target.startsWith(CONTROL_URL_PREFIX)) {
+      if (target === CONTROL_SHOW_CONSOLE) hooks?.onShowConsole?.();
+      else if (target === CONTROL_MINIMIZE) win.minimize();
+      return { action: 'deny' };
+    }
+    return {
     action: 'allow',
     overrideBrowserWindowOptions: {
       frame: false,
@@ -161,7 +205,8 @@ function createCockpitWindow(url: string, title: string, hooks: CockpitWindowHoo
       autoHideMenuBar: true,
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
     },
-  }));
+    };
+  });
   win.webContents.on('did-create-window', (child) => injectShellChrome(child.webContents));
   win.on('closed', () => {
     onClosed();
