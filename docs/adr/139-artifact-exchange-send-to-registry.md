@@ -4,7 +4,7 @@
 promotion; real-HTTP-guarded) and three destinations riding it (dnd character import, Kid Lens
 Takeout ingest, Spaces video reconstruction) plus the class-materials and career resume/cover
 sources — a pdf's menu offers eight destinations. Stage 4 (sources/`provides` + the generic picker,
-the NL leg) and the remaining rollout items are tracked in the BACKLOG's "what is left" entry. **Rollout complete through wave 2 (2026-09-07)**: twelve destinations registered and ten source surfaces tagged, plus two operational pieces the rollout forced out — the shared package-side redeem (`redeemArtifactViaRelay`) so a new destination is ~30 lines, and `scripts/deploy-store-package.sh`, which copies a package onto a box without silently deactivating it (a bare `docker cp` overwrites `status:` and the loader then reconciles the DB toggle from it — that trap cost three debug cycles). Sources with no byte-serving URL (task-explorer's JSON preview envelope, rag-center documents, client-generated blobs) are deliberately NOT tagged: they wait on the mint-with-bytes decision.
+the NL leg) and the remaining rollout items are tracked in the BACKLOG's "what is left" entry. **Rollout complete through wave 2 (2026-09-07)**: twelve destinations registered and ten source surfaces tagged, plus two operational pieces the rollout forced out — the shared package-side redeem (`redeemArtifactViaRelay`) so a new destination is ~30 lines, and `scripts/deploy-store-package.sh`, which copies a package onto a box without silently deactivating it (a bare `docker cp` overwrites `status:` and the loader then reconciles the DB toggle from it — that trap cost three debug cycles). **Amendment D shipped 2026-09-09**: the mint-with-bytes decision is recorded and it is *yes* — a second mint (`POST /handles/upload`) carries the artifact for sources that have no byte-serving URL to point at, under the same owner binding and TTL, bytes in memory only, with a per-sub byte budget the count cap could not provide. The task-explorer Files tab, which could never be tagged, is the live proof. rag-center documents stay untagged for a different reason (a retrieved chunk is not a document) recorded in D4c.
 
 **Date:** 2026-09-04
 
@@ -220,6 +220,58 @@ attributes and one script include — the integration cost a source surface now 
 accepting a small multipart body for client-generated files — would let blob-only exports
 (payroll NACHA files, CAD exports, canvas images) enter the exchange. Same owner/TTL semantics;
 bytes stored transiently instead of a locator. Decide when wave 3 starts, not before.
+
+### D4c — Amendment D (2026-09-09): mint-with-bytes — the decision, and it is **yes**
+
+D2 said a handle holds a locator and the redeem re-fetches it server-side as the minting caller.
+That is right whenever a locator exists. Four kinds of source have none, and no improvement to the
+tag could ever reach them:
+
+- **The task-explorer Files tab** — its route answers a JSON preview envelope
+  (`res.json({ success, data })` with the text on `data.content`), not the file.
+- **RAG Center documents** — a corpus chunk is not a file and has no per-document byte URL.
+- **Client-generated exports** — a composed image, a camera capture, a payroll file, a CAD export,
+  a workflow-studio JSON: the bytes exist only in the browser and were never served by anything.
+- **Anything assembled in the page** from data the user already has on screen.
+
+The alternative was a byte-serving route per surface, which is precisely the N×M shape this ADR
+exists to remove — four new routes to unblock four surfaces, and one more for every surface after.
+
+**Decision: add a second mint that carries the bytes.** `POST /api/artifacts/handles/upload`,
+multipart, one `file` part, alongside the locator mint that is unchanged.
+
+- **It grants no authority.** These are the caller's own bytes, bound to the caller's own sub,
+  redeemable by nobody else — the same thing they could already POST directly to any of these
+  destinations. What changes is only that they can do it through one gesture instead of N.
+- **Storage: memory, for the TTL, and nowhere else.** Not disk. A handle is a gesture in flight;
+  disk would add a cleanup obligation, a path surface, and cross-restart residue, and would give up
+  the "no bytes at rest" property D2 bought deliberately. A restart drops every handle, which is
+  the correct behaviour for a gesture.
+- **Expiry: the same 15 minutes**, and the sweep frees the buffer. A leak here is an api-heap leak,
+  not a stale row, so the guard asserts the memory is actually released.
+- **Two caps, both fail-closed.** Per handle (`ARTIFACT_INLINE_MAX_BYTES`, 10MB) and per sub
+  (`ARTIFACT_INLINE_MAX_BYTES_PER_SUB`, 50MB). The per-sub *count* cap D2 shipped does not bound
+  memory — 200 handles times a large payload is gigabytes of api heap — so the byte budget is the
+  cap that actually holds, and it refuses mints the count cap has room for.
+- **Authorization runs before the parser.** The route rejects an unauthenticated caller ahead of
+  multer, so anonymous bytes are never buffered. The guard proves the ordering by sending an
+  oversize anonymous body and requiring 401 rather than 413.
+- **Nothing downstream changed.** One helper (`readArtifactBytes`) serves a carried payload and
+  otherwise relays as before, so a locator handle and a bytes handle are indistinguishable to every
+  built-in, every app destination, and the package-side `redeemArtifactViaRelay`. Every destination
+  registered to date inherited this without a line of its own.
+
+Source-side, `send-to.js` gains the matching half: `meta.blob`, or the declarative
+`data-artifact-blob="<blob: or data: URL>"` in place of `data-artifact-source`. Only `blob:` and
+`data:` are accepted there — an `http` URL in that attribute would launder an arbitrary
+cross-surface fetch into an artifact.
+
+**Proven on the task-explorer Files tab**, the first of the four to be unblocked: the preview is
+minted as its own bytes and offered the full menu. A **truncated** preview is deliberately not
+sendable — it is not the file, and ingesting a partial document is the defect class ADR-135 closed.
+RAG Center documents remain untagged for a different reason that this amendment does not resolve: a
+retrieved chunk is not a document, so what a handle would even carry is an open question, not a
+plumbing gap.
 
 ### D5 — Who integrates, day one and later
 
