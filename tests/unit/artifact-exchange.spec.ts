@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1 guards over the REAL shared modules (no doubles — the registry and handle store ARE the boundary): every malformed artifacts: declaration shape is refused (a loader that stops calling the validator, or a validator that goes permissive, goes red here); MIME-glob matching including parameters and case; registry replace-by-app + retract + stable menu order; and the handle store's isolation contract — mint validates the source path fail-closed, resolve refuses foreign subs and expired refs indistinguishably (injected clock), and the per-sub cap bounds a mint loop.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Amendment D (mint-with-bytes): the carried-payload half of the same isolation boundary - a bytes handle is owner-bound and expires exactly like a locator handle, expiry actually FREES the memory (a leak here is an api-heap leak, not a stale row), the two kinds never blur into each other, and the per-sub BYTE budget refuses a mint the per-sub COUNT cap has room for, which is the whole reason the byte budget exists.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Stage 2 (Amendment B): overlay is KERNEL-RESERVED — a manifest declaring it must fail the load (or any app could point the in-place overlay at an arbitrary page), while a kernel boot registration passes it through to the menu.
  */
 
@@ -19,8 +20,10 @@ import {
   unregisterAppArtifactActions,
   artifactActionsForType,
   mintArtifactHandle,
+  mintInlineArtifactHandle,
   resolveArtifactHandle,
   artifactSourcePathError,
+  artifactHandleInlineBytes,
 } from '@/shared/artifact-exchange';
 
 const GOOD = {
@@ -148,5 +151,54 @@ describe('handles: the isolation boundary (owner-bound, TTL, fail-closed source)
     // A different sub is unaffected, and expiry frees the hoarder's budget.
     expect(() => mintArtifactHandle({ ownerSub: SUB, sourcePath: '/api/x/ok', type: 'text/plain' }, t0)).not.toThrow();
     expect(() => mintArtifactHandle({ ownerSub: HOARDER, sourcePath: '/api/x/later', type: 'text/plain' }, t0 + 16 * 60 * 1000)).not.toThrow();
+  });
+});
+
+describe('handles: mint-with-bytes (ADR-139 Amendment D)', () => {
+  const SUB = 'auth0|inline-owner';
+  const OTHER = 'auth0|inline-stranger';
+
+  it('is owner-bound and expires like a locator handle — and expiry frees the memory', () => {
+    const t0 = 5_000_000;
+    const bytes = Buffer.from('client-generated export with no URL behind it');
+    const rec = mintInlineArtifactHandle({ ownerSub: SUB, bytes, type: 'Text/Plain; charset=utf-8', name: 'a"b\r\nc.txt' }, t0);
+    expect(rec.type).toBe('text/plain');
+    expect(rec.name).not.toMatch(/["\r\n]/);
+    expect(artifactHandleInlineBytes(SUB, t0 + 1)).toBe(bytes.length);
+    expect(resolveArtifactHandle(rec.ref, SUB, t0 + 1000)?.bytes?.toString()).toBe(bytes.toString());
+    expect(resolveArtifactHandle(rec.ref, OTHER, t0 + 1000)).toBeNull();
+    expect(resolveArtifactHandle(rec.ref, SUB, t0 + 16 * 60 * 1000)).toBeNull();
+    // The bytes are in api memory for the whole TTL — the sweep must actually drop them.
+    expect(artifactHandleInlineBytes(SUB, t0 + 16 * 60 * 1000)).toBe(0);
+  });
+
+  it('the two kinds never blur: a carried handle has no source, a locator handle no bytes', () => {
+    const t0 = 6_000_000;
+    const carried = mintInlineArtifactHandle({ ownerSub: SUB, bytes: Buffer.from('x'), type: 'text/plain' }, t0);
+    const located = mintArtifactHandle({ ownerSub: SUB, sourcePath: '/api/x/y', type: 'text/plain' }, t0);
+    expect(carried.sourcePath).toBeNull();
+    expect(located.bytes).toBeNull();
+  });
+
+  it('refuses an empty body and an unauthenticated minter', () => {
+    expect(() => mintInlineArtifactHandle({ ownerSub: SUB, bytes: Buffer.alloc(0), type: 'text/plain' })).toThrow(/body is required/);
+    expect(() => mintInlineArtifactHandle({ ownerSub: '', bytes: Buffer.from('x'), type: 'text/plain' })).toThrow(/authenticated/);
+  });
+
+  it('the per-sub BYTE budget refuses a mint the per-sub COUNT cap has room for', async () => {
+    vi.resetModules();
+    vi.stubEnv('ARTIFACT_INLINE_MAX_BYTES', '64000');
+    vi.stubEnv('ARTIFACT_INLINE_MAX_BYTES_PER_SUB', '64000');
+    const fresh = await import('@/shared/artifact-exchange/handles');
+    const t0 = 7_000_000;
+    // Two 40KB handles is two of a 200-handle allowance, but 80KB of a 64KB budget.
+    fresh.mintInlineArtifactHandle({ ownerSub: SUB, bytes: Buffer.alloc(40_000, 1), type: 'text/plain' }, t0);
+    expect(() => fresh.mintInlineArtifactHandle({ ownerSub: SUB, bytes: Buffer.alloc(40_000, 1), type: 'text/plain' }, t0))
+      .toThrow(/bytes in flight/);
+    // ...and a single payload over the per-handle cap never lands at all.
+    expect(() => fresh.mintInlineArtifactHandle({ ownerSub: OTHER, bytes: Buffer.alloc(64_001, 1), type: 'text/plain' }, t0))
+      .toThrow(/too large to carry/);
+    vi.unstubAllEnvs();
+    vi.resetModules();
   });
 });

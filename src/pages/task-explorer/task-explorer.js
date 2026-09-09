@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added OSHAL-native task explorer browser logic for hierarchy, activity, and workspace inspection
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | CM-3: Added search/filter/sort/group-by toolbar, enriched tree rows with state colors and phase badges, Process + Cost tabs
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Amendment D: the Files tab joins the artifact exchange. Its file route answers a JSON preview envelope rather than bytes, so there was never a URL to point a handle at and the tab could not be tagged at all; now the previewed content is minted AS bytes through the standard tag (data-artifact-blob), and the shared component supplies the chip and the whole destination menu. A TRUNCATED preview is deliberately not sendable - it is not the file, and ingesting a partial document is the defect class ADR-135 closed.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -27,6 +28,7 @@ class TaskExplorerApp {
       sortKey: 'date-desc',
       groupBy: 'none',
       uniqueAgents: [],
+      previewBlobUrl: null,
     };
 
     this.elements = {
@@ -390,6 +392,31 @@ class TaskExplorerApp {
     viewer.innerHTML = '<div class="breadcrumb">Loading file preview...</div>';
     const response = await fetchJson(`/api/v1/workspace/${encodeURIComponent(ticketId)}/files/${encodePath(relativePath)}`);
     viewer.innerHTML = renderFileViewerMarkup(response.data);
+    this.tagPreviewArtifact(viewer, response.data);
+  }
+
+  /**
+   * ADR-139 Amendment D: tag the previewed file with its own bytes so the shared "Send to..."
+   * component can offer it every registered destination. The preview route hands back a JSON
+   * envelope, so there is no byte-serving URL to mint a locator over. The tagged element is
+   * APPENDED after its attributes are set, so the component's observer never sees it bare.
+   */
+  tagPreviewArtifact(viewer, data) {
+    if (this.state.previewBlobUrl) {
+      URL.revokeObjectURL(this.state.previewBlobUrl);
+      this.state.previewBlobUrl = null;
+    }
+    const host = viewer.querySelector('[data-role="file-artifact"]');
+    if (!host || !data || data.truncated || typeof data.content !== 'string' || !data.content) return;
+    const name = String(data.path || 'file').split(/[/\\]/).pop() || 'file';
+    const mime = previewMimeType(name);
+    const url = URL.createObjectURL(new Blob([data.content], { type: mime }));
+    this.state.previewBlobUrl = url;
+    const tag = document.createElement('span');
+    tag.setAttribute('data-artifact-blob', url);
+    tag.setAttribute('data-artifact-type', mime);
+    tag.setAttribute('data-artifact-name', name);
+    host.appendChild(tag);
   }
 
   bindWorkspaceInteractions() {
@@ -621,10 +648,30 @@ function renderWorkspaceEntry(entry, ticketId, depth = 0) {
     </button>`;
 }
 
+/** Extension to MIME for a previewed workspace file — what the "Send to..." menu filters on. */
+const PREVIEW_MIME_TYPES = {
+  md: 'text/markdown',
+  markdown: 'text/markdown',
+  csv: 'text/csv',
+  html: 'text/html',
+  htm: 'text/html',
+  json: 'application/json',
+  xml: 'application/xml',
+  yml: 'text/yaml',
+  yaml: 'text/yaml',
+};
+
+function previewMimeType(name) {
+  const ext = String(name).split('.').pop().toLowerCase();
+  return PREVIEW_MIME_TYPES[ext] || 'text/plain';
+}
+
 function renderFileViewerMarkup(data) {
-  const suffix = data.truncated ? ' Preview truncated to 256 KB.' : '';
+  const suffix = data.truncated
+    ? ' Preview truncated to 256 KB — a partial file cannot be sent on.'
+    : '';
   return `
-    <div class="breadcrumb">${escapeHtml(data.path || 'file')} · ${escapeHtml(data.language || 'text')} · ${escapeHtml(formatBytes(data.size || 0))}${suffix}</div>
+    <div class="breadcrumb">${escapeHtml(data.path || 'file')} · ${escapeHtml(data.language || 'text')} · ${escapeHtml(formatBytes(data.size || 0))}${suffix}<span data-role="file-artifact"></span></div>
     <pre>${escapeHtml(data.content || '')}</pre>`;
 }
 
