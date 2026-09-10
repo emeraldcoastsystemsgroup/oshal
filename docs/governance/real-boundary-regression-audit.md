@@ -26,6 +26,10 @@ provider claim still needs a separate live acceptance run.
 | `tests/unit/trading-book-report-scripts.spec.ts` (ADR-134 D2 #7 per-book reports) | None for the SQL — it is the shipped module's own text | REAL: the live Postgres as the enforcing `oshal_app` role (self-validated: `current_user`, not superuser, not RLS-bypassing) with and without the operator GUC, plus real CLI runs of all three report scripts over seeded two-live-book data | Green 2026-09-06 |
 | `tests/unit/trading-watchdog-checks.spec.ts` (ADR-134 D3.7 watchdog checks) | Scoped doubles: the Log/Raise sinks, and a stubbed exec wrapper in the core-hold case | REAL: the shipped PowerShell parsed and executed by `powershell.exe`, a real never-answering HTTP server for the wedge/deadline cases, and the pure check module itself — every threshold, alert key and message is mutation-proven | Green 2026-09-07 |
 
+## Configurable Home (2026-09-09)
+
+`tests/unit/app-home-customization.spec.ts` uses a recording pool only for HTTP input/owner binding and failure branches. Its real companion is the store's `identity/tests/home-summary.integration.cjs`: actual PostgreSQL with the canonical owner-RLS policy and a non-superuser role, the production GUC wrapper and preference queries, the compiled Identity extractor and real accessible-connections helper, plus Chromium on the actual Home module/CSS. Mock authentication and seeded source records remain intentional boundaries; this is not live-provider acceptance. The harness rejects nonlocal/non-test database names and removes only its generated schema/role. Passed for owner isolation, stale revisions, shared-account scope, renewable expiry, unavailable-source failures, keyboard editing and desktop/mobile rendering.
+
 ## Rules for future fixes
 
 1. Name the failed boundary in the test header and name what remains doubled.

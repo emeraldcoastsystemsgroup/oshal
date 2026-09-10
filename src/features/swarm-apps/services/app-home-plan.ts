@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-145: the Home plan. Pure builders for the cross-app landing view — one card per active group (aggregating its members' probes) plus one per active app that no shown group already covers, and the D2 coercion that bounds/normalises whatever a package's summary probe answers. Lives here rather than in swarm-app-service.ts, which is already far past its 800-line budget.
  *
  * @module app-home-plan
+ * Home customization | Codex | Carry selectable metric pointers and allowed same-app destinations to Home.
  */
 
 import type {
@@ -39,6 +40,8 @@ export interface HomePlanTodo {
 
 /** One summary probe the Home card asks in the viewer's own session. */
 export interface HomePlanSummaryProbe {
+  metricsPointer?: string;
+  surfaces?: string[];
   app: string;
   path: string;
   tilesPointer?: string;
@@ -90,6 +93,8 @@ function probesFor(
     summary.push({
       app: manifest.name,
       path: decl.path,
+      metricsPointer: decl.metricsPointer,
+      surfaces: (manifest.ui?.static ?? []).map(s => s.toolName),
       tilesPointer: decl.tilesPointer,
       itemsPointer: decl.itemsPointer,
     });
@@ -230,21 +235,25 @@ export function coerceTone(value: unknown): SwarmAppSummaryTone {
  */
 export function coerceSummaryPayload(
   body: unknown,
-  decl: Pick<SwarmAppSummaryDeclaration, 'tilesPointer' | 'itemsPointer'>,
+  decl: Pick<SwarmAppSummaryDeclaration, 'tilesPointer' | 'itemsPointer' | 'metricsPointer'>,
 ): { tiles: SwarmAppSummaryTile[]; items: SwarmAppSummaryItem[]; checked: boolean } {
   let checked = false;
   const tiles: SwarmAppSummaryTile[] = [];
   const items: SwarmAppSummaryItem[] = [];
 
-  if (decl.tilesPointer) {
-    const found = atPointer(body, decl.tilesPointer);
+  const metricPointer = decl.metricsPointer || decl.tilesPointer;
+  if (metricPointer) {
+    const found = atPointer(body, metricPointer);
     if (found.found && Array.isArray(found.value)) {
       checked = true;
-      for (const raw of found.value.slice(0, MAX_SUMMARY_TILES)) {
+      const bounded = found.value.slice(0, decl.metricsPointer ? 24 : MAX_SUMMARY_TILES);
+      for (const raw of bounded) {
         if (!raw || typeof raw !== 'object') continue;
         const t = raw as Record<string, unknown>;
         if (typeof t.label !== 'string' || typeof t.value !== 'string') continue;
+        if (decl.metricsPointer && (bounded.filter(other => other?.id === t.id).length !== 1 || typeof t.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(t.id))) continue;
         tiles.push({
+          ...(decl.metricsPointer ? { id: t.id as string, defaultVisible: t.defaultVisible !== false } : {}),
           label: clamp(t.label, MAX_LABEL_CHARS),
           value: clamp(t.value, MAX_VALUE_CHARS),
           tone: coerceTone(t.tone),
@@ -262,6 +271,7 @@ export function coerceSummaryPayload(
         const it = raw as Record<string, unknown>;
         if (typeof it.text !== 'string') continue;
         items.push({
+          ...(typeof it.metricId === 'string' ? { metricId: it.metricId } : {}),
           text: clamp(it.text, MAX_TEXT_CHARS),
           tone: coerceTone(it.tone),
           ...(typeof it.fix === 'string' ? { fix: it.fix } : {}),
