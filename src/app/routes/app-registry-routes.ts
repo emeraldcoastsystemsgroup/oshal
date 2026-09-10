@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147: the /api/swarm/registries surface behind the App Loader. Three things here are the design, not plumbing. (1) PROBE BEFORE SAVE — a registry URL is validated by actually reading its catalog, so an operator cannot trust a source that does not resolve and an unreachable registry is diagnosed at the moment it is added rather than as an empty shelf later. (2) INSTALL PREVIEW — install mounts a package's routes INTO the controller process and runs its migrations against the platform database, so the preview enumerates exactly that (routes, migrations, bots, schedules, connectors, deps, audit posture) and Install is the second click. (3) PER-REGISTRY FENCED AGGREGATION — one unreachable registry renders as a broken row and never fails the page, mirroring how parseCatalog already fails soft per entry.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | FIX (found verifying the live deploy): a catalog audit binding whose sourceSha is the all-zeros UNAUDITED sentinel was counted as "signed". Every one of the 49 live store entries carries exactly that sentinel with an audit record at status "pending", so the loader labelled every unreviewed package "signed — carries a valid audit binding" on the install-decision screen; and because the unsigned gate keyed off the same flag, a third-party registry could skip allow_unsigned=false simply by publishing a sentinel binding. Audit posture is now a tri-state (audited | pending | none) derived from the binding's SHA, and the install decision is one pure exported function the preview AND the install both call, so the screen can no longer promise an install the route will refuse. The BUILT-IN registry deliberately keeps today's behaviour — it defers to OSHAL_PACKAGE_AUDIT_MODE exactly as /api/swarm/apps/install-remote does (ADR-147 D5: the built-in posture does not change) — so fixing the label does not break installs from the default store.
  */
 
 import path from 'path';
@@ -33,12 +34,90 @@ const DEPLOYED_APPS_DIR = path.join(WORKSPACE_ROOT, 'deployed-apps');
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const CATALOG_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * The all-zeros SHA the audit tooling writes into a binding that has NOT been audited
+ * (scripts/oshal-package-audit.js UNAUDITED_SOURCE_SHA). A binding carrying it is a placeholder,
+ * not an attestation.
+ */
+export const UNAUDITED_SOURCE_SHA = '0'.repeat(40);
+
+/** Audit posture as the catalog alone can establish it. */
+export type AuditState = 'audited' | 'pending' | 'none';
+
+/**
+ * @description Derives a package's audit posture from its catalog binding.
+ *
+ * The catalog carries only a POINTER (`audits/<name>.json` + a source SHA), so this is the most the
+ * list can honestly say without fetching every record: `none` when there is no binding, `pending`
+ * when the binding holds the unaudited sentinel SHA, `audited` when it binds a real commit. It does
+ * NOT claim `audited` means passed — the installer reads the record itself and refuses a failed
+ * one in enforce mode — so the page says "audited", never "safe".
+ *
+ * @param app - a parsed catalog entry
+ * @returns the audit posture
+ */
+export function catalogAuditState(app: Pick<CatalogApp, 'audit'>): AuditState {
+  if (!app.audit) return 'none';
+  return app.audit.sourceSha === UNAUDITED_SOURCE_SHA ? 'pending' : 'audited';
+}
+
+/** What an install may do, decided once and shared by the preview and the install route. */
+export interface InstallAuditDecision {
+  allowed: boolean;
+  /** The OSHAL_PACKAGE_AUDIT_MODE the installer child runs with. */
+  auditMode: 'compatible' | 'enforce';
+  /** One sentence the confirm screen shows verbatim. */
+  note: string;
+}
+
+/**
+ * @description Decides whether a package may be installed and under which audit mode.
+ *
+ * ONE function, called by BOTH the preview and the install, so the confirm screen can never offer
+ * an install the route will refuse (or refuse one the route would allow).
+ *
+ *  - **Built-in registry** — defers to the deployment's OSHAL_PACKAGE_AUDIT_MODE exactly as
+ *    /api/swarm/apps/install-remote does. ADR-147 D5 promises the built-in posture does not
+ *    change; applying the third-party gate here would refuse every pending-audit package in the
+ *    default store, which installs today.
+ *  - **Third-party, audited** — runs under the deployment's mode; the installer verifies the record.
+ *  - **Third-party, pending or no audit** — refused unless that registry's allow_unsigned is on,
+ *    and then forced to `compatible`, since an unaudited package can never satisfy enforce.
+ *
+ * @param state - the package's audit posture
+ * @param registry - the source registry's builtin + allowUnsigned flags
+ * @param boxMode - the deployment's resolved OSHAL_PACKAGE_AUDIT_MODE
+ * @returns whether to install, the mode to run the installer under, and the reason
+ */
+export function decideInstallAudit(
+  state: AuditState,
+  registry: Pick<AppRegistry, 'builtin' | 'allowUnsigned' | 'slug'>,
+  boxMode: 'compatible' | 'enforce',
+): InstallAuditDecision {
+  if (registry.builtin) {
+    if (state === 'audited') return { allowed: true, auditMode: boxMode, note: 'audited; the installer verifies the record and pins the audited commit' };
+    if (boxMode === 'enforce') {
+      return { allowed: false, auditMode: boxMode, note: `not audited, and this deployment enforces package audits — it will not install` };
+    }
+    return { allowed: true, auditMode: boxMode, note: 'not audited yet; this deployment allows it with a warning and installs the branch tip, not an audited commit' };
+  }
+  if (state === 'audited') return { allowed: true, auditMode: boxMode, note: 'audited by its registry; the installer verifies the record' };
+  if (!registry.allowUnsigned) {
+    return {
+      allowed: false, auditMode: boxMode,
+      note: `not audited, and "${registry.slug}" does not allow unaudited packages — turn that on for this source if you accept it`,
+    };
+  }
+  return { allowed: true, auditMode: 'compatible', note: 'not audited; allowed because you enabled unaudited packages for this source' };
+}
+
 /** One catalog entry plus which registry it came from — the identity collisions are resolved by. */
 export interface AggregatedApp extends CatalogApp {
   registry: string;
   registryLabel: string;
-  /** True when the entry carries a valid APP-02 audit binding. */
+  /** True ONLY when the binding names a real audited commit — never for the sentinel. */
   signed: boolean;
+  auditState: AuditState;
 }
 
 /** Per-registry catalog cache, replacing the single module-level global of the one-store rail. */
@@ -82,7 +161,8 @@ async function readRegistryCatalog(
       ...a,
       registry: registry.slug,
       registryLabel: registry.displayName,
-      signed: Boolean(a.audit),
+      signed: catalogAuditState(a) === 'audited',
+      auditState: catalogAuditState(a),
     }));
   } catch (err) {
     const reason = `catalog is not valid marketplace.json: ${(err as Error).message}`;
@@ -143,6 +223,7 @@ export function describeManifestImpact(manifest: Record<string, unknown>, entry:
   connectors: string[];
   dependencies: string[];
   signed: boolean;
+  auditState: AuditState;
   auditReason: string;
 } {
   const routes = Array.isArray(manifest.routes) ? manifest.routes as Record<string, unknown>[] : [];
@@ -173,9 +254,12 @@ export function describeManifestImpact(manifest: Record<string, unknown>, entry:
     connectors: [...connectors].slice(0, 12),
     dependencies: Array.isArray(deps.apps) ? deps.apps.map(String).slice(0, 12) : [],
     signed: entry.signed,
-    auditReason: entry.signed
-      ? 'carries a valid audit binding from this registry'
-      : 'no audit record — this package has not been reviewed by the platform',
+    auditState: entry.auditState,
+    auditReason: entry.auditState === 'audited'
+      ? 'audited — its registry binds the reviewed commit'
+      : entry.auditState === 'pending'
+        ? 'audit pending — this package has not been reviewed yet'
+        : 'no audit record — this package has not been reviewed',
   };
 }
 
@@ -213,12 +297,8 @@ async function runInstall(
   if (entry.status !== 'ready') {
     return { ok: false, status: 409, error: `"${entry.name}" is not installable — registry status is "${entry.status}"` };
   }
-  if (!entry.signed && !registry.allowUnsigned) {
-    return {
-      ok: false, status: 409,
-      error: `"${entry.name}" has no audit record and "${registry.slug}" does not allow unsigned packages. Enable unsigned installs for this registry if you accept that.`,
-    };
-  }
+  const decision = decideInstallAudit(entry.auditState, registry, resolvePackageAuditMode());
+  if (!decision.allowed) return { ok: false, status: 409, error: `"${entry.name}": ${decision.note}` };
   if (!entry.source) return { ok: false, status: 409, error: `"${entry.name}" has no resolvable source` };
 
   const source = await toRegistrySource(pool, registry);
@@ -232,9 +312,8 @@ async function runInstall(
         env: {
           ...buildInstallerEnv(),
           ...(source.token ? { OSHAL_STORE_TOKEN: source.token } : {}),
-          // An unsigned package cannot satisfy enforce mode; the registry's explicit
-          // allow_unsigned opt-in is what downgrades it, per-source and never globally.
-          OSHAL_PACKAGE_AUDIT_MODE: entry.signed ? resolvePackageAuditMode() : 'compatible',
+          // Decided once by decideInstallAudit — the same call the preview renders from.
+          OSHAL_PACKAGE_AUDIT_MODE: decision.auditMode,
         },
       },
       (err, stdout, stderr) => {
@@ -325,7 +404,7 @@ export function createAppRegistryRoutes(pool: Pool, requiresAuth: RequestHandler
       const apps = parseCatalog(result.text);
       res.json({
         ok: true, hostKind, packageCount: apps.length,
-        signedCount: apps.filter((a) => a.audit).length,
+        signedCount: apps.filter((a) => catalogAuditState(a) === 'audited').length,
         sample: apps.slice(0, 8).map((a) => ({ name: a.name, displayName: a.displayName, version: a.version })),
       });
     } catch (err) {
@@ -393,6 +472,7 @@ export function createAppRegistryRoutes(pool: Pool, requiresAuth: RequestHandler
         name: entry.name, displayName: entry.displayName, version: entry.version,
         registry: registry.slug, registryLabel: registry.displayName,
         source: entry.source, allowUnsigned: registry.allowUnsigned,
+        install: decideInstallAudit(entry.auditState, registry, resolvePackageAuditMode()),
         impact: describeManifestImpact(manifest, entry),
       });
     } catch (err) { fail(res, err, 'GET /preview'); }
