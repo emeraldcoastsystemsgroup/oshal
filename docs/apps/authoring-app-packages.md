@@ -520,6 +520,12 @@ they're produced by the build, so a package can be validated before it's fully b
 3. Install into a swarm: `POST /api/swarm/apps/install-remote {source: "my-app"}` (the
    installer + resolver is ADR-085 P3).
 
+The CLI resolves the catalog name to `source.path` before fetching package files. A package
+named `intelligent-trades` can therefore live in `trading/`; its audit remains bound to
+`intelligent-trades`. The CLI also accepts an unambiguous source-folder alias (`install trading`)
+to update an existing installation at that folder. The requested CLI name determines the
+destination folder. Ambiguous names and paths outside the checkout are refused.
+
 ## Reference
 
 - Architecture + rationale: [ADR-085](../adr/085-remote-app-packages-and-registries.md)

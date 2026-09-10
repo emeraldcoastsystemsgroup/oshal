@@ -66,10 +66,10 @@ describe('oshal-app private-store authentication transport', () => {
     );
   });
 
-  it('does not send GitHub credentials to public or non-GitHub remotes', () => {
+  it('does not send credentials without a token or over a non-HTTPS transport', () => {
     for (const repo of [
       'https://github.com/emeraldcoastsystemsgroup/oshal-apps',
-      'https://git.example.test/emerald/oshal-applications.git',
+      'http://git.example.test/emerald/oshal-applications.git',
     ]) {
       const parent = repo.includes('oshal-apps')
         ? { PATH: '/runtime/bin' }
@@ -80,6 +80,13 @@ describe('oshal-app private-store authentication transport', () => {
       expect(auth.cloneEnv.OSHAL_STORE_TOKEN).toBeUndefined();
       expect(auth.cloneEnv.GITHUB_TOKEN).toBeUndefined();
     }
+  });
+
+  it('retains ADR-147 scoped authentication for an explicitly configured HTTPS registry', () => {
+    const auth = buildStoreGitAuth('https://git.example.test/emerald/store.git', { OSHAL_STORE_TOKEN: 'registry-fixture' });
+    expect(auth.argsPrefix).toEqual(['--config-env=http.https://git.example.test/.extraheader=OSHAL_GIT_AUTH_HEADER']);
+    expect(auth.cloneEnv.OSHAL_STORE_TOKEN).toBeUndefined();
+    expect(auth.baseEnv.OSHAL_GIT_AUTH_HEADER).toBeUndefined();
   });
 
   it('guards the source against credential-bearing clone URLs', () => {
@@ -93,7 +100,7 @@ describe('oshal-app private-store authentication transport', () => {
 
   it('retains scoped authentication for checkout operations that lazily fetch private blobs', () => {
     const source = fs.readFileSync(CLI_PATH, 'utf8');
-    expect(source).toContain("git(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', 'marketplace.json', `audits/${name}.json`, name], true)");
+    expect(source).toContain("git(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', 'marketplace.json', selected.auditRecord, selected.sourcePath], true)");
     expect(source).toContain("git(['-C', tmp, 'checkout', '--detach', assessment.sourceSha], true)");
     // Local object metadata reads must remain credential-free.
     expect(source).toContain("git(['-C', tmp, 'rev-parse', 'HEAD'])");
