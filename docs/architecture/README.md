@@ -13,6 +13,10 @@ The guiding model is:
 ## Current Documents
 
 ### Core Runtime
+- [data-model/](./data-model/README.md)
+  - generated schema diagrams for every database: core Postgres tables by domain, the TimescaleDB
+    and SQLite stores, the ownership + RLS contract every table follows, and how each application
+    package's `SCHEMA.md` is produced (`scripts/generate-schema-docs.js`)
 - [global-search-deep-link-contract.md](./global-search-deep-link-contract.md)
   - the per-source deep-link contract for `/api/search` (which URL each result kind opens, which kinds
     declare no surface and why), the adapter-owned isolation rules, and the measured before/after
