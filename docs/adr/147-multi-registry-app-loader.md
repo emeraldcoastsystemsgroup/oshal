@@ -1,6 +1,8 @@
 # ADR-147 — Many registries, one App Loader: installing packages from any git host, admin-only
 
-- **Status:** **Proposed** — designed, nothing built.
+- **Status:** **Accepted — PARTIALLY BUILT 2026-09-09** (PR #415, deployed 2026-09-10; audit-label
+  fix and cockpit entry in the follow-up). What shipped and what did not is listed under
+  [As built](#as-built-2026-09-10); the unbuilt decisions are tracked in [BACKLOG](../BACKLOG.md).
 - **Date:** 2026-09-09
 - **Author:** maintainer@emeraldcoastsystemsgroup.com
 - **Related:**
@@ -14,6 +16,50 @@
   a different question from who may install one;
   [ADR-093 (packaged app runtime placement)](093-packaged-app-runtime-placement.md) — where a
   package's code actually runs, which is what makes install a privileged act.
+
+
+## As built (2026-09-10)
+
+The decisions below are the design. This section is the truth about the code.
+
+**Shipped**
+
+- **D1** — `app_registries`, created by the runtime schema bootstrap (not a numbered migration). The
+  built-in row is seeded from `OSHAL_STORE_REPO` and cannot be deleted.
+- **D2** — the three host adapters, with credentials on `git --config-env`; `scripts/oshal-app.js`
+  `buildStoreGitAuth` now attaches credentials for any https host, scoped to the repository origin.
+- **D3** — probe before save, typed-host confirmation, trust recorded. Revocation exists in the API
+  (`PATCH … { trustState: "revoked" }`); the page offers disable and remove, not a revoke button.
+- **D4** — `GET /api/swarm/registries/:slug/preview/:name`, reading the manifest at the pinned ref.
+- **D5** — audit posture is a tri-state (`audited | pending | none`) derived from the catalog
+  binding's SHA; the all-zeros placeholder is `pending`, never audited. One function
+  (`decideInstallAudit`) decides every install for both the preview and the install route. The
+  built-in registry defers to `OSHAL_PACKAGE_AUDIT_MODE` exactly as `/api/swarm/apps/install-remote`
+  does; a third-party registry refuses unaudited packages unless its `allow_unsigned` is on.
+- **D8** — `/app-loader`, `requiresAuth` at the page, `requiresOperator` on every API route, no
+  guest mat. Reachable from the cockpit rail as an **operator-only** platform-tray entry (the same
+  gate as Dead Letters), and by URL.
+- **D9** — keys Vault-first with an encrypted-column fallback (`secret_backend` records which);
+  never returned by any read.
+- **D10** — https only, no embedded credentials, no redirect following, literal private/loopback/
+  link-local/CGNAT addresses refused unless the registry opts in, per-registry catalog cache,
+  per-registry fenced aggregation.
+- The single-store rail (`/api/swarm/apps/catalog`, `/install-remote`) is byte-identical to before
+  this work and its spec passes unchanged, so no feature flag was needed to preserve it; the
+  `APP_REGISTRIES_ENABLED` flag in the P0 row was not built.
+
+**Not built**
+
+- **D6** — a cross-registry name collision is shown in the UI but **not refused by the API**:
+  installing a name already installed from a different registry replaces it. Unreachable until a
+  second registry publishes a clashing name.
+- **D7** — dependencies resolve only within the origin registry (and fail closed when absent there);
+  cross-registry resolution and its preview line are not built.
+- **D10** — hostnames are not resolved, so a public name that resolves to a private address is not
+  refused. The code documents why validate-then-fetch DNS is a TOCTOU and names the durable fix.
+- **P3** — `/applications` Discover still reads the single built-in store, not the aggregate.
+- **Guards 1, 5, 6, 7** — the route-chain 403, collision 409, two-registry dependency, and
+  unreachable-registry aggregate specs.
 
 ---
 
@@ -258,11 +304,13 @@ supply-chain substitution attack this whole design exists to prevent.
   redirect and a signed-in non-admin gets a clean 403, never a bare one.
 - **No `guestWelcome` mat.** `/applications` opts into the guest preview because browsing a catalog
   is harmless; a page that installs code must not.
-- Not added to the default cockpit ribbon. It is reachable from `/applications` (an admin-only
-  "Manage sources" affordance) and by direct URL. The rest of the swarm never sees it.
-- `/applications` is **left alone**: it keeps installed-app admin and its Discover shelf. Once the
-  loader exists, Discover reads the aggregated multi-registry catalog for free, because it calls
-  the same endpoint.
+- On the cockpit rail as an **operator-only** platform-tray entry, next to Dead Letters and gated by
+  the same flag, so a non-admin never sees it; also reachable by direct URL. *(Amended at build
+  time: the original design kept it off the rail and linked it from `/applications`; the operator
+  asked for it on the default cockpit.)*
+- `/applications` is **left alone**: it keeps installed-app admin and its Discover shelf. Pointing
+  Discover at the aggregated catalog is P3 and is not built — Discover still calls
+  `/api/swarm/apps/catalog`, the single built-in store.
 
 **Page shape** — two stacked sections, one job each:
 

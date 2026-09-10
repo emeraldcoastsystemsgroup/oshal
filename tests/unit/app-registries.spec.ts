@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147 guards. Two halves with different boundaries on purpose. The pure half (fence, host adapters, git auth, impact description) is exercised directly because the defect class is a WRONG STRING — a raw URL that points at the wrong host, an auth header on the wrong origin, a fence that lets a private address through. The clone half runs a REAL local git server over the filesystem, because the claim "generic-git works with no raw-file API" is a claim about git, and a mocked exec would prove only that the code calls execFile.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the sentinel-SHA "signed" defect found verifying the live deploy: all 49 store entries bind the all-zeros UNAUDITED sha, which parseCatalog ACCEPTS as a well-formed binding — so the guard drives the real parser on a live-shaped entry and asserts the result is `pending`, not `audited`. Plus the shared install decision: the third-party allow_unsigned bypass is closed, and the built-in registry keeps today's compatible-mode behaviour so the fix cannot break installs from the default store.
  */
 
 import fs from 'fs';
@@ -15,7 +16,11 @@ import {
   fetchFenceProblem, catalogUrlFor, inferHostKind, normalizeRepoUrl,
   buildRegistryGitAuth, fetchRegistryCatalog, type RegistrySource,
 } from '@/features/app-registries';
-import { describeManifestImpact, type AggregatedApp } from '@/app/routes/app-registry-routes';
+import {
+  describeManifestImpact, catalogAuditState, decideInstallAudit, UNAUDITED_SOURCE_SHA,
+  type AggregatedApp,
+} from '@/app/routes/app-registry-routes';
+import { parseCatalog } from '@/app/routes/app-store-remote';
 
 describe('the SSRF fence on an admin-typed registry URL', () => {
   it('refuses every non-https scheme', () => {
@@ -208,6 +213,7 @@ describe('the install preview enumerates the real blast radius', () => {
   const entry = (signed: boolean): AggregatedApp => ({
     name: 'acme-crm', displayName: 'Acme CRM', description: '', suite: null, version: '1.0.0',
     status: 'ready', source: null, registry: 'acme', registryLabel: 'Acme', signed,
+    auditState: signed ? 'audited' : 'none',
     audit: signed ? { record: 'audits/acme-crm.json', sourceSha: 'a'.repeat(40) } : null,
   });
 
@@ -251,5 +257,75 @@ describe('the install preview enumerates the real blast radius', () => {
     } as unknown as Record<string, unknown>, entry(true));
     expect(impact.routes.count).toBe(0);
     expect(impact.bots.count).toBe(0);
+  });
+});
+
+describe('an unaudited placeholder binding is never reported as audited (live-deploy regression)', () => {
+  /** Exactly the shape all 49 live store entries had on 2026-09-10: a well-formed binding, sentinel sha. */
+  const liveShaped = (sourceSha: string | null) => JSON.stringify({
+    version: 1,
+    apps: [{
+      name: 'hello-oshal', displayName: 'Hello OSHAL', version: '1.1.0', status: 'ready',
+      source: { type: 'git-subdir', url: 'https://github.com/o/r', path: 'hello-oshal', ref: 'main' },
+      ...(sourceSha === null ? {} : { audit: { record: 'audits/hello-oshal.json', sourceSha } }),
+    }],
+  });
+
+  it('the parser ACCEPTS a sentinel binding — which is exactly why presence cannot mean audited', () => {
+    const [entry] = parseCatalog(liveShaped(UNAUDITED_SOURCE_SHA));
+    expect(entry.audit).not.toBeNull();
+    expect(catalogAuditState(entry)).toBe('pending');
+  });
+
+  it('reports a real commit sha as audited and a missing binding as none', () => {
+    expect(catalogAuditState(parseCatalog(liveShaped('b'.repeat(40)))[0])).toBe('audited');
+    expect(catalogAuditState(parseCatalog(liveShaped(null))[0])).toBe('none');
+  });
+
+  it('the confirm screen text for a pending package says pending, never "audited" or "signed"', () => {
+    const pending: AggregatedApp = {
+      name: 'hello-oshal', displayName: 'Hello OSHAL', description: '', suite: null, version: '1.1.0',
+      status: 'ready', source: null, registry: 'oshal-store', registryLabel: 'OSHAL app store',
+      signed: false, auditState: 'pending',
+      audit: { record: 'audits/hello-oshal.json', sourceSha: UNAUDITED_SOURCE_SHA },
+    };
+    const impact = describeManifestImpact({}, pending);
+    expect(impact.signed).toBe(false);
+    expect(impact.auditReason).toMatch(/pending/i);
+    expect(impact.auditReason).not.toMatch(/\baudited\b|signed/i);
+  });
+});
+
+describe('one install decision, shared by the preview and the install route', () => {
+  const builtin = { builtin: true, allowUnsigned: false, slug: 'oshal-store' };
+  const thirdParty = { builtin: false, allowUnsigned: false, slug: 'acme' };
+  const thirdPartyOptIn = { builtin: false, allowUnsigned: true, slug: 'acme' };
+
+  it('CLOSES THE BYPASS: a third-party sentinel binding is refused while allow_unsigned is off', () => {
+    const d = decideInstallAudit('pending', thirdParty, 'compatible');
+    expect(d.allowed).toBe(false);
+    expect(d.note).toMatch(/not audited/);
+  });
+
+  it('refuses a third-party package with no binding at all while allow_unsigned is off', () => {
+    expect(decideInstallAudit('none', thirdParty, 'compatible').allowed).toBe(false);
+  });
+
+  it('allows an unaudited third-party package only with the opt-in, and forces compatible even on an enforce box', () => {
+    const d = decideInstallAudit('pending', thirdPartyOptIn, 'enforce');
+    expect(d.allowed).toBe(true);
+    expect(d.auditMode).toBe('compatible');
+  });
+
+  it('runs an audited third-party package under the deployment mode, so enforce still verifies it', () => {
+    expect(decideInstallAudit('audited', thirdParty, 'enforce')).toMatchObject({ allowed: true, auditMode: 'enforce' });
+  });
+
+  it('PRESERVES the default store: a pending built-in package installs on a compatible box, exactly as today', () => {
+    expect(decideInstallAudit('pending', builtin, 'compatible')).toMatchObject({ allowed: true, auditMode: 'compatible' });
+  });
+
+  it('still refuses a pending built-in package on an enforce box — the built-in posture is not weakened', () => {
+    expect(decideInstallAudit('pending', builtin, 'enforce').allowed).toBe(false);
   });
 });

@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Platform tools: add the four read surfaces for the shared platform services that shipped headless — Budgets (enforced spend caps), Notifications (per-topic routing prefs), Dead Letters (queue quarantine, operator-only), and My Data (export/delete). They are static pages under src/pages/cockpit/tools/, so they need no Express route. Added _loadOperatorState() (GET /api/cli-tokens/whoami) so the operator-only Dead Letters entry is not pinned into a basic user's rail — the routes self-gate server-side regardless, this only avoids offering a tool that can only answer 403.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Rail pin (operator request 2026-08-06): a pin toggle in the top-right corner holds the rail expanded; unpinned restores hover-expand. The preference is a UI setting and persists in localStorage (the ?app= URL contract forbids caching the PROFILE there, not this). State lives on the instance, not the DOM — render() rebuilds innerHTML on every profile/tool change, so the class and handler re-apply per render. Hidden on the mobile drawer, which is always full-width.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Platform tools: add 'tool-devices' (Get oshal) — the desktop / phone / TV onboarding page, a static file under src/pages/cockpit/tools/ like the others. The one-click worker-node installer (GET /api/join/node-installer) shipped with no cockpit link at all — its only button lived on career-hunter's Job Board, and only while the user had zero nodes — and the phone PWA and the TV apps were promoted nowhere.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | ADR-147/148: App Loader and Users join Dead Letters as operator-only platform-tray entries (iframe tool views over /app-loader and /users). Operator asked why the store was not reachable from the default /cockpit/ page — it was reachable only by typing the URL. Gated by the same _loadOperatorState flag, which reads whoami -> isOperator(), so a role granted on the Users page surfaces them without an env-file edit; the routes self-gate with requiresOperator regardless.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
@@ -557,6 +558,27 @@ export class RibbonNav {
         // Operator view of oshal_queue_dlq (ADR queue dead-letter rails): the quarantine table,
         // the JSON export, and per-ticket requeue with each distinct failure surfaced separately.
         toolUi: { iframeUrl: '/cockpit/tools/dlq.html', sidebarLabel: 'Dead Letters' },
+      });
+      // ADR-147/148 administration surfaces. Operator-only on the rail for the same reason as Dead
+      // Letters, and fenced server-side regardless: every registry read and install, and every
+      // role write, is requiresOperator inside /api/swarm/registries and /api/swarm/roles.
+      // this.isOperator comes from whoami -> isOperator(), which now honours swarm_roles, so an
+      // admin granted on the Users page gets these entries without an env-file edit.
+      PLATFORM_TOOLS.push({
+        id: 'tool-app-loader',
+        icon: 'codicon codicon-cloud-download',
+        label: 'App Loader',
+        section: 'bottom',
+        // Install applications from any trusted git source (github, gitlab, any git server).
+        toolUi: { iframeUrl: '/app-loader', sidebarLabel: 'App Loader' },
+      });
+      PLATFORM_TOOLS.push({
+        id: 'tool-users',
+        icon: 'codicon codicon-organization',
+        label: 'Users',
+        section: 'bottom',
+        // Swarm root, admins and roles — who may administer this swarm.
+        toolUi: { iframeUrl: '/users', sidebarLabel: 'Users' },
       });
     }
 
