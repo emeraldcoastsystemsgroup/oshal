@@ -75,4 +75,19 @@ describe('loaded application integration contracts', () => {
     onload = undefined; deliverHandoff(frame, 'receiver-draft'); expect(onload).toBeUndefined();
     stageHandoff(offer, { title: 'Research' }); deliverHandoff({ ...frame, src: 'https://foreign.example/' }, 'receiver-draft'); expect(onload).toBeUndefined();
   });
+
+  it('a receiving app rejects foreign senders, wrong contracts and expired drafts', async () => {
+    const { receiveHandoff } = await import('@/pages/cockpit/js/app-handoff.js' as any);
+    const parent = {}; const listeners = new Map<string, (event: any) => void>();
+    vi.stubGlobal('window', { parent, location: { origin: 'https://local.example' },
+      addEventListener: (type: string, fn: any) => listeners.set(type, fn),
+      removeEventListener: (type: string) => listeners.delete(type) });
+    const onDraft = vi.fn();
+    receiveHandoff({ app: 'receiver', action: 'draft', contextType: 'research-brief', version: 1, fields: ['title'] }, onDraft);
+    const data = { type: 'oshal:app-context', sourceApp: 'sender', targetApp: 'receiver', action: 'draft', contextType: 'research-brief', version: 1, context: { title: 'Review me' }, expiresAt: Date.now() + 60000 };
+    const send = (patch: any = {}, origin = 'https://local.example', source: any = parent) => listeners.get('message')?.({ data: { ...data, ...patch }, source, origin });
+    send({}, 'https://foreign.example'); send({}, undefined, {}); send({ targetApp: 'other' }); send({ version: 2 }); send({ expiresAt: 0 }); send({ context: { unauthorizedField: 'no' } });
+    expect(onDraft).not.toHaveBeenCalled();
+    send(); send(); expect(onDraft).toHaveBeenCalledOnce(); expect(onDraft).toHaveBeenCalledWith({ title: 'Review me' }, { sourceApp: 'sender' });
+  });
 });
