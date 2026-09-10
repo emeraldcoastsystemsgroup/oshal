@@ -50,7 +50,7 @@ export function selected(data, preference = {}) {
       ? !(preference.hiddenMetrics || []).includes(t.id) && (t.defaultVisible !== false || (preference.shownMetrics || []).includes(t.id))
       : true),
     items: preference.showItems === false ? [] : data.items.filter(i => !i.metricId || !(preference.hiddenMetrics || []).includes(i.metricId))
-      .map(i => preference.showActions === false ? { ...i, integration: undefined, integrationNote: undefined } : i),
+      .map(i => preference.showActions === false ? { ...i, actions: [], integration: undefined, integrationNote: undefined } : i),
     open: preference.showSetup === false ? [] : data.open,
     total: preference.showSetup === false ? 0 : data.total,
   };

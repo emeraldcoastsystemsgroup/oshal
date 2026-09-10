@@ -26,6 +26,7 @@ import {
 import { DashboardHomeView } from './views/DashboardHomeView.js';
 import { AppsHomeView } from './views/AppsHomeView.js';
 import { deliverHandoff, homeSurfaceView } from './app-handoff.js';
+import { bindAppHandoffs } from './app-workflows.js';
 
 /**
  * @description Manage cockpit main-content view routing, ticket handoffs, and bot-to-rail context transitions.
@@ -103,6 +104,7 @@ export class CockpitViewController {
 
   // Reset shell-level state before another cockpit workbench renders.
   resetActiveView(viewId) {
+    this.disposeAppHandoffs?.();
     this.workspaceFocus.exit();
     if (this.activeViewInstance?.destroy) {
       this.activeViewInstance.destroy();
@@ -325,6 +327,7 @@ export class CockpitViewController {
    * @param {string} viewId - Tool view ID (e.g. 'tool-graph-query')
    */
   renderToolView(container, viewId) {
+    this.disposeAppHandoffs?.();
     const ribbon = this.getRibbon();
     const viewDef = ribbon?.views?.find(v => v.id === viewId);
     const iframeUrl = viewDef?.toolUi?.iframeUrl;
@@ -376,6 +379,13 @@ export class CockpitViewController {
         </div>`;
 
       deliverHandoff(container.querySelector('iframe'), viewId.replace(/^tool-/, ''));
+      this.disposeAppHandoffs = bindAppHandoffs(container.querySelector('iframe'), (id, destination) => {
+        const view = homeSurfaceView(id, destination), ribbon = this.getRibbon();
+        if (!view || !ribbon) return;
+        const existing = ribbon.views.find(v => v.id === id);
+        if (existing) Object.assign(existing, view); else ribbon.views.push(view);
+        ribbon.setActive(id);
+      });
       if (isGuestReadonly) {
         const iframeEl = container.querySelector('iframe');
         if (iframeEl) iframeEl.addEventListener('load', () => this._applyGuestReadonly(iframeEl));
