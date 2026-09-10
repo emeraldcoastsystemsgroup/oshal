@@ -50,4 +50,8 @@ Ship the plan first, then implement and validate the slice. Keep package code in
 ## Execution record
 
 - Plan written before implementation. Full store inventory source seams scanned; individual acceptance remains pending unless explicitly marked otherwise.
-- Slice 1: in progress.
+- Slice 1 implemented and locally verified: catalog pointers, per-user revisioned preferences, default-on layout, box/suite/metric ordering and visibility, compact boxes, resets, and deterministic highlights; Identity supplies the first selectable catalog.
+- Validation: core and staged Identity TypeScript pass; 30 Home unit tests pass; real PostgreSQL under a non-superuser role proves preference RLS and revision conflicts; compiled Identity route proves personal/shared access, renewable expiry behavior, no-secret output and unavailable-source failures. The Chromium harness proves hide/order/reset/reload, keyboard focus, collapsed suites, failed-save rollback, desktop and mobile layouts.
+- Acceptance uses mock authentication and seeded records on an isolated local database, not live provider accounts. Production deployment/Identity package installation has not been performed by this slice.
+- Store catalog and Identity manifest checks pass. The whole-store audit gate remains red for pre-existing audit-version/binding drift (12 errors in exported origin/main) and additional working-tree line-ending checks; Identity's updated pending record has no validation errors. No pending audit was promoted to passed.
+- Slices 2-6 remain planned in the package ledger; time-window selection and cross-app semantic deduplication are not implemented.

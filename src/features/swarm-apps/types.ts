@@ -24,6 +24,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: manifest.artifacts — the app's "Send to…" declarations (accepts/provides, from @/shared/artifact-exchange). Optional and additive (an older core ignores it); the VALUE is validated fail-closed at load, registered on activate, retracted on deactivate — the skill-profiles discipline.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | SwarmAppRibbonPolicy.hideStatusBar — the third per-app chrome flag beside hideChatPanel/hideAssistant: hide the cockpit's bottom bots/tickets/cost/queue status bar while the app is focused (operator 2026-09-04: that bar only means something to a swarm admin; a CRM or trading surface should be able to drop it). Optional and additive — absent = shown, an older core ignores it.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups: manifest.kind ('app' default | 'group'), the group-only `toolbar[]` (surfaces BORROWED from member apps by app + surface name — a reference the loader resolves, never a copied URL) and `setup[]` (the steps the kernel setup dashboard renders), and the per-user `readiness[]` block any package may declare — the session-authenticated sibling of `smoke:` (a route below the package's own mount + RFC 6901 pointers for done/detail). All optional and additive; an older core ignores them.
+ * Home customization | Codex | Add stable metric catalogs and related-item identities for configurable Home.
  */
 
 import type { SwarmAppRouteAuthMode } from '@/shared/route-auth';
@@ -643,6 +644,8 @@ export interface SwarmAppReadinessDeclaration {
  * in the signed-in user's own session — never with the service secret, never with a PAT.
  */
 export interface SwarmAppSummaryDeclaration {
+  /** Optional bounded catalog of selectable metrics with stable ids (maximum 24). */
+  metricsPointer?: string;
   /** GET path below one of this package's own `routes[].mountPath`s. */
   path: string;
   /** RFC 6901 pointer to an array of headline tiles (see SwarmAppSummaryTile). */
@@ -653,6 +656,9 @@ export interface SwarmAppSummaryDeclaration {
 
 /** ADR-145 D2: one headline number. `value` is a STRING — "116W-215L" and "-$18.24" are real. */
 export interface SwarmAppSummaryTile {
+  /** Stable package-local identity for saved display choices. */
+  id?: string;
+  defaultVisible?: boolean;
   label: string;
   value: string;
   tone?: SwarmAppSummaryTone;
@@ -660,6 +666,8 @@ export interface SwarmAppSummaryTile {
 
 /** ADR-145 D2: one line item; `fix` names a surface in the SAME app, rendered as a button. */
 export interface SwarmAppSummaryItem {
+  /** Optional related package-local metric id; hiding that metric hides this update too. */
+  metricId?: string;
   text: string;
   tone?: SwarmAppSummaryTone;
   fix?: string;
