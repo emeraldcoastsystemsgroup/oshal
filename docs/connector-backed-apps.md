@@ -135,6 +135,44 @@ not-connected result; it must never silently fall back to a different account.
    operation boundary is working. A persona authorization names the capability; it does not weaken
    the server check.
 
+## When the connection is not usable
+
+Recipe step 5 says to treat an omitted credential as not connected. That is the safe default, but a
+builder who stops there ships two bugs. Tell these states apart:
+
+| State | How you see it | What it means |
+|---|---|---|
+| **Not connected** | `connected: false` in `GET /api/connect/list`; the broker omits the provider | the caller has no connection for that provider |
+| **Expired** | `expired: true` on the connection in `GET /api/connect/list` | the stored authorization lapsed AND nothing is left to renew it — re-consent is the only fix |
+| **Grant rejected** | `GET /api/connect/liveness` reports `needs_reconnect` | a row exists and looks healthy, but a forced real refresh came back `refresh 4xx`; the provider will refuse every call |
+
+A liveness verdict of `unknown` is deliberately not a failure — the probe could not reach an answer
+(a network blip), and painting a working connection red is worse than saying nothing.
+
+**Do not write your own `expiry < now` check.** `getValidAccessToken` renews silently whenever a
+refresh token is stored, so a lapsed access token on a refreshable grant is the ORDINARY steady state:
+a Google access token lives an hour, so most healthy Google connections are "past expiry" most of the
+time. [`isConnectionExpired`](../src/app/routes/connector-tenancy.ts) is the one definition — lapsed
+AND unrenewable — and `/api/connect/list` already projects it per connection as `expired`. A
+hand-rolled comparison flags healthy accounts as broken (BUG-13).
+
+**Omitted is not the same as never connected.** `resolveServerOperationCreds` also omits a provider
+the caller has explicitly DISABLED for themselves (per-user enablement), and one whose refresh just
+failed. Fail that provider operation cleanly and say the account is unavailable — do not assert "you
+have not connected this yet", because the user may have connected it and then turned it off.
+
+**How the user fixes it.** Send them to `/utilities` (Settings → Connections). A dead grant is
+repaired IN PLACE by the per-account **reconnect** action:
+`GET /api/connect/<provider>/start?reconnect=<connectionId>` re-runs consent for that one account and
+keeps its connection id, label, and default flag. Never instruct a user to disconnect and re-add —
+that was the old workaround and it loses the account's identity and any per-account selection your
+app stored.
+
+**Guests own nothing.** A guest subject (`ENABLE_GUEST_MODE`) holds no connections, so every
+resolution returns nothing. That is expected rather than an error: degrade to whatever the app can do
+without the account instead of failing the surface. See
+[security/guest-mode.md](security/guest-mode.md).
+
 ## Retired pattern (historical; do not copy)
 
 Before the 2026-08-06 containment change, this guide instructed routes to call `resolveBotCreds`,
