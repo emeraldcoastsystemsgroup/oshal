@@ -4,14 +4,19 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guards for the schema-docs generator's pure logic: static DDL parsing (incl. an apostrophe inside a `--` comment, which once made two package tables unparseable), engine detection (a `.sql` migration naming a SQLite API once flipped three real Postgres tables to "undeclared"), RLS row-scope classification from real policy expressions, Mermaid-legal rendering, ownership attribution (a view-backed name is never "absent"; a core page never names a private package), and fail-loud README block replacement.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Real-git guard for the tracked-files scan: in a checkout, an untracked file declaring a table (build output) is never attributed, while the same tree exported without .git is walked in full.
  */
 
 import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 // The generator is CommonJS so it runs with plain node; load it the same way other specs do.
 /* eslint-disable @typescript-eslint/no-require-imports */
 const { parseCreateTable } = require('../../scripts/schema-docs/ddl-parse.js');
-const { resolveTableName, detectEngine } = require('../../scripts/schema-docs/source-scan.js');
+const { resolveTableName, detectEngine, scanCore, scanPackageRepo } = require('../../scripts/schema-docs/source-scan.js');
 const { classifyPolicy, summarizeRowAccess } = require('../../scripts/schema-docs/row-access.js');
 const { mermaidType, mermaidDiagram, replaceBlock, displayDefault } = require('../../scripts/schema-docs/render.js');
 const { buildModel, coOwners } = require('../../scripts/schema-docs/model.js');
@@ -85,6 +90,31 @@ describe('schema-docs: source scan', () => {
     expect(detectEngine('/p/a.ts', "import { Pool } from 'pg';")).toBe('postgres');
     expect(detectEngine('/p/gaps.py', 'from . import config, db\n')).toBe('sqlite');
     expect(detectEngine('/p/store.py', 'import psycopg2\n')).toBe('postgres');
+  });
+});
+
+describe('schema-docs: only git-tracked source declares a table', () => {
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd, stdio: 'pipe' });
+
+  it('ignores untracked build output in a checkout, and walks a non-git export', () => {
+    const root = mkdtempSync(join(tmpdir(), 'schema-docs-'));
+    try {
+      mkdirSync(join(root, 'src'), { recursive: true });
+      mkdirSync(join(root, 'pkg', 'routes-build'), { recursive: true });
+      writeFileSync(join(root, 'src', 'store.ts'), 'CREATE TABLE IF NOT EXISTS tracked_one (id int)');
+      writeFileSync(join(root, 'src', 'scratch.ts'), 'CREATE TABLE IF NOT EXISTS untracked_one (id int)');
+      writeFileSync(join(root, 'pkg', 'oshal-app.yaml'), 'name: pkg\n');
+      writeFileSync(join(root, 'pkg', 'routes-build', 'r.js'), 'CREATE TABLE IF NOT EXISTS built_one (id int)');
+      const exported = scanCore(root).map((s: Rec) => s.table);
+      expect(exported.sort()).toEqual(['tracked_one', 'untracked_one']);
+      git(root, 'init', '-q');
+      git(root, 'add', 'src/store.ts', 'pkg/oshal-app.yaml');
+      git(root, 'commit', '-qm', 'x');
+      expect(scanCore(root).map((s: Rec) => s.table)).toEqual(['tracked_one']);
+      expect(scanPackageRepo(root, 'store').sites).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
