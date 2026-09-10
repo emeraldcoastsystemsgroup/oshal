@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from server.ts (1000-line cap decomposition): standalone HTML serving helpers + UI asset / engineering-page directory resolution. Verbatim moves — this module MUST stay flat in src/app/ so the __dirname-relative path candidates keep resolving to the same locations as before.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | /applications opts into guestWelcome: the app-store preview surface welcomes anonymous visitors through the /guest demo landing (?next= deep link back) instead of bouncing them to Google OAuth.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148: register the /users swarm access-management surface. requiresAuth only, deliberately — the page is where a signed-in user learns they are NOT an admin, and where the first person on a virgin swarm claims root before any operator exists; the privileged reads and every write are fenced by requiresOperator inside /api/swarm/roles.
  */
 
 import express from 'express';
@@ -230,6 +231,8 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
   const governancePageDir = resolveExistingPath([path.resolve(__dirname, '../pages/governance'), path.resolve(process.cwd(), 'src/pages/governance')]);
   const evalWallPageDir = resolveExistingPath([path.resolve(__dirname, '../pages/eval-wall'), path.resolve(process.cwd(), 'src/pages/eval-wall')]);
   const adminConsoleDir = resolveExistingPath([path.resolve(__dirname, '../pages/admin'), path.resolve(process.cwd(), 'src/pages/admin')]);
+  const usersDir = resolveExistingPath([path.resolve(__dirname, '../pages/users'), path.resolve(process.cwd(), 'src/pages/users')]);
+  const appLoaderDir = resolveExistingPath([path.resolve(__dirname, '../pages/app-loader'), path.resolve(process.cwd(), 'src/pages/app-loader')]);
   const pumpkinDir = resolveExistingPath([path.resolve(__dirname, '../pages/pumpkin'), path.resolve(process.cwd(), 'src/pages/pumpkin')]);
 
   return [
@@ -257,6 +260,16 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
     { routePath: '/governance', pageDir: governancePageDir },
     { routePath: '/eval-wall', pageDir: evalWallPageDir },
     { routePath: '/admin', pageDir: adminConsoleDir, extraGuards: adminConsoleGuards },
+    // ADR-148 swarm access management. requiresAuth only — the PAGE is readable by any signed-in
+    // user because it is where somebody learns they are NOT an admin (and, on a virgin swarm,
+    // where the first person claims root before any operator exists). Every privileged read and
+    // every write is gated by requiresOperator inside /api/swarm/roles, which is the real fence.
+    { routePath: '/users', pageDir: usersDir },
+    // ADR-147 App Loader — install packages from any git registry. requiresAuth only at the page
+    // level so a non-admin gets an explanatory screen rather than a bare 403; every registry read
+    // and every install is fenced by requiresOperator inside /api/swarm/registries. Deliberately
+    // NO guestWelcome mat: browsing a catalog is harmless, installing code is not.
+    { routePath: '/app-loader', pageDir: appLoaderDir },
     // Pumpkin projector — the full-screen jack-o'-lantern display for the Halloween prop (?app=pumpkin).
     { routePath: '/pumpkin', pageDir: pumpkinDir },
   ];

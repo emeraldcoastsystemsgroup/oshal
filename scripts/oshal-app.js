@@ -411,12 +411,26 @@ function buildStoreGitAuth(repo, parent = process.env) {
   delete baseEnv.OSHAL_STORE_TOKEN;
   delete baseEnv.GITHUB_TOKEN;
   delete baseEnv.OSHAL_GIT_AUTH_HEADER;
-  if (!storeToken || !/^https:\/\/github\.com\//.test(repo)) {
+  // ADR-147: any https git host, not just github.com. This used to bail for every other host,
+  // so a private GitLab / Gitea / self-hosted registry could be READ over its files API and then
+  // fail to clone with a bare "authentication failed" — the credential was simply never attached.
+  // The header is still scoped to the repo's exact origin so a token cannot be replayed to a
+  // redirect target, and it still rides --config-env so it never touches argv or the remote URL.
+  let origin;
+  try {
+    const parsed = new URL(repo);
+    if (parsed.protocol !== 'https:') return { argsPrefix: [], baseEnv, cloneEnv: baseEnv, storeToken: '' };
+    origin = parsed.origin;
+  } catch {
     return { argsPrefix: [], baseEnv, cloneEnv: baseEnv, storeToken: '' };
   }
-  const basic = Buffer.from(`x-access-token:${storeToken}`, 'utf8').toString('base64');
+  if (!storeToken) return { argsPrefix: [], baseEnv, cloneEnv: baseEnv, storeToken: '' };
+  // GitLab's HTTP token auth expects the literal user `oauth2`; GitHub and the generic servers
+  // accept `x-access-token`. Both are Basic with the token as the password.
+  const user = /(^|\.)gitlab\./i.test(new URL(repo).hostname) ? 'oauth2' : 'x-access-token';
+  const basic = Buffer.from(`${user}:${storeToken}`, 'utf8').toString('base64');
   return {
-    argsPrefix: ['--config-env=http.https://github.com/.extraheader=OSHAL_GIT_AUTH_HEADER'],
+    argsPrefix: [`--config-env=http.${origin}/.extraheader=OSHAL_GIT_AUTH_HEADER`],
     baseEnv,
     cloneEnv: { ...baseEnv, OSHAL_GIT_AUTH_HEADER: `Authorization: Basic ${basic}` },
     storeToken,
