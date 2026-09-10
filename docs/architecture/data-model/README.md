@@ -159,7 +159,8 @@ node scripts/generate-schema-docs.js --store-root <store repo> --private-root <p
 - **Reads the running stack.** It reads `oshal-local-db` and `oshal-local-tsdb` through
   `docker exec … psql` using catalog `SELECT`s only. Use `--pg-url` / `--ts-url` for any other
   Postgres. `--help` lists every option.
-- **Scans three repos.** The core tree, plus each package repo you pass.
+- **Scans three repos.** The core tree, plus each package repo you pass. In a git checkout only
+  tracked files count, so local build output never declares a table.
 - **Writes only what changed.** An unchanged schema regenerates to a zero diff.
 - **Warns and never guesses.** It reports:
   - live tables that no scanned source declares; these are not documented

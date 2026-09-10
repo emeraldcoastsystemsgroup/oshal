@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Source scan for the schema-docs generator: finds every `CREATE TABLE … (` and `CREATE VIEW` statement in the core tree (migrations + lazily-bootstrapped stores) and in each store/private package (any dir holding an oshal-app.yaml), resolves `${CONST}` table names, and tags each site with its repo, package, engine (postgres vs sqlite, by the file's driver import) and statement text. Ownership of a live table is decided from these sites, never from its name.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Scan git-TRACKED files only when the root is a git checkout (directory walk only for a non-git export). A live checkout carries untracked build output (the store's routes-build/ copies of every route) that made a working-tree run list files git has never seen, so regenerating from a checkout disagreed with regenerating from `git archive` of the same commit.
  */
 
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const yaml = require('js-yaml');
 
 const SOURCE_EXT = /\.(sql|ts|js|mjs|cjs|py)$/;
@@ -35,19 +37,43 @@ const CORE_IGNORED_FILES = new Set([
 ]);
 
 /**
- * @description Recursively list schema-bearing source files under a directory.
- * @param {string} dir - absolute directory
- * @returns {string[]} absolute file paths
+ * @description Whether a repo-relative path is schema-bearing source: a source extension, not a
+ * spec/test file, and no path segment in SKIP_DIR.
+ * @param {string} rel - forward-slash relative path
+ * @returns {boolean} true when the file should be scanned
  */
-function listSourceFiles(dir) {
+function isSourcePath(rel) {
+  const parts = rel.split('/');
+  const name = parts[parts.length - 1];
+  return SOURCE_EXT.test(name) && !/\.(spec|test)\./.test(name) && !parts.slice(0, -1).some((p) => SKIP_DIR.test(p));
+}
+
+/**
+ * @description List schema-bearing source files under a root, as forward-slash paths relative to
+ * it. In a git checkout only TRACKED files count - untracked build output is not source; a
+ * non-git tree (a `git archive` export) is walked instead.
+ * @param {string} root - absolute directory
+ * @returns {string[]} relative paths
+ */
+function listSourceFiles(root) {
+  if (!fs.existsSync(root)) return [];
+  const git = spawnSync('git', ['-C', root, 'ls-files', '-z'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  const tracked = git.status === 0 ? git.stdout.split('\0').filter(Boolean) : null;
+  return (tracked || walk(root, '')).filter(isSourcePath).sort();
+}
+
+/**
+ * @description Recursive directory walk (non-git fallback), skipping SKIP_DIR directories.
+ * @param {string} root - absolute root
+ * @param {string} rel - current relative directory ('' at the root)
+ * @returns {string[]} relative file paths
+ */
+function walk(root, rel) {
   const out = [];
-  if (!fs.existsSync(dir)) return out;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      if (!SKIP_DIR.test(entry.name)) out.push(...listSourceFiles(path.join(dir, entry.name)));
-    } else if (SOURCE_EXT.test(entry.name) && !/\.(spec|test)\./.test(entry.name)) {
-      out.push(path.join(dir, entry.name));
-    }
+  for (const entry of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+    const child = rel ? `${rel}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) { if (!SKIP_DIR.test(entry.name)) out.push(...walk(root, child)); }
+    else out.push(child);
   }
   return out;
 }
@@ -112,11 +138,9 @@ function detectEngine(file, text) {
  */
 function scanCore(root) {
   const sites = [];
-  for (const dir of CORE_DIRS) {
-    for (const file of listSourceFiles(path.join(root, dir))) {
-      const rel = path.relative(root, file).split(path.sep).join('/');
-      if (!CORE_IGNORED_FILES.has(rel)) sites.push(...scanFile(file, rel, { repo: 'core', pkg: null }));
-    }
+  for (const rel of listSourceFiles(root)) {
+    if (!CORE_DIRS.includes(rel.split('/')[0]) || CORE_IGNORED_FILES.has(rel)) continue;
+    sites.push(...scanFile(path.join(root, rel), rel, { repo: 'core', pkg: null }));
   }
   return sites;
 }
@@ -149,10 +173,11 @@ function scanPackageRepo(root, repo) {
     const pkgDir = path.join(root, entry.name);
     if (!entry.isDirectory() || SKIP_DIR.test(entry.name) || !fs.existsSync(path.join(pkgDir, 'oshal-app.yaml'))) continue;
     packages.set(entry.name, { dir: entry.name, ...readManifest(pkgDir) });
-    for (const file of listSourceFiles(pkgDir)) {
-      const rel = path.relative(pkgDir, file).split(path.sep).join('/');
-      sites.push(...scanFile(file, rel, { repo, pkg: entry.name }));
-    }
+  }
+  for (const rel of listSourceFiles(root)) {
+    const [pkg, ...rest] = rel.split('/');
+    if (!rest.length || !packages.has(pkg)) continue;
+    sites.push(...scanFile(path.join(root, rel), rest.join('/'), { repo, pkg }));
   }
   return { sites, packages };
 }
