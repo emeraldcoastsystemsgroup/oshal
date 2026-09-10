@@ -54,7 +54,7 @@ highest-frequency fixes: stack half-up after a Docker engine restart → `bash s
 | Folder | What's in it |
 | --- | --- |
 | [adr/](./adr/README.md) | Architecture Decision Records — the canonical decision log. |
-| [architecture/](./architecture/README.md) | Control plane, runtime, tools, swarm design, delivery/agent contracts, model gateway, connector + graph architecture. |
+| [architecture/](./architecture/README.md) | Control plane, runtime, tools, swarm design, delivery/agent contracts, model gateway, connector + graph architecture, and the [data model](./architecture/data-model/README.md) (schema diagrams for every database). |
 | [apps/](./apps/README.md) | Per-app docs: [trading](./apps/trading/README.md), [kalshi](./apps/kalshi/README.md), LinkedIn assistant, Unreal MCP worker, Spaces (?app=spaces, ADR-111 — video→3D reconstruction), native-migration plans. |
 | [assets/](./assets/README.md) | Packaging and collateral assets, including the OSHAL one-pager, benchmark brief, demo script, sales deck, and messaging kit. |
 | [backlog/](./backlog/README.md) | Per-area open-work backlogs. The cross-cutting backlog is [BACKLOG.md](./BACKLOG.md). |
