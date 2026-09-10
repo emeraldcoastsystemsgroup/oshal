@@ -90,4 +90,12 @@ describe('oshal-app private-store authentication transport', () => {
       "git(['clone', '--depth', '1', '--filter=blob:none', '--sparse', '-b', ref, repo, tmp], true)",
     );
   });
+
+  it('retains scoped authentication for checkout operations that lazily fetch private blobs', () => {
+    const source = fs.readFileSync(CLI_PATH, 'utf8');
+    expect(source).toContain("git(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', 'marketplace.json', `audits/${name}.json`, name], true)");
+    expect(source).toContain("git(['-C', tmp, 'checkout', '--detach', assessment.sourceSha], true)");
+    // Local object metadata reads must remain credential-free.
+    expect(source).toContain("git(['-C', tmp, 'rev-parse', 'HEAD'])");
+  });
 });
