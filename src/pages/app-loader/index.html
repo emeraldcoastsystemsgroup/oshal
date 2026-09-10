@@ -1,0 +1,562 @@
+<!--
+  App Loader — install applications from ANY git location (ADR-147). Admin only.
+
+  Two stacked sections, one job each:
+   - SOURCES: the registries this swarm trusts. The built-in row is seeded from OSHAL_STORE_REPO
+     and can be disabled or re-pointed but never removed, so a deployment can always get back to
+     a known store. Adding a source is the TRUST ACT — it is probed before it can be saved, it
+     requires typing the host to confirm, and who trusted it is recorded.
+   - AVAILABLE: every package across every enabled, trusted registry, merged. Install opens a
+     blast-radius screen first (routes it mounts, migrations it runs against your database, bots,
+     schedules, connectors, dependencies, audit posture) because installing a package runs its
+     code in the controller process. Install is always the second click.
+
+  The page never displays an access key and the API never returns one — only whether one exists
+  and which backend holds it. Every value is HTML-escaped on render.
+-->
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>App Loader — OSHAL</title>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script>
+    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <style>
+    :root {
+      --bg: var(--bg-primary); --panel: var(--bg-secondary); --card: #ffffff;
+      --ink: var(--bg-primary); --ink-muted: var(--text-secondary);
+      --line: rgba(21,27,34,.10); --line-dark: rgba(21,27,34,.15);
+      --teal: var(--accent-primary); --amber: var(--status-warning);
+      --green: var(--status-success); --red: var(--status-error); --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; background: var(--panel); color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14.5px; -webkit-font-smoothing: antialiased; min-height: 100%;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 40px 22px 64px; }
+    .section-kicker { color: var(--amber); font-weight: 850; text-transform: uppercase; letter-spacing: .09em; font-size: .68rem; margin-bottom: 6px; }
+    h1 { font-size: 1.6rem; margin: 0 0 8px; letter-spacing: -.01em; }
+    h2 { font-size: 1.05rem; margin: 0; }
+    .sub { color: var(--ink-muted); line-height: 1.55; margin: 0; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 18px; }
+    .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    th { font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-muted); font-weight: 800; }
+    .table-scroll { overflow-x: auto; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; word-break: break-all; }
+
+    .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+    .pill.ok { background: color-mix(in srgb, var(--green) 18%, transparent); color: #14663a; }
+    .pill.warn { background: color-mix(in srgb, var(--amber) 22%, transparent); color: #7a5200; }
+    .pill.bad { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); }
+    .pill.mute { background: rgba(21,27,34,.08); color: var(--ink-muted); }
+    .pill.teal { background: color-mix(in srgb, var(--teal) 18%, transparent); color: var(--teal); }
+
+    button { font: inherit; font-weight: 650; padding: 6px 13px; border-radius: 7px; border: 1px solid var(--line-dark); background: #fff; color: var(--ink); cursor: pointer; }
+    button:hover:not(:disabled) { border-color: var(--teal); color: var(--teal); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button.primary { background: var(--teal); border-color: var(--teal); color: #fff; }
+    button.primary:hover:not(:disabled) { filter: brightness(1.08); color: #fff; }
+    button.danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
+    .row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+    input, select { font: inherit; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line-dark); background: #fff; color: var(--ink); }
+    input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--teal) 40%, transparent); outline-offset: 1px; }
+    label.check { display: flex; align-items: center; gap: 7px; font-size: .85rem; color: var(--ink-muted); }
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    .field > span { font-size: .74rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-muted); }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+    .empty { color: var(--ink-muted); padding: 16px 4px; font-style: italic; }
+    .msg { padding: 10px 13px; border-radius: 8px; margin-bottom: 14px; display: none; }
+    .msg.err { display: block; background: color-mix(in srgb, var(--red) 10%, transparent); color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 30%, transparent); }
+    .msg.ok { display: block; background: color-mix(in srgb, var(--green) 10%, transparent); color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 30%, transparent); }
+    .hint { font-size: .82rem; color: var(--ink-muted); line-height: 1.5; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .84em; background: rgba(21,27,34,.06); padding: 1px 5px; border-radius: 4px; }
+
+    dialog { border: none; border-radius: 12px; padding: 0; max-width: 560px; width: calc(100% - 32px); box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+    dialog::backdrop { background: rgba(0,0,0,.45); }
+    .dlg-body { padding: 22px 24px; }
+    .dlg-foot { padding: 14px 24px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 8px; background: rgba(21,27,34,.02); }
+    .impact { list-style: none; padding: 0; margin: 14px 0; }
+    .impact li { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: .88rem; }
+    .impact li b { min-width: 92px; flex-shrink: 0; }
+    .impact li.danger { color: var(--red); }
+    .log { font-family: ui-monospace, monospace; font-size: .76rem; background: #10141a; color: #d6e2f0; padding: 12px; border-radius: 8px; max-height: 220px; overflow: auto; white-space: pre-wrap; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div style="max-width:760px;margin-bottom:22px">
+      <div class="section-kicker">Applications</div>
+      <h1>App loader</h1>
+      <p class="sub">Install applications from any git location. A <strong>source</strong> is a git
+        repository publishing one or more packages; this swarm lists everything its trusted sources
+        publish and installs on request. Installing runs the package&rsquo;s code in this
+        controller &mdash; you will see exactly what it does before it lands.</p>
+    </div>
+
+    <div id="msg" class="msg"></div>
+
+    <!-- Sources -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Sources</h2>
+        <div class="toolbar">
+          <button id="refreshBtn" type="button">Refresh catalogs</button>
+          <button id="addToggle" class="primary" type="button">+ Add a git source</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Source</th><th>Repository</th><th>Host</th><th>Key</th><th>Packages</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody id="sourcesBody"><tr><td colspan="6" class="empty">Loading&hellip;</td></tr></tbody>
+        </table>
+      </div>
+
+      <form id="addForm" style="display:none;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)">
+        <div class="form-grid">
+          <label class="field"><span>Repository URL</span>
+            <input id="fUrl" type="url" placeholder="https://gitlab.com/acme/oshal-apps" required /></label>
+          <label class="field"><span>Branch or tag</span>
+            <input id="fRef" type="text" value="main" /></label>
+          <label class="field"><span>Short name</span>
+            <input id="fSlug" type="text" placeholder="acme" pattern="[a-z0-9][a-z0-9-]{1,31}" required /></label>
+          <label class="field"><span>Display name</span>
+            <input id="fName" type="text" placeholder="Acme app store" /></label>
+          <label class="field"><span>Access key <span style="text-transform:none;font-weight:600">(private repos)</span></span>
+            <input id="fToken" type="password" placeholder="Leave blank if public" autocomplete="new-password" /></label>
+          <label class="field"><span>Host type</span>
+            <select id="fHost">
+              <option value="">Detect automatically</option>
+              <option value="github">GitHub</option>
+              <option value="gitlab">GitLab (incl. self-hosted)</option>
+              <option value="generic-git">Other git server</option>
+            </select></label>
+        </div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px">
+          <label class="check"><input id="fPrivateHost" type="checkbox" /> Allow a private / internal host</label>
+          <label class="check"><input id="fUnsigned" type="checkbox" /> Allow packages with no audit record</label>
+        </div>
+        <p class="hint" style="margin-top:12px">The key is stored in the swarm vault when one is
+          available, and encrypted in the database otherwise. It is never shown again and never
+          sent back to this page.</p>
+        <div class="toolbar" style="margin-top:14px">
+          <button id="probeBtn" class="primary" type="button">Check this source</button>
+          <button id="cancelAdd" type="button">Cancel</button>
+        </div>
+        <div id="probeResult" style="margin-top:14px"></div>
+      </form>
+    </div>
+
+    <!-- Available packages -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Available packages</h2>
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Search…" aria-label="Search packages" />
+          <select id="filterSource" aria-label="Filter by source"><option value="">All sources</option></select>
+          <select id="filterSuite" aria-label="Filter by suite"><option value="">All suites</option></select>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Package</th><th>Version</th><th>Source</th><th>Suite</th><th>Audit</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody id="appsBody"><tr><td colspan="6" class="empty">Loading&hellip;</td></tr></tbody>
+        </table>
+      </div>
+      <p class="hint" style="margin-top:12px" id="appsSummary"></p>
+    </div>
+  </div>
+
+  <!-- Install confirm: the blast-radius screen -->
+  <dialog id="installDlg">
+    <div class="dlg-body">
+      <div class="section-kicker">Confirm install</div>
+      <h2 id="dlgTitle" style="margin:4px 0 10px"></h2>
+      <p class="sub" id="dlgSource"></p>
+      <ul class="impact" id="dlgImpact"></ul>
+      <p class="hint" id="dlgAudit"></p>
+    </div>
+    <div class="dlg-foot">
+      <button id="dlgCancel" type="button">Cancel</button>
+      <button id="dlgConfirm" class="primary" type="button">Install</button>
+    </div>
+  </dialog>
+
+  <script>
+    'use strict';
+
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    var msgEl = document.getElementById('msg');
+    function show(kind, text) {
+      msgEl.className = 'msg ' + kind;
+      msgEl.textContent = text;
+      if (kind === 'ok') setTimeout(function () { msgEl.className = 'msg'; }, 5000);
+    }
+
+    async function call(method, url, body) {
+      var init = { method: method, headers: { accept: 'application/json' } };
+      if (body !== undefined) {
+        init.headers['content-type'] = 'application/json';
+        init.body = JSON.stringify(body);
+      }
+      var res = await fetch(url, init);
+      var payload = null;
+      try { payload = await res.json(); } catch (e) {}
+      if (!res.ok) {
+        var err = new Error((payload && payload.error) || ('HTTP ' + res.status));
+        err.log = payload && payload.log;
+        throw err;
+      }
+      return payload;
+    }
+
+    var state = { registries: [], apps: [], sources: [], pending: null };
+
+    // ── Sources ───────────────────────────────────────────────────────────────
+    function renderSources() {
+      var tbody = document.getElementById('sourcesBody');
+      if (!state.registries.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">No sources configured.</td></tr>';
+        return;
+      }
+      var health = {};
+      state.sources.forEach(function (s) { health[s.slug] = s; });
+
+      tbody.innerHTML = state.registries.map(function (r) {
+        var h = health[r.slug];
+        var statusPill;
+        if (r.trustState === 'revoked') statusPill = '<span class="pill bad">revoked</span>';
+        else if (!r.enabled) statusPill = '<span class="pill mute">disabled</span>';
+        else if (h && !h.ok) statusPill = '<span class="pill bad" title="' + esc(h.reason || '') + '">unreachable</span>';
+        else if (h) statusPill = '<span class="pill ok">' + h.count + ' packages</span>';
+        else statusPill = '<span class="pill mute">not read</span>';
+
+        var keyPill = r.hasKey
+          ? '<span class="pill teal" title="Key stored in ' + esc(r.secretBackend) + '">' + esc(r.secretBackend) + '</span>'
+          : '<span class="pill mute">public</span>';
+
+        return '<tr data-slug="' + esc(r.slug) + '">' +
+          '<td><strong>' + esc(r.displayName) + '</strong>' +
+            (r.builtin ? ' <span class="pill mute">built-in</span>' : '') +
+            '<br><span class="mono">' + esc(r.slug) + '</span></td>' +
+          '<td class="mono">' + esc(r.url) + '<br><span style="color:var(--ink-muted)">' + esc(r.ref) + '</span></td>' +
+          '<td><span class="pill mute">' + esc(r.hostKind) + '</span>' +
+            (r.allowUnsigned ? '<br><span class="pill warn" style="margin-top:4px">unsigned ok</span>' : '') + '</td>' +
+          '<td>' + keyPill + '</td>' +
+          '<td>' + statusPill +
+            (h && !h.ok && h.reason ? '<br><span class="hint">' + esc(h.reason) + '</span>' : '') + '</td>' +
+          '<td><div class="row-actions">' +
+            '<button data-act="toggle">' + (r.enabled ? 'Disable' : 'Enable') + '</button>' +
+            '<button data-act="key">' + (r.hasKey ? 'Replace key' : 'Add key') + '</button>' +
+            (r.builtin ? '' : '<button class="danger" data-act="remove">Remove</button>') +
+          '</div></td></tr>';
+      }).join('');
+
+      tbody.querySelectorAll('button[data-act]').forEach(function (btn) {
+        btn.addEventListener('click', function () { sourceAction(btn); });
+      });
+    }
+
+    async function sourceAction(btn) {
+      var slug = btn.closest('tr').dataset.slug;
+      var reg = state.registries.find(function (r) { return r.slug === slug; });
+      var act = btn.dataset.act;
+      try {
+        btn.disabled = true;
+        if (act === 'toggle') {
+          await call('PATCH', '/api/swarm/registries/' + encodeURIComponent(slug), { enabled: !reg.enabled });
+          show('ok', reg.enabled ? 'Source disabled.' : 'Source enabled.');
+        } else if (act === 'key') {
+          var key = prompt('Access key for "' + reg.displayName + '".\n\nStored in the swarm vault when available, encrypted in the database otherwise. Leave blank to remove the existing key.');
+          if (key === null) { btn.disabled = false; return; }
+          await call('PATCH', '/api/swarm/registries/' + encodeURIComponent(slug), { token: key });
+          show('ok', key ? 'Key saved.' : 'Key removed.');
+        } else if (act === 'remove') {
+          if (!confirm('Remove the source "' + reg.displayName + '"?\n\nPackages already installed from it are NOT uninstalled — remove those from the Applications page if you want them gone.')) {
+            btn.disabled = false; return;
+          }
+          await call('DELETE', '/api/swarm/registries/' + encodeURIComponent(slug));
+          show('ok', 'Source removed.');
+        }
+        await load(true);
+      } catch (e) { show('err', e.message); btn.disabled = false; }
+    }
+
+    // ── Add a source: probe, then confirm by typing the host ───────────────────
+    var addForm = document.getElementById('addForm');
+    document.getElementById('addToggle').addEventListener('click', function () {
+      addForm.style.display = addForm.style.display === 'none' ? '' : 'none';
+      document.getElementById('probeResult').innerHTML = '';
+    });
+    document.getElementById('cancelAdd').addEventListener('click', function () {
+      addForm.style.display = 'none';
+      addForm.reset();
+      document.getElementById('probeResult').innerHTML = '';
+    });
+
+    function addFormValues() {
+      return {
+        url: document.getElementById('fUrl').value.trim(),
+        ref: document.getElementById('fRef').value.trim() || 'main',
+        slug: document.getElementById('fSlug').value.trim(),
+        displayName: document.getElementById('fName').value.trim(),
+        token: document.getElementById('fToken').value,
+        hostKind: document.getElementById('fHost').value || undefined,
+        allowPrivateHost: document.getElementById('fPrivateHost').checked,
+        allowUnsigned: document.getElementById('fUnsigned').checked
+      };
+    }
+
+    document.getElementById('probeBtn').addEventListener('click', async function () {
+      var v = addFormValues();
+      var out = document.getElementById('probeResult');
+      if (!v.url || !v.slug) { show('err', 'A repository URL and a short name are required.'); return; }
+      this.disabled = true;
+      out.innerHTML = '<p class="hint">Reading the catalog&hellip;</p>';
+      try {
+        var probe = await call('POST', '/api/swarm/registries/probe', {
+          url: v.url, ref: v.ref, token: v.token, hostKind: v.hostKind, allowPrivateHost: v.allowPrivateHost
+        });
+        if (!probe.ok) {
+          out.innerHTML = '<p class="msg err" style="display:block">Could not read this source: ' + esc(probe.reason) + '</p>';
+          this.disabled = false;
+          return;
+        }
+        var unsigned = probe.packageCount - probe.signedCount;
+        out.innerHTML =
+          '<div style="border:1px solid var(--line);border-radius:8px;padding:14px">' +
+          '<p style="margin:0 0 8px"><strong>' + probe.packageCount + ' package' + (probe.packageCount === 1 ? '' : 's') +
+            '</strong> found &middot; detected as <span class="pill mute">' + esc(probe.hostKind) + '</span></p>' +
+          (probe.sample.length ? '<p class="hint" style="margin:0 0 10px">' +
+            probe.sample.map(function (s) { return esc(s.displayName || s.name); }).join(' &middot; ') +
+            (probe.packageCount > probe.sample.length ? ' &hellip;' : '') + '</p>' : '') +
+          (unsigned > 0
+            ? '<p class="msg err" style="display:block;margin:10px 0">' + unsigned + ' of these package' +
+              (unsigned === 1 ? ' has' : 's have') + ' <strong>no audit record</strong>. Installing one runs unreviewed code in this controller.</p>'
+            : '<p class="hint" style="margin:0 0 10px">All packages carry an audit record.</p>') +
+          '<p class="hint" style="margin:12px 0 6px"><strong>Adding this source means you accept code from it.</strong> ' +
+            'Type <code>' + esc(hostOf(v.url)) + '</code> to confirm:</p>' +
+          '<div class="toolbar"><input id="confirmHost" type="text" placeholder="' + esc(hostOf(v.url)) + '" autocomplete="off" />' +
+          '<button id="doAdd" class="primary" type="button" disabled>Add source</button></div></div>';
+
+        var confirmInput = document.getElementById('confirmHost');
+        var doAdd = document.getElementById('doAdd');
+        confirmInput.addEventListener('input', function () {
+          doAdd.disabled = confirmInput.value.trim().toLowerCase() !== hostOf(v.url).toLowerCase();
+        });
+        doAdd.addEventListener('click', async function () {
+          doAdd.disabled = true;
+          try {
+            await call('POST', '/api/swarm/registries', v);
+            show('ok', 'Source added and trusted.');
+            addForm.style.display = 'none';
+            addForm.reset();
+            out.innerHTML = '';
+            await load(true);
+          } catch (e) { show('err', e.message); doAdd.disabled = false; }
+        });
+      } catch (e) {
+        out.innerHTML = '<p class="msg err" style="display:block">' + esc(e.message) + '</p>';
+      } finally {
+        document.getElementById('probeBtn').disabled = false;
+      }
+    });
+
+    function hostOf(url) {
+      try { return new URL(url).hostname; } catch (e) { return url; }
+    }
+
+    // ── Available packages ────────────────────────────────────────────────────
+    function renderApps() {
+      var q = document.getElementById('search').value.trim().toLowerCase();
+      var srcFilter = document.getElementById('filterSource').value;
+      var suiteFilter = document.getElementById('filterSuite').value;
+
+      // A name published by more than one source is a COLLISION — group it and make the
+      // operator pick, rather than silently taking whichever sorted first.
+      var byName = {};
+      state.apps.forEach(function (a) { (byName[a.name] = byName[a.name] || []).push(a); });
+
+      var rows = state.apps.filter(function (a) {
+        if (srcFilter && a.registry !== srcFilter) return false;
+        if (suiteFilter && a.suite !== suiteFilter) return false;
+        if (!q) return true;
+        return (a.name + ' ' + (a.displayName || '') + ' ' + (a.description || '')).toLowerCase().indexOf(q) >= 0;
+      });
+
+      var tbody = document.getElementById('appsBody');
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">' +
+          (state.apps.length ? 'Nothing matches those filters.' : 'No packages found in the trusted sources.') + '</td></tr>';
+        document.getElementById('appsSummary').textContent = '';
+        return;
+      }
+
+      tbody.innerHTML = rows.map(function (a) {
+        var dupes = byName[a.name].length > 1;
+        var ready = a.status === 'ready';
+        return '<tr data-name="' + esc(a.name) + '" data-registry="' + esc(a.registry) + '">' +
+          '<td><strong>' + esc(a.displayName || a.name) + '</strong>' +
+            (dupes ? ' <span class="pill warn" title="Published by more than one source">' + byName[a.name].length + ' sources</span>' : '') +
+            '<br><span class="hint">' + esc((a.description || '').slice(0, 120)) + '</span></td>' +
+          '<td class="mono">' + esc(a.version || '—') + '</td>' +
+          '<td><span class="pill mute">' + esc(a.registryLabel || a.registry) + '</span></td>' +
+          '<td>' + esc(a.suite || '—') + '</td>' +
+          '<td>' + (a.signed ? '<span class="pill ok">signed</span>' : '<span class="pill warn">unsigned</span>') + '</td>' +
+          '<td><div class="row-actions">' +
+            (ready
+              ? '<button class="primary" data-install>Install</button>'
+              : '<button disabled title="Source status is ' + esc(a.status) + '">Install</button>') +
+          '</div></td></tr>';
+      }).join('');
+
+      tbody.querySelectorAll('button[data-install]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var tr = btn.closest('tr');
+          openInstall(tr.dataset.registry, tr.dataset.name);
+        });
+      });
+
+      document.getElementById('appsSummary').textContent =
+        rows.length + ' of ' + state.apps.length + ' packages across ' +
+        state.sources.filter(function (s) { return s.ok; }).length + ' working source(s).';
+    }
+
+    function fillFilters() {
+      var srcSel = document.getElementById('filterSource');
+      var suiteSel = document.getElementById('filterSuite');
+      var suites = {};
+      state.apps.forEach(function (a) { if (a.suite) suites[a.suite] = true; });
+      srcSel.innerHTML = '<option value="">All sources</option>' + state.sources.map(function (s) {
+        return '<option value="' + esc(s.slug) + '">' + esc(s.label) + '</option>';
+      }).join('');
+      suiteSel.innerHTML = '<option value="">All suites</option>' + Object.keys(suites).sort().map(function (s) {
+        return '<option value="' + esc(s) + '">' + esc(s) + '</option>';
+      }).join('');
+    }
+
+    // ── The blast-radius screen ───────────────────────────────────────────────
+    var dlg = document.getElementById('installDlg');
+
+    async function openInstall(registry, name) {
+      document.getElementById('dlgTitle').textContent = name;
+      document.getElementById('dlgSource').textContent = 'Reading the package manifest…';
+      document.getElementById('dlgImpact').innerHTML = '';
+      document.getElementById('dlgAudit').textContent = '';
+      document.getElementById('dlgConfirm').disabled = true;
+      dlg.showModal();
+      try {
+        var p = await call('GET', '/api/swarm/registries/' + encodeURIComponent(registry) +
+          '/preview/' + encodeURIComponent(name));
+        state.pending = { registry: registry, name: name };
+        document.getElementById('dlgTitle').textContent = (p.displayName || p.name) + (p.version ? ' ' + p.version : '');
+        document.getElementById('dlgSource').innerHTML = 'from <strong>' + esc(p.registryLabel) + '</strong>' +
+          (p.source ? ' &middot; <span class="mono">' + esc(p.source.url) + '#' + esc(p.source.ref) + '</span>' : '');
+
+        var i = p.impact;
+        var items = [];
+        items.push(['mounts', i.routes.count
+          ? i.routes.count + ' route file(s) in this controller' + (i.routes.mounts.length ? ' — ' + i.routes.mounts.join(', ') : '')
+          : 'no routes', i.routes.count > 0]);
+        items.push(['database', i.migrations.count
+          ? i.migrations.count + ' migration(s) — <strong>writes to your database</strong>'
+          : 'no migrations', i.migrations.count > 0]);
+        items.push(['bots', i.bots.count
+          ? i.bots.count + ' bot(s)' + (i.bots.dedicatedNodes ? ', ' + i.bots.dedicatedNodes + ' needing a dedicated node' : '')
+          : 'none', false]);
+        items.push(['schedules', i.schedules.count
+          ? i.schedules.count + ' recurring job(s) — ' + esc(i.schedules.cadences.join(', '))
+          : 'none', i.schedules.count > 0]);
+        if (i.connectors.length) items.push(['connectors', esc(i.connectors.join(', ')), false]);
+        if (i.dependencies.length) items.push(['also installs', esc(i.dependencies.join(', ')), false]);
+
+        document.getElementById('dlgImpact').innerHTML = items.map(function (it) {
+          return '<li' + (it[2] ? ' class="danger"' : '') + '><b>' + it[0] + '</b><span>' + it[1] + '</span></li>';
+        }).join('');
+
+        document.getElementById('dlgAudit').innerHTML = i.signed
+          ? '<span class="pill ok">signed</span> ' + esc(i.auditReason)
+          : '<span class="pill warn">unsigned</span> ' + esc(i.auditReason) +
+            (p.allowUnsigned ? '' : ' — this source does not allow unsigned installs, so this will be refused.');
+        document.getElementById('dlgConfirm').disabled = !i.signed && !p.allowUnsigned;
+      } catch (e) {
+        document.getElementById('dlgSource').textContent = '';
+        document.getElementById('dlgImpact').innerHTML = '<li class="danger"><b>error</b><span>' + esc(e.message) + '</span></li>';
+      }
+    }
+
+    document.getElementById('dlgCancel').addEventListener('click', function () { dlg.close(); state.pending = null; });
+    document.getElementById('dlgConfirm').addEventListener('click', async function () {
+      if (!state.pending) return;
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Installing…';
+      try {
+        var r = await call('POST', '/api/swarm/registries/install', state.pending);
+        dlg.close();
+        show('ok', 'Installed "' + r.name + '" and loaded it live.');
+        state.pending = null;
+        await load(true);
+      } catch (e) {
+        var body = document.querySelector('.dlg-body');
+        var existing = body.querySelector('.log');
+        if (existing) existing.remove();
+        var pre = document.createElement('pre');
+        pre.className = 'log';
+        pre.textContent = e.message + (e.log ? '\n\n' + e.log : '');
+        body.appendChild(pre);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Install';
+      }
+    });
+
+    // ── Load ──────────────────────────────────────────────────────────────────
+    async function load(refresh) {
+      try {
+        var regs = await call('GET', '/api/swarm/registries');
+        state.registries = regs.registries || [];
+      } catch (e) {
+        show('err', e.message.indexOf('403') >= 0 || /operator/i.test(e.message)
+          ? 'The app loader is available to swarm administrators only.'
+          : e.message);
+        document.getElementById('sourcesBody').innerHTML = '<tr><td colspan="6" class="empty">Not available.</td></tr>';
+        document.getElementById('appsBody').innerHTML = '<tr><td colspan="6" class="empty">Not available.</td></tr>';
+        return;
+      }
+      renderSources();
+      try {
+        var cat = await call('GET', '/api/swarm/registries/catalog' + (refresh ? '?refresh=1' : ''));
+        state.apps = cat.apps || [];
+        state.sources = cat.sources || [];
+        renderSources();
+        fillFilters();
+        renderApps();
+      } catch (e) { show('err', e.message); }
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', function () { load(true); });
+    document.getElementById('search').addEventListener('input', renderApps);
+    document.getElementById('filterSource').addEventListener('change', renderApps);
+    document.getElementById('filterSuite').addEventListener('change', renderApps);
+
+    load(false);
+  </script>
+</body>
+</html>

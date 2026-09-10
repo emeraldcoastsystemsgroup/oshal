@@ -232,6 +232,7 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
   const evalWallPageDir = resolveExistingPath([path.resolve(__dirname, '../pages/eval-wall'), path.resolve(process.cwd(), 'src/pages/eval-wall')]);
   const adminConsoleDir = resolveExistingPath([path.resolve(__dirname, '../pages/admin'), path.resolve(process.cwd(), 'src/pages/admin')]);
   const usersDir = resolveExistingPath([path.resolve(__dirname, '../pages/users'), path.resolve(process.cwd(), 'src/pages/users')]);
+  const appLoaderDir = resolveExistingPath([path.resolve(__dirname, '../pages/app-loader'), path.resolve(process.cwd(), 'src/pages/app-loader')]);
   const pumpkinDir = resolveExistingPath([path.resolve(__dirname, '../pages/pumpkin'), path.resolve(process.cwd(), 'src/pages/pumpkin')]);
 
   return [
@@ -264,6 +265,11 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
     // where the first person claims root before any operator exists). Every privileged read and
     // every write is gated by requiresOperator inside /api/swarm/roles, which is the real fence.
     { routePath: '/users', pageDir: usersDir },
+    // ADR-147 App Loader — install packages from any git registry. requiresAuth only at the page
+    // level so a non-admin gets an explanatory screen rather than a bare 403; every registry read
+    // and every install is fenced by requiresOperator inside /api/swarm/registries. Deliberately
+    // NO guestWelcome mat: browsing a catalog is harmless, installing code is not.
+    { routePath: '/app-loader', pageDir: appLoaderDir },
     // Pumpkin projector — the full-screen jack-o'-lantern display for the Halloween prop (?app=pumpkin).
     { routePath: '/pumpkin', pageDir: pumpkinDir },
   ];
