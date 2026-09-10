@@ -533,12 +533,28 @@ function landInstalledPackage(src, dest, details) {
   return 0;
 }
 
+/** @description Resolve an unambiguous catalog identity and confined source folder before checkout. */
+function resolveStorePackage(root, requestedName) {
+  const file = path.join(root, 'marketplace.json');
+  if (fs.statSync(file).size > 5 * 1024 * 1024) throw new Error('marketplace.json exceeds the catalog limit');
+  const catalog = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const matches = Array.isArray(catalog?.apps)
+    ? catalog.apps.filter(entry => entry?.name === requestedName || entry?.source?.path === requestedName) : [];
+  if (matches.length !== 1) throw new Error(`catalog must resolve exactly one package for ${requestedName}`);
+  const entry = matches[0];
+  if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(entry.name)) throw new Error('invalid catalog package name');
+  const sourcePath = entry.source?.path;
+  if (entry.source?.type !== 'git-subdir' || typeof sourcePath !== 'string' || sourcePath.length > 512
+    || !sourcePath.split('/').every(part => /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(part))) {
+    throw new Error('catalog source.path must be a confined relative package directory');
+  }
+  if (entry.audit?.record !== `audits/${entry.name}.json`) throw new Error('invalid catalog audit record path');
+  return { name: entry.name, sourcePath, auditRecord: entry.audit.record };
+}
+
 /**
- * Install a package by name from a git store repo (git-subdir): sparse-clone just that
- * subfolder at the given ref, validate it, RESOLVE ITS DEPENDENCIES (installing missing
- * ones from the same store — npm-style, fail-closed), and copy it into the deploy dir
- * where the swarm loader picks it up. Ad-hoc + repeatable; private-store auth is transported
- * through Git's config-env support so process arguments and the remote URL remain clean.
+ * @description Install by catalog name or source-folder alias, retaining the requested destination
+ * name. Audit identity always comes from the catalog; Git operations retain scoped authentication.
  */
 function installPackage(name, opts, seen) {
   if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(name)) { console.error(C.red(`bad package name: ${name}`)); return 1; }
@@ -560,10 +576,15 @@ function installPackage(name, opts, seen) {
   try {
     console.log(C.dim(`fetching ${name} from ${repo}#${ref} …`));
     git(['clone', '--depth', '1', '--filter=blob:none', '--sparse', '-b', ref, repo, tmp], true);
-    git(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', 'marketplace.json', `audits/${name}.json`, name], true);
-    const assessment = acceptAuditAssessment(git, tmp, name, ref, auditMode);
+    const selected = resolveStorePackage(tmp, name);
+    git(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', 'marketplace.json', selected.auditRecord, selected.sourcePath], true);
+    const assessment = acceptAuditAssessment(git, tmp, selected.name, ref, auditMode);
     if (!assessment) return 1;
-    const src = path.join(tmp, name);
+    const src = path.join(tmp, selected.sourcePath);
+    if (fs.existsSync(src)) {
+      const relative = path.relative(fs.realpathSync(tmp), fs.realpathSync(src));
+      if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('package source escapes checkout');
+    }
     const manifest = readValidatedManifest(src, name, repo, assessment);
     if (!manifest) return 1;
     const resolution = resolveDependencies(manifest, { repo, ref, destAbs: dest, auditMode }, seen);
@@ -849,4 +870,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildStoreGitAuth, installPackage };
+module.exports = { buildStoreGitAuth, installPackage, resolveStorePackage };
