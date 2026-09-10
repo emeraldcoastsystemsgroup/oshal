@@ -1,5 +1,15 @@
 # ADR-145: The app summary contract — every app reports its own highlights and todos, and one page renders them
 
+## Amendment B — configurable Home (2026-09-09)
+
+User direction: show all boxes by default, allow choosing/reordering their data points and boxes,
+and summarize app highlights at suite and page level. This extends D2 with an optional bounded
+`metricsPointer` catalog (24 stable-id facts); the four legacy tiles remain the compatibility view.
+Display choices are caller-owned and revision-checked, using the existing preferences table and
+migration 126. Highlights select visible facts; they do not generate new conclusions or repeat
+explicitly hidden metrics through related items. See the [delivery plan](../apps/configurable-app-home-plan.md)
+and [authoring contract](../apps/authoring-app-packages.md#selectable-data-points-on-home).
+
 - Status: Accepted — BUILT 2026-09-09 (core: the `summary:` contract, the Home plan, and the cockpit Home view)
 - **Amendment A (2026-09-09, recorded at build time): the manifest key is `summary:`, not `status:`.**
   `status` is already a field on `SwarmAppManifest` — the app's install state (`active` | `inactive`) —

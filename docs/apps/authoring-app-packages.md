@@ -237,6 +237,49 @@ missing pointer renders as "can't check", never as done.
 
 ## Dashboard tile (`summary:`)
 
+### Selectable data points on Home
+
+Home supports per-user box and suite visibility/order, compact boxes, selected metric order,
+updates/setup switches, and restore-default controls. Everything starts visible. Preferences are
+stored in the owner-scoped `user_preferences.home_dashboard` column (migration 126), with revision
+checks for concurrent edits. Hiding a box changes presentation, not authorization or installation.
+
+Add `metricsPointer: /metrics` beside the existing pointers to expose a selectable catalog:
+
+```yaml
+summary:
+  path: /api/my-app/summary
+  tilesPointer: /tiles
+  itemsPointer: /items
+  metricsPointer: /metrics
+```
+
+```json
+{
+  "tiles": [{ "label": "Awaiting review", "value": "3", "tone": "warn" }],
+  "metrics": [{ "id": "awaiting-review", "label": "Awaiting review", "value": "3", "tone": "warn" }],
+  "items": [{ "metricId": "awaiting-review", "text": "Three documents need review.", "tone": "warn", "fix": "my-home" }]
+}
+```
+
+The catalog is capped at 24 entries. Each requires a stable package-local `id` (1–64 characters,
+starting alphanumeric; remaining characters alphanumeric, `_`, `.`, or `-`), label, and **string**
+value. Duplicate or malformed ids are not selectable. Label/value limits and tones remain the same
+as legacy tiles. Optional `defaultVisible: false` leaves a metric available in Edit without selecting
+it initially. Saved choices namespace ids by package; changing a label does not change a choice.
+Changing a metric's meaning requires a new id. Continue returning the four legacy `tiles` for older
+Home/group renderers. Legacy tiles without a catalog still render but are not individually editable.
+
+Optional item `metricId` associates an update with a catalog fact so hiding that fact also removes
+its related prose from highlights. `fix` must name a static surface of the declaring app. Home
+selects one highlight per visible app, warning facts before ordinary updates, then bounds suite and
+page highlights. It does not call a model or calculate cross-app totals. Missing source pointers are
+shown as unavailable even when another pointer returns data.
+
+Time-window controls and semantic deduplication across different apps are planned separately; do
+not invent new manifest keys for them. Put the supported window in a metric label or item today.
+See [the implementation plan](configurable-app-home-plan.md) for the rollout and acceptance gates.
+
 `readiness:` answers "what does this *person* still have to set up". `summary:` is its **reporting**
 sibling — "what is going on in this app right now" — and it is what the cockpit **Home** view renders
 as your app's tile ([ADR-145](../adr/145-app-status-contract.md)). One declaration per app: an app is

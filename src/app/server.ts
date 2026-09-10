@@ -175,6 +175,7 @@
  * 162 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: pass ctx into createArtifactExchangeRoutes — the kernel built-in destinations (email compose, save to oshal-local) need the pool for connector tokens and storage writes.
  * 163 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 fix (found by stage-3 live verification): /api/files rides serviceSecretOr(requiresAuth) — the artifact-handle relay redeems a files-browser source by re-fetching /api/files/download as the minting caller over the internal rail, and the session-only mount 401'd that fetch, 502-ing every doc-hub "Send to…" dispatch.
  * 164 | maintainer@emeraldcoastsystemsgroup.com   | resolveOpenAiCodexCallbackPort delegates its raw-port read to resolveConfiguredOpenAiCodexCallbackPort (server-auth-helpers seq 4): the compose-forwarded EMPTY OPENAI_CODEX_CALLBACK_PORT parsed to NaN and silently skipped the :1455 codex callback listener, so every cockpit codex login ended at ERR_EMPTY_RESPONSE on localhost:1455. One reader now owns the ""-means-default rule.
+ * Home customization | Codex | Mount authenticated Home preference persistence alongside user settings.
  */
 
 require('dotenv').config();
@@ -1753,6 +1754,8 @@ function createApp(): express.Application {
   const { createSwarmPresetRoutes } = require('./routes/swarm-preset-routes');
   app.use('/api', requiresAuth, createConfigHealthRoutes(ctx));
   app.use('/api', requiresAuth, createOnboardingRoutes(ctx));
+  const { createAppHomePreferenceRoutes } = require('./routes/app-home-preferences');
+  app.use('/api/home/preferences', requiresAuth, createAppHomePreferenceRoutes(ctx));
   app.use('/api', requiresAuth, createWhatsNewRoutes());
   app.use('/api', requiresAuth, createSwarmPresetRoutes(ctx));
 
