@@ -114,6 +114,15 @@
 .apps-home .apps-home-context-action { border-color: color-mix(in srgb, var(--home-accent) 45%, var(--border-color)); background: color-mix(in srgb, var(--home-accent) 10%, var(--bg-card)); font-weight: 600; padding: 8px 12px; }
 .apps-home-card .apps-home-tile { background: transparent; padding: 4px 0; border: 0; }
 .apps-home-card .apps-home-tile strong { font-size: 23px; letter-spacing: -.04em; }
+.apps-home-tiles-grid { container-type: inline-size; }
+@container (min-width: 718px) {
+  .apps-home-card.is-briefing { grid-column: span 2; }
+  .apps-home-card.is-briefing .apps-home-items { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .apps-home-card.is-briefing .apps-home-items li { align-content: start; }
+  .apps-home-card.is-briefing .apps-home-items li:first-child { grid-column: 1 / -1; }
+  .apps-home-card.is-briefing .apps-home-items li:first-child > span { font-size: 20px; line-height: 1.4; }
+  .apps-home-card.is-briefing .apps-home-items li:last-child { grid-column: 1 / -1; }
+}
 .apps-home-highlights { background: linear-gradient(120deg, color-mix(in srgb, var(--home-accent) 9%, var(--bg-card)), var(--bg-card)); }
 @media (prefers-reduced-motion: no-preference) {
   .apps-home button { transition: background .15s, border-color .15s; }

@@ -103,7 +103,7 @@ export interface ArchivedItem {
 
 export class WorldIntelligenceService {
   /** Shared archive coverage only; unlike historical readers this never bootstraps a schema. */
-  async coverageSnapshot() { return readWorldCoverage(this.tsdb); }
+  async coverageSnapshot(subjects?: readonly string[]) { return readWorldCoverage(this.tsdb, new Date(), subjects); }
   private seriesReady = false;
   private archiveReady = false;
   private eventsReady = false;
