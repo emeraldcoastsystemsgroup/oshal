@@ -676,6 +676,8 @@ export interface SwarmAppSummaryItem {
   /** Declared integrations.offers id; its loaded receiver owns the destination and text schema. */
   integration?: string;
   context?: Record<string, string>;
+  /** Up to four distinct declared actions for the same evidence item. */
+  actions?: Array<{ integration: string; context: Record<string, string> }>;
   /** Optional related package-local metric id; hiding that metric hides this update too. */
   metricId?: string;
   text: string;

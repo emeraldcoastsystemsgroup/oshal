@@ -63,6 +63,12 @@ The active catalog is authoritative after activation changes; the original manif
 
 ## Execution record
 
+Application screens can now use `mountConnectedActions` and `requestHandoff` from `/cockpit/js/app-workflows.js`. The app supplies context from its selected records or editable controls. The shell verifies the active frame's actual URL against that source's caller-visible manifest surfaces, refreshes the loaded catalog, validates the receiving fields, and opens the destination. Group members and apps without Home summary routes publish their source contracts through `integrationSources`. A stale or internally navigated frame cannot borrow its original iframe URL as source authority.
+
+Summary items may return `actions: [{integration, context}]` for up to four distinct declared actions. The original singular fields remain compatible. The per-card connected-actions preference hides every action. Optional partners remain independent of required installation dependencies.
+
+The next package batch connects native Office and Marketing drafts, selected Venture ideas, and Travel/Shopping/Eats/Rides planning controls. Browser fixtures exercise World → Office → Marketing and Travel → Rides → Eats → Shopping, including the Travel receiver, without executing business actions. Deployment of this batch is recorded separately in the store ledger.
+
 The first implementation adds manifest validation, loaded-partner resolution, caller-visible Home planning, in-memory context delivery, receiving-surface validation, connected-action display controls, source links, supporting evidence and revised card styling. Ordinary metadata no longer becomes a highlight by position. Suite highlights exclude updates already in the page highlights.
 
 Live rollout of core #416/#417 and store #155 installed World/Venture 1.1.0 and verified the World summary (HTTP 200, no partial sources) and available integration. The actual cockpit exposed a missing-ribbon navigation gap that the initial fixture had not exercised. The correction carries the declared destination URL and the browser harness now uses the actual cockpit controller with an empty ribbon. The deployed cockpit-to-Venture click-through passed, including populated source context and zero business writes; the stack passed 35/35 healthy with image parity.

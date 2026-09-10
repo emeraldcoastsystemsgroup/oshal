@@ -52,6 +52,7 @@ export interface HomePlanSummaryProbe {
 
 /** One card on the Home view: an app, or a group standing for its members. */
 export interface HomePlanEntry {
+  integrationSources?: Array<{ app: string; surfaces: Array<{ name: string; url: string }>; offers: ResolvedAppIntegration[] }>;
   icon?: string;
   /** Manifest name of the app or group this card represents. */
   name: string;
@@ -132,6 +133,9 @@ function probesFor(
  * @returns Cards in render order.
  */
 export function buildHomePlan(manifests: readonly SwarmAppManifest[]): HomePlanEntry[] {
+  const integrationSource = (m: SwarmAppManifest) => ({ app: m.name,
+    surfaces: (m.ui?.static ?? []).map(s => ({ name: s.toolName, url: s.iframeUrl })),
+    offers: resolveAppIntegrations(m, manifests) });
   const byName = new Map(manifests.map((m) => [m.name, m]));
   const groups = manifests.filter((m) => isGroupManifest(m));
   const covered = new Set<string>();
@@ -161,6 +165,7 @@ export function buildHomePlan(manifests: readonly SwarmAppManifest[]): HomePlanE
       description: group.description,
       suite: group.suite,
       members,
+      integrationSources: members.map(name => integrationSource(byName.get(name)!)),
       firstSurface: `${group.name}-setup`,
       firstSurfaceUrl: `/api/swarm/apps/${encodeURIComponent(group.name)}/setup-dashboard`,
       summary,
@@ -179,6 +184,7 @@ export function buildHomePlan(manifests: readonly SwarmAppManifest[]): HomePlanE
       description: manifest.description,
       suite: manifest.suite,
       members: [manifest.name],
+      integrationSources: [integrationSource(manifest)],
       firstSurface: manifest.ui?.static?.[0]?.toolName,
       firstSurfaceUrl: manifest.ui?.static?.[0]?.iframeUrl,
       summary: part.summary,
