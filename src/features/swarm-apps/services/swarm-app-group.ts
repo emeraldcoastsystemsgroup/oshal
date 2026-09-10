@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups. A `kind: group` manifest carries NO code and binds installed member apps into one front door: its `toolbar[]` BORROWS member surfaces by app + surface name (a reference the loader resolves — never a copied URL, so a renamed surface fails the group instead of leaving a dead tile), its `setup[]` drives the ONE kernel setup dashboard from the members' per-user `readiness:` probes (the session-authenticated sibling of `smoke:`). Static validation (loader) and resolution against the active members (service: fail-closed at activation, lenient-with-warning at profile synthesis) both live here so the service stays under its size budget.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guest-seed contract: validateGuestSeedDeclaration validates the manifest's `guestSeed:` hook fail-closed at load, mirroring readiness but requiring a SERVICE-admitting owner route (service | service-or-oidc) — core, not a browser session, is the caller (it POSTs with the service secret + x-oshal-user-sub = the guest sub). An app that declares a guest seed behind a session-only route would be uncallable by the orchestrator, so that's a load error, not a silent no-op.
+ * Home customization | Codex | Validate optional selectable metric catalog pointers under the existing session-owned route contract.
  */
 
 import fs from 'fs';
@@ -297,7 +298,7 @@ export function validateSummaryDeclaration(manifest: SwarmAppManifest, absPath: 
   if (!isPlainObject(manifest.summary)) {
     throw new Error(`Manifest ${absPath}: summary, when present, must be an object {path, tilesPointer?, itemsPointer?}`);
   }
-  const unknown = Object.keys(manifest.summary).filter((k) => !['path', 'tilesPointer', 'itemsPointer'].includes(k));
+  const unknown = Object.keys(manifest.summary).filter((k) => !['path', 'tilesPointer', 'itemsPointer', 'metricsPointer'].includes(k));
   if (unknown.length) throw new Error(`Manifest ${absPath}: summary has unknown field(s): ${unknown.join(', ')}`);
   const decl = manifest.summary as unknown as SwarmAppSummaryDeclaration;
   if (!isCanonicalPath(decl.path)) {
@@ -314,13 +315,13 @@ export function validateSummaryDeclaration(manifest: SwarmAppManifest, absPath: 
   if (!SESSION_ADMITTING_MODES.has(mode)) {
     throw new Error(`Manifest ${absPath}: summary.path is owned by ${owner.mountPath} (auth: ${mode}) — a status probe runs AS THE SIGNED-IN USER, so its route must admit a browser session (oidc or service-or-oidc)`);
   }
-  for (const key of ['tilesPointer', 'itemsPointer'] as const) {
+  for (const key of ['tilesPointer', 'itemsPointer', 'metricsPointer'] as const) {
     const pointer = decl[key];
     if (pointer !== undefined && (!isJsonPointer(pointer) || pointer === '')) {
       throw new Error(`Manifest ${absPath}: summary.${key}, when present, must be a non-empty RFC 6901 pointer`);
     }
   }
-  if (decl.tilesPointer === undefined && decl.itemsPointer === undefined) {
+  if (decl.tilesPointer === undefined && decl.itemsPointer === undefined && decl.metricsPointer === undefined) {
     throw new Error(`Manifest ${absPath}: summary must declare at least one of tilesPointer / itemsPointer — a probe that can yield neither is a field nothing consumes`);
   }
 }
