@@ -17,6 +17,7 @@ import type {
   SwarmAppSummaryTone,
 } from '../types';
 import { isGroupManifest } from './swarm-app-group';
+import { resolveAppIntegrations, type ResolvedAppIntegration } from './app-integrations';
 
 /** ADR-145 D2 bounds. Four tiles and five items force the author to decide what matters. */
 export const MAX_SUMMARY_TILES = 4;
@@ -40,6 +41,7 @@ export interface HomePlanTodo {
 
 /** One summary probe the Home card asks in the viewer's own session. */
 export interface HomePlanSummaryProbe {
+  integrations?: ResolvedAppIntegration[];
   metricsPointer?: string;
   surfaces?: string[];
   app: string;
@@ -50,6 +52,7 @@ export interface HomePlanSummaryProbe {
 
 /** One card on the Home view: an app, or a group standing for its members. */
 export interface HomePlanEntry {
+  icon?: string;
   /** Manifest name of the app or group this card represents. */
   name: string;
   displayName: string;
@@ -86,12 +89,14 @@ function humanise(slug: string): string {
 function probesFor(
   manifest: SwarmAppManifest,
   labels: ReadonlyMap<string, { label: string; fix?: string }>,
+  active: readonly SwarmAppManifest[],
 ): { summary: HomePlanSummaryProbe[]; todos: HomePlanTodo[] } {
   const summary: HomePlanSummaryProbe[] = [];
   if (manifest.summary) {
     const decl = manifest.summary as SwarmAppSummaryDeclaration;
     summary.push({
       app: manifest.name,
+      integrations: resolveAppIntegrations(manifest, active),
       path: decl.path,
       metricsPointer: decl.metricsPointer,
       surfaces: (manifest.ui?.static ?? []).map(s => s.toolName),
@@ -143,13 +148,14 @@ export function buildHomePlan(manifests: readonly SwarmAppManifest[]): HomePlanE
     const todos: HomePlanTodo[] = [];
     for (const name of members) {
       covered.add(name);
-      const part = probesFor(byName.get(name) as SwarmAppManifest, labels);
+      const part = probesFor(byName.get(name) as SwarmAppManifest, labels, manifests);
       summary.push(...part.summary);
       todos.push(...part.todos);
     }
     entries.push({
       name: group.name,
       displayName: group.displayName,
+      icon: group.ui?.static?.[0]?.icon,
       kind: 'group',
       description: group.description,
       suite: group.suite,
@@ -162,10 +168,11 @@ export function buildHomePlan(manifests: readonly SwarmAppManifest[]): HomePlanE
 
   for (const manifest of manifests) {
     if (isGroupManifest(manifest) || covered.has(manifest.name)) continue;
-    const part = probesFor(manifest, new Map());
+    const part = probesFor(manifest, new Map(), manifests);
     entries.push({
       name: manifest.name,
       displayName: manifest.displayName,
+      icon: manifest.ui?.static?.[0]?.icon,
       kind: 'app',
       description: manifest.description,
       suite: manifest.suite,
@@ -273,6 +280,8 @@ export function coerceSummaryPayload(
         items.push({
           ...(typeof it.metricId === 'string' ? { metricId: it.metricId } : {}),
           text: clamp(it.text, MAX_TEXT_CHARS),
+          ...(typeof it.detail === 'string' ? { detail: clamp(it.detail, 400) } : {}),
+          ...(it.highlight === true ? { highlight: true } : {}),
           tone: coerceTone(it.tone),
           ...(typeof it.fix === 'string' ? { fix: it.fix } : {}),
         });
