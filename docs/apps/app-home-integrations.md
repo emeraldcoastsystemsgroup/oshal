@@ -67,6 +67,8 @@ Application screens can now use `mountConnectedActions` and `requestHandoff` fro
 
 Summary items may return `actions: [{integration, context}]` for up to four distinct declared actions. The original singular fields remain compatible. The per-card connected-actions preference hides every action. Optional partners remain independent of required installation dependencies.
 
+Home relinquishes its shared container when the user navigates away. Outstanding summary reads and action-resolution requests are invalidated so a late completion cannot repaint Home over the receiving application or override the next navigation. Regression coverage holds a summary response open while an app is opened, then completes it and checks that the app remains on screen.
+
 The next package batch connects native Office and Marketing drafts, selected Venture ideas, and Travel/Shopping/Eats/Rides planning controls. Browser fixtures exercise World → Office → Marketing and Travel → Rides → Eats → Shopping, including the Travel receiver, without executing business actions. Deployment of this batch is recorded separately in the store ledger.
 
 The first implementation adds manifest validation, loaded-partner resolution, caller-visible Home planning, in-memory context delivery, receiving-surface validation, connected-action display controls, source links, supporting evidence and revised card styling. Ordinary metadata no longer becomes a highlight by position. Suite highlights exclude updates already in the page highlights.
