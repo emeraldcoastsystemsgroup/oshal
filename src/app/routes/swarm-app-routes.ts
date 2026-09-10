@@ -252,9 +252,12 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAc
    *
    * Declared BEFORE /:name so "home-plan" can never be captured as an app name.
    */
-  router.get('/home-plan', async (_req: Request, res: Response) => {
+  router.get('/home-plan', async (req: Request, res: Response) => {
     try {
-      res.json({ apps: buildHomePlan(await service.getActiveManifests()) });
+      const { sub } = getCaller(req);
+      const visible = new Set((await service.listApps('active', { ownerSub: sub, isOperator: isOperator(req) })).map(app => app.name));
+      res.set('Cache-Control', 'no-store');
+      res.json({ apps: buildHomePlan((await service.getActiveManifests()).filter(app => visible.has(app.name))) });
     } catch (err: any) {
       logger.error({ err }, 'Failed to build the home plan');
       res.status(500).json({ error: 'home plan unavailable' });

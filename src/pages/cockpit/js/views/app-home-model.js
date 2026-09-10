@@ -49,7 +49,8 @@ export function selected(data, preference = {}) {
     tiles: ordered(data.tiles, preference.metricOrder).filter(t => t.id
       ? !(preference.hiddenMetrics || []).includes(t.id) && (t.defaultVisible !== false || (preference.shownMetrics || []).includes(t.id))
       : true),
-    items: preference.showItems === false ? [] : data.items.filter(i => !i.metricId || !(preference.hiddenMetrics || []).includes(i.metricId)),
+    items: preference.showItems === false ? [] : data.items.filter(i => !i.metricId || !(preference.hiddenMetrics || []).includes(i.metricId))
+      .map(i => preference.showActions === false ? { ...i, integration: undefined, integrationNote: undefined } : i),
     open: preference.showSetup === false ? [] : data.open,
     total: preference.showSetup === false ? 0 : data.total,
   };
@@ -66,7 +67,7 @@ export function highlights(entries, cards, preferences) {
     const warning = data.tiles.find(t => t.tone === 'warn');
     const item = data.items.find(i => i.tone === 'warn');
     const setup = data.open[0];
-    const ordinary = data.items[0];
+    const ordinary = data.items.find(i => i.highlight === true);
     const choice = warning ? { text: `${warning.label}: ${warning.value}`, tone: 'warn' }
       : item || (setup ? { text: setup.detail || setup.label, tone: 'warn', fix: setup.fix } : ordinary);
     return choice ? [{ ...choice, app: entry.name, displayName: entry.displayName, fix: choice.fix || entry.firstSurface }] : [];

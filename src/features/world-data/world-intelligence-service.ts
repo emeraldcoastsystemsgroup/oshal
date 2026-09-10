@@ -21,6 +21,7 @@
  * is idempotent and resolution is free.
  */
 import { Pool } from 'pg';
+import { readWorldCoverage } from './world-coverage-read';
 import { createGraphConnector, type GraphConnector, type GraphNode, type GraphEdge } from '@/features/graph';
 import { createChildLogger } from '@/shared/logger';
 import type { WorldContribution } from './world-types';
@@ -101,6 +102,8 @@ export interface ArchivedItem {
 }
 
 export class WorldIntelligenceService {
+  /** Shared archive coverage only; unlike historical readers this never bootstraps a schema. */
+  async coverageSnapshot() { return readWorldCoverage(this.tsdb); }
   private seriesReady = false;
   private archiveReady = false;
   private eventsReady = false;
