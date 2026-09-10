@@ -59,8 +59,12 @@ The receiver imports `receiveHandoff` from `/cockpit/js/app-handoff.js` and regi
 
 Home fetches a fresh caller-visible active-app plan before staging a handoff. Receiver fields are draft data, never arbitrary execution options. The receiver still authorizes any source-record lookup and subsequent action. Package authors must not send secrets in context.
 
+The active catalog is authoritative after activation changes; the original manifest's `status` is only an installation default. Resolved actions include their owned same-origin surface URL. Home can open that declared surface even when the current ribbon profile does not list a shortcut for it. Summary-provided URLs never choose the receiving surface.
+
 ## Execution record
 
 The first implementation adds manifest validation, loaded-partner resolution, caller-visible Home planning, in-memory context delivery, receiving-surface validation, connected-action display controls, source links, supporting evidence and revised card styling. Ordinary metadata no longer becomes a highlight by position. Suite highlights exclude updates already in the page highlights.
+
+Live rollout of core #416 and store #155 installed World/Venture 1.1.0 and verified the World summary (HTTP 200, no partial sources) and available integration. The actual cockpit exposed a missing-ribbon navigation gap that the initial fixture had not exercised. The correction carries the declared destination URL and the browser harness now uses the actual cockpit controller with an empty ribbon. Final click-through acceptance follows this correction's deployment.
 
 World Intelligence supplies an initial archive briefing and optional World → Venture draft handoff. Verification: 36 focused core tests, 15 compiled package tests, TypeScript, scoped lint, package/catalog validation, an authenticated existing-Home rendering check, a real World archive query, and a browser fixture using the actual Home and Venture surfaces. The fixture transfers context on click with zero business writes and no mobile overflow. These checks do not mark the remaining application work orders complete; rollout is recorded separately.
