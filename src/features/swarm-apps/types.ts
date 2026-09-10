@@ -33,6 +33,7 @@ import type { GuestTier } from '@/shared/middleware/guest-capability-matrix';
 import type { SkillCapabilityId, SkillProfile } from '@/shared/skill-profiles';
 import type { SurfaceBridgeOpName } from '@/shared/surface-bridge-ops';
 import type { ArtifactActionsDeclaration } from '@/shared/artifact-exchange';
+import type { AppIntegrationDeclaration } from './services/app-integrations';
 
 
 /**
@@ -666,6 +667,15 @@ export interface SwarmAppSummaryTile {
 
 /** ADR-145 D2: one line item; `fix` names a surface in the SAME app, rendered as a button. */
 export interface SwarmAppSummaryItem {
+  /** Supporting evidence, not a generated instruction. */
+  detail?: string;
+  /** Optional public HTTP(S) evidence link; never an execution URL. */
+  sourceUrl?: string;
+  /** Explicit eligibility for neutral business updates to appear in Home highlights. */
+  highlight?: boolean;
+  /** Declared integrations.offers id; its loaded receiver owns the destination and text schema. */
+  integration?: string;
+  context?: Record<string, string>;
   /** Optional related package-local metric id; hiding that metric hides this update too. */
   metricId?: string;
   text: string;
@@ -739,6 +749,8 @@ export interface SwarmAppManifest {
   /** ADR-139: the app's "Send to…" artifact declarations — validated fail-closed at load,
    *  registered on activate, retracted on deactivate. Absent = the app doesn't participate. */
   artifacts?: ArtifactActionsDeclaration;
+  /** Versioned context exchanges with loaded apps; opening an exchange only prepares a draft. */
+  integrations?: AppIntegrationDeclaration;
   routes?: SwarmAppRouteDeclaration[];
   /** Package-owned Google Takeout slices registered only while this app is active. */
   takeout?: SwarmAppTakeoutSliceDeclaration[];

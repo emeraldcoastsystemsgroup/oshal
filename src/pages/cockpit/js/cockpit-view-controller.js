@@ -25,6 +25,7 @@ import {
 } from './views/index.js';
 import { DashboardHomeView } from './views/DashboardHomeView.js';
 import { AppsHomeView } from './views/AppsHomeView.js';
+import { deliverHandoff } from './app-handoff.js';
 
 /**
  * @description Manage cockpit main-content view routing, ticket handoffs, and bot-to-rail context transitions.
@@ -363,6 +364,7 @@ export class CockpitViewController {
           <iframe src="${bustedUrl}" allow="microphone; fullscreen" style="flex:1;border:none;width:100%;height:100%;" ${sandboxAttr}></iframe>
         </div>`;
 
+      deliverHandoff(container.querySelector('iframe'), viewId.replace(/^tool-/, ''));
       if (isGuestReadonly) {
         const iframeEl = container.querySelector('iframe');
         if (iframeEl) iframeEl.addEventListener('load', () => this._applyGuestReadonly(iframeEl));
