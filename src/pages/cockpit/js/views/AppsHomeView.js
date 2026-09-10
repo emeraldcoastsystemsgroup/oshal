@@ -176,6 +176,16 @@ export class AppsHomeView {
     this.entries = [];
   }
 
+  /** Leaving Home invalidates its outstanding reads and relinquishes the shared host. */
+  destroy() {
+    this.generation = (this.generation || 0) + 1;
+    if (this.container) {
+      this.container.onclick = null;
+      this.container.onchange = null;
+    }
+    this.container = null;
+  }
+
   /**
    * @description Paint the shell, load the plan, then probe every app concurrently (bounded) and
    * render each card as its answers land.
@@ -212,6 +222,7 @@ export class AppsHomeView {
 
   /** Render the saved layout without refetching or mutating any app's data. */
   draw() {
+    if (!this.container) return;
     const scroll = this.container.querySelector('dialog')?.scrollTop || 0;
     const p = this.preferences;
     const shelves = ordered(sectionBySuite(this.entries), p.suiteOrder, s => s.key);
@@ -305,8 +316,10 @@ export class AppsHomeView {
         || (item?.integration === button.dataset.integration ? item : null);
       if (!chosen) return;
       button.disabled = true;
+      const generation = this.generation;
       try {
         const response = await askProbe('/api/swarm/apps/home-plan');
+        if (generation !== this.generation) return;
         const probe = response.ok && response.body.apps?.find(e => e.name === entry.name)?.summary.find(p => p.app === item.sourceApp);
         const offer = probe?.integrations?.find(o => o.id === chosen.integration);
         if (!stageHandoff(offer, chosen.context)) throw new Error('This integration is no longer available. Refresh Home.');
