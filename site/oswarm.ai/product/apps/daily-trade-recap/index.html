@@ -256,7 +256,7 @@ footer a:hover{color:var(--cyan)}</style>
 <nav class="crumbs wrap" aria-label="Breadcrumb"><a href="/">oshal</a><span>/</span><a href="/product/">Applications</a><span>/</span><a href="/product/finance/">Finance</a><span>/</span><span aria-current="page" style="color:var(--body)">Daily Trade Recap</span></nav>
 
 <header class="page"><div class="wrap">
-  <p class="eyebrow">Finance · Store package · v1.0.0</p>
+  <p class="eyebrow">Finance · Store package · v1.1.0</p>
   <h1>Daily Trade Recap</h1>
   <div class="split">
     <div>
@@ -266,13 +266,16 @@ footer a:hover{color:var(--cyan)}</style>
         <a class="btn" href="https://oshal.agenticfederal.us/guest?next=%2Fcockpit%2F%3Fapp%3Ddaily-trade-recap">Try the live demo</a>
       </div>
       <p class="cta-note">Opens <code>?app=daily-trade-recap</code> on the demo deployment. On your own box it is the same URL.</p>
-      
+      <div style="margin-top:36px">
+        <p class="eyebrow">1 screen in the ribbon</p>
+        <div class="pills" style="margin-top:14px"><span class="pill screen">Recap Review</span></div>
+      </div>
     </div>
     <aside class="aside">
       <h3>At a glance</h3>
       <div class="facts">
       <div><div class="k">Shelf</div><div class="v"><a href="/product/finance/">Finance</a></div></div>
-      <div><div class="k">Version</div><div class="v"><code>1.0.0</code></div></div>
+      <div><div class="k">Version</div><div class="v"><code>1.1.0</code></div></div>
       <div><div class="k">Ships as</div><div class="v">An installable store package</div></div>
       <div><div class="k">Opens at</div><div class="v"><code>?app=daily-trade-recap</code></div></div>
       <div><div class="k">Queued work</div><div class="v">Registers the <code>daily-trade-recap</code> ticket type</div></div>
@@ -300,10 +303,13 @@ footer a:hover{color:var(--cyan)}</style>
         app declares in its manifest, which is why it can be told to you plainly.</p></div>
       <ol class="flow"><li>
       <span class="step">01</span>
-      <div><h3>Longer work becomes a ticket</h3><p>Scheduled and swarm-initiated work enters the queue as a <code>daily-trade-recap</code> ticket. It is durable, it has an owner, you can watch it move through its phases, and if it fails it fails somewhere you can open and read.</p></div>
+      <div><h3>You open it, or the assistant does</h3><p>Opening <code>?app=daily-trade-recap</code> loads its 1 screen into the shared cockpit. The ribbon, the ticket list and the assistant are already there — the app contributes views, not a second application to log into.</p></div>
     </li><li>
       <span class="step">02</span>
-      <div><h3>The result lands where you can check it</h3><p>As state keyed to you in the platform's store, which the assistant can then answer questions about.</p></div>
+      <div><h3>Longer work becomes a ticket</h3><p>Scheduled and swarm-initiated work enters the queue as a <code>daily-trade-recap</code> ticket. It is durable, it has an owner, you can watch it move through its phases, and if it fails it fails somewhere you can open and read.</p></div>
+    </li><li>
+      <span class="step">03</span>
+      <div><h3>The result lands where you can check it</h3><p>Back on the app's own screens, as state you own — not as a chat message you have to scroll back to find.</p></div>
     </li></ol>
     </div></section>
 <section><div class="wrap"><div class="sec-head">
