@@ -77,6 +77,10 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
   planner, :8060).
 - [career-hunter-native-migration-plan.md](./career-hunter-native-migration-plan.md) —
   career-hunter (completed reference migration).
+- [artifact-exchange-coverage.md](./artifact-exchange-coverage.md) — **AUDIT:** every installed app's
+  ADR-139 "Send to…" coverage — what it accepts, what it can send, and which endpoints do not exist yet.
+  The per-application inventory the wave-by-wave rollout never produced, with the two grep heuristics that
+  over-count (surface-HTML `sendFile`, and `type="file"`) recorded so the numbers stay honest.
 - [fantasy-football-spec.md](./fantasy-football-spec.md) — **SPEC (nothing built):** the fantasy football
   draft engine, league site and live-draft node assistant. The value model and the roster-construction engine
   in full — league-rule scoring (ESPN publishes raw stats, never points), replacement level from the league's
