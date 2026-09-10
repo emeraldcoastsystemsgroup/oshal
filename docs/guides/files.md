@@ -100,6 +100,10 @@ becomes `_`, and the name is cut at 120 characters. Uploading a name that alread
 Dropbox folder replaces the existing file. Google Drive creates a new file each time, so two files can
 share a name in the same folder.
 
+## Sending a file to another app
+
+Every file row carries a **📤** button (and a right-click menu) that hands the file to another app — email it, ingest it into a knowledge collection, summarize it with Jarvis, or open it in an app that reads that type. Nothing is downloaded and re-uploaded, and nothing is shared with anyone else. See [Send to…](./send-to.md).
+
 **Delete a file** (Dropbox or Google Drive): click **✕** on its row and confirm the browser prompt.
 The list refreshes and the preview closes if you were looking at that file. **On Google Drive this
 delete is permanent — the file does not go to Drive's Trash.** A Dropbox delete goes to Dropbox's own
