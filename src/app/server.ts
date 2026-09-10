@@ -249,6 +249,8 @@ import { createTvPairingRoutes, createTvTokenAuthMiddleware } from './routes/tv-
 import { createCliTokenAuthMiddleware, createCliTokenRoutes } from './routes/cli-token-routes';
 import { createArtifactExchangeRoutes } from './routes/artifact-exchange-routes';
 import { createLocalAuthRoutes, isLocalAuthEnabled } from './routes/local-auth-routes';
+import { createSwarmRolesRoutes, initializeSwarmRoles } from './routes/swarm-roles-routes';
+import { createAppRegistryRoutes, initializeAppRegistries } from './routes/app-registry-routes';
 import { createApplicationAuthMiddlewareSet } from './middleware/application-auth';
 import { createBudgetRoutes } from './routes/budget-routes';
 import { registerA2aGatewayRoutes } from './routes/a2a-routes';
@@ -1491,6 +1493,19 @@ function createApp(): express.Application {
   app.use('/api/voice', requiresAuth, createVoiceRoutes(ctx));
   // Swarm application REST + UI profile surfaces (gate middleware + instance
   // already set up before the app-owned route mounts).
+  // ADR-148 swarm root: roles (root | admin | user) are the operator authority, with the env
+  // allowlist retained as break-glass. Initialization is fire-and-forget and non-fatal — a
+  // degraded role store must not stop the swarm booting, because break-glass is how you get in
+  // to fix it. The router is mounted regardless so /me and /status can report honestly.
+  void initializeSwarmRoles(ctx.pool);
+  app.use('/api/swarm/roles', createSwarmRolesRoutes(ctx.pool, requiresAuth));
+  // ADR-147 App Loader: N git registries instead of one OSHAL_STORE_REPO constant. The built-in
+  // row is seeded from that env var so an existing deployment is unchanged. Operator-gated inside
+  // the router — browsing reveals what this swarm trusts, and installing runs code.
+  void initializeAppRegistries(ctx.pool);
+  app.use('/api/swarm/registries', createAppRegistryRoutes(ctx.pool, requiresAuth, {
+    loadApp: (manifestPath, scopeMeta) => swarmAppService.loadApp(manifestPath, scopeMeta),
+  }));
   app.use('/api/swarm/apps', requiresAuth, createSwarmAppRoutes(swarmAppService, appAccessService));
   app.use('/api/swarm/packs', requiresAuth, createSwarmPackRoutes(swarmAppService));
   // ADR-085 packaged skins: surfaces authored against core skins request

@@ -8,10 +8,12 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added requireServiceSecret for privileged machine-only control planes. Unlike the compatibility-only requireServiceSecretWhenConfigured helper, the strict gate fails closed when SWARM_SERVICE_SECRET is absent and never falls back to a human session.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve OIDC subjects as exact case-sensitive identifiers in operator checks, and add a canonical base64url trusted-service subject header so whitespace/case survive HTTP transport without aliasing. Legacy plain headers remain readable during rollout but are never normalized.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Expose an independently authenticated user predicate so legacy service credentials can never override an established browser or PAT principal on user-scoped routes.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148 swarm root: isOperatorIdentity now consults DATABASE-BACKED roles (swarm_roles, via the synchronous privileged-identity cache) BEFORE the env allowlist, so root/admin are rows an admin can grant and revoke rather than a hand-typed .env nobody can change at runtime. The allowlist is retained forever as break-glass — an existing deployment keeps working with zero config change and a lost root stays recoverable — and isBreakGlassOnlyOperator lets a surface tell an operator their privilege is env-only so the two-disconnected-identity-systems state is visible instead of silent. Both sources stay fail-closed: an unloaded cache and an empty allowlist each grant nothing.
  */
 
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import crypto from 'crypto';
+import { isPrivilegedIdentity } from './privileged-identities';
 
 /** Identity of the authenticated caller, derived ONLY from the validated OIDC session. */
 export interface CallerIdentity {
@@ -77,11 +79,11 @@ function parseEmailAllowlist(value: string | undefined): Set<string> {
 }
 
 /**
- * @description Operator (admin) check. There is no IdP role claim wired into this
- * deployment, so operator status is an explicit env allowlist matched against the
- * caller's OIDC sub or email. FAIL-CLOSED: an empty allowlist means there are no
- * operators, so operator-gated views simply scope to the caller instead of leaking
- * everyone's data. Configure OSHAL_OPERATOR_EMAILS (comma-separated) to grant it.
+ * @description Operator (admin) check for a request. Operator status is held by a swarm_roles
+ * row (`root` or `admin`, managed from the Users page) OR by the env break-glass allowlist —
+ * see {@link isOperatorIdentity} for why both exist and in what order they are consulted.
+ * FAIL-CLOSED: with no roles loaded and an empty allowlist there are no operators, so
+ * operator-gated views scope to the caller instead of leaking everyone's data.
  */
 export function isOperator(req: Request): boolean {
   const { sub, email } = getCaller(req);
@@ -89,20 +91,47 @@ export function isOperator(req: Request): boolean {
 }
 
 /**
- * @description Same operator allowlist as {@link isOperator}, but for code paths that hold only an
- * identity — services and background work with no Express `Request` (e.g. deciding whether a
- * credential import may propagate swarm-wide). Same fail-closed semantics: an empty allowlist means
- * nobody is an operator.
+ * @description The operator check for code paths that hold only an identity — services and
+ * background work with no Express `Request` (e.g. deciding whether a credential import may
+ * propagate swarm-wide). {@link isOperator} is the request-shaped wrapper over this.
+ *
+ * TWO sources, checked in order, and both are deliberate (ADR-148 swarm root):
+ *  1. **Database roles** — the swarm_roles snapshot loaded into the privileged-identity cache.
+ *     This is the authority: root and admin are rows, granted and revoked from the Users page,
+ *     effective on the next request without a restart.
+ *  2. **The env allowlist** — OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS, retained FOREVER as
+ *     break-glass (operator decision). It is what lets an existing deployment adopt roles with
+ *     zero configuration change, and it is the recovery path when the database is unreachable or
+ *     root has been lost. Removing it would make a lost root a manual-SQL incident.
+ *
+ * Still fail-closed: an unloaded cache grants nothing and an empty allowlist grants nothing, so a
+ * swarm with neither configured has no operators rather than universal access.
+ *
  * @param sub - the caller's OIDC sub, when known
  * @param email - the caller's email, when known
- * @returns true when the identity is on the operator allowlist
+ * @returns true when the identity holds root/admin, or is on the break-glass allowlist
  */
 export function isOperatorIdentity(sub?: string | null, email?: string | null): boolean {
+  if (isPrivilegedIdentity(sub, email)) return true;
   const subs = parseSubjectAllowlist(process.env.OSHAL_OPERATOR_SUBS);
   const emails = parseEmailAllowlist(process.env.OSHAL_OPERATOR_EMAILS);
   if (typeof sub === 'string' && sub.length > 0 && subs.has(sub)) return true;
   if (typeof email === 'string' && email.length > 0 && emails.has(email.toLowerCase())) return true;
   return false;
+}
+
+/**
+ * @description True when the identity's operator status comes ONLY from the env break-glass
+ * allowlist and not from a swarm_roles row. Surfaces use this to nudge an operator toward
+ * claiming root — a box running on break-glass alone still has the two-disconnected-systems
+ * problem ADR-148 exists to fix, and nothing else would ever tell them.
+ * @param sub - the caller's OIDC sub, when known
+ * @param email - the caller's email, when known
+ * @returns true when privilege is break-glass only
+ */
+export function isBreakGlassOnlyOperator(sub?: string | null, email?: string | null): boolean {
+  if (isPrivilegedIdentity(sub, email)) return false;
+  return isOperatorIdentity(sub, email);
 }
 
 /**

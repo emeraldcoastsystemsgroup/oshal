@@ -1,0 +1,403 @@
+<!--
+  Users — swarm access management (ADR-148). The page that makes "swarm root" a thing you can
+  see and hand over, instead of an env var somebody typed once.
+
+  Two independent halves, and the split is deliberate:
+   - ROLES (always present, every auth mode) — root / admin / user from /api/swarm/roles. This is
+     what the operator gate reads, so it is the authority on who can administer the swarm.
+   - ACCOUNTS (LOCAL_AUTH only) — the invited-user list from /api/local-auth/users. In OIDC and
+     mock modes accounts live elsewhere, so that half honestly reports itself absent rather than
+     rendering an empty table that looks broken.
+
+  Root is claimable in exactly one situation the UI offers: root is unclaimed AND the caller may
+  claim it (a virgin swarm, or an existing break-glass operator). The API enforces that regardless
+  — the button is a convenience, not the gate.
+
+  Every value is HTML-escaped on render; the page never displays a credential and the roles API
+  never returns one.
+-->
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Swarm Users — OSHAL</title>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script>
+    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
+    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
+    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <style>
+    :root {
+      --bg: var(--bg-primary);
+      --panel: var(--bg-secondary);
+      --card: #ffffff;
+      --ink: var(--bg-primary);
+      --ink-muted: var(--text-secondary);
+      --line: rgba(21, 27, 34, 0.10);
+      --line-dark: rgba(21, 27, 34, 0.15);
+      --teal: var(--accent-primary);
+      --amber: var(--status-warning);
+      --green: var(--status-success);
+      --red: var(--status-error);
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--panel); color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14.5px; -webkit-font-smoothing: antialiased; min-height: 100%;
+    }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 40px 22px 64px; }
+    .section-header { max-width: 760px; margin-bottom: 22px; }
+    .section-kicker { color: var(--amber); font-weight: 850; text-transform: uppercase; letter-spacing: .09em; font-size: .68rem; margin-bottom: 6px; }
+    h1 { font-size: 1.6rem; margin: 0 0 8px; letter-spacing: -0.01em; }
+    h2 { font-size: 1.05rem; margin: 0; }
+    .sub { color: var(--ink-muted); line-height: 1.55; margin: 0; }
+
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 18px; }
+    .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+
+    /* Root banner — the one thing on this page that should be impossible to miss. */
+    .root-banner { border-left: 4px solid var(--teal); }
+    .root-banner.unclaimed { border-left-color: var(--amber); background: color-mix(in srgb, var(--amber) 7%, var(--card)); }
+    .root-banner.breakglass { border-left-color: var(--amber); }
+    .root-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86rem; word-break: break-all; }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    th { font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-muted); font-weight: 800; }
+    td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; word-break: break-all; }
+    .table-scroll { overflow-x: auto; }
+
+    .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+    .pill.root { background: var(--teal); color: #fff; }
+    .pill.admin { background: color-mix(in srgb, var(--teal) 18%, transparent); color: var(--teal); }
+    .pill.user { background: rgba(21,27,34,.08); color: var(--ink-muted); }
+    .pill.warn { background: color-mix(in srgb, var(--amber) 22%, transparent); color: #7a5200; }
+
+    button { font: inherit; font-weight: 650; padding: 6px 13px; border-radius: 7px; border: 1px solid var(--line-dark); background: #fff; color: var(--ink); cursor: pointer; }
+    button:hover:not(:disabled) { border-color: var(--teal); color: var(--teal); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button.primary { background: var(--teal); border-color: var(--teal); color: #fff; }
+    button.primary:hover:not(:disabled) { filter: brightness(1.08); color: #fff; }
+    button.danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
+    .row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+    input, select { font: inherit; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line-dark); background: #fff; color: var(--ink); }
+    input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--teal) 40%, transparent); outline-offset: 1px; }
+    .grant-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .grant-form input { flex: 1 1 200px; min-width: 0; }
+
+    .empty { color: var(--ink-muted); padding: 16px 4px; font-style: italic; }
+    .msg { padding: 10px 13px; border-radius: 8px; margin-bottom: 14px; display: none; }
+    .msg.err { display: block; background: color-mix(in srgb, var(--red) 10%, transparent); color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 30%, transparent); }
+    .msg.ok { display: block; background: color-mix(in srgb, var(--green) 10%, transparent); color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 30%, transparent); }
+    .hint { font-size: .82rem; color: var(--ink-muted); margin-top: 10px; line-height: 1.5; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .84em; background: rgba(21,27,34,.06); padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="section-header">
+      <div class="section-kicker">Access</div>
+      <h1>Swarm users &amp; roles</h1>
+      <p class="sub">Who may administer this swarm. <strong>Swarm root</strong> is one identity that
+        owns the swarm; <strong>admins</strong> may administer it; everyone else is a user. Roles are
+        what the platform&rsquo;s operator gate actually reads.</p>
+    </div>
+
+    <div id="msg" class="msg"></div>
+
+    <!-- Root — status, claim, transfer -->
+    <div class="card root-banner" id="rootBanner">
+      <div class="card-head">
+        <h2>Swarm root</h2>
+        <span id="rootPill"></span>
+      </div>
+      <div id="rootBody"><p class="sub">Loading&hellip;</p></div>
+    </div>
+
+    <!-- Roles -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Roles</h2>
+        <button id="refreshBtn" type="button">Refresh</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>Identity</th><th>Role</th><th>Granted by</th><th>When</th><th style="text-align:right">Actions</th></tr>
+          </thead>
+          <tbody id="rolesBody"><tr><td colspan="5" class="empty">Loading&hellip;</td></tr></tbody>
+        </table>
+      </div>
+      <form class="grant-form" id="grantForm" style="margin-top:16px">
+        <input id="grantSub" type="text" placeholder="Subject (sub) to grant" aria-label="Subject to grant" required />
+        <input id="grantEmail" type="email" placeholder="Email (optional)" aria-label="Email" />
+        <select id="grantRole" aria-label="Role">
+          <option value="admin">admin</option>
+          <option value="user">user</option>
+        </select>
+        <button class="primary" type="submit">Grant</button>
+      </form>
+      <p class="hint">A subject is the identity your login provider issues. Under local login it looks
+        like <code>local-…</code>; under an external provider it is that provider&rsquo;s
+        <code>sub</code> claim. Root can only be moved by transfer, never granted here.</p>
+    </div>
+
+    <!-- Accounts (LOCAL_AUTH only) -->
+    <div class="card" id="accountsCard" style="display:none">
+      <div class="card-head"><h2>Local accounts</h2><span class="pill user" id="accountsCount"></span></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Email</th><th>Status</th><th>Subject</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody id="accountsBody"></tbody>
+        </table>
+      </div>
+      <p class="hint">Accounts and roles are separate: an account is how somebody signs in, a role is
+        what they may administer. Granting a role to an account&rsquo;s subject is what makes them an admin.</p>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+
+    /** HTML-escape every interpolated value — identities and emails are user-supplied text. */
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    var msgEl = document.getElementById('msg');
+    function show(kind, text) {
+      msgEl.className = 'msg ' + kind;
+      msgEl.textContent = text;
+      if (kind === 'ok') setTimeout(function () { msgEl.className = 'msg'; }, 4000);
+    }
+
+    /** One fetch helper so every call surfaces the API's own error text rather than a generic one. */
+    async function call(method, url, body) {
+      var init = { method: method, headers: { accept: 'application/json' } };
+      if (body !== undefined) {
+        init.headers['content-type'] = 'application/json';
+        init.body = JSON.stringify(body);
+      }
+      var res = await fetch(url, init);
+      var payload = null;
+      try { payload = await res.json(); } catch (e) { /* empty body is fine for some 2xx */ }
+      if (!res.ok) throw new Error((payload && payload.error) || ('HTTP ' + res.status));
+      return payload;
+    }
+
+    var state = { me: null, status: null, roles: [] };
+
+    function renderRoot() {
+      var banner = document.getElementById('rootBanner');
+      var pill = document.getElementById('rootPill');
+      var body = document.getElementById('rootBody');
+      var st = state.status || {};
+      var me = state.me || {};
+
+      banner.className = 'card root-banner';
+
+      if (!st.rootClaimed) {
+        banner.classList.add('unclaimed');
+        pill.innerHTML = '<span class="pill warn">unclaimed</span>';
+        // Claimable when the swarm has no roles at all, or the caller is already an operator via
+        // the break-glass allowlist. The API re-checks both — this only decides what to offer.
+        var claimable = st.callerIsOperator || (st.rolesLoaded && st.privilegedCount === 0);
+        body.innerHTML =
+          '<p class="sub">No identity holds swarm root. Administration currently depends on the ' +
+          '<code>OSHAL_OPERATOR_SUBS</code> / <code>OSHAL_OPERATOR_EMAILS</code> break-glass allowlist ' +
+          'in this deployment&rsquo;s environment file &mdash; which nobody can change from a browser.</p>' +
+          (claimable
+            ? '<p style="margin:14px 0 0"><button class="primary" id="claimBtn" type="button">Claim swarm root</button></p>'
+            : '<p class="hint">You cannot claim root: this swarm already has roles and you are not an ' +
+              'operator. Ask a current admin, or add yourself to the break-glass allowlist and restart.</p>');
+        if (claimable) {
+          document.getElementById('claimBtn').addEventListener('click', async function () {
+            if (!confirm('Claim swarm root for your account?\n\nYou become the one identity that owns this swarm. You can transfer it later, but it cannot be revoked.')) return;
+            this.disabled = true;
+            try {
+              await call('POST', '/api/swarm/roles/claim-root', {});
+              show('ok', 'You now hold swarm root.');
+              await load();
+            } catch (e) { show('err', e.message); this.disabled = false; }
+          });
+        }
+        return;
+      }
+
+      if (st.callerIsRoot) {
+        pill.innerHTML = '<span class="pill root">you are root</span>';
+        body.innerHTML =
+          '<p class="sub">You hold swarm root. <span class="root-id">' + esc(me.sub || '') + '</span></p>' +
+          '<form class="grant-form" id="transferForm" style="margin-top:14px">' +
+          '<input id="transferSub" type="text" placeholder="Transfer root to subject (sub)" aria-label="Transfer root to subject" required />' +
+          '<button class="danger" type="submit">Transfer root</button></form>' +
+          '<p class="hint">Transferring hands the swarm to another identity. You are demoted to ' +
+          '<strong>admin</strong>, not removed &mdash; you keep administrative access to the machine you still run.</p>';
+        document.getElementById('transferForm').addEventListener('submit', async function (ev) {
+          ev.preventDefault();
+          var to = document.getElementById('transferSub').value.trim();
+          if (!to) return;
+          if (!confirm('Transfer swarm root to:\n\n' + to + '\n\nYou will be demoted to admin. This cannot be undone from your side.')) return;
+          try {
+            await call('POST', '/api/swarm/roles/transfer-root', { toSub: to });
+            show('ok', 'Swarm root transferred.');
+            await load();
+          } catch (e) { show('err', e.message); }
+        });
+        return;
+      }
+
+      pill.innerHTML = '<span class="pill admin">claimed</span>';
+      body.innerHTML = '<p class="sub">Swarm root is held by another identity. ' +
+        (me.role === 'admin' ? 'You are an <strong>admin</strong> and may manage roles and applications.'
+                             : 'You are not an administrator of this swarm.') + '</p>';
+
+      // A break-glass-only operator is privileged by env var and has no role row. Say so — it is
+      // the exact state ADR-148 exists to end, and nothing else would ever surface it.
+      if (st.callerBreakGlassOnly) {
+        banner.classList.add('breakglass');
+        body.innerHTML += '<p class="hint"><strong>Your access is break-glass only.</strong> It comes ' +
+          'from the environment allowlist, not from a role on this swarm. Ask the current root to grant ' +
+          'you <code>admin</code> so your access survives a change to that file.</p>';
+      }
+    }
+
+    function renderRoles() {
+      var tbody = document.getElementById('rolesBody');
+      if (!state.roles.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">No roles assigned yet.</td></tr>';
+        return;
+      }
+      var meSub = (state.me && state.me.sub) || '';
+      tbody.innerHTML = state.roles.map(function (r) {
+        var isRoot = r.role === 'root';
+        var when = r.grantedAt ? new Date(r.grantedAt).toLocaleString() : '';
+        return '<tr>' +
+          '<td class="mono">' + esc(r.userSub) + (r.email ? '<br><span style="color:var(--ink-muted)">' + esc(r.email) + '</span>' : '') +
+            (r.userSub === meSub ? ' <span class="pill user">you</span>' : '') + '</td>' +
+          '<td><span class="pill ' + esc(r.role) + '">' + esc(r.role) + '</span></td>' +
+          '<td class="mono">' + esc(r.grantedBySub || '—') + '</td>' +
+          '<td>' + esc(when) + '</td>' +
+          '<td><div class="row-actions">' +
+            (isRoot
+              // Root is deliberately actionless here: it cannot be revoked or re-roled, only transferred.
+              ? '<span class="hint" style="margin:0">transfer only</span>'
+              : '<button data-act="toggle" data-sub="' + esc(r.userSub) + '" data-role="' + esc(r.role) + '">' +
+                  (r.role === 'admin' ? 'Make user' : 'Make admin') + '</button>' +
+                '<button class="danger" data-act="revoke" data-sub="' + esc(r.userSub) + '">Remove</button>') +
+          '</div></td></tr>';
+      }).join('');
+
+      tbody.querySelectorAll('button[data-act]').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          var sub = btn.dataset.sub;
+          var act = btn.dataset.act;
+          try {
+            btn.disabled = true;
+            if (act === 'revoke') {
+              if (!confirm('Remove all role privileges from:\n\n' + sub + '?')) { btn.disabled = false; return; }
+              await call('DELETE', '/api/swarm/roles/' + encodeURIComponent(sub));
+            } else {
+              var next = btn.dataset.role === 'admin' ? 'user' : 'admin';
+              await call('POST', '/api/swarm/roles', { userSub: sub, role: next });
+            }
+            show('ok', 'Role updated.');
+            await load();
+          } catch (e) { show('err', e.message); btn.disabled = false; }
+        });
+      });
+    }
+
+    async function loadAccounts() {
+      var card = document.getElementById('accountsCard');
+      try {
+        var data = await call('GET', '/api/local-auth/users');
+        var users = (data && data.users) || [];
+        card.style.display = '';
+        document.getElementById('accountsCount').textContent = users.length + ' account' + (users.length === 1 ? '' : 's');
+        var known = {};
+        state.roles.forEach(function (r) { known[r.userSub] = r.role; });
+        document.getElementById('accountsBody').innerHTML = users.map(function (u) {
+          var role = known[u.userSub] || 'user';
+          return '<tr>' +
+            '<td>' + esc(u.email) + '</td>' +
+            '<td><span class="pill user">' + esc(u.status) + '</span></td>' +
+            '<td class="mono">' + esc(u.userSub) + '</td>' +
+            '<td><div class="row-actions">' +
+              (role === 'user'
+                ? '<button data-make-admin="' + esc(u.userSub) + '" data-email="' + esc(u.email) + '">Make admin</button>'
+                : '<span class="pill ' + esc(role) + '">' + esc(role) + '</span>') +
+            '</div></td></tr>';
+        }).join('');
+        document.getElementById('accountsBody').querySelectorAll('button[data-make-admin]').forEach(function (btn) {
+          btn.addEventListener('click', async function () {
+            try {
+              btn.disabled = true;
+              await call('POST', '/api/swarm/roles', {
+                userSub: btn.dataset.makeAdmin, email: btn.dataset.email, role: 'admin',
+              });
+              show('ok', 'Admin granted.');
+              await load();
+            } catch (e) { show('err', e.message); btn.disabled = false; }
+          });
+        });
+      } catch (e) {
+        // Not LOCAL_AUTH, or not permitted — accounts live elsewhere. Stay hidden rather than
+        // rendering an empty table that reads as breakage.
+        card.style.display = 'none';
+      }
+    }
+
+    async function load() {
+      try {
+        state.me = await call('GET', '/api/swarm/roles/me');
+        state.status = await call('GET', '/api/swarm/roles/status');
+      } catch (e) {
+        show('err', 'Could not read your access: ' + e.message);
+        return;
+      }
+      renderRoot();
+
+      if (!state.status.callerIsOperator) {
+        document.getElementById('rolesBody').innerHTML =
+          '<tr><td colspan="5" class="empty">Only swarm administrators can see the role list.</td></tr>';
+        document.getElementById('grantForm').style.display = 'none';
+        return;
+      }
+      try {
+        var data = await call('GET', '/api/swarm/roles');
+        state.roles = (data && data.roles) || [];
+        renderRoles();
+        await loadAccounts();
+      } catch (e) { show('err', e.message); }
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', load);
+    document.getElementById('grantForm').addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      var sub = document.getElementById('grantSub').value.trim();
+      var email = document.getElementById('grantEmail').value.trim();
+      var role = document.getElementById('grantRole').value;
+      if (!sub) return;
+      try {
+        await call('POST', '/api/swarm/roles', { userSub: sub, email: email || null, role: role });
+        document.getElementById('grantSub').value = '';
+        document.getElementById('grantEmail').value = '';
+        show('ok', 'Role granted.');
+        await load();
+      } catch (e) { show('err', e.message); }
+    });
+
+    load();
+  </script>
+</body>
+</html>
