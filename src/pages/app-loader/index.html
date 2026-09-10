@@ -145,7 +145,7 @@
         </div>
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px">
           <label class="check"><input id="fPrivateHost" type="checkbox" /> Allow a private / internal host</label>
-          <label class="check"><input id="fUnsigned" type="checkbox" /> Allow packages with no audit record</label>
+          <label class="check"><input id="fUnsigned" type="checkbox" /> Allow packages that are not audited</label>
         </div>
         <p class="hint" style="margin-top:12px">The key is stored in the swarm vault when one is
           available, and encrypted in the database otherwise. It is never shown again and never
@@ -348,8 +348,8 @@
             (probe.packageCount > probe.sample.length ? ' &hellip;' : '') + '</p>' : '') +
           (unsigned > 0
             ? '<p class="msg err" style="display:block;margin:10px 0">' + unsigned + ' of these package' +
-              (unsigned === 1 ? ' has' : 's have') + ' <strong>no audit record</strong>. Installing one runs unreviewed code in this controller.</p>'
-            : '<p class="hint" style="margin:0 0 10px">All packages carry an audit record.</p>') +
+              (unsigned === 1 ? ' is' : ' are') + ' <strong>not audited</strong>. Installing one runs unreviewed code in this controller.</p>'
+            : '<p class="hint" style="margin:0 0 10px">Every package binds an audited commit.</p>') +
           '<p class="hint" style="margin:12px 0 6px"><strong>Adding this source means you accept code from it.</strong> ' +
             'Type <code>' + esc(hostOf(v.url)) + '</code> to confirm:</p>' +
           '<div class="toolbar"><input id="confirmHost" type="text" placeholder="' + esc(hostOf(v.url)) + '" autocomplete="off" />' +
@@ -377,6 +377,34 @@
         document.getElementById('probeBtn').disabled = false;
       }
     });
+
+    var UNAUDITED_SHA = '0000000000000000000000000000000000000000';
+
+    /**
+     * Audit posture for a catalog entry. Prefers the server's auditState; falls back to deriving it
+     * from the raw binding, because src/pages is bind-mounted and goes live on save while the API
+     * that adds auditState only ships with the next image deploy. Deriving it keeps the page honest
+     * across that window instead of trusting the older API's "signed" flag, which counted the
+     * all-zeros placeholder as an audit.
+     */
+    function auditStateOf(app) {
+      if (app && app.auditState) return app.auditState;
+      if (!app || !app.audit) return 'none';
+      return app.audit.sourceSha === UNAUDITED_SHA ? 'pending' : 'audited';
+    }
+
+    function auditReasonFor(state) {
+      if (state === 'audited') return 'audited — its registry binds the reviewed commit';
+      if (state === 'pending') return 'audit pending — this package has not been reviewed yet';
+      return 'no audit record — this package has not been reviewed';
+    }
+
+    /** Audit posture pill. "audited" means its registry binds a reviewed commit — never "safe". */
+    function auditPill(state) {
+      if (state === 'audited') return '<span class="pill ok">audited</span>';
+      if (state === 'pending') return '<span class="pill warn" title="The registry has an audit record for this package but it has not been reviewed yet">audit pending</span>';
+      return '<span class="pill warn" title="No audit record">no audit</span>';
+    }
 
     function hostOf(url) {
       try { return new URL(url).hostname; } catch (e) { return url; }
@@ -418,7 +446,7 @@
           '<td class="mono">' + esc(a.version || '—') + '</td>' +
           '<td><span class="pill mute">' + esc(a.registryLabel || a.registry) + '</span></td>' +
           '<td>' + esc(a.suite || '—') + '</td>' +
-          '<td>' + (a.signed ? '<span class="pill ok">signed</span>' : '<span class="pill warn">unsigned</span>') + '</td>' +
+          '<td>' + auditPill(auditStateOf(a)) + '</td>' +
           '<td><div class="row-actions">' +
             (ready
               ? '<button class="primary" data-install>Install</button>'
@@ -490,11 +518,18 @@
           return '<li' + (it[2] ? ' class="danger"' : '') + '><b>' + it[0] + '</b><span>' + it[1] + '</span></li>';
         }).join('');
 
-        document.getElementById('dlgAudit').innerHTML = i.signed
-          ? '<span class="pill ok">signed</span> ' + esc(i.auditReason)
-          : '<span class="pill warn">unsigned</span> ' + esc(i.auditReason) +
-            (p.allowUnsigned ? '' : ' — this source does not allow unsigned installs, so this will be refused.');
-        document.getElementById('dlgConfirm').disabled = !i.signed && !p.allowUnsigned;
+        // The install decision comes from the SAME server function the install route calls, so
+        // this screen cannot promise an install the route will refuse.
+        var listed = state.apps.find(function (a) { return a.registry === registry && a.name === name; });
+        var auditState = i.auditState || auditStateOf(listed);
+        var reason = i.auditState ? i.auditReason : auditReasonFor(auditState);
+        // Older API (before the next deploy) returns no decision; the install route still enforces
+        // its own gate, so offer the button and say the server decides rather than disabling it.
+        var decision = p.install || { allowed: true, note: 'the server checks the audit gate when you install' };
+        document.getElementById('dlgAudit').innerHTML = auditPill(auditState) + ' ' + esc(reason) +
+          '<br><span style="display:inline-block;margin-top:6px">' + (decision.allowed ? '' : '<strong>Will not install:</strong> ') +
+          esc(decision.note) + '</span>';
+        document.getElementById('dlgConfirm').disabled = !decision.allowed;
       } catch (e) {
         document.getElementById('dlgSource').textContent = '';
         document.getElementById('dlgImpact').innerHTML = '<li class="danger"><b>error</b><span>' + esc(e.message) + '</span></li>';

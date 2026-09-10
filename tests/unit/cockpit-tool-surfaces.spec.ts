@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the four new cockpit tool surfaces (budgets/notify/dlq/my-data). Pins the two properties the whole deploy-free approach rests on: (1) the cockpit's own express.static mount serves src/pages/cockpit/tools/*.html at /cockpit/tools/<name>.html AND it is behind requiresAuth, so no Express route and no image rebuild are needed and the pages are never anonymously readable; (2) each page consumes framework theme tokens read-only via the shared bootstrap (data-theme default on <html>, surface-themes.css, surface-theme.js) with surface-glass.css loaded AFTER its own styles, and composites any element that covers scrolling content over an opaque colour instead of using the deliberately-translucent --bg-card directly. Also pins that each ribbon entry's iframeUrl resolves to a file that exists — a typo there is a blank tool nobody notices.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add devices.html (Get oshal on your devices) to the guarded set, plus its own rules: the one-click installer is FETCHED and saved only on a 200 (a plain <a download> would save the route's 409 JSON under the installer's name), the credential notice precedes the fetch, the phone QR comes from the same-origin pairing route, and the computers list is the caller-scoped /api/remote-clients.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147/148 guard: App Loader and Users are on the rail for operators only, proven by running the real _appendPlatformToolsInner with the operator flag on and off rather than by string position in the source.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -179,3 +180,40 @@ describe('devices.html — the Get oshal page keeps the credential-download rule
     expect(html).toContain("fetch('/api/remote-clients'");
   });
 });
+
+describe('ADR-147/148 admin surfaces are on the rail for operators ONLY — behaviour, not string order', () => {
+  /**
+   * Builds the platform-tool list by running the REAL RibbonNav method on a minimal instance, with
+   * the operator flag on and off. The constructor is skipped on purpose (it touches document and
+   * starts a profile fetch); the method reads only views / isOperator / studentMode / profile.
+   */
+  async function toolIdsFor(isOperator: boolean): Promise<string[]> {
+    const mod = await import('../../src/pages/cockpit/js/components/RibbonNav.js');
+    const instance = { views: [] as { id: string }[], isOperator, studentMode: false, profile: null };
+    (mod.RibbonNav.prototype as unknown as { _appendPlatformToolsInner(this: typeof instance): void })
+      ._appendPlatformToolsInner.call(instance);
+    return instance.views.map((v) => v.id);
+  }
+
+  it('an operator gets App Loader and Users, pointing at the routed admin pages', async () => {
+    const ids = await toolIdsFor(true);
+    expect(ids).toContain('tool-app-loader');
+    expect(ids).toContain('tool-users');
+    expect(ribbonSource()).toContain("iframeUrl: '/app-loader'");
+    expect(ribbonSource()).toContain("iframeUrl: '/users'");
+  });
+
+  it('a non-operator gets NEITHER — the rail never offers a page that can only answer 403', async () => {
+    const ids = await toolIdsFor(false);
+    expect(ids).not.toContain('tool-app-loader');
+    expect(ids).not.toContain('tool-users');
+    expect(ids).not.toContain('tool-dlq');
+    // …while still getting the ordinary platform tools, so this is a gate and not an empty list.
+    expect(ids.length).toBeGreaterThan(0);
+  });
+});
+
+function ribbonSource(): string {
+  return readFileSync(RIBBON_NAV, 'utf8');
+}
+

@@ -924,9 +924,35 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** extend `/welcome` through trusted store selection, package choice/install, invited users, and safe backup/secret defaults; third-party store URLs require an explicit trust design.
 - **Done when:** a fresh LOCAL_AUTH admin completes or skips each re-enterable step, failures name the package, anonymous users cannot invoke installation, and an ADR prevents a typed store URL from gaining unchecked code execution. See [ADR-117](adr/117-local-auth-invited-users.md).
 
-### User access management page and role integration (there is no "swarm root" today)
-- **Remaining:** the platform has TWO identity systems that are not connected. `requiresOperator` — the only fail-closed privilege gate, and what Security Center, `install-remote`, update-apply, the guest tier and (per [ADR-147](adr/147-multi-registry-app-loader.md)) the App Loader all rely on — reads the hand-typed `OSHAL_OPERATOR_SUBS` / `OSHAL_OPERATOR_EMAILS` env allowlist. Local accounts live in `oshal_local_users` ([ADR-117](adr/117-local-auth-invited-users.md)), where `bootstrapFirstAdmin` creates the first account and code calls it *"the installer is the first admin"*. **Nothing links the two:** every `OSHAL_OPERATOR_SUBS` write in the tree is a hand-edited `.env` or a script reading its first entry as a fallback sending identity, there is no role column on `oshal_local_users`, and no surface manages either. So a fresh box's first admin can sign in and administer users but cannot reach any operator-gated page, and an admin page reads as broken when the real cause is an unset env var. Needs: a role column + a UAM surface (list/invite/disable/assign role over the existing invite machinery), `isOperatorIdentity` deriving from that role with the env allowlist retained as the bootstrap/break-glass path, and the first-run flow explicitly PROMOTING the bootstrap admin rather than any code path auto-granting operator to whoever registers first (that would be a silent escalation on any box reachable before its first login).
-- **Done when:** a role exists and is assignable from a UAM page, `requiresOperator` honours it, the bootstrap admin is promoted by an explicit recorded step, the env allowlist still works as break-glass, and a guard proves a non-operator signed-in user is refused by an operator-gated route through the real middleware chain. Raised by the ADR-147 premise check, 2026-09-09.
+### Swarm root — the three pieces ADR-148 did not build
+- **Remaining:** [ADR-148](adr/148-swarm-root.md) shipped the role store, root claim/transfer, the
+  role-aware `isOperatorIdentity`, bootstrap-claims-root and the `/users` page. Three things remain:
+  (1) a `MOCK_OIDC` box's installer-configured identity stays break-glass-only until someone claims
+  root from `/users` — nothing adopts it; (2) `/users` lists local accounts and grants roles, but
+  inviting and disabling accounts still go through the local-auth admin API rather than the page;
+  (3) no spec drives an operator-gated route through the real Express middleware chain as a signed-in
+  NON-operator — the shipped guards cover the store and `isOperatorIdentity` against live Postgres,
+  and the 401/200 route paths were verified on the box, but the authenticated-non-operator 403 was not.
+- **Done when:** a `MOCK_OIDC` install ends with its configured identity holding root (or a recorded
+  decision that it should not); `/users` can invite and disable a local account; and a spec mounts
+  `/api/swarm/roles` and `/api/swarm/registries` behind the real auth middleware and gets 403 as a
+  signed-in non-operator and 200 as an admin granted through `swarm_roles`.
+
+### App Loader — the ADR-147 decisions that did not ship
+- **Remaining:** (1) **D6 collision** — installing a package name that is already installed from a
+  DIFFERENT registry replaces it (the installer removes and re-copies `deployed-apps/<name>`); the
+  API must refuse with 409 unless the operator confirms a replace. Latent until a second registry
+  publishes a clashing name. (2) **D7** — dependencies resolve only from the origin registry;
+  cross-registry resolution (exactly-one-other-trusted-registry, shown in the preview) and the
+  two-registries fail-closed rule are not built. (3) **D10** — a public hostname that resolves to a
+  private address is not refused; the durable fix pins the resolved address for the fetch rather
+  than validating then fetching. (4) **P3** — `/applications` Discover still reads
+  `/api/swarm/apps/catalog`; it should read the aggregate. (5) The page has no "revoke trust" button
+  (the API supports `trustState: "revoked"`).
+- **Done when:** each item ships with its guard — a 409 spec for a cross-registry name collision; a
+  two-registry dependency spec that fails closed; a fence spec where a hostname resolving to
+  `10.0.0.0/8` is refused through a real local resolver seam; Discover rendering packages from a
+  second registry; and ADR-147's As built section updated to drop each line as it lands.
 
 ### `swarm-cli` zsh completion
 - **Remaining:** execute the current completion in real zsh, covering sourced/autoloaded modes, command/state dispatch, and saved context completion.
