@@ -59,6 +59,17 @@ describe('loaded application integration contracts', () => {
     cards.get('sender')!.items = [{ text: 'Result ready', highlight: true } as any];
     expect(highlights([sender], cards, {})[0].text).toBe('Result ready');
   });
+  it('renders bounded distinct actions and hides all of them with the saved preference', async () => {
+    const { AppsHomeView } = await import('@/pages/cockpit/js/views/AppsHomeView.js' as any);
+    const { selected } = await import('@/pages/cockpit/js/views/app-home-model.js' as any);
+    const source=structuredClone(sender);
+    source.integrations!.offers!.push({...source.integrations!.offers![0],id:'second',label:'Second destination'});
+    const [entry]=buildHomePlan([source,receiver]);const view=new AppsHomeView();view.cards=new Map();
+    const html=await view.loadCard(entry,new Map(),new Map([['/api/sender/home',{ok:true,body:{items:[{text:'Finding',actions:[{integration:'prepare',context:{title:'First'}},{integration:'prepare',context:{title:'Duplicate'}},{integration:'second',context:{title:'Second'}}]}]}}]]));
+    expect(html.match(/data-integration=/g)).toHaveLength(2);
+    const hidden=selected(view.cards.get('sender'),{showActions:false});
+    expect(hidden.items[0].actions).toEqual([]);expect(view.body(hidden)).not.toContain('data-integration=');
+  });
 
   it('delivers once to the exact same-origin frame and bounds context', async () => {
     const { contextFor, stageHandoff, deliverHandoff } = await import('@/pages/cockpit/js/app-handoff.js' as any);

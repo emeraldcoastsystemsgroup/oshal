@@ -301,13 +301,15 @@ export class AppsHomeView {
     if (button.dataset.integration) {
       const entry = this.entries.find(e => e.name === button.dataset.card);
       const item = this.cards.get(entry?.name)?.items[Number(button.dataset.item)];
-      if (!item?.integration) return;
+      const chosen = item?.actions?.find(a => a.integration === button.dataset.integration)
+        || (item?.integration === button.dataset.integration ? item : null);
+      if (!chosen) return;
       button.disabled = true;
       try {
         const response = await askProbe('/api/swarm/apps/home-plan');
         const probe = response.ok && response.body.apps?.find(e => e.name === entry.name)?.summary.find(p => p.app === item.sourceApp);
-        const offer = probe?.integrations?.find(o => o.id === item.integration);
-        if (!stageHandoff(offer, item.context)) throw new Error('This integration is no longer available. Refresh Home.');
+        const offer = probe?.integrations?.find(o => o.id === chosen.integration);
+        if (!stageHandoff(offer, chosen.context)) throw new Error('This integration is no longer available. Refresh Home.');
         this.navigateToView(`tool-${offer.surface}`, { name: offer.surface, url: offer.surfaceUrl });
       } catch (error) { this.showToast?.(error.message, 'error'); button.disabled = false; }
       return;
@@ -416,16 +418,23 @@ export class AppsHomeView {
           anyChecked = true;
           for (const it of at.value.slice(0, MAX_ITEMS)) {
             if (it && typeof it.text === 'string') {
-              const offer = probe.integrations?.find(o => o.id === it.integration);
-              const context = offer?.state === 'available' ? contextFor(offer.fields, it.context) : null;
+              const actions = [], used = new Set();
+              for (const action of (Array.isArray(it.actions) ? it.actions : [it]).slice(0, 4)) {
+                const offer = probe.integrations?.find(o => o.id === action?.integration);
+                if (!offer || used.has(offer.id)) continue;
+                used.add(offer.id);
+                const context = offer.state === 'available' ? contextFor(offer.fields, action.context) : null;
+                if (context) actions.push({ integration: offer.id, actionLabel: offer.label, context });
+                else if (offer.state !== 'available') actions.push({ integrationNote: `${offer.label}: ${offer.state === 'unavailable' ? 'receiving app is not loaded' : 'compatible receiving action required'}` });
+              }
               items.push({ metricId: typeof it.metricId === 'string' ? `${probe.app}/${it.metricId}` : undefined,
                 text: it.text.slice(0, 120), detail: typeof it.detail === 'string' ? it.detail.slice(0, 400) : '',
                 highlight: it.highlight === true, tone: tone(it.tone),
                 sourceUrl: typeof it.sourceUrl === 'string' && it.sourceUrl.length <= 2048 ? sourceUrl(it.sourceUrl) : undefined,
                 fix: (probe.surfaces || []).includes(it.fix) ? it.fix : undefined,
                 sourceApp: probe.app, card: entry.name, item: items.length,
-                ...(context ? { integration: offer.id, actionLabel: offer.label, context } : {}),
-                ...(offer && offer.state !== 'available' ? { integrationNote: `${offer.label}: ${offer.state === 'unavailable' ? 'receiving app is not loaded' : 'compatible receiving action required'}` } : {}),
+                actions,
+                ...(actions[0] || {}),
               });
             }
           }
@@ -492,7 +501,7 @@ export class AppsHomeView {
       parts.push(`<ul class="apps-home-items">${items.map((i) => `
         <li class="tone-${i.tone}"><span>${esc(i.text)}${i.detail ? `<small class="apps-home-item-detail">${esc(i.detail)}</small>` : ''}</span>${
           i.fix ? `<button type="button" class="apps-home-fix" data-open="${esc(i.fix)}">Open</button>` : ''
-        }${i.sourceUrl ? `<a href="${esc(i.sourceUrl)}" target="_blank" rel="noopener noreferrer" class="apps-home-source">Read source ↗</a>` : ''}${i.integration ? `<button type="button" class="apps-home-context-action" data-integration="${esc(i.integration)}" data-card="${esc(i.card)}" data-item="${i.item}">${esc(i.actionLabel)} <span aria-hidden="true">↗</span></button>` : ''}${i.integrationNote ? `<small>${esc(i.integrationNote)}</small>` : ''}</li>`).join('')}</ul>`);
+        }${i.sourceUrl ? `<a href="${esc(i.sourceUrl)}" target="_blank" rel="noopener noreferrer" class="apps-home-source">Read source ↗</a>` : ''}${(i.actions || [i]).map(a => a.integration ? `<button type="button" class="apps-home-context-action" data-integration="${esc(a.integration)}" data-card="${esc(i.card)}" data-item="${i.item}">${esc(a.actionLabel)} <span aria-hidden="true">↗</span></button>` : a.integrationNote ? `<small>${esc(a.integrationNote)}</small>` : '').join('')}</li>`).join('')}</ul>`);
     }
 
     if (total > 0) {

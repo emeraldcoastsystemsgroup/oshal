@@ -111,6 +111,8 @@
 .apps-home-card .apps-home-items li:last-child { border-bottom: 0; padding-bottom: 0; }
 .apps-home-card .apps-home-items li > span { flex: 1 1 100%; font-weight: 550; font-size: 14px; }
 .apps-home-item-detail { display: block; font-size: 12px; color: var(--text-secondary); font-weight: 400; line-height: 1.65; margin-top: 6px; }
+.apps-home-source { color: var(--home-accent); text-underline-offset: 3px; }
+.apps-home-card .apps-home-items li.tone-neutral > span { color: var(--text-primary); }
 .apps-home .apps-home-context-action { border-color: color-mix(in srgb, var(--home-accent) 45%, var(--border-color)); background: color-mix(in srgb, var(--home-accent) 10%, var(--bg-card)); font-weight: 600; padding: 8px 12px; }
 .apps-home-card .apps-home-tile { background: transparent; padding: 4px 0; border: 0; }
 .apps-home-card .apps-home-tile strong { font-size: 23px; letter-spacing: -.04em; }
