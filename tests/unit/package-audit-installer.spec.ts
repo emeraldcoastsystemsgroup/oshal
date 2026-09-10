@@ -140,6 +140,31 @@ describe('core APP-02 audit contract', () => {
 });
 
 describe('oshal-app exact-SHA install boundary', () => {
+  it.each(['sample-app', 'source-folder'])('installs %s through its catalog identity when the source folder differs', (requestedName) => {
+    const store = fixtureRoot('oshal-folder-store-'), destination = fixtureRoot('oshal-folder-install-');
+    git(store, ['init', '-b', 'main']);
+    mkdirSync(join(store, 'source-folder'));
+    writeFileSync(join(store, 'source-folder', 'oshal-app.yaml'), 'name: sample-app\ndisplayName: Sample App\nsuite: ai-engineering\nversion: 1.2.3\n');
+    writeStore(store, entry({ source: { type: 'git-subdir', path: 'source-folder', url: pathToFileURL(store).href, ref: 'main' }, audit: { record: 'audits/sample-app.json', sourceSha: audit.UNAUDITED_SOURCE_SHA } }), record({ status: 'pending', sourceSha: audit.UNAUDITED_SOURCE_SHA, auditedAt: null, controls: controls('pending'), evidence: [] }));
+    const sha = commit(store, 'package with a distinct source folder');
+    execFileSync(process.execPath, [resolve('scripts/oshal-app.js'), 'install', requestedName, '--repo', pathToFileURL(store).href, '--dest', destination], { cwd: resolve('.'), encoding: 'utf8' });
+    const provenance = JSON.parse(readFileSync(join(destination, requestedName, '.oshal-install.json'), 'utf8'));
+    expect(provenance.sha).toBe(sha);
+    expect(provenance.audit.record).toBe('audits/sample-app.json');
+    expect(readFileSync(join(destination, requestedName, 'oshal-app.yaml'), 'utf8')).toContain('name: sample-app');
+  }, 20_000);
+
+  it('rejects ambiguous identities and source paths that escape the package tree', () => {
+    const { resolveStorePackage } = require('../../scripts/oshal-app');
+    const root = fixtureRoot();
+    for (const sourcePath of ['../escape', '/absolute', 'C:/drive', 'a/../b', 'a\\b', '*', '']) {
+      writeStore(root, entry({ source: { type: 'git-subdir', path: sourcePath } }));
+      expect(() => resolveStorePackage(root, 'sample-app')).toThrow(/confined/);
+    }
+    writeFileSync(join(root, 'marketplace.json'), JSON.stringify({ apps: [entry(), entry()] }));
+    expect(() => resolveStorePackage(root, 'sample-app')).toThrow(/exactly one/);
+  });
+
   it('installs the audited commit rather than the newer catalog commit in enforce mode', () => {
     const store = fixtureRoot('oshal-audit-git-store-');
     const destination = fixtureRoot('oshal-audit-install-');
