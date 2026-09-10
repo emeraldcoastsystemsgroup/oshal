@@ -64,6 +64,7 @@ enforces this.
 | `takeout` | | package-owned Google Takeout slice declarations — see below |
 | `smoke` | | executable HTTP probes run by the installer — see below |
 | `readiness` | | per-user readiness probes a group's setup dashboard asks in the signed-in user's session — see below |
+| `summary` | | the app's dashboard tile on the cockpit Home view: bounded `tiles` + `items` from one session-authenticated GET — see below |
 | `toolbar` / `setup` | | group-only: surfaces borrowed from members by reference, and the setup-dashboard steps — see "Application groups" |
 | `migrations` | | `[path]` — applied idempotently on install |
 | `ticketType` + `workflow` | | rides the kernel queue (the app doesn't own the queue) |
@@ -233,6 +234,96 @@ never service-only, operator or public), and valid pointers. Keep the probe hone
 same store the fix surface writes, because a probe that answers from cached state lies to the
 dashboard. Anything other than boolean `true` at `readyPointer` is *not done*; an HTTP error or a
 missing pointer renders as "can't check", never as done.
+
+## Dashboard tile (`summary:`)
+
+`readiness:` answers "what does this *person* still have to set up". `summary:` is its **reporting**
+sibling — "what is going on in this app right now" — and it is what the cockpit **Home** view renders
+as your app's tile ([ADR-145](../adr/145-app-status-contract.md)). One declaration per app: an app is
+one tile.
+
+```yaml
+routes:
+  - module: routes/example.js
+    factory: createExampleRoutes
+    mountPath: /api/example
+    auth: service-or-oidc
+
+summary:
+  path: /api/example/summary      # GET, below one of THIS package's routes
+  tilesPointer: /tiles            # RFC 6901 -> the headline numbers
+  itemsPointer: /items            # RFC 6901 -> the line items
+```
+
+The route answers from the caller's own rows, in the caller's own session:
+
+```js
+router.get('/summary', async (req, res) => {
+  const sub = callerSub(req);
+  if (!sub) { res.status(401).json({ error: 'sign in to see your summary' }); return; }
+  const { rows } = await ctx.pool.query(
+    `SELECT count(*) FILTER (WHERE status = 'open')::int AS open, count(*)::int AS total
+       FROM example_things WHERE user_sub = $1`,
+    [sub],
+  );
+  const { open, total } = rows[0];
+  res.json({
+    tiles: [
+      { label: 'Open', value: String(open), tone: open ? 'warn' : 'good' },
+      { label: 'Total', value: String(total) },
+    ],
+    items: open ? [{ text: `${open} need your attention`, tone: 'warn', fix: 'example-inbox' }] : [],
+  });
+});
+```
+
+### The shape
+
+| field | rule |
+|---|---|
+| `tiles` | at most **4**. `label` <= 24 chars, `value` <= 16 chars, optional `tone` |
+| `items` | at most **5**. `text` <= 120 chars, optional `tone`, optional `fix` |
+| `tone`  | closed enum — `neutral` (default) / `good` / `warn` |
+| `fix`   | a `ui.static[].toolName` **in the same app**, rendered as a button that opens that surface |
+
+**`value` is a string, never a number.** "116W-215L", "-$18.24", "6 of 9" and "3 days" are all real
+answers, and core cannot know your unit, locale or rounding rule. A numeric `value` is dropped rather
+than guessed at.
+
+The caps are not only a layout concern: four tiles and five items force you to decide what actually
+matters, which is the whole product value of the page.
+
+### What the loader and the page enforce
+
+- Validated fail-closed at load, exactly like `readiness:` — a canonical path below a route this same
+  manifest declares, an owning route that **admits a browser session** (`oidc` or `service-or-oidc`,
+  never service-only/operator/public), valid RFC 6901 pointers, and at least one of
+  `tilesPointer` / `itemsPointer`. A declaration that can yield neither is a load error.
+- Over-cap **truncates**; it does not reject. A chatty app degrades to its first four tiles instead of
+  breaking the page for every other app.
+- An unknown `tone` degrades to `neutral`. It can never **escalate** — one buggy package must not be
+  able to paint the whole page red.
+- A pointer that is missing, or resolves to the wrong type, renders **"can't check"** — never a fact,
+  and never a zero.
+- The probe is a **GET and must be side-effect free**. The page calls it on every load, on every
+  refresh, and concurrently from two tabs.
+- It is asked with a 3s timeout, at most 6 in flight across the page. A slow app shows "can't check"
+  and never delays another app's tile.
+
+### Where the tile lands
+
+On the shelf named by your `suite:` — nothing else decides placement. A `kind: group` collapses to
+**one** tile that aggregates its members, so a grouped app is never also listed loose.
+
+An app that declares no `summary:` still gets a tile, built from its recent `jarvis_tasks` rows whose
+titles carry the `<App>: ...` prefix. Filing tasks that way is the zero-cost version of this contract;
+`summary:` is how you report a *number* rather than a task.
+
+### Keep it honest
+
+Report what the user's own store says, and answer "unavailable" rather than `0` when a source read
+fails. The card renders faithfully whatever you return, and a wrong number here looks more
+authoritative than a wrong number anywhere else in your app — it is the first thing on the screen.
 
 ## Application groups (`kind: group`, ADR-141)
 
