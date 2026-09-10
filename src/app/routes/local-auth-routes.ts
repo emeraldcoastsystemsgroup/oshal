@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G14: a broken Google grant (token refresh rejected — getValidAccessToken throws `refresh 400`) now produces a DISTINCT emailDetail telling the admin to reconnect on the Connections screen, instead of the generic transport failure. On the G-Squared box the first two real invitations silently returned emailSent:false because a Testing-mode Google client had invalidated the refresh token for gmail.send hours after connecting, and the only signal was a container-log warning a prior triage had dismissed. The admin-facing message now names the fix (~30s reconnect) so no log dive is needed.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-117 deferred item: unauthenticated self-service password reset. POST /api/local-auth/forgot (public front door, like /login) asks the store for a reset token (createPasswordReset - active accounts only, never creates/resurrects/stomps) and emails the /invite link over the SAME two rails as invitations. Enumeration-safe by construction: ONE response body/status for known, unknown, invited and disabled addresses; one identical store round trip either way; delivery is fire-and-forget so response timing cannot become the oracle; and delivery outcomes are logged, never returned. Per-IP fixed-window limit answers 429; the per-EMAIL cap is enforced SILENTLY (same 200) because a distinct answer would itself leak, and it caps mailbombing a victim address. A reset never clears TOTP (acceptInvite leaves the factor columns alone - guarded). Guard: tests/unit/local-auth-forgot-password.spec.ts.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Stamp locally authenticated sessions with a stable issuer namespace so derived PAT/TV credentials and issuer-bound applications preserve the same account identity.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148 swarm root: the bootstrap route now CLAIMS SWARM ROOT for the first account. This is the fix for "default passwords are confusing" — the first account and the operator allowlist were two unconnected systems, so whoever set the very first password got no privilege from it and every operator-gated page 403d at them. Safe here specifically because bootstrapFirstAdmin is race-guarded to an empty user store. Non-fatal: a swarm whose root is already held by a break-glass operator still creates and signs in the account.
  */
 
 import { Router, type Request, type RequestHandler, type Response } from 'express';
@@ -25,6 +26,7 @@ import {
 import QRCode from 'qrcode';
 import { hasValidServiceSecret, isOperator } from '@/shared/middleware/authz';
 import { LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
+import { claimRoot } from '@/features/swarm-roles';
 import {
   LOCAL_SESSION_COOKIE,
   localAuthSigningSecret,
@@ -520,8 +522,29 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
       }
       knownNonEmpty = true;
       setLocalSessionCookie(req, res, sessionIdentityFor(user));
-      logger.info({ email: user.email, sub: user.userSub }, 'local-auth first admin bootstrapped');
-      res.status(201).json({ ok: true, email: user.email, sub: user.userSub });
+      // ADR-148: the first account BECOMES swarm root. Before this, bootstrapFirstAdmin created
+      // an account that code called "the first admin" while the operator gate read a separate
+      // hand-typed env allowlist — so the person who set the very first password received no
+      // privilege from it and every operator-gated page 403'd at them. Claiming root here is
+      // safe precisely because bootstrapFirstAdmin is race-guarded to an EMPTY user store: this
+      // is the one identity on the swarm, not an arbitrary caller asking for power.
+      let rootClaimed = false;
+      try {
+        await claimRoot(pool, {
+          userSub: user.userSub,
+          email: user.email,
+          displayName: user.displayName ?? null,
+          note: 'first account on this swarm (local-auth bootstrap)',
+        });
+        rootClaimed = true;
+      } catch (err) {
+        // Root already held (a break-glass operator claimed it first) is EXPECTED and fine —
+        // the account is still created and signed in. Anything else is logged, never fatal:
+        // failing the bootstrap would leave a swarm with no account at all.
+        logger.warn({ err, sub: user.userSub }, 'first admin created but swarm root was not claimed');
+      }
+      logger.info({ email: user.email, sub: user.userSub, rootClaimed }, 'local-auth first admin bootstrapped');
+      res.status(201).json({ ok: true, email: user.email, sub: user.userSub, rootClaimed });
     } catch (err) {
       logger.error({ err }, 'local-auth bootstrap failed');
       res.status(errStatus(err)).json({ error: (err as Error).message });
