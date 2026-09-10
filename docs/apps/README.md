@@ -90,3 +90,5 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
   forwarder, intake route, manifest with a graph-pipeline `approval-gate`, owner-RLS package table,
   ingest contract, untrusted-content handling, failure modes and test plan. Decisions and the RAG
   review behind it are in [ADR-135](../adr/135-print-to-swarm-and-print-to-rag.md).
+
+- [Configurable App Home plan](configurable-app-home-plan.md) ? approved product direction, extraction responsibilities, implementation slices and acceptance criteria.
