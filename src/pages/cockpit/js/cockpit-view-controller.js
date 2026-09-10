@@ -25,7 +25,7 @@ import {
 } from './views/index.js';
 import { DashboardHomeView } from './views/DashboardHomeView.js';
 import { AppsHomeView } from './views/AppsHomeView.js';
-import { deliverHandoff } from './app-handoff.js';
+import { deliverHandoff, homeSurfaceView } from './app-handoff.js';
 
 /**
  * @description Manage cockpit main-content view routing, ticket handoffs, and bot-to-rail context transitions.
@@ -223,7 +223,17 @@ export class CockpitViewController {
   // Render the ADR-145 cross-app Home: one card per installed group/app.
   async renderAppsHomeView(container) {
     const view = new AppsHomeView({
-      navigateToView: (viewId) => this.getRibbon()?.setActive(viewId),
+      navigateToView: (viewId, destination) => {
+        const ribbon = this.getRibbon();
+        const surface = homeSurfaceView(viewId, destination);
+        // A ribbon shortcut is a display choice, not the application's navigation contract.
+        if (ribbon && surface) {
+          const existing = ribbon.views.find(v => v.id === viewId);
+          if (existing) existing.toolUi = surface.toolUi;
+          else ribbon.views.push(surface);
+        }
+        ribbon?.setActive(viewId);
+      },
       showToast: (message, type) => this.showToast(message, type),
     });
     this.activeViewInstance = view;
@@ -353,6 +363,7 @@ export class CockpitViewController {
              <i class="codicon codicon-eye"></i><span>${notation || 'Read-only preview — sign in to make changes.'}</span>
            </div>`
         : '';
+      const frameSrc = bustedUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
       container.innerHTML = `
         <div class="tool-view-container" style="display:flex;flex-direction:column;height:100%;width:100%;">
@@ -361,7 +372,7 @@ export class CockpitViewController {
             <span style="font-weight:600;">${label}</span>
           </div>
           ${banner}
-          <iframe src="${bustedUrl}" allow="microphone; fullscreen" style="flex:1;border:none;width:100%;height:100%;" ${sandboxAttr}></iframe>
+          <iframe src="${frameSrc}" allow="microphone; fullscreen" style="flex:1;border:none;width:100%;height:100%;" ${sandboxAttr}></iframe>
         </div>`;
 
       deliverHandoff(container.querySelector('iframe'), viewId.replace(/^tool-/, ''));

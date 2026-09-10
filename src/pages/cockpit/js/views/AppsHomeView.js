@@ -306,11 +306,15 @@ export class AppsHomeView {
         const probe = response.ok && response.body.apps?.find(e => e.name === entry.name)?.summary.find(p => p.app === item.sourceApp);
         const offer = probe?.integrations?.find(o => o.id === item.integration);
         if (!stageHandoff(offer, item.context)) throw new Error('This integration is no longer available. Refresh Home.');
-        this.navigateToView(`tool-${offer.surface}`);
+        this.navigateToView(`tool-${offer.surface}`, { name: offer.surface, url: offer.surfaceUrl });
       } catch (error) { this.showToast?.(error.message, 'error'); button.disabled = false; }
       return;
     }
-    if (button.dataset.open) { this.navigateToView(`tool-${button.dataset.open}`); return; }
+    if (button.dataset.open) {
+      const entry = this.entries.find(e => e.firstSurface === button.dataset.open);
+      this.navigateToView(`tool-${button.dataset.open}`, entry ? { name: entry.firstSurface, url: entry.firstSurfaceUrl } : undefined);
+      return;
+    }
     const { action, id, kind, delta } = button.dataset;
     if (action === 'refresh') { if (!this.saving) await this.render(this.container); return; }
     if (action === 'close') { this.editor = null; this.draw(); return; }
