@@ -231,7 +231,9 @@ export class AppsHomeView {
         ${this.highlightHtml(highlights(shelf.entries, this.cards, p).filter(h => !top.some(t => t.app === h.app)).slice(0, 3))}
         ${(p.collapsedSuites || []).includes(shelf.key) ? '' : `<div class="apps-home-tiles-grid">${shelf.entries.map(entry => {
           const data = this.cards.get(entry.name), pref = p.cards?.[entry.name] || {};
-          return `<section class="apps-home-card ${pref.compact ? 'is-compact' : ''}" data-card="${esc(entry.name)}">${this.cardHead(entry)}${data ? this.body(selected(data, pref)) : '<p class="apps-home-loading">Checking...</p>'}</section>`;
+          const display = data ? selected(data, pref) : null;
+          const briefing = !pref.compact && display?.items?.filter(item => item.detail).length >= 2;
+          return `<section class="apps-home-card ${pref.compact ? 'is-compact' : ''} ${briefing ? 'is-briefing' : ''}" data-card="${esc(entry.name)}">${this.cardHead(entry)}${display ? this.body(display) : '<p class="apps-home-loading">Checking...</p>'}</section>`;
         }).join('')}</div>`}</section>`).join('')}</div>
       ${!visible.some(s => s.entries.length) ? '<p>No boxes are visible. Use Customize to show your applications.</p>' : ''}
       ${this.editor ? this.editorHtml(shelves) : ''}</div>`;
