@@ -7,6 +7,13 @@
  * Home customization | Codex | Add saved display choices, stable metric catalogs, and traceable suite/page highlights.
  */
 import { ordered, move, catalog, selected, highlights } from './app-home-model.js';
+import { contextFor, stageHandoff } from '../app-handoff.js';
+
+/** A source link is evidence navigation only; never an action or a credential-bearing URL. */
+function sourceUrl(value) {
+  try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : undefined; }
+  catch { return undefined; }
+}
 
 
 /**
@@ -214,13 +221,14 @@ export class AppsHomeView {
     const top = visible.flatMap(s => highlights(s.entries, this.cards, p).slice(0, 3))
       .sort((a, b) => Number(b.tone === 'warn') - Number(a.tone === 'warn')).slice(0, 5);
     this.container.innerHTML = `<div class="apps-home">
-      <header class="apps-home-head"><h2>Home</h2><p>Your applications, your overview.</p>
+      <header class="apps-home-head"><h2>Your world, at a glance.</h2><p>What matters. What moved. What you can do next.</p>
         <div class="apps-home-head-actions"><button data-action="refresh">Refresh</button><button data-action="customize" ${!this.canSave ? 'disabled' : ''}>Customize</button></div></header>
       ${this.notice ? `<p role="status" class="apps-home-notice">${esc(this.notice)}</p>` : ''}
       ${top.length ? `<section class="apps-home-highlights"><h3>Highlights</h3>${this.highlightHtml(top)}</section>` : ''}
-      <div class="apps-home-grid">${visible.map(shelf => `<section class="apps-home-shelf">
+      <div class="apps-home-grid">${visible.map(shelf => `<section class="apps-home-shelf" data-suite="${esc(shelf.key)}">
         <header class="apps-home-shelf-head"><h3>${esc(shelf.label)}</h3><button data-action="collapse" data-id="${esc(shelf.key)}" aria-expanded="${!(p.collapsedSuites || []).includes(shelf.key)}" ${!this.canSave ? 'disabled' : ''}>${(p.collapsedSuites || []).includes(shelf.key) ? 'Expand' : 'Collapse'}</button></header>
-        ${this.highlightHtml(highlights(shelf.entries, this.cards, p).slice(0, 3))}
+        <p class="apps-home-suite-overview">${shelf.entries.length} applications${highlights(shelf.entries, this.cards, p).filter(h => h.tone === 'warn').length ? ` · ${highlights(shelf.entries, this.cards, p).filter(h => h.tone === 'warn').length} with attention items` : ''}</p>
+        ${this.highlightHtml(highlights(shelf.entries, this.cards, p).filter(h => !top.some(t => t.app === h.app)).slice(0, 3))}
         ${(p.collapsedSuites || []).includes(shelf.key) ? '' : `<div class="apps-home-tiles-grid">${shelf.entries.map(entry => {
           const data = this.cards.get(entry.name), pref = p.cards?.[entry.name] || {};
           return `<section class="apps-home-card ${pref.compact ? 'is-compact' : ''}" data-card="${esc(entry.name)}">${this.cardHead(entry)}${data ? this.body(selected(data, pref)) : '<p class="apps-home-loading">Checking...</p>'}</section>`;
@@ -257,7 +265,7 @@ export class AppsHomeView {
       const shown = new Set(selected(data || { tiles: [], items: [], open: [] }, pref).tiles.map(t => t.id));
       content = metrics.map((m, at) => `<div class="apps-home-edit-row"><label><input type="checkbox" data-choice="metric" data-id="${esc(m.id)}" ${shown.has(m.id) ? 'checked' : ''}> ${esc(m.label)}</label>${this.arrows('metric', m.id, at, metrics.length)}</div>`).join('')
         || '<p>This app has not provided selectable data points yet. Its display options are still available.</p>';
-      content += [['compact', 'Compact box', pref.compact === true], ['showItems', 'Show updates', pref.showItems !== false], ['showSetup', 'Show setup steps', pref.showSetup !== false]].map(([key, label, checked]) => `<p><label><input type="checkbox" data-choice="card" data-id="${key}" ${checked ? 'checked' : ''}> ${label}</label></p>`).join('');
+      content += [['compact', 'Compact box', pref.compact === true], ['showItems', 'Show updates', pref.showItems !== false], ['showActions', 'Show connected actions', pref.showActions !== false], ['showSetup', 'Show setup steps', pref.showSetup !== false]].map(([key, label, checked]) => `<p><label><input type="checkbox" data-choice="card" data-id="${key}" ${checked ? 'checked' : ''}> ${label}</label></p>`).join('');
     }
     return `<dialog class="apps-home-editor" aria-labelledby="homeEditTitle"><header><h2 id="homeEditTitle">${e.type === 'layout' ? 'Customize Home' : esc(this.entries.find(a => a.name === e.name)?.displayName)}</h2><button data-action="close">Done</button></header><p role="status">${this.saving ? 'Saving...' : esc(this.notice || 'Changes save to your account.')}</p><fieldset ${this.saving ? 'disabled' : ''}>${content}</fieldset><button data-action="reset" ${this.saving ? 'disabled' : ''}>Restore ${e.type === 'layout' ? 'all defaults' : 'box defaults'}</button></dialog>`;
   }
@@ -288,6 +296,20 @@ export class AppsHomeView {
   async handleClick(ev) {
     const button = ev.target.closest('button');
     if (!button || button.disabled) return;
+    if (button.dataset.integration) {
+      const entry = this.entries.find(e => e.name === button.dataset.card);
+      const item = this.cards.get(entry?.name)?.items[Number(button.dataset.item)];
+      if (!item?.integration) return;
+      button.disabled = true;
+      try {
+        const response = await askProbe('/api/swarm/apps/home-plan');
+        const probe = response.ok && response.body.apps?.find(e => e.name === entry.name)?.summary.find(p => p.app === item.sourceApp);
+        const offer = probe?.integrations?.find(o => o.id === item.integration);
+        if (!stageHandoff(offer, item.context)) throw new Error('This integration is no longer available. Refresh Home.');
+        this.navigateToView(`tool-${offer.surface}`);
+      } catch (error) { this.showToast?.(error.message, 'error'); button.disabled = false; }
+      return;
+    }
     if (button.dataset.open) { this.navigateToView(`tool-${button.dataset.open}`); return; }
     const { action, id, kind, delta } = button.dataset;
     if (action === 'refresh') { if (!this.saving) await this.render(this.container); return; }
@@ -339,13 +361,15 @@ export class AppsHomeView {
   }
 
   cardHead(entry) {
+    const description = String(entry.description || '').trim();
+    const purpose = description.length > 200 ? `${description.slice(0, 197).replace(/\s+\S*$/, '')}…` : description;
     const open = entry.firstSurface
       ? `<button type="button" class="apps-home-open" data-open="${esc(entry.firstSurface)}">Open</button>`
       : '';
     const badge = entry.kind === 'group'
       ? `<span class="apps-home-badge">${entry.members.length} apps</span>` : '';
     return `<header class="apps-home-card-head">
-      <h3>${esc(entry.displayName)}</h3>${badge}${open}<button data-action="edit" data-id="${esc(entry.name)}" ${!this.canSave ? 'disabled' : ''}>Edit</button></header>`;
+      <span class="apps-home-app-icon" aria-hidden="true">${entry.icon && /^codicon(?: codicon-[a-z0-9-]+)?$/.test(entry.icon) ? `<i class="${esc(entry.icon)}"></i>` : esc(entry.displayName.slice(0, 1))}</span><h3>${esc(entry.displayName)}</h3>${badge}${open}<button data-action="edit" data-id="${esc(entry.name)}" aria-label="Customize ${esc(entry.displayName)}" ${!this.canSave ? 'disabled' : ''}>Edit</button></header>${purpose ? `<p class="apps-home-purpose">${esc(purpose)}</p>` : ''}`;
   }
 
   /**
@@ -386,7 +410,17 @@ export class AppsHomeView {
           anyChecked = true;
           for (const it of at.value.slice(0, MAX_ITEMS)) {
             if (it && typeof it.text === 'string') {
-              items.push({ metricId: typeof it.metricId === 'string' ? `${probe.app}/${it.metricId}` : undefined, text: it.text.slice(0, 120), tone: tone(it.tone), fix: (probe.surfaces || []).includes(it.fix) ? it.fix : undefined });
+              const offer = probe.integrations?.find(o => o.id === it.integration);
+              const context = offer?.state === 'available' ? contextFor(offer.fields, it.context) : null;
+              items.push({ metricId: typeof it.metricId === 'string' ? `${probe.app}/${it.metricId}` : undefined,
+                text: it.text.slice(0, 120), detail: typeof it.detail === 'string' ? it.detail.slice(0, 400) : '',
+                highlight: it.highlight === true, tone: tone(it.tone),
+                sourceUrl: typeof it.sourceUrl === 'string' && it.sourceUrl.length <= 2048 ? sourceUrl(it.sourceUrl) : undefined,
+                fix: (probe.surfaces || []).includes(it.fix) ? it.fix : undefined,
+                sourceApp: probe.app, card: entry.name, item: items.length,
+                ...(context ? { integration: offer.id, actionLabel: offer.label, context } : {}),
+                ...(offer && offer.state !== 'available' ? { integrationNote: `${offer.label}: ${offer.state === 'unavailable' ? 'receiving app is not loaded' : 'compatible receiving action required'}` } : {}),
+              });
             }
           }
         } else summaryErrors++;
@@ -450,9 +484,9 @@ export class AppsHomeView {
 
     if (items.length) {
       parts.push(`<ul class="apps-home-items">${items.map((i) => `
-        <li class="tone-${i.tone}"><span>${esc(i.text)}</span>${
+        <li class="tone-${i.tone}"><span>${esc(i.text)}${i.detail ? `<small class="apps-home-item-detail">${esc(i.detail)}</small>` : ''}</span>${
           i.fix ? `<button type="button" class="apps-home-fix" data-open="${esc(i.fix)}">Open</button>` : ''
-        }</li>`).join('')}</ul>`);
+        }${i.sourceUrl ? `<a href="${esc(i.sourceUrl)}" target="_blank" rel="noopener noreferrer" class="apps-home-source">Read source ↗</a>` : ''}${i.integration ? `<button type="button" class="apps-home-context-action" data-integration="${esc(i.integration)}" data-card="${esc(i.card)}" data-item="${i.item}">${esc(i.actionLabel)} <span aria-hidden="true">↗</span></button>` : ''}${i.integrationNote ? `<small>${esc(i.integrationNote)}</small>` : ''}</li>`).join('')}</ul>`);
     }
 
     if (total > 0) {

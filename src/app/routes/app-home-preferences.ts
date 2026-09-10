@@ -7,7 +7,7 @@ import { Router } from 'express';
 import type { AppContext } from '@/app/composition/app-context';
 import { getCaller, hasAuthenticatedUserIdentity } from '@/shared/middleware/authz';
 
-type CardPreference = { metricOrder?: string[]; hiddenMetrics?: string[]; shownMetrics?: string[]; compact?: boolean; showItems?: boolean; showSetup?: boolean };
+type CardPreference = { metricOrder?: string[]; hiddenMetrics?: string[]; shownMetrics?: string[]; compact?: boolean; showItems?: boolean; showSetup?: boolean; showActions?: boolean };
 type HomePreferences = { version: 1; suiteOrder?: string[]; hiddenSuites?: string[]; collapsedSuites?: string[]; appOrder?: string[]; hiddenApps?: string[]; cards?: Record<string, CardPreference> };
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9_:/.-]{0,127}$/;
 const record = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v));
@@ -31,10 +31,10 @@ export function parseHomePreferences(value: unknown): HomePreferences {
     if (!record(value.cards) || Object.keys(value.cards).length > 256) throw new Error('Invalid cards');
     out.cards = {};
     for (const [name, card] of Object.entries(value.cards)) {
-      if (!ID.test(name) || !record(card) || Object.keys(card).some(k => !['metricOrder', 'hiddenMetrics', 'shownMetrics', 'compact', 'showItems', 'showSetup'].includes(k))) throw new Error('Invalid card');
+      if (!ID.test(name) || !record(card) || Object.keys(card).some(k => !['metricOrder', 'hiddenMetrics', 'shownMetrics', 'compact', 'showItems', 'showSetup', 'showActions'].includes(k))) throw new Error('Invalid card');
       const clean: CardPreference = {};
       for (const key of ['metricOrder', 'hiddenMetrics', 'shownMetrics'] as const) if (card[key] !== undefined) clean[key] = ids(card[key], 256);
-      for (const key of ['compact', 'showItems', 'showSetup'] as const) {
+      for (const key of ['compact', 'showItems', 'showSetup', 'showActions'] as const) {
         if (card[key] !== undefined) {
           if (typeof card[key] !== 'boolean') throw new Error('Invalid switch');
           clean[key] = card[key];

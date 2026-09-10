@@ -40,6 +40,7 @@ import {
 } from '@/shared/route-auth';
 import { validateArtifactActionsDeclaration } from '@/shared/artifact-exchange';
 import { validateGroupManifest, validateReadinessDeclarations, validateGuestSeedDeclaration, validateSummaryDeclaration } from './swarm-app-group';
+import { validateAppIntegrations } from './app-integrations';
 import {
   SWARM_APP_BOT_HARNESS_TYPES,
   SWARM_APP_BOT_SPECIAL_API_TYPES,
@@ -916,6 +917,7 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   validateGroupManifest(manifest, absPath);
   validateReadinessDeclarations(manifest, absPath);
   validateSummaryDeclaration(manifest, absPath);
+  validateAppIntegrations(manifest, absPath);
   // Guest-seed contract: the manifest's `guestSeed:` hook, fail-closed like smoke/readiness.
   validateGuestSeedDeclaration(manifest, absPath);
 

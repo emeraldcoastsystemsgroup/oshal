@@ -237,6 +237,8 @@ missing pointer renders as "can't check", never as done.
 
 ## Dashboard tile (`summary:`)
 
+For app-owned actions across loaded applications, see [Home integration contracts](app-home-integrations.md). Declare both the source offer and receiver; Home resolves compatible loaded partners and opens a draft with bounded context. File handoffs continue to use artifact exchange.
+
 ### Selectable data points on Home
 
 Home supports per-user box and suite visibility/order, compact boxes, selected metric order,
