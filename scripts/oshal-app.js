@@ -31,6 +31,8 @@
 
 'use strict';
 
+// 15 | Codex | Authenticate sparse checkout and audit checkout: both can lazily fetch blobs from a private promisor remote.
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -427,7 +429,7 @@ function pinCheckoutToAudit(git, tmp, assessment) {
   const current = git(['-C', tmp, 'rev-parse', 'HEAD']);
   if (current !== assessment.sourceSha) {
     git(['-C', tmp, 'fetch', '--depth', '1', 'origin', assessment.sourceSha], true);
-    git(['-C', tmp, 'checkout', '--detach', assessment.sourceSha]);
+    git(['-C', tmp, 'checkout', '--detach', assessment.sourceSha], true);
   }
   const checkedOut = git(['-C', tmp, 'rev-parse', 'HEAD']);
   if (checkedOut !== assessment.sourceSha) {
@@ -544,7 +546,7 @@ function installPackage(name, opts, seen) {
   try {
     console.log(C.dim(`fetching ${name} from ${repo}#${ref} …`));
     git(['clone', '--depth', '1', '--filter=blob:none', '--sparse', '-b', ref, repo, tmp], true);
-    git(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', 'marketplace.json', `audits/${name}.json`, name]);
+    git(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', 'marketplace.json', `audits/${name}.json`, name], true);
     const assessment = acceptAuditAssessment(git, tmp, name, ref, auditMode);
     if (!assessment) return 1;
     const src = path.join(tmp, name);
