@@ -12,7 +12,7 @@ Apps own extraction and metric meaning; core owns layout, preferences, bounded r
 
 ## Full assessment and extraction work
 
-The public store's [app-by-app extraction plan](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/docs/apps/app-home-extraction-plan.md) is the package work ledger. Each entry records source seams, proposed facts, prerequisites, missing collection, slice, and acceptance. It distinguishes source inspection from tested extraction and deployed acceptance. Each new package must be added to this ledger before its summary is implemented.
+The public store's [app-by-app extraction plan](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/APP-HOME-EXTRACTION-PLAN.md) is the package work ledger. Each entry records source seams, proposed facts, prerequisites, missing collection, slice, and acceptance. It distinguishes source inspection from tested extraction and deployed acceptance. Each new package must be added to this ledger before its summary is implemented.
 
 The private Sales package is assessed separately in its own tree. It must use its existing role-transition/audit model and record visibility rules, not query another CRM. “Today” means business-timezone midnight through now. “Five days” means today and the four preceding calendar dates, explicitly labeled. Cohort conversion uses the same acquired-lead cohort in numerator and denominator; zero denominator means unavailable, and new customers excludes repeat wins. Imported history must be verified before publishing historical rates.
 
