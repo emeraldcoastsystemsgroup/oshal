@@ -28,6 +28,7 @@ export interface ResolvedAppIntegration extends AppIntegrationOffer {
   sourceApp: string;
   state: 'available' | 'unavailable' | 'incompatible';
   surface?: string;
+  surfaceUrl?: string;
   fields?: string[];
 }
 
@@ -77,12 +78,14 @@ export function validateAppIntegrations(manifest: SwarmAppManifest, file: string
 /** Resolve against exactly the active manifests visible to this caller, never the store catalog. */
 export function resolveAppIntegrations(source: SwarmAppManifest, active: readonly SwarmAppManifest[]): ResolvedAppIntegration[] {
   return (source.integrations?.offers ?? []).map(offer => {
-    const target = active.find(m => m.name === offer.targetApp && m.status !== 'inactive');
+    // The active catalog comes from record.status. Manifest.status is only the install default
+    // and remains unchanged when the operator later enables a previously disabled package.
+    const target = active.find(m => m.name === offer.targetApp);
     const receiver = target?.integrations?.accepts?.find(a => a.id === offer.targetAction);
     const match = receiver && receiver.version === offer.version && receiver.contextType === offer.contextType;
     return { ...offer, sourceApp: source.name,
       state: !target ? 'unavailable' : !match ? 'incompatible' : 'available',
-      ...(match ? { surface: receiver.surface, fields: [...receiver.fields] } : {}),
+      ...(match ? { surface: receiver.surface, surfaceUrl: target?.ui?.static?.find(s => s.toolName === receiver.surface)?.iframeUrl, fields: [...receiver.fields] } : {}),
     };
   });
 }

@@ -2,6 +2,17 @@
 const TTL = 120000;
 let pending = null;
 
+/** A Home destination comes from the caller-visible manifest plan, never a summary item's URL. */
+export function homeSurfaceView(viewId, destination) {
+  if (!destination || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(destination.name)
+    || viewId !== `tool-${destination.name}` || typeof destination.url !== 'string'
+    || !/^\/(?!\/)/.test(destination.url) || /[\\\r\n]/.test(destination.url)) return null;
+  const url = new URL(destination.url, window.location.origin);
+  if (url.origin !== window.location.origin) return null;
+  return { id: viewId, label: destination.name.replace(/[-_]/g, ' '),
+    toolUi: { iframeUrl: url.href } };
+}
+
 /** Strict receiver field allow-list. Values are text, never executable options or authority. */
 export function contextFor(fields, value) {
   if (!Array.isArray(fields) || !fields.length || fields.length > 12 || !value || typeof value !== 'object' || Array.isArray(value)) return null;

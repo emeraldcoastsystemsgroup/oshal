@@ -18,9 +18,10 @@ describe('loaded application integration contracts', () => {
   it('requires a loaded compatible receiver and does not turn optional offers into install dependencies', () => {
     validateAppIntegrations(receiver, 'receiver'); validateAppIntegrations(sender, 'sender');
     expect(resolveAppIntegrations(sender, [sender])[0].state).toBe('unavailable');
-    expect(resolveAppIntegrations(sender, [sender, { ...receiver, status: 'inactive' }])[0].state).toBe('unavailable');
+    // A reactivated record is in the active catalog even if its original manifest default was inactive.
+    expect(resolveAppIntegrations(sender, [sender, { ...receiver, status: 'inactive' }])[0].state).toBe('available');
     expect(resolveAppIntegrations(sender, [sender, { ...receiver, integrations: { accepts: [{ ...receiver.integrations!.accepts![0], version: 2 }] } }])[0].state).toBe('incompatible');
-    expect(buildHomePlan([sender, receiver])[0].summary[0].integrations![0]).toMatchObject({ state: 'available', surface: 'receiver-draft', fields: ['title', 'notes'] });
+    expect(buildHomePlan([sender, receiver])[0].summary[0].integrations![0]).toMatchObject({ state: 'available', surface: 'receiver-draft', surfaceUrl: '/api/receiver/draft', fields: ['title', 'notes'] });
     expect(sender.dependencies).toBeUndefined();
   });
 
@@ -89,5 +90,15 @@ describe('loaded application integration contracts', () => {
     send({}, 'https://foreign.example'); send({}, undefined, {}); send({ targetApp: 'other' }); send({ version: 2 }); send({ expiresAt: 0 }); send({ context: { unauthorizedField: 'no' } });
     expect(onDraft).not.toHaveBeenCalled();
     send(); send(); expect(onDraft).toHaveBeenCalledOnce(); expect(onDraft).toHaveBeenCalledWith({ title: 'Review me' }, { sourceApp: 'sender' });
+  });
+
+  it('can prepare a manifest surface without a ribbon shortcut but refuses unowned URLs', async () => {
+    const { homeSurfaceView } = await import('@/pages/cockpit/js/app-handoff.js' as any);
+    vi.stubGlobal('window', { location: { origin: 'https://local.example' } });
+    expect(homeSurfaceView('tool-receiver-draft', { name: 'receiver-draft', url: '/api/receiver/draft' })).toMatchObject({ id: 'tool-receiver-draft', toolUi: { iframeUrl: 'https://local.example/api/receiver/draft' } });
+    for (const url of ['https://foreign.example/app', '//foreign.example/app', '/\\foreign.example/app', 'javascript:alert(1)']) {
+      expect(homeSurfaceView('tool-receiver-draft', { name: 'receiver-draft', url })).toBeNull();
+    }
+    expect(homeSurfaceView('tool-other', { name: 'receiver-draft', url: '/api/receiver/draft' })).toBeNull();
   });
 });
