@@ -63,6 +63,7 @@ export interface HomePlanEntry {
   members: string[];
   /** Ribbon surface the card's title opens. */
   firstSurface?: string;
+  firstSurfaceUrl?: string;
   summary: HomePlanSummaryProbe[];
   todos: HomePlanTodo[];
 }
@@ -161,6 +162,7 @@ export function buildHomePlan(manifests: readonly SwarmAppManifest[]): HomePlanE
       suite: group.suite,
       members,
       firstSurface: `${group.name}-setup`,
+      firstSurfaceUrl: `/api/swarm/apps/${encodeURIComponent(group.name)}/setup-dashboard`,
       summary,
       todos,
     });
@@ -178,6 +180,7 @@ export function buildHomePlan(manifests: readonly SwarmAppManifest[]): HomePlanE
       suite: manifest.suite,
       members: [manifest.name],
       firstSurface: manifest.ui?.static?.[0]?.toolName,
+      firstSurfaceUrl: manifest.ui?.static?.[0]?.iframeUrl,
       summary: part.summary,
       todos: part.todos,
     });
