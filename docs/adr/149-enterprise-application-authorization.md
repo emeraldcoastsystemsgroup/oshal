@@ -217,6 +217,34 @@ Importing an external application's permission model means an adapter normalizes
 It does not import database schemas as access rules, infer grants from tool keywords, or turn external
 identity-provider role definitions into OSHAL permissions without administrator mappings.
 
+### Applications without an authorization catalog
+
+For the new enforced policy, a missing catalog means **all business operations require explicit
+application-admin access**. It never promotes the caller to admin. The core creates an app-scoped
+fallback descriptor for the existing registration rather than inventing read/edit permissions or
+requiring legacy packages to supply a fabricated catalog.
+
+| Loaded declaration | Enforced behavior |
+|---|---|
+| Valid supported authorization catalog | Its declared operation permissions and resource policies |
+| No authorization catalog, whether or not a coarse `access:` block exists | App-admin required for every business entry point; show `admin-required fallback` in the central screen |
+| Malformed, unsupported or broken catalog | Refuse activation; do not downgrade to the missing-catalog fallback |
+| Applicable explicit deny | Deny even when an app-admin assignment exists |
+
+An explicit app-admin assignment may come from a direct grant or an administrator-configured,
+currently valid directory mapping. `defaultTier: admin`, a swarm-admin role, a model assertion or a
+service credential is not that grant. Existing tier restrictions, ownership/tenant policies, token
+scopes and workflow approvals still apply. The fallback covers tools, Jarvis, artifacts, jobs and
+other business entry points as well as HTTP; framework-owned login/callback/health exemptions remain
+explicit and narrow. Unattributed business work cannot fall through to system authority.
+
+Current missing declarations preserve legacy behavior. Enabling the new fallback is therefore a
+reviewed migration: inventory affected apps/users, preview access changes and seed only explicitly
+approved app-admin assignments before enforcing. A legacy compatibility mode must be visibly labelled
+and cannot count as enterprise enforcement. The fallback protects whole-app entry; it does not supply
+missing record/field rules or make an unaudited app enterprise-ready. Adding a real catalog later
+requires explicit migration of fallback assignments, not a wildcard grant of all new permissions.
+
 ## 5. Identity, directory groups and enterprise provisioning
 
 Use one internal principal ID. Preserve existing `user_sub` ownership through explicit identity links
@@ -425,7 +453,25 @@ bootstrap commit, and setup status never reports success for a partial root/acco
 
 ## 9. User and administration experience
 
-Extend the existing Users and Applications surfaces rather than creating an unrelated admin console:
+Provide one core-owned **Access Administration** screen, proposed route `/access`, linked from the
+existing Users and Applications surfaces and from installation setup. Those surfaces deep-link into
+the same selected user/application view; they do not maintain separate grant editors or policy stores.
+Reuse their account/root controls where appropriate. This is a core administrative surface, not an
+additional store package or kernel application manifest.
+
+The screen uses a user/group selector, application selector and business tenant/team scope. Its main
+view is an access matrix with roles/functions, effective allow/deny, scope, expiry and source. Detail
+panels show directory mappings, catalog revisions, access-change history and decision explanations.
+Each installed app appears automatically within the administrator's delegated visibility; update,
+reload, disable and uninstall refresh this view without per-app UI code. Removed apps retain authorized
+history but cannot receive executable grants. Source-qualified app identity prevents name collisions.
+
+An app without a catalog is visibly `admin-required fallback` and offers only explicit app-admin grant
+or deny controls, not invented viewer/editor checkboxes. A schema-backed app renders its own declared
+roles, functions and scopes. Public labels/descriptions are escaped as untrusted display content.
+Authentication and scoped access-management authorization protect the page and each API; hiding its
+ribbon entry is not the guard. Ordinary users retain a separate own-access view without management
+controls or access to the administrator's user/group inventory.
 
 - **Installation:** choose identity source, establish root, invite/link users, select an application,
   review its permission catalog, map roles/groups, then run isolated access checks.
@@ -447,13 +493,61 @@ Exact route schemas must be reviewed with the shared contract. Existing role/tie
 compatible; they feed the same evaluator and cannot bypass fine permissions. Audit payloads carry
 references and decision provenance, not salaries, tokens, prompts or full business records.
 
+### Registered authorization management tool
+
+Register one core-owned tool, proposed stable name `swarm_authorization`, through the existing
+[tool registry](../../src/features/tool-registry/services/tool-registry-service.ts) and
+[executor registry](../../src/features/tool-registry/services/dynamic-tool-executor-registry.ts).
+Its typed operations call the same management service as the screen. A package contributes permission
+definitions and selectable targets; it cannot replace this tool, supply its executor or register a
+second privileged grant path. Startup registration is idempotent and restored after restart. Publish
+the callable descriptor only when its executor, policy service and input schemas are ready.
+
+| Operation | Inputs / result | Required boundary |
+|---|---|---|
+| `catalog` | Installed app identities, declared roles/functions, fallback/enforcement state and revisions | Scoped management read; only visible apps |
+| `effective` / `explain` | Exact principal/app/tenant and optional permission/resource reference; effective rights and reason | Own-access read or scoped management read; no business records or impersonation |
+| `preview_change` | Typed grant/revoke/deny/clear-deny/group-map action, exact IDs, role/permission, scope, expiry, reason and expected policy revision | Current assignment/directory management permission and delegated ceiling; no mutation |
+| `apply_change` | Server-issued preview ID, idempotency key and trusted confirmation/approval reference where required | Recheck caller, management permission, target, revision and applicable approval before an audited transaction |
+
+Read, assignment and directory-management capabilities are separate permissions in the reserved
+platform namespace, each constrained to the administrator's assigned apps/tenants. Account/root
+bootstrap, root transfer and recovery remain their dedicated flows, not generic tool operations.
+Preview binds its initiating principal, exact change, app/source/catalog/policy revisions and expiry;
+apply cannot change those parameters. A stale or changed preview requires a new evaluation. A model's
+`confirmed: true` is not approval evidence. Preserve the existing sensitive/self-affecting change
+approval rules; an authorized administrator can make ordinary changes through the shared save flow.
+
+Tool inputs are a closed schema, not shell commands, raw SQL, arbitrary endpoint URLs or an asserted
+acting user. The authenticated/delegated identity comes from the trusted invocation context; a target
+user ID is only the subject whose access the administrator proposes to change. Neither Jarvis nor a
+background executor receives broader rights because this is an administrative tool. Registered tool
+presence, enablement, caller class and keyword matches do not confer access-management permission.
+
+Use a fixed, code-owned handler with runtime schema validation. The current generic API executor's
+model-selectable method/header/body options are not this contract, and declared input-schema metadata
+alone is not validation. Preserve existing tool consent/exposure restrictions: the current internal
+MCP bridge exposes AUTO tools only, so do not mark permission-changing operations AUTO simply to make
+them discoverable. A transport may expose separately registered operation descriptors under the same
+tool family, with reads and mutations separately gated; unsupported mutation/approval transport is
+unavailable until its trusted implementation exists. Every descriptor still calls the same service.
+
+Include semantic discovery metadata: keywords such as **access, permissions, authorization, roles,
+users, groups, application admin, directory mapping**; a `useWhen` description for inspecting or
+changing application access; and context describing principal/app/tenant selection and preview/apply.
+Jarvis's loaded tool feed advertises only currently permitted operations and targets, and execution
+checks them again. Tool registry tags and YAML routing hints must refer to the same stable identity.
+The current Jarvis YAML parser accepts shell entries only; AUTH-05 must add a validated feed adapter
+for this typed core tool, without pretending it is an already supported YAML entry or opening shell
+execution. Registration is complete only after a real authorized invocation reaches the handler.
+
 ## 10. Rollout, tests and completion
 
 Implement in small slices from [AUTH-01 through AUTH-10](../backlog/enterprise-authorization.md).
 First prove a disposable reference package and two tenants with several users; then adopt real store
 packages in their owning repositories. Do not infer that every existing package is protected because
-the schema loads. Keep an explicit compatibility status: legacy tier-only, schema imported, or
-function-and-data enforcement verified.
+the schema loads. Keep an explicit compatibility status: legacy tier-only, schema imported,
+admin-required fallback, or function-and-data enforcement verified.
 
 Additive schema/database deployment precedes activation. Shadow evaluation may measure differences
 for existing apps but is never advertised as enforced protection. An adopted enterprise app runs
@@ -477,6 +571,8 @@ Completion means proving all of these with dated, pinned results:
 7. At least one adopted store package proves record predicates, restricted fields and its business approval rule.
 8. The Lab displays the installed permission/test revisions and records real results; documentation distinguishes
    fixture proof, live directory proof and production package adoption.
+9. The central screen and registered tool discover installed apps dynamically and produce equivalent
+   allowed/denied changes through the same service, including the no-schema app-admin fallback.
 
 The initial implementation does not promise arbitrary external ERP adapters, every AD deployment
 mode, complete package migration or cryptographic audit export. Those have separate acceptance work;
