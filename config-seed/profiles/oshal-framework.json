@@ -141,6 +141,14 @@
         "toolUi": { "iframeUrl": "/api/email/my-day", "sidebarLabel": "My Day (Summary)" }
       },
       {
+        "id": "tool-calendar-review",
+        "icon": "codicon codicon-lightbulb",
+        "label": "Calendar Preparation",
+        "section": "top",
+        "group": "Communications",
+        "toolUi": { "iframeUrl": "/api/calendar/review", "sidebarLabel": "Calendar Preparation" }
+      },
+      {
         "id": "tool-social-workspace",
         "icon": "codicon codicon-edit",
         "label": "Social",
@@ -199,6 +207,14 @@
         "toolUi": { "iframeUrl": "/api/sat/app", "sidebarLabel": "Sat Ops" }
       },
       {
+        "id": "tool-spaces-viewer",
+        "icon": "codicon codicon-globe",
+        "label": "Spaces",
+        "section": "top",
+        "group": "Robotics & Space",
+        "toolUi": { "iframeUrl": "/api/spaces/app", "sidebarLabel": "Spaces" }
+      },
+      {
         "id": "tool-aero-lab",
         "icon": "codicon codicon-symbol-structure",
         "label": "Aero Lab",
@@ -230,6 +246,14 @@
         "section": "top",
         "group": "Money",
         "toolUi": { "iframeUrl": "/api/kalshi/", "sidebarLabel": "Kalshi Edge" }
+      },
+      {
+        "id": "tool-venture-home",
+        "icon": "codicon codicon-graph-line",
+        "label": "Venture Plan",
+        "section": "top",
+        "group": "Business",
+        "toolUi": { "iframeUrl": "/api/venture/", "sidebarLabel": "Venture Plan" }
       },
       {
         "id": "tool-payroll-home",
