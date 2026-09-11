@@ -13,10 +13,10 @@ Verify the reported image commit, normal schema bootstrap, Users/current role st
 effective rights, scoped audit and the registered read-only Lab probe. Do not claim root, create
 accounts or change grants as part of this acceptance.
 
-The initial database has no assigned swarm roles. Operator access comes from the existing configured
-allowlist; an unclaimed root does not mean that administrators are absent. Existing migrations run
-through 126, leaving only 127–133 pending. Preserve the running image and back up the database before
-the local update.
+The initial database had no assigned swarm roles. Operator access comes from the existing configured
+allowlist; an unclaimed root does not mean that administrators are absent. The migration ledger
+initially ran through 126, leaving only 127–133 pending. The previous image and a verified database backup were
+preserved before the local update.
 
 ## Installation and interface corrections
 
@@ -57,5 +57,42 @@ The signed-in test can use the existing HTTPS tunnel origin after confirming it 
 local installation. No login-provider configuration or account changes are needed for that path.
 
 See [live test instructions](../../tests/live/README.md#installed-users-and-access-acceptance).
-Deployment and signed-in results will be recorded after the actual run; source test success alone
-does not establish localhost acceptance.
+
+## Observed installation results
+
+The local instance runs committed build `980b2561872334e052164d6e8fb17993ab44ef9c`, image
+`sha256:cd92d6b2e59a56668613d521c890e4c3aaea6d1ff43689f444eaef9ebc46335b`.
+The image was built from a Git archive, and its commit label, native SQLite and kernel-skill probes
+passed. The previous image remains tagged for rollback. A custom-format database dump passed
+`pg_restore --list`, and the local backup copy matched its source length.
+
+Normal API startup now completes final runtime-role provisioning successfully. Migrations 127–133
+are present; the final boot reports zero pending migrations. The eight new authorization/principal
+tables checked have forced row-level security. All 75 application packages loaded without a failure.
+The API and all 34 workers run the same image and report healthy; all 14 pre-existing infrastructure
+containers retain their IDs and remain running. Health briefly timed out during worker startup,
+then recovered; three consecutive post-startup localhost probes returned HTTP 200.
+
+Localhost and the configured HTTPS origin report the same full build commit. The tunnel's ingress
+configuration maps that HTTPS hostname to the local API service. Anonymous authorization, swarm-role
+status and Test Lab catalog requests return HTTP 401. The eleven saved authentication/configuration
+fingerprints are unchanged. No swarm role was assigned, root was not claimed, and application
+assignments and policy revision remain zero. Existing provider identities are observed through
+normal verified requests; these counts are not an external directory enumeration.
+
+The running compiled Lab catalog contains 23 authorization regression-suite references, including
+the PostgreSQL upgrade suite, and the separate browser acceptance reference. Validation records:
+
+| Check | Result |
+|---|---|
+| Users browser, authorization routes and compose credential regressions | 27 passed across 3 files |
+| Updated authorization registration/parity suite | 10 passed |
+| PostgreSQL 16 provisioning, full final phase, repeat startup and legacy ACL repair | 4 passed |
+| Selected existing managed-role contract checks | 6 passed; unrelated/gated cases were not run |
+| Committed-source publication gate and exported HEAD typecheck | Passed |
+| Live browser harness discovery, strict TypeScript and scoped lint | Passed; discovery is not execution |
+
+Authenticated browser acceptance remains **pending**. Automatic approval review rejected the Chrome
+launch with "blocked by policy"; the operator was asked to open the existing test profile and sign
+in at the configured HTTPS origin. No authenticated browser result or executed Lab probe is claimed.
+The PR still requires independent review before merging to main. No GitHub Actions were invoked.
