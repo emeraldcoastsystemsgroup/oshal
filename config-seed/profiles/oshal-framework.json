@@ -272,6 +272,30 @@
         "toolUi": { "iframeUrl": "/api/venture/", "sidebarLabel": "Venture Plan" }
       },
       {
+        "id": "tool-marketing-engine",
+        "icon": "codicon codicon-megaphone",
+        "label": "Marketing",
+        "section": "top",
+        "group": "Marketing",
+        "toolUi": { "iframeUrl": "/api/marketing", "sidebarLabel": "Marketing" }
+      },
+      {
+        "id": "tool-marketing-content-studio",
+        "icon": "codicon codicon-edit",
+        "label": "Content Studio",
+        "section": "top",
+        "group": "Marketing",
+        "toolUi": { "iframeUrl": "/api/content/studio", "sidebarLabel": "Content Studio" }
+      },
+      {
+        "id": "tool-marketing-linkedin-assistant",
+        "icon": "codicon codicon-comment-discussion",
+        "label": "LinkedIn Assistant",
+        "section": "top",
+        "group": "Marketing",
+        "toolUi": { "iframeUrl": "/api/linkedin-assistant/panel", "sidebarLabel": "LinkedIn Assistant" }
+      },
+      {
         "id": "tool-payroll-home",
         "icon": "codicon codicon-organization",
         "label": "Payroll",
