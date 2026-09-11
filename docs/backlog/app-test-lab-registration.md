@@ -1,7 +1,8 @@
-# Application test cases installed into AI Test Lab ? backlog
+# Application test cases installed into AI Test Lab — backlog
 
-Status: **smoke registration implemented in the current branch; richer catalogs and package-suite
-migration remain planned**. Requested by the operator on 2026-09-10.
+Status: **versioned catalogs and installation lifecycle implemented at core `15dcbbd7`;
+Hello and Portrait pilots versioned at store `dc4c0dc`**. Local/browser runner execution,
+historical results and the remaining package inventory are still open. Requested on 2026-09-10.
 
 The [enterprise authorization workstream](enterprise-authorization.md) registers its implemented
 policy, HTTP/browser, identity, tool, bootstrap and worker-boundary suites; broader directory,
@@ -34,8 +35,8 @@ Inventory taken from tracked manifests and test paths at public store commit
 - Existing smoke definitions, validation and execution live in `SwarmAppSmokeDeclaration`,
   `scripts/oshal-app-smoke.js`, `app-smoke-verifier.ts`, and `install-verification-routes.ts`.
   Reuse these checks and assertions rather than creating a competing smoke runner.
-- The interactive Lab combines core-owned `SCENARIOS` with active package smoke registrations.
-  Local suite references remain metadata; richer package catalogs are not implemented.
+- The interactive Lab combines core-owned `SCENARIOS` with active package smoke and versioned
+  suite registrations. Local suite references remain metadata until a supported runner exists.
 
 ### First implementation slice
 
@@ -45,9 +46,17 @@ existing verifier. Safe GET/HEAD probes can run with their declared authority; u
 AI and mutating runners remain visibly pending. The local regression command is
 `npm run test:platform-readiness`, including a real Portrait Studio manifest against fixture HTTP.
 
-This implements the smoke portion of TLAB-01/02/03/05. It does not complete those work orders:
-versioned package-local suite catalogs, installation-report linkage, persisted historical evidence,
-and richer runner support remain open. The package rows below still track full suite adoption.
+The next slice implements the [versioned contract](../testing/package-test-catalog.md), shared
+CLI/runtime validation, package/source/content revisions, group member aggregation and lifecycle
+compensation. The three catalog suites pass 19 tests; existing coverage remains in the same command.
+Local source acceptance for TLAB-01/02 is complete. TLAB-03/04/05/09 retain installation-report linkage,
+historical evidence, supported runner execution and scheduled inventory selection.
+
+TLAB-06 has local installation/lifecycle proof for Hello 1.2.0 and Portrait 1.12.0: both existing
+smokes pass through the real core verifier; seven local/core suite references remain pending in the
+browser. Hello's two HTTP tests, Portrait's existing 324 checks/groups and 23 camera checks, and the
+four shared picker tests pass locally. All seven package JavaScript test files are referenced.
+Installed deployment proof still requires the new core capability and package promotion.
 
 ## Work order and acceptance criteria
 
@@ -63,17 +72,18 @@ and richer runner support remain open. The package rows below still track full s
 | TLAB-08 | P1 ? private package owners | Apply the same contract to the private inventory, in its owning repository. | Private app installs expose only authorized case metadata/results; all existing private suites and coverage gaps have dispositions; no private test names, fixtures or records are copied into the public catalog/docs. |
 | TLAB-09 | P2 ? local CI / scheduling | Let local CI and the existing Lab scheduler select installed app test cases by level/prerequisites. Add catalog-versus-package drift checks. | A local scheduled run includes newly installed cases without hand-maintained lists; absent prerequisites, stale results and newly failing cases are distinguishable; missing registration of a shipped test is detected. No GitHub Actions dependency is introduced. |
 
-### Proposed manifest shape ? design input, not accepted syntax
+### Accepted manifest shape
 
-`smoke:` remains the existing installation-probe contract. A richer catalog could be referenced as:
+`smoke:` remains the existing installation-probe contract. Declare the capability and catalog:
 
 ```yaml
+uses: [test-catalog]
 testing:
   version: 1
   catalog: tests/test-lab.yaml
 ```
 
-TLAB-01 settles the field name and schema before package edits. Each catalog case needs a stable ID,
+The [contract reference](../testing/package-test-catalog.md) defines the accepted schema. Each case needs a stable ID,
 name/purpose, level, suite paths or existing smoke reference, approved runner, expected assertions,
 required accounts/devices/AI, data isolation and cleanup, time budget, and installation/default-run
 eligibility. References to shared framework suites need an explicit dependency/version contract;
@@ -94,7 +104,8 @@ production installations must not assume a sibling source checkout or developer 
 
 ## Public package worklist
 
-Every row is open. **Adopt** means catalogue discovered local suites plus existing smokes.
+Rows retain the original inventory counts; Hello and Portrait have local source proof above and
+await deployment. Other rows remain open. **Adopt** means catalogue local suites plus existing smokes.
 **Locate/create** means locate shared/external tests and register the existing smoke; create missing
 behavior coverage where needed. Counts describe files, not individual assertions, runnability or passes.
 

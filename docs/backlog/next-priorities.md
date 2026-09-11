@@ -10,16 +10,16 @@ is recorded before this run. Its application build remains a separate scoped bac
 
 | Rank | Outcome | Autonomous acceptance | Status |
 |---|---|---|---|
-| 1 | Existing Google, Microsoft and local identities appear in Access Administration | Exact verified provider/subject inventory, explicit link preservation, existing operator continuity and cross-provider denial tests; no guessed migration of unqualified IDs. | In progress |
-| 2 | Existing-account setup and Users administration work end to end | Re-entering setup never advertises fresh root election over established accounts; local invitations/disable work from the page with non-admin and sole-root guards. | Queued |
-| 3 | Installed applications register a versioned test catalog | Shared CLI/runtime validation, source/app/version/case metadata, lifecycle reconciliation and explicit unavailable-runner states, preserving existing smoke behavior. | In progress |
-| 4 | Portrait Studio and hello-oshal demonstrate package test registration | Real package catalogs cover existing suites and shared core references; installation/lifecycle fixtures and representative package tests pass. | Queued |
-| 5 | Local regression runs isolate alert tests from deployment data | Known alert/topology suites use disposable PostgreSQL; timeout/cleanup and scheduled-run artifacts are proved; remaining full-nightly failures keep honest dispositions. | In progress |
-| 6 | Freshly loaded bots have authoritative runtime configuration | Manifest/persona defaults seed actionable clean-database records while preserving operator edits; deterministic dispatch fixture succeeds. | Queued |
-| 7 | Dispatched specialists receive authorized application data | A package-owned deterministic read supplies normalized data to the existing accounted path; known-answer, ownership, refusal and credential-exclusion tests pass. | Queued |
-| 8 | First-run provisioning is re-enterable | Trusted-store/package/user steps retain progress and show package-specific failures; privileged operations reuse protected APIs and unknown stores gain no implicit trust. | Queued |
-| 9 | Users control Jarvis briefings | Registered sources expose per-user enable/frequency/channel preferences; scheduling honors them and disabling stops delivery; untouched defaults remain compatible. | Queued |
-| 10 | Administrators can inspect authorization change history | Scoped, paginated audit reads and a working Access screen show actor/change/policy revision; unauthorized and cross-scope reads refuse. | Queued |
+| 1 | Existing Google, Microsoft and local identities appear in Access Administration | Exact verified provider/subject inventory, explicit link preservation, existing operator continuity and cross-provider denial tests; no guessed migration of unqualified IDs. | Source verified; checkpointed |
+| 2 | Existing-account setup and Users administration work end to end | Re-entering setup never advertises fresh root election over established accounts; local invitations/disable work from the page with non-admin and sole-root guards. | Source verified; checkpointed |
+| 3 | Installed applications register a versioned test catalog | Shared CLI/runtime validation, source/app/version/case metadata, lifecycle reconciliation and explicit unavailable-runner states, preserving existing smoke behavior. | Source verified; checkpointed |
+| 4 | Portrait Studio and hello-oshal demonstrate package test registration | Real package catalogs cover existing suites and shared core references; installation/lifecycle fixtures and representative package tests pass. | Source verified; checkpointed |
+| 5 | Local regression runs isolate alert tests from deployment data | Known alert/topology suites use disposable PostgreSQL; timeout/cleanup and scheduled-run artifacts are proved; remaining full-nightly failures keep honest dispositions. | Source verified; checkpointed |
+| 6 | Freshly loaded bots have authoritative runtime configuration | Manifest/persona defaults seed actionable clean-database records while preserving operator edits; deterministic dispatch fixture succeeds. | Source verified; checkpointed |
+| 7 | Dispatched specialists receive authorized application data | A package-owned deterministic read supplies normalized data to the existing accounted path; known-answer, ownership, refusal and credential-exclusion tests pass. | In progress |
+| 8 | First-run provisioning is re-enterable | Trusted-store/package/user steps retain progress and show package-specific failures; privileged operations reuse protected APIs and unknown stores gain no implicit trust. | Source verified; checkpointed |
+| 9 | Users control Jarvis briefings | Registered sources expose per-user enable/frequency/channel preferences; scheduling honors them and disabling stops delivery; untouched defaults remain compatible. | In progress |
+| 10 | Administrators can inspect authorization change history | Scoped, paginated audit reads and a working Access screen show actor/change/policy revision; unauthorized and cross-scope reads refuse. | In progress |
 
 Record exact commands, results and commits in the [run record](../releases/autonomous-backlog-2026-09-11.md).
 Live provider, installed deployment and unattended-nightly proof remain distinct. Required PR

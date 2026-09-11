@@ -41,3 +41,19 @@ These suites use disposable package directories, local HTTP/provider fixtures an
 They do not install applications into the running deployment or connect real external accounts.
 The matching Lab cards link the suites and run their documented discovery/refusal probes. Installed
 package smokes appear separately, with app/version metadata and any missing execution prerequisites.
+
+Installed packages can carry a [versioned test catalog](../docs/testing/package-test-catalog.md).
+Declare every suite with its own runner, prerequisites and isolation; reference shared core suites
+by exact commit instead of assuming the installation has a sibling developer checkout.
+
+The autonomous backlog suites have matching Lab registrations and local commands:
+
+| Command | Coverage |
+|---|---|
+| `npm run test:authorization` | Principal identity, Users administration, installer root, authorization policy/API/tool/browser boundaries |
+| `npm run test:nightly-isolated` | Fixed alert/topology and runner regressions in disposable PostgreSQL, retained reports |
+| `npm run test:bot-initialization` | Fresh manifest runtime state, operator preservation and fixture HTTP dispatch |
+| `npm run test:provisioning` | Saved setup, trusted sources, reviewed installs, retry and browser resume |
+
+Docker-backed suites create their own temporary databases. Do not substitute a deployment DSN or
+run the unrestricted historical unit collection against a live application database.
