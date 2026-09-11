@@ -25,6 +25,7 @@
 # 18 | maintainer@emeraldcoastsystemsgroup.com   | Refuse ignored plaintext credential backups before source-only scanning and direct operators to the redacted key-schema exporter.
 # 19 | maintainer@emeraldcoastsystemsgroup.com   | BUG-22: the failure alert said the same sentence for 38 consecutive nights, so a NEW gate breaking inside the standing failure was indistinguishable from the standing failure. The subject now leads with what CHANGED ("NEW: image-smoke (night 38)" / "no change from last run") and the body separates newly-red from already-known and names the streak. Derived from the run log by scripts/ci/ci-gate-streak.mjs — no new state to keep. The headline is also written to the log, so the signal survives an api container that is down and cannot send mail.
 # 20 | maintainer@emeraldcoastsystemsgroup.com   | Collapse duplicate gate names before writing the run-outcome line. The 2026-09-08 run re-executed a block (a mid-run edit to this file shifted the running shell's byte offset) and recorded `unpushed-commits` plus three *-skipped names twice, which made the new alert headline unreadable. That line is the durable record every later streak comparison reads, so a duplicate written here is wrong in the log forever.
+# 21 | maintainer@emeraldcoastsystemsgroup.com   | Require pinned core/store compatibility in disposable exports and retain compiler diagnostics per run.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -40,6 +41,7 @@
 #   --skip-image  skip image build + image smoke + trivy
 #   --install     run `npm ci --legacy-peer-deps` first (working-tree mode only;
 #                 the HEAD export always npm-ci's its own node_modules)
+#   --store-compatibility-only  run just the committed core/store gate, without Docker
 #
 # Contract:
 #   - working-tree mode runs node gates from disk and committed-artifact gates from pinned HEAD;
@@ -57,6 +59,12 @@ set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_WIN="$(cd "$REPO_DIR" && pwd -W 2>/dev/null || echo "$REPO_DIR")"
+# Standalone release check, before the full runner's locks, logs, or Docker cleanup.
+if [ "$#" = "1" ] && [ "$1" = "--store-compatibility-only" ]; then
+  exec node "$REPO_DIR/scripts/check-store-compatibility.mjs" \
+    --core "$REPO_WIN" --store "${OSHAL_STORE_REPO:-$REPO_WIN/../oshal-applications}" \
+    --store-ref "${OSHAL_STORE_REF:-HEAD}" --dependencies "$REPO_WIN"
+fi
 STATE_DIR="$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")/oshal"
 LOG="$STATE_DIR/ci-local.log"
 RUN_LOG="$STATE_DIR/ci-local-last-run.log"
@@ -224,7 +232,22 @@ prepare_head_src() {
 
 gate_typecheck() { (cd "$GATE_SRC" && timeout 1200 npm run typecheck); }
 
-gate_unit() { (cd "$GATE_SRC" && timeout 1800 npm run test:unit); }
+# The store's ambient declarations are not evidence of compatibility with this core.
+# Scheduled runs fetch store main fail-closed; interactive runs judge the chosen local ref.
+# The Node runner pins both refs, exports outside the repos, and retains complete logs.
+gate_store_compatibility() {
+  local store="${OSHAL_STORE_REPO:-$REPO_WIN/../oshal-applications}"
+  local store_ref="${OSHAL_STORE_REF:-HEAD}"
+  if [ "$SCHEDULED" = "1" ]; then
+    git -C "$store" fetch origin '+refs/heads/main:refs/remotes/origin/main' || return 1
+    store_ref=origin/main
+  fi
+  node "$GATE_SRC/scripts/check-store-compatibility.mjs" \
+    --core "$REPO_WIN" --core-ref "$SOURCE_SHA" --store "$store" --store-ref "$store_ref" \
+    --dependencies "$GATE_SRC" --reports "$STATE_DIR/store-compatibility"
+}
+
+gate_unit() { (cd "$GATE_SRC" && OSHAL_STORE_REPO="${OSHAL_STORE_REPO:-$REPO_WIN/../oshal-applications}" timeout 1800 npm run test:unit); }
 
 # Connector structural-audit gate (ADR-065): FAIL on any error-level issue in a
 # swarm-apps/connectors/*.yaml spec (bad shape, duplicate tool name, paginating resource
@@ -493,6 +516,7 @@ elif [ "$DO_INSTALL" = "1" ]; then
 fi
 if [ "$NODE_GATES_OK" = "1" ]; then
   run_gate typecheck gate_typecheck
+  run_gate store-compatibility gate_store_compatibility
   run_gate unit gate_unit
   run_gate lint gate_lint
   run_gate connectors gate_connectors

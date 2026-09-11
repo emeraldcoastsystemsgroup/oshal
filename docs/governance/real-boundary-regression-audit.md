@@ -30,6 +30,26 @@ provider claim still needs a separate live acceptance run.
 
 `tests/unit/app-home-customization.spec.ts` uses a recording pool only for HTTP input/owner binding and failure branches. Its real companion is the store's `identity/tests/home-summary.integration.cjs`: actual PostgreSQL with the canonical owner-RLS policy and a non-superuser role, the production GUC wrapper and preference queries, the compiled Identity extractor and real accessible-connections helper, plus Chromium on the actual Home module/CSS. Mock authentication and seeded source records remain intentional boundaries; this is not live-provider acceptance. The harness rejects nonlocal/non-test database names and removes only its generated schema/role. Passed for owner isolation, stale revisions, shared-account scope, renewable expiry, unavailable-source failures, keyboard editing and desktop/mobile rendering.
 
+## Core/store compatibility gate (2026-09-10)
+
+`tests/unit/store-compatibility.spec.ts` uses real disposable Git repositories, the shipped store
+compiler and the installed TypeScript compiler; none of those boundaries are mocked. It proves
+committed-only selection despite dirty/untracked source, TS2305 rejection of a consumer whose
+ambient stub invents a core export, dependency-lock mismatch refusal, normal cleanup, and source
+repository preservation when the compiler process tree is forcibly interrupted.
+
+The full exported pair `9655afde416e09058562cba0b965521bff1a0550` (core) and
+`f5db2153a25d8ebd18709dec10a03b130dac559c` (applications) passed on 2026-09-10:
+386 sources across 52 packages, followed by a failing real TS2305 compile naming
+`compatibility-negative-probe/probe.ts` and `inventedCompatibilityExport`. These are dated
+compiler-produced counts, not an inventory constant. The first acceptance run explicitly reused
+manifest/lock-matching provisioned dependencies. A second full run installed fresh dependencies
+with `npm ci` from the pinned core lockfile and passed with the same counts; both exports cleaned
+successfully. Per-run logs and the two SHAs are retained by
+[`check-store-compatibility.mjs`](../../scripts/check-store-compatibility.mjs); invocation and
+scope are documented in [the local CI runbook](../runbooks/local-ci.md#corestore-compatibility-release-check).
+This attests to source compatibility, not legacy JavaScript behavior or emitted-output parity.
+
 ## Rules for future fixes
 
 1. Name the failed boundary in the test header and name what remains doubled.

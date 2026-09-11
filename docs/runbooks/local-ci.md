@@ -25,6 +25,7 @@ Same gates the retired workflow ran (plus the quickstart-smoke equivalent), same
 |---|---|---|
 | head-src (`--head`/`--scheduled` only) | clean pinned-commit export + `npm ci`; interactive `--head` pins HEAD, scheduled mode fetches and pins `origin/main` | yes |
 | typecheck | `npm run typecheck` | yes |
+| store-compatibility | compile every source-bearing public store package against the pinned core types in disposable exports; preserve full diagnostics per run | yes |
 | unit | `npm run test:unit` (vitest, no DB) | yes |
 | lint | `npx eslint src tests scripts --max-warnings 0` | yes |
 | connectors | `connectors:audit-gate --quiet` — structural audit of every `swarm-apps/connectors/*.yaml` (ADR-065); fails on an error-level issue (bad shape, duplicate tool name, paginating resource with no pagination block). Warnings advisory | yes |
@@ -61,6 +62,43 @@ before clearing `%LOCALAPPDATA%\oshal\ci-local.lock` — a half-dead run's e2e
 gate can destroy a live run's datastores (learned the hard way).
 
 ## Schedule + alerting
+
+### Core/store compatibility release check
+
+From the core checkout, with Node, Git, tar and a local applications checkout:
+
+```bash
+node scripts/check-store-compatibility.mjs --store ../oshal-applications
+node scripts/check-store-compatibility.mjs --store ../oshal-applications --core-ref <core-sha> --store-ref <store-sha> --prove-rejection
+bash scripts/ci-local.sh --store-compatibility-only
+```
+
+Both refs default to `HEAD` and resolve to immutable commits before export. Commit your candidate
+first: dirty, staged and untracked changes are deliberately excluded. The default Node command
+runs `npm ci --ignore-scripts --legacy-peer-deps` in the core export. Optional
+`--dependencies <provisioned-core>` reuses that tree's `node_modules` after matching its
+`package.json` and lockfile to the pinned commit; the report labels this caller-provisioned mode.
+The Bash standalone entry uses this faster mode with the local core dependency installation.
+
+The full local-CI runner uses its provisioned `GATE_SRC` dependencies. Interactive runs use
+`OSHAL_STORE_REPO` (default sibling `oshal-applications`) and `OSHAL_STORE_REF` (default `HEAD`).
+Scheduled runs fetch and pin store `origin/main`; a failed store fetch fails the gate rather
+than checking stale code. The core commit is the same `SOURCE_SHA` used by the other release gates.
+Missing repositories, dependencies, compiler or source-bearing packages fail the check.
+
+Every run prints a unique report location containing `result.json`, `compile.log`, and, when
+requested, `dependencies.log` and `rejection.log`. The full runner stores these beneath its
+state directory's `store-compatibility/`; standalone defaults to the OS temp directory's
+`oshal-compatibility-reports/`. Use `--reports <directory>` for a durable location of your choice.
+Reports name both commit SHAs and the failing source/package. The optional rejection proof first
+requires a green full compile, then adds a dishonest ambient declaration and consumer to the
+disposable store; only a real TS2305 diagnostic for that invented export satisfies the proof.
+
+Exports are outside both checkouts and cleaned on normal success/failure. A forcibly killed
+process can leave an `oshal-compatibility-*` temp export, but never stages application sources
+in the original core or rewrites original package outputs. Remove a reused `node_modules`
+junction itself before removing any abandoned export. Compile-only checks do not attest to
+legacy JavaScript routes, emitted-output parity, runtime behavior or package audit status.
 
 Windows task **"OSHAL Local CI"** runs daily at 23:30 local, windowless, via
 `scripts/ci-local-hidden.vbs` (same zero-window pattern as the trading watchdog):
