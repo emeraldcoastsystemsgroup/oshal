@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | renderConnectorDiscoverView forwards the focused app's connector allow-list (profile.connectors ← manifest dependencies.connectors) so the marketplace only offers providers the app declared — inside Little Monsters the Facebook/LinkedIn catalog no longer appears.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Delegate full-screen permission to first-party packaged surfaces so games can hide cockpit chrome on request.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 D4a: renderToolView forwards a shape-checked one-shot `artifact=` ref from the cockpit URL to the surface iframe URL, so an open-mode "Send to…" dispatch lands in the destination surface pre-loaded.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | renderToolView appends the ribbon's consumed one-shot tool query (sanitized k=v&k=v) to the tile's own iframeUrl — the Create front door's deep link into AI Office.
  */
 
 import {
@@ -347,6 +348,10 @@ export class CockpitViewController {
       if (artifactRef && /^art_[A-Za-z0-9_-]{8,64}$/.test(artifactRef)) {
         bustedUrl += '&artifact=' + encodeURIComponent(artifactRef);
       }
+      // A one-shot query an embedded surface attached to its app-navigate (already sanitized by
+      // the ribbon): opens the tile's OWN surface on a purpose, e.g. kind=docx&starter=resume.
+      const toolQuery = ribbon?.consumeToolQuery?.(viewId);
+      if (toolQuery) bustedUrl += '&' + toolQuery;
       const sandboxAttr = isVoiceSurface
         ? ''
         // allow-downloads is load-bearing: without it a sandboxed surface's download is
