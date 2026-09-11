@@ -178,3 +178,27 @@ displayed the readable role guidance inside the focused application. The post-re
 probe again passed all 197 checks. The final stack verifier passed all 35 application services,
 with the 14 infrastructure containers, 11 configuration fingerprints and privilege state preserved.
 Localhost and the configured HTTPS origin report the same final commit.
+
+## Inline application role changes
+
+The **This user's applications** table now supports **Edit roles** in each application row.
+Imported business roles and core access-management roles appear in separate groups. Add or remove
+one direct assignment, select a business tenant when applicable, enter a reason, then review and
+apply the exact change in the row. Other roles, inherited group access and restrictions persist.
+Catalog refreshes preserve the exact selected identity and do not substitute another application
+when a selected application disappears. Late previews and responses cannot change the current
+selection. Legacy applications display their actual legacy status, including explicit refusals.
+
+The final focused run passed **28 browser cases and 12 HTTP/registration cases** with no skips or
+failures. It used the real Access page and policy service with isolated assignments. Coverage
+includes additive grants, direct revocation, separate identity providers, tenant administrators and
+auditors, revoked authority, pending approval, deployment conflicts and out-of-order responses.
+Both suites remain registered in AI Test Lab under `authorization-management`, with fixed command
+and source-path parity verified by the route suite. Embedded JavaScript and test lint passed.
+
+The existing signed-in browser on the configured HTTPS origin displayed the editable table and
+the installed application's imported roles in its row editor. This check opened controls only;
+it did not preview or apply a live grant. The API already mounts `src/pages` read-only from the
+workspace, so the HTML update is served on refresh without rebuilding or restarting containers.
+The compiled runtime remains the image identified above; the UI change is versioned separately
+in the accompanying source commit. Other application deployments were not interrupted.

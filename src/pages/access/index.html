@@ -1,5 +1,12 @@
 <!-- Access Administration: shared authorization service, preview before apply, no client-side grants. -->
-<!-- CHANGE LOG: 1 | maintainer@emeraldcoastsystemsgroup.com | Present per-user application permissions and core delegated management roles. -->
+<!--
+CHANGE LOG
+-----------------------------------------------------------------------------
+SEQ | AUTHOR | DESCRIPTION
+-----------------------------------------------------------------------------
+1 | maintainer@emeraldcoastsystemsgroup.com | Present per-user application permissions and core delegated management roles.
+2 | maintainer@emeraldcoastsystemsgroup.com | Review additive role changes inside exact user/application/tenant rows.
+-->
 <!doctype html>
 <html lang="en" data-theme="midnight">
 <head>
@@ -45,6 +52,12 @@
     .empty { padding: 14px 0; color: var(--text-secondary, #9ca3af); }
     .details { overflow-wrap: anywhere; white-space: pre-wrap; }
     .change-review { border-left: 3px solid var(--accent-primary, #a5b4fc); }
+    .role-editor { padding: 18px; background: var(--bg-primary, #111827); }
+    .role-editor fieldset { border: 0; padding: 0; margin: 0 0 12px; min-width: 0; }
+    .role-editor legend { font-weight: 650; margin-bottom: 8px; }
+    .role-editor .change-review { padding: 12px; margin-top: 14px; }
+    .role-editor [data-role-status] { margin: 10px 0; }
+    [data-app] td { overflow-wrap: anywhere; }
     [hidden] { display: none !important; }
     @media (max-width: 780px) { .selectors, .layout { grid-template-columns: 1fr; } main { padding: 20px 14px 40px; } }
   </style>
@@ -139,8 +152,9 @@
 'use strict';
 const API = '/api/authorization';
 const $ = id => document.getElementById(id);
-const state = { catalog: null, preview: null, previewGeneration: 0, selection: 0, busy: false, idempotencyKey: null, manualTargets: { users: [], groups: [] } };
+const state = { catalog: null, catalogGeneration: 0, unavailableApp: null, preview: null, previewGeneration: 0, selection: 0, busy: false, idempotencyKey: null, manualTargets: { users: [], groups: [] } };
 const auditState = { cursor: null, entries: [], generation: 0 };
+const applicationRows = { generation: 0, rows: [] };
 const escapeHtml = value => String(value == null ? '' : value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
 function status(message, kind) { $('status').textContent = message; $('status').className = 'status' + (kind ? ' ' + kind : ''); }
 function discardPreview() { state.previewGeneration++; state.preview = null; state.idempotencyKey = null; $('review').hidden = true; }
@@ -187,6 +201,7 @@ function setBusy(busy) {
   const permits = permission => scopes.some(scope => scope.permissions.includes(permission) && (!scope.tenantId || scope.tenantId === tenant));
   $('preview-button').disabled = busy || !application() || !target() || !permits('assign') || (group && !permits('directory'));
   $('apply').disabled = busy || !state.preview || state.preview.requiresApproval;
+  applicationRows.rows.forEach(updateRowControls);
 }
 function renderTargets(preferred) {
   const index = targets().findIndex(entry => targetKey(entry) === preferred);
@@ -208,7 +223,7 @@ function renderChange() {
 }
 function renderApplication() {
   const app = application();
-  if (!app) { $('app-title').textContent = 'No visible applications'; setBusy(false); return; }
+  if (!app) { clearSelectedApplication(); return; }
   $('app-title').textContent = app.app;
   $('app-mode').textContent = app.status === 'catalog' ? 'Declared application roles' : app.status === 'legacy' ? 'Legacy access' : 'Explicit app administrator required';
   $('app-description').textContent = app.catalog
@@ -239,8 +254,16 @@ function matchingAssignments() {
     ? entry.group && entry.group.id === selected.id && entry.group.issuer === selected.issuer && entry.group.tenantId === selected.tenantId
     : entry.targetSub === selected.sub && entry.targetIssuer === selected.issuer));
 }
+function clearSelectedApplication() {
+  $('app-title').textContent = 'Select an available application';
+  ['app-mode', 'app-description', 'app-revision', 'roles', 'management-roles', 'permission-matrix', 'history'].forEach(id => $(id).replaceChildren());
+  ['role', 'permission', 'deny-permission', 'operation'].forEach(id => $(id).replaceChildren());
+  $('explain').disabled = true;
+  discardPreview(); setBusy(state.busy);
+}
 async function renderEffective() {
   const generation = ++state.selection;
+  resetApplicationRows();
   $('permission-matrix').replaceChildren(); $('user-applications').replaceChildren();
   $('load-user-applications').disabled = $('target-kind').value === 'group' || !target();
   $('history').innerHTML = table(['Role or restriction', 'Business tenant', 'Expires'], matchingAssignments().map(entry => [entry.deny ? 'Deny: ' + (entry.permission || 'whole application') : entry.role || entry.permission, entry.tenantId || 'None', entry.expiresAt || 'No expiry']));
@@ -260,44 +283,289 @@ async function renderEffective() {
   } catch (error) { if (generation === state.selection) $('effective').textContent = error.message; }
 }
 async function loadCatalog(message) {
-  discardPreview(); resetAudit(); setBusy(true); status('Loading access catalog…');
+  const generation = ++state.catalogGeneration; state.selection++;
+  discardPreview(); resetApplicationRows(); resetAudit(); setBusy(true); status('Loading access catalog…');
   try {
+    const catalog = await request('/catalog');
+    if (generation !== state.catalogGeneration) return;
     const oldApp = $('application').value; const oldTarget = targetKey(target());
-    state.catalog = await request('/catalog');
+    state.catalog = catalog;
     $('audit-global').hidden = state.catalog.canReadGlobalAudit !== true;
     if (state.catalog.canReadGlobalAudit !== true) $('audit-scope').value = 'app';
     $('audit-tenant').disabled = $('audit-scope').value === 'global';
-    options($('application'), state.catalog.apps.map(app => ({ value: app.app, label: `${app.app} (${app.source})` })), oldApp || new URLSearchParams(location.search).get('app'));
+    const preferredApp = oldApp || state.unavailableApp || new URLSearchParams(location.search).get('app');
+    options($('application'), state.catalog.apps.map(app => ({ value: app.app, label: `${app.app} (${app.source})` })), preferredApp);
+    state.unavailableApp = preferredApp && !state.catalog.apps.some(app => app.app === preferredApp) ? preferredApp : null;
+    if (state.unavailableApp) $('application').selectedIndex = -1;
     const query = new URLSearchParams(location.search);
     const linkedTarget = query.has('issuer') || query.has('sub') ? JSON.stringify([query.get('issuer'), query.get('sub'), '']) : '';
     renderTargets(oldTarget || linkedTarget); renderApplication(); $('administration').hidden = false;
     await renderEffective();
+    if (generation !== state.catalogGeneration) return;
     await loadAudit(true);
-    status(message || 'Access catalog loaded. Preview a change before applying it.');
+    if (generation === state.catalogGeneration) status(message || 'Access catalog loaded. Preview a change before applying it.');
   } catch (error) {
+    if (generation !== state.catalogGeneration) return;
     resetAudit();
     $('administration').hidden = true;
     status(error.status === 403 ? 'Access administration is unavailable for this account. A verified identity and administration scope are required.' : error.message, 'error');
-  } finally { setBusy(false); }
+  } finally { if (generation === state.catalogGeneration) setBusy(false); }
 }
 async function loadUserApplications() {
   if (!target() || $('target-kind').value === 'group') return;
-  const selection = state.selection; const selected = targetInput(); const rows = [];
-  const tenant = $('tenant').value.trim(); $('load-user-applications').disabled = true;
+  resetApplicationRows();
+  const generation = applicationRows.generation, selection = state.selection;
+  const selected = targetInput(), catalog = state.catalog, rows = [];
+  $('load-user-applications').disabled = true;
   $('user-applications').textContent = 'Checking current access...';
   try {
-    for (const app of state.catalog.apps) {
-      if (selection !== state.selection) return;
+    for (const app of catalog.apps) {
+      if (generation !== applicationRows.generation || selection !== state.selection) return;
+      const row = { app, catalog, selected, generation, tenant: initialRowTenant(app), result: null, error: '', draft: 0 };
       try {
-        const result = await request('/effective', { app: app.app, ...selected, ...(tenant ? { tenantId: tenant } : {}) });
-        rows.push([app.app, result.denied ? 'Denied' : result.tier, result.roles.join(', ') || 'None',
-          result.permissions.map(grant => `${grant.permission} (${grant.scope})`).join(', ') || 'None', (result.managementRoles || []).join(', ') || 'None']);
-      } catch (error) { rows.push([app.app, 'Unavailable', error.message, '', '']); }
+        row.result = await request('/effective', rowTarget(row));
+      } catch (error) { row.error = error.status === 403 ? 'Current access is unavailable under your administration scope.' : 'Could not load current access. Refresh to retry.'; }
+      rows.push(row);
     }
-    if (selection === state.selection) $('user-applications').innerHTML = table(['Application', 'Access', 'Business roles', 'Actions / record scopes', 'Core management roles'], rows);
-  } finally { $('load-user-applications').disabled = $('target-kind').value === 'group' || !target(); }
+    if (generation === applicationRows.generation && selection === state.selection) renderApplicationRows(rows);
+  } finally {
+    if (generation === applicationRows.generation) $('load-user-applications').disabled = $('target-kind').value === 'group' || !target();
+  }
 }
 $('load-user-applications').addEventListener('click', () => { void loadUserApplications(); });
+function resetApplicationRows() {
+  applicationRows.generation++;
+  applicationRows.rows.forEach(row => { discardRowPreview(row); clearTimeout(row.accessTimer); });
+  applicationRows.rows = [];
+  $('user-applications').replaceChildren();
+}
+function initialRowTenant(app) {
+  const selected = $('tenant').value.trim();
+  const available = app.managementScopes || [];
+  const assign = available.filter(scope => scope.permissions.includes('assign'));
+  const scopes = assign.length ? assign : available.filter(scope => scope.permissions.includes('read'));
+  if (selected || scopes.some(scope => !scope.tenantId)) return selected;
+  const tenants = [...new Set(scopes.map(scope => scope.tenantId))];
+  return tenants.length === 1 ? tenants[0] : '';
+}
+function rowTarget(row) {
+  return { app: row.app.app, ...row.selected, ...(row.tenant ? { tenantId: row.tenant } : {}) };
+}
+function rowCurrent(row) {
+  return row.generation === applicationRows.generation && row.catalog === state.catalog
+    && row.form?.isConnected && $('target-kind').value === 'user'
+    && target()?.issuer === row.selected.targetIssuer && target()?.sub === row.selected.targetSub;
+}
+function rowCanAssign(row) {
+  return (row.app.managementScopes || []).some(scope => scope.permissions.includes('assign')
+    && (!scope.tenantId || scope.tenantId === row.tenant));
+}
+function rowField(row, name) { return row.form.elements.namedItem(name); }
+function rowSummary(row) {
+  const data = row.result;
+  if (!data) return [row.app.app, row.error, '', '', '', row.tenant || 'No business tenant'];
+  const access = data.denied ? 'Denied' : row.app.status === 'legacy' ? 'Legacy access (existing rules)' : data.tier;
+  return [row.app.app, access, data.roles.join(', ') || 'None',
+    data.permissions.map(grant => `${grant.permission} (${grant.scope})`).join(', ') || 'None',
+    (data.managementRoles || []).join(', ') || 'None', row.tenant || 'No business tenant'];
+}
+function rowEditorMarkup(index) {
+  return `<form data-role-editor class="role-editor" aria-label="Application role editor">
+    <fieldset><legend data-role-heading></legend><p class="details" data-role-identity></p>
+    <p class="hint">Add or remove one direct assignment. Other roles, inherited group access and explicit restrictions remain unchanged.</p>
+    <div class="selectors">
+      <div><label for="row-${index}-tenant">Business tenant (optional)</label><input id="row-${index}-tenant" name="tenant" maxlength="512" autocomplete="off" /></div>
+      <div><label for="row-${index}-action">Change</label><select id="row-${index}-action" name="action"><option value="grant">Add role</option><option value="revoke">Remove direct role</option></select></div>
+      <div><label for="row-${index}-role">Role</label><select id="row-${index}-role" name="role" required></select></div>
+    </div>
+    <p class="hint" data-role-scope></p>
+    <div class="field" data-row-expiry><label for="row-${index}-expires">Role expiry (optional)</label><input id="row-${index}-expires" name="expires" type="datetime-local" /></div>
+    <div class="field"><label for="row-${index}-reason">Reason for this change</label><textarea id="row-${index}-reason" name="reason" required maxlength="1000"></textarea></div>
+    </fieldset><div class="actions"><button type="submit" data-action="review-role">Review change</button><button type="button" data-action="cancel-role">Close editor</button></div>
+    <p data-role-status role="status" aria-live="polite"></p>
+    <section data-role-review class="change-review" aria-label="Review exact role change" hidden>
+      <div class="details" data-role-review-details></div><p class="hint" data-role-review-expiry></p>
+      <button type="button" class="primary" data-action="apply-role">Apply change</button>
+    </section></form>`;
+}
+function renderApplicationRows(rows) {
+  applicationRows.rows = rows;
+  const headers = ['Application', 'Access', 'Business roles', 'Actions / record scopes', 'Core management roles', 'Business tenant', 'Edit'];
+  $('user-applications').innerHTML = '<table><thead><tr>' + headers.map(value => `<th>${value}</th>`).join('') + '</tr></thead><tbody>'
+    + rows.map((row, index) => `<tr data-app="${escapeHtml(row.app.app)}">`
+      + rowSummary(row).map(value => `<td>${escapeHtml(value)}</td>`).join('')
+      + `<td><button type="button" data-action="edit-roles" aria-expanded="false" aria-controls="app-role-editor-${index}">Edit roles</button></td></tr>`
+      + `<tr data-editor-app="${escapeHtml(row.app.app)}" id="app-role-editor-${index}" hidden><td colspan="7">${rowEditorMarkup(index)}</td></tr>`).join('') + '</tbody></table>';
+  const summaries = $('user-applications').querySelectorAll('tr[data-app]');
+  const editors = $('user-applications').querySelectorAll('tr[data-editor-app]');
+  rows.forEach((row, index) => bindApplicationRow(row, summaries[index], editors[index]));
+}
+function bindApplicationRow(row, summary, editor) {
+  row.summary = summary; row.editor = editor; row.form = editor.querySelector('form');
+  row.form.querySelector('[data-role-heading]').textContent = 'Edit roles for ' + row.app.app;
+  row.form.querySelector('[data-role-identity]').textContent = `User: ${row.selected.targetSub}\nIdentity provider: ${row.selected.targetIssuer}`;
+  rowField(row, 'tenant').value = row.tenant;
+  const toggle = summary.querySelector('button');
+  toggle.disabled = !(row.app.managementScopes || []).some(scope => scope.permissions.includes('assign'));
+  if (toggle.disabled) toggle.title = 'Your scope permits reviewing access only.';
+  toggle.addEventListener('click', () => { editor.hidden = !editor.hidden; toggle.setAttribute('aria-expanded', String(!editor.hidden)); });
+  row.form.addEventListener('input', () => rowDraftChanged(row));
+  row.form.addEventListener('change', event => {
+    rowDraftChanged(row);
+    if (event.target.name === 'tenant') void refreshRowEffective(row);
+  });
+  row.form.addEventListener('submit', event => { event.preventDefault(); void previewRowRole(row); });
+  row.form.querySelector('[data-action="apply-role"]').addEventListener('click', () => { void applyRowRole(row); });
+  row.form.querySelector('[data-action="cancel-role"]').addEventListener('click', () => {
+    discardRowPreview(row); editor.hidden = true; toggle.setAttribute('aria-expanded', 'false'); toggle.focus();
+  });
+  populateRowRoles(row); updateRowControls(row);
+}
+function directRowRoles(row) {
+  return new Set((row.catalog.assignments || []).filter(entry => entry.app === row.app.app && !entry.group && !entry.deny
+    && entry.targetSub === row.selected.targetSub && entry.targetIssuer === row.selected.targetIssuer
+    && (entry.tenantId || '') === row.tenant && entry.role).map(entry => entry.role));
+}
+function rowRoleGroups(row) {
+  const business = row.app.catalog ? Object.entries(row.app.catalog.roles).map(([id, role]) => ({ id, label: role.label || id }))
+    : [{ id: '@app-admin', label: 'App administrator' }];
+  const management = row.app.canDelegateManagement ? row.catalog.managementRoles || [] : [];
+  return [['Business roles', business], ['Core access-management roles', management]];
+}
+function populateRowRoles(row) {
+  const select = rowField(row, 'role'), previous = select.value, direct = directRowRoles(row);
+  const removing = rowField(row, 'action').value === 'revoke';
+  select.replaceChildren();
+  rowRoleGroups(row).forEach(([label, roles]) => {
+    const group = document.createElement('optgroup'); group.label = label;
+    roles.filter(role => !removing || direct.has(role.id)).forEach(role => {
+      const option = document.createElement('option'); option.value = role.id;
+      option.textContent = role.label + (label.startsWith('Core') ? ' (core management)' : '') + (direct.has(role.id) ? ' — directly assigned' : '');
+      group.append(option);
+    });
+    if (group.childElementCount) select.append(group);
+  });
+  if ([...select.options].some(option => option.value === previous)) select.value = previous;
+  row.form.querySelector('[data-row-expiry]').hidden = removing;
+}
+function discardRowPreview(row) {
+  row.draft++; row.preview = null; row.idempotencyKey = null;
+  clearTimeout(row.expiryTimer);
+  if (row.form) row.form.querySelector('[data-role-review]').hidden = true;
+}
+function rowDraftChanged(row) {
+  discardRowPreview(row);
+  const tenant = rowField(row, 'tenant').value.trim();
+  if (tenant !== row.tenant) {
+    row.accessGeneration = (row.accessGeneration || 0) + 1; row.loading = false;
+    row.tenant = tenant; row.result = null; row.error = 'Reviewing a different business tenant.';
+    clearTimeout(row.accessTimer);
+    row.accessTimer = setTimeout(() => { if (rowCurrent(row)) void refreshRowEffective(row); }, 150);
+    updateRowSummary(row);
+  }
+  populateRowRoles(row); updateRowControls(row);
+  row.form.querySelector('[data-role-status]').textContent = '';
+}
+function updateRowSummary(row) {
+  rowSummary(row).forEach((value, index) => { row.summary.cells[index].textContent = value; });
+}
+function updateRowControls(row) {
+  if (!row.form) return;
+  const permitted = rowCanAssign(row), busy = state.busy || row.pending || row.loading;
+  const legacy = row.app.status === 'legacy' ? 'Legacy application access still follows its existing rules. ' : '';
+  const scope = permitted ? 'Core management roles control access administration only; they do not grant business-data access.'
+    : 'You cannot change roles for this business tenant under your current administration scope.';
+  row.form.querySelector('[data-role-scope]').textContent = legacy + scope;
+  row.form.querySelector('fieldset').disabled = Boolean(row.applying);
+  row.form.querySelector('[data-action="review-role"]').disabled = Boolean(busy || !permitted || !rowField(row, 'role').value || !row.result);
+  row.form.querySelector('[data-action="apply-role"]').disabled = Boolean(busy || !permitted || !row.preview
+    || row.preview.requiresApproval || Date.parse(row.preview.expiresAt) <= Date.now());
+}
+async function refreshRowEffective(row) {
+  clearTimeout(row.accessTimer);
+  const tenant = row.tenant, generation = row.accessGeneration;
+  row.loading = true; updateRowControls(row);
+  try {
+    const result = await request('/effective', rowTarget(row));
+    if (!rowCurrent(row) || tenant !== row.tenant || generation !== row.accessGeneration) return;
+    row.result = result; row.error = '';
+  } catch {
+    if (!rowCurrent(row) || tenant !== row.tenant || generation !== row.accessGeneration) return;
+    row.result = null; row.error = 'Current access is unavailable. Refresh the catalog before changing roles.';
+  } finally {
+    if (rowCurrent(row) && tenant === row.tenant && generation === row.accessGeneration) {
+      row.loading = false; updateRowSummary(row); updateRowControls(row);
+    }
+  }
+}
+function rowChange(row) {
+  const action = rowField(row, 'action').value, expires = rowField(row, 'expires').value;
+  return { ...rowTarget(row), action, role: rowField(row, 'role').value, reason: rowField(row, 'reason').value.trim(),
+    expectedRevision: row.catalog.revision,
+    ...(action === 'grant' && expires ? { expiresAt: new Date(expires).toISOString() } : {}) };
+}
+function showRowReview(row, preview, change) {
+  row.preview = preview; row.reviewedChange = JSON.stringify(change); row.idempotencyKey = crypto.randomUUID();
+  const c = preview.change;
+  row.form.querySelector('[data-role-review-details]').textContent = [
+    `${c.action === 'grant' ? 'Add role' : 'Remove direct role'}: ${c.role}`, `Application: ${c.app}`,
+    `User: ${c.targetSub}`, `Identity provider: ${c.targetIssuer}`, `Business tenant: ${c.tenantId || 'None'}`,
+    `Role expiry: ${c.expiresAt || 'No expiry'}`, `Reason: ${c.reason}`,
+  ].join('\n');
+  row.form.querySelector('[data-role-review-expiry]').textContent = `Policy revision ${preview.revision} · Catalog ${preview.catalogRevision}. Review expires ${preview.expiresAt}.`
+    + (preview.requiresApproval ? ' A separate verified approval is required. Applying this change here is unavailable.' : '');
+  row.form.querySelector('[data-role-review]').hidden = false;
+  row.form.querySelector('[data-role-status]').textContent = 'Review this exact role change before applying it.';
+  row.expiryTimer = setTimeout(() => {
+    if (!rowCurrent(row) || row.preview !== preview) return;
+    discardRowPreview(row); updateRowControls(row);
+    row.form.querySelector('[data-role-status]').textContent = 'This review expired. Review the change again before applying it.';
+  }, Math.max(0, Date.parse(preview.expiresAt) - Date.now()));
+}
+async function rowFailure(row, error) {
+  if (!rowCurrent(row)) return;
+  discardRowPreview(row);
+  const message = error.status === 409 ? 'Access changed during review. Current assignments were refreshed; review a new change.'
+    : error.status === 403 ? 'Your current permissions do not allow this change. Current access was refreshed.'
+    : 'The change could not be completed. Refresh current access and review it again.';
+  if ([403, 409].includes(error.status)) {
+    await loadCatalog();
+    if (!$('administration').hidden) await loadUserApplications();
+    status(message, 'error');
+  } else row.form.querySelector('[data-role-status]').textContent = message;
+}
+async function previewRowRole(row) {
+  if (!rowCurrent(row) || state.busy || row.pending || row.loading || !rowCanAssign(row) || !row.result || !row.form.reportValidity()) return;
+  discardRowPreview(row); discardPreview();
+  const draft = row.draft, change = rowChange(row);
+  row.pending = true; setBusy(true);
+  try {
+    const preview = await request('/preview', change);
+    if (!rowCurrent(row) || draft !== row.draft || JSON.stringify(rowChange(row)) !== JSON.stringify(change)) return;
+    if (preview.catalogRevision !== row.app.catalogRevision || preview.revision !== row.catalog.revision) {
+      const error = new Error('The catalog changed.'); error.status = 409; throw error;
+    }
+    showRowReview(row, preview, change);
+  } catch (error) { if (draft === row.draft) await rowFailure(row, error); }
+  finally { row.pending = false; setBusy(false); }
+}
+async function applyRowRole(row) {
+  if (!rowCurrent(row) || state.busy || row.pending || !row.preview || row.preview.requiresApproval || !rowCanAssign(row)) return;
+  if (Date.parse(row.preview.expiresAt) <= Date.now() || JSON.stringify(rowChange(row)) !== row.reviewedChange) {
+    discardRowPreview(row); updateRowControls(row); return;
+  }
+  const preview = row.preview, idempotencyKey = row.idempotencyKey;
+  row.pending = true; row.applying = true; setBusy(true);
+  try {
+    const receipt = await request('/apply', { previewId: preview.previewId, idempotencyKey });
+    if (!rowCurrent(row)) return;
+    $('receipt').hidden = false;
+    $('receipt').textContent = `Last applied change: ${preview.change.action} ${preview.change.role} for ${preview.change.targetSub} (${preview.change.targetIssuer}) in ${preview.change.app}; audit ${receipt.auditId}, policy revision ${receipt.revision}.`;
+    await loadCatalog('Change applied and current access reloaded.');
+    if (!$('administration').hidden) await loadUserApplications();
+  } catch (error) { await rowFailure(row, error); }
+  finally { row.pending = false; row.applying = false; setBusy(false); }
+}
 function resetAudit() {
   auditState.generation++; auditState.entries = []; auditState.cursor = null;
   $('audit-entries').replaceChildren(); $('audit-status').textContent = '';
@@ -374,7 +642,7 @@ $('manual-target-form').addEventListener('submit', event => {
   status('Exact identity selected. No access has changed; review a preview before applying.');
 });
 $('target').addEventListener('change', () => { discardPreview(); renderApplication(); void renderEffective(); });
-$('application').addEventListener('change', () => { renderApplication(); void renderEffective(); void loadAudit(true); });
+$('application').addEventListener('change', () => { state.unavailableApp = null; renderApplication(); void renderEffective(); void loadAudit(true); });
 $('operation').addEventListener('change', renderChange);
 $('change-form').addEventListener('input', discardPreview);
 $('change-form').addEventListener('change', discardPreview);

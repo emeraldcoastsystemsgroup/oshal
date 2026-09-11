@@ -86,6 +86,21 @@ reads the selected user's current access across the caller's visible catalog. Ex
 affected permission, including a deny for one action within a broader role. Create, update and delete
 are distinct named permissions even when all have the `write` effect in the catalog.
 
+Each row in **This user's applications** has **Edit roles** for callers with assignment rights.
+Choose **Add role** or **Remove direct role**, select the application's imported role and business
+tenant when applicable, and enter a reason. Review the exact identity, application, role and action
+in that row before applying. Adding a role preserves the user's other roles; removing a direct role
+does not remove inherited group access or clear explicit restrictions. Core access-management roles
+appear separately from business roles and are available only to current swarm administrators.
+
+An auditor can read the table without changing roles. Row edits use that application's management
+scope and the selected business tenant. Changes to the selected user, tenant or catalog discard
+pending reviews; a catalog deployment or concurrent policy change requires a fresh review. Sensitive
+self-management changes remain pending independent approval. Applications without a catalog in legacy
+mode show **Legacy access**, because the central role tier does not describe legacy enforcement.
+The registered `authorization-admin-browser.spec.ts` suite exercises these controls with the actual
+policy HTTP service and isolated in-memory assignments; it never edits deployed grants.
+
 Two core role templates can be assigned per application, optionally within a business tenant:
 
 | Core role | Management rights | Business-data rights |

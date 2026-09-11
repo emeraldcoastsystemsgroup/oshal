@@ -6,11 +6,12 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify grants, restrictions and reviewed changes through the real administration screen.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise user deep-links, permission matrices and delegated read-only administration.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Refuse unknown linked identities and obsolete asynchronous access previews.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Verify inline additive roles, exact row scope, live catalog changes and stale response refusal.
  */
 /** Chromium drives the real Access Administration page and shared policy HTTP service on loopback. */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
-import { createAuthorizationFixture } from '../fixtures/authorization';
+import { CATALOG, ISSUER, createAuthorizationFixture } from '../fixtures/authorization';
 
 let browser: Browser, context: BrowserContext, page: Page;
 let fixture: Awaited<ReturnType<typeof createAuthorizationFixture>>;
@@ -22,6 +23,7 @@ beforeEach(async () => {
   await context.addCookies([{ name: 'session', value: 'admin', url: fixture.base }]);
   await context.route('**/*', route => new URL(route.request().url()).origin === fixture.base ? route.continue() : route.abort());
   page = await context.newPage();
+  page.setDefaultTimeout(10000);
   await page.goto(fixture.base + '/access/');
   await page.locator('#administration').waitFor({ state: 'visible' });
   await expect.poll(() => page.locator('#status').textContent()).toContain('Access catalog loaded');
@@ -233,4 +235,227 @@ it('does not reopen a pending Access preview after refresh discards the unchange
     expect(await page.locator('#review').isHidden()).toBe(true);
     expect((await fixture.store.read()).assignments).toEqual([]);
   } finally { release(); }
+});
+
+/** Open the real row editor; each save still uses the shared policy HTTP service. */
+async function editApplication(app = 'catalog-app') {
+  await page.locator('#load-user-applications').click();
+  await page.locator(`tr[data-app="${app}"] [data-action="edit-roles"]`).click();
+  return page.locator(`tr[data-editor-app="${app}"]`);
+}
+
+async function reviewRow(editor: ReturnType<Page['locator']>, role: string, action = 'grant') {
+  await editor.locator('[name="action"]').selectOption(action);
+  await editor.locator('[name="role"]').selectOption(role);
+  await editor.locator('[name="reason"]').fill('Reviewed exact application role in isolated browser');
+  await editor.locator('[data-action="review-role"]').click();
+  await editor.locator('[data-role-review]').waitFor({ state: 'visible' });
+}
+
+async function applyRow(editor: ReturnType<Page['locator']>) {
+  const revision = (await fixture.store.read()).revision;
+  await editor.locator('[data-action="apply-role"]').click();
+  await expect.poll(async () => (await fixture.store.read()).revision).toBe(revision + 1);
+  await expect.poll(() => page.locator('#load-user-applications').isEnabled()).toBe(true);
+  await expect.poll(() => page.locator('#user-applications tr[data-app="catalog-app"]').count()).toBe(1);
+}
+
+describe('Inline application role editing', () => {
+  it('adds imported and core roles, then removes only the chosen direct role while preserving group access and deny', async () => {
+    fixture.actors.alice.directory = [{ issuer: ISSUER, tenantId: 'directory-one', groups: ['engineering'], observedAt: new Date().toISOString(), complete: true }];
+    await fixture.apply();
+    await fixture.apply({ action: 'group-map', targetSub: undefined, targetIssuer: undefined,
+      role: 'reader', group: { issuer: ISSUER, tenantId: 'directory-one', id: 'engineering' } });
+    await fixture.apply({ action: 'deny', role: undefined, permission: 'records.read' });
+    await page.reload();
+    let editor = await editApplication();
+    await reviewRow(editor, 'sensitive-reader');
+    expect(await editor.locator('[data-role-review]').textContent()).toContain(ISSUER);
+    expect(await editor.locator('[data-role-review]').textContent()).toContain('alice');
+    expect((await fixture.store.read()).assignments).toHaveLength(3);
+    await applyRow(editor);
+    editor = await editApplication();
+    expect(await editor.locator('optgroup').evaluateAll(groups => groups.map(group => group.label))).toContain('Core access-management roles');
+    await reviewRow(editor, '@access-auditor'); await applyRow(editor);
+    editor = await editApplication();
+    await reviewRow(editor, 'reader', 'revoke'); await applyRow(editor);
+    const assignments = (await fixture.store.read()).assignments;
+    expect(assignments).toHaveLength(4);
+    expect(assignments.filter(row => !row.group && !row.deny).map(row => row.role).sort()).toEqual(['@access-auditor', 'sensitive-reader']);
+    expect(assignments.some(row => row.group?.id === 'engineering' && row.role === 'reader')).toBe(true);
+    expect(assignments.some(row => row.deny && row.permission === 'records.read')).toBe(true);
+    editor = await editApplication(); await editor.locator('[name="action"]').selectOption('revoke');
+    expect(await editor.locator('[name="role"] option').evaluateAll(options => options.map(option => option.value))).not.toContain('reader');
+    expect((await page.locator('tr[data-app="catalog-app"] td').nth(2).textContent())?.split(',').map(role => role.trim())).toContain('reader');
+    expect(fixture.store.auditEvents).toHaveLength(6);
+  }, 30000);
+
+  it('edits the clicked fallback application independently of the application selected above the table', async () => {
+    const editor = await editApplication('fallback-app');
+    expect(await page.locator('#application').inputValue()).toBe('catalog-app');
+    expect(await editor.locator('[name="role"] option').evaluateAll(options => options.map(option => option.value))).not.toContain('reader');
+    await reviewRow(editor, '@app-admin');
+    expect(await editor.locator('[data-role-review]').textContent()).toContain('fallback-app');
+    await applyRow(editor);
+    expect((await fixture.store.read()).assignments).toMatchObject([{ app: 'fallback-app', targetSub: 'alice', targetIssuer: ISSUER, role: '@app-admin' }]);
+  }, 30000);
+
+  it('restricts a delegated manager to the row business tenant and imported roles', async () => {
+    fixture.actors.alice.tenantIds = ['business-one'];
+    await fixture.apply({ tenantId: 'business-one' });
+    fixture.actors.reader.managementScopes = [{ app: 'catalog-app', tenantId: 'business-one', permissions: ['read', 'assign'] }];
+    await context.addCookies([{ name: 'session', value: 'reader', url: fixture.base }]); await page.reload();
+    const editor = await editApplication();
+    await editor.locator('[name="tenant"]').fill('business-other');
+    expect(await editor.locator('[data-action="review-role"]').isDisabled()).toBe(true);
+    await editor.locator('[name="tenant"]').fill('business-one');
+    expect(await editor.locator('[name="role"] option').evaluateAll(options => options.map(option => option.value))).not.toContain('@access-admin');
+    await reviewRow(editor, 'sensitive-reader'); await applyRow(editor);
+    expect((await fixture.store.read()).assignments.map(row => [row.app, row.tenantId, row.role])).toEqual([
+      ['catalog-app', 'business-one', 'reader'], ['catalog-app', 'business-one', 'sensitive-reader'],
+    ]);
+    expect(await page.locator('tr[data-app="fallback-app"]').count()).toBe(0);
+    fixture.actors.reader.managementScopes = [{ app: 'catalog-app', tenantId: 'business-one', permissions: ['read'] }];
+    await page.reload(); await page.locator('#load-user-applications').click();
+    await expect.poll(() => page.locator('tr[data-app="catalog-app"] td').nth(5).textContent()).toBe('business-one');
+    expect(await page.locator('tr[data-app="catalog-app"] [data-action="edit-roles"]').isDisabled()).toBe(true);
+    expect(await page.locator('tr[data-app="catalog-app"]').textContent()).toContain('sensitive-reader');
+  }, 30000);
+
+  it('renders auditors without mutation controls and refuses a writer revoked after preview', async () => {
+    await fixture.apply();
+    await context.addCookies([{ name: 'session', value: 'reader', url: fixture.base }]); await page.reload();
+    await page.locator('#load-user-applications').click();
+    const edit = page.locator('tr[data-app="catalog-app"] [data-action="edit-roles"]');
+    await expect.poll(() => page.locator('tr[data-app="catalog-app"]').count()).toBe(1);
+    expect(await edit.count() === 0 || await edit.isDisabled()).toBe(true);
+    await context.addCookies([{ name: 'session', value: 'admin', url: fixture.base }]); await page.reload();
+    const editor = await editApplication(); await reviewRow(editor, 'sensitive-reader');
+    fixture.actors.admin.isSwarmAdmin = false;
+    await editor.locator('[data-action="apply-role"]').click();
+    await expect.poll(() => page.locator('#status').textContent()).toMatch(/scope|denied|permission/i);
+    expect((await fixture.store.read()).assignments.map(row => row.role)).toEqual(['reader']);
+  }, 30000);
+
+  it.each(['cancel', 'target', 'tenant'])('discards a delayed row preview after %s changes its context', async change => {
+    const editor = await editApplication();
+    let release!: () => void; let entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    await page.route('**/api/authorization/preview', async route => {
+      const response = await route.fetch(); entered(); await gate; await route.fulfill({ response });
+    });
+    try {
+      await editor.locator('[name="reason"]').fill('Delayed row review');
+      await editor.locator('[data-action="review-role"]').click(); await waiting;
+      if (change === 'target') await page.locator('#target').selectOption('1');
+      else if (change === 'tenant') await editor.locator('[name="tenant"]').fill('changed-business');
+      else await editor.locator('[data-action="cancel-role"]').click();
+      const settled = page.waitForResponse(response => response.url().endsWith('/authorization/preview'));
+      release(); await settled;
+      await expect.poll(() => page.locator('[data-role-review]:visible').count()).toBe(0);
+      expect((await fixture.store.read()).assignments).toEqual([]);
+    } finally { release(); }
+  }, 30000);
+
+  it('keeps a delayed applied change bound to its original user without painting it on a new selection', async () => {
+    const editor = await editApplication(); await reviewRow(editor, 'reader');
+    let release!: () => void; let entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    await page.route('**/api/authorization/apply', async route => {
+      const response = await route.fetch(); entered(); await gate; await route.fulfill({ response });
+    });
+    try {
+      await editor.locator('[data-action="apply-role"]').click(); await waiting;
+      await page.locator('#target').selectOption('1');
+      const settled = page.waitForResponse(response => response.url().endsWith('/authorization/apply'));
+      release(); await settled;
+      await expect.poll(() => page.locator('#effective').textContent()).toContain('Roles: None');
+      expect(await page.locator('#target option:checked').textContent()).toContain('Bob');
+      expect(await page.locator('[data-role-review]:visible').count()).toBe(0);
+      expect(await page.locator('#receipt').textContent()).not.toContain('auditId');
+      expect((await fixture.store.read()).assignments).toMatchObject([{ targetSub: 'alice', targetIssuer: ISSUER, app: 'catalog-app', role: 'reader' }]);
+    } finally { release(); }
+  }, 30000);
+
+  it('refuses an obsolete row preview after an application deployment changes its catalog', async () => {
+    const editor = await editApplication(); await reviewRow(editor, 'reader');
+    const changedCatalog = { ...CATALOG, roles: { ...CATALOG.roles, 'new-reader': structuredClone(CATALOG.roles.reader) } };
+    await fixture.service.registerApp({ app: 'catalog-app', source: 'fixture-store', version: '2.0.0', catalog: changedCatalog, mode: 'enforce' });
+    await editor.locator('[data-action="apply-role"]').click();
+    await expect.poll(() => page.locator('#status').textContent()).toMatch(/Access changed (during review|while you were reviewing)/);
+    expect(await page.locator('[data-role-review]:visible').count()).toBe(0);
+    expect((await fixture.store.read()).assignments).toEqual([]);
+    expect(await page.locator('#app-revision').textContent()).toContain('2.0.0');
+  }, 30000);
+
+  it('does not replace a fresh application inventory with an older pending catalog response', async () => {
+    let release!: () => void; let entered!: () => void; let first = true;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    await page.route('**/api/authorization/catalog', async route => {
+      if (!first) { await route.continue(); return; }
+      first = false; const response = await route.fetch(); entered(); await gate; await route.fulfill({ response });
+    });
+    try {
+      await page.locator('#refresh').click(); await waiting;
+      await fixture.service.registerApp({ app: 'newly-installed', source: 'fixture-store', version: '1.0.0', catalog: CATALOG, mode: 'enforce' });
+      await page.locator('#refresh').click();
+      await expect.poll(() => page.locator('#application option').allTextContents()).toContain('newly-installed (fixture-store)');
+      await page.locator('#target').selectOption('1');
+      const settled = page.waitForResponse(response => response.url().endsWith('/authorization/catalog'));
+      release(); await settled;
+      await expect.poll(() => page.locator('#application option').allTextContents()).toContain('newly-installed (fixture-store)');
+      expect(await page.locator('#target option:checked').textContent()).toContain('Bob');
+    } finally { release(); }
+  }, 30000);
+
+  it('keeps a removed application unselected and leaves other application rows available after refresh', async () => {
+    const editor = await editApplication(); await reviewRow(editor, 'reader');
+    fixture.service.unregisterApp('catalog-app'); await page.locator('#refresh').click();
+    await expect.poll(() => page.locator('#status').textContent()).toContain('Access catalog loaded');
+    expect(await page.locator('#application').inputValue()).toBe('');
+    expect(await page.locator('#preview-button').isDisabled()).toBe(true);
+    expect(await page.locator('[data-role-review]:visible').count()).toBe(0);
+    await page.locator('#refresh').click();
+    await expect.poll(() => page.locator('#status').textContent()).toContain('Access catalog loaded');
+    expect(await page.locator('#application').inputValue()).toBe('');
+    const fallback = await editApplication('fallback-app');
+    await reviewRow(fallback, '@app-admin');
+    expect(await fallback.locator('[data-role-review]').textContent()).toContain('fallback-app');
+    expect((await fixture.store.read()).assignments).toEqual([]);
+  }, 30000);
+
+  it('keeps sensitive self-management review pending independent approval', async () => {
+    await page.locator('#manual-target summary').click();
+    await page.locator('#manual-issuer').fill(ISSUER); await page.locator('#manual-id').fill('admin');
+    await page.locator('#use-manual-target').click();
+    const editor = await editApplication(); await reviewRow(editor, '@access-admin');
+    expect(await editor.locator('[data-action="apply-role"]').isDisabled()).toBe(true);
+    expect(await editor.textContent()).toMatch(/separate.*approval|independent.*approval/i);
+    expect((await fixture.store.read()).assignments).toEqual([]);
+  }, 30000);
+
+  it('keeps identical user subjects from different identity providers separate in the row editor', async () => {
+    await fixture.apply(); await page.reload();
+    await page.locator('#manual-target summary').click();
+    await page.locator('#manual-issuer').fill('https://second.identity.fixture.test');
+    await page.locator('#manual-id').fill('alice'); await page.locator('#use-manual-target').click();
+    const editor = await editApplication(); await reviewRow(editor, 'reader'); await applyRow(editor);
+    expect((await fixture.store.read()).assignments.map(row => [row.targetIssuer, row.targetSub, row.role])).toEqual([
+      [ISSUER, 'alice', 'reader'], ['https://second.identity.fixture.test', 'alice', 'reader'],
+    ]);
+  }, 30000);
+
+  it('distinguishes legacy access from a denied application', async () => {
+    await fixture.service.registerApp({ app: 'legacy-app', source: 'fixture-store', version: '1.0.0', catalog: null, mode: 'legacy' });
+    await page.reload(); await page.locator('#load-user-applications').click();
+    await expect.poll(() => page.locator('tr[data-app="legacy-app"]').textContent()).toContain('Legacy access');
+    expect(await page.locator('tr[data-app="legacy-app"] td').nth(1).textContent()).not.toMatch(/deny|denied/i);
+    expect(await page.locator('tr[data-app="catalog-app"] td').nth(1).textContent()).toMatch(/deny|denied/i);
+    fixture.actors.alice.isActive = false;
+    await page.locator('#load-user-applications').click();
+    await expect.poll(() => page.locator('tr[data-app="legacy-app"] td').nth(1).textContent()).toMatch(/denied/i);
+  }, 30000);
 });
