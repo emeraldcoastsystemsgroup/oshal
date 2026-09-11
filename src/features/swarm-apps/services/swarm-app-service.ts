@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 36 | maintainer@emeraldcoastsystemsgroup.com | Publish installed smoke tests after successful activation and retract them before reload/deactivation; extract stateless artifact registration to keep lifecycle orchestration within its module size limit.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -67,10 +68,8 @@ import {
   registerAppSkillProfiles,
   unregisterAppSkillProfiles,
 } from '@/shared/skill-profiles';
-import {
-  registerAppArtifactActions,
-  unregisterAppArtifactActions,
-} from '@/shared/artifact-exchange';
+import { unregisterAppArtifactActions } from '@/shared/artifact-exchange';
+import { applyArtifactActions } from './manifest-artifact-registration';
 import {
   assertGroupResolvable,
   groupDashboardTile,
@@ -100,6 +99,7 @@ import {
 } from './tool-ownership';
 import { deleteManifestBotToolGrants, deregisterOwnedManifestTools, failClosedManifestActivation, prepareManifestToolUpdate, rollbackNewManifestToolGrants } from './manifest-tool-reconciliation';
 import { SwarmAppRepository, type SwarmAppScopeMeta } from './swarm-app-repository';
+import { InstalledAppTestCatalog } from './installed-app-test-catalog';
 import type {
   SwarmAppManifest,
   SwarmAppAccessDeclaration,
@@ -138,6 +138,7 @@ const logger = createChildLogger({ module: 'swarm-app-service' });
  *   - Dynamic workflow pipeline    — WORKFLOW_PIPELINES array still static
  */
 export class SwarmAppService {
+  readonly testLabCatalog = new InstalledAppTestCatalog();
   /**
    * Mount-path → owning app name map. Built from every loaded manifest's
    * routes[] block. Used by the route-gate middleware to answer "is the
@@ -244,8 +245,7 @@ export class SwarmAppService {
     const prepared = await prepareManifestToolUpdate(this.pool, previous, manifest,
       (retiredManifest) => this.deregisterManifestTools(retiredManifest, true),
     );
-    const toolNames = staticToolNames(manifest);
-    const record = await this.repo.upsert(manifest, manifestPath, toolNames, scopeMeta);
+    const record = await this.repo.upsert(manifest, manifestPath, staticToolNames(manifest), scopeMeta);
     await this.deregisterRetiredManifestSchedules(previous, manifest);
     if (record.status === 'active') {
       try {
@@ -255,6 +255,7 @@ export class SwarmAppService {
         await deleteManifestBotToolGrants(
           this.pool, prepared.retired.agentIds, prepared.retired.toolNames,
         );
+        this.testLabCatalog.register(record);
       } catch (error) {
         this.appStatusCache.set(record.name, 'inactive');
         await failClosedManifestActivation(record.name, error, [
@@ -521,6 +522,7 @@ export class SwarmAppService {
       await this.deactivate(record);
     }
     const updated = await this.repo.updateStatus(name, active ? 'active' : 'inactive');
+    if (updated?.status === 'active') this.testLabCatalog.register(updated);
     await this.refreshOwnershipCache();
     logger.info({ name, active }, 'App toggled');
     return updated;
@@ -901,6 +903,7 @@ export class SwarmAppService {
   // ── Internal: activation / deactivation primitives ─────────────────────
 
   private async activate(record: SwarmApplicationRecord): Promise<void> {
+    this.testLabCatalog.unregister(record.name);
     // ADR-141 D2/D3: a group activates only when every borrowed surface and every setup readiness
     // resolves against its ACTIVE members — it never renders a dead tile. Throws with the member
     // and surface/readiness named; loadApp fail-closes the record to inactive.
@@ -936,7 +939,7 @@ export class SwarmAppService {
     await this.setBotStatuses(record.agentIds, 'active');
     this.applyGuestTier(record);
     this.applySkillProfiles(record);
-    this.applyArtifactActions(record);
+    applyArtifactActions(record);
     // Dynamic UI discovery is the last activation step that may throw directly. Complete it
     // before enabling model tools or seeding grants, then keep only non-throwing/caught steps
     // after the privilege boundary. loadApp still compensates if an unexpected later error escapes.
@@ -1249,6 +1252,7 @@ export class SwarmAppService {
   }
 
   private async deactivate(record: SwarmApplicationRecord): Promise<void> {
+    this.testLabCatalog.unregister(record.name);
     // Close package ingestion first so a handler cannot remain reachable during asynchronous
     // teardown. The registry operation is synchronous and idempotent.
     try {
@@ -1467,27 +1471,6 @@ export class SwarmAppService {
    * @param tier - The tier to approve, or null to revoke.
    * @returns The updated record, or null when the app doesn't exist.
    */
-  /**
-   * @description Register the app's "Send to…" artifact declarations (ADR-139) into the shared
-   * registry. Called from activate(); deactivate() retracts. Mirrors applySkillProfiles — the
-   * negative case RETRACTS rather than skips, so an edit-reload that removes the artifacts:
-   * block clears the prior registration instead of leaving stale menu entries live.
-   * @param record - The app being activated.
-   */
-  private applyArtifactActions(record: SwarmApplicationRecord): void {
-    const decl = record.manifest.artifacts;
-    const empty = !decl || ((decl.accepts?.length ?? 0) === 0 && (decl.provides?.length ?? 0) === 0);
-    if (empty) {
-      unregisterAppArtifactActions(record.name);
-      return;
-    }
-    try {
-      registerAppArtifactActions(record.name, decl);
-    } catch (err) {
-      logger.error({ err, app: record.name }, 'Artifact-action registration failed (non-fatal)');
-    }
-  }
-
   async approveGuestTier(name: string, tier: GuestTier | null): Promise<SwarmApplicationRecord | null> {
     const record = await this.repo.setGuestTierApproval(name, tier);
     if (!record) return null;

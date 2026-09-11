@@ -70,14 +70,29 @@ updated catalog or its live-model scenarios have already run on the deployed ins
 
 ---
 
-## Planned: application-installed test catalogs
+## Application-installed smoke cases
 
-Application test-case catalogs should register through package installation and activation, then
-reconcile on upgrade, reload, disable and uninstall. Existing `smoke:` declarations are the starting
-point. Richer test catalogs and automatic Lab registration are **not implemented yet**; the
-[application registration backlog](backlog/app-test-lab-registration.md) lists the packages, existing
-suites, installation contract work and acceptance criteria. Registering tests must not silently run
-model/device/outward-action suites during installation.
+Active applications register their existing manifest `smoke:` declarations through the application
+loader. Reload and update replace that app's cases; deactivation and uninstall retract them. A fresh
+controller rebuilds the inventory through normal app loading. Each case carries its owning app,
+installed version, declaration revision, and execution prerequisites. The catalog also identifies
+apps without declarations and groups whose coverage belongs to their members.
+
+The Lab displays only apps available to the caller and checks access again before each execution.
+Eligible GET/HEAD cases run through the existing installation smoke verifier. Service-authenticated
+checks require an operator; PAT checks require the caller's PAT. AI and mutating cases remain
+registered but pending a suitable approved runner. Registration itself does not execute tests.
+
+The **Installed application test registration** card (`installed-app-tests`) checks catalog identity
+and prerequisites without running application smokes. **Connector sign-in callback boundary**
+(`connector-oauth-boundary`) probes anonymous refusal paths without connecting a provider.
+**Multi-store discovery** (`multi-store-discovery`) reads registry status and qualified package
+identities without installing packages or changing trust. Their linked local suites run using
+`npm run test:platform-readiness`.
+
+Richer unit/browser catalogs, retained versioned test history, package-suite migration and scheduled
+selection remain in the [application registration backlog](backlog/app-test-lab-registration.md).
+Source registration and fixture tests do not establish deployed provider or production results.
 
 ## Part 2 — Nightly golden loop
 

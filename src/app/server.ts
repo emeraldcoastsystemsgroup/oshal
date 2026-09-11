@@ -178,6 +178,7 @@
  * 164 | maintainer@emeraldcoastsystemsgroup.com   | resolveOpenAiCodexCallbackPort delegates its raw-port read to resolveConfiguredOpenAiCodexCallbackPort (server-auth-helpers seq 4): the compose-forwarded EMPTY OPENAI_CODEX_CALLBACK_PORT parsed to NaN and silently skipped the :1455 codex callback listener, so every cockpit codex login ended at ERR_EMPTY_RESPONSE on localhost:1455. One reader now owns the ""-means-default rule.
  * Home customization | Codex | Mount authenticated Home preference persistence alongside user settings.
  * 165 | maintainer@emeraldcoastsystemsgroup.com | ADR-139 shared artifact picker: source discovery, owner-scoped storage and app visibility.
+ * 166 | maintainer@emeraldcoastsystemsgroup.com | Mount browser-bound connector callbacks and caller-scoped installed application tests in the existing Lab.
  */
 
 require('dotenv').config();
@@ -242,7 +243,7 @@ import { createConfigRoutes } from './routes/config-routes';
 import { createProviderRoutes, listConfiguredProviders } from './routes/provider-routes';
 import { onboardingRequired } from './onboarding-gate';
 import { registerReadinessRoutes } from './routes/readiness-routes';
-import { createConnectorsRoutes, createFacebookDataDeletionRoute } from './routes/connectors-routes';
+import { connectorCallbackAuth, createConnectorsRoutes, createFacebookDataDeletionRoute } from './routes/connectors-routes';
 import { createConnectorLivenessRoutes } from './routes/connector-liveness';
 import { createByoLlmRoutes } from './routes/byo-llm-routes';
 import { createFreeTierRoutes } from './routes/free-tier-routes';
@@ -1153,7 +1154,7 @@ function createApp(): express.Application {
   // every handler reads the authenticated sub and never accepts a subject parameter.
   app.use('/api/settings/llm-default', requiresAuth, createLlmPreferenceRoutes(ctx));
   // Connectors / Utilities hub — per-user provider authorization (Gmail, etc.)
-  app.use('/api/connect', requiresAuth, createConnectorsRoutes(ctx));
+  app.use('/api/connect', connectorCallbackAuth(requiresAuth), createConnectorsRoutes(ctx));
   // Live connection health (INSTALLER-GAPS G14): GET /api/connect/liveness probes whether the
   // provider will actually HONOR the stored grant (forced refresh / account read, cached ≤15min)
   // so the Connections screen's "connected" badge stops trusting a bare DB row.
@@ -1489,7 +1490,24 @@ function createApp(): express.Application {
   // /api/test-lab so /api/test-lab/golden/* resolves here first.
   app.use('/api/test-lab/golden', serviceSecretOr(requiresAuth), createTestLabGoldenRoutes(ctx));
   // AI Test Lab — black-box E2E runner (ADR-063): drives the real endpoints + Jarvis, per-tool + coupled scenarios. requiresAuth-gated.
-  app.use('/api/test-lab', requiresAuth, createTestLabRoutes(ctx));
+  app.use('/api/test-lab', requiresAuth, createTestLabRoutes(ctx, {
+    installedTests: swarmAppService.testLabCatalog,
+    visibleApps: async (req) => {
+      const { sub } = getCaller(req);
+      const visible = new Set((await swarmAppService.listApps('active', { ownerSub: sub, isOperator: isOperator(req) })).map(record => record.name));
+      const readable = new Map<string, string>();
+      for (const manifest of await swarmAppService.getActiveManifests()) {
+        if (!visible.has(manifest.name)) continue;
+        if (manifest.access && (await appAccessService.resolve(manifest.name, sub, manifest.access)).tier === 'deny') continue;
+        readable.set(manifest.name, manifest.displayName || manifest.name);
+      }
+      return readable;
+    },
+    executionAuth: (req) => ({
+      serviceSecret: isOperator(req) ? process.env.SWARM_SERVICE_SECRET : undefined,
+      authorization: req.headers.authorization,
+    }),
+  }));
   // Persona regression evals (golden-task gate): run ai-lab/persona-evals suites through the
   // active provider lane; structural assertions always graded, semantic rubrics skipped-with-notice
   // under noop. Operator-gated (real-lane runs spend tokens; the router re-gates internally too).

@@ -26,6 +26,7 @@ import {
 import { resolvePackageAuditMode } from '@/features/swarm-apps';
 import { parseCatalog, type CatalogApp } from './app-store-remote';
 import { installerLogTail } from './update-check-cron';
+import { replacementFor, SOURCE_CONFLICT_EXIT, type SourceReplacement } from './app-install-source';
 
 const logger = createChildLogger({ module: 'app-registry-routes' });
 
@@ -193,7 +194,12 @@ async function aggregateCatalog(pool: Pool, refresh: boolean): Promise<{
   const apps: AggregatedApp[] = [];
   const sources: { slug: string; label: string; ok: boolean; reason?: string; count: number }[] = [];
   for (const registry of registries) {
-    const result = await readRegistryCatalog(pool, registry, refresh);
+    let result: Awaited<ReturnType<typeof readRegistryCatalog>>;
+    try { result = await readRegistryCatalog(pool, registry, refresh); }
+    catch (err) {
+      logger.warn({ err, registry: registry.slug }, 'registry catalog unavailable');
+      result = { ok: false, apps: [], reason: 'Registry catalog could not be read.' };
+    }
     apps.push(...result.apps);
     sources.push({
       slug: registry.slug, label: registry.displayName,
@@ -292,8 +298,8 @@ async function locate(pool: Pool, registrySlug: string, name: string): Promise<{
  */
 async function runInstall(
   pool: Pool, registry: AppRegistry, entry: AggregatedApp, ownerSub: string | null,
-  loadApp: (manifestPath: string, scopeMeta?: { ownerSub?: string | null }) => Promise<unknown>,
-): Promise<{ ok: true; log: string } | { ok: false; status: number; error: string; log?: string }> {
+  deps: AppRegistryDeps, replaceSource?: string,
+): Promise<{ ok: true; log: string } | { ok: false; status: number; error: string; log?: string; replacement?: SourceReplacement }> {
   if (entry.status !== 'ready') {
     return { ok: false, status: 409, error: `"${entry.name}" is not installable — registry status is "${entry.status}"` };
   }
@@ -301,12 +307,19 @@ async function runInstall(
   if (!decision.allowed) return { ok: false, status: 409, error: `"${entry.name}": ${decision.note}` };
   if (!entry.source) return { ok: false, status: 409, error: `"${entry.name}" has no resolvable source` };
 
+  const deployedDir = deps.deployedAppsDir || DEPLOYED_APPS_DIR;
+  const replacement = replacementFor(deployedDir, entry.name, { repo: entry.source.url, registry: registry.slug });
+  if (replacement && replacement.token !== replaceSource) {
+    return { ok: false, status: 409, error: 'Review and confirm the existing package source before replacing it.', replacement };
+  }
+
   const source = await toRegistrySource(pool, registry);
   const run = await new Promise<{ code: number; output: string }>((resolve) => {
     execFile(
       process.execPath,
       [path.join(process.cwd(), 'scripts', 'oshal-app.js'), 'install', entry.name,
-        '--repo', entry.source!.url, '--ref', entry.source!.ref, '--dest', DEPLOYED_APPS_DIR],
+        '--repo', entry.source!.url, '--ref', entry.source!.ref, '--dest', deployedDir,
+        '--registry', registry.slug, ...(replaceSource ? ['--replace-source', replaceSource] : [])],
       {
         cwd: process.cwd(), timeout: 180_000, maxBuffer: 1024 * 1024,
         env: {
@@ -323,10 +336,10 @@ async function runInstall(
     );
   });
   const log = installerLogTail(run.output, source.token);
-  if (run.code !== 0) return { ok: false, status: 502, error: 'install failed — see log', log };
+  if (run.code !== 0) return { ok: false, status: run.code === SOURCE_CONFLICT_EXIT ? 409 : 502, error: 'install failed — see log', log };
 
   try {
-    await loadApp(path.join(DEPLOYED_APPS_DIR, entry.name, 'oshal-app.yaml'), { ownerSub });
+    await deps.loadApp(path.join(deployedDir, entry.name, 'oshal-app.yaml'), { ownerSub });
   } catch (err) {
     return {
       ok: false, status: 500, log,
@@ -353,6 +366,8 @@ function buildInstallerEnv(): NodeJS.ProcessEnv {
 /** What the install routes need from the app layer — SwarmAppService.loadApp, injected. */
 export interface AppRegistryDeps {
   loadApp: (manifestPath: string, scopeMeta?: { ownerSub?: string | null }) => Promise<unknown>;
+  /** Filesystem seam for isolated installations; production uses the workspace deploy directory. */
+  deployedAppsDir?: string;
 }
 
 /**
@@ -472,6 +487,8 @@ export function createAppRegistryRoutes(pool: Pool, requiresAuth: RequestHandler
         name: entry.name, displayName: entry.displayName, version: entry.version,
         registry: registry.slug, registryLabel: registry.displayName,
         source: entry.source, allowUnsigned: registry.allowUnsigned,
+        replacement: entry.source ? replacementFor(deps.deployedAppsDir || DEPLOYED_APPS_DIR, entry.name,
+          { repo: entry.source.url, registry: registry.slug }) : null,
         install: decideInstallAudit(entry.auditState, registry, resolvePackageAuditMode()),
         impact: describeManifestImpact(manifest, entry),
       });
@@ -485,8 +502,9 @@ export function createAppRegistryRoutes(pool: Pool, requiresAuth: RequestHandler
     try {
       const { registry, entry } = await locate(pool, slug, name);
       logger.warn({ name, registry: slug, by: caller.sub }, 'INSTALLING PACKAGE FROM REGISTRY');
-      const result = await runInstall(pool, registry, entry, caller.sub ?? null, deps.loadApp);
-      if (!result.ok) { res.status(result.status).json({ error: result.error, log: result.log }); return; }
+      const result = await runInstall(pool, registry, entry, caller.sub ?? null, deps,
+        typeof req.body?.replaceSource === 'string' ? req.body.replaceSource : undefined);
+      if (!result.ok) { res.status(result.status).json({ error: result.error, log: result.log, replacement: result.replacement }); return; }
       res.status(201).json({ installed: true, name: entry.name, registry: slug, log: result.log });
     } catch (err) { fail(res, err, 'POST /install'); }
   });
@@ -508,13 +526,17 @@ async function readRemoteManifest(
 ): Promise<Record<string, unknown>> {
   const source = await toRegistrySource(pool, registry);
   const auth = buildRegistryGitAuth(source);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-preview-'));
   const repo = entry.source?.url ?? registry.url;
   const ref = entry.source?.ref ?? registry.ref;
+  const sourcePath = entry.source?.path || entry.name;
+  if (!sourcePath.split('/').every(part => /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(part))) {
+    throw new AppRegistryError(409, 'catalog source.path is not a confined package directory');
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-preview-'));
   try {
     await runGit(['clone', '--depth', '1', '--filter=blob:none', '--sparse', '-b', ref, repo, tmp], auth);
-    await runGit(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', `${entry.name}/oshal-app.yaml`], auth);
-    const file = path.join(tmp, entry.name, 'oshal-app.yaml');
+    await runGit(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', `${sourcePath}/oshal-app.yaml`], auth);
+    const file = path.join(tmp, sourcePath, 'oshal-app.yaml');
     if (!fs.existsSync(file)) return {};
     return (yaml.load(fs.readFileSync(file, 'utf8')) as Record<string, unknown>) ?? {};
   } catch (err) {

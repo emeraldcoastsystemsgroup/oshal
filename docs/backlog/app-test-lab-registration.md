@@ -1,6 +1,7 @@
 # Application test cases installed into AI Test Lab ? backlog
 
-Status: **planned; installation integration is not implemented**. Requested by the operator on 2026-09-10.
+Status: **smoke registration implemented in the current branch; richer catalogs and package-suite
+migration remain planned**. Requested by the operator on 2026-09-10.
 
 ## Outcome
 
@@ -27,8 +28,20 @@ Inventory taken from tracked manifests and test paths at public store commit
 - Existing smoke definitions, validation and execution live in `SwarmAppSmokeDeclaration`,
   `scripts/oshal-app-smoke.js`, `app-smoke-verifier.ts`, and `install-verification-routes.ts`.
   Reuse these checks and assertions rather than creating a competing smoke runner.
-- The interactive Lab still uses core-owned `SCENARIOS`. The recently registered artifact scenarios
-  link local suites through `regressionTests`; that is not yet package install-time registration.
+- The interactive Lab combines core-owned `SCENARIOS` with active package smoke registrations.
+  Local suite references remain metadata; richer package catalogs are not implemented.
+
+### First implementation slice
+
+The current branch adds a service-owned smoke catalog, activation/reload/update/deactivation/uninstall
+reconciliation, app/version/revision metadata, caller-filtered discovery, and execution through the
+existing verifier. Safe GET/HEAD probes can run with their declared authority; unavailable credentials,
+AI and mutating runners remain visibly pending. The local regression command is
+`npm run test:platform-readiness`, including a real Portrait Studio manifest against fixture HTTP.
+
+This implements the smoke portion of TLAB-01/02/03/05. It does not complete those work orders:
+versioned package-local suite catalogs, installation-report linkage, persisted historical evidence,
+and richer runner support remain open. The package rows below still track full suite adoption.
 
 ## Work order and acceptance criteria
 

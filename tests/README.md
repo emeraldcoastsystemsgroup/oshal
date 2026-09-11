@@ -30,3 +30,14 @@ are included in the command. The two Lab scenarios are `artifact-discovery` and
 
 Keep local regression results separate from deployed acceptance. A model fixture proves routing
 and enforcement, while a live-model scenario measures semantic selection. Report both honestly.
+
+For package installation, connector callbacks and multi-store controls, run:
+
+```sh
+npm run test:platform-readiness
+```
+
+These suites use disposable package directories, local HTTP/provider fixtures and browser fixtures.
+They do not install applications into the running deployment or connect real external accounts.
+The matching Lab cards link the suites and run their documented discovery/refusal probes. Installed
+package smokes appear separately, with app/version metadata and any missing execution prerequisites.

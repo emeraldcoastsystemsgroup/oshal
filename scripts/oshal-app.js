@@ -391,8 +391,14 @@ function resolveDependencies(manifest, opts, seen) {
       ref: opts.ref,
       dest: opts.destAbs,
       auditMode: opts.auditMode,
+      registry: opts.registry,
     }, seen);
     if (rc !== 0) {
+      if (rc === require('./oshal-install-source').SOURCE_CONFLICT_EXIT) {
+        const error = new Error(`dependency ${dep} requires source replacement review`);
+        error.code = rc;
+        throw error;
+      }
       console.error(C.red(`  unresolved dependency "${dep}" — failing closed (nothing partially enabled).`));
       return null;
     }
@@ -515,12 +521,31 @@ function readValidatedManifest(src, name, repo, assessment) {
 
 /** Atomically replace the package directory and stamp unambiguous source/audit provenance. */
 function landInstalledPackage(src, dest, details) {
+  const { assertInstallSource, withInstallSourceLock } = require('./oshal-install-source');
+  return withInstallSourceLock(dest, details.name, () => {
+    assertInstallSource(dest, details.name, details, details.replaceSource);
+    return writeInstalledPackage(src, dest, details);
+  });
+}
+
+/** Copy only after the final provenance check has passed under the package lock. */
+function writeInstalledPackage(src, dest, details) {
   const target = path.join(dest, details.name);
+  let registry = details.registry;
+  if (!registry) {
+    try {
+      const previous = JSON.parse(fs.readFileSync(path.join(target, '.oshal-install.json'), 'utf8'));
+      const { canonicalRepo } = require('./oshal-install-source');
+      if (canonicalRepo(previous?.repo) === canonicalRepo(details.repo)) registry = previous?.registry;
+    }
+    catch { /* New installs have no previous registry. */ }
+  }
   fs.mkdirSync(dest, { recursive: true });
   fs.rmSync(target, { recursive: true, force: true });
   fs.cpSync(src, target, { recursive: true });
   fs.writeFileSync(path.join(target, '.oshal-install.json'), JSON.stringify({
     name: details.name, repo: details.repo, ref: details.ref, sha: details.sha,
+    ...(typeof registry === 'string' && registry ? { registry } : {}),
     installedAt: new Date().toISOString(),
     dependencies: details.resolution,
     audit: auditProvenance(details.assessment),
@@ -574,6 +599,7 @@ function installPackage(name, opts, seen) {
     env: authenticateStore ? storeAuth.cloneEnv : storeAuth.baseEnv,
   }).toString().trim();
   try {
+    require('./oshal-install-source').assertInstallSource(dest, name, { repo, registry: opts.registry }, opts.replaceSource);
     console.log(C.dim(`fetching ${name} from ${repo}#${ref} …`));
     git(['clone', '--depth', '1', '--filter=blob:none', '--sparse', '-b', ref, repo, tmp], true);
     const selected = resolveStorePackage(tmp, name);
@@ -587,15 +613,15 @@ function installPackage(name, opts, seen) {
     }
     const manifest = readValidatedManifest(src, name, repo, assessment);
     if (!manifest) return 1;
-    const resolution = resolveDependencies(manifest, { repo, ref, destAbs: dest, auditMode }, seen);
+    const resolution = resolveDependencies(manifest, { repo, ref, destAbs: dest, auditMode, registry: opts.registry }, seen);
     if (resolution === null) return 1;
 
     const sha = git(['-C', tmp, 'rev-parse', 'HEAD']);
-    return landInstalledPackage(src, dest, { name, repo, ref, sha, resolution, assessment });
+    return landInstalledPackage(src, dest, { name, repo, ref, sha, resolution, assessment, registry: opts.registry, replaceSource: opts.replaceSource });
   } catch (e) {
     const msg = storeAuth.storeToken ? e.message.split(storeAuth.storeToken).join('***') : e.message;
     console.error(C.red(`install failed: ${msg.split('\n')[0]}`));
-    return 1;
+    return e.code === require('./oshal-install-source').SOURCE_CONFLICT_EXIT ? e.code : 1;
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -798,7 +824,7 @@ function usage() {
 
   ${C.bold('init')} <name> [--dir <parent>]        scaffold a new app package
   ${C.bold('validate')} <package-dir>               lint a package against the app-package contract
-  ${C.bold('install')} <name> [--repo <url>] [--ref <ref>] [--dest <dir>]
+  ${C.bold('install')} <name> [--repo <url>] [--ref <ref>] [--dest <dir>] [--replace-source <token>]
                                     [--audit-mode compatible|enforce]
                                     pull a package from a git store repo (git-subdir) into
                                     deployed-apps/ where the swarm loader picks it up —
@@ -843,6 +869,8 @@ function main(argv) {
       ref: flag('--ref'),
       dest: flag('--dest'),
       auditMode: flag('--audit-mode'),
+      registry: flag('--registry'),
+      replaceSource: flag('--replace-source'),
     });
   }
   if (cmd === 'build') {

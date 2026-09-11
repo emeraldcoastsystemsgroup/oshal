@@ -186,6 +186,7 @@
       <p class="sub" id="dlgSource"></p>
       <ul class="impact" id="dlgImpact"></ul>
       <p class="hint" id="dlgAudit"></p>
+      <label id="dlgReplacement" hidden><input id="dlgReplaceCheck" type="checkbox"> <span id="dlgReplaceText"></span></label>
     </div>
     <div class="dlg-foot">
       <button id="dlgCancel" type="button">Cancel</button>
@@ -263,6 +264,7 @@
             (h && !h.ok && h.reason ? '<br><span class="hint">' + esc(h.reason) + '</span>' : '') + '</td>' +
           '<td><div class="row-actions">' +
             '<button data-act="toggle">' + (r.enabled ? 'Disable' : 'Enable') + '</button>' +
+            '<button class="danger" data-act="trust">' + (r.trustState === 'revoked' ? 'Restore trust' : 'Revoke trust') + '</button>' +
             '<button data-act="key">' + (r.hasKey ? 'Replace key' : 'Add key') + '</button>' +
             (r.builtin ? '' : '<button class="danger" data-act="remove">Remove</button>') +
           '</div></td></tr>';
@@ -282,6 +284,18 @@
         if (act === 'toggle') {
           await call('PATCH', '/api/swarm/registries/' + encodeURIComponent(slug), { enabled: !reg.enabled });
           show('ok', reg.enabled ? 'Source disabled.' : 'Source enabled.');
+        } else if (act === 'trust') {
+          var restoring = reg.trustState === 'revoked';
+          if (restoring) {
+            var host = new URL(reg.url).hostname;
+            if (prompt('Restore trust in "' + reg.displayName + '" (' + reg.url + ')? Type ' + host + ' to allow installations from this source again.') !== host) {
+              btn.disabled = false; return;
+            }
+          } else if (!confirm('Revoke trust in "' + reg.displayName + '" (' + reg.url + ')? Further installations will be blocked. Existing applications remain installed.')) {
+            btn.disabled = false; return;
+          }
+          await call('PATCH', '/api/swarm/registries/' + encodeURIComponent(slug), { trustState: restoring ? 'trusted' : 'revoked' });
+          show('ok', restoring ? 'Source trusted again.' : 'Source trust revoked.');
         } else if (act === 'key') {
           var key = prompt('Access key for "' + reg.displayName + '".\n\nStored in the swarm vault when available, encrypted in the database otherwise. Leave blank to remove the existing key.');
           if (key === null) { btn.disabled = false; return; }
@@ -483,12 +497,17 @@
     var dlg = document.getElementById('installDlg');
 
     async function openInstall(registry, name) {
+      state.pending = null;
+      state.replacement = null;
+      state.installAllowed = false;
+      document.getElementById('dlgReplacement').hidden = true;
+      document.getElementById('dlgReplaceCheck').checked = false;
       document.getElementById('dlgTitle').textContent = name;
       document.getElementById('dlgSource').textContent = 'Reading the package manifest…';
       document.getElementById('dlgImpact').innerHTML = '';
       document.getElementById('dlgAudit').textContent = '';
       document.getElementById('dlgConfirm').disabled = true;
-      dlg.showModal();
+      if (!dlg.open) dlg.showModal();
       try {
         var p = await call('GET', '/api/swarm/registries/' + encodeURIComponent(registry) +
           '/preview/' + encodeURIComponent(name));
@@ -529,21 +548,38 @@
         document.getElementById('dlgAudit').innerHTML = auditPill(auditState) + ' ' + esc(reason) +
           '<br><span style="display:inline-block;margin-top:6px">' + (decision.allowed ? '' : '<strong>Will not install:</strong> ') +
           esc(decision.note) + '</span>';
-        document.getElementById('dlgConfirm').disabled = !decision.allowed;
+        state.installAllowed = decision.allowed;
+        state.replacement = p.replacement;
+        if (p.replacement) {
+          document.getElementById('dlgReplacement').hidden = false;
+          var previous = p.replacement.from;
+          document.getElementById('dlgReplaceText').textContent = 'Replace "' + name + '" from ' +
+            (previous.registry ? previous.registry + ' (' + (previous.repo || 'unknown source') + ')' : previous.repo || 'an unknown local source') +
+            (previous.sha ? ' at ' + previous.sha.slice(0, 12) : '') + ' with the package from ' + p.registryLabel + ' (' + p.replacement.to.repo + ').';
+        }
+        updateInstallConfirm();
       } catch (e) {
         document.getElementById('dlgSource').textContent = '';
         document.getElementById('dlgImpact').innerHTML = '<li class="danger"><b>error</b><span>' + esc(e.message) + '</span></li>';
       }
     }
 
+    function updateInstallConfirm() {
+      document.getElementById('dlgConfirm').disabled = !state.installAllowed ||
+        !!(state.replacement && !document.getElementById('dlgReplaceCheck').checked);
+    }
+    document.getElementById('dlgReplaceCheck').addEventListener('change', updateInstallConfirm);
+
     document.getElementById('dlgCancel').addEventListener('click', function () { dlg.close(); state.pending = null; });
     document.getElementById('dlgConfirm').addEventListener('click', async function () {
-      if (!state.pending) return;
+      if (!state.pending || !state.installAllowed || (state.replacement && !document.getElementById('dlgReplaceCheck').checked)) return;
       var btn = this;
       btn.disabled = true;
       btn.textContent = 'Installing…';
       try {
-        var r = await call('POST', '/api/swarm/registries/install', state.pending);
+        var payload = Object.assign({}, state.pending);
+        if (state.replacement) payload.replaceSource = state.replacement.token;
+        var r = await call('POST', '/api/swarm/registries/install', payload);
         dlg.close();
         show('ok', 'Installed "' + r.name + '" and loaded it live.');
         state.pending = null;
@@ -557,7 +593,7 @@
         pre.textContent = e.message + (e.log ? '\n\n' + e.log : '');
         body.appendChild(pre);
       } finally {
-        btn.disabled = false;
+        updateInstallConfirm();
         btn.textContent = 'Install';
       }
     });
@@ -591,7 +627,10 @@
     document.getElementById('filterSource').addEventListener('change', renderApps);
     document.getElementById('filterSuite').addEventListener('change', renderApps);
 
-    load(false);
+    load(false).then(function () {
+      var requested = new URLSearchParams(window.location.search);
+      if (requested.get('registry') && requested.get('name')) openInstall(requested.get('registry'), requested.get('name'));
+    });
   </script>
 </body>
 </html>

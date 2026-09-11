@@ -15,6 +15,7 @@
  * Result states stay honest: pass | degraded | gap | fail. Surfacing degraded/gap is the point.
  *
  * CHANGE LOG
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Register installed-case discovery, connector callback boundaries and multi-store control regression suites.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Register artifact scenarios and expose categorized regression suites in the existing Lab catalog.
  * ---------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted registry from
@@ -63,6 +64,9 @@
  */
 
 import { ARTIFACT_SCENARIOS } from './test-lab-artifact-scenarios';
+import { INSTALLATION_SCENARIOS } from './test-lab-installation-scenarios';
+import { CONNECTOR_OAUTH_SCENARIOS } from './test-lab-connector-scenarios';
+import { APP_REGISTRY_SCENARIOS } from './test-lab-app-registry-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 
 const SELF_PORT = process.env.PORT || '5000';
@@ -214,6 +218,9 @@ function arrayAssert(field: string, noun: string): Assert {
 // ── Scenario registry ────────────────────────────────────────────────────────
 export const SCENARIOS: Scenario[] = [
   ...ARTIFACT_SCENARIOS,
+  ...INSTALLATION_SCENARIOS,
+  ...CONNECTOR_OAUTH_SCENARIOS,
+  ...APP_REGISTRY_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,

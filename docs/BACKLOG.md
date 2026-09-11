@@ -6,10 +6,14 @@ Framework, kernel, shared-service, security-boundary, and orchestration work bel
 
 Every item has an observable **Done when**. Live-proof requirements cannot be closed from unit results alone.
 
+The operator's current [ranked ten priorities](backlog/next-priorities.md) identify the three active
+implementation lanes and the next queued outcomes.
+
 ## Promotion, deployment, and regression proof
 
 ### Application test cases register with AI Test Lab during installation
 - **Requested:** test cases belong to application packages and register automatically on installation, with upgrade/reload/disable/uninstall reconciliation. Reuse existing package `smoke:` validation and verification; richer local/browser/live suites need versioned catalog and runner metadata.
+- **Implemented in the current branch:** active package smoke registration, lifecycle reconciliation, caller-filtered discovery, version/revision metadata and existing-verifier execution with explicit pending prerequisites. Richer suite catalogs, historical evidence and the full package inventory remain open.
 - **Backlog:** [Application Test Lab registration](backlog/app-test-lab-registration.md) contains the prioritized core work, complete public-package worklist, pinned suite inventory and lifecycle acceptance cases. Private package rows remain in the private app repository.
 - **Done when:** each application with existing testing installs its cases into the Lab without per-app core edits; lifecycle and ownership tests pass; unavailable prerequisites remain explicit; every inventoried suite has a disposition and representative installation/run evidence. Registration does not automatically execute all tests.
 
@@ -381,7 +385,8 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 ## Connectors, channels, and external systems
 
 ### Connector OAuth started from a themed subdomain dies at the callback
-- **Remaining:** the generic connector ceremony builds its redirect from `APP_URL` ([connector-oauth-ceremony.ts](../src/app/routes/connector-oauth-ceremony.ts)), so every provider sends the browser back to `oshal.agenticfederal.us` regardless of which surface started the flow. A session on `finance.oshal.ai` lives in a cookie scoped to `.oshal.ai`, so the callback arrives with no session and `requiresAuth` rejects it with 401 JSON — tokens are never stored. Live-hit 2026-08-17 reconnecting Schwab from the finance surface (api log: authenticated `/schwab/start` 22:16:18Z → unauthenticated `/schwab/callback` 22:16:36Z). Workaround: run the connect from `oshal.agenticfederal.us` itself. Candidate fixes: authenticate the callback from the signed state it already carries (provider + sub + ts HMAC — treat its verification like the token broker), or have `/start` bounce the browser through the `APP_URL` origin first so the whole ceremony runs inside one cookie family. Registering per-host callbacks does not generalize — Schwab accepts exactly one callback URL, byte-for-byte.
+- **Implemented in the current branch:** the exact OAuth callback can receive a one-time state without a session and relays an opaque ticket to the initiating configured origin. Only completion with that origin's authenticated owner and browser cookie exchanges and stores tokens. The provider's fixed callback stays unchanged. Local HTTP/provider fixtures cover cross-domain completion, PKCE, expiry, replay and browser/owner binding.
+- **Remaining:** merge/deploy and record a real themed-domain provider connection. Pending ceremonies are process-local: a restart requires starting consent again; multiple controllers require routing affinity across configured origins or a shared atomic ceremony store.
 - **Done when:** a connect started from `finance.oshal.ai` (or any `*.oshal.ai` surface) completes and stores tokens without the user pre-logging into `oshal.agenticfederal.us`, a forged or expired state is still refused, and a guard covers the cross-cookie-family origin case.
 
 ### The ESPN "Log in + push" button has not reached a running node
@@ -947,20 +952,18 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
   signed-in non-operator and 200 as an admin granted through `swarm_roles`.
 
 ### App Loader — the ADR-147 decisions that did not ship
-- **Remaining:** (1) **D6 collision** — installing a package name that is already installed from a
-  DIFFERENT registry replaces it (the installer removes and re-copies `deployed-apps/<name>`); the
-  API must refuse with 409 unless the operator confirms a replace. Latent until a second registry
-  publishes a clashing name. (2) **D7** — dependencies resolve only from the origin registry;
+- **Implemented in the current branch:** cross-source replacement requires explicit approval bound
+  to the observed installed provenance and is rechecked at the installer write; Applications Discover
+  reads the aggregate catalog; App Loader can revoke trust and requires typed-host confirmation to
+  restore it. Local CLI, HTTP and browser regressions cover these paths.
+- **Remaining:** **D7** — dependencies resolve only from the origin registry;
   cross-registry resolution (exactly-one-other-trusted-registry, shown in the preview) and the
-  two-registries fail-closed rule are not built. (3) **D10** — a public hostname that resolves to a
+  two-registries fail-closed rule are not built. **D10** — a public hostname that resolves to a
   private address is not refused; the durable fix pins the resolved address for the fetch rather
-  than validating then fetching. (4) **P3** — `/applications` Discover still reads
-  `/api/swarm/apps/catalog`; it should read the aggregate. (5) The page has no "revoke trust" button
-  (the API supports `trustState: "revoked"`).
-- **Done when:** each item ships with its guard — a 409 spec for a cross-registry name collision; a
-  two-registry dependency spec that fails closed; a fence spec where a hostname resolving to
-  `10.0.0.0/8` is refused through a real local resolver seam; Discover rendering packages from a
-  second registry; and ADR-147's As built section updated to drop each line as it lands.
+  than validating then fetching.
+- **Done when:** a two-registry dependency spec fails closed on ambiguity; a fence spec where a
+  hostname resolving to `10.0.0.0/8` is refused through a real local resolver seam; and ADR-147's
+  As built section records the completed behavior and evidence.
 
 ### `swarm-cli` zsh completion
 - **Remaining:** execute the current completion in real zsh, covering sourced/autoloaded modes, command/state dispatch, and saved context completion.

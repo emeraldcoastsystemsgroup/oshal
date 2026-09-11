@@ -629,12 +629,14 @@
     // ── Discover: the store catalog (ADR-085 D7) ─────────────────────────────
     const discoverEl = document.getElementById('discover');
     let installedNames = new Set();
-    let storeCatalog = null; // last GET /api/swarm/apps/catalog payload
+    let storeCatalog = null;
 
     async function fetchCatalog() {
       try {
-        const res = await fetch('/api/swarm/apps/catalog');
-        storeCatalog = res.ok ? await res.json() : { available: false, reason: `HTTP ${res.status}`, apps: [] };
+        let res = await fetch('/api/swarm/registries/catalog');
+        // Guest/member browsing retains the public store; trusted private registries are admin-only.
+        if (res.status === 403) res = await fetch('/api/swarm/apps/catalog');
+        storeCatalog = res.ok ? { available: true, ...await res.json() } : { available: false, reason: `HTTP ${res.status}`, apps: [] };
       } catch (err) {
         storeCatalog = { available: false, reason: err.message, apps: [] };
       }
@@ -648,16 +650,18 @@
         discoverEl.innerHTML = `<div class="empty">Store catalog unavailable: ${escapeHtml(storeCatalog.reason || 'unknown')}</div>`;
         return;
       }
-      const rows = (storeCatalog.apps || []).filter((a) => !installedNames.has(a.name));
+      const rows = storeCatalog.apps || [];
+      const failedSources = (storeCatalog.sources || []).filter((source) => !source.ok);
+      const sourceNotice = failedSources.length ? `<div class="empty">Some sources are unavailable: ${failedSources.map((source) => escapeHtml(source.label || source.slug) + ' — ' + escapeHtml(source.reason || 'unavailable')).join('; ')}</div>` : '';
       if (!rows.length) {
-        discoverEl.innerHTML = '<div class="empty">Everything the store publishes is already installed on this swarm.</div>';
+        discoverEl.innerHTML = sourceNotice + '<div class="empty">No packages are available from the configured sources.</div>';
         return;
       }
       const rowHtml = (a) => {
         const installable = a.status === 'ready';
         const initial = escapeHtml(String(a.displayName || a.name || '?').trim().charAt(0).toUpperCase() || '?');
         return `
-        <div class="app-row" data-store-name="${escapeHtml(a.name)}">
+        <div class="app-row" data-store-name="${escapeHtml(a.name)}" data-store-registry="${escapeHtml(a.registry || '')}">
           <div class="app-ico">${initial}</div>
           <div class="app-main">
             <div class="app-titleline">
@@ -666,11 +670,12 @@
               <span class="status-badge status-${installable ? 'active' : 'coming'}">${escapeHtml(a.status)}</span>
             </div>
             <div class="app-desc">${escapeHtml(a.description)}</div>
+            <div class="app-desc">${escapeHtml(a.registryLabel || 'Public app store')}${installedNames.has(a.name) ? ' · A package with this name is installed' : ''}</div>
           </div>
           <div class="app-right">
             <div class="op-actions">
-              ${installable
-                ? '<button data-act="install">Install</button>'
+              ${installable && a.registry
+                ? '<button data-act="install">' + (installedNames.has(a.name) ? 'Review source' : 'Review install') + '</button>'
                 : `<button disabled title="Not installable yet — store status is ${escapeHtml(a.status)}">Install</button>`}
             </div>
           </div>
@@ -681,7 +686,7 @@
       const more = [];
       const sorted = [...rows].sort((x, y) => String(x.displayName).localeCompare(String(y.displayName)));
       for (const a of sorted) (bySuite.get(a.suite) || more).push(a);
-      discoverEl.innerHTML = SUITES.map(([key, label]) => [label, bySuite.get(key)])
+      discoverEl.innerHTML = sourceNotice + SUITES.map(([key, label]) => [label, bySuite.get(key)])
         .concat([['More', more]])
         .filter(([, group]) => group.length > 0)
         .map(([label, group]) => `
@@ -692,17 +697,9 @@
         .join('');
 
       discoverEl.querySelectorAll('button[data-act="install"]').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const name = btn.closest('.app-row').dataset.storeName;
-          if (!confirm(`Install "${name}" from the app store? The package is fetched into deployed-apps/ and hot-loaded live.`)) return;
-          btn.disabled = true; btn.textContent = 'Installing…';
-          try {
-            await call('POST', '/api/swarm/apps/install-remote', { name });
-            await fetchApps();    // the new app appears in the installed list …
-            renderDiscover();     // … and drops out of Discover
-          } catch (_) {
-            btn.disabled = false; btn.textContent = 'Install';
-          }
+        btn.addEventListener('click', () => {
+          const row = btn.closest('.app-row');
+          window.location.href = '/app-loader/?' + new URLSearchParams({ registry: row.dataset.storeRegistry, name: row.dataset.storeName });
         });
       });
     }

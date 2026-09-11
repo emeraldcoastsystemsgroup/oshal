@@ -10,6 +10,7 @@
  * gap (no capability exists) | fail (error). Surfacing degraded/gap is the point as much as green.
  *
  * CHANGE LOG
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Include caller-visible installed package smokes and version/prerequisite metadata; reuse the installation verifier with operator/caller-scoped authentication.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register artifact scenarios and expose categorized regression suites in the existing Lab catalog.
  * ---------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — runner + per-tool smoke tests +
@@ -30,6 +31,7 @@ import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
 import { SCENARIOS, rollup, type StepResult } from './test-lab-scenarios';
 import { renderCatalogVisual } from './test-lab-visual-catalog';
+import type { InstalledAppTestCatalog, InstalledTestAuth, InstalledAppTestCase } from '@/features/swarm-apps';
 
 const logger = createChildLogger({ module: 'test-lab-routes' });
 const TOOLS_DIR = 'any-bot/server/services/tools/test-lab';
@@ -55,8 +57,31 @@ function resolveViewerSub(req: Request): string {
 }
 
 // ── Router ─────────────────────────────────────────────────────────────────────
-export function createTestLabRoutes(_ctx: AppContext): Router {
+export interface TestLabRouteOptions {
+  installedTests?: InstalledAppTestCatalog;
+  /** Current app visibility and access policy, evaluated again before every package test. */
+  visibleApps?: (req: Request) => Promise<Map<string, string>>;
+  /** Server-owned authority only: service credentials may be supplied only for operators. */
+  executionAuth?: (req: Request) => InstalledTestAuth;
+  /** Test fixture seam; production is fixed loopback, never supplied by the HTTP caller. */
+  apiBaseUrl?: string;
+}
+
+/** @description Present installed smokes through the existing Lab scenario/card contract. */
+function installedScenario(test: InstalledAppTestCase) {
+  return {
+    id: test.id, title: `${test.appName}: ${test.name}`, group: 'tool',
+    description: `Installed ${test.appName} ${test.appVersion} smoke: ${test.method} ${test.path}`,
+    installedTest: test,
+    regressionTests: [{ level: 'integration', path: 'tests/unit/installed-app-test-lab.spec.ts' }],
+    steps: [{ id: test.id, app: test.appName, label: test.name }],
+  };
+}
+
+export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptions = {}): Router {
   const router = Router();
+  const visibleApps = (req: Request) => options.visibleApps?.(req) ?? Promise.resolve(new Map<string, string>());
+  const executionAuth = (req: Request) => options.executionAuth?.(req) ?? {};
 
   const tester =
     (fn: (req: Request, res: Response, sub: string) => Promise<void>): RequestHandler =>
@@ -94,8 +119,11 @@ export function createTestLabRoutes(_ctx: AppContext): Router {
     const cookie = req.headers.cookie || '';
     let apps: any[] = [];
     try { const r = await fetch(`http://localhost:${process.env.PORT || '5000'}/api/swarm/apps?status=active`, { headers: cookie ? { cookie } : {} }); const j: any = await r.json().catch(() => ({})); apps = (j?.apps || []).map((a: any) => ({ name: a.name, displayName: a.displayName, botCount: a.botCount, toolCount: a.toolCount })); } catch { /* best effort */ }
+    const visible = await visibleApps(req);
+    const installed = options.installedTests?.list(visible, executionAuth(req)) ?? [];
     res.json({
-      scenarios: SCENARIOS.map((s) => ({ id: s.id, title: s.title, group: s.group, description: s.description, regressionTests: s.regressionTests || [], steps: s.steps.map((st) => ({ id: st.id, app: st.app, label: st.label })) })),
+      scenarios: [...SCENARIOS.map((s) => ({ id: s.id, title: s.title, group: s.group, description: s.description, regressionTests: s.regressionTests || [], steps: s.steps.map((st) => ({ id: st.id, app: st.app, label: st.label })) })), ...installed.map(installedScenario)],
+      installedApps: options.installedTests?.apps(visible) ?? [],
       apps,
     });
   }));
@@ -105,7 +133,9 @@ export function createTestLabRoutes(_ctx: AppContext): Router {
     const cookie = req.headers.cookie || '';
     const id = String(req.body?.scenarioId || req.query.id || 'all');
     const toRun = id === 'all' ? SCENARIOS : SCENARIOS.filter((s) => s.id === id);
-    if (!toRun.length) { res.status(404).json({ error: `unknown scenario: ${id}` }); return; }
+    const installed = (options.installedTests?.list(await visibleApps(req), executionAuth(req)) ?? [])
+      .filter(test => id === 'all' || test.id === id);
+    if (!toRun.length && !installed.length) { res.status(404).json({ error: `unknown scenario: ${id}` }); return; }
 
     const results = [];
     for (const sc of toRun) {
@@ -119,6 +149,18 @@ export function createTestLabRoutes(_ctx: AppContext): Router {
         stepResults.push(r);
       }
       results.push({ id: sc.id, title: sc.title, group: sc.group, description: sc.description, state: rollup(stepResults.map((s) => s.state)), steps: stepResults });
+    }
+    for (const test of installed) {
+      const result = await options.installedTests!.run(test, await visibleApps(req), {
+        apiBaseUrl: options.apiBaseUrl ?? `http://127.0.0.1:${process.env.PORT || '5000'}`,
+        ...executionAuth(req),
+      });
+      const state = result.status === 'passed' ? 'pass' : result.status === 'failed' ? 'fail' : 'degraded';
+      results.push({ ...installedScenario(test), state, steps: [{
+        app: test.appName, label: test.name, state, status: result.httpStatus,
+        detail: result.status === 'pending' ? `Pending: ${result.error}` : result.error ?? `Verified ${test.method} ${test.path}`,
+        output: { executionStatus: result.status, appVersion: test.appVersion, revision: test.revision, durationMs: result.durationMs },
+      }] });
     }
     res.json({ ran: results.length, results });
   }));
