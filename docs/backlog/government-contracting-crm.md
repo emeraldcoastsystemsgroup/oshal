@@ -1,7 +1,7 @@
 # Government contracting CRM and contract management
 
-Requested 2026-09-11. Status: capture/contract foundation and isolated acceptance complete;
-the full CRM carryover is in progress. The requested application includes the mature CRM's
+Requested 2026-09-11. Status: integrated CRM release installed on localhost;
+the source-to-contract workflow has passing isolated acceptance. The application includes the mature CRM's
 interconnected pages and permissions, in addition to its capture pipeline. This expands the existing
 [Capture CRM handover](capture-crm-plugin-open-work.md), with one durable record of the
 relationship and process from opportunity intake through contract closeout.
@@ -50,16 +50,24 @@ Two users prove different rights through screen, API and Jarvis. Restart/reinsta
 preserves records, repeated import creates no duplicates, and installed tests appear in AI
 Test Lab with accurate runner status.
 
-The deployed foundation implements relationship/capture management and post-award contract
-management over the same durable records. Synthetic HTTP/PostgreSQL and browser cases cover
-reviewed intake, evidence gates, award, delivery, exact ownership, current team membership and
-viewer refusal. Typed tool tests use the actual core registration and execution path; chat
-discovery and authenticated local acceptance remain separate checks. Installation imports
-the permission catalog and registers the package's unit, integration and browser suites.
-Those checks do not establish completion of the expanded multi-page CRM integration.
-That release additionally needs a tested source-to-qualified-lead-to-opportunity-to-proposal-to-contract
-journey, shared record continuity, per-action permission enforcement and the dedicated application
-entry/theme. Existing CRM tests must be inventoried and registered with honest runner prerequisites.
+The installed release includes a dedicated themed application, its default Home card and 20
+connected destinations. It reuses the existing CRM runtime and carries source intake through
+human qualification, canonical opportunities, retained proposal versions, reviewed award and
+contract delivery. Synthetic HTTP/PostgreSQL and browser cases cover record continuity,
+deduplication, evidence gates, exact ownership, workspace membership, current reader restrictions
+and typed tools through the actual core registration and execution path.
+
+Installation imports the named role catalog and registers the package's unit, integration and
+browser suites. Every shipped CRM suite and the historical CRM baseline have explicit Lab
+registration; browser/live prerequisites remain visible and do not execute during installation.
+The private repository holds the feature matrix and detailed executable evidence.
+
+Manual acceptance on the installed system verified the default Home card, focused entry/theme,
+Users and the imported Access catalog. The existing operator has swarm administration but no
+application business grant; denied CRM data access is expected until an application role is
+assigned. This preserves the separation between access administration and business authority.
+Authenticated catalog visibility is recorded separately from isolated workflow execution;
+no live source pull, outreach or contract submission was performed for acceptance.
 
 Real-data migration, financial posting and external
 submission/integration require separately scoped, reviewable work orders.

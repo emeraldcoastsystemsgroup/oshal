@@ -8,11 +8,13 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Preserve strict business identity assertions when refreshed actors contain explicit empty management metadata.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Exercise business-only browser navigation, explicit selection, revoked membership and data-route refusal through real policy and mounts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Reject shell navigation whose awaited decision spans a completed package reload.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove escaped browser denial guidance, API JSON parity and absence of unauthorized handler dispatch.
  */
 /** Real temporary package activation and Express dispatch; persistence is isolated, policy and lifecycle are real. */
 import express, { type Request, type RequestHandler } from 'express';
-import type { Server } from 'node:http';
+import { request as requestHttp, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
@@ -64,9 +66,9 @@ let memberTenants: string[];
 let activationPause: { entered(): void; wait: Promise<void> } | undefined;
 
 /** @description Install an isolated shell catalog and a business-only editor without personal access.
- * @returns Current mounted policy fixture ready for document and API requests.
+ * @param displayName Optional installed application label. @returns Current mounted policy fixture ready for document and API requests.
  */
-async function businessNavigation() {
+async function businessNavigation(displayName = 'Runtime fixture') {
   const navigation = structuredClone(catalog);
   navigation.permissions['app.open'] = { resource: 'records', effect: 'read', minimumTier: 'viewer' };
   navigation.roles.editor.grants.push({ permission: 'app.open', scope: 'own' });
@@ -76,7 +78,7 @@ async function businessNavigation() {
     { id: 'not-shell', method: 'GET', path: '/combined', allOf: ['app.open', 'records.read'] },
     { id: 'not-navigation', method: 'POST', path: '/app', allOf: ['app.open'] });
   memberTenants = ['business-a'];
-  await apps.loadApp(writePackage(manifest(), navigation));
+  await apps.loadApp(writePackage(manifest({ displayName }), navigation));
   const preview = await policy.previewChange(admin, { action: 'grant', app: 'runtime-app', targetSub: alice.sub,
     targetIssuer: alice.issuer, tenantId: 'business-a', role: 'editor', reason: 'Business navigation fixture', expectedRevision: 0 });
   await policy.applyChange(admin, { previewId: preview.previewId, idempotencyKey: crypto.randomUUID() });
@@ -379,4 +381,84 @@ it('refuses a shell request when its awaited policy decision crosses a completed
     expect((await response).status).toBe(503);
     expect(observations.filter(row => row.phase === 'handler')).toHaveLength(0);
   } finally { release(); spy.mockRestore(); await response; }
+});
+
+const DOCUMENT_HEADERS = { accept: 'text/html', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' };
+
+/** @description Send real browser navigation headers over HTTP; Node fetch replaces Sec-Fetch-Mode with cors.
+ * @param url Fixture endpoint. @param options Browser-equivalent method and headers. @returns Actual HTTP response.
+ */
+function navigationRequest(url: string, options: { method?: string; headers: Record<string, string> }): Promise<Response> {
+  return new Promise((resolveResponse, reject) => {
+    const request = requestHttp(url, options, response => {
+      const chunks: Buffer[] = [];
+      response.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      response.on('error', reject);
+      response.on('end', () => {
+        const headers = new Headers();
+        for (const [name, value] of Object.entries(response.headers)) {
+          for (const entry of Array.isArray(value) ? value : value === undefined ? [] : [value]) headers.append(name, entry);
+        }
+        resolveResponse(new Response(Buffer.concat(chunks), { status: response.statusCode, headers }));
+      });
+    });
+    request.on('error', reject); request.setTimeout(15000, () => request.destroy(new Error('Fixture navigation timed out'))); request.end();
+  });
+}
+
+it('explains denied iframe navigation with escaped application text and a script-free response', async () => {
+  await businessNavigation('Fixture </title><script>alert("label")</script> & records'); memberTenants = [];
+  const response = await navigationRequest(`${base}/api/runtime-app/app`, { headers: { ...DOCUMENT_HEADERS, 'x-fixture-user': 'alice' } });
+  const html = await response.text();
+  expect(response.status).toBe(403); expect(response.headers.get('content-type')).toContain('text/html');
+  expect(response.headers.get('cache-control')).toBe('private, no-store');
+  expect(html).toContain('Application role required'); expect(html).toContain('application role for your account and workspace');
+  expect(html).toContain('Fixture &lt;/title&gt;&lt;script&gt;alert(&quot;label&quot;)&lt;/script&gt; &amp; records');
+  expect(html).not.toContain('<script'); expect(html).not.toContain('authorization_denied');
+  expect(html).toContain('href="/users"'); expect(html).toContain('href="/api/help"'); expect(html).not.toContain('href="/access"');
+  const style = html.match(/<style>([\s\S]*?)<\/style>/)![1];
+  const csp = response.headers.get('content-security-policy');
+  expect(csp).toContain("script-src 'none'"); expect(csp).not.toContain('unsafe-inline');
+  expect(csp).toContain(`'sha256-${createHash('sha256').update(style).digest('base64')}'`);
+  expect(observations.filter(row => row.phase === 'handler')).toHaveLength(0);
+});
+
+it('links a verified administrator to Access without granting application rights or invoking its handler', async () => {
+  await businessNavigation(); const assignments = (await store.read()).assignments;
+  const response = await navigationRequest(`${base}/api/runtime-app/app`, { headers: { ...DOCUMENT_HEADERS, 'sec-fetch-dest': 'document', 'x-fixture-user': 'administrator' } });
+  const html = await response.text();
+  expect(response.status).toBe(403); expect(html).toContain('href="/access"'); expect(html).not.toContain('href="/users"');
+  expect(html).toContain('does not automatically grant access to application records');
+  expect((await store.read()).assignments).toEqual(assignments);
+  expect(observations.filter(row => row.phase === 'handler')).toHaveLength(0);
+});
+
+it('retains JSON errors for APIs, other bindings, assets and non-navigation requests', async () => {
+  await businessNavigation(); memberTenants = [];
+  const requests = [
+    { path: '/app', headers: { accept: 'text/html' } },
+    { path: '/app', headers: { ...DOCUMENT_HEADERS, accept: 'application/json' } },
+    { path: '/app', headers: { ...DOCUMENT_HEADERS, 'sec-fetch-mode': 'cors' } },
+    { path: '/records/owned', headers: DOCUMENT_HEADERS },
+    { path: '/combined', headers: DOCUMENT_HEADERS },
+    { path: '/asset/style.css', headers: { ...DOCUMENT_HEADERS, 'sec-fetch-dest': 'style' } },
+    { path: '/app', method: 'POST', headers: DOCUMENT_HEADERS },
+  ];
+  for (const request of requests) {
+    const response = await navigationRequest(`${base}/api/runtime-app${request.path}`, { method: request.method || 'GET', headers: { ...request.headers, 'x-fixture-user': 'alice' } });
+    expect(response.status).toBe(403); expect(response.headers.get('content-type')).toContain('application/json');
+    expect(await response.json()).toHaveProperty('error', 'authorization_tier_denied');
+  }
+  expect(observations.filter(row => row.phase === 'handler')).toHaveLength(0);
+});
+
+it('dispatches authorized document navigation and returns role guidance after current membership is removed', async () => {
+  await businessNavigation();
+  const options = { headers: { ...DOCUMENT_HEADERS, 'x-fixture-user': 'alice' } };
+  const allowed = await navigationRequest(`${base}/api/runtime-app/app`, options);
+  expect(allowed.status).toBe(200); expect(await allowed.json()).toHaveProperty('marker', 'version-one');
+  memberTenants = [];
+  const denied = await navigationRequest(`${base}/api/runtime-app/app`, options);
+  expect(denied.status).toBe(403); expect(await denied.text()).toContain('Application role required');
+  expect(observations.filter(row => row.phase === 'handler')).toHaveLength(1);
 });

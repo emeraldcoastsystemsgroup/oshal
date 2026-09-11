@@ -50,6 +50,11 @@ and choose a workspace. It does not select a data workspace or admit another rea
 Packages must offer their currently authorized workspace choices and keep data requests explicit.
 An explicit empty selector remains the personal context; it never falls back to another workspace.
 
+Denied browser document navigation to an exact `app.open` GET binding returns a static role-guidance
+page with HTTP 403. Verified administrators can follow its Access link; other callers see account
+and help links. API, asset and tool errors remain JSON. The page grants no access and runs no package
+handler or script.
+
 Resource checks and handlers run with the user's database identity and `isOperator: false`.
 This supplies an enforcement boundary; it does not automatically create an application's tenant/team
 predicates or field projections. Package authors must implement and test those adapters. Catalogs alone

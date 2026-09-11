@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Validate declared package tools before activation and fence retired handler domain checks.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Identify fully read-only named bindings for automatic Jarvis proposals.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Preserve business-only browser navigation while retaining explicit data workspace authorization.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Return role guidance for denied app-open browser documents without dispatching package code.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -23,10 +24,10 @@ import { runWithRequestIdentity } from '@/shared/services/database/request-ident
 import { createChildLogger } from '@/shared/logger';
 import type { RemoteApplicationSnapshot } from '@/shared/application-remote-execution';
 import { assertPackageToolInvocation, validatePackageTools, type PackageToolDeclaration } from '@/shared/package-tools';
-import { authorizeApplicationNavigation, navigationWorkspace } from './application-navigation-authorization';
+import { authorizeApplicationNavigation, navigationWorkspace, sendApplicationNavigationDenied } from './application-navigation-authorization';
 
 const logger = createChildLogger({ module: 'application-authorization-runtime' });
-interface RuntimeRegistration { registration: AuthorizationAppRegistration; generation: string; available: boolean; agents: string[]; tools: string[]; packageTools: PackageToolDeclaration[] }
+interface RuntimeRegistration { registration: AuthorizationAppRegistration; displayName: string; generation: string; available: boolean; agents: string[]; tools: string[]; packageTools: PackageToolDeclaration[] }
 export interface PackageAuthorizationContext {
   registerResource(resource: string, adapter: AuthorizationResourceAdapter): void;
   currentActor(): AuthorizationActor | undefined;
@@ -81,7 +82,7 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
   /** Keep a candidate unavailable until every activation step has completed. */
   async start(record: SwarmApplicationRecord): Promise<void> {
     const registration = this.candidate(record.manifest, record.manifestPath);
-    this.registrations.set(record.name, { registration, generation: randomUUID(), available: false,
+    this.registrations.set(record.name, { registration, displayName: record.displayName || record.manifest.displayName || record.name, generation: randomUUID(), available: false,
       agents: (record.manifest.bots ?? []).flatMap(bot => bot.agentId ? [bot.agentId] : []),
       tools: (record.manifest.tools ?? []).map(tool => tool.name), packageTools: validatePackageTools(record.manifest) });
     this.service.unregisterApp(record.name);
@@ -194,17 +195,20 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
       const relative = mount ? requestPath.slice(mount.length) || '/' : requestPath;
       const selection = navigationWorkspace(req);
       if (!selection.valid) { res.status(400).json({ error: 'authorization_workspace_invalid' }); return; }
+      const operation: AuthorizationOperation = { app: appName, kind: 'http', method: req.method, path: relative,
+        ...(selection.tenantId ? { tenantId: selection.tenantId } : {}) };
       await runWithApplicationAuthorizationActor(actor, () => runWithRequestIdentity({ sub: actor.sub,
         principalIssuer: actor.issuer, isOperator: false }, async () => {
-        const decision = await authorizeApplicationNavigation(state.registration, actor,
-          { app: appName, kind: 'http', method: req.method, path: relative,
-            ...(selection.tenantId ? { tenantId: selection.tenantId } : {}) }, selection.explicit,
+        const decision = await authorizeApplicationNavigation(state.registration, actor, operation, selection.explicit,
           operation => {
             if (this.registrations.get(appName) !== state || !state.available) throw new Error('Application generation changed');
             return this.authorize(actor, operation);
           });
         if (this.registrations.get(appName) !== state || !state.available) throw new Error('Application generation changed');
-        if (!decision.allowed) { res.status(403).json({ error: decision.reason, decisionId: decision.decisionId }); return; }
+        if (!decision.allowed) {
+          if (!sendApplicationNavigationDenied(req, res, state.registration, operation, actor, state.displayName)) res.status(403).json({ error: decision.reason, decisionId: decision.decisionId });
+          return;
+        }
         res.locals.applicationAuthorization = decision;
         next();
       }));

@@ -126,3 +126,46 @@ No account, swarm role, application assignment or root ownership was changed. Ca
 applications enforce their imported permissions; the reviewed compatibility mode remains in effect
 for packages without catalogs. External directory synchronization is not claimed by these checks.
 The PR still requires independent review before merging to main. No GitHub Actions were invoked.
+
+The subsequent business-navigation build is `71135bb770ed2e8897e60c522a085eb9526842ed`, image
+`sha256:8273a7f6695aa386b82076484c5dd68177968836407fa23906c3239138476672`.
+All 35 application services again pass health and image parity; the 14 infrastructure containers,
+11 configuration fingerprints and existing privilege state remain unchanged. The 18-test registered
+runtime suite passes, including business-only document selection, current membership revocation,
+explicit denial and a reload during authorization. The publication gate and committed-HEAD
+typecheck pass. Browser fixture acceptance verifies actual package pages and protected downloads
+for personal and business workspaces; that isolated proof does not change installed user grants.
+
+## Installed application acceptance
+
+The subsequent application upgrade used the ordinary recursive store installer and the existing
+package deployment helper. All four dependency packages resolved to one committed store revision.
+The shared schema was installed first, followed by the dependent application. Normal startup
+loaded all 76 packages with zero failures. A read-only database and installation probe passed
+197 checks, including the migration ledger, active versions, registered runner paths and forced
+row-level security. An early probe during startup was retained separately and is not a passing
+result. The post-startup probe passed without applying manual SQL or changing user grants.
+
+The installed copy's 356 tracked source files match their committed Git blobs byte for byte.
+Twenty-four existing generated documents/cache files were retained and inventoried separately;
+they are not claimed to be Git-verified source. Final stack verification again passed for all
+35 application services, 14 unchanged infrastructure containers, 11 configuration fingerprints
+and the existing privilege state. The deployment parity command passed.
+
+In the existing signed-in browser, Users displayed the current administrator and identity roster;
+Access displayed the newly installed application version and imported roles. Default Home showed
+the application's card, and its explicit root selector opened its own focused theme and navigation.
+The current account has no application business role, so the embedded data route correctly denied
+access. Root ownership is not required to administer the role assignment. No account, role,
+business record or provider connection was created for these checks.
+
+An authenticated GET of the installed Test Lab catalog displayed the upgraded application cases
+and their exact package version, file references and pending runner prerequisites. This is live
+registration proof; isolated regression execution is reported separately. The browser prerequisite
+and caller-owned credential requirement were not bypassed to turn pending cases into successes.
+
+The denied embedded page initially displayed a JSON error. A final core correction returns static
+role guidance only for browser navigation to an exact read-only `app.open` binding. APIs and tools
+retain JSON errors, and the package handler never runs for denied requests. The registered runtime
+suite now passes 22 cases, including escaped application labels, script-free CSP, administrator
+guidance, unchanged assignments and membership revocation.
