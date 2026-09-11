@@ -58,9 +58,9 @@ local installation. No login-provider configuration or account changes are neede
 
 See [live test instructions](../../tests/live/README.md#installed-users-and-access-acceptance).
 
-## Observed installation results
+## Initial installation results
 
-The local instance runs committed build `980b2561872334e052164d6e8fb17993ab44ef9c`, image
+The initial acceptance used committed build `980b2561872334e052164d6e8fb17993ab44ef9c`, image
 `sha256:cd92d6b2e59a56668613d521c890e4c3aaea6d1ff43689f444eaef9ebc46335b`.
 The image was built from a Git archive, and its commit label, native SQLite and kernel-skill probes
 passed. The previous image remains tagged for rollback. A custom-format database dump passed
@@ -92,7 +92,37 @@ the PostgreSQL upgrade suite, and the separate browser acceptance reference. Val
 | Committed-source publication gate and exported HEAD typecheck | Passed |
 | Live browser harness discovery, strict TypeScript and scoped lint | Passed; discovery is not execution |
 
-Authenticated browser acceptance remains **pending**. Automatic approval review rejected the Chrome
-launch with "blocked by policy"; the operator was asked to open the existing test profile and sign
-in at the configured HTTPS origin. No authenticated browser result or executed Lab probe is claimed.
+That initial attempt did not complete authenticated browser acceptance: automatic approval review
+rejected a Chrome launch with "blocked by policy". The subsequent acceptance below used the already
+open signed-in browser. No browser launch or authentication bypass was needed.
+
+## Follow-up acceptance
+
+The follow-up local build is `8d42856d133d68ad9d26482ac2491267d80974ad`, image
+`sha256:83c339cba74bbd2c3fe048562cc2aee202a156eda1cd5fe79513321637b80948`.
+It was built from an LF-preserving committed archive. Native SQLite and the installed Access HTML
+asset passed the image probes. All 35 application services are healthy on this image. All 14 existing
+infrastructure containers and the 11 reviewed authentication/configuration fingerprints are unchanged.
+Localhost and the configured HTTPS origin report the same full commit.
+
+Manual acceptance in the existing signed-in browser verified Users, the exact provider account,
+administrator access from the allowlist, unclaimed root ownership, and the dynamic Access catalog.
+The Access page's compiled route initially looked for a nonexistent `dist/pages` asset. Commit
+`924d9e4dd5ea8b0e1dacbf215ae6f08b06d4c07e` fixes the installed asset path and sanitizes missing-file
+responses; its 12 registered route regressions pass, including a real compiled-route fixture.
+The browser then displayed the current user and imported application roles without a temporary copy.
+
+An authenticated browser GET of `/api/test-lab/catalog` displayed the authorization scenarios and
+installed test registrations. That is catalog visibility proof, not execution of every Lab scenario.
+The separate CDP live harness was not executed. The read-only stack verifier reports its own
+`authenticatedLabVerified: false` because no credential was supplied to that script; the manual
+authenticated browser observation is recorded separately.
+
+The root entrypoint now retains a valid explicit `/?app=<name>` selector when redirecting into the
+cockpit. Fourteen focused-entry and platform-registration checks pass. The focused-entry regression
+is registered in the AI Test Lab. Invalid or ambiguous selectors retain the existing host default.
+
+No account, swarm role, application assignment or root ownership was changed. Catalog-bearing
+applications enforce their imported permissions; the reviewed compatibility mode remains in effect
+for packages without catalogs. External directory synchronization is not claimed by these checks.
 The PR still requires independent review before merging to main. No GitHub Actions were invoked.

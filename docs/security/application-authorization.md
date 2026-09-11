@@ -38,6 +38,18 @@ method and path relative to the package mount; unbound endpoints are denied. Pub
 declarations do not bypass these checks. Protected routes require `APP_PACKAGE_DYNAMIC_ROUTES=1` and
 successful route construction before becoming available.
 
+Browser document and asset GET requests may select a business workspace with `?workspace=<tenant>`;
+API calls may use `x-oshal-tenant-id`. Both remain untrusted selectors checked against current
+membership and grants. Duplicate, malformed or conflicting selectors are rejected. A query selector
+does not authorize a mutation; writes continue using the header. Package links and downloads must
+preserve the selected workspace and independently apply the same policy and database scope.
+
+Without an explicit selector, only a GET binding requiring exactly the read permission `app.open`
+may open through an existing business membership. This lets a business-only user reach the shell
+and choose a workspace. It does not select a data workspace or admit another read/write action.
+Packages must offer their currently authorized workspace choices and keep data requests explicit.
+An explicit empty selector remains the personal context; it never falls back to another workspace.
+
 Resource checks and handlers run with the user's database identity and `isOperator: false`.
 This supplies an enforcement boundary; it does not automatically create an application's tenant/team
 predicates or field projections. Package authors must implement and test those adapters. Catalogs alone

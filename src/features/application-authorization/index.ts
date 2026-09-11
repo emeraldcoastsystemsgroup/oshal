@@ -10,5 +10,5 @@ export { ApplicationAuthorizationService, type ApplicationAuthorizationServiceOp
 export { MemoryAuthorizationStore, PostgresAuthorizationStore, ensureApplicationAuthorizationSchema } from './store';
 export { ApplicationAuthorizationError, type AuthorizationStore, type AuthorizationAssignment, type AuthorizationTransaction } from './types';
 export { parseAuthorizationChange, parseAuthorizationApply } from './change-validation';
-export { APP_ADMIN_ROLE } from './policy';
+export { APP_ADMIN_ROLE, resolveOperationPermissions } from './policy';
 export type * from '@/shared/application-authorization';

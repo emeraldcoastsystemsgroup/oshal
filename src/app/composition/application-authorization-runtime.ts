@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Revalidate artifact source permissions by registered HTTP mount, retaining inactive ownership.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Validate declared package tools before activation and fence retired handler domain checks.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Identify fully read-only named bindings for automatic Jarvis proposals.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Preserve business-only browser navigation while retaining explicit data workspace authorization.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,6 +23,7 @@ import { runWithRequestIdentity } from '@/shared/services/database/request-ident
 import { createChildLogger } from '@/shared/logger';
 import type { RemoteApplicationSnapshot } from '@/shared/application-remote-execution';
 import { assertPackageToolInvocation, validatePackageTools, type PackageToolDeclaration } from '@/shared/package-tools';
+import { authorizeApplicationNavigation, navigationWorkspace } from './application-navigation-authorization';
 
 const logger = createChildLogger({ module: 'application-authorization-runtime' });
 interface RuntimeRegistration { registration: AuthorizationAppRegistration; generation: string; available: boolean; agents: string[]; tools: string[]; packageTools: PackageToolDeclaration[] }
@@ -190,11 +192,18 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
       const mounts = [...(state.registration.mountPaths ?? [])].sort((a, b) => b.length - a.length);
       const mount = mounts.find(prefix => requestPath === prefix || requestPath.startsWith(`${prefix}/`));
       const relative = mount ? requestPath.slice(mount.length) || '/' : requestPath;
-      const tenant = req.get('x-oshal-tenant-id');
+      const selection = navigationWorkspace(req);
+      if (!selection.valid) { res.status(400).json({ error: 'authorization_workspace_invalid' }); return; }
       await runWithApplicationAuthorizationActor(actor, () => runWithRequestIdentity({ sub: actor.sub,
         principalIssuer: actor.issuer, isOperator: false }, async () => {
-        const decision = await this.authorize(actor, { app: appName, kind: 'http', method: req.method, path: relative,
-          ...(tenant ? { tenantId: tenant } : {}) });
+        const decision = await authorizeApplicationNavigation(state.registration, actor,
+          { app: appName, kind: 'http', method: req.method, path: relative,
+            ...(selection.tenantId ? { tenantId: selection.tenantId } : {}) }, selection.explicit,
+          operation => {
+            if (this.registrations.get(appName) !== state || !state.available) throw new Error('Application generation changed');
+            return this.authorize(actor, operation);
+          });
+        if (this.registrations.get(appName) !== state || !state.available) throw new Error('Application generation changed');
         if (!decision.allowed) { res.status(403).json({ error: decision.reason, decisionId: decision.decisionId }); return; }
         res.locals.applicationAuthorization = decision;
         next();

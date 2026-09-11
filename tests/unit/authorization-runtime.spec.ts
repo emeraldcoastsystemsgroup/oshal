@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise authorization through real package loading, activation and mounted HTTP routes.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove remote execution generations retract during reload and disable.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Preserve strict business identity assertions when refreshed actors contain explicit empty management metadata.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Exercise business-only browser navigation, explicit selection, revoked membership and data-route refusal through real policy and mounts.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Reject shell navigation whose awaited decision spans a completed package reload.
  */
 /** Real temporary package activation and Express dispatch; persistence is isolated, policy and lifecycle are real. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -58,7 +60,27 @@ let records: Map<string, SwarmApplicationRecord>;
 let queries: string[], repoWrites: number, factoryContexts: unknown[];
 let observations: Array<{ phase: string; identity: ReturnType<typeof getRequestIdentity>; actor: ReturnType<typeof getApplicationAuthorizationActor> }>;
 let failTakeout: boolean, hasCatalog: boolean;
+let memberTenants: string[];
 let activationPause: { entered(): void; wait: Promise<void> } | undefined;
+
+/** @description Install an isolated shell catalog and a business-only editor without personal access.
+ * @returns Current mounted policy fixture ready for document and API requests.
+ */
+async function businessNavigation() {
+  const navigation = structuredClone(catalog);
+  navigation.permissions['app.open'] = { resource: 'records', effect: 'read', minimumTier: 'viewer' };
+  navigation.roles.editor.grants.push({ permission: 'app.open', scope: 'own' });
+  navigation.bindings.http!.push(
+    { id: 'shell', method: 'GET', path: '/app', allOf: ['app.open'] },
+    { id: 'asset', method: 'GET', path: '/asset/:file', allOf: ['app.open'] },
+    { id: 'not-shell', method: 'GET', path: '/combined', allOf: ['app.open', 'records.read'] },
+    { id: 'not-navigation', method: 'POST', path: '/app', allOf: ['app.open'] });
+  memberTenants = ['business-a'];
+  await apps.loadApp(writePackage(manifest(), navigation));
+  const preview = await policy.previewChange(admin, { action: 'grant', app: 'runtime-app', targetSub: alice.sub,
+    targetIssuer: alice.issuer, tenantId: 'business-a', role: 'editor', reason: 'Business navigation fixture', expectedRevision: 0 });
+  await policy.applyChange(admin, { previewId: preview.previewId, idempotencyKey: crypto.randomUUID() });
+}
 
 function manifest(overrides: Partial<SwarmAppManifest> = {}): SwarmAppManifest {
   return { name: 'runtime-app', displayName: 'Runtime fixture', version: '1.0.0', status: 'active', suite: 'ai-home', uses: ['application-authorization'],
@@ -87,7 +109,7 @@ beforeEach(async () => {
   vi.stubEnv('SWARM_SERVICE_SECRET', 'example-runtime-fixture-service-secret');
   vi.stubEnv('APP_PACKAGE_MIGRATIONS', 'false');
   root = mkdtempSync(join(tmpdir(), 'oshal-authorization-runtime-'));
-  records = new Map(); queries = []; repoWrites = 0; factoryContexts = []; observations = []; failTakeout = false; hasCatalog = true; activationPause = undefined;
+  records = new Map(); queries = []; repoWrites = 0; factoryContexts = []; observations = []; failTakeout = false; hasCatalog = true; activationPause = undefined; memberTenants = [];
   const pool = { query: async (sql: string) => { queries.push(sql); return { rows: [], rowCount: 0 }; } };
   const repo = {
     findByName: async (name: string) => records.get(name) ?? null,
@@ -109,7 +131,7 @@ beforeEach(async () => {
   policy = new ApplicationAuthorizationService(store, { resolveTier: async () => ({ tier: 'admin', explicit: false }) });
   const actor = async (req: Request) => {
     const name = req.get('x-fixture-user');
-    if (name === 'alice') return structuredClone(alice);
+    if (name === 'alice') return structuredClone({ ...alice, ...(memberTenants.length ? { tenantIds: memberTenants } : {}) });
     if (name === 'administrator') return structuredClone(admin);
     throw Object.assign(new Error('No verified fixture actor'), { status: 401 });
   };
@@ -289,4 +311,72 @@ describe('Application authorization runtime integration', () => {
       expect((await fetch(endpoint, { headers: { 'x-fixture-user': 'alice' } })).status).toBe(503);
     } finally { hardServer.closeAllConnections(); await new Promise<void>(done => hardServer.close(() => done())); }
   });
+});
+
+it('opens a business-only shell and selected browser workspace without selecting data implicitly', async () => {
+  await businessNavigation();
+  expect((await call('/app')).status).toBe(200);
+  expect((await call('/asset/style.css')).status).toBe(200);
+  expect((await call('/app?workspace=business-a')).status).toBe(200);
+  expect((await call('/records/owned?workspace=business-a')).status).toBe(200);
+  expect((await call('/records/owned', { headers: { 'x-oshal-tenant-id': 'business-a' } })).status).toBe(200);
+  expect((await call('/records/owned')).status).toBe(403);
+  expect((await call('/combined')).status).toBe(403);
+  expect((await call('/app', { method: 'POST' })).status).toBe(403);
+  expect((await call('/records?workspace=business-a', { method: 'POST' })).status).toBe(403);
+  expect((await call('/records', { method: 'POST', headers: { 'x-oshal-tenant-id': 'business-a' } })).status).toBe(200);
+});
+
+it('refuses ambiguous, foreign and explicitly empty browser workspace selections before package execution', async () => {
+  await businessNavigation();
+  for (const query of ['workspace=business-a&workspace=business-b', 'workspace[id]=business-a', 'workspace=%00', `workspace=${'a'.repeat(129)}`]) {
+    expect((await call(`/app?${query}`)).status).toBe(400);
+  }
+  expect((await call('/app?workspace=business-b')).status).toBe(403);
+  expect((await call('/app?workspace=')).status).toBe(403);
+  expect((await call('/app?workspace=business-a', { headers: { 'x-oshal-tenant-id': 'business-b' } })).status).toBe(400);
+  expect(observations.filter(row => row.phase === 'handler')).toHaveLength(0);
+});
+
+it('rechecks current membership on every shell, asset and explicitly selected document', async () => {
+  await businessNavigation();
+  expect((await call('/app')).status).toBe(200);
+  memberTenants = [];
+  expect((await call('/app')).status).toBe(403);
+  expect((await call('/asset/style.css')).status).toBe(403);
+  expect((await call('/app?workspace=business-a')).status).toBe(403);
+  expect((await store.read()).assignments).toHaveLength(1);
+});
+
+it('preserves global explicit deny while considering shell membership grants', async () => {
+  await businessNavigation();
+  const preview = await policy.previewChange(admin, { action: 'deny', app: 'runtime-app', targetSub: alice.sub,
+    targetIssuer: alice.issuer, reason: 'Explicit denial fixture', expectedRevision: (await store.read()).revision });
+  await policy.applyChange(admin, { previewId: preview.previewId, idempotencyKey: crypto.randomUUID() });
+  expect((await call('/app')).status).toBe(403);
+  expect((await call('/app?workspace=business-a')).status).toBe(403);
+  expect(observations.filter(row => row.phase === 'handler')).toHaveLength(0);
+});
+
+it('refuses a shell request when its awaited policy decision crosses a completed package reload', async () => {
+  await businessNavigation();
+  const originalGeneration = runtime.snapshot('runtime-app')!.generation;
+  let entered!: () => void, release!: () => void;
+  const paused = new Promise<void>(resolve => { entered = resolve; });
+  const resume = new Promise<void>(resolve => { release = resolve; });
+  const authorize = policy.authorize.bind(policy);
+  const spy = vi.spyOn(policy, 'authorize').mockImplementationOnce(async (actor, operation) => {
+    const decision = await authorize(actor, operation);
+    entered(); await resume;
+    return decision;
+  });
+  const response = call('/app');
+  try {
+    await paused;
+    await apps.loadApp(records.get('runtime-app')!.manifestPath);
+    expect(runtime.snapshot('runtime-app')!.generation).not.toBe(originalGeneration);
+    release();
+    expect((await response).status).toBe(503);
+    expect(observations.filter(row => row.phase === 'handler')).toHaveLength(0);
+  } finally { release(); spy.mockRestore(); await response; }
 });
