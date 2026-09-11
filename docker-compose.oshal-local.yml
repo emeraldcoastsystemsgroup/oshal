@@ -29,6 +29,7 @@
 # 22 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: TRADING_COTP_URL / TRADING_COTP_REMINDER_HOUR_ET / TRADING_COTP_REMINDER_DAYS / TRADING_EVENT_ALERT_TOPIC / TRADING_EVENT_NOTIFY_TIMEOUT_MS passthrough for the ADR-136 D6 COTP reminders + S-1 alert (trading-event-reminders.ts, trading-event-alerts.ts). Blank = code default; the operator sets the exact Schwab IPO-center page once known, and the timeout is the ceiling a wedged Gmail/Twilio/Telegram send may cost a leg tick. Guard: tests/unit/trading-event-reminders.spec.ts (compose pin).
 # 23 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: the ADR-136 D5 earnings-rule knobs (TRADING_EARNINGS_RULES off by default plus its window/reaction/tranche/attempt bounds). Without an anchor entry a host value never reaches the api and the feature silently runs its defaults.
 # 24 | maintainer@emeraldcoastsystemsgroup.com   | Supply the API bootstrap provisioner with the same least-privilege bot DSN as workers, preserving separate app and owner credentials.
+# 25 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: forward OSHAL_APPLICATION_AUTHORIZATION_MODE (ADR-149). Without the passthrough the api silently ran the default `enforce` mode with zero approved assignments, so every package surface answered 403 to a signed-in operator; the documented `legacy` compatibility mode could not be set from .env at all.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -171,6 +172,11 @@ x-bot-env: &bot-env
   # Per-host OIDC login origins (fixes cross-host login loop). Unset = single-host.
   OIDC_BASE_URLS: ${OIDC_BASE_URLS:-}
   HOST_APP_MAP: ${HOST_APP_MAP:-}
+  # ADR-149 application authorization rollout mode. The runtime defaults to `enforce` when this is
+  # unset, and in enforce mode a package without a permission catalog admits ONLY an explicit
+  # @app-admin assignment - a box with no approved assignments answers 403 on every package
+  # surface. `legacy` is the documented compatibility mode until assignments are approved.
+  OSHAL_APPLICATION_AUTHORIZATION_MODE: ${OSHAL_APPLICATION_AUTHORIZATION_MODE:-}
   # SESSION_SECRET (the master connector-token AES key) is deliberately NOT in the
   # shared bot anchor — token-broker security: bots get short-lived per-user tokens
   # from the controller, never the master key. It lives on oshal-api (the controller)
