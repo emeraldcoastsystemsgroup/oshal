@@ -40,6 +40,7 @@
     "test": "npx playwright test",
     "test:e2e:green": "node scripts/e2e-green.mjs",
     "test:unit": "vitest run",
+    "test:artifacts": "vitest run --no-file-parallelism --hookTimeout 30000 tests/unit/artifact-exchange.spec.ts tests/unit/jarvis-tool-catalog.spec.ts tests/unit/artifact-mint-bytes-route.spec.ts tests/unit/artifact-redeem-relay.spec.ts tests/unit/artifact-picker.spec.ts tests/unit/jarvis-artifact-routing.spec.ts tests/unit/artifact-dispatch-browser.spec.ts tests/unit/test-lab-artifact-registration.spec.ts",
     "test:ui": "npx playwright test --ui",
     "app": "node scripts/oshal-app.js",
     "test:live": "npx playwright test --config playwright.live.config.ts",

@@ -298,6 +298,17 @@ app/ → pages/ → features/ → entities/ → shared/
 - One primary entity per file (one class, one component, one service).
 - No cross-imports between slices at the same layer.
 
+## Tests accompany new functionality (operator, 2026-09-10)
+
+Every new feature ships with behavior tests; every bug fix ships with a regression test for its
+failure shape. Include the successful outcome and applicable refusal, ownership, cancellation and
+confirmation cases. Use isolated data and identify model/provider fixtures explicitly.
+
+Register runnable product scenarios in the existing AI Test Lab (`test-lab-scenarios.ts`, including
+feature modules), and attach `regressionTests` file references with unit/integration/browser levels.
+Update the feature's local test command and coverage notes. A test file on disk alone is not Test
+Lab registration. Keep locally tested and live-proven status distinct. See [tests/README.md](tests/README.md).
+
 ## Hard file/function limits
 
 - **1000-line hard cap** on any file — no exceptions. Measured in **lines of code**:

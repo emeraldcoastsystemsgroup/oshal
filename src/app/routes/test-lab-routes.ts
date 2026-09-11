@@ -10,6 +10,7 @@
  * gap (no capability exists) | fail (error). Surfacing degraded/gap is the point as much as green.
  *
  * CHANGE LOG
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Register artifact scenarios and expose categorized regression suites in the existing Lab catalog.
  * ---------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — runner + per-tool smoke tests +
  *            | two coupled scenarios (job-pack->deck->save->email; birthday+gift) + a Jarvis-routing
@@ -94,7 +95,7 @@ export function createTestLabRoutes(_ctx: AppContext): Router {
     let apps: any[] = [];
     try { const r = await fetch(`http://localhost:${process.env.PORT || '5000'}/api/swarm/apps?status=active`, { headers: cookie ? { cookie } : {} }); const j: any = await r.json().catch(() => ({})); apps = (j?.apps || []).map((a: any) => ({ name: a.name, displayName: a.displayName, botCount: a.botCount, toolCount: a.toolCount })); } catch { /* best effort */ }
     res.json({
-      scenarios: SCENARIOS.map((s) => ({ id: s.id, title: s.title, group: s.group, description: s.description, steps: s.steps.map((st) => ({ id: st.id, app: st.app, label: st.label })) })),
+      scenarios: SCENARIOS.map((s) => ({ id: s.id, title: s.title, group: s.group, description: s.description, regressionTests: s.regressionTests || [], steps: s.steps.map((st) => ({ id: st.id, app: st.app, label: st.label })) })),
       apps,
     });
   }));

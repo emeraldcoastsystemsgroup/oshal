@@ -115,10 +115,11 @@ PR sits idle, ping the thread — never work around review.
 3. Branch from `main` after confirming no development branch is already open
    (see the branching model above). Use a focused branch name: `feat/foo`,
    `fix/bar`, `refactor/baz`.
-4. Add tests. Source-level lock-in tests (regex against file content)
-   are fine for wiring changes; **behavior tests are required** for
-   adapters and dispatchers — see `tests/harness-adapter-behavior.spec.ts`
-   for the pattern.
+4. Add behavior tests for every new feature and regression tests for every bug fix in the same
+   change. Cover the successful user outcome and relevant failure/ownership/confirmation paths.
+   Register testable product behavior in the existing AI Test Lab scenario catalog, with
+   `regressionTests` references labelled unit, integration, or browser. Keep the relevant local
+   command and feature coverage notes current. See [tests/README.md](tests/README.md).
 5. Run the checks relevant to the change before opening a PR. For a full
    committed-HEAD sweep, use `bash scripts/ci-local.sh --head`.
 6. Fill in [PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md).

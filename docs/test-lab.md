@@ -48,6 +48,26 @@ fell back to demo/local, or async) / **gap** (capability missing — a finding) 
 
 API: `GET /api/test-lab/catalog`, `POST /api/test-lab/run` (both `requiresAuth`).
 
+### Artifact exchange and Jarvis registrations
+
+The existing catalog includes **Artifact picker and tool metadata** (`artifact-discovery`, Tools)
+and **Jarvis artifact target and confirmation** (`jarvis-artifact-handoff`, Jarvis). Each card's
+**Regression suites** section identifies its unit, integration and browser test files. The paths
+remain in the existing Vitest tree so the normal local test run continues to discover them.
+
+The discovery scenario reads the active source/destination catalogs and validates the real YAML
+tool load. The Jarvis scenario mints a short-lived handle over a Test Lab sample visual, checks the
+actual model's named email target and ambiguous request in separate Lab chat sessions, and checks
+that an unconfirmed email request returns 428. It never dispatches the proposed destination.
+It creates Lab chat turns and consumes model usage when run; unavailable prerequisites remain
+visible as degraded/gap rather than passing. Browser selection and replay behavior are covered by
+the linked browser suites, not claimed by these server-side probes.
+
+Run the associated isolated regression suites locally with `npm run test:artifacts`. Registration,
+HTTP assertions and negative cases are themselves covered by
+`tests/unit/test-lab-artifact-registration.spec.ts`. Registration in source does not claim that the
+updated catalog or its live-model scenarios have already run on the deployed instance.
+
 ---
 
 ## Part 2 — Nightly golden loop

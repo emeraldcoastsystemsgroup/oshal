@@ -15,6 +15,7 @@
  * Result states stay honest: pass | degraded | gap | fail. Surfacing degraded/gap is the point.
  *
  * CHANGE LOG
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Register artifact scenarios and expose categorized regression suites in the existing Lab catalog.
  * ---------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted registry from
  *            | test-lab-routes.ts; added the deterministic `visual` group, live Jarvis visual
@@ -61,6 +62,7 @@
  * @module test-lab-scenarios
  */
 
+import { ARTIFACT_SCENARIOS } from './test-lab-artifact-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 
 const SELF_PORT = process.env.PORT || '5000';
@@ -88,6 +90,7 @@ export interface Scenario {
   title: string;
   group: 'visual' | 'tool' | 'jarvis' | 'coupled';
   description: string;
+  regressionTests?: Array<{ level: 'unit' | 'integration' | 'browser'; path: string }>;
   steps: Array<{ id: string; app: string; label: string; run: (cookie: string, prior: Record<string, any>) => Promise<StepResult> }>;
 }
 
@@ -210,6 +213,7 @@ function arrayAssert(field: string, noun: string): Assert {
 
 // ── Scenario registry ────────────────────────────────────────────────────────
 export const SCENARIOS: Scenario[] = [
+  ...ARTIFACT_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,

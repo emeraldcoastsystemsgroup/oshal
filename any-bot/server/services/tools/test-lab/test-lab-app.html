@@ -264,6 +264,7 @@ function renderScenarioCard(scenario) {
     + '<div class="scenario-actions"><span class="badge ' + esc(state) + '" id="badge-' + esc(scenario.id) + '">' + esc(state) + '</span>'
     + '<button type="button" data-run-id="' + esc(scenario.id) + '">Run</button></div>'
     + '</div>'
+    + ((scenario.regressionTests || []).length ? '<details class="scenario-desc"><summary>Regression suites</summary>' + scenario.regressionTests.map((test) => '<div>' + esc(test.level) + ': <code>' + esc(test.path) + '</code></div>').join('') + '</details>' : '')
     + '<div class="steps" id="steps-' + esc(scenario.id) + '">'
     + (scenario.steps || []).map((step) => renderStep(step, 'idle', step.app)).join('')
     + '</div></article>';
