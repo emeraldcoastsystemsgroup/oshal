@@ -225,3 +225,28 @@ and fixed command remain unchanged and their parity was verified. Combined embed
 and test lint passed, including the function-length guard. Browser acceptance includes a narrow
 viewport, calendar invocation and exact expiry, distinct application roles, common roles, bulk
 revocation, changed catalogs, revoked administrators and ambiguous-response reconciliation.
+
+## Authorized account provisioning and live UI acceptance
+
+After the read-only acceptance above, the operator explicitly requested administrator roles for
+their existing verified account across every current application. The signed-in browser used the
+normal bulk preview/apply controls in four batches of 20, 20, 20 and 8. All 68 new assignments have
+distinct audit receipts; the two existing assignments were preserved. Policy revision advanced
+from 2 to 70. A refreshed catalog contains 70 applications and 70 corresponding direct assignments;
+all 70 effective-access responses return the exact selected principal, tier `admin` and no denial.
+
+Applications without imported role catalogs received `@app-admin`. The two declared catalogs use
+their own administrator roles: `crm_personal_admin` grants all 154 CRM actions for the account's own
+records, and Portrait Studio's `manager` grants its eight actions for the account's own records.
+These assignments have no expiry or business tenant. Existing record ownership, tenant membership
+and field rules continue to apply. The current catalog includes 52 enforced applications and 18
+legacy registrations; the latter retain their existing access rules and display Legacy access.
+This is account provisioning for the current catalog, not an automatic grant to future installations.
+
+Native browser acceptance also opened the calendar picker, cleared expiry, searched both declared
+applications and inspected their saved roles and action counts. The served HTML SHA-256 matches
+source commit `3b51c1c47b05fa2c371eaf562dab3ff97bd81e35`. The API remains healthy on compiled core
+`ca43c1081719bcdc9bb40f6ec9dede669fb1bb2d`; the existing read-only page mount serves the UI update.
+This change required no container restart. The separate application deployment completed before
+the live grants. The committed-HEAD typecheck and publication gate passed; merge still requires
+the repository's independent review.
