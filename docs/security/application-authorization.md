@@ -63,6 +63,34 @@ The Access screen and read tool expose [scoped applied-change history](authoriza
 Each paginated read rechecks current authority, filters app/tenant scope before limiting results, and
 omits raw reasons and approval material. An ordinary user cannot browse administration history.
 
+The user roster deep-links the exact identity into Access. The screen shows each declared permission,
+whether it is granted, and the applicable record scope/field projection. “Review all visible applications”
+reads the selected user's current access across the caller's visible catalog. Explicit deny removes the
+affected permission, including a deny for one action within a broader role. Create, update and delete
+are distinct named permissions even when all have the `write` effect in the catalog.
+
+Two core role templates can be assigned per application, optionally within a business tenant:
+
+| Core role | Management rights | Business-data rights |
+|---|---|---|
+| `@access-admin` | Read access, assign imported business roles and map directory groups | None |
+| `@access-auditor` | Read access and scoped audit history | None |
+
+Only a current swarm administrator may grant or revoke these management roles. An application access
+administrator cannot delegate management roles or alter swarm root/admin/user roles. Both templates use
+the existing assignment store, catalog/source binding, expiry, deny and revision rules. Every operation
+derives current management scopes again; revoking a manager before an assignment transaction acquires
+the policy writer prevents that assignment. Existing sensitive/self-escalation approval requirements
+still apply. `authorization-management-roles.spec.ts` and its PostgreSQL companion cover these boundaries,
+including a one-connection pool so account/approval checks cannot deadlock while holding the writer.
+
+External business memberships use exact issuer/subject/tenant tuples introduced by migration 135. The
+Users screen exposes existing tenants through the admin-only `/api/authorization/tenant-memberships`
+catalog and preview/apply API. Membership alone grants no application action. A verified provider's
+directory tenant ID is not an OSHAL business tenant; local issuerless memberships are not inherited.
+The actor resolver reads external memberships freshly, and changes share the authorization revision
+and audit transaction. Application managers cannot grant business memberships.
+
 The Entra bridge preserves verified directory claims before linking to a local account. Group decisions
 match issuer, directory tenant, and group object ID. Missing, stale, incomplete, or overage membership
 evidence refuses affected access; no claim URL is fetched. Evidence expires after five minutes, so the
@@ -117,7 +145,8 @@ changes; root disable and administrative credential-reset guards remain transact
 
 Migrations 127–129 add policy state/audit/app posture, installer proof and verified principal storage;
 migration 131 indexes scoped audit reads; migrations 132–133 persist remote execution authority and
-queued initiator provenance. Normal schema
+queued initiator provenance. Migrations 134–135 add reviewed roster registrations and exact external
+business-tenant memberships. Normal schema
 initialization supports installation. No deployed accounts or app grants are changed by the source
 implementation itself.
 

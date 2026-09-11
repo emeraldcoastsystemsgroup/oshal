@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register existing-account administration, root credential protection and browser controls.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Register real authenticated localhost browser acceptance separately from the fixed isolated regression runner.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register disposable PostgreSQL role provisioning and repeat-bootstrap integration coverage.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Register roster imports, delegated management roles and external business memberships with their isolated browser/database proofs.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -40,6 +41,10 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
   id: 'authorization-management', title: 'Application access administration', group: 'tool',
   description: 'Read the current caller-visible authorization catalog. Isolated HTTP and browser suites prove identity, scope, CSRF, preview/apply and revocation behavior.',
   regressionTests: [
+    { level: 'unit', path: 'tests/unit/authorization-management-roles.spec.ts' },
+    { level: 'integration', path: 'tests/unit/authorization-management-roles-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/principal-registration.spec.ts' },
+    { level: 'integration', path: 'tests/unit/external-tenant-memberships.spec.ts' },
     { level: 'unit', path: 'tests/unit/authorization-policy.spec.ts' },
     { level: 'unit', path: 'tests/unit/bot-db-least-privilege.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-postgres-provisioning.spec.ts' },
@@ -67,7 +72,7 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
   steps: [{ id: 'catalog', app: 'authorization', label: 'Caller-visible access catalog', run: authorizationCatalog }],
 }, {
   id: 'authorization-localhost-live', title: 'Localhost Users and Access acceptance', group: 'tool',
-  description: 'Existing authenticated operator browser on localhost:35457: deployed build, Users, Access, effective rights, audit and catalog probe. Run explicitly through the no-prune CDP harness; no account or grant changes.',
+  description: 'Existing authenticated operator browser on an explicitly selected localhost or canonical HTTPS origin: deployed build, Users, Access, effective rights, audit and catalog probe. Run through the no-prune CDP harness with the expected commit; no account or grant changes.',
   regressionTests: [{ level: 'browser', path: 'tests/live/authorization-management.live.spec.ts' }],
   steps: [{ id: 'external-browser', app: 'authorization', label: 'Authenticated localhost browser required', run: async () => ({
     app: 'authorization', label: 'Authenticated localhost browser required', state: 'degraded',

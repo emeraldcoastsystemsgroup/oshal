@@ -4,6 +4,8 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify grants, restrictions and reviewed changes through the real administration screen.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise user deep-links, permission matrices and delegated read-only administration.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Refuse unknown linked identities and obsolete asynchronous access previews.
  */
 /** Chromium drives the real Access Administration page and shared policy HTTP service on loopback. */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -38,6 +40,25 @@ async function apply() {
 }
 
 describe('Access Administration browser workflow', () => {
+  it('opens the exact user from the roster and reviews their application actions and delegated auditor role', async () => {
+    await fixture.apply({ targetSub: 'bob' });
+    const query = new URLSearchParams({ issuer: fixture.actors.bob.issuer, sub: 'bob' });
+    await page.goto(fixture.base + '/access/?' + query);
+    await expect.poll(() => page.locator('#effective').textContent()).toContain('Roles: reader');
+    expect(await page.locator('#target option:checked').textContent()).toContain('Bob');
+    expect(await page.locator('#permission-matrix').textContent()).toContain('Allowed within scope');
+    await page.locator('#load-user-applications').click();
+    await expect.poll(() => page.locator('#user-applications').textContent()).toContain('fallback-app');
+    expect(await page.locator('#user-applications').textContent()).toContain('records.read (own)');
+    await page.locator('#role').selectOption('@access-auditor'); await preview(); await apply();
+    expect(await page.locator('#effective').textContent()).toContain('@access-auditor');
+    await context.addCookies([{ name: 'session', value: 'bob', url: fixture.base }]); await page.reload();
+    await page.locator('#administration').waitFor({ state: 'visible' });
+    expect(await page.locator('#application option').allTextContents()).toEqual(['catalog-app (fixture-store)']);
+    expect(await page.locator('#role option').allTextContents()).not.toContain('Core: Application access administrator');
+    expect(await page.locator('#preview-button').isDisabled()).toBe(true);
+  });
+
   it('renders declared roles, scoped fields and source metadata safely, with explicit fallback administrator only', async () => {
     expect(await page.locator('#roles').textContent()).toContain('records.read (own)');
     expect(await page.locator('#app-revision').textContent()).toContain('fixture-store');
@@ -45,7 +66,7 @@ describe('Access Administration browser workflow', () => {
     expect(await page.evaluate(() => (window as any).inventoryXss)).toBeUndefined();
     expect(await page.locator('#administration img').count()).toBe(0);
     await page.locator('#application').selectOption('fallback-app');
-    expect(await page.locator('#role option').allTextContents()).toEqual(['App administrator']);
+    expect(await page.locator('#role option').allTextContents()).toEqual(['App administrator', 'Core: Application access administrator', 'Core: Application access auditor']);
     expect(await page.locator('#app-description').textContent()).toContain('explicit app administrator');
     await preview();
     expect(await page.locator('#preview-details').textContent()).toContain('@app-admin');
@@ -179,4 +200,37 @@ describe('Access Administration browser workflow', () => {
     // Selection is not proof of an active authenticated external identity.
     expect(await page.locator('#effective').textContent()).toContain('Tier: deny');
   });
+});
+
+it.each([
+  { issuer: 'https://missing.identity.example.test',sub: 'alice' },
+  { issuer: 'https://identity.fixture.test',sub: 'missing-person' },
+  { issuer: 'https://identity.fixture.test' },
+])('leaves no selected target when an exact user link is unavailable or incomplete: %j', async query => {
+  await page.goto(fixture.base + '/access/?' + new URLSearchParams(query));
+  await expect.poll(() => page.locator('#status').textContent()).toContain('Access catalog loaded');
+  expect(await page.locator('#target').inputValue()).toBe('');
+  expect(await page.locator('#preview-button').isDisabled()).toBe(true);
+  expect(await page.locator('#explain').isDisabled()).toBe(true);
+  expect(await page.locator('#load-user-applications').isDisabled()).toBe(true);
+  expect((await fixture.store.read()).assignments).toEqual([]);
+});
+
+it('does not reopen a pending Access preview after refresh discards the unchanged selection', async () => {
+  let release!: () => void; let entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  await page.route('**/api/authorization/preview',async route => {
+    const response = await route.fetch(); entered(); await gate; await route.fulfill({ response });
+  });
+  try {
+    await page.locator('#reason').fill('Reviewed pending access'); await page.locator('#preview-button').click(); await waiting;
+    await page.locator('#refresh').click();
+    await expect.poll(() => page.locator('#status').textContent()).toContain('Access catalog loaded');
+    const settled = page.waitForResponse(response => response.url().endsWith('/api/authorization/preview'));
+    release(); await settled;
+    await expect.poll(() => page.locator('#preview-button').isEnabled()).toBe(true);
+    expect(await page.locator('#review').isHidden()).toBe(true);
+    expect((await fixture.store.read()).assignments).toEqual([]);
+  } finally { release(); }
 });

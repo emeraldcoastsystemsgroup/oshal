@@ -13,3 +13,9 @@ Pages contain 25 entries by default and permit 1–100. Filtering happens in Pos
 Migration `131-authorization-audit-indexes.sql` adds indexes for global, application and tenant pagination without granting new database privileges. The existing audit ledger remains under forced control-plane row security. Runtime initialization installs the same indexes through the established schema bootstrap policy.
 
 Validation uses `tests/unit/authorization-audit.spec.ts` (real PostgreSQL, HTTP and fixed read tool) and `tests/unit/authorization-audit-browser.spec.ts` (the actual Access page in Chromium). It covers concurrent new entries between pages, durable restart reads, redaction, database row security, application/tenant isolation, malformed cursors, privilege revocation and browser rendering.
+
+Explicit external business-tenant membership changes share this revision and audit ledger under the
+reserved `platform-tenant-membership` label. Packages cannot register that name. Reading those entries
+requires current swarm administration even when an application manager supplies the reserved label
+directly; no delegated application scope exposes platform membership changes. Roster metadata imports
+have a separate metadata revision and audit table because they grant no application or tenant authority.

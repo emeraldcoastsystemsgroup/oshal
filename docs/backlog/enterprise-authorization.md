@@ -10,13 +10,16 @@ See [as-built operation](../security/application-authorization.md). The work-ord
 remain the complete enterprise target; foundation completion does not close every row.
 
 AUTH-01 is implemented using `uses: [application-authorization]` as the old-core activation floor.
-AUTH-02 and AUTH-07 have a working shared service, UI/tool parity and isolated PostgreSQL/browser
-proofs, including scoped applied-change history. A sensitive approval workflow, scoped-admin
-provisioning UI and catalog migration tooling remain. AUTH-03 covers local proof-based setup and
+AUTH-02 and AUTH-07 have a shared service, UI/tool parity and isolated PostgreSQL/browser
+proofs, including scoped applied-change history, delegated access administrators/auditors and the
+per-user application permission screen. A sensitive approval workflow and catalog migration tooling
+remain. AUTH-03 covers local proof-based setup and
 established-account/root credential guards; OIDC bootstrap and all installer variants
-remain. AUTH-04 preserves verified claims, adopts exact provider identities and maps exact groups, but live refresh/Graph and tenant
-proof remain. AUTH-05 has HTTP/controller checks; protected remote bots are deliberately unavailable
-pending a live revalidation protocol. Complete artifact/result/queue enforcement, package business
+remain. AUTH-04 preserves verified claims, adopts exact provider identities, supports reviewed roster
+snapshots and explicit external business membership, and maps exact groups. Live refresh/Graph and
+external-tenant canary proof remain. AUTH-05 has HTTP/controller checks and signed, freshly revalidated
+protected remote hosted reasoning without tools. Broader remote agentic execution remains refused.
+Complete artifact/result/queue enforcement, package business
 adapters (AUTH-06/08), provisioning (AUTH-09), and deployed canary/adoption (AUTH-10) remain open.
 
 ## Work order
@@ -82,7 +85,7 @@ test. Root races, role changes, directory mutation and payroll-like examples bel
 Installation registers these tests but auto-runs only opted-in safe checks. The interactive Lab must
 not let a user mint test administrators in the production swarm.
 
-Proposed command after suites exist: `npm run test:authorization`. It must run the meaningful isolated
+Registered local command: `npm run test:authorization`. It runs the meaningful isolated
 contract/boundary suites, fail on absent required local fixtures and produce case-linked results.
 Live directory tests remain separately selected and visibly pending until credentials and an isolated
 tenant exist. No GitHub Actions are required or introduced.

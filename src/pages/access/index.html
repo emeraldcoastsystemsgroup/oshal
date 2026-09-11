@@ -1,4 +1,5 @@
 <!-- Access Administration: shared authorization service, preview before apply, no client-side grants. -->
+<!-- CHANGE LOG: 1 | maintainer@emeraldcoastsystemsgroup.com | Present per-user application permissions and core delegated management roles. -->
 <!doctype html>
 <html lang="en" data-theme="midnight">
 <head>
@@ -73,6 +74,11 @@
         <p><button id="use-manual-target" type="submit">Use exact identity</button></p>
       </form>
     </details>
+    <section class="panel" aria-labelledby="user-applications-title">
+      <div class="row"><h2 id="user-applications-title">This user's applications</h2><button id="load-user-applications" type="button">Review all visible applications</button></div>
+      <p class="hint">Application roles grant named actions such as view, read, create, change and delete. Record scope still limits which data those actions can affect. Swarm administrator access does not grant business-data permissions.</p>
+      <div id="user-applications" class="table-wrap"></div>
+    </section>
     <div class="layout">
       <div>
         <section class="panel" aria-labelledby="app-title">
@@ -80,12 +86,15 @@
           <p id="app-description" class="muted"></p>
           <p id="app-revision" class="hint"></p>
           <div id="roles" class="table-wrap"></div>
+          <details><summary>Core access-management roles</summary><div id="management-roles" class="table-wrap"></div>
+            <p class="hint">These roles administer or audit access for this application. They grant no business-data access. Only a swarm administrator can delegate them.</p></details>
         </section>
         <section class="panel" aria-labelledby="effective-title">
           <div class="row"><h2 id="effective-title">Effective access</h2><button id="explain" type="button">Explain access</button></div>
           <div class="field" id="permission-field"><label for="permission">Permission to explain</label><select id="permission"></select></div>
           <p class="hint">Current assignments and restrictions for the selected target. Explanations contain access decisions only.</p>
           <div id="effective" class="details empty">Select an application and target.</div>
+          <div id="permission-matrix" class="table-wrap"></div>
         </section>
         <section class="panel" aria-labelledby="history-title">
           <h2 id="history-title">Current assignments</h2><div id="history" class="empty">No assignments loaded.</div>
@@ -130,11 +139,11 @@
 'use strict';
 const API = '/api/authorization';
 const $ = id => document.getElementById(id);
-const state = { catalog: null, preview: null, selection: 0, busy: false, idempotencyKey: null, manualTargets: { users: [], groups: [] } };
+const state = { catalog: null, preview: null, previewGeneration: 0, selection: 0, busy: false, idempotencyKey: null, manualTargets: { users: [], groups: [] } };
 const auditState = { cursor: null, entries: [], generation: 0 };
 const escapeHtml = value => String(value == null ? '' : value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
 function status(message, kind) { $('status').textContent = message; $('status').className = 'status' + (kind ? ' ' + kind : ''); }
-function discardPreview() { state.preview = null; state.idempotencyKey = null; $('review').hidden = true; }
+function discardPreview() { state.previewGeneration++; state.preview = null; state.idempotencyKey = null; $('review').hidden = true; }
 async function request(path, body) {
   const response = await fetch(API + path, {
     credentials: 'same-origin', cache: 'no-store',
@@ -160,7 +169,7 @@ function targets() {
   const known = state.catalog?.[kind] || [];
   return [...known, ...state.manualTargets[kind].filter(entry => !known.some(existing => targetKey(existing) === targetKey(entry)))];
 }
-function target() { return targets()[Number($('target').value)]; }
+function target() { return $('target').selectedIndex >= 0 && /^\d+$/.test($('target').value) ? targets()[Number($('target').value)] : undefined; }
 function targetLabel(value) { return value.label || value.displayName || value.sub || value.id; }
 function targetKey(value) { return value ? JSON.stringify([value.issuer, value.sub || value.id, value.tenantId || '']) : ''; }
 function targetInput() {
@@ -182,6 +191,7 @@ function setBusy(busy) {
 function renderTargets(preferred) {
   const index = targets().findIndex(entry => targetKey(entry) === preferred);
   options($('target'), targets().map((entry, index) => ({ value: String(index), label: `${targetLabel(entry)} (${entry.issuer}${entry.tenantId ? ', ' + entry.tenantId : ''})` })), index >= 0 ? String(index) : undefined);
+  if (preferred && index < 0) $('target').selectedIndex = -1;
 }
 function table(headers, rows) {
   if (!rows.length) return '<p class="empty">None.</p>';
@@ -209,7 +219,10 @@ function renderApplication() {
   if (app.missingAdapters.length) $('app-description').textContent += ` Access remains unavailable for resources awaiting an enforcement adapter: ${app.missingAdapters.join(', ')}.`;
   const roles = app.catalog ? Object.entries(app.catalog.roles) : [['@app-admin', { tier: 'admin', grants: [] }]];
   $('roles').innerHTML = table(['Role', 'Tier', 'Permissions and scopes'], roles.map(([name, role]) => [name, role.tier, role.grants.map(grant => `${grant.permission} (${grant.scope}${grant.fields ? ', fields: ' + grant.fields : ''})`).join('\n') || 'Whole application administrator']));
-  options($('role'), roles.map(([name]) => ({ value: name, label: name === '@app-admin' ? 'App administrator' : name })), $('role').value);
+  const managementRoles = state.catalog.managementRoles || [];
+  $('management-roles').innerHTML = table(['Core role', 'Purpose', 'Management permissions'], managementRoles.map(role => [role.label, role.description, role.permissions.join(', ')]));
+  options($('role'), [...roles.map(([name]) => ({ value: name, label: name === '@app-admin' ? 'App administrator' : name })),
+    ...(app.canDelegateManagement ? managementRoles.map(role => ({ value: role.id, label: 'Core: ' + role.label })) : [])], $('role').value);
   const permissions = app.catalog ? Object.keys(app.catalog.permissions) : [];
   options($('permission'), permissions.map(name => ({ value: name, label: name })), $('permission').value);
   options($('deny-permission'), [{ value: '', label: 'Whole application' }, ...permissions.map(name => ({ value: name, label: name }))], $('deny-permission').value);
@@ -228,6 +241,8 @@ function matchingAssignments() {
 }
 async function renderEffective() {
   const generation = ++state.selection;
+  $('permission-matrix').replaceChildren(); $('user-applications').replaceChildren();
+  $('load-user-applications').disabled = $('target-kind').value === 'group' || !target();
   $('history').innerHTML = table(['Role or restriction', 'Business tenant', 'Expires'], matchingAssignments().map(entry => [entry.deny ? 'Deny: ' + (entry.permission || 'whole application') : entry.role || entry.permission, entry.tenantId || 'None', entry.expiresAt || 'No expiry']));
   if (!application() || !target()) { $('effective').textContent = 'No visible application or target. Directory access may be required.'; return; }
   if ($('target-kind').value === 'group') { $('effective').textContent = 'Group mappings are shown below. Individual effective access also depends on verified, current membership and explicit restrictions.'; return; }
@@ -236,6 +251,12 @@ async function renderEffective() {
     const data = await request('/effective', { app: application().app, ...targetInput(), ...($('tenant').value.trim() ? { tenantId: $('tenant').value.trim() } : {}) });
     if (generation !== state.selection) return;
     $('effective').textContent = `Tier: ${data.tier}\nExplicit deny: ${data.denied ? 'Yes' : 'No'}\nRoles: ${data.roles.join(', ') || 'None'}\nPermissions: ${data.permissions.map(grant => `${grant.permission} (${grant.scope})`).join(', ') || 'None'}`;
+    if (data.managementRoles?.length) $('effective').textContent += '\nCore management roles: ' + data.managementRoles.join(', ');
+    const declared = application()?.catalog?.permissions || {};
+    $('permission-matrix').innerHTML = table(['Application action', 'Access', 'Record scope / fields'], Object.entries(declared).map(([id, definition]) => {
+      const grants = data.permissions.filter(grant => grant.permission === id);
+      return [id, grants.length && !data.denied ? 'Allowed within scope' : 'Not granted', grants.map(grant => `${grant.scope}${grant.fields ? ' / ' + grant.fields : ''}`).join(', ') || 'None'];
+    }));
   } catch (error) { if (generation === state.selection) $('effective').textContent = error.message; }
 }
 async function loadCatalog(message) {
@@ -247,7 +268,9 @@ async function loadCatalog(message) {
     if (state.catalog.canReadGlobalAudit !== true) $('audit-scope').value = 'app';
     $('audit-tenant').disabled = $('audit-scope').value === 'global';
     options($('application'), state.catalog.apps.map(app => ({ value: app.app, label: `${app.app} (${app.source})` })), oldApp || new URLSearchParams(location.search).get('app'));
-    renderTargets(oldTarget); renderApplication(); $('administration').hidden = false;
+    const query = new URLSearchParams(location.search);
+    const linkedTarget = query.has('issuer') || query.has('sub') ? JSON.stringify([query.get('issuer'), query.get('sub'), '']) : '';
+    renderTargets(oldTarget || linkedTarget); renderApplication(); $('administration').hidden = false;
     await renderEffective();
     await loadAudit(true);
     status(message || 'Access catalog loaded. Preview a change before applying it.');
@@ -257,6 +280,24 @@ async function loadCatalog(message) {
     status(error.status === 403 ? 'Access administration is unavailable for this account. A verified identity and administration scope are required.' : error.message, 'error');
   } finally { setBusy(false); }
 }
+async function loadUserApplications() {
+  if (!target() || $('target-kind').value === 'group') return;
+  const selection = state.selection; const selected = targetInput(); const rows = [];
+  const tenant = $('tenant').value.trim(); $('load-user-applications').disabled = true;
+  $('user-applications').textContent = 'Checking current access...';
+  try {
+    for (const app of state.catalog.apps) {
+      if (selection !== state.selection) return;
+      try {
+        const result = await request('/effective', { app: app.app, ...selected, ...(tenant ? { tenantId: tenant } : {}) });
+        rows.push([app.app, result.denied ? 'Denied' : result.tier, result.roles.join(', ') || 'None',
+          result.permissions.map(grant => `${grant.permission} (${grant.scope})`).join(', ') || 'None', (result.managementRoles || []).join(', ') || 'None']);
+      } catch (error) { rows.push([app.app, 'Unavailable', error.message, '', '']); }
+    }
+    if (selection === state.selection) $('user-applications').innerHTML = table(['Application', 'Access', 'Business roles', 'Actions / record scopes', 'Core management roles'], rows);
+  } finally { $('load-user-applications').disabled = $('target-kind').value === 'group' || !target(); }
+}
+$('load-user-applications').addEventListener('click', () => { void loadUserApplications(); });
 function resetAudit() {
   auditState.generation++; auditState.entries = []; auditState.cursor = null;
   $('audit-entries').replaceChildren(); $('audit-status').textContent = '';
@@ -341,17 +382,17 @@ $('tenant').addEventListener('change', () => { setBusy(state.busy); void renderE
 $('cancel').addEventListener('click', discardPreview);
 $('change-form').addEventListener('submit', async event => {
   event.preventDefault(); if (state.busy) return;
-  discardPreview(); setBusy(true); const generation = state.selection;
+  discardPreview(); setBusy(true); const generation = state.selection, previewGeneration = state.previewGeneration;
   try {
     const change = changeInput();
     const preview = await request('/preview', change);
-    if (generation !== state.selection || JSON.stringify(changeInput()) !== JSON.stringify(change)) return;
+    if (previewGeneration !== state.previewGeneration || generation !== state.selection || JSON.stringify(changeInput()) !== JSON.stringify(change)) return;
     state.preview = preview; state.idempotencyKey = crypto.randomUUID();
     $('preview-details').textContent = JSON.stringify(preview.change, null, 2);
     $('preview-expiry').textContent = `Policy revision ${preview.revision} · Catalog ${preview.catalogRevision}\nExpires ${preview.expiresAt}`
       + (preview.requiresApproval ? '\nThis change requires a separate, verified approval. Applying it here is unavailable until that approval workflow is provided.' : '');
     $('review').hidden = false; status('Review the exact change below before applying it.');
-  } catch (error) { await report(error); }
+  } catch (error) { if (previewGeneration === state.previewGeneration) await report(error); }
   finally { setBusy(false); }
 });
 $('apply').addEventListener('click', async () => {

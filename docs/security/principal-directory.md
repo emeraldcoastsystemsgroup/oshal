@@ -13,3 +13,38 @@ Configured operator continuity uses `OSHAL_OPERATOR_SUBS` and `OSHAL_OPERATOR_EM
 Native targets can be inspected and assigned exact application permissions through the same authorization service used by the UI and tools. The registry is account inventory, not an identity-provider synchronization service: it does not query Graph/SCIM, refresh group membership or establish real-time external account revocation. Live OIDC authentication, provider enablement, directory-evidence freshness and application policy remain separate checks. Issuer-less legacy tenant memberships and app tiers are not inherited by a native external principal.
 
 Validation is registered through `tests/unit/principal-directory.spec.ts`: a disposable PostgreSQL instance exercises migration 129, forced RLS, persisted identities, existing-account preservation, exact bridge resolution, current provider/operator checks, disabled state, real HTTP observer failure handling and the authoritative application policy service. The suite uses fixture identities and never deployment credentials.
+
+## User roster and reviewed registration
+
+`/users` presents local accounts, verified provider identities, reviewed registrations and exact
+targets already referenced by application assignments. Each row links to that issuer and subject in
+Access Administration. Search filters the roster; it does not change authority. Saved swarm roles
+and swarm root ownership remain separate sections. Existing configured administrators need not claim
+root to use the roster or manage application access.
+
+Migration 134 adds separate registration, preview, revision and audit tables with forced control-plane
+RLS. `GET /api/user-directory` reports enabled providers and the known roster. The browser's registration
+form accepts a JSON array of up to 250 exact `{issuer, sub, displayName, email}` records. `email` is an
+optional label. Issuers must be exact HTTPS identifiers; local accounts must use the existing invitation
+flow. Closed validation rejects role, group, verification and account-status fields.
+
+`POST /api/user-directory/preview` requires a source (`manual` or `directory-snapshot`), reason and
+expected roster revision. The ten-minute preview changes nothing. `/apply` accepts only the preview ID,
+requires the same current administrator and returns the original receipt on an authorized retry.
+Concurrent imports conflict on the locked revision; the metadata batch and audit commit atomically.
+Writes require same-origin JSON and `X-OSHAL-ACCESS-REQUEST: 1`. Attenuated callers also need the
+corresponding authorization read, assign and directory scopes.
+
+A registered identity remains inactive for application authorization until observed through an enabled,
+verified sign-in. Importing metadata never modifies credentials, root, roles, provider configuration,
+tenant memberships, identity links or business ownership. Labels supplied by a snapshot never replace
+verified authentication evidence. A snapshot is not live Graph/SCIM synchronization.
+
+The historical-reference section inspects fixed subject columns in connection, preference, model-setting
+and swarm-role stores, at most 250 distinct references per source with a visible truncation indicator.
+It reads no credentials or business payloads. These references are not added as verified users and must
+not be migrated by guessing an issuer or matching an email.
+
+`principal-registration.spec.ts` proves import persistence, collision separation, expiry, conflicting
+writers, retries, forced RLS, HTTP authority/CSRF and unchanged account authority against disposable
+PostgreSQL. The existing Users browser suite exercises actual registration APIs and exact Access links.

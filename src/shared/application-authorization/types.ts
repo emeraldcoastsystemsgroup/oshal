@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Expose distinct core access-management role templates and effective capabilities.
  */
 /** ADR-149: versioned application permission contract. Routing metadata never grants authority. */
 export type AuthorizationTier = 'deny' | 'viewer' | 'editor' | 'admin';
@@ -22,6 +23,11 @@ export interface AuthorizationCatalog {
 export interface ApplicationAuthorizationDeclaration { version: 1; catalog: string }
 export interface AuthorizationManagementScope {
   app: string; tenantId?: string; permissions: Array<'read' | 'assign' | 'directory'>;
+}
+/** A core-defined access-management template, assigned separately from application business roles. */
+export interface AuthorizationManagementRoleDefinition {
+  id: '@access-admin' | '@access-auditor'; label: string; description: string;
+  scope: 'application'; permissions: AuthorizationManagementScope['permissions'];
 }
 /** Only authentication/composition code constructs actors; never deserialize one from tool/body input. */
 export interface AuthorizationActor {
@@ -69,6 +75,8 @@ export interface AuthorizationAppSummary {
   mode: 'legacy' | 'enforce'; status: 'legacy' | 'admin-required' | 'catalog';
   catalog: AuthorizationCatalog | null; missingAdapters: string[];
   managementScopes?: AuthorizationManagementScope[];
+  /** Whether this caller may delegate core-defined access-management roles for this application. */
+  canDelegateManagement?: boolean;
 }
 export interface AuthorizationDecision {
   allowed: boolean; reason: string; decisionId: string; revision: number;
@@ -92,6 +100,9 @@ export interface AuthorizationEffective {
   revision: number; catalogRevision: string; tier: AuthorizationTier;
   roles: string[]; denied: boolean; permissions: AuthorizationGrant[];
   status: AuthorizationAppSummary['status'];
+  /** Separate from business permissions: these roles govern access administration only. */
+  managementRoles?: string[];
+  managementPermissions?: AuthorizationManagementScope['permissions'];
 }
 export interface AuthorizationInventory {
   users: Array<{ sub: string; issuer: string; label: string }>;
@@ -99,6 +110,7 @@ export interface AuthorizationInventory {
 }
 export interface AuthorizationCatalogResult extends AuthorizationInventory {
   revision: number; apps: AuthorizationAppSummary[];
+  managementRoles?: AuthorizationManagementRoleDefinition[];
   canReadGlobalAudit?: boolean;
   assignments: Array<{ id: string; app: string; targetSub?: string; targetIssuer?: string; tenantId?: string;
     role?: string; permission?: string; deny: boolean; expiresAt?: string;

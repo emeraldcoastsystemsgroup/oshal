@@ -4,10 +4,11 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Observe verified sessions, retain explicit local links, and expose provider-aware management inventory.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Unite reviewed registrations and assignment targets with account inventory while preserving verified-only authority.
  */
 import type { Request, RequestHandler } from 'express';
 import type { Pool } from 'pg';
-import { PrincipalDirectoryStore } from '@/features/principal-directory';
+import { PrincipalDirectoryStore, PrincipalRegistrationStore, requireRosterAdmin, historicalPrincipalReferences } from '@/features/principal-directory';
 import { getSessionSnapshot, listUsers } from '@/features/local-auth';
 import { getVerifiedWorkloadDelegation } from '@/features/security';
 import type { AuthorizationActor, AuthorizationInventory } from '@/shared/application-authorization';
@@ -32,10 +33,12 @@ export function createApplicationPrincipalDirectory(pool: Pool, ready: Promise<u
 }
 class ApplicationPrincipalDirectory {
   private readonly store: PrincipalDirectoryStore;
+  readonly registrations: PrincipalRegistrationStore;
   private providerSignature = '';
   private configuredProviders: ReturnType<typeof principalLoginProviders> = new Map();
   constructor(private readonly pool: Pool,private readonly ready: Promise<unknown>,private readonly env: NodeJS.ProcessEnv) {
     this.store = new PrincipalDirectoryStore(pool);
+    this.registrations = new PrincipalRegistrationStore(pool);
   }
   private providers() {
     const signature = JSON.stringify(['MOCK_OIDC','LOCAL_AUTH','ENTRA_LOCAL_AUTH_HYBRID','ENTRA_LOCAL_IDENTITY_BRIDGE',
@@ -97,8 +100,8 @@ class ApplicationPrincipalDirectory {
   inventory = async (actor: AuthorizationActor): Promise<AuthorizationInventory> => {
     if (!actor.isActive || !actor.isSwarmAdmin) return { users: [], groups: [] };
     await this.ready;
-    const [native, locals] = await Promise.all([this.store.list(), this.hasTable('oshal_local_users').then(exists =>
-      exists ? runWithSystemIdentity(() => listUsers(this.pool)) : [])]);
+    const [native, locals, registered] = await Promise.all([this.store.list(), this.hasTable('oshal_local_users').then(exists =>
+      exists ? runWithSystemIdentity(() => listUsers(this.pool)) : []), this.registrations.list()]);
     const enabled = this.providers();
     const users = locals.map(user => {
       const linked = native.filter(row => row.canonicalLocalSub === user.userSub).map(row => row.provider);
@@ -107,8 +110,29 @@ class ApplicationPrincipalDirectory {
     });
     for (const row of native.filter(item => !item.canonicalLocalSub)) users.push({ sub: row.sub,issuer: row.issuer,
       label: `${row.displayName || row.email || row.sub} (${row.provider}; ${enabled.has(row.issuer) ? row.status : 'provider disabled'})` });
+    for (const row of registered) {
+      if (native.some(item => item.issuer === row.issuer && item.sub === row.sub)) continue;
+      users.push({ sub: row.sub, issuer: row.issuer, label: `${row.displayName} (registered; awaiting verified sign-in)` });
+    }
     return { users, groups: (actor.directory ?? []).filter(evidence => evidence.complete).flatMap(evidence => evidence.groups.map(id => ({
       issuer: evidence.issuer,tenantId: evidence.tenantId,id,label: id,
     }))) };
+  };
+  roster = async (actor: AuthorizationActor, assignmentUsers: AuthorizationInventory['users'] = []) => {
+    requireRosterAdmin(actor); await this.ready;
+    const [inventory, native, registered, historical, revision] = await Promise.all([
+      this.inventory(actor), this.store.list(), this.registrations.list(), historicalPrincipalReferences(this.pool), this.registrations.revision(),
+    ]);
+    const known = new Map([...assignmentUsers, ...inventory.users].map(user => [JSON.stringify([user.issuer, user.sub]), user]));
+    const users = [...known.values()].map(user => {
+      const observed = native.find(row => row.issuer === user.issuer && row.sub === user.sub);
+      const registration = registered.find(row => row.issuer === user.issuer && row.sub === user.sub);
+      const local = user.issuer === LOCAL_AUTH_PRINCIPAL_ISSUER && inventory.users.some(item => item.issuer === user.issuer && item.sub === user.sub);
+      return { ...user, source: local ? 'local-account' : observed ? 'verified-sign-in' : registration?.source ?? 'access-assignment',
+        signIn: local ? 'local-account' : !this.providers().has(user.issuer) ? 'provider-disabled'
+          : observed ? observed.status : 'awaiting-sign-in', lastSeenAt: observed?.lastSeenAt ?? null };
+    });
+    return { revision, users, historical, providers: [...this.providers()].map(([issuer, provider]) => ({ issuer, name: provider.name })),
+      explanation: 'Registered identities and historical references do not grant sign-in, ownership or application access.' };
   };
 }

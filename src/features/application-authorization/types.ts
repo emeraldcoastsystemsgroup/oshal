@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Read actor-bound previews before approval and writer-lock acquisition.
  */
 import type { AuthorizationActor, AuthorizationChange, AuthorizationPreview, AuthorizationReceipt } from '@/shared/application-authorization';
 export interface AuthorizationAssignment {
@@ -25,6 +26,8 @@ export interface AuthorizationAudit {
 }
 export interface AuthorizationTransaction { state: AuthorizationState; audit(event: AuthorizationAudit): void }
 export interface AuthorizationStore {
+  /** Read one preview without holding the policy writer lock during approval or account refresh. */
+  readPreview(id: string): Promise<StoredAuthorizationPreview | null>;
   readAudit(input: AuthorizationAuditQuery): Promise<{ events: AuthorizationAudit[]; snapshotRevision: number }>;
   publishAppPosture(app: string, protectedApp: boolean, agentIds: readonly string[], toolNames?: readonly string[]): Promise<void>;
   read(): Promise<AuthorizationState>;

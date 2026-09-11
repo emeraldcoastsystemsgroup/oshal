@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise real Users invitations and account suspension plus root and nonadministrator UI fences in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Bound browser case registration while retaining the suite and browser/database hook scope.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Verify current operator access independently from root ownership and shared-theme contrast without Docker.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Verify exact roster links and reviewed metadata imports without sign-in or privilege changes.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -48,9 +49,10 @@ function registerAccountWorkflowCases() {
     expect(await root.locator('button').count()).toBe(0);
     expect(await root.textContent()).toContain('Transfer root before disabling');
     await page.locator('#providerAccountsCard').waitFor({ state: 'visible' });
-    expect(await page.locator('#providerAccounts').textContent()).toContain('https://accounts.google.com / external-person');
+    const external = page.locator('#providerAccounts tr').filter({ hasText: 'external-person' });
+    expect(await external.textContent()).toContain('https://accounts.google.com');
     expect(await page.locator('#providerAccounts img').count()).toBe(0);
-    expect(await page.locator('#providerAccountsCard button').count()).toBe(0);
+    expect(await external.locator('button').count()).toBe(0);
     expect(await page.locator('#providerAccountsCard').textContent()).toContain('remain with their identity provider');
   });
 
@@ -111,7 +113,36 @@ describe('Users account administration browser', () => {
   registerDatabaseHooks();
   registerAccountWorkflowCases();
   registerAdministrationRefusalCases();
+  registerRosterCases();
 });
+
+/** Register exact user roster navigation and the reviewed registration workflow against actual SQL/API. */
+function registerRosterCases() {
+  it('registers reviewed provider identities without creating login accounts or access and links the exact target', async () => {
+    await openUsers();
+    await expect.poll(() => page.locator('#rosterCount').textContent()).toBe('3 / 3');
+    await page.locator('#rosterImport summary').click();
+    await page.locator('#rosterEntries').fill(JSON.stringify([{ issuer: 'https://identity.example.test', sub: 'exact-person',
+      displayName: 'New <img src=x onerror=alert(1)> Person', email: 'new@example.test' }]));
+    await page.locator('#rosterReason').fill('Review imported provider subject');
+    await page.locator('#rosterPreviewButton').click();
+    await page.locator('#rosterReview').waitFor({ state: 'visible' });
+    expect((await fixture.owner.query('SELECT * FROM oshal_principal_registrations')).rowCount).toBe(0);
+    expect(await page.locator('#rosterReviewText').textContent()).toContain('Does not enable sign-in');
+    await page.locator('#rosterApply').click();
+    await expect.poll(() => page.locator('#rosterCount').textContent()).toBe('4 / 4');
+    await page.locator('#rosterSearch').fill('exact-person');
+    const row = page.locator('#providerAccounts tbody tr');
+    expect(await row.count()).toBe(1); expect(await row.textContent()).toContain('provider-disabled');
+    const link = new URL((await row.locator('a').getAttribute('href'))!, fixture.base);
+    expect(link.searchParams.get('issuer')).toBe('https://identity.example.test');
+    expect(link.searchParams.get('sub')).toBe('exact-person');
+    expect(await page.locator('#providerAccounts img').count()).toBe(0);
+    expect((await fixture.owner.query('SELECT * FROM oshal_local_users')).rowCount).toBe(3);
+    expect((await fixture.owner.query('SELECT * FROM swarm_roles')).rowCount).toBe(2);
+    expect((await fixture.owner.query('SELECT * FROM oshal_verified_principals')).rowCount).toBe(0);
+  });
+}
 
 function statusResponse() {
   return { me: { sub: 'existing-operator', role: 'user', isOperator: true, breakGlassOnly: true, isRoot: false },
@@ -131,6 +162,7 @@ function registerStatusHooks() {
     app.get('/api/swarm/roles', (_req, res) => res.json({ roles: [] }));
     app.get('/api/local-auth/users', (_req, res) => res.status(404).json({ error: 'oidc_mode' }));
     app.get('/api/authorization/catalog', (_req, res) => res.json({ users: [] }));
+    app.get('/api/user-directory', (_req, res) => res.json({ revision: 0, users: [], providers: [], historical: { entries: [], truncated: false } }));
     app.use('/shared/ui/css', express.static(resolve('src/shared/ui/css')));
     app.use('/cockpit/css/themes', express.static(resolve('src/pages/cockpit/css/themes')));
     statusServer = http.createServer(app);

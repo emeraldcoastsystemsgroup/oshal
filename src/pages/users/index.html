@@ -2,12 +2,10 @@
   Users — swarm access management (ADR-148). The page that makes "swarm root" a thing you can
   see and hand over, instead of an env var somebody typed once.
 
-  Two independent halves, and the split is deliberate:
-   - ROLES (always present, every auth mode) — root / admin / user from /api/swarm/roles. This is
-     what the operator gate reads, so it is the authority on who can administer the swarm.
-   - ACCOUNTS (LOCAL_AUTH only) — the invited-user list from /api/local-auth/users. In OIDC and
-     mock modes accounts live elsewhere, so that half honestly reports itself absent rather than
-     rendering an empty table that looks broken.
+  The roster joins exact known identities for navigation without inventing login or ownership.
+  Local invitations, provider sign-in, platform administration, business membership and application
+  permissions remain separate authorities. Roster imports change labels only; all membership and
+  permission changes require the current administrator to preview and apply the exact change.
 
   Root is claimable in exactly one situation the UI offers: root is unclaimed AND the caller may
   claim it as an existing operator. Fresh installations use proof-bound setup. The API enforces that regardless
@@ -21,6 +19,7 @@
   SEQ                 | AUTHOR                      | DESCRIPTION
   -----------------------------------------------------------------------------
   1 | maintainer@emeraldcoastsystemsgroup.com | Separate current administrator access from root ownership and honor shared theme contrast.
+  2 | maintainer@emeraldcoastsystemsgroup.com | Show the complete known roster, exact application-access links and reviewed metadata imports.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -126,6 +125,44 @@
     </div>
 
     <!-- Root — status, claim, transfer -->
+    <div class="card" id="providerAccountsCard" hidden>
+      <div class="card-head"><h2>Users in this swarm</h2><span id="rosterCount" class="pill user"></span></div>
+      <p class="sub">Select a user to review application roles, individual permissions and restrictions. Root ownership is not required to manage this list.</p>
+      <p class="hint">External account sign-in and suspension remain with their identity provider.</p>
+      <p id="loginProviders" class="hint"></p>
+      <label for="rosterSearch">Find a user</label> <input id="rosterSearch" type="search" placeholder="Name, issuer or subject" />
+      <div id="providerAccounts" class="table-scroll"></div>
+      <details id="rosterImport"><summary>Register identities or import a directory snapshot</summary>
+        <p class="hint">Paste up to 250 exact issuer and subject records as a JSON array. Use identifiers supplied by the identity provider; an email address is not a subject. This registers labels only. It does not enable a login provider, verify a sign-in, link existing records or grant access.</p>
+        <form id="rosterImportForm">
+          <label for="rosterEntries">Identity records</label>
+          <textarea id="rosterEntries" rows="7" required style="width:100%;color:var(--ink);background:var(--bg-primary)" aria-label="Identity records" placeholder='[{"issuer":"https://identity.example.test","sub":"exact-subject","displayName":"Example User","email":"user@example.test"}]'></textarea>
+          <label for="rosterSource">Source</label><select id="rosterSource"><option value="manual">Manual registration</option><option value="directory-snapshot">Directory snapshot</option></select>
+          <label for="rosterReason">Reason</label><input id="rosterReason" required maxlength="2000" />
+          <button type="submit" id="rosterPreviewButton">Preview registration</button>
+        </form>
+        <div id="rosterReview" hidden><pre id="rosterReviewText" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+          <button type="button" id="rosterApply">Apply reviewed registration</button><button type="button" id="rosterCancel">Cancel</button></div>
+      </details>
+      <details id="historicalAccounts"><summary>Historical references needing identity verification</summary>
+        <p class="hint">Older connection and preference records store subjects without an issuer. They are not verified login accounts. Review the provider identity before mapping or migrating any ownership.</p>
+        <div id="historicalReferences"></div>
+      </details>
+      <details id="businessMemberships"><summary>Business-tenant memberships for external users</summary>
+        <p class="hint">Membership selects which organization workspace a verified external user may enter. Application roles are still required. A Microsoft directory tenant or email domain does not automatically grant business membership. Local accounts use their existing tenant memberships.</p>
+        <button id="membershipRefresh" type="button">Load business memberships</button>
+        <p id="membershipStatus" class="hint" role="status"></p><div id="membershipRows" class="table-scroll"></div>
+        <form id="membershipForm" hidden>
+          <label for="membershipUser">External user</label><select id="membershipUser"></select>
+          <label for="membershipTenant">Existing business tenant</label><select id="membershipTenant"></select>
+          <label for="membershipAction">Change</label><select id="membershipAction"><option value="grant">Grant membership</option><option value="revoke">Revoke membership</option></select>
+          <label for="membershipReason">Reason</label><input id="membershipReason" maxlength="1000" required />
+          <button type="submit" id="membershipPreviewButton">Preview membership change</button>
+        </form>
+        <div id="membershipReview" hidden><pre id="membershipReviewText" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+          <button id="membershipApply" type="button">Apply reviewed membership</button><button id="membershipCancel" type="button">Cancel</button></div>
+      </details>
+    </div>
     <div class="card root-banner" id="rootBanner">
       <div class="card-head">
         <h2>Swarm root</h2>
@@ -186,12 +223,6 @@
     </div>
   </div>
 
-  <div class="wrap"><div class="card" id="providerAccountsCard" hidden>
-    <div class="card-head"><h2>Provider accounts</h2></div>
-    <div id="providerAccounts"></div>
-    <p class="hint">These identities were observed through verified sign-in. Manage their application permissions in
-      <a href="/access">Access Administration</a>. Account sign-in and suspension remain with their identity provider.</p>
-  </div></div>
   <script>
     'use strict';
 
@@ -402,18 +433,111 @@
       }
     }
 
+    var roster = null;
+    var rosterPreview = null;
+    var rosterPreviewGeneration = 0;
+    function renderRoster() {
+      var query = document.getElementById('rosterSearch').value.toLowerCase();
+      var users = (roster?.users || []).filter(function (user) { return [user.label, user.issuer, user.sub].join(' ').toLowerCase().includes(query); });
+      document.getElementById('rosterCount').textContent = users.length + ' / ' + (roster?.users.length || 0);
+      document.getElementById('providerAccounts').innerHTML = '<table><thead><tr><th>User</th><th>Identity</th><th>Sign-in / source</th><th>Application access</th></tr></thead><tbody>' + users.map(function (user) {
+        var link = '/access?' + new URLSearchParams({ issuer: user.issuer, sub: user.sub }).toString();
+        return '<tr><td>' + esc(user.label || user.sub) + '</td><td class="mono">' + esc(user.issuer) + '<br>' + esc(user.sub) + '</td><td>' + esc(user.signIn) + '<br>' + esc(user.source) + '</td><td><a href="' + esc(link) + '">Manage application access</a></td></tr>';
+      }).join('') + '</tbody></table>';
+    }
     async function loadProviderAccounts() {
       var card = document.getElementById('providerAccountsCard');
       try {
-        var data = await call('GET', '/api/authorization/catalog');
-        var users = ((data && data.users) || []).filter(function (user) { return user.issuer !== 'urn:oshal:local-auth'; });
-        card.hidden = users.length === 0;
-        document.getElementById('providerAccounts').innerHTML = users.map(function (user) {
-          return '<p>' + esc(user.label || user.sub) + '<br><span class="root-id">' + esc(user.issuer) + ' / ' + esc(user.sub) + '</span></p>';
-        }).join('');
-      } catch (error) { card.hidden = true; }
+        roster = await call('GET', '/api/user-directory'); card.hidden = false; renderRoster();
+        document.getElementById('loginProviders').textContent = 'Enabled login providers: ' + (roster.providers.map(function (provider) { return provider.name; }).join(', ') || 'Local account configuration only') + '. Directory snapshots are not live directory synchronization.';
+        document.getElementById('historicalReferences').innerHTML = (roster.historical.entries || []).map(function (entry) {
+          return '<p><code>' + esc(entry.sub) + '</code> — ' + esc(entry.sources.join(', ')) + '</p>';
+        }).join('') || '<p class="hint">No issuerless references found in the inspected account stores.</p>';
+        if (roster.historical.truncated) document.getElementById('historicalReferences').insertAdjacentHTML('beforeend', '<p>Showing the first 250 references per source. Additional references require review.</p>');
+      } catch (error) { card.hidden = false; document.getElementById('providerAccounts').textContent = 'User roster unavailable: ' + error.message; }
     }
+    function discardRosterPreview() { rosterPreviewGeneration++; rosterPreview = null; document.getElementById('rosterReview').hidden = true; }
+    async function rosterRequest(path, body) {
+      var response = await fetch('/api/user-directory/' + path, { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-OSHAL-ACCESS-REQUEST': '1' }, body: JSON.stringify(body) });
+      var result = await response.json(); if (!response.ok) throw new Error(result.error || 'Roster request failed'); return result;
+    }
+    document.getElementById('rosterSearch').addEventListener('input', renderRoster);
+    document.getElementById('rosterImportForm').addEventListener('input', discardRosterPreview);
+    document.getElementById('rosterCancel').addEventListener('click', discardRosterPreview);
+    document.getElementById('rosterImportForm').addEventListener('submit', async function (event) {
+      event.preventDefault(); discardRosterPreview(); var button = document.getElementById('rosterPreviewButton'); button.disabled = true;
+      var generation = rosterPreviewGeneration;
+      try {
+        var preview = await rosterRequest('preview', { entries: JSON.parse(document.getElementById('rosterEntries').value),
+          source: document.getElementById('rosterSource').value, reason: document.getElementById('rosterReason').value, expectedRevision: roster.revision });
+        if (generation !== rosterPreviewGeneration) return; rosterPreview = preview;
+        document.getElementById('rosterReviewText').textContent = rosterPreview.consequence + '\n' + JSON.stringify(rosterPreview.entries, null, 2);
+        document.getElementById('rosterReview').hidden = false;
+      } catch (error) { show('err', error.message); } finally { button.disabled = false; }
+    });
+    document.getElementById('rosterApply').addEventListener('click', async function () {
+      if (!rosterPreview) return; this.disabled = true;
+      try { var result = await rosterRequest('apply', { previewId: rosterPreview.previewId }); discardRosterPreview(); await loadProviderAccounts(); show('ok', result.count + ' identity labels registered. Application access has not changed.'); }
+      catch (error) { show('err', error.message); } finally { this.disabled = false; }
+    });
+    var memberships = null;
+    var membershipPreview = null;
+    var membershipPreviewGeneration = 0;
+    function discardMembershipPreview() { membershipPreviewGeneration++; membershipPreview = null; document.getElementById('membershipReview').hidden = true; }
+    async function membershipRequest(path, body) {
+      var response = await fetch('/api/authorization/tenant-memberships/' + path, { credentials: 'same-origin', cache: 'no-store',
+        ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-OSHAL-ACCESS-REQUEST': '1' }, body: JSON.stringify(body) }) });
+      var result = await response.json(); if (!response.ok) throw new Error(result.error || 'Membership request failed'); return result;
+    }
+    function membershipOptions(id, values) {
+      document.getElementById(id).replaceChildren(...values.map(function (entry) {
+        var option = document.createElement('option'); option.value = entry.value; option.textContent = entry.label; return option;
+      }));
+    }
+    async function loadMemberships() {
+      discardMembershipPreview(); document.getElementById('membershipForm').hidden = true;
+      try {
+        memberships = await membershipRequest('catalog');
+        var identities = new Map((roster?.users || []).filter(function (user) { return user.issuer !== 'urn:oshal:local-auth'; }).map(function (user) {
+          return [JSON.stringify([user.issuer, user.sub]), { value: JSON.stringify([user.issuer, user.sub]), label: user.label + ' — ' + user.issuer }];
+        }));
+        memberships.memberships.forEach(function (entry) { var key = JSON.stringify([entry.targetIssuer, entry.targetSub]);
+          if (!identities.has(key)) identities.set(key, { value: key, label: entry.targetIssuer + ' / ' + entry.targetSub }); });
+        membershipOptions('membershipUser', [...identities.values()]);
+        membershipOptions('membershipTenant', memberships.tenants.map(function (tenant) { return { value: tenant.tenantId, label: (tenant.name || 'Business tenant') + ' — ' + tenant.tenantId }; }));
+        document.getElementById('membershipRows').innerHTML = '<table><thead><tr><th>Issuer / subject</th><th>Business tenant</th></tr></thead><tbody>' + memberships.memberships.map(function (entry) {
+          return '<tr><td class="mono">' + esc(entry.targetIssuer) + '<br>' + esc(entry.targetSub) + '</td><td class="mono">' + esc(entry.tenantId) + '</td></tr>';
+        }).join('') + '</tbody></table>';
+        document.getElementById('membershipForm').hidden = !memberships.tenants.length || !identities.size;
+        document.getElementById('membershipStatus').textContent = memberships.tenants.length ? memberships.memberships.length + ' saved memberships. Grants require a verified active external user.' : 'No business tenants are configured. Create a tenant through organization administration first.';
+      } catch (error) { document.getElementById('membershipStatus').textContent = error.message; }
+    }
+    document.getElementById('membershipRefresh').addEventListener('click', loadMemberships);
+    document.getElementById('membershipForm').addEventListener('input', discardMembershipPreview);
+    document.getElementById('membershipCancel').addEventListener('click', discardMembershipPreview);
+    document.getElementById('membershipForm').addEventListener('submit', async function (event) {
+      event.preventDefault(); discardMembershipPreview(); var button = document.getElementById('membershipPreviewButton'); button.disabled = true;
+      var generation = membershipPreviewGeneration;
+      try {
+        var identity = JSON.parse(document.getElementById('membershipUser').value);
+        var preview = await membershipRequest('preview', { action: document.getElementById('membershipAction').value,
+          targetIssuer: identity[0], targetSub: identity[1], tenantId: document.getElementById('membershipTenant').value,
+          reason: document.getElementById('membershipReason').value, expectedRevision: memberships.revision });
+        if (generation !== membershipPreviewGeneration) return;
+        membershipPreview = { previewId: preview.previewId, idempotencyKey: crypto.randomUUID() };
+        document.getElementById('membershipReviewText').textContent = JSON.stringify(preview.change, null, 2) + '\nApplication permissions do not change.';
+        document.getElementById('membershipReview').hidden = false;
+      } catch (error) { document.getElementById('membershipStatus').textContent = error.message; } finally { button.disabled = false; }
+    });
+    document.getElementById('membershipApply').addEventListener('click', async function () {
+      if (!membershipPreview) return; this.disabled = true;
+      try { await membershipRequest('apply', membershipPreview); await loadMemberships(); show('ok', 'Business membership updated. Application permissions have not changed.'); }
+      catch (error) { document.getElementById('membershipStatus').textContent = error.message; } finally { this.disabled = false; }
+    });
     async function load() {
+      discardRosterPreview();
+      discardMembershipPreview();
       try {
         state.me = await call('GET', '/api/swarm/roles/me');
         state.status = await call('GET', '/api/swarm/roles/status');

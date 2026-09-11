@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Compose durable policy, current principal resolution, execution guards and registered management tools.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Adopt existing local and verified provider accounts without conflating subjects or granting new operator roles.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Compose durable remote execution and scoped result authority behind schema readiness.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Compose reviewed roster registration, delegated management and exact external business memberships.
  */
 /** Assemble the control plane without granting it authority over business records. */
 import type { Request } from 'express';
@@ -17,7 +18,8 @@ import { createApplicationAuthorizationActorResolver } from '../middleware/appli
 import { ApplicationAuthorizationService, PostgresAuthorizationStore, ensureApplicationAuthorizationSchema } from '@/features/application-authorization';
 import type { AuthorizationActor, AuthorizationStore, ApplicationAuthorizationServiceOptions } from '@/features/application-authorization';
 import { getSessionSnapshot } from '@/features/local-auth';
-import { ensurePrincipalDirectorySchema } from '@/features/principal-directory';
+import { ensurePrincipalDirectorySchema, ensurePrincipalRegistrationSchema } from '@/features/principal-directory';
+import { ExternalTenantMembershipService, PostgresExternalTenantMembershipStore, ensureExternalTenantMembershipSchema } from '@/features/external-tenant-memberships';
 import { createApplicationPrincipalDirectory } from './application-principal-directory';
 import type { AppAccessService, SwarmAppService } from '@/features/swarm-apps';
 import { LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
@@ -28,8 +30,8 @@ import { ensureRemoteExecutionSchema } from '@/features/application-remote-execu
 import { createApplicationRemoteExecutionWiring } from './application-remote-execution-wiring';
 
 const logger = createChildLogger({ module: 'application-authorization-wiring' });
-function createActorPorts(ctx: AppContext, directory: ReturnType<typeof createApplicationPrincipalDirectory>) {
-  const tenants = async (sub: string, issuer = LOCAL_AUTH_PRINCIPAL_ISSUER) => issuer !== LOCAL_AUTH_PRINCIPAL_ISSUER ? [] : runWithSystemIdentity(async () => (await ctx.pool.query<{ tenant_id: string }>(
+function createActorPorts(ctx: AppContext, directory: ReturnType<typeof createApplicationPrincipalDirectory>, memberships: PostgresExternalTenantMembershipStore) {
+  const tenants = async (sub: string, issuer = LOCAL_AUTH_PRINCIPAL_ISSUER) => issuer !== LOCAL_AUTH_PRINCIPAL_ISSUER ? memberships.tenantIds(sub, issuer) : runWithSystemIdentity(async () => (await ctx.pool.query<{ tenant_id: string }>(
     'SELECT tenant_id::text FROM oshal_tenant_memberships WHERE user_sub=$1', [sub],
   )).rows.map(row => row.tenant_id));
   const resolveActor = createApplicationAuthorizationActorResolver(ctx.pool, { tenantIds: tenants, nativePrincipal: directory.nativePrincipal });
@@ -66,6 +68,18 @@ function createPolicyOptions(ctx: AppContext, appAccess: AppAccessService, getAp
   };
 }
 
+/** @description Await schema readiness before any policy store operation. @param ctx Core services. @param ready Schema initialization. @returns Durable store ports. */
+function readyPolicyStore(ctx: AppContext, ready: Promise<unknown>): AuthorizationStore {
+  const durable = new PostgresAuthorizationStore(ctx.pool);
+  return {
+    readPreview: async id => { await ready; return durable.readPreview(id); },
+    readAudit: async input => { await ready; return durable.readAudit(input); },
+    publishAppPosture: async (app, protectedApp, agentIds, toolNames) => { await ready; return durable.publishAppPosture(app, protectedApp, agentIds, toolNames); },
+    read: async () => { await ready; return durable.read(); },
+    transaction: async operation => { await ready; return durable.transaction(operation); },
+  };
+}
+
 /** @description Wire one durable authority into UI, tools and package execution.
  * @param ctx Core services. @param appAccess Legacy explicit ceilings.
  * @param getApps Lazy application registry. @param bootstrap Core schema readiness.
@@ -73,18 +87,16 @@ function createPolicyOptions(ctx: AppContext, appAccess: AppAccessService, getAp
  */
 export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess: AppAccessService,
   getApps: () => SwarmAppService, bootstrap: Promise<unknown>) {
-  const ready = bootstrap.then(() => Promise.all([ensureApplicationAuthorizationSchema(ctx.pool), ensurePrincipalDirectorySchema(ctx.pool), ensureRemoteExecutionSchema(ctx.pool)]));
+  const policyReady = bootstrap.then(() => Promise.all([ensureApplicationAuthorizationSchema(ctx.pool), ensurePrincipalDirectorySchema(ctx.pool),
+    ensurePrincipalRegistrationSchema(ctx.pool), ensureRemoteExecutionSchema(ctx.pool)]));
+  const ready = policyReady.then(() => ensureExternalTenantMembershipSchema(ctx.pool));
   // Observe rejection immediately; each operation still waits and refuses on the same failure.
   void ready.catch(error => logger.error({ err: error }, 'Application authorization unavailable'));
-  const durable = new PostgresAuthorizationStore(ctx.pool);
-  const store: AuthorizationStore = {
-    readAudit: async input => { await ready; return durable.readAudit(input); },
-    publishAppPosture: async (app, protectedApp, agentIds, toolNames) => { await ready; return durable.publishAppPosture(app, protectedApp, agentIds, toolNames); },
-    read: async () => { await ready; return durable.read(); },
-    transaction: async operation => { await ready; return durable.transaction(operation); },
-  };
+  const store = readyPolicyStore(ctx, ready);
   const directory = createApplicationPrincipalDirectory(ctx.pool,ready);
-  const actors = createActorPorts(ctx,directory);
+  const membershipStore = new PostgresExternalTenantMembershipStore(ctx.pool, ready);
+  const actors = createActorPorts(ctx,directory,membershipStore);
+  const memberships = new ExternalTenantMembershipService(membershipStore, { refreshActor: actors.refreshActor, resolveTarget: directory.targetActor });
   const { resolveActor } = actors;
   const service = new ApplicationAuthorizationService(store, createPolicyOptions(ctx, appAccess, getApps, actors));
   const runtime = new ApplicationAuthorizationRuntime(service, resolveActor, process.env, name => getApps().getApp(name));
@@ -108,6 +120,7 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
   ctx.authorizationTool = authorizationTool;
   const registered = ready.then(() => registerAuthorizationTools(ctx.toolRegistryService, ctx.dynamicToolExecutorRegistry, service));
   void registered.catch(error => logger.error({ err: error }, 'Authorization tool registration failed'));
-  return { service, runtime, remoteExecution, refreshActor: actors.refreshActor, authorizationTool, isProtected, observePrincipal: directory.observePrincipal,
+  return { service, runtime, remoteExecution, directory: { registrations: directory.registrations, roster: directory.roster }, memberships,
+    refreshActor: actors.refreshActor, authorizationTool, isProtected, observePrincipal: directory.observePrincipal,
     resolveActor: (req: Request) => resolveActor(req), targetActor: actors.targetActor, ready: registered };
 }

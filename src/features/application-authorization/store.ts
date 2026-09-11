@@ -5,12 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Provide durable preview reads without retaining a policy writer lock.
  */
 /** Durable control-plane state; this store never opens application business data. */
 import type { Pool, PoolClient } from 'pg';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
-import type { AuthorizationAudit, AuthorizationAuditQuery, AuthorizationState, AuthorizationStore, AuthorizationTransaction } from './types';
+import type { AuthorizationAudit, AuthorizationAuditQuery, AuthorizationState, AuthorizationStore, AuthorizationTransaction, StoredAuthorizationPreview } from './types';
 import { readPostgresAudit } from './audit-store';
 
 export const AUTHORIZATION_SCHEMA = [
@@ -42,6 +43,16 @@ export async function ensureApplicationAuthorizationSchema(pool: Pool): Promise<
 /** Policy changes serialize on one revision row; each audit and change commits atomically. */
 export class PostgresAuthorizationStore implements AuthorizationStore {
   constructor(private readonly pool: Pool) {}
+  /** @description Load an actor-bound preview for pre-lock approval and identity revalidation.
+   * @param id Opaque preview identifier. @returns Its persisted state, or null; the service still checks ownership and freshness.
+   */
+  readPreview(id: string): Promise<StoredAuthorizationPreview | null> {
+    return runWithSystemIdentity(async () => {
+      const result = await this.pool.query<{ payload: StoredAuthorizationPreview }>(
+        'SELECT payload FROM oshal_authorization_previews WHERE id=$1', [id]);
+      return result.rows[0]?.payload ?? null;
+    });
+  }
   /** @description Query a consistent audit page without taking the policy writer lock.
    * @param input Service-authorized scope and bounded cursor. @returns Matching stored audit events.
    */
@@ -103,6 +114,13 @@ async function persistRows(client: PoolClient, table: 'assignments' | 'previews'
 
 /** Isolated repository adapter for fixture apps/tests; production must inject PostgreSQL. */
 export class MemoryAuthorizationStore implements AuthorizationStore {
+  /** @description Match the durable preview read without holding the fixture writer lock.
+   * @param id Opaque preview identifier. @returns An independent preview copy, or null.
+   */
+  async readPreview(id: string): Promise<StoredAuthorizationPreview | null> {
+    await this.tail;
+    return structuredClone(this.state.previews.find(preview => preview.previewId === id) ?? null);
+  }
   /** @description Match durable audit ordering for isolated policy fixtures.
    * @param input Service-authorized scope and bounded cursor. @returns Matching fixture events.
    */

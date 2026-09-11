@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Real local account and role APIs against isolated PostgreSQL for HTTP and browser regression tests.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Include actual roster registration routes and schemas without altering account fixture authority.
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -14,6 +15,9 @@ import express, { type RequestHandler } from 'express';
 import { Pool } from 'pg';
 import { ensureLocalUserSchema, ensureTotpSchema, upsertInvite, acceptInvite, type LocalUser } from '@/features/local-auth';
 import { ensurePrincipalDirectorySchema } from '@/features/principal-directory';
+import { ensurePrincipalRegistrationSchema } from '@/features/principal-directory/registration-schema';
+import { createApplicationPrincipalDirectory } from '@/app/composition/application-principal-directory';
+import { createUserDirectoryRoutes } from '@/app/routes/user-directory-routes';
 import { ensureSwarmRoleSchema, refreshPrivilegedCache } from '@/features/swarm-roles';
 import { clearPrivilegedIdentities } from '@/shared/middleware/privileged-identities';
 import { isOperatorIdentity } from '@/shared/middleware/authz';
@@ -49,6 +53,7 @@ export class LocalAccountFixture {
     await this.waitForDatabase();
     await ensureLocalUserSchema(this.owner); await ensureTotpSchema(this.owner); await ensureSwarmRoleSchema(this.owner);
     await ensureInstallerRootSchema(this.owner); await ensurePrincipalDirectorySchema(this.owner);
+    await ensurePrincipalRegistrationSchema(this.owner);
     await this.owner.query("CREATE ROLE users_runtime LOGIN PASSWORD 'fixture-runtime' NOSUPERUSER NOBYPASSRLS");
     await this.owner.query('GRANT USAGE ON SCHEMA public TO users_runtime');
     await this.owner.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO users_runtime');
@@ -66,6 +71,8 @@ export class LocalAccountFixture {
   async reset(seedAccounts = true): Promise<void> {
     if (this.server) await new Promise<void>(done => this.server.close(() => done()));
     await this.owner.query('TRUNCATE oshal_local_users, swarm_roles, oshal_installer_root_setup, oshal_verified_principals');
+    await this.owner.query('TRUNCATE oshal_principal_registrations,oshal_roster_previews,oshal_roster_audit');
+    await this.owner.query('UPDATE oshal_roster_state SET revision=0');
     clearPrivilegedIdentities();
     if (seedAccounts) {
       for (const name of ['root', 'admin', 'member'] as const) {
@@ -98,7 +105,15 @@ export class LocalAccountFixture {
     app.use('/api/swarm/roles', createSwarmRolesRoutes(this.runtime, (req, res, next) => {
       if (!req.oidc?.isAuthenticated()) { res.status(401).json({ error: 'fixture_auth_required' }); return; } next();
     }));
-    // The Users page only consumes the existing Access inventory projection. Account mutation uses the real APIs above.
+    const directory = createApplicationPrincipalDirectory(this.runtime, Promise.resolve(), {
+      OIDC_ISSUER_URL: directoryIssuer, OIDC_CLIENT_ID: 'fixture', OIDC_CLIENT_SECRET: 'fixture',
+    });
+    app.use('/api/user-directory', createUserDirectoryRoutes({ ready: Promise.resolve(), registrations: directory.registrations,
+      roster: directory.roster }, { requiresAuth: (_req, _res, next) => next(), resolveActor: async req => ({
+      sub: req.oidc?.user?.sub ?? '', issuer: req.oidc?.user?.iss ?? '', isActive: req.oidc?.isAuthenticated() ?? false,
+      isSwarmAdmin: isOperatorIdentity(req.oidc?.user?.sub, req.oidc?.user?.email),
+    }) }));
+    // Compatibility inventory for older fixture consumers; production roster above uses its real route and store.
     app.get('/api/authorization/catalog', async (req, res) => {
       if (!req.oidc?.isAuthenticated() || !isOperatorIdentity(req.oidc.user?.sub, req.oidc.user?.email)) { res.status(403).json({ error: 'forbidden' }); return; }
       const result = await this.owner.query('SELECT issuer,user_sub AS sub,display_name AS label FROM oshal_verified_principals');

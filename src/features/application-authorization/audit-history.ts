@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Scope and redact applied-change history with actor-bound revision-snapshot cursors.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep reserved global membership events outside delegated application history.
  */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { createChildLogger } from '@/shared/logger';
 import type { AuthorizationActor, AuthorizationAuditInput, AuthorizationAuditPage, AuthorizationAuditEntry } from '@/shared/application-authorization';
+import { EXTERNAL_TENANT_MEMBERSHIP_AUDIT_APP } from '@/shared/application-authorization';
 import { AuthorizationAuditSchema } from '@/shared/security/authorization-tool-contract';
 import { managementAllowed } from './policy';
 import { ApplicationAuthorizationError, type AuthorizationAudit, type AuthorizationStore } from './types';
@@ -27,7 +29,8 @@ export async function readAuthorizationAudit(store: AuthorizationStore, actor: A
   const parsed = AuthorizationAuditSchema.safeParse(raw);
   if (!parsed.success) throw reject();
   const input = parsed.data;
-  if ((!input.app && !actor.isSwarmAdmin) || !managementAllowed(actor, input.app ?? '', input.tenantId, 'read')) {
+  if ((!input.app && !actor.isSwarmAdmin) || (input.app === EXTERNAL_TENANT_MEMBERSHIP_AUDIT_APP && !actor.isSwarmAdmin)
+    || !managementAllowed(actor, input.app ?? '', input.tenantId, 'read')) {
     throw new ApplicationAuthorizationError(403, 'authorization_management_denied');
   }
   const scope = createHash('sha256').update(JSON.stringify([actor.issuer, actor.sub, input.app ?? null, input.tenantId ?? null])).digest('hex');

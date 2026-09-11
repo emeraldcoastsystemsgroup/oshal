@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 171 | maintainer@emeraldcoastsystemsgroup.com | Mount machine-authenticated remote application permit checks and immutable queued-principal installation wiring.
+ * 172 | maintainer@emeraldcoastsystemsgroup.com | Mount exact user roster registration and external business membership administration.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — Express server entry point
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added static file serving for UI assets
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed conflicting manual auth routes and consolidated on express-openid-connect
@@ -330,6 +331,8 @@ import { SpecialistContextRegistry, configureSpecialistContextRegistry } from '@
 import { createApplicationAuthorizationGate } from './middleware/application-authorization-gate';
 import { createApplicationActorContext } from './middleware/application-authorization-context';
 import { createAuthorizationRoutes, createAuthorizationPageRoutes } from './routes/authorization-routes';
+import { createUserDirectoryRoutes } from './routes/user-directory-routes';
+import { createExternalTenantMembershipRoutes } from './routes/external-tenant-membership-routes';
 // Manifest schedule registrar/deregistrar + per-user reconciler + nightly oshal-dev schedule —
 // extracted verbatim to swarm-app-schedule-wiring.ts (1000-line cap decomposition).
 import { createManifestScheduleRegistrar, createManifestScheduleDeregistrar, registerPerUserScheduleReconciler, registerNightlyDevDocsSchedule } from './swarm-app-schedule-wiring';
@@ -1161,7 +1164,11 @@ function createApp(): express.Application {
   app.use(createApplicationAuthorizationGate(swarmAppService, applicationAuthorization.runtime));
   const authorizationRoutes = { requiresAuth, resolveActor: applicationAuthorization.resolveActor,
     authorizationTool: applicationAuthorization.authorizationTool };
+  app.use('/api/authorization/tenant-memberships', createExternalTenantMembershipRoutes(applicationAuthorization.memberships, authorizationRoutes));
   app.use('/api/authorization', createAuthorizationRoutes(applicationAuthorization.service, authorizationRoutes));
+  app.use('/api/user-directory', createUserDirectoryRoutes({ ready: applicationAuthorization.ready,
+    registrations: applicationAuthorization.directory.registrations, roster: async actor => applicationAuthorization.directory.roster(actor,
+      (await applicationAuthorization.service.catalog(actor)).users) }, authorizationRoutes));
   app.use('/access', createAuthorizationPageRoutes(applicationAuthorization.service, authorizationRoutes));
 
   // Node Pool Mode (phase0) — register /node/* endpoints when running as a pool node.

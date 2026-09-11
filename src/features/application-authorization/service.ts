@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Derive durable delegated management roles and revalidate writes without nested pool acquisition.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Reserve the global business-membership audit namespace against application registration.
  */
 /** ADR-149 authoritative management and execution service. No swarm-admin business bypass. */
 import { randomUUID } from 'node:crypto';
@@ -13,6 +15,7 @@ import { runWithApplicationAuthorizationActor } from '@/shared/application-autho
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import {
   validateAuthorizationCatalog,
+  applicationManagementRole, applicationManagementRoles, EXTERNAL_TENANT_MEMBERSHIP_AUDIT_APP,
   type ApplicationAuthorizationManagementService, type AuthorizationActor, type AuthorizationAppRegistration,
   type AuthorizationAppSummary, type AuthorizationApplyInput, type AuthorizationCatalogResult,
   type AuthorizationChange, type AuthorizationDecision, type AuthorizationEffective, type AuthorizationInventory,
@@ -20,13 +23,15 @@ import {
   type AuthorizationTier,
   type AuthorizationResourceAdapter,
   type AuthorizationAuditInput, type AuthorizationAuditPage,
+  type AuthorizationManagementScope,
 } from '@/shared/application-authorization';
-import type { AuthorizationAssignment, AuthorizationState, AuthorizationStore, StoredAuthorizationPreview } from './types';
+import type { AuthorizationAssignment, AuthorizationState, AuthorizationStore, StoredAuthorizationPreview, AuthorizationTransaction } from './types';
 import { ApplicationAuthorizationError } from './types';
 import { APP_ADMIN_ROLE, TIER_ORDER, assertActor, catalogRevision, managementAllowed, matchingAssignments,
   requireManagement, resolveGrantSet, resolveOperationPermissions, type RegisteredAuthorizationApp } from './policy';
 import { parseAuthorizationApply, parseAuthorizationChange } from './change-validation';
 import { readAuthorizationAudit } from './audit-history';
+import { mergeManagementScopes, resolveManagementRoles, storedManagementScopes } from './management-policy';
 const logger = createChildLogger({ module: 'application-authorization' });
 
 export interface ApplicationAuthorizationServiceOptions {
@@ -42,6 +47,7 @@ export interface ApplicationAuthorizationServiceOptions {
 export class ApplicationAuthorizationService implements ApplicationAuthorizationManagementService {
   private readonly apps = new Map<string, RegisteredAuthorizationApp>();
   private readonly now: () => number;
+  private readonly trustedScopes = new WeakMap<AuthorizationActor, AuthorizationManagementScope[] | undefined>();
   constructor(private readonly store: AuthorizationStore, private readonly options: ApplicationAuthorizationServiceOptions = {}) {
     this.now = options.now ?? Date.now;
   }
@@ -55,6 +61,7 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
       mode: catalog ? 'enforce' : input.mode, catalogRevision: catalogRevision({ ...input, catalog }) });
   }
   async validateRegistration(input: AuthorizationAppRegistration): Promise<void> {
+    if (input.app === EXTERNAL_TENANT_MEMBERSHIP_AUDIT_APP) throw new ApplicationAuthorizationError(400, 'authorization_app_name_reserved');
     if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(input.app) || !input.source || !input.version || !['legacy','enforce'].includes(input.mode)) throw new ApplicationAuthorizationError(400, 'invalid_authorization_registration');
     const catalog = input.catalog === null ? null : validateAuthorizationCatalog(input.catalog);
     const app = { ...input, catalog, mode: catalog ? 'enforce' as const : input.mode, catalogRevision: catalogRevision({ ...input, catalog }) };
@@ -95,7 +102,8 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
       if (row.targetSub && row.targetIssuer) users.set(`${row.targetIssuer}\0${row.targetSub}`, users.get(`${row.targetIssuer}\0${row.targetSub}`) ?? { sub: row.targetSub, issuer: row.targetIssuer, label: row.targetSub });
       if (row.group) groups.set(`${row.group.issuer}\0${row.group.tenantId}\0${row.group.id}`, { ...row.group, label: row.group.id });
     }
-    return { revision: state.revision, canReadGlobalAudit: actor.isSwarmAdmin, apps: available.map(app => ({ ...this.summary(app), managementScopes: (actor.isSwarmAdmin
+    return { revision: state.revision, managementRoles: applicationManagementRoles(), canReadGlobalAudit: actor.isSwarmAdmin, apps: available.map(app => ({ ...this.summary(app),
+      canDelegateManagement: actor.isSwarmAdmin && managementAllowed(actor, app.app, undefined, 'assign'), managementScopes: (actor.isSwarmAdmin
       ? [{ app: app.app, permissions: ['read','assign','directory'] as Array<'read' | 'assign' | 'directory'> }] : actor.managementScopes?.filter(scope => scope.app === app.app) ?? [])
       .map(scope => ({ ...scope, permissions: scope.permissions.filter(permission => !actor.allowedPermissions || actor.allowedPermissions.includes(`platform:authorization.${permission}`)) })) })),
     users: [...users.values()], groups: [...groups.values()], assignments };
@@ -118,9 +126,11 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     const tier = await this.explicitTier(app.app, subject); const grants = resolveGrantSet(app, resolution.rows, tier);
     const denied = grants.denied || !subject.isActive || resolution.stale || resolution.unknownDirectory
       || Boolean(target.tenantId && !subject.tenantIds?.includes(target.tenantId));
+    const managementRoles = resolveManagementRoles(state, app, subject, target.tenantId, this.now());
     return { app: app.app, targetSub: subject.sub, targetIssuer: subject.issuer, tenantId: target.tenantId,
       revision: state.revision, catalogRevision: app.catalogRevision, tier: denied ? 'deny' : grants.tier,
-      roles: grants.roles, denied, permissions: denied ? [] : structuredClone(grants.grants), status: this.summary(app).status };
+      roles: grants.roles, denied, permissions: denied ? [] : structuredClone(grants.grants), status: this.summary(app).status,
+      managementRoles, managementPermissions: [...new Set(managementRoles.flatMap(role => applicationManagementRole(role)!.permissions))] };
   }
   async explain(actor: AuthorizationActor, input: AuthorizationOperation & { targetSub?: string; targetIssuer?: string }): Promise<AuthorizationDecision> {
     actor = await this.currentActor(actor); const target = await this.targetActor(actor, input);
@@ -130,7 +140,7 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
   async authorize(actor: AuthorizationActor, operation: AuthorizationOperation): Promise<AuthorizationDecision> {
     const state = await this.store.read(); const app = this.apps.get(operation.app);
     const deny = (reason: string, tier?: AuthorizationTier): AuthorizationDecision => ({ allowed: false, reason, decisionId: randomUUID(), revision: state.revision, app: operation.app, catalogRevision: app?.catalogRevision, tier, grants: [] });
-    try { actor = await this.currentActor(actor); } catch { return deny('authorization_identity_required'); }
+    try { actor = await this.currentActor(actor, state); } catch { return deny('authorization_identity_required'); }
     if (!app) return deny('authorization_app_unavailable');
     if (operation.tenantId && !actor.tenantIds?.includes(operation.tenantId)) return deny('authorization_tenant_denied');
     const explicitTier = await this.explicitTier(app.app, actor);
@@ -173,26 +183,46 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     actor = await this.currentActor(actor);
     const change = parseAuthorizationChange(input); const app = this.requireApp(change.app); this.validateChange(actor, change, app);
     return this.store.transaction(async ({ state }) => {
+      actor = this.managementActor(actor, state); this.validateChange(actor, change, app);
       if (state.revision !== change.expectedRevision) throw new ApplicationAuthorizationError(409, 'authorization_revision_conflict');
       state.previews = state.previews.filter(preview => preview.receipt || Date.parse(preview.expiresAt) > this.now());
       if (state.previews.length >= 10_000) throw new ApplicationAuthorizationError(503, 'authorization_preview_capacity');
       const self = change.targetSub === actor.sub && change.targetIssuer === actor.issuer;
-      const sensitive = Boolean(change.role && app.catalog?.roles[change.role]?.sensitive);
+      const sensitive = Boolean(applicationManagementRole(change.role) || (change.role && app.catalog?.roles[change.role]?.sensitive));
       const restoresSensitive = change.action === 'clear-deny' && state.assignments.some(row => row.app === app.app
-        && row.targetSub === actor.sub && row.targetIssuer === actor.issuer && row.role && app.catalog?.roles[row.role]?.sensitive);
+        && row.targetSub === actor.sub && row.targetIssuer === actor.issuer && row.role
+        && (applicationManagementRole(row.role) || app.catalog?.roles[row.role]?.sensitive));
       const preview: StoredAuthorizationPreview = { previewId: randomUUID(), expiresAt: new Date(this.now() + 600_000).toISOString(), revision: state.revision,
         catalogRevision: app.catalogRevision, change, requiresApproval: (self && (sensitive || restoresSensitive)) || (Boolean(change.group) && sensitive), actor: { sub: actor.sub, issuer: actor.issuer } };
       state.previews.push(preview); return this.publicPreview(preview);
     });
   }
   async applyChange(actor: AuthorizationActor, raw: AuthorizationApplyInput): Promise<AuthorizationReceipt> {
-    const input = parseAuthorizationApply(raw); actor = await this.currentActor(actor);
-    return this.store.transaction(async ({ state, audit }) => {
+    const input = parseAuthorizationApply(raw);
+    const current = await this.prepareApply(actor, input);
+    return this.store.transaction(async transaction => this.applyPrepared(current, input, transaction));
+  }
+  private async prepareApply(original: AuthorizationActor, input: AuthorizationApplyInput): Promise<AuthorizationActor> {
+    const actor = await this.currentActor(original);
+    const preview = await this.store.readPreview(input.previewId);
+    if (!preview || preview.actor.sub !== actor.sub || preview.actor.issuer !== actor.issuer) throw new ApplicationAuthorizationError(404, 'authorization_preview_not_found');
+    this.requireChangeAuthority(actor, preview.change);
+    if (!preview.receipt) {
+      if (Date.parse(preview.expiresAt) <= this.now()) throw new ApplicationAuthorizationError(409, 'authorization_preview_expired');
+      if (preview.catalogRevision !== this.requireApp(preview.change.app).catalogRevision
+        || preview.revision !== (await this.store.read()).revision) throw new ApplicationAuthorizationError(409, 'authorization_revision_conflict');
+    }
+    if (!preview.receipt && preview.requiresApproval && (!input.approvalReference || !this.options.verifyApproval
+      || !await this.options.verifyApproval(actor, this.publicPreview(preview), input.approvalReference))) throw new ApplicationAuthorizationError(403, 'authorization_approval_required');
+    // Approval and account lookups must not hold a pool client or the policy writer lock.
+    return this.currentActor(original);
+  }
+  private applyPrepared(current: AuthorizationActor, input: AuthorizationApplyInput, transaction: AuthorizationTransaction): AuthorizationReceipt {
+      const { state, audit } = transaction; const actor = this.managementActor(current, state);
       const preview = state.previews.find(row => row.previewId === input.previewId);
       if (!preview || preview.actor.sub !== actor.sub || preview.actor.issuer !== actor.issuer) throw new ApplicationAuthorizationError(404, 'authorization_preview_not_found');
       const app = this.requireApp(preview.change.app);
-      requireManagement(actor, app.app, preview.change.tenantId, preview.change.group ? 'directory' : 'assign');
-      if (preview.change.group) requireManagement(actor, app.app, preview.change.tenantId, 'assign');
+      this.requireChangeAuthority(actor, preview.change);
       if (state.previews.some(row => row.previewId !== preview.previewId && row.actor.sub === actor.sub && row.actor.issuer === actor.issuer && row.idempotencyKey === input.idempotencyKey)) throw new ApplicationAuthorizationError(409, 'authorization_idempotency_conflict');
       if (preview.receipt) {
         if (preview.idempotencyKey !== input.idempotencyKey) throw new ApplicationAuthorizationError(409, 'authorization_preview_consumed');
@@ -201,10 +231,6 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
       if (Date.parse(preview.expiresAt) <= this.now()) throw new ApplicationAuthorizationError(409, 'authorization_preview_expired');
       if (preview.catalogRevision !== app.catalogRevision || preview.revision !== state.revision) throw new ApplicationAuthorizationError(409, 'authorization_revision_conflict');
       this.validateChange(actor, preview.change, app);
-      if (preview.requiresApproval && (!input.approvalReference || !this.options.verifyApproval
-        || !await this.options.verifyApproval(actor, this.publicPreview(preview), input.approvalReference))) throw new ApplicationAuthorizationError(403, 'authorization_approval_required');
-      // Revalidate after asynchronous approval, before authority and its audit become one commit.
-      actor = await this.currentActor(actor); this.validateChange(actor, preview.change, app);
       const change = preview.change;
       const matches = (row: AuthorizationAssignment): boolean => row.app === change.app && row.source === app.source && row.targetSub === change.targetSub
         && row.targetIssuer === change.targetIssuer && row.tenantId === change.tenantId && JSON.stringify(row.group) === JSON.stringify(change.group)
@@ -217,24 +243,35 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
       audit({ id: auditId, actor: { sub: actor.sub, issuer: actor.issuer }, at: new Date(this.now()).toISOString(), change, revision: state.revision, previewId: preview.previewId });
       const receipt: AuthorizationReceipt = { previewId: preview.previewId, revision: state.revision, auditId, applied: true };
       preview.receipt = receipt; preview.idempotencyKey = input.idempotencyKey; return receipt;
-    });
+  }
+  private requireChangeAuthority(actor: AuthorizationActor, change: AuthorizationChange): void {
+    requireManagement(actor, change.app, change.tenantId, change.group ? 'directory' : 'assign');
+    if (change.group) requireManagement(actor, change.app, change.tenantId, 'assign');
+    if (applicationManagementRole(change.role) && !actor.isSwarmAdmin) throw new ApplicationAuthorizationError(403, 'authorization_management_delegation_denied');
   }
   private validateChange(actor: AuthorizationActor, change: AuthorizationChange, app: RegisteredAuthorizationApp): void {
-    requireManagement(actor, app.app, change.tenantId, change.group ? 'directory' : 'assign');
-    if (change.group) requireManagement(actor, app.app, change.tenantId, 'assign');
+    this.requireChangeAuthority(actor, change);
     if (change.expiresAt && Date.parse(change.expiresAt) <= this.now()) throw new ApplicationAuthorizationError(400, 'authorization_expiry_invalid');
-    if (change.role && (app.catalog ? !Object.prototype.hasOwnProperty.call(app.catalog.roles, change.role) : change.role !== APP_ADMIN_ROLE)) throw new ApplicationAuthorizationError(400, 'authorization_role_unknown');
+    if (change.role && !applicationManagementRole(change.role) && (app.catalog ? !Object.prototype.hasOwnProperty.call(app.catalog.roles, change.role) : change.role !== APP_ADMIN_ROLE)) throw new ApplicationAuthorizationError(400, 'authorization_role_unknown');
     if (change.permission && (!app.catalog || !Object.prototype.hasOwnProperty.call(app.catalog.permissions, change.permission))) throw new ApplicationAuthorizationError(400, 'authorization_permission_unknown');
   }
-  private async currentActor(actor: AuthorizationActor): Promise<AuthorizationActor> {
+  private async currentActor(actor: AuthorizationActor, state?: AuthorizationState): Promise<AuthorizationActor> {
     assertActor(actor);
-    if (!this.options.refreshActor) return actor;
-    const current = await this.options.refreshActor(actor);
+    const current = this.options.refreshActor ? await this.options.refreshActor(actor) : actor;
     if (!current || current.sub !== actor.sub || current.issuer !== actor.issuer) throw new ApplicationAuthorizationError(401, 'authorization_identity_required');
     assertActor(current);
     const allowedPermissions = actor.allowedPermissions === undefined ? current.allowedPermissions
       : actor.allowedPermissions.filter(permission => current.allowedPermissions === undefined || current.allowedPermissions.includes(permission));
-    return { ...current, allowedPermissions };
+    const trusted = this.options.refreshActor ? current.managementScopes
+      : this.trustedScopes.has(actor) ? this.trustedScopes.get(actor) : current.managementScopes;
+    const identity = { ...current, allowedPermissions, managementScopes: trusted };
+    return this.managementActor(identity, state ?? await this.store.read());
+  }
+  private managementActor(actor: AuthorizationActor, state: AuthorizationState): AuthorizationActor {
+    const trusted = this.trustedScopes.has(actor) ? this.trustedScopes.get(actor) : actor.managementScopes;
+    const current = { ...actor, managementScopes: mergeManagementScopes(trusted, storedManagementScopes(state, this.apps.values(), actor, this.now())) };
+    this.trustedScopes.set(current, trusted);
+    return current;
   }
   private requireApp(name: string): RegisteredAuthorizationApp {
     const app = this.apps.get(name); if (!app) throw new ApplicationAuthorizationError(404, 'authorization_app_unavailable'); return app;

@@ -4,10 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep reserved management roles outside business-role and grant evaluation.
  */
 /** Shared deterministic permission semantics; business adapters remain authoritative over records. */
 import { createHash } from 'node:crypto';
-import type { AuthorizationActor, AuthorizationAppRegistration, AuthorizationGrant, AuthorizationOperation, AuthorizationTier } from '@/shared/application-authorization';
+import { applicationManagementRole, type AuthorizationActor, type AuthorizationAppRegistration, type AuthorizationGrant, type AuthorizationOperation, type AuthorizationTier } from '@/shared/application-authorization';
 import type { AuthorizationAssignment, AuthorizationState } from './types';
 import { ApplicationAuthorizationError } from './types';
 export const TIER_ORDER: AuthorizationTier[] = ['deny', 'viewer', 'editor', 'admin'];
@@ -60,7 +61,7 @@ export function matchingAssignments(state: AuthorizationState, app: RegisteredAu
 }
 export function resolveGrantSet(app: RegisteredAuthorizationApp, rows: AuthorizationAssignment[], explicitTier?: AuthorizationTier): { tier: AuthorizationTier; roles: string[]; grants: AuthorizationGrant[]; denied: boolean } {
   const denied = rows.some(row => row.deny && !row.permission) || explicitTier === 'deny';
-  const roles = [...new Set(rows.filter(row => !row.deny && row.role).map(row => row.role!))];
+  const roles = [...new Set(rows.filter(row => !row.deny && row.role && !applicationManagementRole(row.role)).map(row => row.role!))];
   let tier: AuthorizationTier = 'deny'; const grants: AuthorizationGrant[] = [];
   if (!app.catalog && explicitTier === 'admin' && !roles.includes(APP_ADMIN_ROLE)) roles.push(APP_ADMIN_ROLE);
   for (const roleName of roles) {
