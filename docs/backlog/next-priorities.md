@@ -1,30 +1,29 @@
-# Next ten priorities
+# Next ten autonomous priorities
 
-Ranked for the operator's 2026-09-10 request. The first three are independent implementation lanes;
-the remaining items are queued. Local verification and AI Test Lab registration are part of each
-change. No GitHub Actions are required.
+Selected for the operator's 2026-09-11 request after verifying the previous three platform lanes
+and authorization foundation are committed at `3f04ce73`. These outcomes can be built and tested
+with isolated fixtures, without live account changes, outward actions or bypassing protected
+review. Local checks and AI Test Lab registration accompany each change; no GitHub Actions.
 
-**Current operator-directed focus:** [enterprise authorization](enterprise-authorization.md), specified
-in [ADR-149](../adr/149-enterprise-application-authorization.md). This work follows the completed first
-three lanes and takes precedence over the queued ordering below. The core policy, admin screen,
-registered tools, package enforcement and isolated Lab suites are implemented; the authorization
-backlog tracks remaining directory, worker, data-adapter and rollout work.
+The new [government-contracting CRM and contract-management request](government-contracting-crm.md)
+is recorded before this run. Its application build remains a separate scoped backlog.
 
-| Rank | Outcome | Scope / acceptance | Status |
+| Rank | Outcome | Autonomous acceptance | Status |
 |---|---|---|---|
-| 1 | Installed apps automatically register their smoke tests in AI Test Lab | Reuse existing `smoke:` declarations; identify app/version/case; reconcile activation, reload, update and removal; run through the existing verifier with caller-scoped authority and explicit missing prerequisites. | Implemented; awaiting protected review/promotion |
-| 2 | Connector sign-in succeeds across configured themed domains | Keep the provider's fixed callback URL; complete in the initiating browser and identity; reject forged, expired and replayed ceremonies. | Implemented; awaiting protected review/promotion |
-| 3 | Multi-store installation has complete source controls | Discover packages across trusted registries; preserve registry/name identity; revoke trust from the page; require explicit confirmation before replacing a package from another source. | Implemented; awaiting protected review/promotion |
-| 4 | Dispatched Jarvis specialists can answer from their app's data | A delegated data question reaches the package's deterministic, owner-scoped read and returns the known fixture answer without exposing credentials to the model. | Queued |
-| 5 | Nightly tests give useful regression signals | Isolate database-backed alert tests from deployment data, resolve or explicitly disposition persistent failing gates, and prove a local scheduled result. | Queued |
-| 6 | Application unit, integration and browser suites register with installation | Settle the richer versioned catalog contract, migrate Portrait Studio and hello-oshal, then work the public and private inventories in their owning repositories. | Queued |
-| 7 | Freshly installed bots can immediately receive dispatched work | Seed authoritative runtime configuration from the manifest/persona and prove a clean installation dispatches without hand-created database rows. | Queued |
-| 8 | Administrators can invite and disable users from the Users page | Exercise the existing account APIs through the page and prove authenticated non-operators cannot administer accounts or roles. | Queued |
-| 9 | First-run provisioning guides a new installation to readiness | Re-enterable trusted-store, app installation and user setup steps; failures identify the affected package and preserve completed steps. | Queued |
-| 10 | Users control Jarvis briefings | Discover briefing-capable bots and persist per-user source, frequency and delivery-channel preferences; disabled sources do not brief. | Queued |
+| 1 | Existing Google, Microsoft and local identities appear in Access Administration | Exact verified provider/subject inventory, explicit link preservation, existing operator continuity and cross-provider denial tests; no guessed migration of unqualified IDs. | In progress |
+| 2 | Existing-account setup and Users administration work end to end | Re-entering setup never advertises fresh root election over established accounts; local invitations/disable work from the page with non-admin and sole-root guards. | Queued |
+| 3 | Installed applications register a versioned test catalog | Shared CLI/runtime validation, source/app/version/case metadata, lifecycle reconciliation and explicit unavailable-runner states, preserving existing smoke behavior. | In progress |
+| 4 | Portrait Studio and hello-oshal demonstrate package test registration | Real package catalogs cover existing suites and shared core references; installation/lifecycle fixtures and representative package tests pass. | Queued |
+| 5 | Local regression runs isolate alert tests from deployment data | Known alert/topology suites use disposable PostgreSQL; timeout/cleanup and scheduled-run artifacts are proved; remaining full-nightly failures keep honest dispositions. | In progress |
+| 6 | Freshly loaded bots have authoritative runtime configuration | Manifest/persona defaults seed actionable clean-database records while preserving operator edits; deterministic dispatch fixture succeeds. | Queued |
+| 7 | Dispatched specialists receive authorized application data | A package-owned deterministic read supplies normalized data to the existing accounted path; known-answer, ownership, refusal and credential-exclusion tests pass. | Queued |
+| 8 | First-run provisioning is re-enterable | Trusted-store/package/user steps retain progress and show package-specific failures; privileged operations reuse protected APIs and unknown stores gain no implicit trust. | Queued |
+| 9 | Users control Jarvis briefings | Registered sources expose per-user enable/frequency/channel preferences; scheduling honors them and disabling stops delivery; untouched defaults remain compatible. | Queued |
+| 10 | Administrators can inspect authorization change history | Scoped, paginated audit reads and a working Access screen show actor/change/policy revision; unauthorized and cross-scope reads refuse. | Queued |
 
-The underlying acceptance criteria remain in [the main backlog](../BACKLOG.md),
-[application Test Lab registration](app-test-lab-registration.md),
-[ADR-147](../adr/147-multi-registry-app-loader.md) and [ADR-148](../adr/148-swarm-root.md).
-This ranking does not claim that queued work is implemented or that local tests prove live provider
-or production behavior.
+Record exact commands, results and commits in the [run record](../releases/autonomous-backlog-2026-09-11.md).
+Live provider, installed deployment and unattended-nightly proof remain distinct. Required PR
+review is not counted as an autonomous item.
+
+Underlying targets: [main backlog](../BACKLOG.md), [enterprise authorization](enterprise-authorization.md)
+and [application Test Lab registration](app-test-lab-registration.md).

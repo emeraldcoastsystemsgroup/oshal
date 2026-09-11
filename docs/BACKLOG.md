@@ -11,16 +11,21 @@ implementation lanes and the next queued outcomes.
 
 ## Promotion, deployment, and regression proof
 
+### Government contracting CRM and contract management
+- **Remaining:** extend the application-owned capture workflow into a durable relationship, opportunity, proposal and contract lifecycle, using established sales interaction patterns. Reconcile existing records and package responsibilities first; the website uses the same source of truth. See [the scoped backlog](backlog/government-contracting-crm.md); detailed package work stays private.
+- **Done when:** a synthetic opportunity travels from intake through reviewed pursuit and award to a managed contract with linked relationships, decisions, documents and obligations; two-user UI/API/Jarvis permissions pass and the package registers its cases with AI Test Lab on installation.
+
 ### Enterprise authorization: user, application, function and record
 - **Requested:** application permission schemas imported at installation; direct and directory-group grants; installer-established swarm admin; consistent user authority through applications and Jarvis.
 - **Implemented foundation:** imported catalogs, durable policy/audit, central Access Administration, registered typed tools, package HTTP/controller enforcement and local installer proof. [As-built behavior](security/application-authorization.md) distinguishes these from the complete [ADR-149](adr/149-enterprise-application-authorization.md) target.
-- **Remaining work and tests:** [AUTH-01 through AUTH-10](backlog/enterprise-authorization.md) retain directory provisioning, live worker revalidation, business-data adapters and rollout evidence. Isolated implementation suites are registered in AI Test Lab.
+- **Remaining:** [AUTH-01 through AUTH-10](backlog/enterprise-authorization.md) retain directory provisioning, live worker revalidation, business-data adapters and rollout evidence. Isolated implementation suites are registered in AI Test Lab.
 - **Done when:** one installed business package proves differing user/group function and record rights across UI, API and delegated AI; explicit deny and revocation work; installer root has one authorized winner; test cases register with installation and isolated/live evidence is accurately distinguished.
 
 ### Application test cases register with AI Test Lab during installation
 - **Requested:** test cases belong to application packages and register automatically on installation, with upgrade/reload/disable/uninstall reconciliation. Reuse existing package `smoke:` validation and verification; richer local/browser/live suites need versioned catalog and runner metadata.
 - **Implemented in the current branch:** active package smoke registration, lifecycle reconciliation, caller-filtered discovery, version/revision metadata and existing-verifier execution with explicit pending prerequisites. Richer suite catalogs, historical evidence and the full package inventory remain open.
 - **Backlog:** [Application Test Lab registration](backlog/app-test-lab-registration.md) contains the prioritized core work, complete public-package worklist, pinned suite inventory and lifecycle acceptance cases. Private package rows remain in the private app repository.
+- **Remaining:** implement richer package-local catalogs, supported runners, historical evidence and package-suite adoption.
 - **Done when:** each application with existing testing installs its cases into the Lab without per-app core edits; lifecycle and ownership tests pass; unavailable prerequisites remain explicit; every inventoried suite has a disposition and representative installation/run evidence. Registration does not automatically execute all tests.
 
 ### Production core-deploy pipeline + version strategy (operator, 2026-09-05)
