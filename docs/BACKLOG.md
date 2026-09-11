@@ -484,9 +484,10 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** merge the protected core change, install Portrait Studio 1.11.0 and record one signed-in selection on the deployed cockpit.
 - **Done when:** the deployed picker lists registered sources and a selected authorized image reaches Portrait Studio's crop stage through its owner-bound handle.
 
-### ADR-139 Stage 4b — the NL leg ("Jarvis, send this to X")
-- **Remaining:** language resolution against the same registry, so the menu and the assistant answer from one catalog. Nothing about this needs a new mechanism — a turn resolves `/api/artifacts/actions` for the artifact in hand and dispatches the chosen action.
-- **Done when:** one live-proven Jarvis turn dispatches an artifact to a destination the user named in words, with the destination's own confirm gate intact (an outward-acting destination still asks), and a refused/ambiguous name answers with the available destinations instead of guessing.
+### ADR-139 Stage 4b ? the NL leg ("Jarvis, send this to X")
+- **Implemented:** Jarvis loads versioned YAML tool metadata with keywords and usage context. An explicitly selected artifact supplies a live compatible/visible destination catalog; strict model proposals resolve to the existing browser dispatcher, retaining owner checks and destination confirmation. Local model-fixture, registry/handle and browser proof are documented in ADR-139.
+- **Remaining:** protected core merge, deployment, and a signed-in turn using the actual model to name a destination; exercise an ambiguous request and a confirmation-requiring destination.
+- **Done when:** one live-proven Jarvis turn dispatches the selected artifact to the named destination, outward actions retain their confirmation gate, and ambiguous/unavailable targets return available choices without dispatch.
 
 ### Surface theming — visual spot check across themes
 - **Done already:** [BUG-12](operations/bug-log.md) is fixed and gated — every governed surface links a theme source, sets a default `data-theme`, and declares no bare hex in `:root`; 315 hardcoded colours across 37 files were remapped onto framework tokens by semantic role. `tests/unit/surface-theming.spec.ts` is mutation-proved and fails on all three regressions.

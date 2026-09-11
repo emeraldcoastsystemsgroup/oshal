@@ -69,6 +69,19 @@ camera proof passes 23 checks. Run locally with `node node_modules/vitest/vitest
 tests/unit/artifact-picker.spec.ts`; set `OSHAL_STORE_REPO` when the repositories are not siblings.
 The deployed signed-in acceptance remains in BACKLOG until the protected core change lands.
 
+## Jarvis YAML routing and artifact handoff (2026-09-10)
+
+`tests/unit/jarvis-tool-catalog.spec.ts` loads the shipped YAML and mutates invalid metadata and
+role grants. `tests/unit/jarvis-artifact-routing.spec.ts` exercises actual registry and owner-bound
+handle selection, post-model expiry/visibility checks, and the real Jarvis ask/result HTTP path.
+Its model and persistence are explicit fixtures; no live deployment database is used.
+
+`tests/unit/artifact-dispatch-browser.spec.ts` runs Chromium with the shipped dispatcher and Jarvis
+surface, actual artifact HTTP routes and registry, and explicit authentication/model-result/source
+fixtures. It checks same-ref dispatch, confirmation refusal, foreign handles, removed destinations,
+and stale selection. This does not prove deployed model disambiguation. Keep ADR-139 Stage 4b open
+until a signed-in live model handoff and ambiguous-target refusal are recorded after deployment.
+
 ## Rules for future fixes
 
 1. Name the failed boundary in the test header and name what remains doubled.

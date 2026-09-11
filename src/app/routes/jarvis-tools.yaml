@@ -1,0 +1,375 @@
+# Jarvis routing metadata. Version 1.
+# CHANGE LOG: 1 | maintainer@emeraldcoastsystemsgroup.com | Move catalog into validated semantic metadata; preserve internal role restrictions.
+version: 1
+tools:
+  - kind: shell
+    script: oshal-uber-rides.js
+    usage: >-
+      Uber RIDES + geocoding. `estimate "<pickup>" "<dropoff>"` · `ride "<pickup>" "<dropoff>" [type]` ·
+      `geocode "<address>"` (address → lat/lon) · `reverse <lat> <lon>` (coordinates → address)
+    keywords:
+      - ride
+      - taxi
+      - pickup
+      - dropoff
+      - geocode
+      - address
+      - coordinates
+    useWhen: Find a ride or resolve an address/coordinates.
+    context: Travel, pickup and destination; not food delivery.
+  - kind: shell
+    script: oshal-uber.js
+    usage: Uber EATS — restaurants & food delivery. `search "<food>"` · `menu "<storeId>"` · `order "<storeId>"`
+    keywords:
+      - food
+      - restaurant
+      - delivery
+      - eats
+      - menu
+    useWhen: Find restaurants, menus or food delivery.
+    context: Food ordering; not passenger rides.
+  - kind: shell
+    script: oshal-walmart.js
+    usage: Walmart shopping. `search "<item>"` · `deals` · `cart "<ITEMID_QTY,...>"`
+    keywords:
+      - shop
+      - shopping
+      - groceries
+      - cart
+      - deals
+      - products
+    useWhen: Search Walmart products, deals or cart.
+    context: Retail shopping.
+  - kind: shell
+    script: oshal-weather.js
+    usage: >-
+      NWS severe-alert trading feed only (NOT a local forecast). Local forecasts belong to weather-bot /
+      format-weather.
+    keywords:
+      - severe
+      - alerts
+      - nws
+      - trading
+    useWhen: Read severe-weather alerts for trading.
+    context: Not local forecasts; use weather-bot / format-weather for forecasts.
+  - kind: shell
+    script: oshal-spotify.js
+    usage: Spotify music. `search "<q>"` · `now-playing` · `playlists`
+    keywords:
+      - music
+      - song
+      - playlist
+      - spotify
+      - listening
+    useWhen: Find music or inspect listening and playlists.
+    context: Music playback.
+  - kind: shell
+    script: oshal-tmdb.js
+    usage: Movies & TV. `search "<q>"` · `trending` · `where-to-watch <movie|tv> <id>`
+    keywords:
+      - movie
+      - movies
+      - tv
+      - television
+      - streaming
+      - watch
+    useWhen: Find movies, TV or where to watch.
+    context: Entertainment discovery.
+  - kind: shell
+    script: oshal-smartthings.js
+    usage: Smart home devices & scenes (run with no args for a digest).
+    keywords:
+      - home
+      - lights
+      - thermostat
+      - devices
+      - scenes
+    useWhen: Inspect smart home devices and scenes.
+    context: Connected home.
+  - kind: shell
+    script: oshal-gmail.js
+    usage: Gmail — read/triage/draft email.
+    keywords:
+      - gmail
+      - google
+      - email
+      - inbox
+      - draft
+      - triage
+    useWhen: Read, triage or draft Gmail messages.
+    context: Gmail account; raw sending is not available here.
+  - kind: shell
+    script: oshal-outlook.js
+    usage: Outlook email.
+    keywords:
+      - outlook
+      - microsoft
+      - email
+      - inbox
+    useWhen: Work with Outlook email.
+    context: Microsoft mail account; ask which account when ambiguous.
+  - kind: shell
+    script: oshal-plaid.js
+    usage: Finance — banks/brokerages, balances/spend (read-only).
+    keywords:
+      - finance
+      - bank
+      - brokerage
+      - balances
+      - spending
+      - transactions
+    useWhen: Read connected financial balances or spending.
+    context: Read-only personal finance.
+  - kind: shell
+    script: oshal-research.js
+    usage: Web research. `"<topic>"`
+    keywords:
+      - research
+      - web
+      - sources
+      - topic
+      - investigate
+    useWhen: Research a topic on the web.
+    context: Use a specialized tool first when one already covers the request.
+  - kind: shell
+    script: oshal-gcp.js
+    usage: Google Cloud inventory & ops.
+    keywords:
+      - gcp
+      - google
+      - cloud
+      - infrastructure
+      - inventory
+    useWhen: Inspect Google Cloud inventory and operations.
+    context: Cloud administration.
+  - kind: shell
+    script: oshal-x.js
+    usage: Post to X (Twitter).
+    keywords:
+      - twitter
+      - x
+      - post
+      - publish
+    useWhen: Prepare content for posting to X.
+    context: Publishing requires the existing confirmation flow.
+  - kind: shell
+    script: oshal-x-read.js
+    usage: Read X (Twitter) — mentions/timeline.
+    keywords:
+      - twitter
+      - x
+      - mentions
+      - timeline
+      - read
+    useWhen: Read X timeline or mentions.
+    context: Social reading.
+  - kind: shell
+    script: oshal-linkedin.js
+    usage: LinkedIn content.
+    keywords:
+      - linkedin
+      - professional
+      - content
+      - posts
+    useWhen: Work with LinkedIn content.
+    context: Professional social network.
+  - kind: shell
+    script: oshal-duffel.js
+    usage: Flights / travel search & booking links.
+    keywords:
+      - flights
+      - travel
+      - airfare
+      - booking
+      - airport
+    useWhen: Search flights and booking links.
+    context: Air travel.
+  - kind: shell
+    script: oshal-feeds.js
+    usage: News feeds / world data.
+    keywords:
+      - news
+      - feeds
+      - headlines
+      - world
+    useWhen: Read news feeds and world data.
+    context: News and current events.
+  - kind: shell
+    script: oshal-trading.js
+    usage: Trading / portfolio (paper).
+    keywords:
+      - trading
+      - paper
+      - portfolio
+      - positions
+    useWhen: Work with paper trading and portfolio.
+    context: Paper only; not live-trading operations.
+  - kind: shell
+    script: oshal-apply.js
+    usage: Job-application submitter (remote apply pipeline) — ACTUATES.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-gmail-send.js
+    usage: Raw Gmail sender (recap pipeline) — Jarvis drafts via oshal-gmail.js instead.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-send-alert.js
+    usage: Watchdog alert sender.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-vault.js
+    usage: DevOps Vault CLI (ADR-040 preview) — operator-gated.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-vids.js
+    usage: Creative Studio render-node pipeline (ADR-080).
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-tools-mcp.js
+    usage: MCP tool bridge (internal plumbing).
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-trade-ops.js
+    usage: Live trading ops (autopilot rails).
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-trade-recap.js
+    usage: Daily trade recap pipeline stage.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-trade-data.js
+    usage: Daily trade recap data stage.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-deck-data.js
+    usage: Recap deck data (deck-data.json = truth).
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-recap-pipeline.js
+    usage: Recap pipeline driver (5PM CT host task).
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-recap-email.js
+    usage: Recap email stage.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-recap-render-remote.js
+    usage: Recap remote render stage.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-recap-agent-remote.js
+    usage: Recap remote agent stage.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-backtest.js
+    usage: Trading research — backtest engine.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-backtest-live.js
+    usage: Trading research — live-window backtest.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-gravity.js
+    usage: Trading research — gravity model.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-bars.js
+    usage: Trading research — bar data.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-equity-bars.js
+    usage: Trading research — equity bar data.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-intraday.js
+    usage: Trading research — intraday data.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-algos.js
+    usage: Trading research — algo library.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-pick.js
+    usage: Trading research — symbol picker.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-monitor.js
+    usage: Trading autopilot watchdog.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-optimize.js
+    usage: Trading research — optimizer.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-signal-mine.js
+    usage: Trading research — signal mining.
+    accessRoles:
+      - operator
+      - swarm
+  - kind: shell
+    script: oshal-signal-label.js
+    usage: Trading research — signal labeling.
+    accessRoles:
+      - operator
+      - swarm
+artifactHandoff:
+  kind: artifact-handoff
+  keywords:
+    - send
+    - open
+    - save
+    - email
+    - attach
+    - print
+  useWhen: The user has selected an existing artifact and requests a compatible destination.
+  context: >-
+    Use the live destination registry. Ask for clarification when the target is ambiguous. Never claim
+    completion or bypass destination confirmation. This is a browser handoff, not a shell command.

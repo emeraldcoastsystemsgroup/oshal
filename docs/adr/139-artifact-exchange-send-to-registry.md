@@ -3,7 +3,7 @@
 **Status:** Accepted (staged) — operator approved the staged build 2026-09-04 ("ok lets do it in stages") after a design review that surfaced two under-specified spots, resolved in amendment A below. **Stage 1 shipped**: the shared registry + handle store (`src/shared/artifact-exchange/`), the `/api/artifacts` routes + `send-to.js`, fail-closed `artifacts:` manifest parsing with activate/deactivate lifecycle, the cockpit `artifact=` forward, and Portrait Studio as the first registered destination — full loop operator-verified in the browser. **Stage 2 shipped (Amendment B)**: the first kernel built-in destinations — **Email it…** (an in-place compose overlay; the artifact rides as an attachment over the caller's own mailbox, confirm-gated) and **Save to OSHAL Storage** (post-mode into the always-present oshal-local store, which `uploadBytes` now supports) — plus the files browser instrumented as the first document-hub surface (📤 per file). `overlay` is a kernel-reserved dispatch shape: manifests declaring it fail the load, so an app can never point the overlay at an arbitrary page. **Stage 3 shipped (same day)**: **Ingest to RAG** — an overlay that drives the *existing* caller-ACL'd `/api/rag/upload` from the user's own session (the ADR-135 mojibake gate had already been closed: the upload route extracts via doc-extract and never ingests raw bytes), collection picked or named in the overlay, kernel collections still refused server-side for non-admins; and **Summarize with Jarvis** — an overlay that gets the document's text through the owner-bound `POST /builtin/extract-text` (the doc-extract rail) and rides the surface's own `/api/jarvis/ask` + result poll. Both are kernel registrations over the same overlay dispatch as email. **Wave 2 shipped 2026-09-06**: the shared package-side redeem (`redeemArtifactViaRelay` — the promised
 promotion; real-HTTP-guarded) and three destinations riding it (dnd character import, Kid Lens
 Takeout ingest, Spaces video reconstruction) plus the class-materials and career resume/cover
-sources — a pdf's menu offers eight destinations. Stage 4a (sources and the shared picker) is implemented and locally verified below; deployed acceptance and Stage 4b natural-language dispatch remain in BACKLOG. **Rollout complete through wave 2 (2026-09-07)**: twelve destinations registered and ten source surfaces tagged, plus two operational pieces the rollout forced out — the shared package-side redeem (`redeemArtifactViaRelay`) so a new destination is ~30 lines, and `scripts/deploy-store-package.sh`, which copies a package onto a box without silently deactivating it (a bare `docker cp` overwrites `status:` and the loader then reconciles the DB toggle from it — that trap cost three debug cycles). **Amendment D shipped 2026-09-09**: the mint-with-bytes decision is recorded and it is *yes* — a second mint (`POST /handles/upload`) carries the artifact for sources that have no byte-serving URL to point at, under the same owner binding and TTL, bytes in memory only, with a per-sub byte budget the count cap could not provide. The task-explorer Files tab, which could never be tagged, is the live proof. rag-center documents stay untagged for a different reason (a retrieved chunk is not a document) recorded in D4c.
+sources — a pdf's menu offers eight destinations. Stages 4a (shared picker) and 4b (YAML-guided natural-language handoff) are implemented below; deployed acceptance remains in BACKLOG. **Rollout complete through wave 2 (2026-09-07)**: twelve destinations registered and ten source surfaces tagged, plus two operational pieces the rollout forced out — the shared package-side redeem (`redeemArtifactViaRelay`) so a new destination is ~30 lines, and `scripts/deploy-store-package.sh`, which copies a package onto a box without silently deactivating it (a bare `docker cp` overwrites `status:` and the loader then reconciles the DB toggle from it — that trap cost three debug cycles). **Amendment D shipped 2026-09-09**: the mint-with-bytes decision is recorded and it is *yes* — a second mint (`POST /handles/upload`) carries the artifact for sources that have no byte-serving URL to point at, under the same owner binding and TTL, bytes in memory only, with a per-sub byte budget the count cap could not provide. The task-explorer Files tab, which could never be tagged, is the live proof. rag-center documents stay untagged for a different reason (a retrieved chunk is not a document) recorded in D4c.
 
 **Date:** 2026-09-04
 
@@ -17,6 +17,52 @@ sources — a pdf's menu offers eight destinations. Stage 4a (sources and the sh
 ---
 
 ## Context
+
+### Stage 4b implementation ? YAML-guided Jarvis handoffs (2026-09-10)
+
+Jarvis loads `src/app/routes/jarvis-tools.yaml` on each model-directed turn. The versioned catalog
+holds tool usage, keywords, `useWhen`, context and existing role restrictions. Request text and the
+current surface rank matching tools; a nonmatching keyword never removes an otherwise valid tool.
+Malformed metadata fails closed. Metadata describes selection, not permission to execute.
+
+In Jarvis, **Choose from OSHAL** selects an existing file. The next `/ask` carries only
+`artifact: {ref}`; the server resolves its owner, type and name itself. The model receives the
+selected file's metadata and MIME-compatible, caller-visible destinations from the same registry
+as the menu. It does not receive source paths, file bytes or a handle it can replace. The model
+may propose `oshal:artifact` JSON containing only `{app,id}`. A missing or ambiguous destination
+must produce a clarification with available labels. Keyword hints do not authorize a handoff.
+
+The server checks ownership, expiry and current visibility again after the model returns. The
+browser re-resolves the key and reuses the shared send dispatcher with the original handle.
+Email opens its compose screen; post destinations receive only `{ref}`. A 428 confirmation request
+is shown and is never automatically retried with `confirm:true`. Selected-file turns cannot become
+queue plans or background handoffs, including on model timeout. Changing the selection while a
+turn runs refuses its stale response; history replay never dispatches.
+
+Destination manifests may add `keywords` (up to 16 nonempty strings, each at most 60 characters)
+and `useWhen` (a nonempty single line, at most 300 characters) under each `artifacts.accepts` entry:
+
+```yaml
+artifacts:
+  accepts:
+    - id: restyle
+      label: Restyle in Portrait Studio
+      types: [image/*]
+      mode: open
+      keywords: [portrait, photo, restyle, headshot]
+      useWhen: Open an existing image for portrait editing.
+```
+
+Existing declarations remain valid and use their labels. These hints stay in the owning manifest;
+there is no second hardcoded app-target catalog in Jarvis. Kernel destinations supply the same
+metadata when they register. The shell-tool YAML is core-owned; application targets remain
+store-owned declarations.
+
+Local tests cover YAML parsing/ranking, actual registry and owner-bound handles, and Chromium
+using real handle/menu routes. Model responses and authentication are explicit fixtures. This
+proves transport and enforcement, not a live model's semantic accuracy. Protected merge and a
+signed-in deployed natural-language handoff remain the acceptance gate. Automatic inference of
+an unselected file from another app's screen is outside this stage: select the file explicitly.
 
 ### Stage 4a implementation — shared source picker (2026-09-10)
 
@@ -40,7 +86,7 @@ Local real-HTTP/browser acceptance covers file ownership, foreign-handle refusal
 source discovery, folder navigation, filtering, cancellation, and loading both a stored file and
 a gallery image into the actual crop stage. The test doubles authentication and the portrait SQL
 store explicitly. Production rollout remains subject to the protected core merge; this is not
-a claim that the new routes are already deployed. Stage 4b natural-language dispatch remains separate.
+a claim that the new routes are already deployed.
 
 The operator's framing, verbatim intent: *"for any artifact (images, documents, etc.) there should be a
 general swarm service that apps register with on load, that subscribes artifact types to applications,

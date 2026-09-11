@@ -25,6 +25,7 @@
 <link rel="stylesheet" href="/shared/ui/css/surface-reading.css" />
 <script src="/shared/ui/js/surface-reading.js"></script>
 <script src="/api/artifacts/send-to.js" defer></script>
+<script src="/api/artifacts/picker.js" defer></script>
 <style>
   :root {
     /* Short alias names DERIVED from the framework theme tokens (surface-themes.css) rather than
@@ -138,6 +139,7 @@
   .attach-opt:hover { border-color:var(--accent); }
   .attach-strip { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; width:100%; max-width:520px; margin:12px auto 2px; }
   .attach-strip[hidden] { display:none; }
+  #selectedArtifact[hidden] { display:none; }
   .attach-chip { position:relative; display:inline-flex; align-items:center; gap:8px; max-width:210px; font-size:.78rem; color:var(--muted);
     border:1px solid var(--line); border-radius:12px; padding:6px 8px 6px 6px; background:var(--glass); }
   .attach-chip .attach-thumb { width:34px; height:34px; border-radius:8px; object-fit:cover; flex:0 0 auto; background:var(--line); }
@@ -467,6 +469,10 @@
           </div>
 
           <div class="attach-strip" id="attachStrip" hidden aria-label="Attached media"></div>
+          <div class="attach-strip" aria-label="File for Jarvis">
+            <button type="button" class="attach-opt" id="chooseArtifact">Choose from OSHAL</button>
+            <span id="selectedArtifact" class="attach-chip" hidden><span id="selectedArtifactName" class="attach-name"></span><button type="button" class="attach-x" id="clearArtifact" aria-label="Remove selected file">×</button></span>
+          </div>
 
           <form class="typer" id="typer">
             <input id="typein" type="text" placeholder="Ask me anything…" autocomplete="off" />
@@ -1350,8 +1356,32 @@ function buildContextualMessage(text) {
    SESSION_ID — no transcript stuffing, which used to leak into the message + the work label), show a
    "thinking" bubble, then replace it with the actual answer. Still async under the hood (a tool-using
    turn can exceed Cloudflare's ~100s edge timeout), but it reads as a normal conversation, not a queue. */
+// Artifact selection belongs to this browser session and is never restored from history.
+let selectedArtifact = null;
+let artifactSelectionVersion = 0;
+const dispatchedArtifactJobs = new Set();
+function renderArtifactSelection() {
+  $('selectedArtifact').hidden = !selectedArtifact;
+  $('selectedArtifactName').textContent = selectedArtifact ? selectedArtifact.name : '';
+}
+$('chooseArtifact').addEventListener('click', async () => {
+  const button = $('chooseArtifact'); button.disabled = true;
+  const version = ++artifactSelectionVersion;
+  try {
+    const picked = await window.oshalPickArtifact({ title: 'Choose a file for Jarvis' });
+    if (picked && version === artifactSelectionVersion) {
+      selectedArtifact = picked; renderArtifactSelection(); $('typer').classList.add('show'); $('typein').focus();
+    }
+  } catch (error) { setStatus(error.message || 'Could not choose a file.'); }
+  finally { button.disabled = false; }
+});
+$('clearArtifact').addEventListener('click', () => {
+  artifactSelectionVersion++; selectedArtifact = null; renderArtifactSelection();
+});
 async function handleInput(text) {
   text = (text || '').trim();
+  const artifactForTurn = selectedArtifact;
+  const artifactVersionForTurn = artifactSelectionVersion;
   const atts = pendingAttachments.slice();   // snapshot the media attached to THIS turn
   if (!text && !atts.length) return;
   clearInlineResult();
@@ -1363,21 +1393,21 @@ async function handleInput(text) {
   const offeredCatchupForTurn = pendingCatchupOffer;
   pendingCatchupOffer = false;
   const saidYes = /^\s*(?:yes|yeah|yep|sure|ok(?:ay)?|please do|go ahead)\s*[.!]?\s*$/.test(_low);
-  if (!atts.length && offeredCatchupForTurn && !offeredResultIdForTurn && saidYes) {
+  if (!artifactForTurn && !atts.length && offeredCatchupForTurn && !offeredResultIdForTurn && saidYes) {
     showCenterUserCopy(text); addConvo('You', 'user', `<div>${esc(text)}</div>`); scrollToConvo();
     await readAllBacklog();
     return;
   }
-  if (!atts.length && offeredResultIdForTurn && saidYes) {
+  if (!artifactForTurn && !atts.length && offeredResultIdForTurn && saidYes) {
     showCenterUserCopy(text); addConvo('You', 'user', `<div>${esc(text)}</div>`); scrollToConvo();
     await openJob(offeredResultIdForTurn);
     return;
   }
-  if (!atts.length && /\bread\b/.test(_low) && /(backlog|unread|all\b.*\bresults?|all results?|all of (my|them)|all my|everything)/.test(_low)) {
+  if (!artifactForTurn && !atts.length && /\bread\b/.test(_low) && /(backlog|unread|all\b.*\bresults?|all results?|all of (my|them)|all my|everything)/.test(_low)) {
     showCenterUserCopy(text); addConvo('You', 'user', `<div>${esc(text)}</div>`); scrollToConvo();
     await readAllBacklog(); return;
   }
-  if (!atts.length && /^\s*(read it|read that( one)?|give me (the|an) update|yes,? read( it)?|go ahead( and read)?)\.?\s*$/.test(_low)) {
+  if (!artifactForTurn && !atts.length && /^\s*(read it|read that( one)?|give me (the|an) update|yes,? read( it)?|go ahead( and read)?)\.?\s*$/.test(_low)) {
     showCenterUserCopy(text); addConvo('You', 'user', `<div>${esc(text)}</div>`); scrollToConvo();
     const u = unreadDone();
     if (offeredResultIdForTurn && durableTaskResults[offeredResultIdForTurn]?.status === 'done') { await openJob(offeredResultIdForTurn); }
@@ -1425,6 +1455,7 @@ async function handleInput(text) {
       // re-validates it against the real contract rather than trusting this frame.
       body: JSON.stringify({
         message: text, sessionId: SESSION_ID, attachments: outAttachments,
+        ...(artifactForTurn ? { artifact: { ref: artifactForTurn.ref } } : {}),
         ...(window.__surfaceContext ? { context: window.__surfaceContext } : {}),
       }),
     });
@@ -1436,6 +1467,16 @@ async function handleInput(text) {
       bubble.innerHTML = `<span class="err">${esc(d.error || "That didn't work.")}</span>`;
       speak("Sorry, that didn't work.");
     } else {
+      // Only the live request may dispatch. History/shelf replay never enters this branch.
+      if (d.artifactAction && !dispatchedArtifactJobs.has(j0.jobId)) {
+        dispatchedArtifactJobs.add(j0.jobId);
+        if (!artifactForTurn || d.artifactAction.ref !== artifactForTurn.ref ||
+            artifactVersionForTurn !== artifactSelectionVersion) {
+          throw new Error('The selected file changed. Ask again with the file you want to send.');
+        }
+        await window.oshalDispatchArtifact(d.artifactAction);
+        selectedArtifact = null; artifactSelectionVersion++; renderArtifactSelection();
+      }
       // Drive the screen the user is on BEFORE painting the reply, so the edit and the sentence
       // describing it land together. The relay still re-validates every op against the app's
       // manifest allow-list; anything the app never declared is dropped in transit.

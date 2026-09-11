@@ -25,6 +25,7 @@
  * delegation replaces it.
  *
  * CHANGE LOG
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Load contextual YAML tool hints and caller-visible artifact targets; bind proposed browser handoffs to the selected owner handle.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -104,6 +105,9 @@ import {
   schedulingTimezone,
 } from './jarvis-schedule-intent';
 import { visualSpecForDirectRequest } from './jarvis-visuals';
+import { visibleArtifactActions } from './artifact-action-visibility';
+import type { PickerVisibleApps } from './artifact-picker-routes';
+import { resolveJarvisArtifact, buildArtifactRoutingPrompt, resolveJarvisArtifactAnswer, type JarvisArtifactAction } from './jarvis-artifact-routing';
 import { buildToolsBlock, withImageDeliverableContract } from './jarvis-tool-catalog';
 import { buildBots, buildComms, buildActivity, buildCalendar } from './jarvis-overview';
 import {
@@ -229,6 +233,7 @@ interface AskJob {
     // isolation key. The client's producer stamps it from the shell's trusted binding, and the
     // cockpit relay re-validates against the app's manifest allow-list before any surface sees it.
     surfaceOps?: SurfaceDirectiveOp[];
+    artifactAction?: JarvisArtifactAction;
   };
   error?: string;
   createdAt: number;
@@ -450,7 +455,7 @@ function storedJarvisSourceId(value: unknown): string | undefined {
  * @param apiDir - Directory holding the HTML surface.
  * @returns Express router.
  */
-export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
+export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisibleApps?: PickerVisibleApps): Router {
   const router = Router();
   registerLegacyReadContainment(router);
   // Legacy mode can still arrive with the fleet secret. Narrow only that compatibility path to its
@@ -634,7 +639,13 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
   router.post('/ask', requireAiEnabled, async (req: Request, res: Response) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
-    const body = (req.body || {}) as { message?: string; sessionId?: string; attachments?: unknown; context?: unknown };
+    const body = (req.body || {}) as { message?: string; sessionId?: string; attachments?: unknown; context?: unknown; artifact?: unknown };
+    const artifactSelection = resolveJarvisArtifact(body.artifact, sub);
+    if (body.artifact !== undefined && !artifactSelection) { res.status(404).json({ error: 'Choose the file again; this selection is unavailable.' }); return; }
+    let artifactActions: Awaited<ReturnType<typeof visibleArtifactActions>> = [];
+    try {
+      if (artifactSelection) artifactActions = await visibleArtifactActions(req, artifactSelection.type, artifactVisibleApps);
+    } catch { res.status(503).json({ error: 'Artifact destinations are temporarily unavailable.' }); return; }
     let message = String(body.message || '').trim();
     // What the operator has on screen right now, relayed from the focused app surface through the
     // surface bridge. Validated against the REAL contract; anything malformed degrades to a
@@ -675,12 +686,12 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
     // owner actually having ambient data, so an ordinary question is never hijacked into an empty read.
     // Media turns go straight to an enriched Jarvis turn — the deterministic weather/inbox/recall
     // guards would only misfire on "what's in this photo?" and never own the attached context.
-    const recallIntent = hasAttachments ? null : detectRecallIntent(message);
+    const recallIntent = (hasAttachments || artifactSelection) ? null : detectRecallIntent(message);
     const doRecall = recallIntent ? await ownerHasAmbientData(ctx.pool, sub) : false;
     const clarificationKey = threadTicketKey(sub, sessionId);
     const pendingWeather = pendingWeatherClarifications.get(clarificationKey);
-    let providerBoundIntent = (doRecall || hasAttachments) ? undefined : detectProviderBoundHandoff(message);
-    if (!doRecall && !hasAttachments && pendingWeather && Date.now() - pendingWeather.createdAt <= PENDING_WEATHER_TTL_MS) {
+    let providerBoundIntent = (doRecall || hasAttachments || artifactSelection) ? undefined : detectProviderBoundHandoff(message);
+    if (!doRecall && !hasAttachments && !artifactSelection && pendingWeather && Date.now() - pendingWeather.createdAt <= PENDING_WEATHER_TTL_MS) {
       const followUp = classifyWeatherLocationFollowUp(pendingWeather.request, message);
       if (followUp.action === 'resolved') {
         providerBoundIntent = followUp.intent;
@@ -702,26 +713,35 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
     // a media turn, a provider-bound ask, or a plain question — and only when a runner exists to fire
     // it (jarvisSchedulingAvailable). The fired prompt re-enters the orchestrator with
     // autoApprove:false, so any outward action still hits the interactive approval gates.
-    const scheduleIntent = (!doRecall && !hasAttachments && !providerBoundIntent && !providerClarification && jarvisSchedulingAvailable())
+    const scheduleIntent = (!doRecall && !hasAttachments && !artifactSelection && !providerBoundIntent && !providerClarification && jarvisSchedulingAvailable())
       ? detectScheduleIntent(message, { now: new Date(), timezone: schedulingTimezone() })
       : null;
     // Prepend the auto tool-feed (what Jarvis can actually DO) + the user's recent tasks/results only
     // when a direct model decision is still needed; the deterministic provider path needs neither.
     let botMessage = message;
-    if (!providerBoundIntent) {
-      const tools = buildToolsBlock();
-      // The deployment's app catalog rides EVERY model turn (before the plan guidance, whose
-      // "catalog keys above" refers to it). Without it the persona's baked specialist list was
-      // Jarvis's whole world - a store-installed app on this box did not exist to the model.
-      const catalog = await buildCatalogBlock(ctx);
-      const openWork = await buildOpenWorkBlock(ctx, sub);
-      const ctxBlocks = [tools, catalog, openWork, PLAN_DIRECTIVE_GUIDANCE].filter(Boolean).join('\n\n');
-      // The live screen sits with the attached media: both are authoritative context for THIS turn,
-      // and both belong immediately before the user's words so they frame the question being asked.
-      const screenBlock = buildSurfaceContextPrompt(surfaceContext);
-      const userPart = [screenBlock, attachments.hasAny ? attachments.promptBlock : '', message]
-        .filter(Boolean).join('\n\n');
-      botMessage = ctxBlocks ? `${ctxBlocks}\n\n---\n\n${userPart}` : userPart;
+    try {
+      if (!providerBoundIntent) {
+        const tools = buildToolsBlock({ message, surface: surfaceContext?.app });
+        // The deployment's app catalog rides EVERY model turn (before the plan guidance, whose
+        // "catalog keys above" refers to it). Without it the persona's baked specialist list was
+        // Jarvis's whole world - a store-installed app on this box did not exist to the model.
+        const catalog = await buildCatalogBlock(ctx);
+        const openWork = await buildOpenWorkBlock(ctx, sub);
+        const artifactBlock = buildArtifactRoutingPrompt(artifactSelection, artifactActions);
+        const ctxBlocks = [tools, catalog, openWork, artifactBlock, ...(artifactSelection ? [] : [PLAN_DIRECTIVE_GUIDANCE])].filter(Boolean).join('\n\n');
+        // The live screen sits with the attached media: both are authoritative context for THIS turn,
+        // and both belong immediately before the user's words so they frame the question being asked.
+        const screenBlock = buildSurfaceContextPrompt(surfaceContext);
+        const userPart = [screenBlock, attachments.hasAny ? attachments.promptBlock : '', message]
+          .filter(Boolean).join('\n\n');
+        botMessage = ctxBlocks ? `${ctxBlocks}\n\n---\n\n${userPart}` : userPart;
+      }
+    } catch (err) {
+      logger.error({ err, sessionId }, 'jarvis: tool context unavailable');
+      askJobs.delete(jobId);
+      await markJarvisSessionTaskStatus(ctx, sessionId, 'failed');
+      res.status(503).json({ error: 'Jarvis tool context is temporarily unavailable.' });
+      return;
     }
     // MUST be agentic:true — the codex provider has no plain-LLM path (agenticMode:false →
     // "activeLlm.generateResponse is not a function"). The persona is what keeps the decision turn
@@ -804,7 +824,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
           ]);
           answer = raced.answer;
         } catch (e) {
-          if ((e as Error).message !== 'DECISION_TIMEOUT') throw e;
+          if ((e as Error).message !== 'DECISION_TIMEOUT' || artifactSelection) throw e;
           const workJobId = crypto.randomUUID();
           let ticketId: string | undefined;
           try {
@@ -837,7 +857,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
         // that the engine runs step-by-step (data passed between app bots; outward steps gated). A
         // single-step "plan" is not a plan — it falls through to the normal handoff path below.
         const plan = extractPlanDirective(answer);
-        if (isMultiAppPlan(plan)) {
+        if (!artifactSelection && !/```oshal:artifact\b/i.test(answer) && isMultiAppPlan(plan)) {
           const { byKey } = await loadEffectiveRoutes(ctx);
           const planDispatched = await compileAndDispatchPlan(ctx, sub, sessionId, plan, byKey);
           if (planDispatched.length) {
@@ -870,16 +890,18 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
         // the fence, or the raw JSON leaks into the user's answer. Ops are validated fail-closed
         // here and re-validated by the cockpit relay against the app's manifest allow-list.
         const surface = extractSurfaceDirectives(directives.cleanAnswer);
-        const surfaceOps = surfaceContext ? surface.ops : [];
+        let surfaceOps = surfaceContext && !artifactSelection ? surface.ops : [];
         if (surface.ops.length && !surfaceContext) {
           logger.warn({ sessionId, ops: surface.ops.length }, 'jarvis: surface ops emitted with no surface context — dropped');
         }
-        const cleanAnswer = stripPlanDirective(surface.cleanAnswer);
-        const dispatched = handoffs.length ? await dispatchHandoffs(ctx, sub, sessionId, handoffs) : [];
+        const artifactReply = await resolveJarvisArtifactAnswer(stripPlanDirective(surface.cleanAnswer), artifactSelection, req, sub, artifactActions, artifactVisibleApps);
+        const cleanAnswer = artifactReply.cleanAnswer;
+        if (artifactReply.hadDirective) surfaceOps = [];
+        const dispatched = !artifactSelection && !artifactReply.hadDirective && handoffs.length ? await dispatchHandoffs(ctx, sub, sessionId, handoffs) : [];
         const directAnswerSource = `jarvis-answer:${jobId}`;
         // An explicit "show me a diagram" request wins; otherwise the deterministic default picker
         // gives a structured direct answer a fitting visual. Acks and plain prose stay text-only.
-        const directVisualSpec = visualSpecForDirectRequest(directives, message, directAnswerSource)
+        const directVisualSpec = artifactReply.hadDirective ? undefined : visualSpecForDirectRequest(directives, message, directAnswerSource)
           ?? (!directives.hadHandoffFence && handoffs.length === 0
             ? inferVisualSpec({ answer: cleanAnswer, request: message }) ?? undefined
             : undefined);
@@ -906,6 +928,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
             answer: cleanAnswer, routed: [], handoffs: [], dispatched,
             ...(directVisual ? { visual: directVisual } : {}),
             ...(surfaceOps.length ? { surfaceOps } : {}),
+            ...(artifactReply.artifactAction ? { artifactAction: artifactReply.artifactAction } : {}),
           },
         });
       } catch (err) {

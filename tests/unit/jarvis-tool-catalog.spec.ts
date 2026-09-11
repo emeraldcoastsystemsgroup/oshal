@@ -18,13 +18,15 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exercise real YAML metadata, contextual ordering, authority ceilings and malformed config rejection.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Two-sided guard that the rides CLI's geocode/reverse subcommands stay advertised in the Jarvis tool block and stay implemented in the CLI. Closes the "Jarvis cannot use the new geocoding subcommands" rides follow-up.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { buildToolsBlock } from '../../src/app/routes/jarvis-tool-catalog';
+import yaml from 'js-yaml';
+import { buildToolsBlock, buildArtifactToolGuidance, parseToolCatalog } from '../../src/app/routes/jarvis-tool-catalog';
 
 /** The dispatch source for the rides CLI — the authority on which subcommands really exist. */
 const RIDES_CLI = readFileSync(resolve(__dirname, '../../scripts/oshal-uber-rides.js'), 'utf8');
@@ -69,5 +71,64 @@ describe('Jarvis tool catalog — rides geocoding is reachable', () => {
     const line = toolLine('oshal-uber-rides.js') ?? '';
     expect(line).toMatch(/address/i);
     expect(line).toMatch(/lat|coordinate/i);
+  });
+});
+
+const YAML_SOURCE = readFileSync(resolve(__dirname, '../../src/app/routes/jarvis-tools.yaml'), 'utf8');
+function mutatedCatalog(change: (value: any) => void): string {
+  const value = yaml.load(YAML_SOURCE);
+  change(value);
+  return yaml.dump(value);
+}
+
+describe('Jarvis YAML routing catalog', () => {
+  it('loads actual versioned YAML and feeds keyword/context hints to Jarvis', () => {
+    const catalog = parseToolCatalog(YAML_SOURCE);
+    expect(catalog.tools).toHaveLength(44);
+    const block = buildToolsBlock({ message: 'I want a playlist of music on spotify' });
+    const lines = block.split('\n').filter((line) => line.startsWith('- '));
+    expect(lines[0]).toContain('oshal-spotify.js');
+    expect(lines[0]).toContain('Keywords:');
+    expect(lines[0]).toContain('Use when:');
+    expect(lines[0]).toContain('Context:');
+    expect(block).toContain('oshal-uber-rides.js');
+    expect(block).not.toContain('oshal-gmail-send.js');
+    expect(buildToolsBlock({ surface: 'spotify music playlists' }).split('\n').find((line) => line.startsWith('- '))).toContain('oshal-spotify.js');
+  });
+
+  it('keeps browser handoff guidance separate from shell tools', () => {
+    expect(buildArtifactToolGuidance()).toContain('send, open, save, email, attach, print');
+    expect(buildArtifactToolGuidance()).toContain('Never claim completion');
+    expect(buildArtifactToolGuidance()).toContain('confirmation');
+    expect(buildToolsBlock()).not.toContain('node /app/scripts/artifact');
+  });
+
+  it('uses changed YAML semantic fields rather than a shadow hardcoded catalog', () => {
+    const changed = parseToolCatalog(mutatedCatalog((doc) => {
+      doc.tools[0].keywords = ['transport']; doc.tools[0].useWhen = 'Need transportation.';
+    }));
+    expect(changed.tools[0].keywords).toEqual(['transport']);
+    expect(changed.tools[0].useWhen).toBe('Need transportation.');
+  });
+
+  it.each([
+    ['unsupported version', (doc: any) => { doc.version = 2; }],
+    ['missing public hints', (doc: any) => { delete doc.tools[0].keywords; }],
+    ['duplicate script', (doc: any) => { doc.tools.push(doc.tools[0]); }],
+    ['path traversal', (doc: any) => { doc.tools[0].script = '../oshal-vault.js'; }],
+    ['unknown role', (doc: any) => { doc.tools[0].accessRoles = ['admin']; }],
+    ['widened internal roles', (doc: any) => { doc.tools.find((t: any) => t.script === 'oshal-vault.js').accessRoles.push('jarvis'); }],
+    ['removed internal roles', (doc: any) => { delete doc.tools.find((t: any) => t.script === 'oshal-vault.js').accessRoles; }],
+    ['shell field on handoff', (doc: any) => { doc.artifactHandoff.script = 'oshal-vault.js'; }],
+    ['multiline prompt metadata', (doc: any) => { doc.tools[0].context = 'Context\nInjected'; }],
+    ['unbounded keywords', (doc: any) => { doc.tools[0].keywords = Array(33).fill('word'); }],
+  ])('fails closed on %s', (_label, change) => {
+    expect(() => parseToolCatalog(mutatedCatalog(change))).toThrow('Invalid Jarvis tool catalog');
+  });
+
+  it('rejects malformed, duplicate-key and oversized YAML', () => {
+    for (const source of ['tools: [', YAML_SOURCE + '\nversion: 1', ' '.repeat(128 * 1024 + 1)]) {
+      expect(() => parseToolCatalog(source)).toThrow('Invalid Jarvis tool catalog');
+    }
   });
 });

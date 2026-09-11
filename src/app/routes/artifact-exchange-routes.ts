@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Share caller-visible destination discovery with Jarvis and register kernel keyword/context hints.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -7,7 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: the first kernel built-ins, registered at boot through the SAME registry interface apps use. kernel-storage → POST /builtin/save (redeem the handle, uploadBytes to the caller's oshal-local store under artifacts/). kernel-email → the compose overlay (GET /email-compose page; POST /builtin/email sends the artifact as an attachment over the caller's OWN mailbox — sendGmail else the Graph sibling else 409 — behind the standard confirm:true 428 gate). Factory now takes ctx (uploadBytes + connector-token lookups need the pool).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Amendment D (mint-with-bytes): POST /handles/upload — a multipart sibling of the locator mint, for a source that has no byte-serving URL to point at (a client-generated export; a route that answers a JSON preview envelope rather than the file). Authorization runs BEFORE multer buffers attacker-controlled bytes, the per-request limit is the shared inline cap, and the per-sub byte budget is enforced in the handle store. Redeem is unchanged for every caller and every destination: readArtifactBytes serves a carried payload directly and otherwise relays as before, so the built-ins and the package-side redeemArtifactViaRelay needed no change at all.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 3: kernel-rag "Ingest to RAG" (overlay — pick a collection, then the page drives the EXISTING caller-ACL'd /api/rag/upload from the user's own session; no new ingest surface, the doc-extract fix already guards it) and kernel-jarvis "Summarize with Jarvis" (overlay — text via POST /builtin/extract-text, the doc-extract rail, then the surface's own /api/jarvis/ask + result poll). extract-text is read-only and owner-bound like every redeem.
- * 2026-09-10 | maintainer@emeraldcoastsystemsgroup.com | ADR-139 shared artifact picker: source discovery, owner-scoped storage and app visibility.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-139 shared artifact picker: source discovery, owner-scoped storage and app visibility.
  */
 
 import * as path from 'node:path';
@@ -16,9 +17,9 @@ import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { visibleArtifactActions } from './artifact-action-visibility';
 import { confirmationRequiredPayload, hasExplicitWriteConfirmation } from '@/shared/security/explicit-write-confirmation';
 import {
-  artifactActionsForType,
   mintArtifactHandle,
   mintInlineArtifactHandle,
   registerAppArtifactActions,
@@ -153,17 +154,17 @@ const DOC_TYPES = [
 /** Register the kernel built-in destinations — through the SAME interface apps use (ADR-139 D1). */
 function registerBuiltins(): void {
   registerAppArtifactActions('kernel-email', {
-    accepts: [{ id: 'compose', label: 'Email it…', icon: '✉️', types: ['*/*'], mode: 'open', overlay: '/api/artifacts/email-compose' }],
+    accepts: [{ id: 'compose', keywords: ['email', 'mail', 'attach'], useWhen: 'Draft an email with this file attached; the user chooses recipients and confirms sending.', label: 'Email it…', icon: '✉️', types: ['*/*'], mode: 'open', overlay: '/api/artifacts/email-compose' }],
   });
   registerAppArtifactActions('kernel-storage', {
-    accepts: [{ id: 'save', label: 'Save to OSHAL Storage', icon: '🗄️', types: ['*/*'], mode: 'post', endpoint: '/api/artifacts/builtin/save' }],
+    accepts: [{ id: 'save', keywords: ['save', 'store', 'keep', 'files'], useWhen: 'Save a copy of the selected file in the user own OSHAL storage.', label: 'Save to OSHAL Storage', icon: '🗄️', types: ['*/*'], mode: 'post', endpoint: '/api/artifacts/builtin/save' }],
     provides: [{ label: 'Connected files', types: ['*/*'], list: '/api/artifacts/storage' }],
   });
   registerAppArtifactActions('kernel-rag', {
-    accepts: [{ id: 'ingest', label: 'Ingest to RAG', icon: '📚', types: DOC_TYPES, mode: 'open', overlay: '/api/artifacts/rag-ingest' }],
+    accepts: [{ id: 'ingest', keywords: ['knowledge', 'rag', 'index', 'library'], useWhen: 'Open knowledge ingestion for a selected document.', label: 'Ingest to RAG', icon: '📚', types: DOC_TYPES, mode: 'open', overlay: '/api/artifacts/rag-ingest' }],
   });
   registerAppArtifactActions('kernel-jarvis', {
-    accepts: [{ id: 'summarize', label: 'Summarize with Jarvis', icon: '🤖', types: DOC_TYPES, mode: 'open', overlay: '/api/artifacts/jarvis-summarize' }],
+    accepts: [{ id: 'summarize', keywords: ['summarize', 'summary', 'explain'], useWhen: 'Open the document summarization screen.', label: 'Summarize with Jarvis', icon: '🤖', types: DOC_TYPES, mode: 'open', overlay: '/api/artifacts/jarvis-summarize' }],
   });
 }
 
@@ -189,14 +190,18 @@ export function createArtifactExchangeRoutes(ctx: AppContext, visibleApps?: Pick
   router.use(createArtifactPickerRoutes(ctx, visibleApps));
 
   /** GET /actions?type=<mime> — the "Send to…" menu for one artifact type. Entries the caller
-   *  may not ultimately use still fail closed at the destination's own gate on dispatch. */
-  router.get('/actions', (req, res) => {
+   *  can read are offered; the destination still enforces its own write gate on dispatch. */
+  router.get('/actions', async (req, res) => {
     const mime = String(req.query.type || '').trim();
     if (!mime || !mime.includes('/') || mime.length > 100) {
       res.status(400).json({ error: 'type must be a MIME type, e.g. image/png' });
       return;
     }
-    res.json({ actions: artifactActionsForType(mime) });
+    try {
+      res.set('Cache-Control', 'private, no-store').json({ actions: await visibleArtifactActions(req, mime, visibleApps) });
+    } catch {
+      res.status(503).json({ error: 'Artifact destinations are temporarily unavailable.' });
+    }
   });
 
   /** POST /handles — mint a claim ticket over a serve URL the caller can already read. */

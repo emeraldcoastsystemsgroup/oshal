@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Jarvis handoffs resolve owner-bound handles and current registry keys before sharing the menu dispatcher; destination confirmation stays unchanged.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -115,7 +116,7 @@
 
   function dispatch(menu, meta, action) {
     statusLine(menu, 'Preparing…');
-    mintHandle(meta).then(function (ref) {
+    return (meta.ref ? Promise.resolve(meta.ref) : mintHandle(meta)).then(function (ref) {
       if (action.overlay) {
         closeMenu();
         openOverlay(action.overlay + (action.overlay.indexOf('?') >= 0 ? '&' : '?') + 'artifact=' + encodeURIComponent(ref));
@@ -143,8 +144,35 @@
       });
     }).catch(function (e) {
       statusLine(menu, e && e.message ? e.message : 'Send failed', true);
+      if (meta.ref) throw e;
     });
   }
+
+  /** Dispatch a validated Jarvis handoff through the same destination gates as the menu.
+   * Only registry keys are accepted; endpoint/overlay/confirmation fields never come from a model. */
+  window.oshalDispatchArtifact = async function (selection) {
+    if (!selection || !/^art_[a-zA-Z0-9_-]+$/.test(selection.ref || '') ||
+        typeof selection.app !== 'string' || typeof selection.id !== 'string') {
+      throw new Error('Invalid artifact handoff.');
+    }
+    async function read(url) {
+      var response = await fetch(url, { credentials: 'same-origin', redirect: 'error', cache: 'no-store' });
+      var body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Artifact is no longer available.');
+      return body;
+    }
+    var meta = await read('/api/artifacts/handles/' + encodeURIComponent(selection.ref));
+    var catalog = await read('/api/artifacts/actions?type=' + encodeURIComponent(meta.type));
+    var action = Array.isArray(catalog.actions) && catalog.actions.find(function (item) {
+      return item.app === selection.app && item.id === selection.id;
+    });
+    if (!action) throw new Error('That destination is no longer available for this file.');
+    closeMenu();
+    var menu = menuShell(); OPEN_MENU = menu; document.body.appendChild(menu);
+    document.addEventListener('mousedown', onOutside, true);
+    document.addEventListener('keydown', onKey, true);
+    return dispatch(menu, { ref: selection.ref }, action);
+  };
 
   /**
    * Open the "Send to…" menu for one artifact.

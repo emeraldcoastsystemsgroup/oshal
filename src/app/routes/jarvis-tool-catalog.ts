@@ -2,7 +2,7 @@
  * Jarvis tool catalog — the auto tool-feed (what Jarvis can actually DO) + the image-deliverable
  * contract appended to image-shaped hand-offs.
  *
- * Extracted from jarvis-routes.ts (2026-07-18, ADR-050 route decomposition). Behaviour unchanged.
+ * Extracted from jarvis-routes.ts (2026-07-18, ADR-050); YAML routing metadata added for artifact handoffs.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
@@ -11,104 +11,141 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: TOOL_CATALOG + buildToolsBlock (ADR-087 access-role-scoped auto tool-feed) + withImageDeliverableContract (route decomposition, no behaviour change).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Advertise oshal-uber-rides.js's geocode/reverse subcommands. The CLI grew them with the rides map fix (they are what the surface calls to drop and drag pins), but this catalog is Jarvis's ONLY view of a tool — the block it builds says "a script not listed here is off-limits" — so a capability absent from the usage string does not exist as far as Jarvis is concerned. It was answering "where is X" / "what is at these coordinates" by guessing while a real geocoder sat one subcommand away.
  *
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Load strict versioned YAML semantic routing metadata, retain internal role ceilings, rank contextual tools, and expose browser artifact guidance.
+ *
  * @module jarvis-tool-catalog
  */
 
-import { roleCanAccess, type SwarmAccessRole } from '@/shared/types';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import yaml from 'js-yaml';
+import { roleCanAccess, isSwarmAccessRole, type SwarmAccessRole } from '@/shared/types';
 import type { HandoffDirective } from './jarvis-directives';
 
-/** One tool-catalog entry: rich usage text + optional ADR-087 access-role scoping. */
-interface ToolCatalogEntry {
-  usage: string;
-  /** Caller roles allowed to see/route to this CLI. Omit = every caller (the default).
-   *  Declare without 'jarvis' to take a script out of the assistant's tool feed even
-   *  though it exists on disk (the auto-feed otherwise surfaces every oshal-*.js). */
-  accessRoles?: SwarmAccessRole[];
+/** Semantic metadata helps selection; it grants no execution authority. */
+interface SemanticMetadata { keywords: string[]; useWhen: string; context: string }
+interface ToolCatalogEntry extends Partial<SemanticMetadata> {
+  kind: 'shell'; script: string; usage: string; accessRoles?: SwarmAccessRole[];
+}
+interface ToolCatalog {
+  version: 1; tools: ToolCatalogEntry[];
+  artifactHandoff: SemanticMetadata & { kind: 'artifact-handoff' };
+}
+/** Existing privileged scripts have an immutable discovery ceiling independent of YAML edits. */
+const INTERNAL_SCRIPTS = new Set([
+  "oshal-apply.js",
+  "oshal-gmail-send.js",
+  "oshal-send-alert.js",
+  "oshal-vault.js",
+  "oshal-vids.js",
+  "oshal-tools-mcp.js",
+  "oshal-trade-ops.js",
+  "oshal-trade-recap.js",
+  "oshal-trade-data.js",
+  "oshal-deck-data.js",
+  "oshal-recap-pipeline.js",
+  "oshal-recap-email.js",
+  "oshal-recap-render-remote.js",
+  "oshal-recap-agent-remote.js",
+  "oshal-backtest.js",
+  "oshal-backtest-live.js",
+  "oshal-gravity.js",
+  "oshal-bars.js",
+  "oshal-equity-bars.js",
+  "oshal-intraday.js",
+  "oshal-algos.js",
+  "oshal-pick.js",
+  "oshal-monitor.js",
+  "oshal-optimize.js",
+  "oshal-signal-mine.js",
+  "oshal-signal-label.js"
+]);
+
+function record(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+function text(value: unknown, max: number): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= max && !/[\r\n\x00-\x1f]/.test(value);
+}
+function exactKeys(value: Record<string, unknown>, allowed: string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+function semantic(value: Record<string, unknown>): boolean {
+  return Array.isArray(value.keywords) && value.keywords.length > 0 && value.keywords.length <= 32
+    && value.keywords.every((word) => text(word, 64)) && text(value.useWhen, 500) && text(value.context, 500);
 }
 
-/** Internal/pipeline scoping shorthand: operator + swarm machinery only, never Jarvis. */
-const INTERNAL: SwarmAccessRole[] = ['operator', 'swarm'];
+/**
+ * @description Parse bounded versioned YAML. Invalid metadata or widened internal roles fail closed.
+ * @param source - Trusted repository YAML contents, never request data.
+ * @returns Validated catalog used for model discovery only.
+ */
+export function parseToolCatalog(source: string): ToolCatalog {
+  const fail = (): never => { throw new Error('Invalid Jarvis tool catalog: expected version 1 routing metadata'); };
+  if (Buffer.byteLength(source, 'utf8') > 128 * 1024) return fail();
+  let value: unknown;
+  try { value = yaml.load(source, { schema: yaml.JSON_SCHEMA }); } catch { return fail(); }
+  if (!record(value) || !exactKeys(value, ['version', 'tools', 'artifactHandoff']) || value.version !== 1
+    || !Array.isArray(value.tools) || !value.tools.length || value.tools.length > 128) return fail();
+  const seen = new Set<string>();
+  for (const tool of value.tools) {
+    if (!record(tool) || !exactKeys(tool, ['kind', 'script', 'usage', 'accessRoles', 'keywords', 'useWhen', 'context'])
+      || tool.kind !== 'shell' || typeof tool.script !== 'string' || !/^oshal-[a-z0-9-]+\.js$/.test(tool.script)
+      || seen.has(tool.script) || !text(tool.usage, 2000)) return fail();
+    seen.add(tool.script);
+    if (tool.accessRoles !== undefined && (!Array.isArray(tool.accessRoles) || tool.accessRoles.length === 0
+      || !tool.accessRoles.every(isSwarmAccessRole))) return fail();
+    if (INTERNAL_SCRIPTS.has(tool.script) && (!Array.isArray(tool.accessRoles)
+      || tool.accessRoles.some((role) => role !== 'operator' && role !== 'swarm'))) return fail();
+    if (roleCanAccess(tool.accessRoles as SwarmAccessRole[] | undefined, 'jarvis') && !semantic(tool)) return fail();
+    if (['keywords', 'useWhen', 'context'].some((key) => key in tool) && !semantic(tool)) return fail();
+  }
+  const handoff = value.artifactHandoff;
+  if (!record(handoff) || !exactKeys(handoff, ['kind', 'keywords', 'useWhen', 'context'])
+    || handoff.kind !== 'artifact-handoff' || !semantic(handoff)) return fail();
+  return value as unknown as ToolCatalog;
+}
 
-/** Rich purpose+usage for the known CLIs (single source of truth). Anything in /app/scripts not listed
- *  here still gets auto-surfaced by name so a newly-added CLI is never invisible to Jarvis — list a
- *  script here with accessRoles that exclude 'jarvis' to deliberately hide it (ADR-087). */
-const TOOL_CATALOG: Record<string, ToolCatalogEntry> = {
-  'oshal-uber-rides.js': { usage: 'Uber RIDES + geocoding. `estimate "<pickup>" "<dropoff>"` · `ride "<pickup>" "<dropoff>" [type]` · `geocode "<address>"` (address → lat/lon) · `reverse <lat> <lon>` (coordinates → address)' },
-  'oshal-uber.js': { usage: 'Uber EATS — restaurants & food delivery. `search "<food>"` · `menu "<storeId>"` · `order "<storeId>"`' },
-  'oshal-walmart.js': { usage: 'Walmart shopping. `search "<item>"` · `deals` · `cart "<ITEMID_QTY,...>"`' },
-  'oshal-weather.js': { usage: 'NWS severe-alert trading feed only (NOT a local forecast). Local forecasts belong to weather-bot / format-weather.' },
-  'oshal-spotify.js': { usage: 'Spotify music. `search "<q>"` · `now-playing` · `playlists`' },
-  'oshal-tmdb.js': { usage: 'Movies & TV. `search "<q>"` · `trending` · `where-to-watch <movie|tv> <id>`' },
-  'oshal-smartthings.js': { usage: 'Smart home devices & scenes (run with no args for a digest).' },
-  'oshal-gmail.js': { usage: 'Gmail — read/triage/draft email.' },
-  'oshal-outlook.js': { usage: 'Outlook email.' },
-  'oshal-plaid.js': { usage: 'Finance — banks/brokerages, balances/spend (read-only).' },
-  'oshal-research.js': { usage: 'Web research. `"<topic>"`' },
-  'oshal-gcp.js': { usage: 'Google Cloud inventory & ops.' },
-  'oshal-x.js': { usage: 'Post to X (Twitter).' },
-  'oshal-x-read.js': { usage: 'Read X (Twitter) — mentions/timeline.' },
-  'oshal-linkedin.js': { usage: 'LinkedIn content.' },
-  'oshal-duffel.js': { usage: 'Flights / travel search & booking links.' },
-  'oshal-feeds.js': { usage: 'News feeds / world data.' },
-  'oshal-trading.js': { usage: 'Trading / portfolio (paper).' },
-
-  // ── ADR-087: internal machinery the auto-feed used to advertise to Jarvis by name.
-  // These run under scheduled host tasks / owning bots, not the assistant; several actuate
-  // for real (job applications, raw email send, alerts, live-trading ops, render pipeline).
-  'oshal-apply.js': { usage: 'Job-application submitter (remote apply pipeline) — ACTUATES.', accessRoles: INTERNAL },
-  'oshal-gmail-send.js': { usage: 'Raw Gmail sender (recap pipeline) — Jarvis drafts via oshal-gmail.js instead.', accessRoles: INTERNAL },
-  'oshal-send-alert.js': { usage: 'Watchdog alert sender.', accessRoles: INTERNAL },
-  'oshal-vault.js': { usage: 'DevOps Vault CLI (ADR-040 preview) — operator-gated.', accessRoles: INTERNAL },
-  'oshal-vids.js': { usage: 'Creative Studio render-node pipeline (ADR-080).', accessRoles: INTERNAL },
-  'oshal-tools-mcp.js': { usage: 'MCP tool bridge (internal plumbing).', accessRoles: INTERNAL },
-  'oshal-trade-ops.js': { usage: 'Live trading ops (autopilot rails).', accessRoles: INTERNAL },
-  'oshal-trade-recap.js': { usage: 'Daily trade recap pipeline stage.', accessRoles: INTERNAL },
-  'oshal-trade-data.js': { usage: 'Daily trade recap data stage.', accessRoles: INTERNAL },
-  'oshal-deck-data.js': { usage: 'Recap deck data (deck-data.json = truth).', accessRoles: INTERNAL },
-  'oshal-recap-pipeline.js': { usage: 'Recap pipeline driver (5PM CT host task).', accessRoles: INTERNAL },
-  'oshal-recap-email.js': { usage: 'Recap email stage.', accessRoles: INTERNAL },
-  'oshal-recap-render-remote.js': { usage: 'Recap remote render stage.', accessRoles: INTERNAL },
-  'oshal-recap-agent-remote.js': { usage: 'Recap remote agent stage.', accessRoles: INTERNAL },
-  'oshal-backtest.js': { usage: 'Trading research — backtest engine.', accessRoles: INTERNAL },
-  'oshal-backtest-live.js': { usage: 'Trading research — live-window backtest.', accessRoles: INTERNAL },
-  'oshal-gravity.js': { usage: 'Trading research — gravity model.', accessRoles: INTERNAL },
-  'oshal-bars.js': { usage: 'Trading research — bar data.', accessRoles: INTERNAL },
-  'oshal-equity-bars.js': { usage: 'Trading research — equity bar data.', accessRoles: INTERNAL },
-  'oshal-intraday.js': { usage: 'Trading research — intraday data.', accessRoles: INTERNAL },
-  'oshal-algos.js': { usage: 'Trading research — algo library.', accessRoles: INTERNAL },
-  'oshal-pick.js': { usage: 'Trading research — symbol picker.', accessRoles: INTERNAL },
-  'oshal-monitor.js': { usage: 'Trading autopilot watchdog.', accessRoles: INTERNAL },
-  'oshal-optimize.js': { usage: 'Trading research — optimizer.', accessRoles: INTERNAL },
-  'oshal-signal-mine.js': { usage: 'Trading research — signal mining.', accessRoles: INTERNAL },
-  'oshal-signal-label.js': { usage: 'Trading research — signal labeling.', accessRoles: INTERNAL },
-};
+/** Read from source in both tsx and compiled dist runtimes; missing/malformed YAML is an error. */
+function loadToolCatalog(): ToolCatalog {
+  const sourcePath = resolve(__dirname, '../../../src/app/routes/jarvis-tools.yaml');
+  return parseToolCatalog(readFileSync(sourcePath, 'utf8'));
+}
 
 /**
- * @description The AUTO TOOL-FEED: enumerates the mounted OSHAL CLIs (/app/scripts/oshal-*.js) every
- * turn and injects them so Jarvis knows what he can actually do. New CLIs auto-appear (listed by name
- * with a `--help` hint); known ones get rich usage from TOOL_CATALOG. This is why he must shell out to
- * the right tool instead of "searching" for something a tool already covers. ADR-087: catalog entries
- * whose accessRoles exclude 'jarvis' are dropped even when the script exists on disk — the assistant
- * neither sees them nor is told they are runnable.
+ * @description Load YAML on every turn and rank matching semantic hints without removing other valid tools.
+ * Only catalogued, mounted scripts are advertised; YAML cannot widen existing internal access roles.
+ * @param context - Optional request text and current surface; ranking hints only, never authority.
+ * @returns Model tool feed with semantic metadata and existing CLI usage.
  */
-export function buildToolsBlock(): string {
-  let files: string[] = [];
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    files = require('fs').readdirSync('/app/scripts').filter((f: string) => /^oshal-.*\.js$/.test(f)).sort();
-  } catch { /* fall back to the catalog */ }
-  const names = (files.length ? files : Object.keys(TOOL_CATALOG))
-    .filter((f) => roleCanAccess(TOOL_CATALOG[f]?.accessRoles, 'jarvis'));
-  const lines = names.map((f) => TOOL_CATALOG[f]
-    ? `- ${TOOL_CATALOG[f].usage}  → node /app/scripts/${f}`
-    : `- ${f.replace(/^oshal-|\.js$/g, '')}: node /app/scripts/${f} --help`);
+export function buildToolsBlock(context: { message?: string; surface?: string } = {}): string {
+  const catalog = loadToolCatalog();
+  const scriptsPath = existsSync('/app/scripts') ? '/app/scripts' : resolve(__dirname, '../../../scripts');
+  const mounted = new Set(readdirSync(scriptsPath).filter((file) => /^oshal-.*\.js$/.test(file)));
+  const input = ((context.message ?? '') + ' ' + (context.surface ?? '')).slice(0, 16000).toLowerCase();
+  const score = (tool: ToolCatalogEntry): number => (tool.keywords ?? []).filter((word) => input.includes(word.toLowerCase())).length;
+  const tools = catalog.tools.filter((tool) => mounted.has(tool.script) && roleCanAccess(tool.accessRoles, 'jarvis'))
+    .sort((a, b) => score(b) - score(a) || a.script.localeCompare(b.script));
+  const lines = tools.map((tool) => '- ' + tool.usage + '  -> node /app/scripts/' + tool.script
+    + ' | Keywords: ' + tool.keywords!.join(', ') + '. Use when: ' + tool.useWhen + ' Context: ' + tool.context);
   return [
-    'YOUR TOOLS — shell out to these (auto-scoped to the signed-in user via OSHAL_USER_SUB). For a',
-    'request, RUN the matching tool (e.g. an Uber ride → oshal-uber-rides.js). Run a tool with no args',
-    'or --help to learn its usage. NEVER "search the web" for something a tool here already covers.',
-    'These are your ONLY tools — a script not listed here is off-limits even if you can see it.',
+    'YOUR TOOLS: shell out to these (auto-scoped to the signed-in user via OSHAL_USER_SUB).',
+    'Use the request and current surface with keywords and context to select a tool. Keywords are hints, not authorization.',
+    'Run a tool with no args or --help to learn usage. NEVER search the web for something a tool here already covers.',
+    'These are your ONLY shell tools; a script not listed here is off-limits even if you can see it.',
+    'Ask which tool or account the user intends when context leaves multiple plausible choices. Preserve existing confirmation requirements.',
     ...lines,
   ].join('\n');
+}
+
+/**
+ * @description Load YAML semantic hints for browser artifact dispatch, separate from executable CLI tools.
+ * @returns Selection guidance to combine with caller-visible live artifact destinations.
+ */
+export function buildArtifactToolGuidance(): string {
+  const handoff = loadToolCatalog().artifactHandoff;
+  return 'ARTIFACT HANDOFF (browser dispatch, not shell): Keywords: ' + handoff.keywords.join(', ')
+    + '. Use when: ' + handoff.useWhen + ' Context: ' + handoff.context;
 }
 
 /** Detects handoffs whose deliverable is imagery the user expects to SEE, not just read about. */
