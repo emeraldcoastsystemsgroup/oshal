@@ -50,7 +50,10 @@ function exportCommit(repo, sha, scratch, name) {
   const archive = join(scratch, `${name}.tar`);
   mkdirSync(destination);
   command('git', ['archive', '--format=tar', '--output', archive, sha], { cwd: repo });
-  command('tar', ['-xf', archive, '-C', destination]);
+  // Git Bash's GNU tar treats a Windows drive colon as a remote archive. Use Windows'
+  // native tar explicitly so this command behaves identically from PowerShell and Bash.
+  const tar = process.platform === 'win32' ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+  command(tar, ['-xf', archive, '-C', destination]);
   unlinkSync(archive);
   return destination;
 }
@@ -164,6 +167,7 @@ export function checkCompatibility(options = {}) {
       report.cleanupError = error.message;
     }
     report.finishedAt = new Date().toISOString();
+    report.phase = 'finished';
     saveReport(reportFile, report);
   }
   if (report.status !== 'passed') throw new Error(`${report.error ?? report.cleanupError}; report: ${reportFile}`);

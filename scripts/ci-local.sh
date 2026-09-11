@@ -239,7 +239,7 @@ gate_store_compatibility() {
   local store="${OSHAL_STORE_REPO:-$REPO_WIN/../oshal-applications}"
   local store_ref="${OSHAL_STORE_REF:-HEAD}"
   if [ "$SCHEDULED" = "1" ]; then
-    git -C "$store" fetch origin '+refs/heads/main:refs/remotes/origin/main' || return 1
+    timeout 120 git -C "$store" fetch origin '+refs/heads/main:refs/remotes/origin/main' || return 1
     store_ref=origin/main
   fi
   node "$GATE_SRC/scripts/check-store-compatibility.mjs" \
