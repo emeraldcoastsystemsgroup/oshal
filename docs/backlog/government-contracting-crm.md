@@ -1,7 +1,8 @@
 # Government contracting CRM and contract management
 
-Requested 2026-09-11. Status: application implementation and isolated acceptance complete;
-local installation and Jarvis chat integration are being verified. This expands the existing
+Requested 2026-09-11. Status: capture/contract foundation and isolated acceptance complete;
+the full CRM carryover is in progress. The requested application includes the mature CRM's
+interconnected pages and permissions, in addition to its capture pipeline. This expands the existing
 [Capture CRM handover](capture-crm-plugin-open-work.md), with one durable record of the
 relationship and process from opportunity intake through contract closeout.
 
@@ -9,6 +10,14 @@ Use the established Intelligent Sales interaction patterns for boards, record ca
 activities, assignments and follow-ups, adapted to capture and contract delivery. Detailed
 package work belongs in the private application repository. The government-contracting
 website is a view and intake channel over the same system, rather than another source of truth.
+
+The clarified scope includes a separately registered Federal CRM application with its own
+focused `/?app=...` entry and theme, discoverable in the default application overview.
+Preserve contacts/accounts, relationships, activities/calendar, search, saved views, imports,
+reports/targets, documents, communication integrations, settings, administration and delegated
+coverage. Reuse the existing CRM runtime; keep workspace data and settings isolated from
+the original installation. The package's feature matrix and executable evidence are maintained
+in its private repository.
 
 ## Delivery scope
 
@@ -41,12 +50,16 @@ Two users prove different rights through screen, API and Jarvis. Restart/reinsta
 preserves records, repeated import creates no duplicates, and installed tests appear in AI
 Test Lab with accurate runner status.
 
-The private package now implements relationship/capture management and post-award contract
+The deployed foundation implements relationship/capture management and post-award contract
 management over the same durable records. Synthetic HTTP/PostgreSQL and browser cases cover
 reviewed intake, evidence gates, award, delivery, exact ownership, current team membership and
 viewer refusal. Typed tool tests use the actual core registration and execution path; chat
 discovery and authenticated local acceptance remain separate checks. Installation imports
 the permission catalog and registers the package's unit, integration and browser suites.
+Those checks do not establish completion of the expanded multi-page CRM integration.
+That release additionally needs a tested source-to-qualified-lead-to-opportunity-to-proposal-to-contract
+journey, shared record continuity, per-action permission enforcement and the dedicated application
+entry/theme. Existing CRM tests must be inventoried and registered with honest runner prerequisites.
 
 Real-data migration, financial posting and external
 submission/integration require separately scoped, reviewable work orders.

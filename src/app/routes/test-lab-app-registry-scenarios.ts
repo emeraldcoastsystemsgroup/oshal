@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register multi-store discovery and its isolated installation/browser regression suites in the existing AI Test Lab.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Register explicit focused-application entry and host-default regression coverage.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -41,4 +42,12 @@ export const APP_REGISTRY_SCENARIOS: Scenario[] = [{
     { level: 'browser', path: 'tests/unit/multi-store-routes-browser.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'app-loader', label: 'Trusted store discovery', run: registryDiscovery }],
+}, {
+  id: 'focused-application-entry', title: 'Focused application entry', group: 'tool',
+  description: 'Explicit root application links retain the selected application through redirect. Bare-host defaults remain intact and malformed selectors cannot supply a redirect destination.',
+  regressionTests: [{ level: 'unit', path: 'tests/unit/host-app-map.spec.ts' }],
+  steps: [{ id: 'runner', app: 'app-loader', label: 'Focused entry regressions', run: async () => ({
+    app: 'app-loader', label: 'Focused entry regressions', state: 'degraded',
+    detail: 'Run npx vitest run tests/unit/host-app-map.spec.ts locally. This Lab step does not execute host commands or change application access.',
+  }) }],
 }];

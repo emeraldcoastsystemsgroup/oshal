@@ -8,6 +8,7 @@
  * 172 | maintainer@emeraldcoastsystemsgroup.com | Mount exact user roster registration and external business membership administration.
  * 173 | maintainer@emeraldcoastsystemsgroup.com | Bind typed package tools before activation under the current authorization runtime.
  * 174 | maintainer@emeraldcoastsystemsgroup.com | Mount user-bound Jarvis application proposals and transient result controls.
+ * 175 | maintainer@emeraldcoastsystemsgroup.com | Preserve validated explicit application selection when root redirects into the cockpit.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — Express server entry point
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added static file serving for UI assets
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed conflicting manual auth routes and consolidated on express-openid-connect
@@ -966,6 +967,7 @@ function createApp(): express.Application {
       process.env.HOST_APP_MAP,
       req.hostname,
       process.env.LANDING_PATH || '/cockpit/',
+      req.query.app,
     );
     // First-run gate: every user sees onboarding once, and a working LLM is mandatory.
     if (await needsOnboarding(req)) {
