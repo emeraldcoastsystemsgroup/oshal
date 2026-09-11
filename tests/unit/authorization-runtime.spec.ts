@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise authorization through real package loading, activation and mounted HTTP routes.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove remote execution generations retract during reload and disable.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Preserve strict business identity assertions when refreshed actors contain explicit empty management metadata.
  */
 /** Real temporary package activation and Express dispatch; persistence is isolated, policy and lifecycle are real. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -185,7 +186,8 @@ describe('Application authorization runtime integration', () => {
     expect(observations.map(row => row.phase)).toEqual(['adapter', 'handler']);
     for (const row of observations) {
       expect(row.identity).toEqual({ sub: alice.sub, principalIssuer: ISSUER, isOperator: false });
-      expect(row.actor).toEqual(alice);
+      expect({ ...row.actor, managementScopes: row.actor?.managementScopes ?? [], allowedPermissions: row.actor?.allowedPermissions })
+        .toEqual({ ...alice, managementScopes: [], allowedPermissions: undefined });
     }
     expect(response.body.actor.sub).toBe(alice.sub);
   });
