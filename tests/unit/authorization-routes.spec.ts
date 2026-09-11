@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify authorization HTTP and tool parity and actual Test Lab registration.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep explicit live browser acceptance separate from isolated runner parity and honest about pending execution.
  */
 /** Real HTTP authorization adapter proofs using the actual policy service and isolated repository. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -110,6 +111,13 @@ describe('Access Administration HTTP authority', () => {
     expect((await scenario.steps[0].run('session=admin', [])).state).toBe('pass');
     expect((await scenario.steps[0].run('session=alice', [])).state).toBe('degraded');
     expect(await fixture.store.read()).toEqual(state);
+    const live = AUTHORIZATION_SCENARIOS.find(item => item.id === 'authorization-localhost-live')!;
+    expect(SCENARIOS.find(item => item.id === live.id)).toBe(live);
+    expect(live.regressionTests).toEqual([{ level: 'browser', path: 'tests/live/authorization-management.live.spec.ts' }]);
+    expect(existsSync(resolve(live.regressionTests![0].path))).toBe(true);
+    expect(command).not.toContain(live.regressionTests![0].path);
+    const pending = await live.steps[0].run('', {});
+    expect(pending.state).toBe('degraded'); expect(pending.detail).toContain('No browser tests ran');
   });
 
   it('uses the real typed tool for interactive requests with identical identity, CSRF and preview/apply authority', async () => {

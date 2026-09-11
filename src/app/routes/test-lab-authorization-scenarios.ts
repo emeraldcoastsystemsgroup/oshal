@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register authorization boundary, shared-service and browser regression tests with a read-only live catalog probe.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register verified Google/Microsoft/local principal adoption and account continuity coverage.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register existing-account administration, root credential protection and browser controls.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Register real authenticated localhost browser acceptance separately from the fixed isolated regression runner.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -39,6 +40,7 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
   description: 'Read the current caller-visible authorization catalog. Isolated HTTP and browser suites prove identity, scope, CSRF, preview/apply and revocation behavior.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/authorization-policy.spec.ts' },
+    { level: 'unit', path: 'tests/unit/bot-db-least-privilege.spec.ts' },
     { level: 'unit', path: 'tests/unit/authorization-contract-files.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-postgres-integration.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-runtime.spec.ts' },
@@ -61,4 +63,12 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'browser', path: 'tests/unit/authorization-audit-browser.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'authorization', label: 'Caller-visible access catalog', run: authorizationCatalog }],
+}, {
+  id: 'authorization-localhost-live', title: 'Localhost Users and Access acceptance', group: 'tool',
+  description: 'Existing authenticated operator browser on localhost:35457: deployed build, Users, Access, effective rights, audit and catalog probe. Run explicitly through the no-prune CDP harness; no account or grant changes.',
+  regressionTests: [{ level: 'browser', path: 'tests/live/authorization-management.live.spec.ts' }],
+  steps: [{ id: 'external-browser', app: 'authorization', label: 'Authenticated localhost browser required', run: async () => ({
+    app: 'authorization', label: 'Authenticated localhost browser required', state: 'degraded',
+    detail: 'Pending: run tests/live/authorization-management.live.spec.ts with playwright.live.config.ts, OSHAL_E2E_BASE_URL=http://localhost:35457 and an existing authenticated CDP browser. No browser tests ran from this Lab request.',
+  }) }],
 }];

@@ -28,6 +28,7 @@
 # 21 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: TRADING_EVENTS_CRON / TRADING_EVENTS_FULL_TICK_MINUTES / TRADING_DATED_REGULAR_ET / TRADING_MARKET_HOLIDAYS (ADR-136 D4 follow-up). Compose does not forward .env, so without an anchor entry a host value never reaches the api and the code silently runs its defaults.
 # 22 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: TRADING_COTP_URL / TRADING_COTP_REMINDER_HOUR_ET / TRADING_COTP_REMINDER_DAYS / TRADING_EVENT_ALERT_TOPIC / TRADING_EVENT_NOTIFY_TIMEOUT_MS passthrough for the ADR-136 D6 COTP reminders + S-1 alert (trading-event-reminders.ts, trading-event-alerts.ts). Blank = code default; the operator sets the exact Schwab IPO-center page once known, and the timeout is the ceiling a wedged Gmail/Twilio/Telegram send may cost a leg tick. Guard: tests/unit/trading-event-reminders.spec.ts (compose pin).
 # 23 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: the ADR-136 D5 earnings-rule knobs (TRADING_EARNINGS_RULES off by default plus its window/reaction/tranche/attempt bounds). Without an anchor entry a host value never reaches the api and the feature silently runs its defaults.
+# 24 | maintainer@emeraldcoastsystemsgroup.com   | Supply the API bootstrap provisioner with the same least-privilege bot DSN as workers, preserving separate app and owner credentials.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -909,8 +910,10 @@ services:
       # in .env to restore the legacy single-role boot.
       OSHAL_APP_ROLE_BOOTSTRAP: ${OSHAL_APP_ROLE_BOOTSTRAP:-true}
       BOOTSTRAP_DATABASE_URL: ${BOOTSTRAP_DATABASE_URL:-postgresql://oshal:oshal@oshal-db:5432/oshal}
-      # A1.2 least-privilege default (api service ONLY — worker bots keep the *bot-env
-      # anchor's superuser default until per-bot GUC wiring lands, ADR-076 Phase 2):
+      # Provision both runtime roles using the exact DSN workers receive. This is
+      # a bootstrap input; the API's own pool continues to use DATABASE_URL below.
+      BOT_DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
+      # A1.2 least-privilege API default; workers use the separate oshal_bot role.
       # a FRESH checkout now runs the server as oshal_app so RLS enforces out of the box.
       # 'oshal-app-dev' is the committed DEV password (same posture as the committed
       # oshal:oshal superuser dev creds) — the flag-ON boot sets oshal_app's password

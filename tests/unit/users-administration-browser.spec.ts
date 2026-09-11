@@ -5,14 +5,20 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise real Users invitations and account suspension plus root and nonadministrator UI fences in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Bound browser case registration while retaining the suite and browser/database hook scope.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Verify current operator access independently from root ownership and shared-theme contrast without Docker.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { LocalAccountFixture, fixturePassword, fixtureServiceSecret } from '../fixtures/local-account-administration';
 import { refreshPrivilegedCache } from '@/features/swarm-roles';
+import express from 'express';
+import { resolve } from 'node:path';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 const fixture = new LocalAccountFixture();
 let browser: Browser, context: BrowserContext, page: Page;
+function registerDatabaseHooks() {
 beforeAll(async () => {
   vi.stubEnv('SESSION_SECRET', 'isolated-session-signing-secret-for-users-browser'); vi.stubEnv('SWARM_SERVICE_SECRET', fixtureServiceSecret);
   vi.stubEnv('OSHAL_OPERATOR_SUBS', ''); vi.stubEnv('OSHAL_OPERATOR_EMAILS', '');
@@ -27,6 +33,7 @@ beforeEach(async () => {
 });
 afterEach(async () => { await context?.close(); });
 afterAll(async () => { await browser?.close(); await fixture.close(); vi.unstubAllEnvs(); }, 30_000);
+}
 async function openUsers() {
   await page.goto(fixture.base + '/users');
   await page.locator('#accountsCard').waitFor({ state: 'visible' });
@@ -101,6 +108,102 @@ function registerAdministrationRefusalCases() {
 }
 
 describe('Users account administration browser', () => {
+  registerDatabaseHooks();
   registerAccountWorkflowCases();
   registerAdministrationRefusalCases();
+});
+
+function statusResponse() {
+  return { me: { sub: 'existing-operator', role: 'user', isOperator: true, breakGlassOnly: true, isRoot: false },
+    status: { rootClaimed: false, callerIsRoot: false, callerIsOperator: true, callerBreakGlassOnly: true,
+      rolesLoaded: true, privilegedCount: 0 } };
+}
+let statusState = statusResponse();
+let statusServer: http.Server, statusBase: string, statusBrowser: Browser, statusContext: BrowserContext, statusPage: Page;
+const statusWrites: string[] = [];
+function registerStatusHooks() {
+  beforeAll(async () => {
+    const app = express();
+    app.use((req, _res, next) => { if (req.method !== 'GET') statusWrites.push(req.path); next(); });
+    app.get('/users', (_req, res) => res.sendFile(resolve('src/pages/users/index.html')));
+    app.get('/api/swarm/roles/me', (_req, res) => res.json(statusState.me));
+    app.get('/api/swarm/roles/status', (_req, res) => res.json(statusState.status));
+    app.get('/api/swarm/roles', (_req, res) => res.json({ roles: [] }));
+    app.get('/api/local-auth/users', (_req, res) => res.status(404).json({ error: 'oidc_mode' }));
+    app.get('/api/authorization/catalog', (_req, res) => res.json({ users: [] }));
+    app.use('/shared/ui/css', express.static(resolve('src/shared/ui/css')));
+    app.use('/cockpit/css/themes', express.static(resolve('src/pages/cockpit/css/themes')));
+    statusServer = http.createServer(app);
+    await new Promise<void>(done => statusServer.listen(0, '127.0.0.1', done));
+    statusBase = `http://127.0.0.1:${(statusServer.address() as AddressInfo).port}`;
+    statusBrowser = await chromium.launch({ headless: true });
+  });
+  beforeEach(async () => {
+    statusState = statusResponse(); statusWrites.length = 0; statusContext = await statusBrowser.newContext();
+    await statusContext.route('**/*', route => new URL(route.request().url()).origin === statusBase ? route.continue() : route.abort());
+    statusPage = await statusContext.newPage();
+  });
+  afterEach(async () => { expect(statusWrites).toEqual([]); await statusContext?.close(); });
+  afterAll(async () => {
+    await statusBrowser?.close(); statusServer?.closeAllConnections();
+    if (statusServer) await new Promise<void>(done => statusServer.close(() => done()));
+  });
+}
+async function openStatus() {
+  await statusPage.goto(statusBase + '/users');
+  await expect.poll(() => statusPage.locator('#currentAccessBody').textContent()).not.toContain('Loading');
+}
+function registerStatusCases() {
+  it('shows environment-backed administrator access with unclaimed root and no saved roles', async () => {
+    await openStatus();
+    expect(await statusPage.locator('#currentAccessBody').textContent()).toContain('You have swarm administrator access.');
+    expect(await statusPage.locator('#currentAccessBody').textContent()).toContain('configured operator allowlist');
+    expect(await statusPage.locator('#rootPill').textContent()).toBe('unclaimed');
+    expect(await statusPage.locator('#claimBtn').isVisible()).toBe(true);
+    expect(await statusPage.locator('#rootBody').textContent()).toContain('separate from your current access');
+    await expect.poll(() => statusPage.locator('#rolesBody').textContent()).toContain('No saved roles');
+  });
+  it('keeps environment-backed administrator status when another identity owns root', async () => {
+    statusState.status.rootClaimed = true; await openStatus();
+    expect(await statusPage.locator('#rootPill').textContent()).toBe('claimed');
+    expect(await statusPage.locator('#currentAccessBody').textContent()).toContain('You have swarm administrator access.');
+    expect(await statusPage.locator('#rootBody').textContent()).not.toContain('not an administrator');
+    expect(await statusPage.locator('#claimBtn').count()).toBe(0);
+    expect(await statusPage.locator('#grantForm').isVisible()).toBe(true);
+  });
+  it('identifies a saved admin role without claiming that unassigned root implies environment access', async () => {
+    statusState.me.role = 'admin'; statusState.status.callerBreakGlassOnly = false; await openStatus();
+    expect(await statusPage.locator('#currentAccessBody').textContent()).toContain('saved admin role');
+    expect(await statusPage.locator('#currentAccessBody').textContent()).not.toContain('environment settings');
+    expect(await statusPage.locator('#rootBody').textContent()).not.toContain('depends on');
+  });
+  it('shows ordinary access without root-claim or role-administration controls', async () => {
+    statusState.status.callerIsOperator = false; statusState.status.callerBreakGlassOnly = false; await openStatus();
+    expect(await statusPage.locator('#currentAccessBody').textContent()).toContain('standard user access');
+    expect(await statusPage.locator('#claimBtn').count()).toBe(0);
+    expect(await statusPage.locator('#grantForm').isHidden()).toBe(true);
+  });
+}
+function registerContrastCases() {
+  it.each(['midnight', 'daylight'])('keeps heading and card copy readable with the actual %s theme', async theme => {
+    await statusPage.addInitScript(value => localStorage.setItem('cockpit-theme', value), theme); await openStatus();
+    const ratios = await statusPage.evaluate(() => {
+      const luminance = (color: string) => {
+        const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(value => value / 255);
+        const channels = rgb.map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4);
+        return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+      };
+      const ratio = (foreground: string, background: string) => {
+        const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+        return (values[0] + .05) / (values[1] + .05);
+      };
+      const color = (selector: string) => getComputedStyle(document.querySelector(selector)!);
+      return [ratio(color('h1').color, color('body').backgroundColor),
+        ratio(color('#currentAccessBody .sub').color, color('#currentAccessCard').backgroundColor)];
+    });
+    for (const ratio of ratios) expect(ratio).toBeGreaterThanOrEqual(4.5);
+  });
+}
+describe('Users authority status browser', () => {
+  registerStatusHooks(); registerStatusCases(); registerContrastCases();
 });

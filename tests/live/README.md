@@ -56,6 +56,33 @@ and the suite will reuse its session — the launcher just automates that.
   assertions report which leg of a flow is/ isn't wired instead of dying on the
   first mismatch.
 
+## Localhost Users and Access acceptance
+
+After the real deployment is ready, use the existing operator session signed in on
+`http://localhost:35457` in the debuggable browser. A hosted-domain login does not
+authenticate this origin. This focused spec uses `_attach-noprune.ts`; it opens its
+own tab and leaves existing tabs alone. It never enables mock authentication.
+
+```powershell
+$env:OSHAL_E2E_BASE_URL='http://localhost:35457'
+$env:OSHAL_E2E_CDP_URL='http://localhost:9222'
+# Optional: require the exact GIT_SHA reported by the newly deployed image.
+# $env:OSHAL_E2E_EXPECTED_COMMIT='<full deployed commit>'
+npx playwright test --config playwright.live.config.ts tests/live/authorization-management.live.spec.ts
+```
+
+The spec checks the published build, current operator/root state, loaded Users and
+Access pages, application source revisions, current effective rights, bounded audit
+reads and the Lab's catalog probe. Missing authentication or unavailable modules
+fail; an empty application catalog is reported without claiming an app read.
+Account/grant writes and other origins are blocked. Screenshots, traces and video
+are disabled; the attached report contains booleans, counts and build/app metadata.
+
+The Lab registers this file separately as `authorization-localhost-live`. Its Lab
+button reports pending because HTTP cannot run the authenticated browser. The
+`authorization-management` button runs only its read-only catalog probe; the fixed
+`npm run test:authorization` command remains the isolated regression suite list.
+
 ## Assisted provider onboarding
 
 For partner app registration, use the same debuggable Chrome profile but keep

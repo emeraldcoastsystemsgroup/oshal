@@ -15,6 +15,13 @@
 
   Every value is HTML-escaped. A newly created one-time invitation is shown only to its administrator; no existing passwords or factor secrets are returned.
 -->
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | Separate current administrator access from root ownership and honor shared theme contrast.
+-->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
 <head>
@@ -32,11 +39,11 @@
     :root {
       --bg: var(--bg-primary);
       --panel: var(--bg-secondary);
-      --card: #ffffff;
-      --ink: var(--bg-primary);
+      --card: var(--bg-card);
+      --ink: var(--text-primary);
       --ink-muted: var(--text-secondary);
-      --line: rgba(21, 27, 34, 0.10);
-      --line-dark: rgba(21, 27, 34, 0.15);
+      --line: var(--border-color);
+      --line-dark: var(--border-color-hover);
       --teal: var(--accent-primary);
       --amber: var(--status-warning);
       --green: var(--status-success);
@@ -55,6 +62,7 @@
     .section-kicker { color: var(--amber); font-weight: 850; text-transform: uppercase; letter-spacing: .09em; font-size: .68rem; margin-bottom: 6px; }
     h1 { font-size: 1.6rem; margin: 0 0 8px; letter-spacing: -0.01em; }
     h2 { font-size: 1.05rem; margin: 0; }
+    a { color: var(--accent-primary); }
     .sub { color: var(--ink-muted); line-height: 1.55; margin: 0; }
 
     .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 18px; }
@@ -75,10 +83,10 @@
     .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
     .pill.root { background: var(--teal); color: #fff; }
     .pill.admin { background: color-mix(in srgb, var(--teal) 18%, transparent); color: var(--teal); }
-    .pill.user { background: rgba(21,27,34,.08); color: var(--ink-muted); }
-    .pill.warn { background: color-mix(in srgb, var(--amber) 22%, transparent); color: #7a5200; }
+    .pill.user { background: var(--bg-tertiary); color: var(--ink-muted); }
+    .pill.warn { background: color-mix(in srgb, var(--amber) 22%, transparent); color: var(--ink); }
 
-    button { font: inherit; font-weight: 650; padding: 6px 13px; border-radius: 7px; border: 1px solid var(--line-dark); background: #fff; color: var(--ink); cursor: pointer; }
+    button { font: inherit; font-weight: 650; padding: 6px 13px; border-radius: 7px; border: 1px solid var(--line-dark); background: var(--bg-tertiary); color: var(--ink); cursor: pointer; }
     button:hover:not(:disabled) { border-color: var(--teal); color: var(--teal); }
     button:disabled { opacity: .45; cursor: not-allowed; }
     button.primary { background: var(--teal); border-color: var(--teal); color: #fff; }
@@ -86,7 +94,7 @@
     button.danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
     .row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 
-    input, select { font: inherit; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line-dark); background: #fff; color: var(--ink); }
+    input, select { font: inherit; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line-dark); background: var(--bg-primary); color: var(--ink); }
     input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--teal) 40%, transparent); outline-offset: 1px; }
     .grant-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .grant-form input { flex: 1 1 200px; min-width: 0; }
@@ -106,11 +114,16 @@
       <h1>Swarm users &amp; roles</h1>
       <p><a href="/access">Application access administration</a></p>
       <p class="sub">Who may administer this swarm. <strong>Swarm root</strong> is one identity that
-        owns the swarm; <strong>admins</strong> may administer it; everyone else is a user. Roles are
-        what the platform&rsquo;s operator gate actually reads.</p>
+        owns the swarm. Administrator access can come from saved roles or the deployment&rsquo;s
+        configured operator allowlist. Application permissions are managed separately.</p>
     </div>
 
     <div id="msg" class="msg"></div>
+
+    <div class="card" id="currentAccessCard">
+      <div class="card-head"><h2>Your access</h2><span id="currentAccessPill"></span></div>
+      <div id="currentAccessBody"><p class="sub">Loading&hellip;</p></div>
+    </div>
 
     <!-- Root — status, claim, transfer -->
     <div class="card root-banner" id="rootBanner">
@@ -212,83 +225,85 @@
 
     var state = { me: null, status: null, roles: [] };
 
+    function renderCurrentAccess() {
+      var st = state.status || {}, me = state.me || {};
+      var operator = st.callerIsOperator === true;
+      document.getElementById('currentAccessPill').innerHTML = operator
+        ? '<span class="pill admin">administrator</span>' : '<span class="pill user">standard user</span>';
+      var message = operator ? 'You have swarm administrator access.' : 'You have standard user access.';
+      var source = 'A swarm administrator manages swarm roles. Application permissions are managed separately.';
+      if (operator && st.callerBreakGlassOnly) {
+        source = 'Your access comes from this deployment&rsquo;s configured operator allowlist (environment settings). ' +
+          'A saved role is not required for your current administrator access.';
+      } else if (operator) {
+        source = me.role === 'root' || me.role === 'admin'
+          ? 'Your access comes from your saved <strong>' + esc(me.role) + '</strong> role.'
+          : 'Your current identity matches the swarm&rsquo;s saved administrator roles.';
+      }
+      document.getElementById('currentAccessBody').innerHTML = '<p><strong>' + message + '</strong></p>' +
+        '<p class="sub">' + source + '</p>';
+    }
+
+    function bindRootClaim() {
+      document.getElementById('claimBtn').addEventListener('click', async function () {
+        if (!confirm('Claim swarm root for your account?\n\nYou become the one identity that owns this swarm. You can transfer it later, but it cannot be revoked.')) return;
+        this.disabled = true;
+        try {
+          await call('POST', '/api/swarm/roles/claim-root', {});
+          show('ok', 'You now hold swarm root.');
+          await load();
+        } catch (e) { show('err', e.message); this.disabled = false; }
+      });
+    }
+
+    function bindRootTransfer() {
+      document.getElementById('transferForm').addEventListener('submit', async function (ev) {
+        ev.preventDefault();
+        var to = document.getElementById('transferSub').value.trim();
+        if (!to) return;
+        if (!confirm('Transfer swarm root to:\n\n' + to + '\n\nYou will be demoted to admin. This cannot be undone from your side.')) return;
+        try {
+          await call('POST', '/api/swarm/roles/transfer-root', { toSub: to });
+          show('ok', 'Swarm root transferred.');
+          await load();
+        } catch (e) { show('err', e.message); }
+      });
+    }
+
     function renderRoot() {
-      var banner = document.getElementById('rootBanner');
-      var pill = document.getElementById('rootPill');
-      var body = document.getElementById('rootBody');
-      var st = state.status || {};
-      var me = state.me || {};
-
+      var banner = document.getElementById('rootBanner'), pill = document.getElementById('rootPill');
+      var body = document.getElementById('rootBody'), st = state.status || {}, me = state.me || {};
       banner.className = 'card root-banner';
-
       if (!st.rootClaimed) {
         banner.classList.add('unclaimed');
         pill.innerHTML = '<span class="pill warn">unclaimed</span>';
-        // Existing operator recovery is the only root claim offered; fresh setup requires installer proof.
         var claimable = st.callerIsOperator === true;
-        body.innerHTML =
-          '<p class="sub">No identity holds swarm root. Administration currently depends on the ' +
-          '<code>OSHAL_OPERATOR_SUBS</code> / <code>OSHAL_OPERATOR_EMAILS</code> break-glass allowlist ' +
-          'in this deployment&rsquo;s environment file &mdash; which nobody can change from a browser.</p>' +
-          (claimable
+        body.innerHTML = '<p class="sub">No identity has been assigned the swarm root ownership role. ' +
+          'This is separate from your current access shown above.</p>' + (claimable
             ? '<p style="margin:14px 0 0"><button class="primary" id="claimBtn" type="button">Claim swarm root</button></p>'
             : '<p class="hint">An existing operator can complete root recovery. Contact a swarm administrator.</p>');
-        if (claimable) {
-          document.getElementById('claimBtn').addEventListener('click', async function () {
-            if (!confirm('Claim swarm root for your account?\n\nYou become the one identity that owns this swarm. You can transfer it later, but it cannot be revoked.')) return;
-            this.disabled = true;
-            try {
-              await call('POST', '/api/swarm/roles/claim-root', {});
-              show('ok', 'You now hold swarm root.');
-              await load();
-            } catch (e) { show('err', e.message); this.disabled = false; }
-          });
-        }
+        if (claimable) bindRootClaim();
         return;
       }
-
       if (st.callerIsRoot) {
         pill.innerHTML = '<span class="pill root">you are root</span>';
-        body.innerHTML =
-          '<p class="sub">You hold swarm root. <span class="root-id">' + esc(me.sub || '') + '</span></p>' +
+        body.innerHTML = '<p class="sub">You hold swarm root. <span class="root-id">' + esc(me.sub || '') + '</span></p>' +
           '<form class="grant-form" id="transferForm" style="margin-top:14px">' +
           '<input id="transferSub" type="text" placeholder="Transfer root to subject (sub)" aria-label="Transfer root to subject" required />' +
           '<button class="danger" type="submit">Transfer root</button></form>' +
           '<p class="hint">Transferring hands the swarm to another identity. You are demoted to ' +
           '<strong>admin</strong>, not removed &mdash; you keep administrative access to the machine you still run.</p>';
-        document.getElementById('transferForm').addEventListener('submit', async function (ev) {
-          ev.preventDefault();
-          var to = document.getElementById('transferSub').value.trim();
-          if (!to) return;
-          if (!confirm('Transfer swarm root to:\n\n' + to + '\n\nYou will be demoted to admin. This cannot be undone from your side.')) return;
-          try {
-            await call('POST', '/api/swarm/roles/transfer-root', { toSub: to });
-            show('ok', 'Swarm root transferred.');
-            await load();
-          } catch (e) { show('err', e.message); }
-        });
+        bindRootTransfer();
         return;
       }
-
       pill.innerHTML = '<span class="pill admin">claimed</span>';
-      body.innerHTML = '<p class="sub">Swarm root is held by another identity. ' +
-        (me.role === 'admin' ? 'You are an <strong>admin</strong> and may manage roles and applications.'
-                             : 'You are not an administrator of this swarm.') + '</p>';
-
-      // A break-glass-only operator is privileged by env var and has no role row. Say so — it is
-      // the exact state ADR-148 exists to end, and nothing else would ever surface it.
-      if (st.callerBreakGlassOnly) {
-        banner.classList.add('breakglass');
-        body.innerHTML += '<p class="hint"><strong>Your access is break-glass only.</strong> It comes ' +
-          'from the environment allowlist, not from a role on this swarm. Ask the current root to grant ' +
-          'you <code>admin</code> so your access survives a change to that file.</p>';
-      }
+      body.innerHTML = '<p class="sub">Swarm root is held by another identity. Your current access is shown above.</p>';
     }
 
     function renderRoles() {
       var tbody = document.getElementById('rolesBody');
       if (!state.roles.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty">No roles assigned yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">No saved roles assigned yet. Configured operator access is shown above.</td></tr>';
         return;
       }
       var meSub = (state.me && state.me.sub) || '';
@@ -406,6 +421,7 @@
         show('err', 'Could not read your access: ' + e.message);
         return;
       }
+      renderCurrentAccess();
       renderRoot();
 
       if (!state.status.callerIsOperator) {
