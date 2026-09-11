@@ -4,11 +4,28 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify deployed localhost Users, Access and Lab through the existing authenticated browser without account or grant changes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Require an explicit loopback or HTTPS installation origin and exact full deployed commit before attaching to the existing browser.
  */
 import { test, expect } from './_attach-noprune';
 import type { Page } from '@playwright/test';
 
-const ORIGIN = 'http://localhost:35457';
+function acceptanceTarget(): { origin: string; commit: string } {
+  const configured = process.env.OSHAL_E2E_BASE_URL;
+  if (!configured) throw new Error('Set OSHAL_E2E_BASE_URL explicitly to the installation origin; this acceptance has no default.');
+  const url = new URL(configured);
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if ((configured !== url.origin && configured !== url.origin + '/') || url.username || url.password
+    || (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))) {
+    throw new Error('OSHAL_E2E_BASE_URL must be an exact HTTPS origin or HTTP localhost/127.0.0.1/[::1] origin, without credentials, path, query or fragment.');
+  }
+  const commit = process.env.OSHAL_E2E_EXPECTED_COMMIT;
+  if (!commit || !/^[a-f0-9]{40}$/.test(commit)) {
+    throw new Error('Set OSHAL_E2E_EXPECTED_COMMIT to the exact full 40-character lowercase deployed GIT_SHA.');
+  }
+  return { origin: url.origin, commit };
+}
+
+const { origin: ORIGIN, commit: EXPECTED_COMMIT } = acceptanceTarget();
 const LIVE_PATH = 'tests/live/authorization-management.live.spec.ts';
 test.use({ screenshot: 'off', trace: 'off', video: 'off' });
 
@@ -30,17 +47,16 @@ async function readJson<T>(page: Page, path: string, project: (body: any) => T):
     const result = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store', redirect: 'manual' });
     return { status: result.status, json: await result.json().catch(() => null) };
   }, path);
-  expect(response.status, `${path}: authenticated localhost operator session and deployed module are required`).toBe(200);
+  expect(response.status, `${path}: an authenticated operator session on the explicit target origin and deployed module are required`).toBe(200);
   return project(response.json);
 }
 
 async function inspectBuild(page: Page) {
   const response = await page.goto(ORIGIN + '/health', { waitUntil: 'domcontentloaded' });
-  expect(response?.status(), 'The selected localhost deployment must be running').toBe(200);
+  expect(response?.status(), 'The explicitly selected installation must be running').toBe(200);
   const build = await readJson(page, '/api/version', body => ({ version: body?.version, commit: body?.commit }));
   expect(build.version, 'Deployed package version is required').toMatch(/^\d+\.\d+\.\d+/);
-  expect(build.commit, 'Deployed image must publish its GIT_SHA build identity').toMatch(/^[a-f0-9]{7,40}$/i);
-  if (process.env.OSHAL_E2E_EXPECTED_COMMIT) expect(build.commit).toBe(process.env.OSHAL_E2E_EXPECTED_COMMIT);
+  expect(build.commit, 'The selected origin must serve the exact expected deployed GIT_SHA').toBe(EXPECTED_COMMIT);
   return build;
 }
 
@@ -49,7 +65,7 @@ async function inspectUsers(page: Page) {
     root: body?.isRoot, breakGlass: body?.breakGlassOnly, role: body?.role }));
   const status = await readJson(page, '/api/swarm/roles/status', body => ({ claimed: body?.rootClaimed,
     operator: body?.callerIsOperator, root: body?.callerIsRoot, breakGlass: body?.callerBreakGlassOnly, loaded: body?.rolesLoaded }));
-  expect(me.operator, 'Sign in on localhost as the existing operator; no bootstrap or impersonation is performed').toBe(true);
+  expect(me.operator, 'Sign in on the explicit target origin as the existing operator; no bootstrap or impersonation is performed').toBe(true);
   expect(status.operator).toBe(me.operator); expect(status.root).toBe(me.root);
   expect(status.breakGlass).toBe(me.breakGlass); expect(status.loaded).toBe(true);
   expect(typeof status.claimed).toBe('boolean'); expect(typeof me.root).toBe('boolean');
@@ -121,8 +137,7 @@ async function inspectLab(page: Page): Promise<void> {
   expect(result.results).toEqual([{ id: 'authorization-management', state: 'pass' }]);
 }
 
-test('existing localhost operator can read deployed Users, Access and registered authorization probe', async ({ page }, info) => {
-  expect(process.env.OSHAL_E2E_BASE_URL, 'Explicitly target this localhost acceptance deployment').toBe(ORIGIN);
+test('existing operator can read Users, Access and registered authorization probe on the explicit installation build', async ({ page }, info) => {
   test.setTimeout(120_000);
   const blocked: string[] = []; let pageErrors = 0;
   page.on('pageerror', () => { pageErrors += 1; }); await restrictRequests(page, blocked);
@@ -130,6 +145,6 @@ test('existing localhost operator can read deployed Users, Access and registered
   await inspectLab(page);
   expect(blocked, 'The read-only acceptance must not submit account/grant changes or contact another origin').toEqual([]);
   expect(pageErrors, 'Users and Access must finish loading without uncaught browser errors').toBe(0);
-  await info.attach('localhost-uam-summary', { contentType: 'application/json',
+  await info.attach('installation-uam-summary', { contentType: 'application/json',
     body: JSON.stringify({ origin: ORIGIN, build, users, access, lab: 'pass', accountOrGrantWrites: 0 }) });
 });

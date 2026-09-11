@@ -3,6 +3,7 @@
 -- SEQ                 | AUTHOR                      | DESCRIPTION
 -- -----------------------------------------------------------------------------
 -- 1 | maintainer@emeraldcoastsystemsgroup.com | Converge superuser-created runtime role ADMIN membership without regranting it from managed non-superuser creators.
+-- 2 | maintainer@emeraldcoastsystemsgroup.com | Reset legacy app table and sequence default grants before establishing the exact runtime privilege allowlist.
 -- ===========================================================================
 -- app-role-provisioning.sql  (ADR-076)
 --
@@ -177,9 +178,9 @@ $$;
 -- Future migration-owned objects. Without FOR ROLE this correctly targets
 -- the connected bootstrap role on local Postgres and DigitalOcean alike.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC, oshal_bot;
+  REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC, oshal_bot, oshal_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC, oshal_bot;
+  REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC, oshal_bot, oshal_app;
 ALTER DEFAULT PRIVILEGES
   REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
