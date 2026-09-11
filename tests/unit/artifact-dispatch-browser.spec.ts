@@ -49,7 +49,7 @@ afterAll(async () => {
   await new Promise<void>(resolve => server?.close(() => resolve()));
   unregisterAppArtifactActions('dispatch-proof');
   unregisterAppArtifactActions('jarvis-proof');
-});
+}, 30000);
 
 describe('live browser artifact handoff', () => {
   it('reuses the owner handle for navigation and ignores supplied destination URLs', async () => {
@@ -111,6 +111,7 @@ describe('live browser artifact handoff', () => {
     expect(await page.locator('dialog').count()).toBe(1);
     await page.getByRole('button', { name: 'Test files', exact: true }).click();
     await page.getByRole('button', { name: 'Selected image.png', exact: true }).click();
+    await page.locator('#selectedArtifactName', { hasText: 'Selected image.png' }).waitFor({ state: 'visible' });
     expect(await page.locator('#selectedArtifactName').textContent()).toBe('Selected image.png');
     await page.locator('#typein').fill('Open this in the test app');
     await page.locator('#typer button').click();
