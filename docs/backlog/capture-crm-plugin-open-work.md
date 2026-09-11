@@ -1,5 +1,10 @@
 # Capture CRM — swarm-app plugin (OPEN WORK / handover)
 
+Historical handover. The current private application replaces the external board with a native
+CRM surface and durable relationship, pursuit, contract and delivery records. Follow the
+[current delivery and acceptance record](government-contracting-crm.md). The deployment and
+file-path statements below describe the original handover, not the current installation.
+
 **Status:** beta, loaded & integration-verified on the local stack · **paused 2026-06-01** · resume from "Next session" below.
 
 > **Re-baseline 2026-07-19:** the ⚠️ blocker below is RESOLVED — `federal-capture` is a live,

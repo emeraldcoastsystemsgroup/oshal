@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register isolated nightly and first-run suites with honest local-runner prerequisites and a read-only progress probe.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register signed remote authorization and exact-principal result regressions with a fixed isolated runner.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Register package tool activation, current authorization and execution boundary tests.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register bot initialization, specialist context and briefing behavior suites with read-only discovery and explicit runner prerequisites.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -89,6 +90,14 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
   steps: [{ id: 'runner', app: 'test-lab', label: 'Specialist fixture runner', run: async () => ({
     app: 'test-lab', label: 'Specialist fixture runner', state: 'degraded',
     detail: 'Run npm run test:specialist-context locally. This step does not query application records or invoke a model. No tests ran from this step.',
+  }) }],
+}, {
+  id: 'authorized-package-tools', title: 'Authorized application tools', group: 'tool',
+  description: 'Declared handlers register atomically and execute with current caller permissions. Isolated fixtures verify lifecycle, tenant selection, revocation and approval boundaries.',
+  regressionTests: [{ level: 'integration', path: 'tests/unit/package-tools.spec.ts' }],
+  steps: [{ id: 'runner', app: 'test-lab', label: 'Package tool fixtures', run: async () => ({
+    app: 'test-lab', label: 'Package tool fixtures', state: 'degraded',
+    detail: 'Run npm run test:package-tools locally. The browser does not execute host commands or change application data. No tests ran from this step.',
   }) }],
 }, {
   id: 'jarvis-briefing-preferences', title: 'Per-user Jarvis briefing preferences', group: 'tool',

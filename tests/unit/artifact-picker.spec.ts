@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Real HTTP, local files, artifact handles and Chromium drive the shipped Portrait Studio picker. Authentication/provider discovery and the portrait SQL store are fixtures; storage ownership and handle redemption are not mocked.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise the protected Portrait package with real business grants and verified issuer-qualified fixture principals.
  */
 import { beforeAll, afterAll, describe, it, expect, vi } from 'vitest';
 import express from 'express';
@@ -15,6 +16,11 @@ import type { AppContext } from '@/app/composition/app-context';
 import { createArtifactExchangeRoutes } from '@/app/routes/artifact-exchange-routes';
 import { createFilesRoutes } from '@/app/routes/files-routes';
 import { registerAppArtifactActions, unregisterAppArtifactActions, validateArtifactActionsDeclaration } from '@/shared/artifact-exchange';
+import { ApplicationAuthorizationService, MemoryAuthorizationStore } from '@/features/application-authorization';
+import { type AuthorizationActor } from '@/shared/application-authorization';
+import { getApplicationAuthorizationActor, runWithApplicationAuthorizationActor } from '@/shared/application-authorization-context';
+import { ApplicationAuthorizationRuntime } from '@/app/composition/application-authorization-runtime';
+import type { SwarmApplicationRecord } from '@/features/swarm-apps';
 
 let server: Server, browser: Browser, base: string, workspace: string;
 const store = resolve(process.env.OSHAL_STORE_REPO || '../oshal-applications');
@@ -22,6 +28,32 @@ const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQ
 const portraitId = '00000000-0000-4000-8000-000000000001';
 const queries: Array<{ sql: string; values?: unknown[] }> = [];
 let denyPortraits = false;
+const ISSUER = 'https://picker-identity.fixture.test';
+const actor = (sub: string): AuthorizationActor => ({ sub, issuer: ISSUER, isActive: true, isSwarmAdmin: sub === 'admin' });
+
+/** @description Adopt the package's real imported roles in the disposable picker fixture.
+ * @param ctx Package context. @returns Actual permission service used at the HTTP boundary.
+ */
+async function portraitPolicy(ctx: AppContext) {
+  const state = new MemoryAuthorizationStore(), policy = new ApplicationAuthorizationService(state);
+  const runtime = new ApplicationAuthorizationRuntime(policy, async req => {
+    const principal = (req as any).oidc?.user;
+    if (!principal?.sub || principal.iss !== ISSUER) throw new Error('Verified picker fixture login required');
+    return actor(principal.sub);
+  });
+  const record = { name: 'portrait-studio', manifestPath: join(store, 'portrait-studio/oshal-app.yaml'), manifest: {
+    name: 'portrait-studio', version: '1.13.0', uses: ['application-authorization'],
+    authorization: { version: 1, catalog: 'authorization.yaml' }, routes: [{ mountPath: '/api/portrait-studio' }],
+  } } as SwarmApplicationRecord;
+  await runtime.start(record);
+  ctx.applicationAuthorization = runtime; ctx.authorization = runtime.forPackage('portrait-studio');
+  for (const sub of ['alice', 'bob']) {
+    const preview = await policy.previewChange(actor('admin'), { app: 'portrait-studio', action: 'grant', role: 'creator',
+      targetSub: sub, targetIssuer: ISSUER, reason: 'Isolated shared picker proof', expectedRevision: (await state.read()).revision });
+    await policy.applyChange(actor('admin'), { previewId: preview.previewId, idempotencyKey: crypto.randomUUID() });
+  }
+  return { policy, runtime, record };
+}
 
 beforeAll(async () => {
   workspace = mkdtempSync(join(tmpdir(), 'oshal-picker-proof-'));
@@ -35,32 +67,45 @@ beforeAll(async () => {
   writeFileSync(join(owned, 'portrait.png'), image);
   const pool = { query: async (sql: string, values?: unknown[]) => {
     queries.push({ sql, values });
+    if (/SELECT portrait_id FROM ps_portraits WHERE portrait_id/.test(sql)) {
+      return { rows: values?.[0] === portraitId && values?.[1] === 'alice' && values?.[2] === ISSUER ? [{ portrait_id: portraitId }] : [], rowCount: 1 };
+    }
     if (/SELECT portrait_id FROM ps_portraits/.test(sql)) {
-      return { rows: values?.[0] === 'alice' ? [{ portrait_id: portraitId }] : [], rowCount: 1 };
+      return { rows: values?.[0] === 'alice' && values?.[2] === ISSUER ? [{ portrait_id: portraitId }] : [], rowCount: 1 };
     }
     if (/SELECT \* FROM ps_portraits WHERE portrait_id/.test(sql)) {
-      return { rows: values?.[0] === portraitId && values?.[1] === 'alice' ? [{ portrait_id: portraitId, status: 'done', output_path: join(owned, 'portrait.png') }] : [] };
+      return { rows: values?.[0] === portraitId && values?.[1] === 'alice' && values?.[2] === ISSUER ? [{ portrait_id: portraitId, status: 'done', output_path: join(owned, 'portrait.png') }] : [] };
     }
     return { rows: [], rowCount: 0 };
   } };
   const ctx = { pool, appPackageDir: join(store, 'portrait-studio') } as unknown as AppContext;
+  const { policy, runtime, record } = await portraitPolicy(ctx);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     const match = /(?:^|;\s*)picker-user=(alice|bob)/.exec(req.headers.cookie || '');
-    if (match) (req as any).oidc = { user: { sub: match[1] }, isAuthenticated: () => true };
-    next();
+    if (!match) { next(); return; }
+    (req as any).oidc = { user: { sub: match[1], iss: ISSUER }, isAuthenticated: () => true };
+    runWithApplicationAuthorizationActor(actor(match[1]), next);
   });
   registerAppArtifactActions('portrait-studio', { provides: [{ label: 'Portrait Studio', types: ['image/png'], list: '/api/portrait-studio/artifacts' }] });
   registerAppArtifactActions('hidden-source', { provides: [{ types: ['image/png'], list: '/api/hidden/artifacts' }] });
   app.use('/api/artifacts', createArtifactExchangeRoutes(ctx, async () => new Map(denyPortraits ? [] : [['portrait-studio', 'Portrait Studio']])));
   app.use('/api/files', createFilesRoutes(ctx, workspace));
+  app.use('/api/portrait-studio', async (req, res, next) => {
+    const principal = getApplicationAuthorizationActor();
+    if (!principal) { res.status(401).json({ error: 'fixture_authentication_required' }); return; }
+    const decision = await policy.authorize(principal, { app: 'portrait-studio', kind: 'http', method: req.method, path: req.path });
+    if (!decision.allowed) { res.status(403).json({ error: decision.reason }); return; }
+    next();
+  });
   app.get('/api/portrait-studio/provider', (_req, res) => res.json({ configured: true, provider: 'fixture' }));
   app.use('/shared', express.static(join(process.cwd(), 'src/shared')));
   app.use('/cockpit/css/themes', express.static(join(process.cwd(), 'src/pages/cockpit/css/themes')));
   // Vite transforms the actual package TypeScript and its framework imports, not a route double.
   const { createPortraitStudioRoutes } = await import(join(store, 'portrait-studio/src-routes/portrait-studio-routes.ts').replaceAll('\\', '/'));
   app.use('/api/portrait-studio', createPortraitStudioRoutes(ctx));
+  runtime.complete(record);
   await new Promise<void>(done => { server = app.listen(0, '127.0.0.1', done); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   browser = await chromium.launch({ headless: true });
@@ -68,6 +113,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await browser?.close();
+  server?.closeAllConnections();
   if (server) await new Promise<void>(done => server.close(() => done()));
   unregisterAppArtifactActions('portrait-studio'); unregisterAppArtifactActions('hidden-source');
   vi.unstubAllEnvs();

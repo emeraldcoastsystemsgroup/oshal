@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register artifact discovery and live Jarvis proposals in the existing Test Lab, linked to their regression suites.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Register exact-principal artifact relay and revocation regression coverage.
  */
 import { randomUUID } from 'node:crypto';
 import { buildToolsBlock, buildArtifactToolGuidance } from './jarvis-tool-catalog';
@@ -85,6 +86,7 @@ export const ARTIFACT_SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/jarvis-tool-catalog.spec.ts' },
       { level: 'integration', path: 'tests/unit/artifact-mint-bytes-route.spec.ts' },
       { level: 'integration', path: 'tests/unit/artifact-redeem-relay.spec.ts' },
+      { level: 'integration', path: 'tests/unit/artifact-authenticated-relay.spec.ts' },
       { level: 'browser', path: 'tests/unit/artifact-picker.spec.ts' },
     ],
     steps: [

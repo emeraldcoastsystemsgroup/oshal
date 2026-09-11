@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Execute manifest-declared app smokes over the real HTTP boundary with package-local fixtures and deterministic assertions.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-141: a `kind: group` (no code, no smokes of its own) is verified THROUGH its members via options.resolveMember — every member must be installed, active and pass its own smokes, reported as `<member>/<smoke>`; without a resolver the group fails by name rather than passing empty.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Report missing verified-user prerequisites as pending while refusing malformed supplied PATs and executing valid caller tokens over HTTP.
  */
 
 import fs from 'fs';
@@ -145,12 +146,29 @@ function smokeHeaders(
   return headers;
 }
 
+/** Resolve explicit user prerequisites without accepting service credentials as a user identity. */
+export function userSmokePrerequisite(
+  smoke: SwarmAppSmokeDeclaration,
+  authorization: string | undefined,
+): { status: 'pending' | 'failed'; error: string } | undefined {
+  if (!smoke.requiresUser) return undefined;
+  if (authorization === undefined) {
+    return { status: 'pending', error: 'Verified user context requires a caller-owned PAT.' };
+  }
+  if (!/^Bearer oshal_pat_[a-f0-9]{48}$/.test(authorization) || authorization.length !== 65) {
+    return { status: 'failed', error: 'User-context smoke requires a valid oshal_pat_ bearer token.' };
+  }
+  return undefined;
+}
+
 /** @description Execute one smoke against the actual mounted package route. */
 async function executeSmoke(
   record: SwarmApplicationRecord,
   smoke: SwarmAppSmokeDeclaration,
   options: AppSmokeVerificationOptions,
 ): Promise<AppSmokeResult> {
+  const userPrerequisite = userSmokePrerequisite(smoke, options.authorization);
+  if (userPrerequisite) return { name: smoke.name, path: smoke.path, durationMs: 0, ...userPrerequisite };
   if (smoke.requiresAi && options.preOnboarding && !options.noAi) {
     return { name: smoke.name, path: smoke.path, status: 'pending', durationMs: 0 };
   }

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Standalone package-CLI validation for CORE-05 executable smoke declarations and static fixture containment.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Validate explicit user-context smokes against read-only PAT and owning route authentication requirements.
  */
 
 'use strict';
@@ -31,6 +32,20 @@ function containsInterpolation(value) {
     return Object.entries(value).some(([key, entry]) => containsInterpolation(key) || containsInterpolation(entry));
   }
   return false;
+}
+
+/** Validate the explicit user prerequisite against the closest owning route. */
+function validateUserRequirement(smoke, owner, at, errors) {
+  if (smoke.requiresUser !== undefined && typeof smoke.requiresUser !== 'boolean') {
+    errors.push(`${at}.requiresUser must be a boolean`);
+  }
+  if (smoke.requiresUser !== true) return;
+  if (!['GET', 'HEAD'].includes(smoke.method) || smoke.auth !== 'pat') {
+    errors.push(`${at}.requiresUser requires GET or HEAD with auth: pat`);
+  }
+  if (!owner || !['oidc', 'service-or-oidc'].includes(owner.auth)) {
+    errors.push(`${at}.requiresUser requires an owning oidc or service-or-oidc route`);
+  }
 }
 
 /** Validate one package-local JSON fixture without allowing a symlink escape. */
@@ -86,7 +101,7 @@ function validateSmokeDeclarations(manifest, packageDir) {
       return;
     }
     const unknown = Object.keys(smoke).filter(
-      (key) => !['name', 'method', 'path', 'auth', 'bodyFixture', 'expect', 'requiresAi'].includes(key),
+      (key) => !['name', 'method', 'path', 'auth', 'bodyFixture', 'expect', 'requiresAi', 'requiresUser'].includes(key),
     );
     if (unknown.length) errors.push(`${at} has unknown field(s): ${unknown.join(', ')}`);
     const name = typeof smoke.name === 'string' ? smoke.name.trim() : '';
@@ -107,6 +122,7 @@ function validateSmokeDeclarations(manifest, packageDir) {
       .filter((route) => route && typeof route.mountPath === 'string' && belongsToRoute(probePath, route.mountPath))
       .sort((a, b) => b.mountPath.length - a.mountPath.length);
     if (!owners.length) errors.push(`${at}.path "${probePath}" is not owned by a declared routes[].mountPath`);
+    validateUserRequirement(smoke, owners[0], at, errors);
     if (smoke.requiresAi !== undefined && typeof smoke.requiresAi !== 'boolean') {
       errors.push(`${at}.requiresAi must be a boolean`);
     }

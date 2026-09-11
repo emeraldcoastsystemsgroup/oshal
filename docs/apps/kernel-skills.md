@@ -8,7 +8,7 @@ domain of its own, existing so a vendor stays swappable. An **app** is a domain 
 > If ≥2 apps would need it, or it wraps swappable vendors → **kernel skill**. Apps declare `uses:`
 > and *call* it. They never bundle it, and they can never uninstall it out from under each other.
 
-The twelve skills below are the **stable API an installed app may import** — treat removing one
+The skills below are the **stable API an installed app may import** — treat removing one
 like removing a public method. The first ten were signed off by the operator on 2026-07-13
 (migration plan §2); `payments` and `spatial-mapping` were pinned later at the finance and spaces
 carves respectively — engines that stay kernel per ADR-093 while only their *surface* carves, so
@@ -28,6 +28,9 @@ the carve doesn't prune them out of `dist/` (the google-calendar/notifications b
 | `memory` | `@/features/memory`, `@/features/user-model`, `@/features/personal-data` | Cross-app user state. |
 | `tool-registry` | `@/features/tool-registry`, `@/features/llm-provider` | Tool + model access — the aggregation thesis (ADR-049). |
 | `test-catalog` | `@/shared/package-testing` | Versioned package test declarations registered on activation. See [the catalog contract](../testing/package-test-catalog.md); local runners remain explicit prerequisites. |
+| `application-authorization` | `@/shared/application-authorization` | Imported application roles and permissions evaluated for the current exact user and selected business tenant. |
+| `package-tools` | `@/shared/package-tools` | Activation-scoped `ctx.tools.register` handlers run under current caller authorization and the tool approval policy. |
+| `authenticated-artifacts` | `@/app/routes/artifact-authenticated-relay` | Authenticated local artifact reads preserve the original caller and recheck source permission and registration before returning bytes. |
 | `specialist-context` | `@/shared/specialist-context` | Package-owned scalar facts for caller-authorized specialist dispatch; bounded reads, lifecycle and permission rechecks. |
 | `jarvis-briefings` | `@/shared/briefings` | Registered briefing sources and per-user enable, frequency and voice/bubble/screen delivery preferences. |
 | `media-generation` | `@/features/video-generation`, `@/features/visual-response` | Vendor-abstracted image/video generation. |

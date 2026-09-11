@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise registered Lab scenarios through real catalog/run HTTP routes; model responses and session authentication are explicit fixtures.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Require the authenticated relay suite in Lab and local runner parity.
  */
 import express from 'express';
 import { existsSync, readFileSync } from 'node:fs';
@@ -55,7 +56,7 @@ describe('artifact features registered in AI Test Lab', () => {
     const registered = catalog.scenarios.filter((s: any) => ARTIFACT_SCENARIOS.some(expected => expected.id === s.id));
     expect(registered.map((s: any) => s.id)).toEqual(['artifact-discovery', 'jarvis-artifact-handoff']);
     const suites = registered.flatMap((s: any) => s.regressionTests);
-    expect(suites).toHaveLength(8);
+    expect(suites).toHaveLength(9);
     const command = JSON.parse(readFileSync('package.json', 'utf8')).scripts['test:artifacts'];
     for (const suite of suites) expect(command.split(/\s+/)).toContain(suite.path);
     expect(new Set(suites.map((s: any) => s.level))).toEqual(new Set(['unit', 'integration', 'browser']));

@@ -70,6 +70,17 @@ Other cases use `app:<app>:test:<id>`. Existing smoke names are reserved. Only a
 smoke with no extra prerequisites or side effects may declare `installation: safe-smoke`.
 This field reports eligibility; installation retains its existing verification workflow.
 
+A protected read-only smoke can declare `requiresUser: true` with `auth: pat`. The Lab derives
+`verified-user-context` and `caller-pat` prerequisites and always reports
+`installationEligible: false`, even if an older catalog decoration says `safe-smoke`. Prefer
+`installation: never` for these cases. A missing PAT leaves the case pending; supplying the caller's
+PAT clears the derived prerequisite and runs the actual package route. Malformed supplied tokens
+fail, and validly shaped tokens denied by the route remain failed assertions.
+
+Keep the catalog case's `prerequisites: []` when the only requirement is the smoke's user context.
+Do not duplicate `verified-user-context` in that array: explicitly declared additional prerequisites
+currently remain pending until a runner verifies them, independently of the caller's PAT.
+
 Shared core coverage uses an explicit pinned revision rather than a sibling source checkout:
 
 ```yaml

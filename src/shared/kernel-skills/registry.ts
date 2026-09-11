@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085/ADR-090 D8: declare the kernel-skill contract as DATA. This is the single source of truth for the Tier-0b skills the operator signed off 2026-07-13 — consumed by the build anchor (src/app/composition/kernel-skills.ts), the manifest `uses:` validator, and the CI guard (scripts/check-kernel-skills.js). Lives in shared/ so features/, app/, and scripts/ can all read it without violating FSD's top-down import direction.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #5 (finance): pin 'payments' as the 11th kernel skill. skill-registry.md called @/features/payments a KERNEL SKILL all along, but the code never contracted it — it stayed in dist only because finance-routes.ts imported it, and the finance carve removes that last core anchor. Without this pin the installed payments AND finance packages both fail at mount on a pruned dist (the exact google-calendar/notifications bug class D8 exists to close).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 spaces carve: pin 'spatial-mapping' as the 12th kernel skill. Identical situation to payments — the video->3D / import / RF / capture reconstruction engine + owner-scoped scan store stays kernel per ADR-093, but its ONLY core import anchor is spaces-routes.ts, which the spaces surface carve removes. Unlike drone/camera (anchored by their *-node-server.ts), spaces-operator is an INLINE concierge with no dedicated node, so there is no node-server to hold the engine in dist. Without this pin the installed spaces package fails at mount on a pruned dist.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Declare exact-principal artifact relay and in-process package tool compatibility floors.
  */
 
 /**
@@ -28,6 +29,8 @@ export type KernelSkillId =
   | 'media-generation'
   | 'payments'
   | 'application-authorization'
+  | 'authenticated-artifacts'
+  | 'package-tools'
   | 'test-catalog'
   | 'jarvis-briefings'
   | 'specialist-context'
@@ -79,6 +82,12 @@ export interface KernelSkillDeclaration {
  * docs/apps/kernel-skills.md. The CI guard then enforces it forever.
  */
 export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
+  { id: 'authenticated-artifacts', title: 'Authenticated artifact relay',
+    why: 'Local artifact sources receive the original authenticated caller with current permission and registration checks.',
+    modules: [{ specifier: '@/app/routes/artifact-authenticated-relay', distFile: 'dist/app/routes/artifact-authenticated-relay.js' }] },
+  { id: 'package-tools', title: 'Authorized package tools',
+    why: 'Fixed package handlers execute under the exact caller through an activation-scoped registration port.',
+    modules: [{ specifier: '@/shared/package-tools', distFile: 'dist/shared/package-tools/index.js' }] },
   { id: 'jarvis-briefings', title: 'Jarvis briefing delivery',
     why: 'Registered application/bot sources honor exact-principal preferences and return truthful enqueue outcomes.',
     modules: [{ specifier: '@/shared/briefings', distFile: 'dist/shared/briefings/index.js' },

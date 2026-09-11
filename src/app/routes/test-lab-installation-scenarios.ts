@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register installed application smoke discovery and its local lifecycle regression suite in the AI Test Lab.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Register authenticated installation smoke prerequisite and CLI/runtime contract cases.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -47,6 +48,7 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
   id: 'installed-app-tests', title: 'Installed application test registration', group: 'tool',
   description: 'Read the current caller-visible package test catalog and check case identity, version and prerequisites. Lifecycle behavior is covered by the linked isolated suite.',
   regressionTests: [
+    { level: 'integration', path: 'tests/unit/core05-app-smoke.spec.ts' },
     { level: 'integration', path: 'tests/unit/installed-app-test-lab.spec.ts' },
     { level: 'integration', path: 'tests/unit/test-lab-platform-registration.spec.ts' },
     { level: 'unit', path: 'tests/unit/package-test-catalog.spec.ts' },

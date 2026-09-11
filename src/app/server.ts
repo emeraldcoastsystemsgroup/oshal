@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 171 | maintainer@emeraldcoastsystemsgroup.com | Mount machine-authenticated remote application permit checks and immutable queued-principal installation wiring.
  * 172 | maintainer@emeraldcoastsystemsgroup.com | Mount exact user roster registration and external business membership administration.
+ * 173 | maintainer@emeraldcoastsystemsgroup.com | Bind typed package tools before activation under the current authorization runtime.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — Express server entry point
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added static file serving for UI assets
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed conflicting manual auth routes and consolidated on express-openid-connect
@@ -328,6 +329,7 @@ import { createQueuedApplicationPrincipalWiring } from './composition/queued-app
 import { createApplicationRemoteExecutionRoutes } from './routes/application-remote-execution-routes';
 import { resolveManifestBotRuntimeDefaults } from './composition/manifest-bot-runtime-defaults';
 import { SpecialistContextRegistry, configureSpecialistContextRegistry } from '@/shared/specialist-context';
+import { PackageToolRegistry, configurePackageToolRegistry } from '@/shared/package-tools';
 import { createApplicationAuthorizationGate } from './middleware/application-authorization-gate';
 import { createApplicationActorContext } from './middleware/application-authorization-context';
 import { createAuthorizationRoutes, createAuthorizationPageRoutes } from './routes/authorization-routes';
@@ -1098,6 +1100,11 @@ function createApp(): express.Application {
   app.use(createApplicationActorContext(applicationAuthorization.resolveActor));
   const specialistContext = new SpecialistContextRegistry(applicationAuthorization.runtime);
   configureSpecialistContextRegistry(specialistContext);
+  const packageTools = new PackageToolRegistry(applicationAuthorization.runtime, {
+    reservedNames: ctx.dynamicToolExecutorRegistry.listAll()
+      .filter(row => !row.runtimeRegistered).map(row => row.toolName),
+  });
+  configurePackageToolRegistry(packageTools);
   const jarvisBriefings = createJarvisBriefingWiring(ctx, applicationAuthorization);
   const takeoutSliceRegistry = new TakeoutSliceRegistry(ctx);
   const swarmAppService = new SwarmAppService(
@@ -1112,7 +1119,7 @@ function createApp(): express.Application {
     manifestScheduleRegistrar,
     // ADR-085 P1: lets an installed app package mount its OWN compiled-JS routes at activation
     // (flag-gated on APP_PACKAGE_DYNAMIC_ROUTES → no-op by default, hardcoded mounts below still apply).
-    new ManifestRouteMounterImpl(app, requiresAuth, ctx, appAccessService, applicationAuthorization.runtime, specialistContext),
+    new ManifestRouteMounterImpl(app, requiresAuth, ctx, appAccessService, applicationAuthorization.runtime, specialistContext, packageTools),
     manifestScheduleDeregistrar,
     // ADR-085: packaged bots join the ACTIVE bot registry as inline-concierge entries
     // (container oshal-api, port 3010; validated manifest runtime or legacy Claude default)

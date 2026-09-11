@@ -4,12 +4,13 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register installed package smokes in the AI Test Lab and reuse the installation verifier with caller-scoped execution authority.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Derive clearable verified-user prerequisites, exclude user probes from unattended installation eligibility, and fail malformed supplied tokens.
  */
 
 import { createHash } from 'crypto';
 import path from 'node:path';
 import type { SwarmApplicationRecord, SwarmAppSmokeDeclaration } from '../types';
-import { verifyAppSmokes, type AppSmokeResult, type AppSmokeVerificationOptions } from './app-smoke-verifier';
+import { userSmokePrerequisite, verifyAppSmokes, type AppSmokeResult, type AppSmokeVerificationOptions } from './app-smoke-verifier';
 import { loadPackageTestCatalog, packageTestSource, type PackageTestCase, type PackageTestLevel, type PackageTestRunner } from '@/shared/package-testing';
 
 export type InstalledTestAuth = Pick<AppSmokeVerificationOptions, 'serviceSecret' | 'authorization'>;
@@ -49,6 +50,8 @@ interface Registration {
 function pendingReason(entry: Registration['cases'] extends Map<string, infer E> ? E : never, auth: InstalledTestAuth): string | undefined {
   const smoke = entry.smoke;
   if (!smoke) return `The ${entry.metadata.runner.kind} runner is unavailable. This catalog registers suites without executing them.`;
+  const userPrerequisite = userSmokePrerequisite(smoke, auth.authorization);
+  if (userPrerequisite) return userPrerequisite.error;
   if (entry.declaration?.sideEffects !== undefined && entry.declaration.sideEffects !== 'none') return 'Declared side effects require a separately approved test runner.';
   if (entry.declaration?.prerequisites.length) return `Additional prerequisites require verification: ${entry.declaration.prerequisites.join(', ')}.`;
   if (!['GET', 'HEAD'].includes(smoke.method)) return 'Mutation requires a separately approved test runner.';
@@ -90,6 +93,7 @@ export class InstalledAppTestCatalog {
       const prerequisites = [
         ...(!['GET', 'HEAD'].includes(smoke.method) ? ['approved-mutation-runner'] : []),
         ...(smoke.requiresAi ? ['approved-ai-runner'] : []),
+        ...(smoke.requiresUser ? ['verified-user-context'] : []),
         ...(smoke.auth !== 'public' ? [smoke.auth === 'service' ? 'operator-service-auth' : 'caller-pat'] : []),
       ];
       cases.set(id, { smoke, declaration, metadata: {
@@ -101,7 +105,7 @@ export class InstalledAppTestCatalog {
         sideEffects: declaration?.sideEffects ?? (['GET', 'HEAD'].includes(smoke.method) ? 'none' : 'external-write'),
         isolation: declaration?.isolation ?? { mode: ['GET', 'HEAD'].includes(smoke.method) ? 'none' : 'live' },
         limits: declaration?.limits ?? { timeoutMs: 15000 },
-        installationEligible: declaration ? declaration.installation === 'safe-smoke' : ['GET', 'HEAD'].includes(smoke.method) && !smoke.requiresAi,
+        installationEligible: !smoke.requiresUser && (declaration ? declaration.installation === 'safe-smoke' : ['GET', 'HEAD'].includes(smoke.method) && !smoke.requiresAi),
         method: smoke.method, path: smoke.path,
         auth: smoke.auth, prerequisites: [...new Set([...prerequisites, ...(declaration?.prerequisites ?? [])])], runnable: false,
       } });
@@ -169,6 +173,8 @@ export class InstalledAppTestCatalog {
     if (entry.metadata.source !== expected.source || entry.metadata.appVersion !== expected.appVersion || entry.metadata.revision !== expected.revision) {
       return pending('Case changed after selection. Refresh the catalog.');
     }
+    const userPrerequisite = entry.smoke && userSmokePrerequisite(entry.smoke, options.authorization);
+    if (userPrerequisite?.status === 'failed') return { name: expected.name, path: expected.path, durationMs: 0, ...userPrerequisite };
     const reason = pendingReason(entry, options);
     if (reason) return pending(reason);
     if (!entry.smoke) return pending('Test runner is unavailable.');

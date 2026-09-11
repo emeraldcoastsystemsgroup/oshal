@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085/ADR-090 D8: the kernel-skills build anchor. Replaces the package-feature-anchors.ts stopgap (deleted) with the full contract: one re-export per module declared in @/shared/kernel-skills, guarded by scripts/check-kernel-skills.js. Each re-export is what physically pins the feature into dist/ — tsconfig.server.json excludes src/features/**, so the import graph is the ONLY thing that carries a feature into the built image.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #5: pin @/features/payments (11th skill) — the finance carve removes its last core import, and both the finance + payments store packages resolve it from dist.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 spaces carve: pin @/features/spatial-mapping (12th skill) — the spaces surface carve removes its last core import (spaces-routes.ts), and spaces-operator (inline, no node-server) has no other anchor; the installed spaces package resolves it from dist.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin authenticated artifact relay and activation-scoped package tools in the executable core build.
  */
 
 /**
@@ -91,6 +92,8 @@ export * as payments from '@/features/payments';
 // (unlike drone/camera). The installed spaces package resolves this from dist.
 export * as spatialMapping from '@/features/spatial-mapping';
 export * as applicationAuthorization from '@/shared/application-authorization';
+export * as authenticatedArtifacts from '@/app/routes/artifact-authenticated-relay';
+export * as packageTools from '@/shared/package-tools';
 export * as packageTesting from '@/shared/package-testing';
 export * as specialistContext from '@/shared/specialist-context';
 

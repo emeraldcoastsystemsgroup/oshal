@@ -18,6 +18,8 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | Validate both manifest schedule modes fail-closed. Deterministic service-route jobs must be framework-scoped static POSTs beneath an exactly service-authenticated package route; malformed cron, mixed prompt/route fields, dynamic interpolation, and oversized bodies are rejected at load.
  * 13 | maintainer@emeraldcoastsystemsgroup.com  | ADR-093 Tier 2: validate bots[].container/port fail-closed (service-name slug, sane port, port requires container, 'oshal-api' rejected) — a malformed node declaration must fail the load, not silently register the bot inline on a runtime the operator opted out of.
  * 14 | maintainer@emeraldcoastsystemsgroup.com  | ADR-141: readManifest validates `kind: group` (no code keys, members required, toolbar borrows only from members, setup steps name a member + a toolbar surface) and the per-user `readiness:` block (own mount, canonical path, session-admitting route, RFC 6901 pointers) — both fail closed at load, from swarm-app-group.ts.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Validate explicit user smoke prerequisites against read-only PAT probes and the closest session-authenticated route.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Validate package-owned tool declarations through the shared tool contract before activation.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -41,6 +43,7 @@ import {
 } from '@/shared/route-auth';
 import { validateArtifactActionsDeclaration } from '@/shared/artifact-exchange';
 import { loadApplicationAuthorization } from '@/shared/application-authorization';
+import { validatePackageTools } from '@/shared/package-tools';
 import { loadPackageTestCatalog } from '@/shared/package-testing';
 import { validateGroupManifest, validateReadinessDeclarations, validateGuestSeedDeclaration, validateSummaryDeclaration } from './swarm-app-group';
 import { validateAppIntegrations } from './app-integrations';
@@ -589,10 +592,21 @@ function validateSmokeFixture(absPath: string, at: string, fixturePath: string):
   }
 }
 
-/**
- * @description Validate executable app smoke declarations at the manifest trust boundary. Every
- * probe must be concrete, package-owned, deterministic in shape, and safe to run unattended.
- */
+/** Validate the explicit user prerequisite against the closest owning route. */
+function validateUserSmokeRequirement(smoke: Record<string, unknown>, routeAuth: unknown, at: string): void {
+  if (smoke.requiresUser !== undefined && typeof smoke.requiresUser !== 'boolean') {
+    throw new Error(`${at}.requiresUser must be a boolean`);
+  }
+  if (smoke.requiresUser !== true) return;
+  if (!['GET', 'HEAD'].includes(String(smoke.method)) || smoke.auth !== 'pat') {
+    throw new Error(`${at}.requiresUser requires GET or HEAD with auth: pat`);
+  }
+  if (!['oidc', 'service-or-oidc'].includes(String(routeAuth))) {
+    throw new Error(`${at}.requiresUser requires an owning oidc or service-or-oidc route`);
+  }
+}
+
+/** Validate executable smoke declarations before activation. */
 function validateSmokeDeclarations(manifest: SwarmAppManifest, absPath: string): void {
   if (manifest.smoke === undefined) return;
   if (!Array.isArray(manifest.smoke) || manifest.smoke.length === 0) {
@@ -607,7 +621,7 @@ function validateSmokeDeclarations(manifest: SwarmAppManifest, absPath: string):
     }
     const smoke = value as unknown as Record<string, unknown>;
     const unknownFields = Object.keys(smoke).filter(
-      (key) => !['name', 'method', 'path', 'auth', 'bodyFixture', 'expect', 'requiresAi'].includes(key),
+      (key) => !['name', 'method', 'path', 'auth', 'bodyFixture', 'expect', 'requiresAi', 'requiresUser'].includes(key),
     );
     if (unknownFields.length > 0) {
       throw new Error(`Manifest ${absPath}: ${at} has unknown field(s): ${unknownFields.join(', ')}`);
@@ -641,6 +655,7 @@ function validateSmokeDeclarations(manifest: SwarmAppManifest, absPath: string):
     if (owningRoutes.length === 0) {
       throw new Error(`Manifest ${absPath}: ${at}.path "${probePath}" is not owned by a declared routes[].mountPath`);
     }
+    validateUserSmokeRequirement(smoke, owningRoutes[0].auth, `Manifest ${absPath}: ${at}`);
     if (smoke.requiresAi !== undefined && typeof smoke.requiresAi !== 'boolean') {
       throw new Error(`Manifest ${absPath}: ${at}.requiresAi, when present, must be a boolean`);
     }
@@ -819,6 +834,7 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   // fail at load. Omission is deliberate rollout compatibility and keeps current behavior.
   validateAppAccess(manifest, absPath);
   loadApplicationAuthorization(path.dirname(absPath), manifest);
+  validatePackageTools(manifest);
   loadPackageTestCatalog(path.dirname(absPath), manifest);
 
   // ADR-085 D4: guestTier is a REQUEST, not a grant — it does nothing until an operator approves it.

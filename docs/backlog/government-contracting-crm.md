@@ -1,6 +1,7 @@
 # Government contracting CRM and contract management
 
-Requested 2026-09-11. Status: planned application work. This expands the existing
+Requested 2026-09-11. Status: application implementation and isolated acceptance complete;
+local installation and Jarvis chat integration are being verified. This expands the existing
 [Capture CRM handover](capture-crm-plugin-open-work.md), with one durable record of the
 relationship and process from opportunity intake through contract closeout.
 
@@ -40,6 +41,12 @@ Two users prove different rights through screen, API and Jarvis. Restart/reinsta
 preserves records, repeated import creates no duplicates, and installed tests appear in AI
 Test Lab with accurate runner status.
 
-Phase one delivers relationship/capture management. Phase two adds post-award contract
-management over the same records. Real-data migration, financial posting and external
+The private package now implements relationship/capture management and post-award contract
+management over the same durable records. Synthetic HTTP/PostgreSQL and browser cases cover
+reviewed intake, evidence gates, award, delivery, exact ownership, current team membership and
+viewer refusal. Typed tool tests use the actual core registration and execution path; chat
+discovery and authenticated local acceptance remain separate checks. Installation imports
+the permission catalog and registers the package's unit, integration and browser suites.
+
+Real-data migration, financial posting and external
 submission/integration require separately scoped, reviewable work orders.

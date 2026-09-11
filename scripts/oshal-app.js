@@ -18,6 +18,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: require structurally valid store audit bindings, warn without claiming verification in compatible mode, and install fully evidenced packages from their exact audited SHA in enforce mode.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Validate package-owned Takeout declarations before install and verify their named handler exports during route compilation.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Validate first-class manifest schedules before install, including service-route ownership/auth, named handler exports, and static bounded bodies.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Validate fixed in-process package tool declarations and required capabilities before installation.
  *
  * The npm-of-OSHAL-apps helper. An OSHAL app package is a folder with a definition
  * file (oshal-app.yaml — the package.json analog), personas, compiled routes, migrations,
@@ -42,6 +43,7 @@ const { validateSmokeDeclarations } = require('./oshal-app-smoke');
 const { validateTakeoutDeclarations } = require('./oshal-app-takeout');
 const { validateScheduleDeclarations } = require('./oshal-app-schedules');
 const { loadApplicationAuthorization } = require('./oshal-authorization-contract');
+const { validatePackageTools } = require('./oshal-package-tools');
 const { loadPackageTestCatalog } = require('./oshal-test-catalog');
 const {
   loadPackageAuditAssessment,
@@ -97,6 +99,7 @@ function validatePackage(dir) {
   }
   if (!m || typeof m !== 'object') return { errors: ['oshal-app.yaml is empty or not a mapping.'], warnings };
   try { loadApplicationAuthorization(dir, m); } catch (error) { err(error.message); }
+  try { validatePackageTools(m); } catch (error) { err(error.message); }
   try { loadPackageTestCatalog(dir, m); } catch (error) { err(error.message); }
 
   // ── identity ──────────────────────────────────────────────────────────────

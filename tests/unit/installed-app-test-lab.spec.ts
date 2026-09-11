@@ -1,6 +1,10 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove installed Test Lab registration through real lifecycle and HTTP boundaries with disposable package/persistence fixtures.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise clearable user prerequisites, explicit malformed-token failures and protected Portrait smoke execution.
  */
 
 import express from 'express';
@@ -79,8 +83,8 @@ function newService(): SwarmAppService {
     { register: async () => { if (failActivation) throw new Error('fixture activation failure'); }, unregister: () => undefined });
 }
 
-async function catalog(sub = 'operator') {
-  const response = await fetch(`${baseUrl}/api/test-lab/catalog`, { headers: { 'x-test-sub': sub } });
+async function catalog(sub = 'operator', authorization?: string) {
+  const response = await fetch(`${baseUrl}/api/test-lab/catalog`, { headers: { 'x-test-sub': sub, ...(authorization ? { authorization } : {}) } });
   expect(response.status).toBe(200);
   return response.json() as Promise<{ scenarios: any[]; installedApps: any[] }>;
 }
@@ -103,6 +107,10 @@ beforeAll(async () => {
   app.get('/api/swarm/apps', (_req, res) => res.json({ apps: [] }));
   app.all('/api/:app/_smoke', (req, res) => {
     hits.push({ path: req.path, secret: req.headers['x-service-secret'] as string | undefined, authorization: req.headers.authorization });
+    if (records.get(req.params.app)?.manifest.smoke?.[0].requiresUser && req.headers.authorization !== PAT) {
+      res.status(403).json({ error: 'no_current_access' });
+      return;
+    }
     res.json({ package: smokeValue });
   });
   app.use('/api/test-lab', (req, res, next) => createTestLabRoutes(ctx, {
@@ -253,14 +261,18 @@ describe('installed application Test Lab lifecycle over HTTP', () => {
     expect(hits[1]).toEqual({ path: '/api/public-case/_smoke', authorization: undefined, secret: undefined });
   });
 
-  it('retains existing Portrait Studio smoke syntax and checks it through the Lab against a fixture route', async () => {
+  it('retains protected Portrait Studio smoke syntax and checks caller authority through the Lab', async () => {
     const storeRoot = process.env.OSHAL_STORE_REPO || resolve(process.cwd(), '../oshal-applications');
     const portrait = readManifest(join(storeRoot, 'portrait-studio/oshal-app.yaml'));
     const installed = await install({ ...manifest('portrait-studio'), version: portrait.version, smoke: portrait.smoke });
     const scenario = (await catalog()).scenarios.find(s => s.installedTest?.appName === 'portrait-studio');
     expect(scenario.installedTest.appVersion).toBe(installed.version);
     expect(scenario.installedTest.name).toBe('package-readiness');
-    const result = await (await run(scenario.id)).json() as any;
+    expect(scenario.installedTest).toMatchObject({ installationEligible: false, prerequisites: expect.arrayContaining(['verified-user-context']) });
+    const pending = await (await run(scenario.id)).json() as any;
+    expect(pending.results[0].steps[0].output.executionStatus).toBe('pending');
+    expect(hits).toEqual([]);
+    const result = await (await run(scenario.id, 'operator', PAT)).json() as any;
     expect(result.results[0].state).toBe('pass');
     expect(hits[0].path).toBe('/api/portrait-studio/_smoke');
   });
@@ -280,6 +292,57 @@ describe('installed application Test Lab lifecycle over HTTP', () => {
     expect(current.installedApps.find(a => a.name === 'group-app')).toMatchObject({ coverage: 'members', caseIds: ['app:member:smoke:readiness'] });
     expect(current.scenarios.filter(s => s.installedTest)).toHaveLength(1);
   });
+});
+
+/** Declare a user smoke with catalog decorations that cannot grant unattended eligibility. */
+async function installUserSmoke(prerequisites: string[] = []) {
+  const input = manifest('user-case');
+  Object.assign(input.smoke![0], { auth: 'pat', requiresUser: true });
+  input.uses = ['test-catalog'];
+  input.testing = { version: 1, catalog: 'user-tests.yaml' };
+  writeFileSync(join(root, 'user-tests.yaml'), yaml.dump({ version: 1, cases: [{
+    id: 'readiness', name: 'User readiness', purpose: 'Verify current user access.', level: 'integration',
+    runner: { kind: 'smoke', smoke: 'readiness' }, expected: ['Current user can read.'], prerequisites,
+    sideEffects: 'none', isolation: { mode: 'none' }, limits: { timeoutMs: 15000 },
+    installation: prerequisites.length ? 'never' : 'safe-smoke',
+  }] }));
+  return install(input);
+}
+
+it('derives user prerequisites and clears them with a current PAT without unattended eligibility', async () => {
+  await installUserSmoke();
+  const without = (await catalog()).scenarios.find(s => s.installedTest);
+  expect(without.installedTest).toMatchObject({ runnable: false, installationEligible: false,
+    prerequisites: ['verified-user-context', 'caller-pat'], pendingReason: expect.stringContaining('Verified user context') });
+  const pending = await (await run(without.id)).json() as any;
+  expect(pending.results[0].steps[0].output.executionStatus).toBe('pending');
+  expect(hits).toEqual([]);
+  const withPat = (await catalog('operator', PAT)).scenarios.find(s => s.installedTest);
+  expect(withPat.installedTest).toMatchObject({ runnable: true, installationEligible: false });
+  const passed = await (await run(withPat.id, 'operator', PAT)).json() as any;
+  expect(passed.results[0]).toMatchObject({ state: 'pass', steps: [{ output: { executionStatus: 'passed' } }] });
+  expect(hits).toEqual([{ path: '/api/user-case/_smoke', authorization: PAT, secret: undefined }]);
+});
+
+it('fails malformed user PATs without requests and preserves actual HTTP refusal for revoked tokens', async () => {
+  await installUserSmoke();
+  const scenario = (await catalog()).scenarios.find(s => s.installedTest);
+  const malformed = await (await run(scenario.id, 'operator', 'Bearer invalid')).json() as any;
+  expect(malformed.results[0]).toMatchObject({ state: 'fail', steps: [{ output: { executionStatus: 'failed' } }] });
+  expect(hits).toEqual([]);
+  const revoked = `Bearer oshal_pat_${'b'.repeat(48)}`;
+  const denied = await (await run(scenario.id, 'operator', revoked)).json() as any;
+  expect(denied.results[0]).toMatchObject({ state: 'fail', steps: [{ detail: expect.stringContaining('HTTP 403') }] });
+  expect(hits).toEqual([{ path: '/api/user-case/_smoke', authorization: revoked, secret: undefined }]);
+});
+
+it('does not claim arbitrary declared prerequisites are fulfilled by a supplied user PAT', async () => {
+  await installUserSmoke(['account:microsoft']);
+  const scenario = (await catalog('operator', PAT)).scenarios.find(s => s.installedTest);
+  expect(scenario.installedTest).toMatchObject({ runnable: false, pendingReason: expect.stringContaining('account:microsoft') });
+  const result = await (await run(scenario.id, 'operator', PAT)).json() as any;
+  expect(result.results[0].steps[0].output.executionStatus).toBe('pending');
+  expect(hits).toEqual([]);
 });
 
 describe('installed smoke registration isolation', () => {

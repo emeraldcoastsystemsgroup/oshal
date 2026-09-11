@@ -25,6 +25,7 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | SwarmAppRibbonPolicy.hideStatusBar — the third per-app chrome flag beside hideChatPanel/hideAssistant: hide the cockpit's bottom bots/tickets/cost/queue status bar while the app is focused (operator 2026-09-04: that bar only means something to a swarm admin; a CRM or trading surface should be able to drop it). Optional and additive — absent = shown, an older core ignores it.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups: manifest.kind ('app' default | 'group'), the group-only `toolbar[]` (surfaces BORROWED from member apps by app + surface name — a reference the loader resolves, never a copied URL) and `setup[]` (the steps the kernel setup dashboard renders), and the per-user `readiness[]` block any package may declare — the session-authenticated sibling of `smoke:` (a route below the package's own mount + RFC 6901 pointers for done/detail). All optional and additive; an older core ignores them.
  * Home customization | Codex | Add stable metric catalogs and related-item identities for configurable Home.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com | Declare read-only user-context installation smokes with a clearable caller PAT prerequisite.
  */
 
 import type { BriefingDeclaration } from '@/shared/briefings';
@@ -321,6 +322,8 @@ export interface SwarmAppSmokeDeclaration {
   expect: SwarmAppSmokeExpectation;
   /** The probe spends an AI inference when AI is enabled. */
   requiresAi?: boolean;
+  /** A read-only PAT probe requiring the caller's verified user context; pending without a PAT. */
+  requiresUser?: boolean;
 }
 
 /** One stage of a `pipeline: 'staged'` workflow — an existing bot pinned to a step,

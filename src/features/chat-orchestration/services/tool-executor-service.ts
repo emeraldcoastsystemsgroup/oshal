@@ -21,8 +21,10 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: execute dynamic CLI tools with an explicit OS/runtime allowlist instead of the controller environment; retain only the exact caller identity marker.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch the authorization family through a fixed typed port and trusted invocation context.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Execute activation-scoped package handlers with exact caller and selected tenant authority.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
+import { executePackageTool, packageToolTenant, requiresPackageTool } from '@/shared/package-tools';
 
 import fs from 'fs';
 import path from 'path';
@@ -153,7 +155,9 @@ export class ToolExecutorService {
     userSub?: string,
     authorizationInvocation?: AuthorizationToolInvocation,
   ): Promise<string> {
-    return runWithApplicationExecution({ kind: 'tools', operation: toolName, userSub }, async () => {
+    const packageTool = requiresPackageTool(toolName) || this.dynamicToolExecutorRegistry?.resolve(toolName)?.builtinKey === 'package';
+    const tenantId = packageTool ? packageToolTenant(toolInput) : undefined;
+    return runWithApplicationExecution({ kind: 'tools', operation: toolName, userSub, ...(tenantId ? { tenantId } : {}) }, async () => {
     const startedAt = Date.now();
     this.streamManager.broadcastToolExecution(taskId, { name: toolName, input: toolInput }, 'started');
 
@@ -212,6 +216,7 @@ export class ToolExecutorService {
     userSub?: string,
   ): Promise<string> {
     const descriptor = this.dynamicToolExecutorRegistry?.resolve(toolName);
+    if (requiresPackageTool(toolName) || descriptor?.builtinKey === 'package') return executePackageTool(toolName, toolInput, userSub);
     if (descriptor && descriptor.executorType !== 'builtin') {
       return this.handleDynamicExecutor(taskId, descriptor, toolInput, agentId, userSub);
     }

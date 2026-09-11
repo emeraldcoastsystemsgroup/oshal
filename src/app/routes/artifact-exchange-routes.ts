@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Preserve authenticated caller credentials and exact principal/source authorization across local artifact relay.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Share caller-visible destination discovery with Jarvis and register kernel keyword/context hints.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
@@ -31,6 +32,7 @@ import { extractDocText } from '@/features/doc-extract';
 import { uploadBytes } from './storage-browse';
 import { sendGmail, sendOutlookMail } from './email-routes';
 import { getValidAccessToken } from './connectors-routes';
+import { bindArtifactPrincipal, assertArtifactPrincipal, relayAuthenticatedArtifact } from './artifact-authenticated-relay';
 import { createArtifactPickerRoutes, type PickerVisibleApps } from './artifact-picker-routes';
 
 const logger = createChildLogger({ module: 'artifact-exchange-routes' });
@@ -62,41 +64,6 @@ function callerSub(req: Request): string | null {
 }
 
 /**
- * @description Fetch the handle's source object from THIS server instance over the loopback,
- * authenticated as the minting caller (service secret + x-oshal-user-sub) — the headless
- * identity rail the platform already trusts internally. The secret never leaves this function.
- * @param req - The redeeming request (its socket tells us our own port).
- * @param sourcePath - The validated root-relative source path.
- * @param ownerSub - The minting caller the fetch acts as.
- * @returns Status, content type, and bytes of the source response.
- */
-async function fetchSourceAsOwner(
-  req: Request,
-  sourcePath: string,
-  ownerSub: string,
-): Promise<{ ok: boolean; status: number; contentType: string; body: Buffer | null }> {
-  const secret = (process.env.SWARM_SERVICE_SECRET || '').trim();
-  if (!secret) return { ok: false, status: 503, contentType: '', body: null };
-  const port = req.socket.localPort;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SOURCE_FETCH_TIMEOUT_MS);
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}${sourcePath}`, {
-      headers: { 'x-service-secret': secret, 'x-oshal-user-sub': ownerSub },
-      signal: controller.signal,
-    });
-    if (!r.ok) return { ok: false, status: r.status, contentType: '', body: null };
-    const declared = Number(r.headers.get('content-length') || 0);
-    if (declared > MAX_CONTENT_BYTES) return { ok: false, status: 413, contentType: '', body: null };
-    const body = Buffer.from(await r.arrayBuffer());
-    if (body.length > MAX_CONTENT_BYTES) return { ok: false, status: 413, contentType: '', body: null };
-    return { ok: true, status: r.status, contentType: r.headers.get('content-type') || 'application/octet-stream', body };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
  * @description The artifact's bytes for a resolved handle, whichever kind it is: a mint-with-bytes
  * handle carries them, a locator handle is relayed as its minting owner. Every consumer of a handle
  * goes through here, which is why Amendment D needed no change in any destination.
@@ -105,12 +72,11 @@ async function fetchSourceAsOwner(
  * @returns Status, content type, and bytes.
  */
 async function readArtifactBytes(
+  ctx: AppContext,
   req: Request,
   rec: ArtifactHandleRecord,
 ): Promise<{ ok: boolean; status: number; contentType: string; body: Buffer | null }> {
-  if (rec.bytes) return { ok: true, status: 200, contentType: rec.type, body: rec.bytes };
-  if (!rec.sourcePath) return { ok: false, status: 502, contentType: '', body: null };
-  return fetchSourceAsOwner(req, rec.sourcePath, rec.ownerSub);
+  return relayAuthenticatedArtifact(ctx, req, rec, { maxBytes: MAX_CONTENT_BYTES, timeoutMs: SOURCE_FETCH_TIMEOUT_MS });
 }
 
 /** @description The valid-recipient shape shared with the sibling app senders (one address, no CRLF). */
@@ -127,6 +93,7 @@ function isValidRecipient(raw: unknown): boolean {
  * @returns The record + bytes, or null after an error response has been written.
  */
 async function redeemForBuiltin(
+  ctx: AppContext,
   req: Request,
   res: Response,
   sub: string,
@@ -134,7 +101,7 @@ async function redeemForBuiltin(
   const ref = String((req.body as { ref?: unknown } | undefined)?.ref ?? '');
   const rec = resolveArtifactHandle(ref, sub);
   if (!rec) { res.status(404).json({ error: 'artifact handle not found' }); return null; }
-  const fetched = await readArtifactBytes(req, rec);
+  const fetched = await readArtifactBytes(ctx, req, rec);
   if (!fetched.ok || !fetched.body) {
     const status = fetched.status === 503 ? 503 : fetched.status === 413 ? 413 : 502;
     res.status(status).json({ error: status === 503 ? 'artifact relay unconfigured' : status === 413 ? 'artifact too large' : 'artifact source unavailable' });
@@ -205,7 +172,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext, visibleApps?: Pick
   });
 
   /** POST /handles — mint a claim ticket over a serve URL the caller can already read. */
-  router.post('/handles', (req, res) => {
+  router.post('/handles', async (req, res) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'unauthenticated' }); return; }
     const body = (req.body ?? {}) as { source?: unknown; type?: unknown; name?: unknown };
@@ -216,6 +183,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext, visibleApps?: Pick
         type: String(body.type ?? ''),
         name: typeof body.name === 'string' ? body.name : undefined,
       });
+      await bindArtifactPrincipal(ctx, req, record);
       res.status(201).json({ ref: record.ref, type: record.type, name: record.name, expiresAt: new Date(record.expiresAt).toISOString() });
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : 'handle mint failed' });
@@ -242,7 +210,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext, visibleApps?: Pick
         });
       });
     },
-    (req: Request, res: Response) => {
+    async (req: Request, res: Response) => {
       const sub = callerSub(req) as string;
       const file = (req as Request & { file?: { buffer: Buffer; originalname?: string; mimetype?: string } }).file;
       if (!file?.buffer) { res.status(400).json({ error: 'a single "file" part is required' }); return; }
@@ -254,6 +222,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext, visibleApps?: Pick
           type: String(body.type || file.mimetype || ''),
           name: typeof body.name === 'string' && body.name ? body.name : file.originalname,
         });
+        await bindArtifactPrincipal(ctx, req, record);
         res.status(201).json({ ref: record.ref, type: record.type, name: record.name, bytes: file.buffer.length, expiresAt: new Date(record.expiresAt).toISOString() });
       } catch (err) {
         res.status(400).json({ error: err instanceof Error ? err.message : 'handle mint failed' });
@@ -262,11 +231,13 @@ export function createArtifactExchangeRoutes(ctx: AppContext, visibleApps?: Pick
   );
 
   /** GET /handles/:ref — metadata (owner only; foreign/expired/missing are one 404). */
-  router.get('/handles/:ref', (req, res) => {
+  router.get('/handles/:ref', async (req, res) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'unauthenticated' }); return; }
     const rec = resolveArtifactHandle(String(req.params.ref || ''), sub);
     if (!rec) { res.status(404).json({ error: 'artifact handle not found' }); return; }
+    try { await assertArtifactPrincipal(ctx, req, rec); }
+    catch { res.status(404).json({ error: 'handle not found or expired' }); return; }
     res.json({ ref: rec.ref, type: rec.type, name: rec.name, expiresAt: new Date(rec.expiresAt).toISOString() });
   });
 
@@ -279,7 +250,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext, visibleApps?: Pick
     const rec = resolveArtifactHandle(String(req.params.ref || ''), sub);
     if (!rec) { res.status(404).json({ error: 'artifact handle not found' }); return; }
     try {
-      const fetched = await readArtifactBytes(req, rec);
+      const fetched = await readArtifactBytes(ctx, req, rec);
       if (!fetched.ok || !fetched.body) {
         const status = fetched.status === 503 ? 503 : fetched.status === 413 ? 413 : 502;
         logger.warn({ ref: rec.ref, sourceStatus: fetched.status }, 'artifact source fetch failed');
@@ -302,7 +273,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext, visibleApps?: Pick
   router.post('/builtin/save', async (req, res) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'unauthenticated' }); return; }
-    const redeemed = await redeemForBuiltin(req, res, sub);
+    const redeemed = await redeemForBuiltin(ctx, req, res, sub);
     if (!redeemed) return;
     try {
       const saved = await uploadBytes(ctx, sub, 'oshal-local', 'artifacts', redeemed.rec.name, redeemed.body, redeemed.rec.type);
@@ -328,7 +299,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext, visibleApps?: Pick
     const body = (req.body ?? {}) as { to?: unknown; subject?: unknown; note?: unknown };
     const to = typeof body.to === 'string' ? body.to.trim() : '';
     if (!isValidRecipient(to)) { res.status(400).json({ error: 'a valid "to" address is required' }); return; }
-    const redeemed = await redeemForBuiltin(req, res, sub);
+    const redeemed = await redeemForBuiltin(ctx, req, res, sub);
     if (!redeemed) return;
     try {
       const note = typeof body.note === 'string' ? body.note.slice(0, 2000).trim() : '';
@@ -365,7 +336,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext, visibleApps?: Pick
   router.post('/builtin/extract-text', async (req, res) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'unauthenticated' }); return; }
-    const redeemed = await redeemForBuiltin(req, res, sub);
+    const redeemed = await redeemForBuiltin(ctx, req, res, sub);
     if (!redeemed) return;
     try {
       const result = await extractDocText({ name: redeemed.rec.name, buffer: redeemed.body, mime: redeemed.rec.type });

@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Connect dynamic package activation to the shared application policy service and request boundaries.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Bind remote authorization to one fully activated executable policy generation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Revalidate artifact source permissions by registered HTTP mount, retaining inactive ownership.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Validate declared package tools before activation and fence retired handler domain checks.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,9 +20,10 @@ import { getApplicationAuthorizationActor, runWithApplicationAuthorizationActor 
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import { createChildLogger } from '@/shared/logger';
 import type { RemoteApplicationSnapshot } from '@/shared/application-remote-execution';
+import { assertPackageToolInvocation, validatePackageTools, type PackageToolDeclaration } from '@/shared/package-tools';
 
 const logger = createChildLogger({ module: 'application-authorization-runtime' });
-interface RuntimeRegistration { registration: AuthorizationAppRegistration; generation: string; available: boolean; agents: string[]; tools: string[] }
+interface RuntimeRegistration { registration: AuthorizationAppRegistration; generation: string; available: boolean; agents: string[]; tools: string[]; packageTools: PackageToolDeclaration[] }
 export interface PackageAuthorizationContext {
   registerResource(resource: string, adapter: AuthorizationResourceAdapter): void;
   currentActor(): AuthorizationActor | undefined;
@@ -30,6 +33,7 @@ export interface ApplicationRouteAuthorization {
   guard(appName: string, req: Request, res: Response, next: () => void): Promise<void>;
   forPackage(appName: string): PackageAuthorizationContext;
   protectedApp(appName: string): boolean;
+  packageToolDeclarations?(appName: string): PackageToolDeclaration[];
 }
 
 /** A reviewed legacy rollout is explicit; absent and unknown settings require app-admin. */
@@ -58,6 +62,7 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
     private readonly findApp?: (name: string) => Promise<SwarmApplicationRecord | null>) {}
 
   private candidate(manifest: SwarmAppManifest, manifestPath: string): AuthorizationAppRegistration {
+    validatePackageTools(manifest);
     const catalog = loadApplicationAuthorization(path.dirname(path.resolve(manifestPath)), manifest);
     const isPackage = path.basename(manifestPath) === 'oshal-app.yaml';
     return { app: manifest.name, source: installationSource(manifestPath), version: manifest.version ?? '0.0.0', catalog,
@@ -75,7 +80,7 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
     const registration = this.candidate(record.manifest, record.manifestPath);
     this.registrations.set(record.name, { registration, generation: randomUUID(), available: false,
       agents: (record.manifest.bots ?? []).flatMap(bot => bot.agentId ? [bot.agentId] : []),
-      tools: (record.manifest.tools ?? []).map(tool => tool.name) });
+      tools: (record.manifest.tools ?? []).map(tool => tool.name), packageTools: validatePackageTools(record.manifest) });
     this.service.unregisterApp(record.name);
     await this.service.registerApp(registration);
   }
@@ -88,6 +93,12 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
   protectedApp(appName: string): boolean {
     const state = this.registrations.get(appName);
     return Boolean(state && (state.registration.catalog || state.registration.mode === 'enforce'));
+  }
+  /** @description Return validated declarations for one activation-scoped tool registry.
+   * @param appName Installed package owner. @returns Detached declarations, including disabled tools.
+   */
+  packageToolDeclarations(appName: string): PackageToolDeclaration[] {
+    return (this.registrations.get(appName)?.packageTools ?? []).map(item => ({ ...item }));
   }
   /** @description Bind remote work to one fully activated executable policy generation.
    * @param appName Controller-resolved application. @returns Live generation or unavailable null.
@@ -106,9 +117,12 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
       },
       currentActor: getApplicationAuthorizationActor,
       authorize: async operation => {
+        assertPackageToolInvocation(appName);
         const actor = getApplicationAuthorizationActor();
         if (!actor) throw new Error('Verified application actor unavailable');
-        return this.authorize(actor, { ...operation, app: appName });
+        const decision = await this.authorize(actor, { ...operation, app: appName });
+        assertPackageToolInvocation(appName);
+        return decision;
       },
     };
   }
@@ -121,6 +135,19 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
   /** Resolve the owning app without inferring permissions from bot names or keywords. */
   owner(kind: 'bots' | 'tools', id: string): string | undefined {
     return [...this.registrations].find(([, row]) => (kind === 'bots' ? row.agents : row.tools).includes(id))?.[0];
+  }
+  /** @description Resolve the longest known package mount and recheck its named HTTP permission.
+   * @param actor Verified caller. @param input Local request path and method. @returns Protected decision, or null for an unowned/legacy path.
+   */
+  async authorizeHttpPath(actor: AuthorizationActor, input: { method: string; path: string }): Promise<AuthorizationDecision | null> {
+    const owner = [...this.registrations.entries()].flatMap(([app, state]) =>
+      (state.registration.mountPaths ?? []).map(mount => ({ app, state, mount })))
+      .filter(row => input.path === row.mount || input.path.startsWith(`${row.mount}/`))
+      .sort((left, right) => right.mount.length - left.mount.length)[0];
+    if (!owner || !(owner.state.registration.catalog || owner.state.registration.mode === 'enforce')) return null;
+    // unregister retains the registration: a retired protected mount remains a denied owner.
+    return this.authorize(actor, { app: owner.app, kind: 'http', method: input.method,
+      path: input.path.slice(owner.mount.length) || '/' });
   }
   /** A coarse discovery check can hide inaccessible apps, but can never authorize an operation. */
   async canDiscover(appName: string, actor = getApplicationAuthorizationActor()): Promise<boolean> {
