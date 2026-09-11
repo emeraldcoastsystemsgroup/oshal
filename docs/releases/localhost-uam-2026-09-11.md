@@ -25,6 +25,13 @@ continues to remove that credential from the long-running API and confines it to
 The existing bot database regression suite is included in the fixed authorization command and Lab
 registration.
 
+The first updated startup exposed an existing local PostgreSQL membership mismatch: roles created
+by a superuser lacked the ADMIN membership option required by the strict provisioner. Provisioning
+now establishes that option only for a superuser bootstrap. Managed non-superuser creators keep
+their existing path, and the verifier still rejects unexpected memberships. A disposable PostgreSQL
+16 suite covers repeated local repair, repeated managed provisioning and refusal of a foreign
+membership with worker login disabled; it is registered with the authorization foundation tests.
+
 Users now shows current administrator access separately from root ownership, including access from
 the configured operator allowlist when no role row exists. The page uses shared theme tokens for
 text, cards, inputs and buttons so its status remains readable in the selected theme. It does not

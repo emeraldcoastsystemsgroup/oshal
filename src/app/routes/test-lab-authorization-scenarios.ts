@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register verified Google/Microsoft/local principal adoption and account continuity coverage.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register existing-account administration, root credential protection and browser controls.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Register real authenticated localhost browser acceptance separately from the fixed isolated regression runner.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Register disposable PostgreSQL role provisioning and repeat-bootstrap integration coverage.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -41,6 +42,7 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
   regressionTests: [
     { level: 'unit', path: 'tests/unit/authorization-policy.spec.ts' },
     { level: 'unit', path: 'tests/unit/bot-db-least-privilege.spec.ts' },
+    { level: 'integration', path: 'tests/unit/local-postgres-provisioning.spec.ts' },
     { level: 'unit', path: 'tests/unit/authorization-contract-files.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-postgres-integration.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-runtime.spec.ts' },
