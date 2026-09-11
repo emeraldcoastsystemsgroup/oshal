@@ -15,6 +15,9 @@
  * Result states stay honest: pass | degraded | gap | fail. Surfacing degraded/gap is the point.
  *
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Register isolated nightly, provisioning and authoritative bot initialization coverage.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Register installed-case discovery, connector callback boundaries and multi-store control regression suites.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Register artifact scenarios and expose categorized regression suites in the existing Lab catalog.

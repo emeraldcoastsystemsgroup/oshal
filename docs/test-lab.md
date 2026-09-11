@@ -72,10 +72,11 @@ updated catalog or its live-model scenarios have already run on the deployed ins
 
 ## Application-installed smoke cases
 
-Active applications register their existing manifest `smoke:` declarations through the application
+Active applications register their manifest `smoke:` declarations and optional
+[versioned suite catalog](testing/package-test-catalog.md) through the application
 loader. Reload and update replace that app's cases; deactivation and uninstall retract them. A fresh
 controller rebuilds the inventory through normal app loading. Each case carries its owning app,
-installed version, declaration revision, and execution prerequisites. The catalog also identifies
+installed version, source/content revision, level and execution prerequisites. The catalog also identifies
 apps without declarations and groups whose coverage belongs to their members.
 
 The Lab displays only apps available to the caller and checks access again before each execution.
@@ -90,9 +91,16 @@ and prerequisites without running application smokes. **Connector sign-in callba
 identities without installing packages or changing trust. Their linked local suites run using
 `npm run test:platform-readiness`.
 
-Richer unit/browser catalogs, retained versioned test history, package-suite migration and scheduled
+Unit/browser catalogs register suite references and limits; these remain pending until a suitable local
+runner executes them. Retained test history, runner execution, remaining package adoption and scheduled
 selection remain in the [application registration backlog](backlog/app-test-lab-registration.md).
 Source registration and fixture tests do not establish deployed provider or production results.
+
+The autonomous-run cards also register isolated nightly regressions, manifest bot initialization,
+first-run setup, specialist facts and Jarvis briefing preferences. Access administration includes
+principal inventory, Users, root protection and scoped audit history. Each card's linked source suites
+have a matching command in [tests/README.md](../tests/README.md); browser probes only perform their
+documented read steps and never execute arbitrary host commands.
 
 ## Part 2 — Nightly golden loop
 

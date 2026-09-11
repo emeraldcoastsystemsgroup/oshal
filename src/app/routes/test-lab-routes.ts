@@ -10,6 +10,9 @@
  * gap (no capability exists) | fail (error). Surfacing degraded/gap is the point as much as green.
  *
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Include caller-visible installed package smokes and version/prerequisite metadata; reuse the installation verifier with operator/caller-scoped authentication.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register artifact scenarios and expose categorized regression suites in the existing Lab catalog.
  * ---------------------------------------------------------------------------

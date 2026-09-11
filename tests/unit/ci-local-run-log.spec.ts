@@ -1,5 +1,8 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Execute production CI log retention in Git Bash and prove prior per-run failure details survive later results.
  */
 import { execFileSync, spawnSync } from 'node:child_process';

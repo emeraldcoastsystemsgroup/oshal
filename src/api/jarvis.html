@@ -501,6 +501,7 @@
         <div id="threads" class="threads"></div>
 
         <div class="sect" id="shelfSect" style="display:none"><span class="t">Work queue</span></div>
+        <a href="/api/jarvis/briefings/settings" style="color:var(--accent);font-size:12px">Briefing preferences</a>
         <div id="shelf" class="shelf"></div>
 
         <div class="sect"><span class="t">Status</span><button class="refresh" id="refresh" title="Refresh">↻</button></div>
@@ -531,6 +532,7 @@
     window.dispatchEvent(new Event('mermaid-ready'));
   } catch (e) { /* offline / blocked — diagrams stay as readable text */ }
 </script>
+<script src="/api/jarvis/briefings/client.js"></script>
 <script src="/api/jarvis/assets/jarvis-stage.js"></script>
 <script src="/api/jarvis/assets/jarvis-ambient-core.js"></script>
 <script src="/api/jarvis/assets/jarvis-ambient-ui.js"></script>
@@ -1661,7 +1663,7 @@ async function focusTask(jobId) {
 }
 /* Proactively DELIVER the result when a task finishes — render it inline in the conversation so the
    user never has to ask "did it finish / update me". A short spoken lead-in, then the full result. */
-function announceReady(job) {
+function announceReady(job, withVoice = true) {
   const label = job.label || 'your request';
   // Don't barge in with the full readout — just say it's ready and let the user pull it.
   // It stays UNREAD (highlighted in the work queue) until they hear it.
@@ -1677,7 +1679,7 @@ function announceReady(job) {
     if (pendingResultOfferId === id) pendingResultOfferId = null;
     focusTask(id);
   });
-  speak('I have your results ready for ' + label + '. Want an update?');
+  if (withVoice) speak('I have your results ready for ' + label + '. Want an update?');
   setStatus('Results ready: ' + label.slice(0, 30));
   renderShelfFromCache();   // reflect the new unread item's highlight
 }
@@ -1733,17 +1735,17 @@ function summarizeCatchup(tasks, opts) {
    while Jarvis was open is announced by name (the "read it" offer, as before). Anything else — a
    batch, or whatever accumulated while nobody was here — is ONE summary of counts. Every task in
    the batch is marked delivered either way; unread (actually heard) is tracked separately. */
-function deliverFresh(fresh, away) {
+function deliverFresh(fresh, away, withVoice = true) {
   if (!away && fresh.length === 1 && fresh[0].status === 'done') {
-    announceReady({ jobId: fresh[0].id, label: fresh[0].title });
+    announceReady({ jobId: fresh[0].id, label: fresh[0].title }, withVoice);
   } else {
     const s = summarizeCatchup(fresh, { away });
-    if (s) announceCatchup(s);
+    if (s) announceCatchup(s, withVoice);
   }
   for (const t of fresh) markDelivered(t.id);
 }
 /* The one summary bubble + one spoken line for a batch. "Read all" is an offer, not a default. */
-function announceCatchup(s) {
+function announceCatchup(s, withVoice = true) {
   const rows = s.groups.map((g) => {
     const name = g.source || 'Other tasks';
     const bits = [];
@@ -1761,7 +1763,7 @@ function announceCatchup(s) {
   box?.querySelector('[data-catchup-report]')?.addEventListener('click', () => { pendingCatchupOffer = false; taskReport(); });
   pendingResultOfferId = null;
   pendingCatchupOffer = true;
-  speak(`${s.text} Want me to read them?`);
+  if (withVoice) speak(`${s.text} Want me to read them?`);
   setStatus(`${s.total} new result${s.total === 1 ? '' : 's'} waiting`);
   renderShelfFromCache();
 }
@@ -1775,7 +1777,11 @@ async function pollShelf() {
     // Durable Tasks list — survives reloads/restarts (the in-session /ask/jobs is in-memory only),
     // so a returning user sees their old tasks + results.
     const r = await fetch('/api/jarvis/tasks', { credentials: 'include' });
+    if (!r.ok) throw new Error('Tasks unavailable');
     const tasks = (await r.json()).tasks || [];
+    const removed = window.OshalBriefings?.reconcile(durableTaskResults, tasks) || [];
+    if (removed.includes(pendingResultOfferId)) pendingResultOfferId = null;
+    if (removed.length) pendingCatchupOffer = false;
     const jobs = tasks.map((t) => {
       durableTaskResults[t.id] = t;
       return { jobId: t.id, label: t.title, status: t.status, createdAt: Date.parse(t.createdAt) || Date.now() };
@@ -1792,7 +1798,10 @@ async function pollShelf() {
     }
     // The first poll after opening is the catch-up: whatever landed while nobody was here is one
     // summary of counts, never a readout. Later polls name a single result and batch the rest.
-    if (fresh.length) deliverFresh(fresh, !shelfPrimed);
+    if (fresh.length) {
+      if (window.OshalBriefings) await window.OshalBriefings.deliver(fresh, !shelfPrimed, deliverFresh);
+      else { const ordinary = fresh.filter(task => !task.briefing); if (ordinary.length) deliverFresh(ordinary, !shelfPrimed); }
+    }
     shelfPrimed = true;
     if (mode !== 'speaking' && mode !== 'listening') setMode(anyRunning ? 'thinking' : 'idle');
   } catch (_) {}
@@ -1855,6 +1864,16 @@ async function openJob(jobId) {
   try {
     // Prefer the durable task row (survives reloads); fall back to the in-memory job result.
     let d = durableTaskResults[jobId];
+    if (d?.briefing) {
+      const response = await fetch('/api/jarvis/tasks', { credentials: 'include' });
+      if (!response.ok) throw new Error('Tasks unavailable');
+      const tasks = (await response.json()).tasks || [];
+      const removed = window.OshalBriefings?.reconcile(durableTaskResults, tasks) || [];
+      if (removed.includes(pendingResultOfferId)) pendingResultOfferId = null;
+      if (removed.length) pendingCatchupOffer = false;
+      d = tasks.find(task => task.id === jobId);
+      if (!d) { setStatus('That briefing is no longer available.'); return; }
+    }
     if (d) {
       const durable = d;
       const note = durable.kind === 'complex'

@@ -100,6 +100,7 @@ import { deleteManifestBotToolGrants, deregisterOwnedManifestTools, failClosedMa
 import { SwarmAppRepository, type SwarmAppScopeMeta } from './swarm-app-repository';
 import { InstalledAppTestCatalog } from './installed-app-test-catalog';
 import { upsertManifestBots, type ManifestBotRuntimeDefaultsResolver } from './manifest-bot-runtime';
+import type { ManifestBriefingRegistrar } from '@/shared/briefings';
 import { queryDynamicUiRows } from './dynamic-ui-query';
 import type {
   SwarmAppManifest,
@@ -191,6 +192,7 @@ export class SwarmAppService {
     private readonly takeoutRegistrar?: ManifestTakeoutRegistrar,
     private readonly authorizationRegistrar?: ManifestAuthorizationRegistrar,
     private readonly runtimeDefaults?: ManifestBotRuntimeDefaultsResolver,
+    private readonly briefingRegistrar?: ManifestBriefingRegistrar,
   ) {}
 
   /**
@@ -957,6 +959,8 @@ export class SwarmAppService {
     }
 
     await upsertManifestBots(this.pool, record.manifest, record.manifestPath, this.runtimeDefaults);
+    if (record.manifest.briefings?.length && !this.briefingRegistrar) throw new Error('Briefing registry unavailable');
+    await this.briefingRegistrar?.register(record.name, record.version, record.manifest.briefings ?? []);
     await this.setBotStatuses(record.agentIds, 'active');
     this.applyGuestTier(record);
     this.applySkillProfiles(record);
@@ -982,10 +986,10 @@ export class SwarmAppService {
    * Non-fatal: a route module that fails to load must not break app activation.
    */
   private async mountManifestRoutes(record: SwarmApplicationRecord): Promise<void> {
-    if (!this.routeMounter || !record.manifest.routes?.length) return;
+    if (!this.routeMounter) return;
     try {
       const packageDir = dirname(record.manifestPath);
-      await this.routeMounter.mount(record.name, packageDir, record.manifest.routes, record.manifest.access);
+      await this.routeMounter.mount(record.name, packageDir, record.manifest.routes ?? [], record.manifest.access);
     } catch (err) {
       if (record.manifest.authorization || this.authorizationRegistrar) throw err;
       logger.error({ err, app: record.name }, 'Manifest route mount failed (non-fatal)');
@@ -1201,6 +1205,7 @@ export class SwarmAppService {
   private async deactivate(record: SwarmApplicationRecord): Promise<void> {
     this.testLabCatalog.unregister(record.name);
     this.authorizationRegistrar?.unregister(record.name);
+    this.routeMounter?.unmount(record.name);
     // Close package ingestion first so a handler cannot remain reachable during asynchronous
     // teardown. The registry operation is synchronous and idempotent.
     try {
@@ -1208,6 +1213,9 @@ export class SwarmAppService {
     } catch (err) {
       logger.error({ err, app: record.name }, 'Manifest Takeout deregistration failed (non-fatal)');
     }
+    const briefingRetraction = this.briefingRegistrar?.unregister(record.name).catch(err => {
+      logger.warn({ err, app: record.name }, 'Briefing source persistence unavailable after local retraction');
+    });
     await this.setBotStatuses(record.agentIds, 'inactive');
     // ADR-085 D4: retract the guest tier — a toggled-off app must not keep granting guests reach
     // into routes its own gate now blocks. Idempotent; the segment falls back to the read-only default.
@@ -1245,11 +1253,11 @@ export class SwarmAppService {
     WorkflowPipelineRegistry.getInstance().unregisterApp(record.name);
     // Unmount any package routes this app dynamically mounted (ADR-085 P1). No-op when
     // no mounter is injected or the app declared none. Idempotent.
-    this.routeMounter?.unmount(record.name);
     // ADR-085 P0 — tear down the app's registered schedules so a toggled-off app's
     // recurring polls STOP firing (and billing). Before this, deactivate() had no
     // counterpart to registerManifestSchedules and the polls outlived the toggle.
     await this.deregisterManifestSchedules(record.manifest);
+    await briefingRetraction;
   }
 
   /**

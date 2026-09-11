@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en" data-theme="midnight"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Jarvis briefing preferences</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css"><script src="/shared/ui/js/surface-theme.js"></script>
+<style>body{font:16px system-ui;margin:2rem auto;padding:0 1rem;max-width:860px;background:var(--bg-primary);color:var(--text-primary)}a{color:var(--accent-primary)}article{border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:12px;padding:1rem;margin:1rem 0}label{display:inline-flex;gap:.5rem;align-items:center;margin:.5rem 1rem .5rem 0}select,button{font:inherit;padding:.4rem;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:6px}button{cursor:pointer}small,p{line-height:1.5;color:var(--text-secondary)}[role=status]{min-height:1.5em}h2{font-size:1.15rem}:focus-visible{outline:2px solid var(--accent-primary);outline-offset:3px}</style></head>
+<body data-briefing-settings><a href="/api/jarvis/ui">Back to Jarvis</a><h1>Briefing preferences</h1>
+<p>Choose which registered sources may update you and how often Jarvis announces their updates. Source collection schedules stay unchanged.</p>
+<p>Voice includes a message bubble and requires browser audio permission. Bubble is silent. Main screen only keeps updates in your work queue. Jarvis must be open for delivery.</p>
+<div id="briefing-status" role="status" aria-live="polite">Loading sources…</div><div id="briefing-sources"></div>
+<script src="/api/jarvis/briefings/client.js"></script></body></html>

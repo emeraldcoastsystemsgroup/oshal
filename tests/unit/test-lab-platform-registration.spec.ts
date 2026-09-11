@@ -1,5 +1,8 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the installed-case catalog scenario is registered and detects broken app/version associations over HTTP.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';

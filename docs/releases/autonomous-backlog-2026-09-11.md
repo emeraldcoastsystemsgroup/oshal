@@ -24,9 +24,13 @@ here as each lane is verified. Pending outcomes remain pending until proved.
   PR431's branch. The pre-push check typechecked the committed tree successfully.
 - Public pilots: `dc4c0dc` on `feat/package-test-catalog-pilots`; Hello 1.2.0 and Portrait 1.12.0.
   Install only after core provides the `test-catalog` capability.
+- Public briefing adoption: `571838a`; Kalshi 1.5.0 declares `jarvis-briefings` and `test-catalog`.
+  These package changes are collected in public store PR185, dependent on core PR431.
 - Private process/test inventory documentation: PR180 merged at `4248e2e`. Government contracting
   CRM and contract-management work is recorded in its owning private backlog; runtime construction
   is not claimed by this planning deliverable.
+- The private specialist consumer and its new catalog are versioned in that repository's PR181,
+  with implementation `f5e6c92` and inventory evidence `77d4b7a`. Its business details stay private.
 
 ## Verified first implementation checkpoint
 
@@ -53,8 +57,56 @@ References: [principal directory](../security/principal-directory.md),
 [bot initialization](../testing/manifest-bot-initialization.md),
 [first-run provisioning](../testing/first-run-provisioning.md).
 
-## Remaining evidence at this checkpoint
+## Combined local validation
 
-Ranks 7, 9 and 10 are in progress. Required independent core PR review, installed deployment
+These commands use the same suite paths as AI Test Lab. Counts overlap the implementation evidence
+above and are not a distinct-test total. JSON results and process logs are retained locally under
+`temp/autonomous-*-results.json` and `temp/autonomous-*-output.log`.
+
+An inventory of added core suite files since `3f04ce73` finds **21 new suite files and zero missing
+Lab references**. Registration parity checks also compare exact suite sets with the local commands.
+
+| Command | Passing cases | Suite files |
+|---|---:|---:|
+| `npm run test:authorization` | 227 | 21 |
+| `npm run test:platform-readiness` | 144 | 13 |
+| `npm run test:bot-initialization` | 56 | 6 |
+| `npm run test:provisioning` | 13 | 3 |
+| `npm run test:specialist-context` | 31 | 2 |
+| `npm run test:briefings` | 30 | 3 |
+| Registration parity: autonomous, platform and authorization route suites | 16 | 3 |
+
+The audit-history addition contributes nine new PostgreSQL/HTTP/tool/browser cases within the
+authorization command. Specialist dispatch contributes 31 cases covering known answers, exact
+identity, separate bot/read grants, revocation, ownership, lifecycle, deadline and transport refusal.
+Its actual private package consumer also passes six new behavior cases and four existing suites;
+an isolated core installer/Lab HTTP fixture verifies registration and scoped data without live records.
+
+Briefing preferences add 30 PostgreSQL/HTTP/identity/browser cases. The earlier focused run including
+existing catch-up and kernel checks passed 91 cases in five files, before five additional pool and
+lifecycle regressions were added. Coverage includes exact recipients,
+current access, durable preferences, concurrent claims, source/account revocation, reserved producer
+sessions, microsecond-safe visible task pagination and mixed ordinary/briefing announcements.
+Two-connection concurrent claims preserve a single winner and actual database identity. A
+single exhausted connection causes bounded refusal and rollback; late identity reads cannot
+resume a delivery write. Overlapping activation and retirement cannot restore a stale source.
+The final package installation/catalog lifecycle rerun passes 20 cases in two files.
+
+Kalshi's new compiled scan-path regression passes with 46 Node cases across three suites and five
+existing Chromium cases in its fourth suite. The five-case package catalog registers those four
+suites plus the existing smoke. Declined briefing enqueue does not finish a task or mark delivery;
+the existing first-seen scan ledger is preserved and enabling later does not replay skipped hands.
+
+Both TypeScript configurations pass, as do scoped ESLint across 98 changed JavaScript/TypeScript
+paths, the active-backlog guard, repository separation check and links in all 13 final changed
+Markdown files. New code follows the repository's change-log and
+bounded-function conventions. GitHub Actions were not added or invoked.
+
+References: [specialist facts](../apps/specialist-context.md),
+[briefing preferences](../apps/jarvis-briefings.md), [audit history](../security/authorization-audit.md).
+
+## Remaining rollout evidence
+
+All ten selected implementation outcomes have local source proof. Required independent core PR review, installed deployment
 proof, real provider/model runs and a complete unattended green nightly are not established by
 the isolated suites. The previous full-nightly failures remain recorded in the isolated-nightly note.

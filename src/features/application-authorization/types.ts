@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  */
 import type { AuthorizationActor, AuthorizationChange, AuthorizationPreview, AuthorizationReceipt } from '@/shared/application-authorization';
 export interface AuthorizationAssignment {
@@ -24,9 +25,15 @@ export interface AuthorizationAudit {
 }
 export interface AuthorizationTransaction { state: AuthorizationState; audit(event: AuthorizationAudit): void }
 export interface AuthorizationStore {
+  readAudit(input: AuthorizationAuditQuery): Promise<{ events: AuthorizationAudit[]; snapshotRevision: number }>;
   publishAppPosture(app: string, protectedApp: boolean, agentIds: readonly string[], toolNames?: readonly string[]): Promise<void>;
   read(): Promise<AuthorizationState>;
   transaction<T>(operation: (transaction: AuthorizationTransaction) => Promise<T>): Promise<T>;
+}
+/** @description Internal repository query after service authorization; never constructed from a request actor. */
+export interface AuthorizationAuditQuery {
+  app?: string; tenantId?: string; limit: number; snapshotRevision?: number;
+  before?: { revision: number; id: string };
 }
 /** Structured expected denial; HTTP/tool adapters should preserve status/code, not expose stacks. */
 export class ApplicationAuthorizationError extends Error {

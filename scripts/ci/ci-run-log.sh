@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ | AUTHOR | DESCRIPTION
+# -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com | Preserve every local CI run while retaining the legacy latest-log alias.
 
 # Called after argument parsing. Unique directories avoid overwrites even when an invocation

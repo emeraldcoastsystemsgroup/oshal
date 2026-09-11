@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify existing-account adoption, provider collisions and operator continuity against disposable PostgreSQL.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Bound case-registration helpers without changing suite names, test order or database hook scope.
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -64,7 +65,8 @@ beforeEach(async () => {
 });
 afterAll(async () => { if (runtime) await runtime.end(); if (owner) await owner.end(); if (started) docker(['rm','--force',container]); vi.unstubAllEnvs(); });
 
-describe('verified existing-principal directory', () => {
+/** Register verified observation and independent provider inventory behavior. */
+function registerObservationCases() {
   it('observes authenticated HTTP callers before handlers and refuses on registry failure', async () => {
     const app = express();
     app.use((request,_response,next) => { if (request.get('x-fixture-auth') === 'yes') Object.assign(request,{ oidc: req(google).oidc }); next(); });
@@ -93,6 +95,10 @@ describe('verified existing-principal directory', () => {
     const restarted = createApplicationPrincipalDirectory(runtime,Promise.resolve(),env);
     expect((await restarted.inventory(admin)).users).toHaveLength(3);
   });
+}
+
+/** Register protocol-provenance boundaries separately from account authorization. */
+function registerProtocolCases() {
   it('never invents principals from metadata-only sessions, body claims, incoherent evidence or disabled provider flags', async () => {
     await directory.observe({ oidc: { isAuthenticated: () => true,user: { iss: google,sub: 'unverified' } },headers: {} } as unknown as Request);
     await directory.observe({ body: { iss: google,sub: 'forged' },headers: {} } as unknown as Request);
@@ -105,6 +111,10 @@ describe('verified existing-principal directory', () => {
     await directory.observe(req(google,'established',{ iat: now-7200,exp: now-3600 }));
     expect((await directory.nativePrincipal('established',google)).isActive).toBe(true);
   });
+}
+
+/** Register current operator and disabled-account behavior under the existing fixture hooks. */
+function registerOperatorCases() {
   it('scopes configured operators to enabled primary or explicit secondary issuers and verified email provenance', async () => {
     env.OSHAL_OPERATOR_SUBS = 'same-sub'; await directory.observe(req(google)); await directory.observe(req(microsoft));
     expect(await directory.nativePrincipal('same-sub',google)).toEqual({ isActive: true,isSwarmAdmin: true });
@@ -131,6 +141,10 @@ describe('verified existing-principal directory', () => {
     const resolve = createApplicationAuthorizationActorResolver(runtime,{ nativePrincipal: directory.nativePrincipal,tenantIds: async () => [] });
     expect(await resolve(req(google))).toMatchObject({ issuer: google,sub: 'same-sub',isActive: false,isSwarmAdmin: false });
   });
+}
+
+/** Register explicit canonical links and exact-principal policy targets. */
+function registerCanonicalTargetCases() {
   it('deduplicates Microsoft only through the existing exact link and does not create or rebind accounts', async () => {
     await owner.query("INSERT INTO oshal_local_users(id,email,user_sub,status) VALUES('local-row','same@example.test','local-canonical','active')");
     const bridged = { oidc: { isAuthenticated: () => true,user: { iss: LOCAL_AUTH_PRINCIPAL_ISSUER,sub: 'local-canonical' } },headers: {} } as unknown as Request;
@@ -156,4 +170,11 @@ describe('verified existing-principal directory', () => {
     expect((await service.effective(admin,{ app: 'fixture-app',targetSub: 'same-sub',targetIssuer: microsoft })).tier).toBe('deny');
     expect((await service.catalog(admin)).users).toHaveLength(2);
   });
+}
+
+describe('verified existing-principal directory', () => {
+  registerObservationCases();
+  registerProtocolCases();
+  registerOperatorCases();
+  registerCanonicalTargetCases();
 });

@@ -1,9 +1,10 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise registered typed invocation, consent boundaries, reserved ownership and caller-scoped discovery.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Exercise registered typed invocation, consent boundaries, reserved ownership and caller-scoped discovery.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  */
 import express from 'express';
 import http from 'node:http';
@@ -53,6 +54,7 @@ function catalogRepository() {
 /** Only policy is doubled in adapter tests below; actual policy parity is covered in the companion integration suite. */
 function serviceFixture() {
   const service: ApplicationAuthorizationManagementService = {
+    auditHistory: vi.fn(async () => ({ entries: [], snapshotRevision: 0, nextCursor: null })),
     catalog: vi.fn(async (actor) => {
       if (!actor.isSwarmAdmin && !actor.managementScopes?.length) throw Object.assign(new Error('authorization_management_denied'), { code: 'authorization_management_denied' });
       return { revision: 0, users: [], groups: [], assignments: [], apps: [{ app: 'fixture-app', source: 'fixture:one', version: '1',

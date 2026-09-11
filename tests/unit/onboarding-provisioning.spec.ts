@@ -1,5 +1,8 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove resumable partial onboarding writes, caller ownership and unavailable persistence through real HTTP and disposable PostgreSQL.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';

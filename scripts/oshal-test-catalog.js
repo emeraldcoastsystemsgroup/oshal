@@ -1,4 +1,11 @@
-/** TLAB-01: one closed, bounded package test-catalog validator for the CLI and runtime. */
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Share a closed, bounded package test-catalog validator between the CLI and runtime.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extract isolation checks to keep catalog validation within the function-size limit.
+ */
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
@@ -48,7 +55,19 @@ function confinedFile(root, value, app, field, max = MAX_FILE_BYTES) {
     fail(app, field, `file unavailable: ${value}`);
   }
 }
-/** Shape validation is pure; file loading and content fingerprints are performed below. */
+function validateIsolation(test, app, at) {
+  exact(test.isolation, ['mode', 'fixtures', 'cleanup'], app, `${at}.isolation`);
+  choice(test.isolation.mode, ['none', 'disposable', 'live'], app, `${at}.isolation.mode`);
+  if (test.isolation.fixtures !== undefined) {
+    list(test.isolation.fixtures, app, `${at}.isolation.fixtures`, 32);
+    test.isolation.fixtures.forEach(file => relativeFile(file, app, `${at}.isolation.fixtures`));
+  }
+  if (test.isolation.cleanup !== undefined) text(test.isolation.cleanup, app, `${at}.isolation.cleanup`);
+  if (test.sideEffects === 'fixture-write' && (test.isolation.mode !== 'disposable' || !test.isolation.cleanup)) fail(app, `${at}.isolation`, 'fixture writes require disposable isolation and a cleanup description');
+  if (['external-write', 'device-action'].includes(test.sideEffects) && test.isolation.mode !== 'live') fail(app, `${at}.isolation`, 'external side effects require explicit live isolation');
+}
+/** @description Validate declarations without executing package code. @param value Parsed catalog.
+ * @param manifest Owning manifest and existing smokes. @returns Detached validated catalog metadata. */
 function validatePackageTestCatalog(value, manifest) {
   const app = manifest.name;
   exact(value, ['version', 'cases'], app, 'catalog');
@@ -66,15 +85,7 @@ function validatePackageTestCatalog(value, manifest) {
     list(test.prerequisites, app, `${at}.prerequisites`, 32, true);
     test.prerequisites.forEach(item => { if (typeof item !== 'string' || !/^[a-z][a-z0-9:._-]{0,127}$/.test(item)) fail(app, `${at}.prerequisites`, 'must contain stable prerequisite IDs'); });
     choice(test.sideEffects, ['none', 'fixture-write', 'external-write', 'device-action'], app, `${at}.sideEffects`);
-    exact(test.isolation, ['mode', 'fixtures', 'cleanup'], app, `${at}.isolation`);
-    choice(test.isolation.mode, ['none', 'disposable', 'live'], app, `${at}.isolation.mode`);
-    if (test.isolation.fixtures !== undefined) {
-      list(test.isolation.fixtures, app, `${at}.isolation.fixtures`, 32);
-      test.isolation.fixtures.forEach(file => relativeFile(file, app, `${at}.isolation.fixtures`));
-    }
-    if (test.isolation.cleanup !== undefined) text(test.isolation.cleanup, app, `${at}.isolation.cleanup`);
-    if (test.sideEffects === 'fixture-write' && (test.isolation.mode !== 'disposable' || !test.isolation.cleanup)) fail(app, `${at}.isolation`, 'fixture writes require disposable isolation and a cleanup description');
-    if (['external-write', 'device-action'].includes(test.sideEffects) && test.isolation.mode !== 'live') fail(app, `${at}.isolation`, 'external side effects require explicit live isolation');
+    validateIsolation(test, app, at);
     exact(test.limits, ['timeoutMs', 'maxMemoryMb'], app, `${at}.limits`);
     if (!Number.isInteger(test.limits.timeoutMs) || test.limits.timeoutMs < 100 || test.limits.timeoutMs > 300000) fail(app, `${at}.limits.timeoutMs`, 'must be 100-300000');
     if (test.limits.maxMemoryMb !== undefined && (!Number.isInteger(test.limits.maxMemoryMb) || test.limits.maxMemoryMb < 16 || test.limits.maxMemoryMb > 4096)) fail(app, `${at}.limits.maxMemoryMb`, 'must be 16-4096');
@@ -103,6 +114,8 @@ function validatePackageTestCatalog(value, manifest) {
   }
   return JSON.parse(JSON.stringify(value));
 }
+/** @description Confine declared files and fingerprint their contents. @param packageDir Installed package root.
+ * @param manifest Owning manifest. @returns Catalog and case revisions, or null for an undeclared catalog. */
 function loadPackageTestCatalog(packageDir, manifest) {
   if (manifest.testing === undefined) return null;
   const app = manifest.name, declaration = manifest.testing;
@@ -133,7 +146,7 @@ function loadPackageTestCatalog(packageDir, manifest) {
   }
   return { catalog, revisions };
 }
-/** Only a fingerprint leaves the registry: local paths and credential-bearing provenance never do. */
+/** @description Fingerprint installer provenance without exposing paths or credentials. @param packageDir Package root. @returns Opaque source identifier. */
 function packageTestSource(packageDir) {
   const root = fs.realpathSync(packageDir), stamp = path.join(root, '.oshal-install.json');
   if (!fs.existsSync(stamp)) return `local:${hash(root)}`;

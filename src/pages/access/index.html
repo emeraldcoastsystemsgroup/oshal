@@ -91,6 +91,17 @@
           <h2 id="history-title">Current assignments</h2><div id="history" class="empty">No assignments loaded.</div>
           <p id="receipt" class="hint" hidden></p>
         </section>
+        <section class="panel" aria-labelledby="audit-title">
+          <h2 id="audit-title">Applied access changes</h2>
+          <p class="hint">Changes committed through Access Administration, newest first. Freeform reasons and approval data are omitted.</p>
+          <div class="selectors">
+            <div><label for="audit-scope">History scope</label><select id="audit-scope"><option value="app">Selected application</option><option id="audit-global" value="global" hidden>All applications</option></select></div>
+            <div><label for="audit-tenant">Business tenant (optional)</label><input id="audit-tenant" maxlength="512" autocomplete="off" /></div>
+            <div><label for="audit-limit">Changes per page</label><select id="audit-limit"><option>10</option><option selected>25</option><option>50</option><option>100</option></select></div>
+          </div>
+          <p class="actions"><button id="audit-refresh" type="button">Refresh history</button><button id="audit-more" type="button" disabled>Load older changes</button></p>
+          <p id="audit-status" class="hint" role="status"></p><div id="audit-entries" class="table-wrap"></div>
+        </section>
       </div>
       <div>
         <section class="panel" aria-labelledby="change-title">
@@ -120,6 +131,7 @@
 const API = '/api/authorization';
 const $ = id => document.getElementById(id);
 const state = { catalog: null, preview: null, selection: 0, busy: false, idempotencyKey: null, manualTargets: { users: [], groups: [] } };
+const auditState = { cursor: null, entries: [], generation: 0 };
 const escapeHtml = value => String(value == null ? '' : value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
 function status(message, kind) { $('status').textContent = message; $('status').className = 'status' + (kind ? ' ' + kind : ''); }
 function discardPreview() { state.preview = null; state.idempotencyKey = null; $('review').hidden = true; }
@@ -227,19 +239,64 @@ async function renderEffective() {
   } catch (error) { if (generation === state.selection) $('effective').textContent = error.message; }
 }
 async function loadCatalog(message) {
-  discardPreview(); setBusy(true); status('Loading access catalog…');
+  discardPreview(); resetAudit(); setBusy(true); status('Loading access catalog…');
   try {
     const oldApp = $('application').value; const oldTarget = targetKey(target());
     state.catalog = await request('/catalog');
+    $('audit-global').hidden = state.catalog.canReadGlobalAudit !== true;
+    if (state.catalog.canReadGlobalAudit !== true) $('audit-scope').value = 'app';
+    $('audit-tenant').disabled = $('audit-scope').value === 'global';
     options($('application'), state.catalog.apps.map(app => ({ value: app.app, label: `${app.app} (${app.source})` })), oldApp || new URLSearchParams(location.search).get('app'));
     renderTargets(oldTarget); renderApplication(); $('administration').hidden = false;
     await renderEffective();
+    await loadAudit(true);
     status(message || 'Access catalog loaded. Preview a change before applying it.');
   } catch (error) {
+    resetAudit();
     $('administration').hidden = true;
     status(error.status === 403 ? 'Access administration is unavailable for this account. A verified identity and administration scope are required.' : error.message, 'error');
   } finally { setBusy(false); }
 }
+function resetAudit() {
+  auditState.generation++; auditState.entries = []; auditState.cursor = null;
+  $('audit-entries').replaceChildren(); $('audit-status').textContent = '';
+  $('audit-more').disabled = true;
+}
+function auditQuery() {
+  const global = $('audit-scope').value === 'global';
+  if (global && state.catalog?.canReadGlobalAudit !== true) throw new Error('Swarm administration is required for all-application history.');
+  if (!global && !application()) throw new Error('Select an application to inspect its history.');
+  return new URLSearchParams({ ...(!global ? { app: application().app, ...($('audit-tenant').value.trim() ? { tenantId: $('audit-tenant').value.trim() } : {}) } : {}), limit: $('audit-limit').value });
+}
+function renderAudit() {
+  $('audit-entries').innerHTML = table(['When / revision', 'Application / tenant', 'Actor', 'Change', 'Target'], auditState.entries.map(entry => [
+    `${entry.at}\nRevision ${entry.revision}\n${entry.id}`, `${entry.app}\n${entry.tenantId || 'No tenant'}`,
+    `${entry.actor.issuer}\n${entry.actor.sub}`, `${entry.action}\n${entry.role || entry.permission || 'Whole application'}`,
+    entry.group ? `${entry.group.issuer}\n${entry.group.tenantId}\n${entry.group.id}` : `${entry.targetIssuer || ''}\n${entry.targetSub || ''}`,
+  ]));
+}
+async function loadAudit(reset) {
+  if (reset) resetAudit();
+  const generation = ++auditState.generation;
+  $('audit-more').disabled = true; $('audit-status').textContent = 'Loading applied changes...';
+  try {
+    const query = auditQuery();
+    if (auditState.cursor) query.set('cursor', auditState.cursor);
+    const page = await request('/audit?' + query.toString());
+    if (generation !== auditState.generation) return;
+    auditState.entries.push(...page.entries); auditState.cursor = page.nextCursor;
+    renderAudit(); $('audit-more').disabled = !page.nextCursor;
+    $('audit-status').textContent = `${auditState.entries.length} applied changes loaded through revision ${page.snapshotRevision}.` + (page.nextCursor ? '' : ' End of history.');
+  } catch (error) {
+    if (generation !== auditState.generation) return;
+    resetAudit(); $('audit-status').textContent = error.status === 403 ? 'History is unavailable for this application or tenant under your current scope.' : error.message;
+  }
+}
+$('audit-refresh').addEventListener('click', () => { void loadAudit(true); });
+$('audit-more').addEventListener('click', () => { void loadAudit(false); });
+['audit-scope', 'audit-tenant', 'audit-limit'].forEach(id => $(id).addEventListener('change', () => {
+  $('audit-tenant').disabled = $('audit-scope').value === 'global'; void loadAudit(true);
+}));
 function changeInput() {
   const action = $('operation').value;
   return { action, app: application().app, ...targetInput(), reason: $('reason').value.trim(), expectedRevision: state.catalog.revision,
@@ -276,7 +333,7 @@ $('manual-target-form').addEventListener('submit', event => {
   status('Exact identity selected. No access has changed; review a preview before applying.');
 });
 $('target').addEventListener('change', () => { discardPreview(); renderApplication(); void renderEffective(); });
-$('application').addEventListener('change', () => { renderApplication(); void renderEffective(); });
+$('application').addEventListener('change', () => { renderApplication(); void renderEffective(); void loadAudit(true); });
 $('operation').addEventListener('change', renderChange);
 $('change-form').addEventListener('input', discardPreview);
 $('change-form').addEventListener('change', discardPreview);

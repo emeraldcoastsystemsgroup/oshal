@@ -4,9 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  */
 /** ADR-149 authoritative management and execution service. No swarm-admin business bypass. */
 import { randomUUID } from 'node:crypto';
+import { createChildLogger } from '@/shared/logger';
 import { runWithApplicationAuthorizationActor } from '@/shared/application-authorization-context';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import {
@@ -17,12 +19,15 @@ import {
   type AuthorizationOperation, type AuthorizationPreview, type AuthorizationReceipt, type AuthorizationTarget,
   type AuthorizationTier,
   type AuthorizationResourceAdapter,
+  type AuthorizationAuditInput, type AuthorizationAuditPage,
 } from '@/shared/application-authorization';
 import type { AuthorizationAssignment, AuthorizationState, AuthorizationStore, StoredAuthorizationPreview } from './types';
 import { ApplicationAuthorizationError } from './types';
 import { APP_ADMIN_ROLE, TIER_ORDER, assertActor, catalogRevision, managementAllowed, matchingAssignments,
   requireManagement, resolveGrantSet, resolveOperationPermissions, type RegisteredAuthorizationApp } from './policy';
 import { parseAuthorizationApply, parseAuthorizationChange } from './change-validation';
+import { readAuthorizationAudit } from './audit-history';
+const logger = createChildLogger({ module: 'application-authorization' });
 
 export interface ApplicationAuthorizationServiceOptions {
   now?: () => number;
@@ -65,6 +70,17 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
   }
   unregisterApp(app: string): void { this.apps.delete(app); }
   getApp(app: string): AuthorizationAppSummary | null { const registration = this.apps.get(app); return registration ? this.summary(registration) : null; }
+  /** @description Read applied changes under current authority on every page.
+   * @param actor Verified calling identity. @param input Bounded app/tenant filters. @returns Redacted applied-change history.
+   */
+  async auditHistory(actor: AuthorizationActor, input: AuthorizationAuditInput): Promise<AuthorizationAuditPage> {
+    const startedAt = Date.now(); logger.info('Authorization history requested');
+    try {
+      const result = await readAuthorizationAudit(this.store, await this.currentActor(actor), input);
+      logger.info({ durationMs: Date.now() - startedAt, count: result.entries.length }, 'Authorization history completed');
+      return result;
+    } catch (error) { logger.error({ err: error }, 'Authorization history refused'); throw error; }
+  }
   async catalog(actor: AuthorizationActor): Promise<AuthorizationCatalogResult> {
     actor = await this.currentActor(actor);
     if (actor.allowedPermissions && !actor.allowedPermissions.includes('platform:authorization.read')) throw new ApplicationAuthorizationError(403, 'authorization_management_denied');
@@ -79,7 +95,7 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
       if (row.targetSub && row.targetIssuer) users.set(`${row.targetIssuer}\0${row.targetSub}`, users.get(`${row.targetIssuer}\0${row.targetSub}`) ?? { sub: row.targetSub, issuer: row.targetIssuer, label: row.targetSub });
       if (row.group) groups.set(`${row.group.issuer}\0${row.group.tenantId}\0${row.group.id}`, { ...row.group, label: row.group.id });
     }
-    return { revision: state.revision, apps: available.map(app => ({ ...this.summary(app), managementScopes: (actor.isSwarmAdmin
+    return { revision: state.revision, canReadGlobalAudit: actor.isSwarmAdmin, apps: available.map(app => ({ ...this.summary(app), managementScopes: (actor.isSwarmAdmin
       ? [{ app: app.app, permissions: ['read','assign','directory'] as Array<'read' | 'assign' | 'directory'> }] : actor.managementScopes?.filter(scope => scope.app === app.app) ?? [])
       .map(scope => ({ ...scope, permissions: scope.permissions.filter(permission => !actor.allowedPermissions || actor.allowedPermissions.includes(`platform:authorization.${permission}`)) })) })),
     users: [...users.values()], groups: [...groups.values()], assignments };

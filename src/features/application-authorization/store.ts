@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  */
 /** Durable control-plane state; this store never opens application business data. */
 import type { Pool, PoolClient } from 'pg';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
-import type { AuthorizationAudit, AuthorizationState, AuthorizationStore, AuthorizationTransaction } from './types';
+import type { AuthorizationAudit, AuthorizationAuditQuery, AuthorizationState, AuthorizationStore, AuthorizationTransaction } from './types';
+import { readPostgresAudit } from './audit-store';
 
 export const AUTHORIZATION_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS oshal_authorization_state (singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton), revision BIGINT NOT NULL DEFAULT 0 CHECK(revision>=0))`,
@@ -17,6 +19,9 @@ export const AUTHORIZATION_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS oshal_authorization_assignments (id TEXT PRIMARY KEY, payload JSONB NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS oshal_authorization_previews (id TEXT PRIMARY KEY, payload JSONB NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS oshal_authorization_audit (id TEXT PRIMARY KEY, revision BIGINT NOT NULL, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+  `CREATE INDEX IF NOT EXISTS authorization_audit_revision ON oshal_authorization_audit(revision DESC,id DESC)`,
+  `CREATE INDEX IF NOT EXISTS authorization_audit_app_revision ON oshal_authorization_audit((payload #>> '{change,app}'),revision DESC,id DESC)`,
+  `CREATE INDEX IF NOT EXISTS authorization_audit_tenant_revision ON oshal_authorization_audit((payload #>> '{change,app}'),(payload #>> '{change,tenantId}'),revision DESC,id DESC)`,
   `CREATE TABLE IF NOT EXISTS oshal_authorization_applications (app_name TEXT PRIMARY KEY, protected BOOLEAN NOT NULL, agent_ids TEXT[] NOT NULL DEFAULT '{}', tool_names TEXT[] NOT NULL DEFAULT '{}')`,
   `ALTER TABLE oshal_authorization_applications ADD COLUMN IF NOT EXISTS tool_names TEXT[] NOT NULL DEFAULT '{}'`,
   ...['state', 'assignments', 'previews', 'audit', 'applications'].flatMap(name => [
@@ -37,6 +42,10 @@ export async function ensureApplicationAuthorizationSchema(pool: Pool): Promise<
 /** Policy changes serialize on one revision row; each audit and change commits atomically. */
 export class PostgresAuthorizationStore implements AuthorizationStore {
   constructor(private readonly pool: Pool) {}
+  /** @description Query a consistent audit page without taking the policy writer lock.
+   * @param input Service-authorized scope and bounded cursor. @returns Matching stored audit events.
+   */
+  readAudit(input: AuthorizationAuditQuery) { return readPostgresAudit(this.pool, input); }
   async publishAppPosture(app: string, protectedApp: boolean, agentIds: readonly string[], toolNames: readonly string[] = []): Promise<void> {
     await runWithSystemIdentity(() => this.pool.query(`INSERT INTO oshal_authorization_applications(app_name,protected,agent_ids,tool_names)
       VALUES($1,$2,$3::text[],$4::text[]) ON CONFLICT(app_name) DO UPDATE SET
@@ -94,6 +103,18 @@ async function persistRows(client: PoolClient, table: 'assignments' | 'previews'
 
 /** Isolated repository adapter for fixture apps/tests; production must inject PostgreSQL. */
 export class MemoryAuthorizationStore implements AuthorizationStore {
+  /** @description Match durable audit ordering for isolated policy fixtures.
+   * @param input Service-authorized scope and bounded cursor. @returns Matching fixture events.
+   */
+  async readAudit(input: AuthorizationAuditQuery): Promise<{ events: AuthorizationAudit[]; snapshotRevision: number }> {
+    await this.tail;
+    const snapshotRevision = input.snapshotRevision === undefined ? this.state.revision : Math.min(input.snapshotRevision, this.state.revision);
+    const events = this.auditEvents.filter(event => event.revision <= snapshotRevision
+      && (input.app === undefined || event.change.app === input.app) && (input.tenantId === undefined || event.change.tenantId === input.tenantId)
+      && (!input.before || event.revision < input.before.revision || (event.revision === input.before.revision && event.id < input.before.id)))
+      .sort((a, b) => b.revision - a.revision || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)).slice(0, input.limit);
+    return { events: structuredClone(events), snapshotRevision };
+  }
   readonly applicationPostures = new Map<string, { protected: boolean; agentIds: string[]; toolNames: string[] }>();
   async publishAppPosture(app: string, protectedApp: boolean, agentIds: readonly string[], toolNames: readonly string[] = []): Promise<void> {
     const previous = this.applicationPostures.get(app);

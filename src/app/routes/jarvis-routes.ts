@@ -45,6 +45,7 @@
  * @module jarvis-routes
  */
 
+import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
 import { Router, type Request, type Response, type RequestHandler } from 'express';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -335,6 +336,7 @@ function threadTicketKey(ownerSub: string, sessionId: string): string {
  */
 async function ensureSessionTask(ctx: AppContext, sub: string, sessionId: string, message: string): Promise<boolean> {
   try {
+    if (await getJarvisBriefingDelivery()?.service.isProducerSession(sessionId)) return false;
     const existing = await ctx.taskStore.get(sessionId);
     if (existing) return existing.ownerSub === sub;
     const created = await ctx.taskStore.create({
@@ -564,9 +566,11 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     try {
-      const rows = (await ctx.pool.query(
-        `SELECT id, title, status, result, error, kind, ticket_id, visual, files, delivered, created_at, finished_at
+      let rows = (await ctx.pool.query(
+        `SELECT id, user_sub, session_id, briefing_source_id, principal_issuer, title, status, result, error, kind, ticket_id, visual, files, delivered, created_at, finished_at
            FROM jarvis_tasks WHERE user_sub = $1 ORDER BY created_at DESC LIMIT 50`, [sub])).rows;
+      const briefings = getJarvisBriefingDelivery();
+      if (briefings) rows = await briefings.service.listTasks(sub, await briefings.resolveActor(req), 50);
       // For complex tasks (filed with the swarm), the live status lives on the ticket — map it in.
       const hasComplex = rows.some((r) => r.kind === 'complex' && r.ticket_id);
       let ticketStatus = new Map<string, string>();
@@ -595,6 +599,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
           id: r.id, title: r.title, status, result: r.result as string | null, error,
           kind: r.kind, ticketId: r.ticket_id, delivered: r.delivered === true, createdAt: r.created_at, finishedAt: r.finished_at,
           ...(visual ? { visual } : {}),
+          ...(r.briefing ? { briefing: r.briefing } : {}),
           ...(files.length ? { files } : {}),
         };
       });
@@ -618,7 +623,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     try {
-      await ctx.pool.query('UPDATE jarvis_tasks SET delivered = TRUE WHERE id = $1 AND user_sub = $2', [String(req.params.id), sub]);
+      await ctx.pool.query('UPDATE jarvis_tasks SET delivered = TRUE WHERE id = $1 AND user_sub = $2 AND briefing_source_id IS NULL', [String(req.params.id), sub]);
       res.json({ ok: true });
     } catch (err) {
       logger.warn({ err }, 'jarvis mark-delivered failed');

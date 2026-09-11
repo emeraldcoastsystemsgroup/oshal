@@ -24,8 +24,10 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Make authoritative push-on-dispatch enforcement explicit in the wire contract: requests can require a provider record, and responses report the config source/action/version actually enforced.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Harden loadActiveBotEndpointRegistry: the raw registry require has no .js on disk under the ESM/vitest transform (the exact gap inline-bot-execution seq 6 documents for its own loader) and it had NO catch — so the first route that called hasEndpoint() in a spec threw a 500 instead of resolving. Now: require works as before in the compiled dist; on failure the loader kicks warmBotEndpointRegistry() (dynamic-import cache, exported so specs and boot paths can await it) and reports no endpoints until warm — the caller falls back to the inline path, exactly the pre-loader behaviour, never an exception.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | Append caller-authorized bounded package facts before signing and recheck bot permission after the read.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
+import { getSpecialistContextRegistry } from '@/shared/specialist-context';
 
 import * as http from 'node:http';
 import * as https from 'node:https';
@@ -370,6 +372,16 @@ export class BotNodeClient {
     }
 
     const url = `${endpoint}/api/swarm-execute`;
+    const context = getSpecialistContextRegistry();
+    const assertFresh = context?.requires(agentId) ? context.capture(agentId) : undefined;
+    const enriched = context?.requires(agentId) ? { ...request,
+      text: await context.append(agentId, request.text, resolveDelegatedPrincipal(request)) } : request;
+    const send = () => { assertFresh?.(); return this.sendAuthorized(agentId, url, enriched); };
+    return context?.requires(agentId)
+      ? runWithApplicationExecution({ kind: 'bots', operation: agentId, userSub: enriched.userSub }, send) : send();
+  }
+
+  private async sendAuthorized(agentId: string, url: string, request: BotNodeRequest): Promise<BotNodeResponse> {
     const delegated = this.buildDelegatedDispatch(agentId, request);
     logger.info(
       { agentId, url, taskId: request.taskId, textLength: request.text.length },

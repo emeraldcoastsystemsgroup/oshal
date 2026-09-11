@@ -20,6 +20,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com  | ADR-141: readManifest validates `kind: group` (no code keys, members required, toolbar borrows only from members, setup steps name a member + a toolbar surface) and the per-user `readiness:` block (own mount, canonical path, session-admitting route, RFC 6901 pointers) — both fail closed at load, from swarm-app-group.ts.
  */
 
+import { validateBriefingDeclarations } from '@/shared/briefings';
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
@@ -916,6 +917,10 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   validateScheduleDeclarations(manifest, absPath);
   validateTakeoutDeclarations(manifest, absPath);
   validateSmokeDeclarations(manifest, absPath);
+  if (manifest.briefings !== undefined) {
+    validateBriefingDeclarations(manifest.briefings, (manifest.bots ?? []).map(bot => bot.agentId), Boolean(manifest.authorization));
+    if (!manifest.uses?.includes('jarvis-briefings')) throw new Error('Manifest briefings require uses: [jarvis-briefings]');
+  }
   // ADR-141: a `kind: group` manifest carries no code and borrows member surfaces by reference;
   // `readiness:` is the per-user sibling of `smoke:`. Both fail closed here, at load.
   validateGroupManifest(manifest, absPath);

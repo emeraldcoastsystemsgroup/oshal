@@ -1,5 +1,8 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Build application authorization actors from verified sessions/delegation and current local account state.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve native external account status and configured operator continuity through provider-qualified observed identities.
  */

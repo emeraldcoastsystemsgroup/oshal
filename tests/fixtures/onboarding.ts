@@ -1,5 +1,8 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the real first-run page and progress routes against disposable storage and explicit deterministic installer fixtures.
  */
 import express, { type RequestHandler } from 'express';

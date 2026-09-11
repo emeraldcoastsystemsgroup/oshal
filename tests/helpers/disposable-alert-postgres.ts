@@ -1,5 +1,8 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Give alert integration guards a private PostgreSQL lifetime with no deployment DSN fallback.
  */
 import { execFileSync } from 'node:child_process';

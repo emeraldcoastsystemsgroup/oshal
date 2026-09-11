@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Exposed a fixed privacy-bounded Outlook reader so packages can project actor-owned message metadata without receiving OAuth tokens or arbitrary Graph access.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exposed the fixed owner-scoped RingCentral call-log reader (screen-pop v2 call history) — the same token-safe seam shape as outlookMail.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Exposed the fixed recent-mail sync reader (CR-22 auto email logging) — core matches the mailbox page against the package's authorized address set so unmatched mail never crosses the boundary.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Expose an activation-scoped package specialist reader port without the global registry or arbitrary caller inputs.
  */
 
 import type { Pool } from 'pg';
@@ -125,4 +126,6 @@ export interface AppContext {
    * channel and points at whichever package was required LAST.
    */
   appPackageDir?: string;
+  /** Activation-scoped package-owned numeric reads; never the global registry or management authority. */
+  specialistContext?: import('@/shared/specialist-context').PackageSpecialistContext;
 }

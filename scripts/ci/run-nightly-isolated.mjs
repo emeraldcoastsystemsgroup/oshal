@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Retain truthful local nightly fixture results without using deployment credentials or calling live endpoints.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Document the fixed runner API and its evidence boundaries for scheduler callers.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
@@ -9,6 +13,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+/** @description Fixed isolated suites; callers cannot substitute arbitrary host commands. */
 export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/alert-incident-cutover.spec.ts',
   'tests/unit/alert-incident-reopen.spec.ts',
@@ -20,7 +25,11 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/ci-gate-streak.spec.ts',
 ]);
 
-/** Only OS/Docker discovery settings survive into the test process; never deployment service keys. */
+/**
+ * @description Retain OS/Docker discovery settings while excluding deployment service keys.
+ * @param ambient Parent environment to filter before starting the child runner.
+ * @returns A fixture-only environment with deployment connection settings explicitly cleared.
+ */
 export function isolatedEnvironment(ambient = process.env) {
   const allowed = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SYSTEMDRIVE', 'COMSPEC',
     'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA',
@@ -31,7 +40,12 @@ export function isolatedEnvironment(ambient = process.env) {
     ALERT_PIPELINE_TEST_DATABASE_URL: '', SWARM_SERVICE_SECRET: '', ALERT_WEBHOOK_TOKEN: '' };
 }
 
-/** A zero process exit alone is insufficient: missing, skipped or unreported suites remain red. */
+/**
+ * @description Require complete passing evidence; a zero exit cannot hide missing or skipped suites.
+ * @param report Parsed Vitest report, or null when the runner did not produce one.
+ * @param exitCode Actual child-process exit code, including a timeout failure.
+ * @returns Overall disposition and one result for every expected suite.
+ */
 export function assessTestReport(report, exitCode) {
   const results = Array.isArray(report?.testResults) ? report.testResults : [];
   const suites = NIGHTLY_ISOLATED_SUITES.map(path => {
@@ -70,7 +84,11 @@ async function execute(root, reportPath, logPath, timeoutMs) {
   return { exitCode: timedOut ? 124 : exitCode, timedOut };
 }
 
-/** Callable by local CI and a task scheduler; scheduled invocation does not claim an unattended run. */
+/**
+ * @description Run isolated fixtures and retain evidence without claiming a full unattended CI run.
+ * @param options Local checkout, report directory, invocation label and process timeout overrides.
+ * @returns Retained suite results and the unique report directory.
+ */
 export async function runNightlyIsolated({ root = ROOT, reportsRoot = resolve(ROOT, 'temp/nightly-isolated'), scheduled = false, timeoutMs = 900_000 } = {}) {
   mkdirSync(reportsRoot, { recursive: true });
   const runDirectory = mkdtempSync(resolve(reportsRoot, `${new Date().toISOString().replaceAll(/[:.]/g, '-')}-`));

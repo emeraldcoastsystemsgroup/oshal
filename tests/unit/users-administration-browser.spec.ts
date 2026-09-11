@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise real Users invitations and account suspension plus root and nonadministrator UI fences in Chromium.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Bound browser case registration while retaining the suite and browser/database hook scope.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -31,7 +32,8 @@ async function openUsers() {
   await page.locator('#accountsCard').waitFor({ state: 'visible' });
 }
 
-describe('Users account administration browser', () => {
+/** Register established account rendering and the complete local invitation workflow. */
+function registerAccountWorkflowCases() {
   it('shows established accounts and protects root while showing verified provider identities without local suspension controls', async () => {
     await fixture.externalIdentity(); await openUsers();
     expect(await page.locator('#accountsCount').textContent()).toBe('3 accounts');
@@ -68,6 +70,10 @@ describe('Users account administration browser', () => {
     await expect.poll(() => page.locator('#inviteLink').inputValue()).not.toBe(invite);
   });
 
+}
+
+/** Register current-authority UI refusals with the existing per-case browser isolation. */
+function registerAdministrationRefusalCases() {
   it('removes administration controls and invitation secrets when privileges are revoked during the session', async () => {
     await openUsers();
     await page.locator('#inviteEmail').fill('later@example.test'); await page.getByRole('button', { name: 'Invite user', exact: true }).click();
@@ -92,4 +98,9 @@ describe('Users account administration browser', () => {
     expect(await page.locator('#grantForm').isHidden()).toBe(true);
     expect((await fixture.post('/api/swarm/roles/claim-root', {}, 'member')).status).toBe(403);
   });
+}
+
+describe('Users account administration browser', () => {
+  registerAccountWorkflowCases();
+  registerAdministrationRefusalCases();
 });

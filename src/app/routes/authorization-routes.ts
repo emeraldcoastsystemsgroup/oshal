@@ -1,13 +1,17 @@
 /**
  * CHANGE LOG
- * 1 | maintainer@emeraldcoastsystemsgroup.com | Add authenticated Access Administration adapters over the shared policy service and its strict tool schemas.
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add authenticated Access Administration adapters over the shared policy service and its strict tool schemas.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  */
 import path from 'node:path';
 import { Router, json, type ErrorRequestHandler, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
 import type { ApplicationAuthorizationManagementService, AuthorizationActor } from '@/shared/application-authorization';
 import {
-  AUTHORIZATION_TOOL, AuthorizationApplySchema, AuthorizationChangeSchema, AuthorizationExplainSchema,
+  AUTHORIZATION_TOOL, AuthorizationApplySchema, AuthorizationAuditSchema, AuthorizationChangeSchema, AuthorizationExplainSchema,
   AuthorizationTargetSchema, type AuthorizationToolExecutor,
 } from '@/shared/security/authorization-tool-contract';
 import { createChildLogger } from '@/shared/logger';
@@ -61,6 +65,10 @@ export function createAuthorizationRoutes(service: ApplicationAuthorizationManag
   router.get('/me', run(async (req, actor) => {
     const input = AuthorizationTargetSchema.omit({ targetSub: true, targetIssuer: true }).parse(req.query);
     return service.effective(actor, input);
+  }));
+  router.get('/audit', run(async (req, actor) => {
+    const input = { ...req.query, ...(typeof req.query.limit === 'string' && /^[0-9]+$/.test(req.query.limit) ? { limit: Number(req.query.limit) } : {}) };
+    return service.auditHistory(actor, AuthorizationAuditSchema.parse(input));
   }));
   router.use(authorizationSameOrigin, json({ limit: '32kb' }));
   router.post('/effective', run(async (req, actor) => service.effective(actor, AuthorizationTargetSchema.parse(req.body))));

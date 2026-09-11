@@ -28,6 +28,8 @@ import {
 } from '@/features/visual-response';
 import { createChildLogger } from '@/shared/logger';
 import type { CapturedFile } from './jarvis-deliverable-files';
+import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
+import { getRequestIdentity } from '@/shared/services/database/request-identity';
 
 const logger = createChildLogger({ module: 'jarvis-task-store' });
 
@@ -66,6 +68,8 @@ export async function ensureJarvisSchema(pool: AppContext['pool']): Promise<void
         'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS visual JSONB',
         'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS delivered BOOLEAN DEFAULT FALSE',
         'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS files JSONB',
+        'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS briefing_source_id TEXT',
+        'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS principal_issuer TEXT',
         'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS summarize_started_at TIMESTAMPTZ',
         'CREATE INDEX IF NOT EXISTS idx_jarvis_tasks_user ON jarvis_tasks (user_sub, created_at DESC)',
       ],
@@ -85,6 +89,8 @@ export async function ensureJarvisSchema(pool: AppContext['pool']): Promise<void
             'visual',
             'delivered',
             'files',
+            'briefing_source_id',
+            'principal_issuer',
             'created_at',
             'finished_at',
             'summarize_started_at',
@@ -103,15 +109,27 @@ export async function ensureJarvisSchema(pool: AppContext['pool']): Promise<void
 export async function saveTaskPending(
   pool: AppContext['pool'], id: string, sub: string, sessionId: string, title: string,
   kind: 'simple' | 'complex' = 'simple', ticketId?: string,
-): Promise<void> {
+): Promise<boolean> {
   const status = kind === 'complex' ? 'queued' : 'pending';
   try {
+    const briefings = getJarvisBriefingDelivery();
+    if (briefings) {
+      const accepted = await briefings.service.publish(sub, sessionId, async (client, issuer, sourceId) => {
+        const result = await client.query(`INSERT INTO jarvis_tasks
+          (id,user_sub,session_id,title,status,kind,ticket_id,briefing_source_id,principal_issuer) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+          ON CONFLICT(id) DO NOTHING RETURNING id`,
+        [id,sub,sessionId,title.slice(0,200),status,kind,ticketId ?? null,sourceId,issuer]);
+        return Boolean(result.rowCount);
+      });
+      if (accepted !== undefined) return accepted;
+    }
     await pool.query(
       `INSERT INTO jarvis_tasks (id, user_sub, session_id, title, status, kind, ticket_id) VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (id) DO UPDATE SET title = $4, status = $5, kind = $6, ticket_id = COALESCE($7, jarvis_tasks.ticket_id), error = NULL, result = NULL, visual = NULL, files = NULL, finished_at = NULL`,
       [id, sub, sessionId, title.slice(0, 200), status, kind, ticketId ?? null],
     );
-  } catch (err) { logger.warn({ err }, 'jarvis: saveTaskPending failed'); }
+    return true;
+  } catch (err) { logger.warn({ err }, 'jarvis: saveTaskPending failed'); return false; }
 }
 
 /** @description Marks a work task done (with result) or errored — durable so it survives restarts.
@@ -170,10 +188,16 @@ const STALE_RESULT_DAYS = 7;
 
 export async function buildOpenWorkBlock(ctx: AppContext, sub: string): Promise<string> {
   try {
-    const rows = (await ctx.pool.query(
-      `SELECT id, title, status, kind, result, created_at FROM jarvis_tasks WHERE user_sub = $1 ORDER BY created_at DESC LIMIT 8`,
+    let rows = (await ctx.pool.query(
+      `SELECT id, session_id, briefing_source_id, principal_issuer, title, status, kind, result, created_at FROM jarvis_tasks WHERE user_sub = $1 ORDER BY created_at DESC LIMIT 8`,
       [sub],
-    )).rows as Array<{ id: string; title: string; status: string; kind: string; result: string | null; created_at?: string | Date }>;
+    )).rows as Array<{ id: string; session_id?: string; briefing_source_id?: string; principal_issuer?: string; title: string; status: string; kind: string; result: string | null; created_at?: string | Date }>;
+    const briefings = getJarvisBriefingDelivery();
+    if (briefings) {
+      const issuer = getRequestIdentity()?.principalIssuer;
+      const actor = issuer ? await briefings.targetActor(sub, issuer) : null;
+      rows = await briefings.service.listTasks(sub, actor, 8);
+    }
     if (!rows.length) return '';
     const lines = rows.map((r) => {
       // The age is part of the record: without it a month-old demo-era pull read exactly like

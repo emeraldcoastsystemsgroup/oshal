@@ -1,5 +1,8 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register installed application smoke discovery and its local lifecycle regression suite in the AI Test Lab.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';

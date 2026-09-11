@@ -1,4 +1,10 @@
-/** Real Chromium and Lab HTTP routes show pending catalogs and refuse stale selections. */
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Verify pending catalogs and stale-selection refusal through Chromium and real Lab HTTP routes.
+ */
 import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -6,7 +12,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { chromium, type Browser } from 'playwright';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { InstalledAppTestCatalog } from '@/features/swarm-apps/services/installed-app-test-catalog';
 import type { SwarmApplicationRecord } from '@/features/swarm-apps';
 import { createTestLabRoutes } from '@/app/routes/test-lab-routes';
@@ -44,40 +50,38 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 }, 30000);
 
-describe('package test catalog browser workflow', () => {
-  it('shows escaped suite metadata, remains pending, and refreshes before running a replaced smoke', async () => {
-    const context = await browser.newContext();
-    await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
-    const page = await context.newPage();
-    try {
-      await page.goto(base + '/api/test-lab/app');
-      const suite = page.locator('[id="card-app:catalog-fixture:test:behavior"]');
-      await suite.waitFor({ state: 'visible' });
-      expect(await suite.textContent()).toContain('Pending: The vitest runner is unavailable');
-      await suite.getByText('Runner and prerequisites', { exact: true }).click();
-      expect(await suite.textContent()).toContain('Side effects: fixture-write');
-      expect(await suite.textContent()).toContain('Isolation: disposable');
-      expect(await suite.textContent()).toContain('runner:vitest');
-      expect(await suite.textContent()).toMatch(/Source: local:[a-f0-9]{64}/);
-      expect(await suite.textContent()).toContain('The catalog renders <script> as text.');
-      expect(await suite.locator('img, script').count()).toBe(0);
-      expect(await page.evaluate(() => (window as any).catalogXss)).toBeUndefined();
-      await suite.getByRole('button', { name: 'Run', exact: true }).click();
-      await expect.poll(() => suite.locator('.badge').textContent()).toBe('degraded');
-      expect(smokeCalls).toBe(0);
+it('shows escaped suite metadata, remains pending, and refreshes before running a replaced smoke', async () => {
+  const context = await browser.newContext();
+  await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+  const page = await context.newPage();
+  try {
+    await page.goto(base + '/api/test-lab/app');
+    const suite = page.locator('[id="card-app:catalog-fixture:test:behavior"]');
+    await suite.waitFor({ state: 'visible' });
+    expect(await suite.textContent()).toContain('Pending: The vitest runner is unavailable');
+    await suite.getByText('Runner and prerequisites', { exact: true }).click();
+    expect(await suite.textContent()).toContain('Side effects: fixture-write');
+    expect(await suite.textContent()).toContain('Isolation: disposable');
+    expect(await suite.textContent()).toContain('runner:vitest');
+    expect(await suite.textContent()).toMatch(/Source: local:[a-f0-9]{64}/);
+    expect(await suite.textContent()).toContain('The catalog renders <script> as text.');
+    expect(await suite.locator('img, script').count()).toBe(0);
+    expect(await page.evaluate(() => (window as any).catalogXss)).toBeUndefined();
+    await suite.getByRole('button', { name: 'Run', exact: true }).click();
+    await expect.poll(() => suite.locator('.badge').textContent()).toBe('degraded');
+    expect(smokeCalls).toBe(0);
 
-      record = { ...record, version: '2.0.0', manifest: { ...record.manifest, version: '2.0.0' } };
-      catalog.register(record);
-      const smoke = page.locator('[id="card-app:catalog-fixture:smoke:ready"]');
-      await smoke.getByRole('button', { name: 'Run', exact: true }).click();
-      await expect.poll(() => smoke.locator('.badge').textContent()).toBe('degraded');
-      expect(await smoke.locator('.step-detail').textContent()).toContain('Case changed after selection');
-      expect(smokeCalls).toBe(0);
-      await page.locator('#refreshCatalog').click();
-      await expect.poll(() => smoke.textContent()).toContain('Installed 2.0.0');
-      await smoke.getByRole('button', { name: 'Run', exact: true }).click();
-      await expect.poll(() => smoke.locator('.badge').textContent()).toBe('pass');
-      expect(smokeCalls).toBe(1);
-    } finally { await context.close(); }
-  }, 30000);
-});
+    record = { ...record, version: '2.0.0', manifest: { ...record.manifest, version: '2.0.0' } };
+    catalog.register(record);
+    const smoke = page.locator('[id="card-app:catalog-fixture:smoke:ready"]');
+    await smoke.getByRole('button', { name: 'Run', exact: true }).click();
+    await expect.poll(() => smoke.locator('.badge').textContent()).toBe('degraded');
+    expect(await smoke.locator('.step-detail').textContent()).toContain('Case changed after selection');
+    expect(smokeCalls).toBe(0);
+    await page.locator('#refreshCatalog').click();
+    await expect.poll(() => smoke.textContent()).toContain('Installed 2.0.0');
+    await smoke.getByRole('button', { name: 'Run', exact: true }).click();
+    await expect.poll(() => smoke.locator('.badge').textContent()).toBe('pass');
+    expect(smokeCalls).toBe(1);
+  } finally { await context.close(); }
+}, 30000);

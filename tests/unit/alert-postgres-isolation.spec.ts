@@ -1,5 +1,8 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove deployment DSNs are ignored, private alert fixtures cannot see each other's rows and teardown removes their containers.
  */
 import { createServer } from 'node:net';

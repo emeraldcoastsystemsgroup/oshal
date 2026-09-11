@@ -1,9 +1,10 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com | Register caller-bound authorization operations backed by the administration service.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Register caller-bound authorization operations backed by the administration service.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  */
 import { CreateToolSchema } from '@/entities/tool';
 import type { DynamicToolExecutorRegistry, ToolRegistryService } from '@/features/tool-registry';
@@ -17,9 +18,10 @@ import {
 } from '@/shared/security/authorization-tool-contract';
 
 const logger = createChildLogger({ module: 'authorization-tool' });
-const READ_OPERATIONS: AuthorizationToolOperation[] = ['catalog', 'effective', 'explain'];
+const INSPECTION_OPERATIONS: AuthorizationToolOperation[] = ['catalog', 'effective', 'explain'];
+const READ_OPERATIONS: AuthorizationToolOperation[] = [...INSPECTION_OPERATIONS, 'audit_history'];
 const CHANGE_OPERATIONS: AuthorizationToolOperation[] = ['preview_change', 'apply_change'];
-const KEYWORDS = ['access', 'permissions', 'authorization', 'roles', 'users', 'groups', 'application admin', 'directory mapping'];
+const KEYWORDS = ['access', 'permissions', 'authorization', 'roles', 'users', 'groups', 'application admin', 'directory mapping', 'audit', 'access history'];
 type JsonSchema = Record<string, unknown>;
 const string: JsonSchema = { type: 'string', minLength: 1, maxLength: 512 };
 const targetProperties = { app: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]*$', maxLength: 128 },
@@ -38,12 +40,15 @@ const changeSchema = object({ ...targetProperties, action: { enum: ['grant', 're
   group: object({ issuer: string, tenantId: string, id: string }, ['issuer', 'tenantId', 'id']),
 }, ['action', 'app', 'reason', 'expectedRevision']);
 const applySchema = object({ previewId: string, idempotencyKey: string, approvalReference: string }, ['previewId', 'idempotencyKey']);
+const auditSchema = object({ app: targetProperties.app, tenantId: string, limit: { type: 'integer', minimum: 1, maximum: 100 },
+  cursor: { type: 'string', minLength: 1, maxLength: 2048, pattern: '^[A-Za-z0-9_-]+$' } }, []);
 
 /** @description Publish the same closed operation envelopes validated by the handler. @param readsOnly AUTO restriction. @returns JSON Schema. */
 export function authorizationToolInputSchema(readsOnly = false): JsonSchema {
   const branches = [object({ operation: { const: 'catalog' } }, ['operation']),
     object({ operation: { const: 'effective' }, target: targetSchema }, ['operation', 'target']),
-    object({ operation: { const: 'explain' }, request: explainSchema }, ['operation', 'request'])];
+    object({ operation: { const: 'explain' }, request: explainSchema }, ['operation', 'request']),
+    object({ operation: { const: 'audit_history' }, query: auditSchema }, ['operation', 'query'])];
   if (!readsOnly) branches.push(
     object({ operation: { const: 'preview_change' }, change: changeSchema }, ['operation', 'change']),
     object({ operation: { const: 'apply_change' }, preview: applySchema }, ['operation', 'preview']),
@@ -59,9 +64,9 @@ function metadata(name: string) {
     selectorFragment: 'Inspect application roles and permissions with exact principal and tenant scope.',
     routingTags: KEYWORDS, tags: [AUTHORIZATION_TOOL, 'core-owned', ...KEYWORDS], authGroup: AUTHORIZATION_TOOL,
     defaultAuthMode: readsOnly ? AuthMode.AUTO : AuthMode.ASK, requiresApproval: !readsOnly,
-    description: readsOnly ? 'Read permitted application catalogs, effective access and decision explanations.'
+    description: readsOnly ? 'Read permitted application catalogs, effective access, decision explanations and redacted applied-change history.'
       : 'Preview and apply scoped access changes through the same service as Access Administration.',
-    usageInstructions: readsOnly ? 'Only catalog, effective and explain. Caller identity is supplied by the server.'
+    usageInstructions: readsOnly ? 'Only catalog, effective, explain and audit_history. History is scope-filtered; caller identity is supplied by the server.'
       : 'Use preview_change first, then review in /access and apply the exact unexpired preview. No unattended mutation.',
     inputSchema: authorizationToolInputSchema(readsOnly), registeredBy: 'core:authorization', enabled: true,
   });
@@ -70,7 +75,7 @@ function metadata(name: string) {
 /** Fixed handler, shared by the registry executor, internal read bridge and authenticated administration route. */
 export class AuthorizationToolRuntime implements AuthorizationToolExecutor {
   constructor(private readonly service: ApplicationAuthorizationManagementService) {
-    for (const method of ['catalog', 'effective', 'explain', 'previewChange', 'applyChange'] as const) {
+    for (const method of ['catalog', 'effective', 'explain', 'auditHistory', 'previewChange', 'applyChange'] as const) {
       if (typeof service?.[method] !== 'function') throw new Error('Authorization management service is not ready');
     }
   }
@@ -105,6 +110,7 @@ export class AuthorizationToolRuntime implements AuthorizationToolExecutor {
         case 'catalog': result = await this.readCatalog(actor); break;
         case 'effective': result = await this.service.effective(actor, parsed.target); break;
         case 'explain': result = await this.service.explain(actor, parsed.request); break;
+        case 'audit_history': result = await this.service.auditHistory(actor, parsed.query); break;
         case 'preview_change': result = await this.service.previewChange(actor, parsed.change); break;
         case 'apply_change': result = await this.service.applyChange(actor, parsed.preview); break;
       }
@@ -123,15 +129,17 @@ export class AuthorizationToolRuntime implements AuthorizationToolExecutor {
     const catalog = await this.readCatalog(actor);
     const targets = catalog.apps.map((entry) => {
       const scopes = entry.managementScopes ?? [];
+      const reads = scopes.some(scope => scope.permissions.includes('read')) ? READ_OPERATIONS : INSPECTION_OPERATIONS;
       const mayChange = allowChanges && (!actor.allowedPermissions || actor.allowedPermissions.includes('platform:authorization.assign'))
         && scopes.some((scope) => scope.permissions.includes('assign'));
       return { app: entry.app, source: entry.source, catalogRevision: entry.catalogRevision,
-        operations: [...READ_OPERATIONS, ...(mayChange ? CHANGE_OPERATIONS : [])],
+        operations: [...reads, ...(mayChange ? CHANGE_OPERATIONS : [])],
         ...(actor.isSwarmAdmin ? {} : { tenantIds: scopes.flatMap((scope) => scope.tenantId ? [scope.tenantId] : []) }) };
     });
     if (!targets.length) return [];
     const descriptors: AuthorizationToolDiscovery[] = [{ name: AUTHORIZATION_READ_TOOL,
-      operations: [...READ_OPERATIONS], targets: targets.map((target) => ({ ...target, operations: [...READ_OPERATIONS] })) }];
+      operations: [...new Set(targets.flatMap(target => target.operations.filter(operation => !CHANGE_OPERATIONS.includes(operation))))],
+      targets: targets.map(target => ({ ...target, operations: target.operations.filter(operation => !CHANGE_OPERATIONS.includes(operation)) })) }];
     const managementTargets = targets.filter((target) => target.operations.includes('preview_change'));
     if (managementTargets.length) descriptors.push({ name: AUTHORIZATION_TOOL,
       operations: [...READ_OPERATIONS, ...CHANGE_OPERATIONS], targets: managementTargets });

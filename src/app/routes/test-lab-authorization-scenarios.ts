@@ -1,5 +1,8 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register authorization boundary, shared-service and browser regression tests with a read-only live catalog probe.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register verified Google/Microsoft/local principal adoption and account continuity coverage.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register existing-account administration, root credential protection and browser controls.
@@ -53,6 +56,9 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/principal-directory.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-account-administration.spec.ts' },
     { level: 'browser', path: 'tests/unit/users-administration-browser.spec.ts' },
+    { level: 'integration', path: 'tests/unit/local-auth-forgot-password.spec.ts' },
+    { level: 'integration', path: 'tests/unit/authorization-audit.spec.ts' },
+    { level: 'browser', path: 'tests/unit/authorization-audit-browser.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'authorization', label: 'Caller-visible access catalog', run: authorizationCatalog }],
 }];

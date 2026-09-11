@@ -1,5 +1,8 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove fresh manifest load, durable runtime selection and real fixture dispatch with private PostgreSQL.
  */
 import { randomUUID } from 'node:crypto';

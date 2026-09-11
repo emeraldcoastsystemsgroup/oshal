@@ -29,6 +29,8 @@ export type KernelSkillId =
   | 'payments'
   | 'application-authorization'
   | 'test-catalog'
+  | 'jarvis-briefings'
+  | 'specialist-context'
   | 'spatial-mapping';
 
 /**
@@ -77,6 +79,14 @@ export interface KernelSkillDeclaration {
  * docs/apps/kernel-skills.md. The CI guard then enforces it forever.
  */
 export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
+  { id: 'jarvis-briefings', title: 'Jarvis briefing delivery',
+    why: 'Registered application/bot sources honor exact-principal preferences and return truthful enqueue outcomes.',
+    modules: [{ specifier: '@/shared/briefings', distFile: 'dist/shared/briefings/index.js' },
+      { specifier: '@/app/routes/jarvis-task-store', distFile: 'dist/app/routes/jarvis-task-store.js' }],
+  },
+  { id: 'specialist-context', title: 'Authorized specialist facts',
+    why: 'Package-owned deterministic numeric reads feed accountable specialist dispatch under the actual caller.',
+    modules: [{ specifier: '@/shared/specialist-context', distFile: 'dist/shared/specialist-context/index.js' }] },
   {
     id: 'test-catalog', title: 'Package test catalogs',
     why: 'Versioned test metadata installs with applications and remains separate from runner execution authority.',

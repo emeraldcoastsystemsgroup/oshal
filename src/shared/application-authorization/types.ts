@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  */
 /** ADR-149: versioned application permission contract. Routing metadata never grants authority. */
 export type AuthorizationTier = 'deny' | 'viewer' | 'editor' | 'admin';
@@ -98,11 +99,16 @@ export interface AuthorizationInventory {
 }
 export interface AuthorizationCatalogResult extends AuthorizationInventory {
   revision: number; apps: AuthorizationAppSummary[];
+  canReadGlobalAudit?: boolean;
   assignments: Array<{ id: string; app: string; targetSub?: string; targetIssuer?: string; tenantId?: string;
     role?: string; permission?: string; deny: boolean; expiresAt?: string;
     group?: { issuer: string; tenantId: string; id: string } }>;
 }
 export interface ApplicationAuthorizationManagementService {
+  /** @description Read redacted applied changes after current caller revalidation.
+   * @param actor Verified caller. @param input Application/tenant filters and cursor. @returns A bounded history page.
+   */
+  auditHistory(actor: AuthorizationActor, input: AuthorizationAuditInput): Promise<AuthorizationAuditPage>;
   catalog(actor: AuthorizationActor): Promise<AuthorizationCatalogResult>;
   ownCatalog?(actor: AuthorizationActor): Promise<AuthorizationCatalogResult>;
   effective(actor: AuthorizationActor, target: AuthorizationTarget): Promise<AuthorizationEffective>;
@@ -110,3 +116,14 @@ export interface ApplicationAuthorizationManagementService {
   previewChange(actor: AuthorizationActor, input: AuthorizationChange): Promise<AuthorizationPreview>;
   applyChange(actor: AuthorizationActor, input: AuthorizationApplyInput): Promise<AuthorizationReceipt>;
 }
+/** @description Read-only history filters. Omitting app requests swarm-wide history, requiring swarm administration. */
+export interface AuthorizationAuditInput { app?: string; tenantId?: string; limit?: number; cursor?: string }
+/** @description Explicit projection with no freeform reasons, approvals, resource values, credentials or raw payloads. */
+export interface AuthorizationAuditEntry {
+  id: string; revision: number; at: string; actor: { sub: string; issuer: string };
+  app: string; action: AuthorizationChange['action']; tenantId?: string;
+  targetSub?: string; targetIssuer?: string; group?: { issuer: string; tenantId: string; id: string };
+  role?: string; permission?: string;
+}
+/** @description A bounded revision snapshot; a continuation carries pagination state, never authority. */
+export interface AuthorizationAuditPage { entries: AuthorizationAuditEntry[]; snapshotRevision: number; nextCursor: string | null }

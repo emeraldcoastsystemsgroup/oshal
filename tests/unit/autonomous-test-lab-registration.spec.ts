@@ -1,5 +1,8 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Keep autonomous suite registration aligned with runnable local commands and prevent browser claims of host test execution.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -19,6 +22,8 @@ describe('autonomous Test Lab registration', () => {
       const commands: Record<string, string> = {
         'first-run-provisioning': scripts['test:provisioning'],
         'manifest-bot-initialization': scripts['test:bot-initialization'],
+        'specialist-application-context': scripts['test:specialist-context'],
+        'jarvis-briefing-preferences': scripts['test:briefings'],
         'nightly-isolated-regression': readFileSync('scripts/ci/run-nightly-isolated.mjs', 'utf8'),
       };
       const command = commands[scenario.id];

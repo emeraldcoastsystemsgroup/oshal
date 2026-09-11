@@ -1,6 +1,10 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register isolated nightly and first-run suites with honest local-runner prerequisites and a read-only progress probe.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Register bot initialization, specialist context and briefing behavior suites with read-only discovery and explicit runner prerequisites.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -13,11 +17,26 @@ async function onboardingProgress(cookie: string): Promise<StepResult> {
     state: [401, 403, 503].includes(response.status) ? 'degraded' : 'fail', detail: `Progress returned HTTP ${response.status}; no setup changes attempted.` };
   const body = await response.json() as Record<string, unknown>;
   const valid = typeof body.completed === 'boolean' && Number.isSafeInteger(body.currentStep)
-    && Number(body.currentStep) >= 0 && body.data !== null && typeof body.data === 'object';
+    && Number(body.currentStep) >= 0 && body.data !== null && typeof body.data === 'object' && !Array.isArray(body.data);
   return { app: 'onboarding', label, state: valid ? 'pass' : 'fail',
     detail: valid ? 'Caller-owned saved progress is available. No package, source or account changes attempted.' : 'Saved progress has an invalid response shape.' };
 }
 
+async function briefingSources(cookie: string): Promise<StepResult> {
+  const response = await fetch(`http://127.0.0.1:${process.env.PORT || '5000'}/api/jarvis/briefings`, {
+    headers: cookie ? { cookie } : {}, signal: AbortSignal.timeout(10000), redirect: 'manual',
+  });
+  const label = 'Caller-visible briefing sources';
+  if (response.status !== 200) return { app: 'jarvis', label, status: response.status,
+    state: [401, 403, 503].includes(response.status) ? 'degraded' : 'fail', detail: 'Briefing catalog unavailable; no preferences or delivery claims changed.' };
+  const body = await response.json() as { sources?: unknown };
+  const valid = Array.isArray(body.sources) && body.sources.every(source => source && typeof source.sourceId === 'string'
+    && typeof source.preference?.enabled === 'boolean' && Array.isArray(source.channels));
+  return { app: 'jarvis', label, state: valid ? 'pass' : 'fail',
+    detail: valid ? 'Registered sources and caller preferences are readable. No notification was claimed or delivered.' : 'Briefing catalog response is invalid.' };
+}
+
+/** @description Discover autonomous regression suites without granting the browser host execution authority. */
 export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
   id: 'nightly-isolated-regression', title: 'Isolated nightly regressions', group: 'tool',
   description: 'Disposable PostgreSQL alert/topology coverage and bounded local runner evidence. Deployment credentials and live notification endpoints are excluded.',
@@ -59,4 +78,24 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     app: 'test-lab', label: 'Isolated bot initialization suites', state: 'degraded',
     detail: 'Run npm run test:bot-initialization with local Node and Docker. The Lab does not load fixture bots into the running swarm. No tests ran from this step.',
   }) }],
+}, {
+  id: 'specialist-application-context', title: 'Authorized specialist application facts', group: 'tool',
+  description: 'Package-owned bounded facts pass through caller authorization before signed dispatch. Isolated fixtures prove known answers, identity, revocation, lifecycle and timeout behavior.',
+  regressionTests: [
+    { level: 'unit', path: 'tests/unit/specialist-context.spec.ts' },
+    { level: 'integration', path: 'tests/unit/specialist-context-dispatch.spec.ts' },
+  ],
+  steps: [{ id: 'runner', app: 'test-lab', label: 'Specialist fixture runner', run: async () => ({
+    app: 'test-lab', label: 'Specialist fixture runner', state: 'degraded',
+    detail: 'Run npm run test:specialist-context locally. This step does not query application records or invoke a model. No tests ran from this step.',
+  }) }],
+}, {
+  id: 'jarvis-briefing-preferences', title: 'Per-user Jarvis briefing preferences', group: 'tool',
+  description: 'Registered source discovery, exact-principal preferences, bounded announcement frequency and voice/bubble/screen delivery. Read-only catalog probe; isolated fixtures cover mutations.',
+  regressionTests: [
+    { level: 'integration', path: 'tests/unit/jarvis-briefing-preferences.spec.ts' },
+    { level: 'browser', path: 'tests/unit/jarvis-briefing-browser.spec.ts' },
+    { level: 'unit', path: 'tests/unit/jarvis-briefing-identity.spec.ts' },
+  ],
+  steps: [{ id: 'sources', app: 'jarvis', label: 'Caller-visible sources', run: briefingSources }],
 }];

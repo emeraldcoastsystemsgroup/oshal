@@ -1,7 +1,7 @@
 # Application test cases installed into AI Test Lab — backlog
 
 Status: **versioned catalogs and installation lifecycle implemented at core `15dcbbd7`;
-Hello and Portrait pilots versioned at store `dc4c0dc`**. Local/browser runner execution,
+Hello and Portrait pilots versioned at store `dc4c0dc`, and Kalshi at `571838a`**. Local/browser runner execution,
 historical results and the remaining package inventory are still open. Requested on 2026-09-10.
 
 The [enterprise authorization workstream](enterprise-authorization.md) registers its implemented
@@ -58,6 +58,12 @@ browser. Hello's two HTTP tests, Portrait's existing 324 checks/groups and 23 ca
 four shared picker tests pass locally. All seven package JavaScript test files are referenced.
 Installed deployment proof still requires the new core capability and package promotion.
 
+Kalshi 1.5.0 adds its existing smoke and all four package suites to a five-case catalog. Its new
+briefing delivery regression exercises the compiled public scan path with isolated provider and
+task-store ports; 46 Node cases and five existing Chromium cases pass. Canonical source compilation
+and manifest validation pass. No live scan, trade or notification was executed. One private
+package also registers its new specialist suite; its scope and evidence remain in the private inventory.
+
 ## Work order and acceptance criteria
 
 | ID | Priority / owner | Work | Done when |
@@ -104,8 +110,8 @@ production installations must not assume a sibling source checkout or developer 
 
 ## Public package worklist
 
-Rows retain the original inventory counts; Hello and Portrait have local source proof above and
-await deployment. Other rows remain open. **Adopt** means catalogue local suites plus existing smokes.
+Rows retain the original inventory counts; Hello, Portrait and Kalshi have local source proof above
+and await deployment. Other rows remain open. **Adopt** means catalogue local suites plus existing smokes.
 **Locate/create** means locate shared/external tests and register the existing smoke; create missing
 behavior coverage where needed. Counts describe files, not individual assertions, runnability or passes.
 

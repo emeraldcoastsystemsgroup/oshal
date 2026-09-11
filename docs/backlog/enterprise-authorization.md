@@ -11,9 +11,10 @@ remain the complete enterprise target; foundation completion does not close ever
 
 AUTH-01 is implemented using `uses: [application-authorization]` as the old-core activation floor.
 AUTH-02 and AUTH-07 have a working shared service, UI/tool parity and isolated PostgreSQL/browser
-proofs; a sensitive approval workflow, scoped-admin provisioning UI, full audit browsing and catalog
-migration tooling remain. AUTH-03 covers local proof-based setup; OIDC and all installer variants
-remain. AUTH-04 preserves verified claims and maps exact groups, but live refresh/Graph and tenant
+proofs, including scoped applied-change history. A sensitive approval workflow, scoped-admin
+provisioning UI and catalog migration tooling remain. AUTH-03 covers local proof-based setup and
+established-account/root credential guards; OIDC bootstrap and all installer variants
+remain. AUTH-04 preserves verified claims, adopts exact provider identities and maps exact groups, but live refresh/Graph and tenant
 proof remain. AUTH-05 has HTTP/controller checks; protected remote bots are deliberately unavailable
 pending a live revalidation protocol. Complete artifact/result/queue enforcement, package business
 adapters (AUTH-06/08), provisioning (AUTH-09), and deployed canary/adoption (AUTH-10) remain open.

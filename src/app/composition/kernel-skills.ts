@@ -92,3 +92,7 @@ export * as payments from '@/features/payments';
 export * as spatialMapping from '@/features/spatial-mapping';
 export * as applicationAuthorization from '@/shared/application-authorization';
 export * as packageTesting from '@/shared/package-testing';
+export * as specialistContext from '@/shared/specialist-context';
+
+export * as jarvisBriefings from '@/shared/briefings';
+export * as jarvisBriefingTaskStore from '@/app/routes/jarvis-task-store';

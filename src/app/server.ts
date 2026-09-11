@@ -181,6 +181,8 @@
  * 166 | maintainer@emeraldcoastsystemsgroup.com | Mount browser-bound connector callbacks and caller-scoped installed application tests in the existing Lab.
  * 167 | maintainer@emeraldcoastsystemsgroup.com | Observe verified external principals before authorization so existing provider accounts retain a canonical management inventory.
  * 168 | maintainer@emeraldcoastsystemsgroup.com | Seed fresh manifest bots through the authoritative deployment provider and model resolver.
+ * 169 | maintainer@emeraldcoastsystemsgroup.com | Bind package-owned specialist facts to current application authority before accountable dispatch.
+ * 170 | maintainer@emeraldcoastsystemsgroup.com | Register per-user Jarvis briefing settings and source lifecycle against current principal and application authority.
  */
 
 require('dotenv').config();
@@ -301,6 +303,8 @@ import { createSecurityRoutes } from './routes/security-routes';
 import { createJoinRoutes } from './routes/join-routes';
 import { createJarvisRoutes } from './routes/jarvis-routes';
 import { createJarvisBriefRoutes } from './routes/jarvis-brief-routes';
+import { createJarvisBriefingRoutes } from './routes/jarvis-briefing-routes';
+import { createJarvisBriefingWiring } from './composition/jarvis-briefing-wiring';
 import { createChatChannelRoutes } from './routes/chat-channel-routes';
 import { createUserModelRoutes } from './routes/user-model-routes';
 import { createDevConsoleRoutes } from './routes/dev-console-routes';
@@ -319,6 +323,7 @@ import { UIProfileService } from '@/features/ui-profile';
 import { AppAccessService, SwarmAppService, SwarmAppRepository } from '@/features/swarm-apps';
 import { createApplicationAuthorizationWiring } from './composition/application-authorization-wiring';
 import { resolveManifestBotRuntimeDefaults } from './composition/manifest-bot-runtime-defaults';
+import { SpecialistContextRegistry, configureSpecialistContextRegistry } from '@/shared/specialist-context';
 import { createApplicationAuthorizationGate } from './middleware/application-authorization-gate';
 import { createApplicationActorContext } from './middleware/application-authorization-context';
 import { createAuthorizationRoutes, createAuthorizationPageRoutes } from './routes/authorization-routes';
@@ -1080,6 +1085,9 @@ function createApp(): express.Application {
     () => swarmAppService, waitForBootstrapComplete());
   app.use(applicationAuthorization.observePrincipal);
   app.use(createApplicationActorContext(applicationAuthorization.resolveActor));
+  const specialistContext = new SpecialistContextRegistry(applicationAuthorization.runtime);
+  configureSpecialistContextRegistry(specialistContext);
+  const jarvisBriefings = createJarvisBriefingWiring(ctx, applicationAuthorization);
   const takeoutSliceRegistry = new TakeoutSliceRegistry(ctx);
   const swarmAppService = new SwarmAppService(
     ctx.pool,
@@ -1093,7 +1101,7 @@ function createApp(): express.Application {
     manifestScheduleRegistrar,
     // ADR-085 P1: lets an installed app package mount its OWN compiled-JS routes at activation
     // (flag-gated on APP_PACKAGE_DYNAMIC_ROUTES → no-op by default, hardcoded mounts below still apply).
-    new ManifestRouteMounterImpl(app, requiresAuth, ctx, appAccessService, applicationAuthorization.runtime),
+    new ManifestRouteMounterImpl(app, requiresAuth, ctx, appAccessService, applicationAuthorization.runtime, specialistContext),
     manifestScheduleDeregistrar,
     // ADR-085: packaged bots join the ACTIVE bot registry as inline-concierge entries
     // (container oshal-api, port 3010; validated manifest runtime or legacy Claude default)
@@ -1114,6 +1122,7 @@ function createApp(): express.Application {
     takeoutSliceRegistry,
     applicationAuthorization.runtime,
     resolveManifestBotRuntimeDefaults,
+    jarvisBriefings.service,
   );
   // Late-bind the guest-seed fan-out to the now-constructed app registry (see the guest routes
   // mount above) so guest-start can read the active manifests' `guestSeed:` hooks at request time.
@@ -1401,6 +1410,7 @@ function createApp(): express.Application {
   // Morning brief claims ONLY GET /brief + /brief.html with per-route user auth and passes every
   // other Jarvis path through to the later SEC-01 gate (the ambient routes use the same ordering).
   app.use('/api/jarvis', createJarvisBriefRoutes(requiresAuth, ctx));
+  app.use('/api/jarvis/briefings', createJarvisBriefingRoutes(jarvisBriefings.service, requiresAuth, jarvisBriefings.resolveActor));
   // Same durable SEC-01 gate as Graph. Legacy reads retain immediate containment in every mode;
   // enforce also removes the compatibility fleet secret from Jarvis actions.
   app.use('/api/jarvis', delegatedUserRouteAuth, createJarvisRoutes(ctx, apiDir, artifactVisibleApps));

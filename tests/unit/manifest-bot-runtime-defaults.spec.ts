@@ -1,5 +1,8 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify manifest defaults follow the existing deployed mode and hard overrides.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';

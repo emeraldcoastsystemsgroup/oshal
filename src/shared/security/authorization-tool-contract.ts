@@ -1,9 +1,10 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com | Define the closed core authorization tool family and trusted invocation port.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Define the closed core authorization tool family and trusted invocation port.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  */
 import { z } from 'zod';
 import type { AuthorizationActor } from '@/shared/application-authorization';
@@ -40,9 +41,14 @@ export const AuthorizationChangeSchema = AuthorizationTargetSchema.extend({
 export const AuthorizationApplySchema = z.object({
   previewId: identifier, idempotencyKey: identifier, approvalReference: identifier.optional(),
 }).strict();
+/** Bounded read-only history; authority always comes from the server actor, never these filters. */
+export const AuthorizationAuditSchema = z.object({ app: app.optional(), tenantId: identifier.optional(),
+  limit: z.number().int().min(1).max(100).optional(), cursor: z.string().min(1).max(2048).regex(/^[A-Za-z0-9_-]+$/).optional(),
+}).strict().refine(input => !input.tenantId || Boolean(input.app));
 /** Runtime validation is independent of model-visible schema metadata. */
 export const AuthorizationToolInputSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('catalog') }).strict(),
+  z.object({ operation: z.literal('audit_history'), query: AuthorizationAuditSchema }).strict(),
   z.object({ operation: z.literal('effective'), target: AuthorizationTargetSchema }).strict(),
   z.object({ operation: z.literal('explain'), request: AuthorizationExplainSchema }).strict(),
   z.object({ operation: z.literal('preview_change'), change: AuthorizationChangeSchema }).strict(),

@@ -27,6 +27,7 @@
  * Home customization | Codex | Add stable metric catalogs and related-item identities for configurable Home.
  */
 
+import type { BriefingDeclaration } from '@/shared/briefings';
 import type { SwarmAppRouteAuthMode } from '@/shared/route-auth';
 import type { SwarmAccessRole } from '@/shared/types/access-roles';
 import type { ApplicationAuthorizationDeclaration } from '@/shared/application-authorization';
@@ -747,6 +748,7 @@ export interface SwarmAppManifest {
   suite?: SwarmAppSuite;
   /** Optional: a deterministic / UI-only app (e.g. payments) declares no bots. */
   bots?: SwarmAppBotDeclaration[];
+  briefings?: BriefingDeclaration[];
   foundation?: { persona: string };
   toolsDir?: string;
   tools?: SwarmAppToolDeclaration[];

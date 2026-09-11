@@ -1,6 +1,10 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive the real welcome wizard through source review, failed installs, retry, resume and account-management links.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep trust, completion and recovery cases in bounded test groups with shared isolated fixtures.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -36,7 +40,7 @@ async function install(name: string) {
   await card(name).getByRole('button', { name: `Install ${name}`, exact: true }).click();
 }
 
-describe('first-run installation browser workflow', () => {
+describe('first-run installation source review and retry', () => {
   it('offers trusted sources only, keeps foreign text inert and requires review before installation', async () => {
     expect(await page.locator('#provisioning-source option').allTextContents()).toEqual(['Choose a source', 'Official fixture source']);
     await apps(); expect(await page.locator('#wizardStep img').count()).toBe(0);
@@ -65,6 +69,9 @@ describe('first-run installation browser workflow', () => {
     expect(await page.getByRole('link', { name: 'Open Access Administration' }).getAttribute('href')).toBe('/access/');
   });
 
+});
+
+describe('first-run installation completion and resume', () => {
   it('does not replace another source or finish while a selected package remains pending', async () => {
     await apps(); await card('alpha').getByRole('checkbox').check(); fixture.state.replacement = true;
     await card('alpha').getByRole('button', { name: 'Review installation' }).click();
@@ -97,6 +104,9 @@ describe('first-run installation browser workflow', () => {
     expect(fixture.state.installs).toEqual([]);
   });
 
+});
+
+describe('first-run installation scope and state recovery', () => {
   it('allows app-focused completion while retaining unrelated pending global choices', async () => {
     await database.pool.query("UPDATE user_preferences SET onboarding_data=$1 WHERE user_id='alice'",
       [{ stepId: 'done', provisioning: { source: 'official', selected: [{ registry: 'official', name: 'alpha' }], installed: [] } }]);

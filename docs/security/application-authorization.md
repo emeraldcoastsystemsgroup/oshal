@@ -51,12 +51,17 @@ one service. The server supplies actor identity. Browser writes require the serv
 the access-request header. Previews bind actor, issuer, application catalog, revision, and expiry;
 concurrent edits conflict. Assignment changes and audit receipts commit together in PostgreSQL.
 
-Management uses current root/admin roles and the existing environment recovery allowlists. External
-management identities additionally require their verified issuer in
-`OSHAL_AUTHORIZATION_ADMIN_ISSUERS`; external email matching does not grant authority. Local disabled
-accounts are rejected even with an existing session. Legacy subject-only app assignments are read only
-for canonical local identities. Local users populate the selector; exact external identities and group
-IDs can be entered for assignment without claiming their membership has been verified.
+Management uses current root/admin roles and the existing environment recovery allowlists. The primary
+provider retains explicitly configured operator continuity; additional provider issuers require
+`OSHAL_AUTHORIZATION_ADMIN_ISSUERS`. Email-based operator matching requires a verified email claim.
+Local disabled accounts are rejected even with an existing session. Legacy subject-only assignments
+belong only to canonical local identities. The selector includes local accounts and exact Google/Microsoft
+identities observed through verified login, preserving explicit bridge links. Unqualified historical IDs
+are never guessed or merged by email. See [principal adoption](principal-directory.md).
+
+The Access screen and read tool expose [scoped applied-change history](authorization-audit.md).
+Each paginated read rechecks current authority, filters app/tenant scope before limiting results, and
+omits raw reasons and approval material. An ordinary user cannot browse administration history.
 
 The Entra bridge preserves verified directory claims before linking to a local account. Group decisions
 match issuer, directory tenant, and group object ID. Missing, stale, incomplete, or overage membership
@@ -103,7 +108,12 @@ cannot claim an empty root role; existing operator recovery remains available. L
 `LOCAL_AUTH=true` and `MOCK_OIDC=false`; existing Bash/PowerShell/Kubernetes installation defaults have
 not been converted to enterprise OIDC provisioning.
 
-Migrations 127 and 128 add policy state/audit/app posture and installer proof storage. Normal schema
+Existing accounts, roles, verified external inventory or a completed installation close fresh-root
+election. [Users administration](local-account-administration.md) supports local invitations and status
+changes; root disable and administrative credential-reset guards remain transactional.
+
+Migrations 127–129 add policy state/audit/app posture, installer proof and verified principal storage;
+migration 131 indexes scoped audit reads. Normal schema
 initialization supports installation. No deployed accounts or app grants are changed by the source
 implementation itself.
 

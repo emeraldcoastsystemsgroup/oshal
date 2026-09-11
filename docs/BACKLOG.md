@@ -6,8 +6,8 @@ Framework, kernel, shared-service, security-boundary, and orchestration work bel
 
 Every item has an observable **Done when**. Live-proof requirements cannot be closed from unit results alone.
 
-The operator's current [ranked ten priorities](backlog/next-priorities.md) identify the three active
-implementation lanes and the next queued outcomes.
+The operator's [ranked ten priorities](backlog/next-priorities.md) link each autonomous implementation
+outcome to its local proof. This queue retains the remaining rollout and broader acceptance work.
 
 ## Promotion, deployment, and regression proof
 
@@ -17,15 +17,15 @@ implementation lanes and the next queued outcomes.
 
 ### Enterprise authorization: user, application, function and record
 - **Requested:** application permission schemas imported at installation; direct and directory-group grants; installer-established swarm admin; consistent user authority through applications and Jarvis.
-- **Implemented foundation:** imported catalogs, durable policy/audit, central Access Administration, registered typed tools, package HTTP/controller enforcement and local installer proof. [As-built behavior](security/application-authorization.md) distinguishes these from the complete [ADR-149](adr/149-enterprise-application-authorization.md) target.
+- **Implemented foundation:** imported catalogs, durable policy and browsable applied-change history, central Access Administration, existing principal inventory, Users administration, registered typed tools, package HTTP/controller enforcement and local installer proof. [As-built behavior](security/application-authorization.md) distinguishes these from the complete [ADR-149](adr/149-enterprise-application-authorization.md) target.
 - **Remaining:** [AUTH-01 through AUTH-10](backlog/enterprise-authorization.md) retain directory provisioning, live worker revalidation, business-data adapters and rollout evidence. Isolated implementation suites are registered in AI Test Lab.
 - **Done when:** one installed business package proves differing user/group function and record rights across UI, API and delegated AI; explicit deny and revocation work; installer root has one authorized winner; test cases register with installation and isolated/live evidence is accurately distinguished.
 
 ### Application test cases register with AI Test Lab during installation
 - **Requested:** test cases belong to application packages and register automatically on installation, with upgrade/reload/disable/uninstall reconciliation. Reuse existing package `smoke:` validation and verification; richer local/browser/live suites need versioned catalog and runner metadata.
-- **Implemented in the current branch:** versioned package catalogs, shared CLI/runtime validation, lifecycle reconciliation, caller-filtered discovery, source/content revisions and existing-verifier smoke execution with explicit pending prerequisites. Hello and Portrait provide local package/lifecycle proof; see the run record.
+- **Implemented in the current branch:** versioned package catalogs, shared CLI/runtime validation, lifecycle reconciliation, caller-filtered discovery, source/content revisions and existing-verifier smoke execution with explicit pending prerequisites. Hello, Portrait and Kalshi provide public package test catalogs; see the run record for each proof scope.
 - **Backlog:** [Application Test Lab registration](backlog/app-test-lab-registration.md) contains the prioritized core work, complete public-package worklist, pinned suite inventory and lifecycle acceptance cases. Private package rows remain in the private app repository.
-- **Remaining:** implement supported local/browser runners, installation-report linkage, retained historical evidence and the remaining package-suite adoption; promote and prove the two pilot packages on the installed deployment.
+- **Remaining:** implement supported local/browser runners, installation-report linkage, retained historical evidence and the remaining package-suite adoption; promote and prove the pilot packages on the installed deployment.
 - **Done when:** each application with existing testing installs its cases into the Lab without per-app core edits; lifecycle and ownership tests pass; unavailable prerequisites remain explicit; every inventoried suite has a disposition and representative installation/run evidence. Registration does not automatically execute all tests.
 
 ### Production core-deploy pipeline + version strategy (operator, 2026-09-05)
@@ -314,8 +314,9 @@ implementation lanes and the next queued outcomes.
 - **Done when:** that state produces a user-facing "Jarvis has no AI engine connected — add one under Settings → BYO LLM" (surface and TTS), a guard proves the message appears when resolution is empty and the harness is unbrokered, and the briefing shelf (which needs no live model) still renders instead of being dragged down with the ask path.
 
 ### Jarvis briefing preferences (operator ask, 2026-08-09)
-- **Remaining:** the Kalshi playable-hand briefing is loved, but it is the only proactive update Jarvis gives and there is no control surface. Operator asked for: a config screen listing every briefing-capable bot with per-bot on/off, an update frequency, and a delivery-channel choice per briefing — voice, bubble, or main-Jarvis-screen-only.
-- **Done when:** a Jarvis settings surface lists briefing sources discovered from registered bots (not hardcoded), each with enable/frequency/channel persisted per user; the cron honors them; a disabled source never briefs; and the Kalshi briefing continues working unchanged for a user who touches nothing.
+- **Source proof:** registered application sources, exact-user settings, announcement cadence, channel delivery and Kalshi producer adoption pass isolated PostgreSQL/HTTP/browser and package tests. [The contract](apps/jarvis-briefings.md) distinguishes announcement cadence from collection schedules.
+- **Remaining:** promote core and Kalshi 1.5.0, then verify the settings and eligible untouched defaults through the installed browser and producer path; adopt additional package-owned briefing sources.
+- **Done when:** the installed settings surface lists registered sources, per-user changes survive restart, disabled sources never deliver, channel and cadence choices govern announcements, and an eligible user with untouched preferences still receives Kalshi updates.
 
 ### ADR-045 graph-tier residuals
 - **Remaining:** decide/build RCA-persona graph use, add `subgraph()` if still needed, and make store-package graph dependencies explicit through `uses:` or an ADR-backed alternative.
@@ -362,25 +363,22 @@ implementation lanes and the next queued outcomes.
 - **Done when:** the deployed worker self-corrects to the dispatched provider/model, a missing authoritative record is refused before task creation, and the returned result records `providerConfigSource: "authoritative-dispatch"` with the config version.
 
 ### Manifest bots get an ADR-034 authoritative record at load
-- **Remaining:** the gsquared CRM boxes had an EMPTY `agent_config` table, so with push-on-dispatch
-  default-on every queue dispatch to any node bot failed closed ("Authoritative provider config was
-  required but no actionable record was available") while direct chat paths worked — found live
-  2026-09-04 chasing the Jarvis→sales-concierge handoff. Interim: records seeded by hand on both
-  boxes (openai-codex/gpt-5.5, matching their env truth). The durable fix: loading a manifest that
-  declares `bots:` seeds/updates each bot's `agent_config` record from its persona `runtime:` block
-  or the deployment default, so a fresh box is queue-dispatchable without hand seeding.
+- **Source proof:** manifest loads seed authoritative persona/deployment defaults while preserving
+  operator changes; disposable PostgreSQL and deterministic dispatch checks pass. See
+  [the implementation reference](testing/manifest-bot-initialization.md).
+- **Remaining:** promote the implementation and retain fresh installed-node dispatch evidence
+  without hand-seeded configuration, under the existing runtime and authorization requirements.
 - **Done when:** a clean-DB manifest load leaves a dispatchable record for every declared node bot,
   a unit guard proves it (and goes red when seeding is dropped), and `dispatch-manifest-worker` to a
   freshly loaded packaged bot succeeds on a box with no hand-seeded rows.
 
 ### Queue-dispatched concierge answers carry the app's data context
-- **Remaining:** the ADR-083 rail now completes end to end for the CRM (Jarvis files the pull,
-  keyword call-out picks sales-concierge, the node executes and the ticket completes — proven live
-  2026-09-05 on the gsquared staging box), but the concierge answered honestly that it had no board
-  data: the bare swarm-execute prompt does not engage the package's route-backed board tools the
-  interactive path uses, so a data question completes without the data. The dispatch (or the bot
-  node's tool layer) needs to let the concierge reach its own deterministic board reads on ticket
-  work, per the ADR-036 boundary (server-side data access, model sees normalized results only).
+- **Source proof:** the [specialist context contract](apps/specialist-context.md) inserts authorized
+  scalar facts before signed dispatch. Core known-answer/revocation/lifecycle checks and an actual
+  package consumer pass locally; the model receives no query or credential.
+- **Remaining:** complete signed current-rights verification on protected remote bot transport,
+  promote core and the owning application, and retain a live known-answer handoff. Protected
+  remote and unsupported inline dispatch remain refused until their required authority is available.
 - **Done when:** the same Jarvis question ("how many opportunities are in docs out?") returns the
   live count through the handoff rail on a box whose CRM holds a known stage distribution, with the
   read executed by the package's own operation — never by handing the model a credential.
@@ -934,15 +932,16 @@ implementation lanes and the next queued outcomes.
 ## Provisioning and operator experience
 
 ### First-run provisioning wizard
-- **Remaining:** extend `/welcome` through trusted store selection, package choice/install, invited users, and safe backup/secret defaults; third-party store URLs require an explicit trust design.
+- **Source proof:** trusted source selection, reviewed package install/retry, saved progress and existing-account links pass isolated HTTP/Chromium checks; [the provisioning guide](testing/first-run-provisioning.md) records the implemented flow.
+- **Remaining:** prove the promoted flow on a fresh installed swarm and complete the separate safe backup/secret-default setup acceptance; third-party sources continue through the existing explicit registry trust controls.
 - **Done when:** a fresh LOCAL_AUTH admin completes or skips each re-enterable step, failures name the package, anonymous users cannot invoke installation, and an ADR prevents a typed store URL from gaining unchecked code execution. See [ADR-117](adr/117-local-auth-invited-users.md).
 
 ### Swarm root — the three pieces ADR-148 did not build
 - **Remaining:** [ADR-148](adr/148-swarm-root.md) shipped the role store, root claim/transfer, the
   role-aware `isOperatorIdentity`, bootstrap-claims-root and the `/users` page. Three things remain:
   (1) a `MOCK_OIDC` box's installer-configured identity stays break-glass-only until someone claims
-  root from `/users` — nothing adopts it; (2) `/users` lists local accounts and grants roles, but
-  inviting and disabling accounts still go through the local-auth admin API rather than the page;
+  root from `/users` — nothing adopts it; (2) promote and verify the new `/users` invite/disable
+  controls, already covered by isolated PostgreSQL and Chromium tests;
   (3) no spec drives an operator-gated route through the real Express middleware chain as a signed-in
   NON-operator — the shipped guards cover the store and `isOperatorIdentity` against live Postgres,
   and the 401/200 route paths were verified on the box, but the authenticated-non-operator 403 was not.

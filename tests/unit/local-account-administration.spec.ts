@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove existing-account adoption and serialized root-safe administration through real PostgreSQL and HTTP.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep case registration bounded while preserving the root-administration suite and shared fixture hooks.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LocalAccountFixture, fixtureServiceSecret } from '../fixtures/local-account-administration';
@@ -57,7 +58,8 @@ describe('established accounts close fresh-root setup', () => {
   });
 });
 
-describe('root-safe local account administration', () => {
+/** Register caller and exact-root credential boundaries in the existing suite. */
+function registerAdministrationCallerCases() {
   it('rejects anonymous and nonadministrator writes, including root credential reset attempts', async () => {
     for (const caller of ['', 'member']) {
       const expected = caller ? 403 : 401;
@@ -94,6 +96,10 @@ describe('root-safe local account administration', () => {
     expect((await fixture.post(operations[2].route, operations[2].body, 'root')).status).toBe(200);
   });
 
+}
+
+/** Register serialized root-transfer checks using the same per-case database reset. */
+function registerRootTransferCases() {
   it.each(['disable', 'reinvite', '2fa'])('rechecks current root after a concurrent role transfer before %s', async action => {
     const client = await fixture.owner.connect();
     try {
@@ -118,4 +124,9 @@ describe('root-safe local account administration', () => {
     expect((await fixture.post(userRoute(fixture.users.root.id, 'disable'))).status).toBe(200);
     expect((await fixture.post(userRoute(fixture.users.member.id, 'disable'))).status).toBe(409);
   });
+}
+
+describe('root-safe local account administration', () => {
+  registerAdministrationCallerCases();
+  registerRootTransferCases();
 });

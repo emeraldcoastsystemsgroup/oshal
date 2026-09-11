@@ -28,6 +28,8 @@ the carve doesn't prune them out of `dist/` (the google-calendar/notifications b
 | `memory` | `@/features/memory`, `@/features/user-model`, `@/features/personal-data` | Cross-app user state. |
 | `tool-registry` | `@/features/tool-registry`, `@/features/llm-provider` | Tool + model access — the aggregation thesis (ADR-049). |
 | `test-catalog` | `@/shared/package-testing` | Versioned package test declarations registered on activation. See [the catalog contract](../testing/package-test-catalog.md); local runners remain explicit prerequisites. |
+| `specialist-context` | `@/shared/specialist-context` | Package-owned scalar facts for caller-authorized specialist dispatch; bounded reads, lifecycle and permission rechecks. |
+| `jarvis-briefings` | `@/shared/briefings` | Registered briefing sources and per-user enable, frequency and voice/bubble/screen delivery preferences. |
 | `media-generation` | `@/features/video-generation`, `@/features/visual-response` | Vendor-abstracted image/video generation. |
 | `payments` | `@/features/payments` | Provider-agnostic money rails: the Stripe `PaymentAdapter` half (finance package) + the Square/PayPal merchant half (payments package). Pinned at the finance carve (ADR-085 Wave 1 #5) — until then it survived in dist only through finance-routes' import. |
 

@@ -60,7 +60,9 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
     expect([...KERNEL_SKILL_IDS].sort()).toEqual(
       [
         'application-authorization',
+        'specialist-context',
         'test-catalog',
+        'jarvis-briefings',
         'deck-generation',
         'graph',
         'media-generation',

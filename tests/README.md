@@ -54,6 +54,8 @@ The autonomous backlog suites have matching Lab registrations and local commands
 | `npm run test:nightly-isolated` | Fixed alert/topology and runner regressions in disposable PostgreSQL, retained reports |
 | `npm run test:bot-initialization` | Fresh manifest runtime state, operator preservation and fixture HTTP dispatch |
 | `npm run test:provisioning` | Saved setup, trusted sources, reviewed installs, retry and browser resume |
+| `npm run test:specialist-context` | Package-owned facts, exact caller scope, signed dispatch and revocation/timeout refusal |
+| `npm run test:briefings` | Registered sources, per-user preferences, frequency and delivery channels |
 
 Docker-backed suites create their own temporary databases. Do not substitute a deployment DSN or
 run the unrestricted historical unit collection against a live application database.

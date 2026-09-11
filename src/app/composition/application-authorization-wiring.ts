@@ -75,6 +75,7 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
   void ready.catch(error => logger.error({ err: error }, 'Application authorization unavailable'));
   const durable = new PostgresAuthorizationStore(ctx.pool);
   const store: AuthorizationStore = {
+    readAudit: async input => { await ready; return durable.readAudit(input); },
     publishAppPosture: async (app, protectedApp, agentIds, toolNames) => { await ready; return durable.publishAppPosture(app, protectedApp, agentIds, toolNames); },
     read: async () => { await ready; return durable.read(); },
     transaction: async operation => { await ready; return durable.transaction(operation); },
@@ -104,5 +105,5 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
   const registered = ready.then(() => registerAuthorizationTools(ctx.toolRegistryService, ctx.dynamicToolExecutorRegistry, service));
   void registered.catch(error => logger.error({ err: error }, 'Authorization tool registration failed'));
   return { service, runtime, authorizationTool, isProtected, observePrincipal: directory.observePrincipal,
-    resolveActor: (req: Request) => resolveActor(req), ready: registered };
+    resolveActor: (req: Request) => resolveActor(req), targetActor: actors.targetActor, ready: registered };
 }
