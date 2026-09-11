@@ -45,6 +45,8 @@ import type { ConnectorMarketplaceService } from '@/app/connectors/runtime/marke
 import type { BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
 import type { OutlookMailReader, OutlookMailSyncReader } from '@/app/routes/outlook-mail-reader';
 import type { RingcentralCallLogReader } from '@/app/routes/ringcentral-call-log';
+import type { ApplicationAuthorizationRuntime, PackageAuthorizationContext } from './application-authorization-runtime';
+import type { AuthorizationToolRuntime } from './authorization-tool';
 
 /**
  * @description Package-safe bot execution seam. The composition root binds the application
@@ -60,6 +62,10 @@ export type AppBotExecutor = (
  * Created by the composition root and passed to route handlers.
  */
 export interface AppContext {
+  /** Core-owned authority; package factories receive only the bound authorization adapter below. */
+  applicationAuthorization?: ApplicationAuthorizationRuntime;
+  authorizationTool?: AuthorizationToolRuntime;
+  authorization?: PackageAuthorizationContext;
   taskStore: InMemoryTaskStore;
   messageStore: InMemoryMessageStore;
   streamManager: StreamManager;

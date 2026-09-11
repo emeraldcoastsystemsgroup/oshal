@@ -1,0 +1,320 @@
+<!-- Access Administration: shared authorization service, preview before apply, no client-side grants. -->
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Access Administration — OSHAL</title>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script>
+    try { const theme = localStorage.getItem('cockpit-theme'); if (theme) document.documentElement.dataset.theme = theme; } catch {}
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text-primary, #e5e7eb); background: var(--bg-primary, #111827); font: 14px/1.5 system-ui, sans-serif; }
+    main { max-width: 1280px; margin: auto; padding: 30px 24px 64px; }
+    h1 { font-size: 28px; margin: 0; letter-spacing: -.03em; }
+    h2 { font-size: 17px; margin: 0 0 12px; }
+    p { margin: 6px 0 14px; }
+    a { color: var(--accent-primary, #a5b4fc); }
+    header, .row, .actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    header { justify-content: space-between; margin-bottom: 24px; }
+    .muted, .hint, label { color: var(--text-secondary, #9ca3af); }
+    .hint { font-size: 12px; }
+    .panel { background: var(--bg-secondary, #1f2937); border: 1px solid var(--border-color, #374151); border-radius: 12px; padding: 20px; margin-bottom: 18px; }
+    .selectors { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap: 16px; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr); gap: 18px; align-items: start; }
+    label { display: block; font-size: 12px; font-weight: 650; margin-bottom: 5px; }
+    input, select, textarea, button { font: inherit; border-radius: 7px; border: 1px solid var(--border-color, #4b5563); }
+    input, select, textarea { width: 100%; background: var(--bg-primary, #111827); color: inherit; padding: 9px 10px; }
+    textarea { min-height: 80px; resize: vertical; }
+    button { padding: 9px 14px; cursor: pointer; background: var(--bg-tertiary, #374151); color: inherit; font-weight: 650; }
+    button.primary { color: var(--bg-primary, #111827); background: var(--accent-primary, #a5b4fc); border-color: transparent; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    :focus-visible { outline: 2px solid var(--accent-primary, #a5b4fc); outline-offset: 3px; }
+    .field { margin-bottom: 14px; }
+    .badge { display: inline-block; padding: 3px 9px; border-radius: 5px; font-size: 12px; background: var(--bg-tertiary, #374151); }
+    .status { padding: 11px 14px; border: 1px solid var(--border-color, #374151); border-radius: 8px; margin-bottom: 18px; }
+    .status.error { color: var(--status-error, #f87171); }
+    .status.success { color: var(--status-success, #34d399); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px 8px; border-bottom: 1px solid var(--border-color, #374151); text-align: left; vertical-align: top; }
+    th { color: var(--text-secondary, #9ca3af); font-size: 12px; }
+    .table-wrap { overflow-x: auto; }
+    .empty { padding: 14px 0; color: var(--text-secondary, #9ca3af); }
+    .details { overflow-wrap: anywhere; white-space: pre-wrap; }
+    .change-review { border-left: 3px solid var(--accent-primary, #a5b4fc); }
+    [hidden] { display: none !important; }
+    @media (max-width: 780px) { .selectors, .layout { grid-template-columns: 1fr; } main { padding: 20px 14px 40px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1>Access Administration</h1><p class="muted">Review who can use each application and manage their assigned access.</p></div>
+    <nav class="row" aria-label="Administration"><a href="/users">Users</a><a href="/applications/">Applications</a><button id="refresh" type="button">Refresh</button></nav>
+  </header>
+  <div id="status" class="status" role="status" aria-live="polite">Loading access catalog…</div>
+  <div id="administration" hidden>
+    <section class="panel selectors" aria-label="Access selection">
+      <div><label for="target-kind">Assign access to</label><select id="target-kind"><option value="user">User</option><option value="group">Directory group</option></select></div>
+      <div><label for="target">User or group</label><select id="target"></select></div>
+      <div><label for="application">Application</label><select id="application"></select></div>
+    </section>
+    <details class="panel" id="manual-target">
+      <summary>Enter an exact user or directory group identity</summary>
+      <p class="hint">Use the identity provider’s exact identifiers when a target is absent from the list. A manual entry selects a target; it does not verify membership or grant access. Changes still require an authorized preview and apply.</p>
+      <form id="manual-target-form">
+        <div class="selectors">
+          <div><label for="manual-issuer">Identity provider issuer</label><input id="manual-issuer" required maxlength="512" autocomplete="off" placeholder="Exact issuer URI" /></div>
+          <div><label for="manual-id" id="manual-id-label">User subject</label><input id="manual-id" required maxlength="512" autocomplete="off" /></div>
+          <div id="manual-tenant-field" hidden><label for="manual-tenant">Directory tenant ID</label><input id="manual-tenant" maxlength="512" autocomplete="off" /></div>
+        </div>
+        <p><button id="use-manual-target" type="submit">Use exact identity</button></p>
+      </form>
+    </details>
+    <div class="layout">
+      <div>
+        <section class="panel" aria-labelledby="app-title">
+          <div class="row"><h2 id="app-title">Application access</h2><span id="app-mode" class="badge"></span></div>
+          <p id="app-description" class="muted"></p>
+          <p id="app-revision" class="hint"></p>
+          <div id="roles" class="table-wrap"></div>
+        </section>
+        <section class="panel" aria-labelledby="effective-title">
+          <div class="row"><h2 id="effective-title">Effective access</h2><button id="explain" type="button">Explain access</button></div>
+          <div class="field" id="permission-field"><label for="permission">Permission to explain</label><select id="permission"></select></div>
+          <p class="hint">Current assignments and restrictions for the selected target. Explanations contain access decisions only.</p>
+          <div id="effective" class="details empty">Select an application and target.</div>
+        </section>
+        <section class="panel" aria-labelledby="history-title">
+          <h2 id="history-title">Current assignments</h2><div id="history" class="empty">No assignments loaded.</div>
+          <p id="receipt" class="hint" hidden></p>
+        </section>
+      </div>
+      <div>
+        <section class="panel" aria-labelledby="change-title">
+          <h2 id="change-title">Change access</h2>
+          <form id="change-form">
+            <div class="field"><label for="operation">Change</label><select id="operation"></select></div>
+            <div class="field" id="role-field"><label for="role">Application role</label><select id="role"></select></div>
+            <div class="field" id="deny-permission-field" hidden><label for="deny-permission">Restriction</label><select id="deny-permission"></select></div>
+            <div class="field" id="tenant-field"><label for="tenant">Business tenant</label><input id="tenant" maxlength="200" autocomplete="off" placeholder="Tenant ID, when required" /></div>
+            <div class="field" id="expires-field"><label for="expires">Expires (optional)</label><input id="expires" type="datetime-local" /></div>
+            <div class="field"><label for="reason">Reason for this change</label><textarea id="reason" required maxlength="1000" placeholder="Explain why this access is needed"></textarea></div>
+            <button class="primary" id="preview-button" type="submit">Preview change</button>
+          </form>
+        </section>
+        <section class="panel change-review" id="review" aria-labelledby="review-title" hidden>
+          <h2 id="review-title">Review change</h2>
+          <div id="preview-details" class="details"></div>
+          <p id="preview-expiry" class="hint"></p>
+          <div class="actions"><button id="apply" class="primary" type="button">Apply change</button><button id="cancel" type="button">Cancel</button></div>
+        </section>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+'use strict';
+const API = '/api/authorization';
+const $ = id => document.getElementById(id);
+const state = { catalog: null, preview: null, selection: 0, busy: false, idempotencyKey: null, manualTargets: { users: [], groups: [] } };
+const escapeHtml = value => String(value == null ? '' : value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+function status(message, kind) { $('status').textContent = message; $('status').className = 'status' + (kind ? ' ' + kind : ''); }
+function discardPreview() { state.preview = null; state.idempotencyKey = null; $('review').hidden = true; }
+async function request(path, body) {
+  const response = await fetch(API + path, {
+    credentials: 'same-origin', cache: 'no-store',
+    ...(body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json', 'x-oshal-access-request': '1' }, body: JSON.stringify(body) }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || 'Access request failed.');
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+function options(element, entries, preferred) {
+  element.replaceChildren(...entries.map(entry => {
+    const option = document.createElement('option'); option.value = entry.value; option.textContent = entry.label; return option;
+  }));
+  if (entries.some(entry => entry.value === preferred)) element.value = preferred;
+}
+function application() { return state.catalog?.apps.find(app => app.app === $('application').value); }
+function targets() {
+  const kind = $('target-kind').value === 'group' ? 'groups' : 'users';
+  const known = state.catalog?.[kind] || [];
+  return [...known, ...state.manualTargets[kind].filter(entry => !known.some(existing => targetKey(existing) === targetKey(entry)))];
+}
+function target() { return targets()[Number($('target').value)]; }
+function targetLabel(value) { return value.label || value.displayName || value.sub || value.id; }
+function targetKey(value) { return value ? JSON.stringify([value.issuer, value.sub || value.id, value.tenantId || '']) : ''; }
+function targetInput() {
+  const selected = target();
+  if (!selected) throw new Error('No visible target is available. Directory access may be required.');
+  return $('target-kind').value === 'group'
+    ? { group: { issuer: selected.issuer, tenantId: selected.tenantId, id: selected.id } }
+    : { targetSub: selected.sub, targetIssuer: selected.issuer };
+}
+function setBusy(busy) {
+  state.busy = busy;
+  const group = $('target-kind').value === 'group';
+  const tenant = $('tenant').value.trim() || undefined;
+  const scopes = application()?.managementScopes || [];
+  const permits = permission => scopes.some(scope => scope.permissions.includes(permission) && (!scope.tenantId || scope.tenantId === tenant));
+  $('preview-button').disabled = busy || !application() || !target() || !permits('assign') || (group && !permits('directory'));
+  $('apply').disabled = busy || !state.preview || state.preview.requiresApproval;
+}
+function renderTargets(preferred) {
+  const index = targets().findIndex(entry => targetKey(entry) === preferred);
+  options($('target'), targets().map((entry, index) => ({ value: String(index), label: `${targetLabel(entry)} (${entry.issuer}${entry.tenantId ? ', ' + entry.tenantId : ''})` })), index >= 0 ? String(index) : undefined);
+}
+function table(headers, rows) {
+  if (!rows.length) return '<p class="empty">None.</p>';
+  return '<table><thead><tr>' + headers.map(value => '<th>' + escapeHtml(value) + '</th>').join('')
+    + '</tr></thead><tbody>' + rows.map(row => '<tr>' + row.map(value => '<td>' + escapeHtml(value) + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
+}
+function renderChange() {
+  const action = $('operation').value;
+  $('role-field').hidden = ['deny', 'clear-deny'].includes(action);
+  $('deny-permission-field').hidden = !application()?.catalog || !['deny', 'clear-deny'].includes(action);
+  $('expires-field').hidden = ['revoke', 'clear-deny', 'group-unmap'].includes(action);
+  $('tenant-field').hidden = false;
+  discardPreview(); setBusy(state.busy);
+}
+function renderApplication() {
+  const app = application();
+  if (!app) { $('app-title').textContent = 'No visible applications'; setBusy(false); return; }
+  $('app-title').textContent = app.app;
+  $('app-mode').textContent = app.status === 'catalog' ? 'Declared application roles' : app.status === 'legacy' ? 'Legacy access' : 'Explicit app administrator required';
+  $('app-description').textContent = app.catalog
+    ? 'Choose from this application’s declared roles. Each role includes the permissions and resource scopes below.'
+    : app.status === 'legacy' ? 'This application still uses legacy access. Its existing access rules remain in effect until enforcement is enabled.'
+      : 'This application has no permission catalog. Access requires an explicit app administrator assignment; an explicit deny takes precedence.';
+  $('app-revision').textContent = `Source: ${app.source} · Version: ${app.version} · Policy revision: ${state.catalog.revision} · Catalog: ${app.catalogRevision}`;
+  if (app.missingAdapters.length) $('app-description').textContent += ` Access remains unavailable for resources awaiting an enforcement adapter: ${app.missingAdapters.join(', ')}.`;
+  const roles = app.catalog ? Object.entries(app.catalog.roles) : [['@app-admin', { tier: 'admin', grants: [] }]];
+  $('roles').innerHTML = table(['Role', 'Tier', 'Permissions and scopes'], roles.map(([name, role]) => [name, role.tier, role.grants.map(grant => `${grant.permission} (${grant.scope}${grant.fields ? ', fields: ' + grant.fields : ''})`).join('\n') || 'Whole application administrator']));
+  options($('role'), roles.map(([name]) => ({ value: name, label: name === '@app-admin' ? 'App administrator' : name })), $('role').value);
+  const permissions = app.catalog ? Object.keys(app.catalog.permissions) : [];
+  options($('permission'), permissions.map(name => ({ value: name, label: name })), $('permission').value);
+  options($('deny-permission'), [{ value: '', label: 'Whole application' }, ...permissions.map(name => ({ value: name, label: name }))], $('deny-permission').value);
+  $('permission-field').hidden = !permissions.length;
+  const group = $('target-kind').value === 'group';
+  options($('operation'), [...(group ? [['group-map', 'Map group to role'], ['group-unmap', 'Remove group mapping']] : [['grant', 'Grant role'], ['revoke', 'Revoke role']]), ['deny', 'Deny access'], ['clear-deny', 'Remove explicit deny']].map(([value, label]) => ({ value, label })), $('operation').value);
+  $('explain').disabled = group || !target();
+  renderChange();
+}
+function matchingAssignments() {
+  const selected = target(); const app = application();
+  if (!selected || !app) return [];
+  return (state.catalog.assignments || []).filter(entry => entry.app === app.app && ($('target-kind').value === 'group'
+    ? entry.group && entry.group.id === selected.id && entry.group.issuer === selected.issuer && entry.group.tenantId === selected.tenantId
+    : entry.targetSub === selected.sub && entry.targetIssuer === selected.issuer));
+}
+async function renderEffective() {
+  const generation = ++state.selection;
+  $('history').innerHTML = table(['Role or restriction', 'Business tenant', 'Expires'], matchingAssignments().map(entry => [entry.deny ? 'Deny: ' + (entry.permission || 'whole application') : entry.role || entry.permission, entry.tenantId || 'None', entry.expiresAt || 'No expiry']));
+  if (!application() || !target()) { $('effective').textContent = 'No visible application or target. Directory access may be required.'; return; }
+  if ($('target-kind').value === 'group') { $('effective').textContent = 'Group mappings are shown below. Individual effective access also depends on verified, current membership and explicit restrictions.'; return; }
+  $('effective').textContent = 'Loading effective access…';
+  try {
+    const data = await request('/effective', { app: application().app, ...targetInput(), ...($('tenant').value.trim() ? { tenantId: $('tenant').value.trim() } : {}) });
+    if (generation !== state.selection) return;
+    $('effective').textContent = `Tier: ${data.tier}\nExplicit deny: ${data.denied ? 'Yes' : 'No'}\nRoles: ${data.roles.join(', ') || 'None'}\nPermissions: ${data.permissions.map(grant => `${grant.permission} (${grant.scope})`).join(', ') || 'None'}`;
+  } catch (error) { if (generation === state.selection) $('effective').textContent = error.message; }
+}
+async function loadCatalog(message) {
+  discardPreview(); setBusy(true); status('Loading access catalog…');
+  try {
+    const oldApp = $('application').value; const oldTarget = targetKey(target());
+    state.catalog = await request('/catalog');
+    options($('application'), state.catalog.apps.map(app => ({ value: app.app, label: `${app.app} (${app.source})` })), oldApp || new URLSearchParams(location.search).get('app'));
+    renderTargets(oldTarget); renderApplication(); $('administration').hidden = false;
+    await renderEffective();
+    status(message || 'Access catalog loaded. Preview a change before applying it.');
+  } catch (error) {
+    $('administration').hidden = true;
+    status(error.status === 403 ? 'Access administration is unavailable for this account. A verified identity and administration scope are required.' : error.message, 'error');
+  } finally { setBusy(false); }
+}
+function changeInput() {
+  const action = $('operation').value;
+  return { action, app: application().app, ...targetInput(), reason: $('reason').value.trim(), expectedRevision: state.catalog.revision,
+    ...(!['deny', 'clear-deny'].includes(action) ? { role: $('role').value } : {}),
+    ...(!$('deny-permission-field').hidden && $('deny-permission').value ? { permission: $('deny-permission').value } : {}),
+    ...($('tenant').value.trim() ? { tenantId: $('tenant').value.trim() } : {}),
+    ...(!$('expires-field').hidden && $('expires').value ? { expiresAt: new Date($('expires').value).toISOString() } : {}),
+  };
+}
+async function report(error) {
+  discardPreview();
+  if (error.status === 409) await loadCatalog();
+  status(error.status === 409 ? 'Access changed while you were reviewing it. Review the current assignments and create a new preview.' : error.message, 'error');
+}
+$('refresh').addEventListener('click', () => { void loadCatalog(); });
+$('target-kind').addEventListener('change', () => {
+  const group = $('target-kind').value === 'group';
+  $('manual-tenant-field').hidden = !group; $('manual-tenant').required = group;
+  $('manual-id-label').textContent = group ? 'Directory group object ID' : 'User subject';
+  renderTargets(); renderApplication(); void renderEffective();
+});
+$('manual-target-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const issuer = $('manual-issuer').value.trim(), id = $('manual-id').value.trim(), tenantId = $('manual-tenant').value.trim();
+  const group = $('target-kind').value === 'group';
+  if (![issuer, id, ...(group ? [tenantId] : [])].every(value => value && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value))) {
+    status('Enter the exact issuer, subject or group object ID, and directory tenant when selecting a group.', 'error'); return;
+  }
+  const entry = { issuer, label: id + ' (manual entry)', ...(group ? { id, tenantId } : { sub: id }) };
+  const kind = group ? 'groups' : 'users';
+  if (!targets().some(existing => targetKey(existing) === targetKey(entry))) state.manualTargets[kind].push(entry);
+  renderTargets(targetKey(entry)); renderApplication(); void renderEffective();
+  $('manual-target').open = false;
+  status('Exact identity selected. No access has changed; review a preview before applying.');
+});
+$('target').addEventListener('change', () => { discardPreview(); renderApplication(); void renderEffective(); });
+$('application').addEventListener('change', () => { renderApplication(); void renderEffective(); });
+$('operation').addEventListener('change', renderChange);
+$('change-form').addEventListener('input', discardPreview);
+$('change-form').addEventListener('change', discardPreview);
+$('tenant').addEventListener('change', () => { setBusy(state.busy); void renderEffective(); });
+$('cancel').addEventListener('click', discardPreview);
+$('change-form').addEventListener('submit', async event => {
+  event.preventDefault(); if (state.busy) return;
+  discardPreview(); setBusy(true); const generation = state.selection;
+  try {
+    const change = changeInput();
+    const preview = await request('/preview', change);
+    if (generation !== state.selection || JSON.stringify(changeInput()) !== JSON.stringify(change)) return;
+    state.preview = preview; state.idempotencyKey = crypto.randomUUID();
+    $('preview-details').textContent = JSON.stringify(preview.change, null, 2);
+    $('preview-expiry').textContent = `Policy revision ${preview.revision} · Catalog ${preview.catalogRevision}\nExpires ${preview.expiresAt}`
+      + (preview.requiresApproval ? '\nThis change requires a separate, verified approval. Applying it here is unavailable until that approval workflow is provided.' : '');
+    $('review').hidden = false; status('Review the exact change below before applying it.');
+  } catch (error) { await report(error); }
+  finally { setBusy(false); }
+});
+$('apply').addEventListener('click', async () => {
+  if (state.busy || !state.preview || state.preview.requiresApproval) return;
+  const preview = state.preview; setBusy(true);
+  try {
+    const receipt = await request('/apply', { previewId: preview.previewId, idempotencyKey: state.idempotencyKey });
+    $('receipt').hidden = false; $('receipt').textContent = `Last applied change: audit ${receipt.auditId}, policy revision ${receipt.revision}.`;
+    await loadCatalog('Change applied and current access reloaded.');
+  } catch (error) { await report(error); }
+  finally { setBusy(false); }
+});
+$('explain').addEventListener('click', async () => {
+  const generation = state.selection;
+  try {
+    const data = await request('/explain', { app: application().app, ...targetInput(), ...($('permission').value ? { permission: $('permission').value } : {}), ...($('tenant').value.trim() ? { tenantId: $('tenant').value.trim() } : {}) });
+    if (generation === state.selection) $('effective').textContent = `Allowed: ${data.allowed ? 'Yes' : 'No'}\nReason: ${data.reason}\nDecision: ${data.decisionId}\nPolicy revision: ${data.revision}`;
+  } catch (error) { status(error.message, 'error'); }
+});
+void loadCatalog();
+</script>
+</body>
+</html>

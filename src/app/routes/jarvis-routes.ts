@@ -109,6 +109,7 @@ import { visibleArtifactActions } from './artifact-action-visibility';
 import type { PickerVisibleApps } from './artifact-picker-routes';
 import { resolveJarvisArtifact, buildArtifactRoutingPrompt, resolveJarvisArtifactAnswer, type JarvisArtifactAction } from './jarvis-artifact-routing';
 import { buildToolsBlock, withImageDeliverableContract } from './jarvis-tool-catalog';
+import { getApplicationAuthorizationActor, runWithApplicationAuthorizationActor } from '@/shared/application-authorization-context';
 import { buildBots, buildComms, buildActivity, buildCalendar } from './jarvis-overview';
 import {
   ensureJarvisSchema,
@@ -461,6 +462,13 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
   // Legacy mode can still arrive with the fleet secret. Narrow only that compatibility path to its
   // asserted owner; OIDC/PAT and verified delegation already carry authoritative user identity.
   router.use(requireTrustedServiceUserIdentity);
+  router.use(async (req, _res, next) => {
+    if (!ctx.applicationAuthorization) { next(); return; }
+    try {
+      const actor = await ctx.applicationAuthorization.resolveActor(req);
+      runWithApplicationAuthorizationActor(actor, next);
+    } catch { next(); } // Protected discovery/execution refuses without a verified actor.
+  });
   const visualResponseService = new VisualResponseService(ctx.pool);
   void ensureJarvisSchema(ctx.pool);   // durable Tasks list table
 
@@ -481,7 +489,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
       res.json({ apps: routes.map((r) => ({ key: r.key, name: r.name, blurb: r.blurb, mode: r.mode, deepLink: r.deepLink })) });
     } catch (err) {
       logger.warn({ err }, 'Jarvis /catalog dynamic build failed — falling back to curated routes');
-      const visible = APP_ROUTES.filter((r) => isBotAccessibleTo(r.agentId, 'jarvis'));
+      const visible = ctx.applicationAuthorization ? [] : APP_ROUTES.filter((r) => isBotAccessibleTo(r.agentId, 'jarvis'));
       res.json({ apps: visible.map((r) => ({ key: r.key, name: r.name, blurb: r.blurb, mode: r.mode, deepLink: r.deepLink })) });
     }
   });
@@ -721,7 +729,10 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     let botMessage = message;
     try {
       if (!providerBoundIntent) {
-        const tools = buildToolsBlock({ message, surface: surfaceContext?.app });
+        const authorizationActor = getApplicationAuthorizationActor();
+        const authorizationTools = ctx.authorizationTool && authorizationActor
+          ? await ctx.authorizationTool.discover(authorizationActor, true) : [];
+        const tools = buildToolsBlock({ message, surface: surfaceContext?.app, authorizationTools });
         // The deployment's app catalog rides EVERY model turn (before the plan guidance, whose
         // "catalog keys above" refers to it). Without it the persona's baked specialist list was
         // Jarvis's whole world - a store-installed app on this box did not exist to the model.

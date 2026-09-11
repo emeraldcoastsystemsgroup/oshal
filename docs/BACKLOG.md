@@ -13,8 +13,8 @@ implementation lanes and the next queued outcomes.
 
 ### Enterprise authorization: user, application, function and record
 - **Requested:** application permission schemas imported at installation; direct and directory-group grants; installer-established swarm admin; consistent user authority through applications and Jarvis.
-- **Specified:** [ADR-149](adr/149-enterprise-application-authorization.md) proposes the shared contract, admin/data separation, Entra/AD integration boundaries, record/field scopes, delegation, revocation and compatible rollout. This is a proposal, not implemented enforcement.
-- **Work and tests:** [AUTH-01 through AUTH-10](backlog/enterprise-authorization.md) define core/store ownership, three implementation lanes and planned AI Test Lab case registration.
+- **Implemented foundation:** imported catalogs, durable policy/audit, central Access Administration, registered typed tools, package HTTP/controller enforcement and local installer proof. [As-built behavior](security/application-authorization.md) distinguishes these from the complete [ADR-149](adr/149-enterprise-application-authorization.md) target.
+- **Remaining work and tests:** [AUTH-01 through AUTH-10](backlog/enterprise-authorization.md) retain directory provisioning, live worker revalidation, business-data adapters and rollout evidence. Isolated implementation suites are registered in AI Test Lab.
 - **Done when:** one installed business package proves differing user/group function and record rights across UI, API and delegated AI; explicit deny and revocation work; installer root has one authorized winner; test cases register with installation and isolated/live evidence is accurately distinguished.
 
 ### Application test cases register with AI Test Lab during installation

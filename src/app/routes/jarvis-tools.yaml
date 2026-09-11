@@ -360,6 +360,20 @@ tools:
     accessRoles:
       - operator
       - swarm
+typedTools:
+  - kind: typed
+    name: swarm_authorization
+    keywords:
+      - access
+      - permissions
+      - authorization
+      - roles
+      - users
+      - groups
+      - application admin
+      - directory mapping
+    useWhen: Inspect application access or prepare a scoped role, restriction or directory mapping change.
+    context: Select an exact principal, installed application and tenant from current permitted targets. Use the registered read tool for inspection and Access Administration to review and apply the exact preview. Keywords never grant authority.
 artifactHandoff:
   kind: artifact-handoff
   keywords:

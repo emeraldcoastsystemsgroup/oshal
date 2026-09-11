@@ -35,6 +35,7 @@ import type {
 } from '@/features/swarm-apps';
 import type { AppContext } from '@/app/composition/app-context';
 import { appAccessCallerSub, appAccessDenial, appAccessEnforcementMode } from '@/app/middleware/app-access-policy';
+import type { ApplicationRouteAuthorization } from './application-authorization-runtime';
 
 const logger = createChildLogger({ module: 'manifest-route-mounter' });
 
@@ -102,6 +103,7 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
     private readonly requiresAuth: RequestHandler,
     private readonly ctx: AppContext,
     private readonly appAccess?: AppAccessResolver,
+    private readonly applicationAuthorization?: ApplicationRouteAuthorization,
   ) {
     this.enabled = ['1', 'true', 'yes'].includes(
       (process.env.APP_PACKAGE_DYNAMIC_ROUTES || '').trim().toLowerCase(),
@@ -148,7 +150,12 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
     routes: SwarmAppRouteDeclaration[],
     access?: SwarmAppAccessDeclaration,
   ): Promise<void> {
-    if (!this.enabled || !routes.length) return;
+    const strict = this.applicationAuthorization?.protectedApp(appName) === true;
+    if (!routes.length) return;
+    if (!this.enabled) {
+      if (strict) throw new Error('Protected application routes require APP_PACKAGE_DYNAMIC_ROUTES=1');
+      return;
+    }
     const entries: MountedRoute[] = [];
     for (const decl of routes) {
       try {
@@ -157,6 +164,7 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
         // hard-mounted in server.ts, not ours to load. Skip quietly, not as an error.
         const declared = resolvePath(packageDir, decl.module);
         if (!require('fs').existsSync(declared)) {
+          if (strict) throw new Error(`Protected route module missing: ${decl.module}`);
           logger.info({ appName, module: decl.module }, 'Route declaration not package-relative — skipped (hard-mounted by the framework)');
           continue;
         }
@@ -172,15 +180,19 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
         const mod = nodeRequire(modPath) as Record<string, unknown>;
         const factory = mod[decl.factory];
         if (typeof factory !== 'function') {
+          if (strict) throw new Error(`Protected route factory missing: ${decl.factory}`);
           logger.error({ appName, module: decl.module, factory: decl.factory }, 'Route factory not found or not a function — skipping');
           continue;
         }
         // Per-package context: same framework services, plus THIS package's own directory.
         // The factory captures appPackageDir once, so serving bundled assets stays correct
         // no matter how many packages mount or reload afterwards.
-        const packageCtx: AppContext = { ...this.ctx, appPackageDir: packageDir };
+        const packageCtx: AppContext = { ...this.ctx, appPackageDir: packageDir,
+          applicationAuthorization: undefined, authorizationTool: undefined,
+          authorization: this.applicationAuthorization?.forPackage(appName) };
         const handler = (factory as (ctx: AppContext) => RequestHandler)(packageCtx);
         if (typeof handler !== 'function') {
+          if (strict) throw new Error(`Protected route factory returned no handler: ${decl.factory}`);
           logger.error({ appName, module: decl.module, factory: decl.factory }, 'Route factory did not return a handler — skipping');
           continue;
         }
@@ -201,6 +213,7 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
         });
         logger.info({ appName, mountPath: decl.mountPath, module: decl.module, auth: mode }, 'Mounted package route');
       } catch (err) {
+        if (strict) { this.byApp.delete(appName); throw err; }
         logger.error({ err, appName, module: decl.module }, 'Failed to mount package route (skipping)');
       }
     }
@@ -332,11 +345,15 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
       if (trusted) (req as Request & { oshalCallerSub?: string }).oshalCallerSub = trusted;
 
       void this.authorizeAppAccess(entry, req, res, next, () => {
-        req.url = remainder.startsWith('/') ? remainder : '/' + remainder;
-        entry.handler(req, res, (err?: unknown) => {
-          req.url = originalUrl; // restore for any downstream middleware
-          next(err as Parameters<NextFunction>[0]);
-        });
+        const execute = () => {
+          req.url = remainder.startsWith('/') ? remainder : '/' + remainder;
+          entry.handler(req, res, (err?: unknown) => {
+            req.url = originalUrl;
+            next(err as Parameters<NextFunction>[0]);
+          });
+        };
+        if (this.applicationAuthorization) void this.applicationAuthorization.guard(entry.appName, req, res, execute);
+        else execute();
       });
     };
     this.runGuards(entry.guards, 0, req, res, next, invoke);

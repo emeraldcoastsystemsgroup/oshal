@@ -5,9 +5,11 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Track B S6: Dynamic tool executor registry — replaces hardcoded switch with runtime-extendable descriptor map
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: publish immutable executor descriptors so request-start identity checks cannot be bypassed by in-place mutation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reserve authorization executors for fixed code-owned handlers.
  */
 
 import { createChildLogger } from '@/shared/logger';
+import { AUTHORIZATION_TOOL, AUTHORIZATION_READ_TOOL, isAuthorizationTool } from '@/shared/security/authorization-tool-contract';
 
 const logger = createChildLogger({ module: 'dynamic-tool-executor-registry' });
 
@@ -64,6 +66,9 @@ export class DynamicToolExecutorRegistry {
    * @param descriptor - Execution descriptor for the tool
    */
   register(descriptor: ToolExecutorDescriptor): void {
+    if (isAuthorizationTool(descriptor.toolName) || isAuthorizationTool(descriptor.builtinKey ?? '')) {
+      throw new Error('Authorization tool executors are reserved for core registration');
+    }
     const immutableDescriptor = Object.freeze({ ...descriptor });
     this.registry.set(immutableDescriptor.toolName, immutableDescriptor);
     logger.info(
@@ -74,6 +79,15 @@ export class DynamicToolExecutorRegistry {
       },
       'Tool executor descriptor registered',
     );
+  }
+
+  /** @description Seed immutable fixed handlers only after service readiness. @returns Nothing. */
+  registerAuthorizationDescriptors(): void {
+    for (const toolName of [AUTHORIZATION_TOOL, AUTHORIZATION_READ_TOOL]) {
+      if (this.registry.has(toolName)) continue;
+      this.registry.set(toolName, Object.freeze({ toolName, executorType: 'builtin', builtinKey: toolName,
+        runtimeRegistered: false, registeredAt: new Date().toISOString() }));
+    }
   }
 
   /**

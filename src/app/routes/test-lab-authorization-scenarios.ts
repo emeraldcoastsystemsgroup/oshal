@@ -1,0 +1,53 @@
+/**
+ * CHANGE LOG
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Register authorization boundary, shared-service and browser regression tests with a read-only live catalog probe.
+ */
+import type { Scenario, StepResult } from './test-lab-scenarios';
+
+/** @description Validate only the current caller's visible metadata; never create a preview or change a grant. */
+async function authorizationCatalog(cookie: string): Promise<StepResult> {
+  const label = 'Access Administration catalog';
+  const response = await fetch(`http://127.0.0.1:${process.env.PORT || '5000'}/api/authorization/catalog`, {
+    headers: cookie ? { cookie } : {}, signal: AbortSignal.timeout(20000), redirect: 'manual',
+  });
+  if (response.status !== 200) return {
+    app: 'authorization', label, status: response.status,
+    state: [401, 403, 503].includes(response.status) ? 'degraded' : response.status === 404 ? 'gap' : 'fail',
+    detail: `Access catalog returned HTTP ${response.status}; a verified identity with administration read scope is required. No access changes were attempted.`,
+  };
+  const data = await response.json() as Record<string, unknown>;
+  const valid = Number.isSafeInteger(data.revision) && Number(data.revision) >= 0 && Array.isArray(data.apps)
+    && data.apps.every((app: unknown) => {
+      if (!app || typeof app !== 'object') return false;
+      const entry = app as Record<string, unknown>;
+      return typeof entry.app === 'string' && typeof entry.source === 'string'
+        && typeof entry.catalogRevision === 'string' && typeof entry.version === 'string'
+        && ['catalog', 'admin-required', 'legacy'].includes(String(entry.status));
+    });
+  return { app: 'authorization', label, state: valid ? 'pass' : 'fail',
+    detail: valid ? 'Caller-visible app metadata, source and policy revision verified. No grants, previews or business data were accessed.'
+      : 'Access catalog is missing application provenance or policy revision metadata.' };
+}
+
+export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
+  id: 'authorization-management', title: 'Application access administration', group: 'tool',
+  description: 'Read the current caller-visible authorization catalog. Isolated HTTP and browser suites prove identity, scope, CSRF, preview/apply and revocation behavior.',
+  regressionTests: [
+    { level: 'unit', path: 'tests/unit/authorization-policy.spec.ts' },
+    { level: 'unit', path: 'tests/unit/authorization-contract-files.spec.ts' },
+    { level: 'integration', path: 'tests/unit/authorization-postgres-integration.spec.ts' },
+    { level: 'integration', path: 'tests/unit/authorization-runtime.spec.ts' },
+    { level: 'integration', path: 'tests/unit/swarm-app-access-routes.spec.ts' },
+    { level: 'unit', path: 'tests/unit/kernel-skills.spec.ts' },
+    { level: 'integration', path: 'tests/unit/authorization-execution-boundary.spec.ts' },
+    { level: 'integration', path: 'tests/unit/installer-root-bootstrap.spec.ts' },
+    { level: 'integration', path: 'tests/unit/local-auth-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/authorization-tool.spec.ts' },
+    { level: 'unit', path: 'tests/unit/authorization-tool-policy.spec.ts' },
+    { level: 'integration', path: 'tests/unit/authorization-routes.spec.ts' },
+    { level: 'browser', path: 'tests/unit/authorization-admin-browser.spec.ts' },
+    { level: 'integration', path: 'tests/unit/authorization-identity-integration.spec.ts' },
+    { level: 'unit', path: 'tests/unit/authorization-principal.spec.ts' },
+  ],
+  steps: [{ id: 'catalog', app: 'authorization', label: 'Caller-visible access catalog', run: authorizationCatalog }],
+}];

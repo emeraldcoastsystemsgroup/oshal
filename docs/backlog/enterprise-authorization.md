@@ -1,12 +1,22 @@
 # Enterprise authorization implementation and test backlog
 
-Requested 2026-09-10. Status: **specified, not implemented**.
+Requested 2026-09-10. Status: **core foundation implemented; enterprise adoption in progress**.
 Design: [ADR-149](../adr/149-enterprise-application-authorization.md).
 
-The next work is a common authorization contract followed by three independent implementation lanes:
-installer bootstrap, directory mappings, and application enforcement. They integrate against one
-decision service; there must not be three competing permission engines. Existing roles, app tiers,
-identity links, signed delegation and AI Test Lab are inputs to reuse.
+The initial implementation includes the strict imported contract, durable policy/audit, central
+screen and typed tools, package HTTP enforcement, verified identity provenance, controller execution
+guards, remote-node refusal for protected packages, and an atomic local installer-root ceremony.
+See [as-built operation](../security/application-authorization.md). The work-order criteria below
+remain the complete enterprise target; foundation completion does not close every row.
+
+AUTH-01 is implemented using `uses: [application-authorization]` as the old-core activation floor.
+AUTH-02 and AUTH-07 have a working shared service, UI/tool parity and isolated PostgreSQL/browser
+proofs; a sensitive approval workflow, scoped-admin provisioning UI, full audit browsing and catalog
+migration tooling remain. AUTH-03 covers local proof-based setup; OIDC and all installer variants
+remain. AUTH-04 preserves verified claims and maps exact groups, but live refresh/Graph and tenant
+proof remain. AUTH-05 has HTTP/controller checks; protected remote bots are deliberately unavailable
+pending a live revalidation protocol. Complete artifact/result/queue enforcement, package business
+adapters (AUTH-06/08), provisioning (AUTH-09), and deployed canary/adoption (AUTH-10) remain open.
 
 ## Work order
 
@@ -31,8 +41,10 @@ Entra/direct-assignment slice and must not be implied by it.
 
 ## Test cases and AI Test Lab registration
 
-These are **planned case IDs**, not existing runnable registrations. Add each implementation's real
-suite and Lab registration in the same change. Reuse the current core `SCENARIOS` registry and active
+The existing Lab now registers **`authorization-management`**, with real isolated suite references and
+a read-only live catalog check. `npm run test:authorization` runs the implementation suites locally.
+The IDs below remain the more granular **planned enterprise cases**, not separate runnable registrations.
+Add each implementation's real suite and Lab registration in the same change. Reuse the current core `SCENARIOS` registry and active
 installed-package test catalog. The richer suite runner/catalog follows
 [TLAB-01/04](app-test-lab-registration.md); until available, register local suite references honestly
 and do not invent a browser endpoint that executes arbitrary shell commands.

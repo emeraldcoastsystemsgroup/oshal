@@ -41,6 +41,7 @@ export type {
   ManifestScheduleRegistrar,
   ManifestScheduleDeregistrar,
   ManifestRouteMounter,
+  ManifestAuthorizationRegistrar,
   ManifestBotRegistrar,
   ManifestTakeoutRegistrar,
   RagCollectionTeardown,

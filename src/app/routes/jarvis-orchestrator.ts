@@ -462,7 +462,10 @@ export async function loadEffectiveRoutes(ctx: AppContext): Promise<{ routes: Ap
   } catch (err) {
     logger.warn({ err }, 'Jarvis dynamic route discovery failed — using curated catalog only');
   }
-  return { routes, byKey: new Map(routes.map((r) => [r.key, r])) };
+  const visibility = ctx.applicationAuthorization ? await Promise.all(routes.map(route =>
+    ctx.applicationAuthorization!.canDiscover(ctx.applicationAuthorization!.owner('bots', route.agentId) ?? route.key))) : routes.map(() => true);
+  const visible = routes.filter((_route, index) => visibility[index]);
+  return { routes: visible, byKey: new Map(visible.map((r) => [r.key, r])) };
 }
 
 /**

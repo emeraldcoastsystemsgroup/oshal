@@ -12,7 +12,9 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: wire durable provenance-aware swarm memory and the persisted enabled-tool resolver into bot-node prompt containment.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. The unforced provider order leads with codex (was cline -> claude -> codex) and codex's auto-failover chain drops claude-code (now ['cline-cli']). Naming claude-code in OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER still works — that is a deliberate operator choice, not a default.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Honor DB_MAX_CONNECTIONS for the bot-node Postgres pool and stamp a per-bot application_name, making the existing fleet knob effective for managed-database connection budgets.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  */
+import { assertBotNodeApplicationTransport } from './bot-node-application-authorization';
 
 /**
  * Shared bot-node runtime bootstrap.
@@ -118,6 +120,7 @@ export async function createBotNodeRuntime(): Promise<BotNodeRuntime> {
   } = await buildLlmStack();
 
   const executionHandler = createBotNodeExecutionHandler({
+    authorizeApplicationExecution: requestedAgentId => assertBotNodeApplicationTransport(pool, agentId, requestedAgentId),
     anyBotTaskController: taskController,
     agentProfileRepository,
     personaLayerStore,

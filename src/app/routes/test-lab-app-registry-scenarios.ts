@@ -9,7 +9,9 @@ async function registryDiscovery(cookie: string): Promise<StepResult> {
   const base = `http://127.0.0.1:${process.env.PORT || '5000'}`;
   const read = async (path: string) => {
     const response = await fetch(base + path, { headers: cookie ? { cookie } : {}, signal: AbortSignal.timeout(30000) });
-    return { status: response.status, json: await response.json() };
+    const body: unknown = await response.json();
+    const json = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
+    return { status: response.status, json };
   };
   const sources = await read('/api/swarm/registries');
   const result = (state: StepResult['state'], detail: string, status?: number): StepResult => ({ app: 'app-loader', label: 'Trusted store discovery', state, detail, ...(status ? { status } : {}) });

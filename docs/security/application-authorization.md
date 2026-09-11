@@ -1,0 +1,114 @@
+# Application access administration
+
+The core imports an installed application's permission catalog, enforces its declared HTTP functions,
+and exposes the same management service through `/access`, `/api/authorization`, and the registered
+`swarm_authorization` tool. Users and Applications link to the screen. This is the initial
+implementation of [ADR-149](../adr/149-enterprise-application-authorization.md); the remaining enterprise
+work is tracked in [the authorization backlog](../backlog/enterprise-authorization.md).
+
+An installed package without a catalog requires an explicit `@app-admin` assignment by default.
+Neither swarm administration nor a manifest's `defaultTier: admin` grants that assignment. Existing
+explicit local-account app-admin assignments remain recognized. The kernel's flat manifests retain
+their existing platform checks. For a reviewed deployment migration, setting
+`OSHAL_APPLICATION_AUTHORIZATION_MODE=legacy` retains the old behavior for packages without catalogs;
+the screen labels them **legacy**. Catalog-bearing packages always enforce. Unknown setting values
+enforce. Review package access before promoting this change to an existing deployment.
+
+## Package contract
+
+An adopted package declares both fields:
+
+```yaml
+uses: [application-authorization]
+authorization:
+  version: 1
+  catalog: authorization.yaml
+```
+
+The existing kernel-skill check makes older cores reject this unknown capability. The catalog contains
+`resources`, `permissions`, `roles`, and `bindings`; see ADR-149 for the full example. CLI validation and
+runtime loading share one strict validator. Unknown versions, unknown fields, missing references,
+overlapping HTTP bindings, duplicate YAML keys, and escaping or symbolic-link catalog paths fail load.
+
+During its route factory, a package registers each resource with
+`ctx.authorization.registerResource(resource, { authorize })`. The adapter receives the verified actor,
+requested operation, and one permitted scope/field tuple. It must look up authoritative relationships
+and constrain its actual queries and writes. Missing adapters deny requests. HTTP bindings use the
+method and path relative to the package mount; unbound endpoints are denied. Public/service route
+declarations do not bypass these checks. Protected routes require `APP_PACKAGE_DYNAMIC_ROUTES=1` and
+successful route construction before becoming available.
+
+Resource checks and handlers run with the user's database identity and `isOperator: false`.
+This supplies an enforcement boundary; it does not automatically create an application's tenant/team
+predicates or field projections. Package authors must implement and test those adapters. Catalogs alone
+do not prove isolation of records, aggregates, exports, or derived fields.
+
+## Administration and identity
+
+Select an application and a source-qualified user or directory group, preview an exact change, and
+apply that preview. Grants, restrictions, expiry, group mappings, effective access, and explanations use
+one service. The server supplies actor identity. Browser writes require the serving origin, JSON, and
+the access-request header. Previews bind actor, issuer, application catalog, revision, and expiry;
+concurrent edits conflict. Assignment changes and audit receipts commit together in PostgreSQL.
+
+Management uses current root/admin roles and the existing environment recovery allowlists. External
+management identities additionally require their verified issuer in
+`OSHAL_AUTHORIZATION_ADMIN_ISSUERS`; external email matching does not grant authority. Local disabled
+accounts are rejected even with an existing session. Legacy subject-only app assignments are read only
+for canonical local identities. Local users populate the selector; exact external identities and group
+IDs can be entered for assignment without claiming their membership has been verified.
+
+The Entra bridge preserves verified directory claims before linking to a local account. Group decisions
+match issuer, directory tenant, and group object ID. Missing, stale, incomplete, or overage membership
+evidence refuses affected access; no claim URL is fetched. Evidence expires after five minutes, so the
+authentication integration must supply fresh verified claims. Live Graph refresh, transitive group
+lookup, SCIM lifecycle, and native AD/LDAPS provisioning remain backlog work. A locally authenticated
+session or PAT alone does not prove directory membership.
+
+Sensitive self-grants, sensitive group mappings, and restoration of sensitive self-access require a
+trusted approval verifier. The initial server composition has no such approval workflow and therefore
+refuses those changes. A model-supplied confirmation cannot approve them. The UI shows this requirement.
+
+## Jarvis, tools, and workers
+
+The core registers `swarm_authorization` as an ASK typed tool and `swarm_authorization_read` as its
+AUTO read-only companion. Keywords include access, permissions, roles, users, groups, and directory
+mapping. Jarvis receives caller-filtered structured metadata from the same runtime. Interactive
+preview/apply reaches the same handler through `/api/authorization/tool`; the internal bridge permits
+only the read companion. Missing server-created actor context fails closed.
+
+Controller bot, inline task, tool, and deterministic schedule boundaries recheck package ownership and
+named operations. A service secret or saved subject is not a user principal. Work without the required
+verified actor is refused. Direct remote bot ingress also checks durable protected-app ownership before
+provider execution. **Protected remote package bots are unavailable in this initial release** until
+signed delegation can revalidate current user rights at the worker. Persisted ownership remembers old
+agent IDs across removal/downgrade so those nodes cannot reopen through a legacy path.
+
+Artifact discovery filters inaccessible apps. Complete artifact redemption, cached result, streaming,
+queue retry, and cross-process revocation protocols remain in AUTH-05/06. Do not treat discovery as a
+capability or use this foundation to claim full business-data or ERP isolation.
+
+## Installation and verification
+
+Fresh local root creation requires a one-use installer proof, bound to the browser origin and expiring
+after fifteen minutes. From the API environment with its database configuration, use:
+
+```text
+node scripts/oshal-setup-root.mjs --origin https://your-swarm.example
+```
+
+Use the resulting transient code at the local login setup form. Account creation, root assignment,
+and proof consumption commit atomically. The database stores a hash of the proof. Ordinary first login
+cannot claim an empty root role; existing operator recovery remains available. Local setup requires
+`LOCAL_AUTH=true` and `MOCK_OIDC=false`; existing Bash/PowerShell/Kubernetes installation defaults have
+not been converted to enterprise OIDC provisioning.
+
+Migrations 127 and 128 add policy state/audit/app posture and installer proof storage. Normal schema
+initialization supports installation. No deployed accounts or app grants are changed by the source
+implementation itself.
+
+Run `npm run test:authorization` locally. It includes isolated policy/import, identity, loaded-package
+HTTP, typed-tool, real Chromium, worker-boundary, and disposable PostgreSQL tests. The existing AI Test
+Lab registers their source paths under `authorization-management`; its live catalog step is read-only
+and does not apply grants or launch arbitrary tests against deployment data. Package-specific tests
+still register through the installed application's existing test catalog.

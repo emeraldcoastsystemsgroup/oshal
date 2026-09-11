@@ -39,6 +39,7 @@ import {
   type SwarmAppRouteAuthMode,
 } from '@/shared/route-auth';
 import { validateArtifactActionsDeclaration } from '@/shared/artifact-exchange';
+import { loadApplicationAuthorization } from '@/shared/application-authorization';
 import { validateGroupManifest, validateReadinessDeclarations, validateGuestSeedDeclaration, validateSummaryDeclaration } from './swarm-app-group';
 import { validateAppIntegrations } from './app-integrations';
 import {
@@ -815,6 +816,7 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   // ADR-118: access is an authorization contract, so its entire shape and closed vocabulary
   // fail at load. Omission is deliberate rollout compatibility and keeps current behavior.
   validateAppAccess(manifest, absPath);
+  loadApplicationAuthorization(path.dirname(absPath), manifest);
 
   // ADR-085 D4: guestTier is a REQUEST, not a grant — it does nothing until an operator approves it.
   // Still fail closed on the VALUE: an unrecognised tier must not sit in a manifest looking approved,

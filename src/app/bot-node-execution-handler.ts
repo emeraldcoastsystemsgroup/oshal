@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: reject every generic credential carrier, consume credentials only in validated deterministic provider intents, and finish those intents before persona/memory/task creation so no model-visible work or hidden task side effect occurs.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Enforce authoritative dispatch pins fail-closed: refuse missing records/seams and concurrent mismatches before task creation, and report the effective config source/action/version in every successful result.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: one audited carve in the SEC-05 preflight — a DEMO deployment may run an autonomous CLI harness for a request owned by a configured operator (DEMO_MODE alone, never MOCK_OIDC; exact OSHAL_OPERATOR_SUBS match). Off-demo, non-operator, and identity-less requests keep the refusal, so unattended content-driven work is never unlocked by the flag.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  */
 
 /**
@@ -141,6 +142,8 @@ let activeExecutions = 0;
  * cost attribution, and prompt assembly decisions.
  */
 export interface BotNodeExecutionDeps {
+  /** Runtime-owned guard over local and requested bot identities, shared by HTTP/mesh/batch. */
+  authorizeApplicationExecution?: (requestedAgentId: string) => Promise<void>;
   /** Any-bot TaskController instance (JavaScript, loaded via require()) */
   anyBotTaskController: {
     getTask(taskId: string): Promise<{ id: string; userSub?: string | null } | null>;
@@ -192,6 +195,7 @@ export function createBotNodeExecutionHandler(
   deps: BotNodeExecutionDeps,
 ): (envelope: MeshEnvelope) => Promise<EnvelopeExecutionResult> {
   return async (envelope: MeshEnvelope): Promise<EnvelopeExecutionResult> => {
+    await deps.authorizeApplicationExecution?.(envelope.toAgentId);
     const agentId = envelope.toAgentId;
     const payload = envelope.payload as Record<string, unknown> | undefined;
     // Direct/interactive reasoning call (not a swarm ticket): skip the swarm

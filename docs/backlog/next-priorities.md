@@ -6,8 +6,9 @@ change. No GitHub Actions are required.
 
 **Current operator-directed focus:** [enterprise authorization](enterprise-authorization.md), specified
 in [ADR-149](../adr/149-enterprise-application-authorization.md). This work follows the completed first
-three lanes and takes precedence over the queued ordering below. The specification is ready for
-implementation; runtime enforcement and its planned Test Lab cases are not yet implemented.
+three lanes and takes precedence over the queued ordering below. The core policy, admin screen,
+registered tools, package enforcement and isolated Lab suites are implemented; the authorization
+backlog tracks remaining directory, worker, data-adapter and rollout work.
 
 | Rank | Outcome | Scope / acceptance | Status |
 |---|---|---|---|

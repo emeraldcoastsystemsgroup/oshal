@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added persistent runtime tool registration service for framework-owned executable tools
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Refuse reserved authorization names before writes and skip poisoned persisted descriptors.
  */
 
 import type { Pool } from 'pg';
@@ -13,6 +14,7 @@ import { createChildLogger } from '@/shared/logger';
 import { DynamicToolExecutorRegistry, type ToolExecutorDescriptor } from './dynamic-tool-executor-registry';
 import { ToolRegistryService } from './tool-registry-service';
 import { assertSafeCliCommandTemplate, validateCliCommandTemplate } from './cli-command-validator';
+import { isAuthorizationTool } from '@/shared/security/authorization-tool-contract';
 
 const logger = createChildLogger({ module: 'runtime-tool-registration-service' });
 
@@ -43,6 +45,9 @@ export class RuntimeToolRegistrationService {
     },
   ): Promise<RuntimeToolRegistrationResult> {
     const toolName = descriptorInput.toolName || toolInput.name;
+    if (isAuthorizationTool(toolName) || isAuthorizationTool(descriptorInput.builtinKey ?? '')) {
+      throw new Error('Authorization tool executors are code-owned');
+    }
     if (toolName !== toolInput.name) {
       throw new Error(`Runtime descriptor toolName '${toolName}' must match tool name '${toolInput.name}'`);
     }
@@ -84,6 +89,10 @@ export class RuntimeToolRegistrationService {
     }
     const safe: ToolExecutorDescriptor[] = [];
     for (const descriptor of descriptors) {
+      if (isAuthorizationTool(descriptor.toolName) || isAuthorizationTool(descriptor.builtinKey ?? '')) {
+        logger.warn({ toolName: descriptor.toolName }, 'Skipped reserved authorization runtime descriptor');
+        continue;
+      }
       // Fail-closed restore path: a previously-persisted (possibly poisoned) cli
       // template is re-validated. An invalid one is skipped + logged rather than
       // registered — and skipping a single bad row must not abort restoring the
@@ -126,6 +135,7 @@ export class RuntimeToolRegistrationService {
   }
 
   async deregisterRuntimeTool(toolName: string, disableTool = true): Promise<{ removed: boolean; disabled: boolean }> {
+    if (isAuthorizationTool(toolName)) throw new Error('Authorization tool executors are code-owned');
     const deleteResult = await this.pool.query(
       'DELETE FROM runtime_tool_executors WHERE tool_name = $1',
       [toolName],

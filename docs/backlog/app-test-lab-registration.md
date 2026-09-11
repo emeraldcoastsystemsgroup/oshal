@@ -3,8 +3,9 @@
 Status: **smoke registration implemented in the current branch; richer catalogs and package-suite
 migration remain planned**. Requested by the operator on 2026-09-10.
 
-The [enterprise authorization workstream](enterprise-authorization.md) adds planned permission,
-directory, bootstrap, record-isolation and delegated-AI cases to this registration contract. Register
+The [enterprise authorization workstream](enterprise-authorization.md) registers its implemented
+policy, HTTP/browser, identity, tool, bootstrap and worker-boundary suites; broader directory,
+record-isolation and delegated-AI cases remain planned. Register
 each suite with its implementation; multi-user and privilege-changing cases require disposable
 fixtures and must never run against production merely because a package was installed.
 

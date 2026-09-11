@@ -27,6 +27,7 @@ export type KernelSkillId =
   | 'tool-registry'
   | 'media-generation'
   | 'payments'
+  | 'application-authorization'
   | 'spatial-mapping';
 
 /**
@@ -75,6 +76,11 @@ export interface KernelSkillDeclaration {
  * docs/apps/kernel-skills.md. The CI guard then enforces it forever.
  */
 export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
+  {
+    id: 'application-authorization', title: 'Application authorization',
+    why: 'Versioned permission catalogs and actor-bound resource adapters shared by installed applications.',
+    modules: [{ specifier: '@/shared/application-authorization', distFile: 'dist/shared/application-authorization/index.js' }],
+  },
   {
     id: 'voice',
     title: 'TTS / STT (voice)',

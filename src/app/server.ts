@@ -315,6 +315,10 @@ import { createGlobalSearchRoutes } from './routes/global-search-routes';
 import { RagService } from '@/features/rag';
 import { UIProfileService } from '@/features/ui-profile';
 import { AppAccessService, SwarmAppService, SwarmAppRepository } from '@/features/swarm-apps';
+import { createApplicationAuthorizationWiring } from './composition/application-authorization-wiring';
+import { createApplicationAuthorizationGate } from './middleware/application-authorization-gate';
+import { createApplicationActorContext } from './middleware/application-authorization-context';
+import { createAuthorizationRoutes, createAuthorizationPageRoutes } from './routes/authorization-routes';
 // Manifest schedule registrar/deregistrar + per-user reconciler + nightly oshal-dev schedule —
 // extracted verbatim to swarm-app-schedule-wiring.ts (1000-line cap decomposition).
 import { createManifestScheduleRegistrar, createManifestScheduleDeregistrar, registerPerUserScheduleReconciler, registerNightlyDevDocsSchedule } from './swarm-app-schedule-wiring';
@@ -1069,6 +1073,9 @@ function createApp(): express.Application {
   const manifestScheduleRegistrar = createManifestScheduleRegistrar(manifestServiceScheduleRegistry);
   const manifestScheduleDeregistrar = createManifestScheduleDeregistrar(manifestServiceScheduleRegistry);
   const appAccessService = new AppAccessService(ctx.pool);
+  const applicationAuthorization = createApplicationAuthorizationWiring(ctx, appAccessService,
+    () => swarmAppService, waitForBootstrapComplete());
+  app.use(createApplicationActorContext(applicationAuthorization.resolveActor));
   const takeoutSliceRegistry = new TakeoutSliceRegistry(ctx);
   const swarmAppService = new SwarmAppService(
     ctx.pool,
@@ -1082,7 +1089,7 @@ function createApp(): express.Application {
     manifestScheduleRegistrar,
     // ADR-085 P1: lets an installed app package mount its OWN compiled-JS routes at activation
     // (flag-gated on APP_PACKAGE_DYNAMIC_ROUTES → no-op by default, hardcoded mounts below still apply).
-    new ManifestRouteMounterImpl(app, requiresAuth, ctx, appAccessService),
+    new ManifestRouteMounterImpl(app, requiresAuth, ctx, appAccessService, applicationAuthorization.runtime),
     manifestScheduleDeregistrar,
     // ADR-085: packaged bots join the ACTIVE bot registry as inline-concierge entries
     // (container oshal-api, port 3010; validated manifest runtime or legacy Claude default)
@@ -1101,6 +1108,7 @@ function createApp(): express.Application {
       deleteCollection: (name: string) => new RagService().deleteCollection(name),
     },
     takeoutSliceRegistry,
+    applicationAuthorization.runtime,
   );
   // Late-bind the guest-seed fan-out to the now-constructed app registry (see the guest routes
   // mount above) so guest-start can read the active manifests' `guestSeed:` hooks at request time.
@@ -1128,6 +1136,11 @@ function createApp(): express.Application {
   // manifest whose owning app is currently inactive. Framework paths
   // (paths no manifest claims) pass through untouched.
   app.use(createSwarmAppGateMiddleware(swarmAppService, appAccessService));
+  app.use(createApplicationAuthorizationGate(swarmAppService, applicationAuthorization.runtime));
+  const authorizationRoutes = { requiresAuth, resolveActor: applicationAuthorization.resolveActor,
+    authorizationTool: applicationAuthorization.authorizationTool };
+  app.use('/api/authorization', createAuthorizationRoutes(applicationAuthorization.service, authorizationRoutes));
+  app.use('/access', createAuthorizationPageRoutes(applicationAuthorization.service, authorizationRoutes));
 
   // Node Pool Mode (phase0) — register /node/* endpoints when running as a pool node.
   // Opt-in via env, so this is inert on the normal controller/bot-node runtime.
@@ -1246,6 +1259,8 @@ function createApp(): express.Application {
     const readable = new Map<string, string>();
     for (const manifest of await swarmAppService.getActiveManifests()) {
       if (!visible.has(manifest.name) || !manifest.artifacts) continue;
+      if (applicationAuthorization.runtime.protectedApp(manifest.name)
+        && !await applicationAuthorization.runtime.canDiscover(manifest.name, await applicationAuthorization.resolveActor(req))) continue;
       if (manifest.access && (await appAccessService.resolve(manifest.name, sub, manifest.access)).tier === 'deny') continue;
       readable.set(manifest.name, manifest.displayName || manifest.name);
     }
@@ -1537,7 +1552,9 @@ function createApp(): express.Application {
   app.use('/api/swarm/registries', createAppRegistryRoutes(ctx.pool, requiresAuth, {
     loadApp: (manifestPath, scopeMeta) => swarmAppService.loadApp(manifestPath, scopeMeta),
   }));
-  app.use('/api/swarm/apps', requiresAuth, createSwarmAppRoutes(swarmAppService, appAccessService));
+  app.use('/api/swarm/apps', requiresAuth, createSwarmAppRoutes(swarmAppService, appAccessService, {
+    isAuthorizationProtected: app => applicationAuthorization.isProtected(app.name),
+  }));
   app.use('/api/swarm/packs', requiresAuth, createSwarmPackRoutes(swarmAppService));
   // ADR-085 packaged skins: surfaces authored against core skins request
   // /cockpit/css/themes/<id>.css. The cockpit express.static mount (registered earlier)
@@ -1607,7 +1624,9 @@ function createApp(): express.Application {
     (toolName) => swarmAppService.manifestToolOwner(toolName),
   ));
   // Claude Code MCP tools bridge: list/execute a bot's swarm-registered tools (scripts/oshal-tools-mcp.mjs).
-  app.use('/api/tools', serviceSecretOr(requiresAuth), createInternalToolBridgeRoutes(ctx));
+  app.use('/api/tools', serviceSecretOr(requiresAuth), createInternalToolBridgeRoutes(ctx, {
+    authorizationTool: applicationAuthorization.authorizationTool, resolveActor: applicationAuthorization.resolveActor,
+  }));
   app.use('/api/tools/verify', requiresAuth, createVerificationRoutes(ctx.verificationController));
   app.use('/api/agents', requiresAuth, createAgentProfileRoutes(ctx.agentProfileController));
   app.use('/api/agents', requiresAuth, createAgentToolRoutes(ctx.agentToolController));

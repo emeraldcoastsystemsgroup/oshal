@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-117 deferred item: unauthenticated self-service password reset. POST /api/local-auth/forgot (public front door, like /login) asks the store for a reset token (createPasswordReset - active accounts only, never creates/resurrects/stomps) and emails the /invite link over the SAME two rails as invitations. Enumeration-safe by construction: ONE response body/status for known, unknown, invited and disabled addresses; one identical store round trip either way; delivery is fire-and-forget so response timing cannot become the oracle; and delivery outcomes are logged, never returned. Per-IP fixed-window limit answers 429; the per-EMAIL cap is enforced SILENTLY (same 200) because a distinct answer would itself leak, and it caps mailbombing a victim address. A reset never clears TOTP (acceptInvite leaves the factor columns alone - guarded). Guard: tests/unit/local-auth-forgot-password.spec.ts.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Stamp locally authenticated sessions with a stable issuer namespace so derived PAT/TV credentials and issuer-bound applications preserve the same account identity.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148 swarm root: the bootstrap route now CLAIMS SWARM ROOT for the first account. This is the fix for "default passwords are confusing" — the first account and the operator allowlist were two unconnected systems, so whoever set the very first password got no privilege from it and every operator-gated page 403d at them. Safe here specifically because bootstrapFirstAdmin is race-guarded to an empty user store. Non-fatal: a swarm whose root is already held by a break-glass operator still creates and signs in the account.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Require installer proof and commit first account/root together before creating a session.
  */
 
 import { Router, type Request, type RequestHandler, type Response } from 'express';
@@ -26,7 +27,7 @@ import {
 import QRCode from 'qrcode';
 import { hasValidServiceSecret, isOperator } from '@/shared/middleware/authz';
 import { LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
-import { claimRoot } from '@/features/swarm-roles';
+import { completeInstallerRootSetup } from '@/app/composition/installer-root-bootstrap';
 import {
   LOCAL_SESSION_COOKIE,
   localAuthSigningSecret,
@@ -35,7 +36,6 @@ import {
   verifyLocalSession,
   type LocalSessionIdentity,
   acceptInvite,
-  bootstrapFirstAdmin,
   ensureLocalUserSchema,
   // Second factor (TOTP, RFC 6238) — same feature slice, separate module.
   beginTotpEnrolment,
@@ -511,40 +511,20 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
     }
   });
 
-  /** POST /api/local-auth/bootstrap — creates the FIRST admin (the installer). Refused once any account exists. */
+  /** POST /api/local-auth/bootstrap — installer proof, account and root commit before any session is issued. */
   router.post('/api/local-auth/bootstrap', async (req, res) => {
-    const { email, name, password } = (req.body ?? {}) as { email?: string; name?: string; password?: string };
+    const { email, name, password, setupToken } = (req.body ?? {}) as { email?: string; name?: string; password?: string; setupToken?: string };
+    const origin = req.get('origin');
+    if (!origin || origin !== `${req.protocol}://${req.get('host')}` || req.get('sec-fetch-site') === 'cross-site') {
+      res.status(403).json({ error: 'installer setup requires the original browser origin' }); return;
+    }
     try {
-      const user = await bootstrapFirstAdmin(pool, { email: String(email ?? ''), displayName: name ?? null, password: String(password ?? '') });
-      if (!user) {
-        res.status(409).json({ error: 'an account already exists — sign in instead' });
-        return;
-      }
+      const user = await completeInstallerRootSetup(pool, { token: String(setupToken ?? ''), origin,
+        email: String(email ?? ''), displayName: typeof name === 'string' ? name : null, password: String(password ?? '') });
       knownNonEmpty = true;
       setLocalSessionCookie(req, res, sessionIdentityFor(user));
-      // ADR-148: the first account BECOMES swarm root. Before this, bootstrapFirstAdmin created
-      // an account that code called "the first admin" while the operator gate read a separate
-      // hand-typed env allowlist — so the person who set the very first password received no
-      // privilege from it and every operator-gated page 403'd at them. Claiming root here is
-      // safe precisely because bootstrapFirstAdmin is race-guarded to an EMPTY user store: this
-      // is the one identity on the swarm, not an arbitrary caller asking for power.
-      let rootClaimed = false;
-      try {
-        await claimRoot(pool, {
-          userSub: user.userSub,
-          email: user.email,
-          displayName: user.displayName ?? null,
-          note: 'first account on this swarm (local-auth bootstrap)',
-        });
-        rootClaimed = true;
-      } catch (err) {
-        // Root already held (a break-glass operator claimed it first) is EXPECTED and fine —
-        // the account is still created and signed in. Anything else is logged, never fatal:
-        // failing the bootstrap would leave a swarm with no account at all.
-        logger.warn({ err, sub: user.userSub }, 'first admin created but swarm root was not claimed');
-      }
-      logger.info({ email: user.email, sub: user.userSub, rootClaimed }, 'local-auth first admin bootstrapped');
-      res.status(201).json({ ok: true, email: user.email, sub: user.userSub, rootClaimed });
+      logger.info({ sub: user.userSub }, 'installer local root bootstrapped');
+      res.status(201).json({ ok: true, email: user.email, sub: user.userSub, rootClaimed: true });
     } catch (err) {
       logger.error({ err }, 'local-auth bootstrap failed');
       res.status(errStatus(err)).json({ error: (err as Error).message });

@@ -90,3 +90,4 @@ export * as payments from '@/features/payments';
 // and spaces-operator is an inline concierge with no *-node-server.ts to anchor the engine
 // (unlike drone/camera). The installed spaces package resolves this from dist.
 export * as spatialMapping from '@/features/spatial-mapping';
+export * as applicationAuthorization from '@/shared/application-authorization';

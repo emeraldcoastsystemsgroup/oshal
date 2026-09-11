@@ -12,6 +12,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Advertise oshal-uber-rides.js's geocode/reverse subcommands. The CLI grew them with the rides map fix (they are what the surface calls to drop and drag pins), but this catalog is Jarvis's ONLY view of a tool — the block it builds says "a script not listed here is off-limits" — so a capability absent from the usage string does not exist as far as Jarvis is concerned. It was answering "where is X" / "what is at these coordinates" by guessing while a real geocoder sat one subcommand away.
  *
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Load strict versioned YAML semantic routing metadata, retain internal role ceilings, rank contextual tools, and expose browser artifact guidance.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add a closed typed authorization feed adapter with caller-scoped operations and targets.
  *
  * @module jarvis-tool-catalog
  */
@@ -21,14 +22,17 @@ import { resolve } from 'node:path';
 import yaml from 'js-yaml';
 import { roleCanAccess, isSwarmAccessRole, type SwarmAccessRole } from '@/shared/types';
 import type { HandoffDirective } from './jarvis-directives';
+import { AUTHORIZATION_TOOL, AUTHORIZATION_READ_TOOL, type AuthorizationToolDiscovery } from '@/shared/security/authorization-tool-contract';
 
 /** Semantic metadata helps selection; it grants no execution authority. */
 interface SemanticMetadata { keywords: string[]; useWhen: string; context: string }
 interface ToolCatalogEntry extends Partial<SemanticMetadata> {
   kind: 'shell'; script: string; usage: string; accessRoles?: SwarmAccessRole[];
 }
+interface TypedCatalogEntry extends SemanticMetadata { kind: 'typed'; name: typeof AUTHORIZATION_TOOL }
 interface ToolCatalog {
   version: 1; tools: ToolCatalogEntry[];
+  typedTools?: TypedCatalogEntry[];
   artifactHandoff: SemanticMetadata & { kind: 'artifact-handoff' };
 }
 /** Existing privileged scripts have an immutable discovery ceiling independent of YAML edits. */
@@ -85,7 +89,7 @@ export function parseToolCatalog(source: string): ToolCatalog {
   if (Buffer.byteLength(source, 'utf8') > 128 * 1024) return fail();
   let value: unknown;
   try { value = yaml.load(source, { schema: yaml.JSON_SCHEMA }); } catch { return fail(); }
-  if (!record(value) || !exactKeys(value, ['version', 'tools', 'artifactHandoff']) || value.version !== 1
+  if (!record(value) || !exactKeys(value, ['version', 'tools', 'typedTools', 'artifactHandoff']) || value.version !== 1
     || !Array.isArray(value.tools) || !value.tools.length || value.tools.length > 128) return fail();
   const seen = new Set<string>();
   for (const tool of value.tools) {
@@ -100,6 +104,9 @@ export function parseToolCatalog(source: string): ToolCatalog {
     if (roleCanAccess(tool.accessRoles as SwarmAccessRole[] | undefined, 'jarvis') && !semantic(tool)) return fail();
     if (['keywords', 'useWhen', 'context'].some((key) => key in tool) && !semantic(tool)) return fail();
   }
+  if (value.typedTools !== undefined && (!Array.isArray(value.typedTools) || value.typedTools.length !== 1
+    || !value.typedTools.every((tool) => record(tool) && exactKeys(tool, ['kind', 'name', 'keywords', 'useWhen', 'context'])
+      && tool.kind === 'typed' && tool.name === AUTHORIZATION_TOOL && semantic(tool)))) return fail();
   const handoff = value.artifactHandoff;
   if (!record(handoff) || !exactKeys(handoff, ['kind', 'keywords', 'useWhen', 'context'])
     || handoff.kind !== 'artifact-handoff' || !semantic(handoff)) return fail();
@@ -118,7 +125,7 @@ function loadToolCatalog(): ToolCatalog {
  * @param context - Optional request text and current surface; ranking hints only, never authority.
  * @returns Model tool feed with semantic metadata and existing CLI usage.
  */
-export function buildToolsBlock(context: { message?: string; surface?: string } = {}): string {
+export function buildToolsBlock(context: { message?: string; surface?: string; authorizationTools?: AuthorizationToolDiscovery[] } = {}): string {
   const catalog = loadToolCatalog();
   const scriptsPath = existsSync('/app/scripts') ? '/app/scripts' : resolve(__dirname, '../../../scripts');
   const mounted = new Set(readdirSync(scriptsPath).filter((file) => /^oshal-.*\.js$/.test(file)));
@@ -135,7 +142,21 @@ export function buildToolsBlock(context: { message?: string; surface?: string } 
     'These are your ONLY shell tools; a script not listed here is off-limits even if you can see it.',
     'Ask which tool or account the user intends when context leaves multiple plausible choices. Preserve existing confirmation requirements.',
     ...lines,
+    ...typedAuthorizationLines(catalog, context.authorizationTools),
   ].join('\n');
+}
+
+function typedAuthorizationLines(catalog: ToolCatalog, available: AuthorizationToolDiscovery[] = []): string[] {
+  const metadata = catalog.typedTools?.find((entry) => entry.name === AUTHORIZATION_TOOL);
+  if (!metadata) return [];
+  const tools = available.filter((tool) => tool.name === AUTHORIZATION_TOOL || tool.name === AUTHORIZATION_READ_TOOL);
+  if (!tools.length) return [];
+  return ['TYPED APPLICATION ACCESS TOOLS: call only the registered typed operation; do not construct a shell command.',
+    `Keywords: ${metadata.keywords.join(', ')}. Use when: ${metadata.useWhen} Context: ${metadata.context}`,
+    ...tools.map((tool) => `- ${tool.name}: operations=${JSON.stringify(tool.operations)}; targets=${JSON.stringify(tool.targets)}`),
+    'Read operations use swarm_authorization_read when granted AUTO. Changes use the authenticated /access preview and apply flow.',
+    'Only the user can approve the exact preview in Access Administration. Never claim an access change succeeded before an apply receipt.',
+  ];
 }
 
 /**

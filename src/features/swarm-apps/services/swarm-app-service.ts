@@ -85,7 +85,6 @@ import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type S
 import {
   interpolate,
   manifestToolToCreateInput,
-  parseSafeWhere,
   readBotSelectorSeed,
   staticToolNames,
 } from './swarm-app-manifest-mapping';
@@ -100,6 +99,7 @@ import {
 import { deleteManifestBotToolGrants, deregisterOwnedManifestTools, failClosedManifestActivation, prepareManifestToolUpdate, rollbackNewManifestToolGrants } from './manifest-tool-reconciliation';
 import { SwarmAppRepository, type SwarmAppScopeMeta } from './swarm-app-repository';
 import { InstalledAppTestCatalog } from './installed-app-test-catalog';
+import { queryDynamicUiRows } from './dynamic-ui-query';
 import type {
   SwarmAppManifest,
   SwarmAppAccessDeclaration,
@@ -112,6 +112,7 @@ import type {
   ManifestScheduleRegistrar,
   ManifestScheduleDeregistrar,
   ManifestRouteMounter,
+  ManifestAuthorizationRegistrar,
   ManifestBotRegistrar,
   ManifestTakeoutRegistrar,
   RagCollectionTeardown,
@@ -187,6 +188,7 @@ export class SwarmAppService {
     /** Registers package-owned Takeout archive slices while the app is active. Package-module
      * loading stays in the app layer; this feature slice owns only lifecycle reconciliation. */
     private readonly takeoutRegistrar?: ManifestTakeoutRegistrar,
+    private readonly authorizationRegistrar?: ManifestAuthorizationRegistrar,
   ) {}
 
   /**
@@ -241,6 +243,7 @@ export class SwarmAppService {
     // Read the stored revision BEFORE upsert. Once overwritten, names removed from the new
     // manifest are otherwise unknowable and their persisted executor/grants survive forever.
     const previous = await this.repo.findByName(manifest.name);
+    await this.authorizationRegistrar?.prepare(manifest, manifestPath);
     await this.assertToolOwnership(manifest);
     const prepared = await prepareManifestToolUpdate(this.pool, previous, manifest,
       (retiredManifest) => this.deregisterManifestTools(retiredManifest, true),
@@ -256,6 +259,7 @@ export class SwarmAppService {
           this.pool, prepared.retired.agentIds, prepared.retired.toolNames,
         );
         this.testLabCatalog.register(record);
+        this.authorizationRegistrar?.complete(record);
       } catch (error) {
         this.appStatusCache.set(record.name, 'inactive');
         await failClosedManifestActivation(record.name, error, [
@@ -517,13 +521,20 @@ export class SwarmAppService {
     const record = await this.repo.findByName(name);
     if (!record) return null;
     if (active) {
-      await this.activate(record);
+      await this.authorizationRegistrar?.prepare(record.manifest, record.manifestPath);
+      try { await this.activate(record); }
+      catch (error) {
+        this.appStatusCache.set(record.name, 'inactive');
+        await failClosedManifestActivation(record.name, error, [() => this.deactivate(record),
+          async () => { await this.repo.updateStatus(record.name, 'inactive'); }]);
+      }
     } else {
       await this.deactivate(record);
     }
     const updated = await this.repo.updateStatus(name, active ? 'active' : 'inactive');
     if (updated?.status === 'active') this.testLabCatalog.register(updated);
     await this.refreshOwnershipCache();
+    if (updated?.status === 'active') this.authorizationRegistrar?.complete(updated);
     logger.info({ name, active }, 'App toggled');
     return updated;
   }
@@ -904,6 +915,7 @@ export class SwarmAppService {
 
   private async activate(record: SwarmApplicationRecord): Promise<void> {
     this.testLabCatalog.unregister(record.name);
+    await this.authorizationRegistrar?.start(record);
     // ADR-141 D2/D3: a group activates only when every borrowed surface and every setup readiness
     // resolves against its ACTIVE members — it never renders a dead tile. Throws with the member
     // and surface/readiness named; loadApp fail-closes the record to inactive.
@@ -966,6 +978,7 @@ export class SwarmAppService {
       const packageDir = dirname(record.manifestPath);
       await this.routeMounter.mount(record.name, packageDir, record.manifest.routes, record.manifest.access);
     } catch (err) {
+      if (record.manifest.authorization || this.authorizationRegistrar) throw err;
       logger.error({ err, app: record.name }, 'Manifest route mount failed (non-fatal)');
     }
   }
@@ -1253,6 +1266,7 @@ export class SwarmAppService {
 
   private async deactivate(record: SwarmApplicationRecord): Promise<void> {
     this.testLabCatalog.unregister(record.name);
+    this.authorizationRegistrar?.unregister(record.name);
     // Close package ingestion first so a handler cannot remain reachable during asynchronous
     // teardown. The registry operation is synchronous and idempotent.
     try {
@@ -1654,37 +1668,10 @@ export class SwarmAppService {
     }
   }
 
-  private async queryDynamicRows(dyn: SwarmAppDynamicUi): Promise<Array<Record<string, unknown>>> {
-    // `source` and `where` can arrive via manifest upload (POST /api/swarm/apps/load
-    // or /import), so they must be treated as UNTRUSTED. Raw SQL concatenation
-    // would let an uploaded manifest run arbitrary queries against the pool.
-    //
-    // Contract for dyn.where: a very small allowlist of "column = literal" clauses
-    // joined by AND. Each clause's column must match /^[a-z_][a-z0-9_]*$/, and
-    // literals are bound as parameters ($1, $2, ...) — never concatenated.
-    const safeSource = /^[a-z_][a-z0-9_]*$/i.test(dyn.source) ? dyn.source : null;
-    if (!safeSource) {
-      logger.warn({ source: dyn.source }, 'Rejected dynamic UI source — unsafe identifier');
-      return [];
-    }
-
-    const { whereSql, params } = parseSafeWhere(dyn.where);
-    if (dyn.where && whereSql === null) {
-      logger.warn({ where: dyn.where, source: safeSource }, 'Rejected dynamic UI where — does not match safe-clause allowlist');
-      return [];
-    }
-
-    try {
-      const { rows } = await this.pool.query(
-        `SELECT * FROM ${safeSource} ${whereSql ?? ''}`.trim(),
-        params,
-      );
-      return rows as Array<Record<string, unknown>>;
-    } catch (err) {
-      logger.error({ err, source: safeSource }, 'Dynamic UI row query failed');
-      return [];
-    }
+  private queryDynamicRows(dyn: SwarmAppDynamicUi): Promise<Array<Record<string, unknown>>> {
+    return queryDynamicUiRows(this.pool, dyn);
   }
+
 }
 
 export type { SwarmApplicationRecord, SwarmApplicationSummary, SwarmAppManifest } from '../types';

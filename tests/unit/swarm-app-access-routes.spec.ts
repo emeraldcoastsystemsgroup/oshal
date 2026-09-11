@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: real Express proof that the framework-owned access matrix and assignment API are operator-only, validate app declarations/tiers, and support restoring defaults.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Deny legacy grant and clear writes for policy-protected applications, including catalog and enforced no-catalog packages.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -24,7 +25,8 @@ const APP_RECORD = {
   },
 };
 
-async function boot(overrides: { app?: typeof APP_RECORD | null } = {}): Promise<{
+async function boot(overrides: { app?: typeof APP_RECORD | null;
+  isAuthorizationProtected?: (app: unknown) => boolean | Promise<boolean> } = {}): Promise<{
   server: Server;
   base: string;
   assign: ReturnType<typeof vi.fn>;
@@ -53,7 +55,9 @@ async function boot(overrides: { app?: typeof APP_RECORD | null } = {}): Promise
     (req as typeof req & { oidc: unknown }).oidc = { isAuthenticated: () => true, user: { sub } };
     next();
   });
-  app.use('/api/swarm/apps', createSwarmAppRoutes(service, appAccess));
+  app.use('/api/swarm/apps', createSwarmAppRoutes(service, appAccess, {
+    isAuthorizationProtected: overrides.isAuthorizationProtected,
+  }));
   const server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -143,5 +147,49 @@ describe('swarm app access management routes', () => {
     } finally {
       await stop(server);
     }
+  });
+
+  it.each(['admin', null])('refuses legacy self-grant or clear (%s) for a catalog-protected app', async tier => {
+    process.env.OSHAL_OPERATOR_SUBS = 'operator-sub';
+    const protectedApp = { ...APP_RECORD, manifest: { ...APP_RECORD.manifest,
+      authorization: { version: 1, catalog: 'authorization.yaml' } } };
+    const { server, base, assign, clear } = await boot({ app: protectedApp });
+    try {
+      const response = await request(base, 'operator-sub', '/api/swarm/apps/test-access/access', {
+        userSub: 'operator-sub', tier, reason: 'Alternate authority path',
+      });
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({ error: 'authorization_managed_by_policy', managementUrl: '/access' });
+      expect(assign).not.toHaveBeenCalled(); expect(clear).not.toHaveBeenCalled();
+    } finally { await stop(server); }
+  });
+
+  it.each(['active', 'inactive'])('refuses a protected no-catalog package while %s', async status => {
+    process.env.OSHAL_OPERATOR_SUBS = 'operator-sub';
+    const appRecord = { ...APP_RECORD, status };
+    const protectedPolicy = vi.fn().mockResolvedValue(true);
+    const { server, base, assign, clear } = await boot({ app: appRecord, isAuthorizationProtected: protectedPolicy });
+    try {
+      for (const tier of ['admin', null]) {
+        const response = await request(base, 'operator-sub', '/api/swarm/apps/test-access/access', {
+          userSub: 'operator-sub', tier, reason: 'Enforced fallback cannot bypass policy',
+        });
+        expect(response.status).toBe(409);
+      }
+      expect(protectedPolicy).toHaveBeenCalledWith(appRecord);
+      expect(assign).not.toHaveBeenCalled(); expect(clear).not.toHaveBeenCalled();
+    } finally { await stop(server); }
+  });
+
+  it('fails closed if the current application protection policy is unavailable', async () => {
+    process.env.OSHAL_OPERATOR_SUBS = 'operator-sub';
+    const { server, base, assign, clear } = await boot({ isAuthorizationProtected: async () => { throw new Error('Policy unavailable'); } });
+    try {
+      const response = await request(base, 'operator-sub', '/api/swarm/apps/test-access/access', {
+        userSub: 'operator-sub', tier: 'admin', reason: 'Cannot check current policy',
+      });
+      expect(response.status).toBe(500);
+      expect(assign).not.toHaveBeenCalled(); expect(clear).not.toHaveBeenCalled();
+    } finally { await stop(server); }
   });
 });

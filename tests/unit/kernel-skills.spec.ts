@@ -52,14 +52,14 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
   const anchorSrc = readFileSync(join(REPO_ROOT, ANCHOR), 'utf8');
   const allModules = KERNEL_SKILLS.flatMap((s) => s.modules.map((m) => ({ ...m, skill: s.id })));
 
-  it('declares the twelve contracted skills (ten signed off + two carve pins), with no duplicate ids', () => {
-    expect(KERNEL_SKILLS.length).toBe(12);
+  it('declares the contracted skills and authorization floor, with no duplicate ids', () => {
     expect(KERNEL_SKILL_IDS.size).toBe(KERNEL_SKILLS.length);
     // The signed-off Tier-0b list (swarm-store-migration-plan §2) + 'payments', pinned at the
     // finance carve (ADR-085 Wave 1 #5): both its importers live in the store, so only this
     // contract keeps @/features/payments in dist.
     expect([...KERNEL_SKILL_IDS].sort()).toEqual(
       [
+        'application-authorization',
         'deck-generation',
         'graph',
         'media-generation',

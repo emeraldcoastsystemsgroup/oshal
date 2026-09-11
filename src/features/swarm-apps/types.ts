@@ -29,6 +29,7 @@
 
 import type { SwarmAppRouteAuthMode } from '@/shared/route-auth';
 import type { SwarmAccessRole } from '@/shared/types/access-roles';
+import type { ApplicationAuthorizationDeclaration } from '@/shared/application-authorization';
 import type { GuestTier } from '@/shared/middleware/guest-capability-matrix';
 import type { SkillCapabilityId, SkillProfile } from '@/shared/skill-profiles';
 import type { SurfaceBridgeOpName } from '@/shared/surface-bridge-ops';
@@ -545,6 +546,14 @@ export interface ManifestRouteMounter {
   unmount(appName: string): void;
 }
 
+/** Application policy publication follows the same activation lifecycle as routes and executors. */
+export interface ManifestAuthorizationRegistrar {
+  prepare(manifest: SwarmAppManifest, manifestPath: string): Promise<void>;
+  start(record: SwarmApplicationRecord): Promise<void>;
+  complete(record: SwarmApplicationRecord): void;
+  unregister(appName: string): void;
+}
+
 /**
  * Port for contributing an installed app's bots to the ACTIVE bot registry at
  * activation time (ADR-085) — the mechanism that makes packaged bots dispatchable
@@ -808,6 +817,8 @@ export interface SwarmAppManifest {
   guestTier?: GuestTier;
   /** ADR-118: opt-in per-user app doorway policy. Omission preserves current behavior. */
   access?: SwarmAppAccessDeclaration;
+  /** ADR-149 package-local function permission catalog. */
+  authorization?: ApplicationAuthorizationDeclaration;
   /** ADR-090 D8: the KERNEL SKILLS this app calls (`@/shared/kernel-skills` ids — e.g.
    *  `deck-generation`, `rag`, `voice`). A skill is a shared capability the kernel always
    *  provides; it is NOT an app, so it never installs, never ref-counts, and can never be

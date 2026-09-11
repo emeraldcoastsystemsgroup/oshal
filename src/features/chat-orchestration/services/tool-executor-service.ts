@@ -19,7 +19,10 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Replace the dynamic CLI's best-effort identity write with the shared exact-subject, link-safe atomic writer; serialize same-workspace invocations and remove only the identity file each invocation still owns.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: deny model-driven RAG ingestion into kernel-owned swarm collections.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: execute dynamic CLI tools with an explicit OS/runtime allowlist instead of the controller environment; retain only the exact caller identity marker.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch the authorization family through a fixed typed port and trusted invocation context.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  */
+import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 
 import fs from 'fs';
 import path from 'path';
@@ -43,6 +46,7 @@ import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middle
 import { acquireScopedSubjectLease } from '@/shared/security/scoped-subject-lease';
 import { FollowupQuestionSignal } from './followup-question-signal';
 import { guardTemplateValue } from './runtime-template-guard';
+import { isAuthorizationTool, type AuthorizationToolExecutor, type AuthorizationToolInvocation } from '@/shared/security/authorization-tool-contract';
 
 const execAsync = promisify(execCallback);
 const execFileAsync = promisify(execFileCallback);
@@ -84,6 +88,7 @@ const DEFAULT_BOT_RUNTIME_ROOT = path.resolve(process.cwd(), 'output', 'bot-runt
  * stream broadcaster plus optional services for workspace, agent config, and dynamic tools.
  */
 export interface ToolExecutorServiceDeps {
+  authorizationToolExecutor?: AuthorizationToolExecutor;
   streamManager: StreamManager;
   /** Optional workspace service for ticket→workspace resolution */
   workspaceService?: WorkspaceService;
@@ -106,6 +111,7 @@ export interface ToolExecutorServiceDeps {
  * File and shell tools are scoped to the task workspace to prevent cross-task access.
  */
 export class ToolExecutorService {
+  private readonly authorizationToolExecutor?: AuthorizationToolExecutor;
   private readonly streamManager: StreamManager;
   private readonly workspaceRoot: string;
   private readonly workspaceService?: WorkspaceService;
@@ -120,6 +126,7 @@ export class ToolExecutorService {
    * @param deps - Stream manager plus optional workspace, agent config, and dynamic tool services
    */
   constructor(deps: ToolExecutorServiceDeps) {
+    this.authorizationToolExecutor = deps.authorizationToolExecutor;
     this.streamManager = deps.streamManager;
     this.workspaceService = deps.workspaceService;
     this.agentConfigService = deps.agentConfigService;
@@ -144,12 +151,16 @@ export class ToolExecutorService {
     toolInput: Record<string, unknown>,
     agentId?: string,
     userSub?: string,
+    authorizationInvocation?: AuthorizationToolInvocation,
   ): Promise<string> {
+    return runWithApplicationExecution({ kind: 'tools', operation: toolName, userSub }, async () => {
     const startedAt = Date.now();
     this.streamManager.broadcastToolExecution(taskId, { name: toolName, input: toolInput }, 'started');
 
     try {
-      const result = await this.dispatchTool(taskId, toolName, toolInput, agentId, userSub);
+      const result = isAuthorizationTool(toolName)
+        ? await this.executeAuthorizationTool(toolName, toolInput, authorizationInvocation)
+        : await this.dispatchTool(taskId, toolName, toolInput, agentId, userSub);
       this.streamManager.broadcastToolExecution(
         taskId,
         { name: toolName, durationMs: Date.now() - startedAt },
@@ -173,6 +184,16 @@ export class ToolExecutorService {
       );
       throw error;
     }
+    });
+  }
+
+  private async executeAuthorizationTool(name: string, input: unknown, invocation?: AuthorizationToolInvocation): Promise<string> {
+    const descriptor = this.dynamicToolExecutorRegistry?.resolve(name);
+    if (!this.authorizationToolExecutor || !descriptor || descriptor.executorType !== 'builtin'
+      || descriptor.builtinKey !== name || descriptor.runtimeRegistered) {
+      throw new Error('Authorization tool is unavailable');
+    }
+    return this.authorizationToolExecutor.execute(name, input, invocation);
   }
 
   /**

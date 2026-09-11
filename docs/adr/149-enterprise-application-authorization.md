@@ -1,7 +1,11 @@
 # ADR-149: Enterprise authorization for users, applications and delegated AI
 
 Date: 2026-09-10
-Status: **Proposed specification. No runtime change is implemented by this ADR.**
+Status: **Initial core implementation; enterprise rollout and package adoption remain open.**
+
+[As-built behavior and operation](../security/application-authorization.md) records the shipped
+boundaries and limits. This ADR also contains target requirements that are not all implemented;
+the [work-order status](../backlog/enterprise-authorization.md) is authoritative for remaining work.
 
 Requested outcome: an enterprise swarm can serve CRM, business development, payroll and HR while
 each person, group and automation receives only the application functions and records it is assigned.
