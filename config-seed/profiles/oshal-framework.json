@@ -223,6 +223,22 @@
         "toolUi": { "iframeUrl": "/api/aero-lab/app", "sidebarLabel": "Aero Lab" }
       },
       {
+        "id": "tool-ocean-lab-harvest-console",
+        "icon": "codicon codicon-pulse",
+        "label": "Harvest Console",
+        "section": "top",
+        "group": "Engineering",
+        "toolUi": { "iframeUrl": "/api/ocean-lab/harvest-console", "sidebarLabel": "Ocean Lab · Harvest Console" }
+      },
+      {
+        "id": "tool-ocean-lab-blade-studio",
+        "icon": "codicon codicon-settings-gear",
+        "label": "Blade Studio",
+        "section": "top",
+        "group": "Engineering",
+        "toolUi": { "iframeUrl": "/api/ocean-lab/blade-studio", "sidebarLabel": "Ocean Lab · Blade Studio" }
+      },
+      {
         "id": "tool-camera-ops",
         "icon": "codicon codicon-device-camera",
         "label": "Camera Ops",
