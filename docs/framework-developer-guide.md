@@ -147,7 +147,8 @@ The framework registers it through `registerDynamicToolUI()`. In focused mode, i
 The cockpit left rail ([RibbonNav.js](../src/pages/cockpit/js/components/RibbonNav.js)) has three
 trays, driven by each ribbon item's `section`:
 
-- **`home`** — pinned at the top, never scrolls (Jarvis in the framework profile). Tinted
+- **`home`** — pinned at the top, never scrolls (Home, Jarvis and Switchboard in the framework
+  profile). Tinted
   `--bg-tertiary`.
 - **`top`** — the scrollable middle. Items may carry a `group` label; groups render in order of
   first appearance with a header that collapses to a thin divider when the rail is at its 48px
@@ -155,9 +156,10 @@ trays, driven by each ribbon item's `section`:
 - **`bottom`** — pinned at the base, same tint as `home`.
 
 The framework-default profile ([config-seed/profiles/oshal-framework.json](../config-seed/profiles/oshal-framework.json))
-groups the middle rail by app bundle (Little Monsters, Career Placement, Communications, Money,
-Everyday, Create, …) and ends with three platform groups — **Connections** (Connectors, Cloud,
-Identity Hub, Files), **Security** (Security Center, DevOps + Vault) and **Optimization**
+groups the middle rail by app bundle (Little Monsters, Career Placement, Communications, Everyday,
+Robotics & Space, Engineering, Create, Money, Business, HR, …) and ends with three platform
+groups — **Connections** (Connectors, Cloud, Identity Hub, Files), **Security** (Security Center,
+DevOps + Vault) and **Optimization**
 (Optimizer, AI Test Lab, Eval Wall) — split out of the former "Cloud & Ops" catch-all
 (2026-07-07). The pinned bottom tray is just the essentials: Tickets, Calendar, Swarm Messages,
 Settings, Operations.
