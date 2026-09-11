@@ -28,3 +28,22 @@ instead of inventing a deployment result.
 Local JSON reports are retained in `temp/remote-authorization-final-results.json` and
 `temp/remote-authorization-foundation-results.json`. These isolated fixture results are source
 evidence; required PR review and a deployed application canary remain separate release steps.
+
+## Publication checkpoint
+
+Implementation commit `c875a5085f4084178301446d448fa841d58ce8d5` is pushed on
+`feat/store-compatibility-gate`. The publication gate and pre-push typecheck of an exported committed
+HEAD both passed. [PR 431](https://github.com/emeraldcoastsystemsgroup/oshal/pull/431) remains open
+with required independent review; this record does not claim a merge or deployed canary.
+
+Pinned compatibility passed for that core commit and unchanged public store commit
+`571838aff8a2d874c1edc77b661aba78fb4d6291`: 388 sources across 52 packages. The real compiler also
+rejected the deliberately invented ambient export with TS2305. The command was:
+
+```text
+node scripts/check-store-compatibility.mjs --core C:/Projects/oshal --core-ref c875a5085f4084178301446d448fa841d58ce8d5 --store C:/Projects/oshal-applications --store-ref 571838aff8a2d874c1edc77b661aba78fb4d6291 --dependencies C:/Projects/oshal --reports <OS-temp>/oshal-remote-compatibility-20260911 --prove-rejection
+```
+
+The retained report is `oshal-remote-compatibility-20260911/run-nAFyTb/result.json` under the OS
+temporary directory. Store repositories were not changed by this increment. Public store PR 185
+and private consumer PR 181 continue to depend on core promotion.
