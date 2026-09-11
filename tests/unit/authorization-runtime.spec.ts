@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise authorization through real package loading, activation and mounted HTTP routes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove remote execution generations retract during reload and disable.
  */
 /** Real temporary package activation and Express dispatch; persistence is isolated, policy and lifecycle are real. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -144,6 +145,16 @@ afterEach(async () => {
 });
 
 describe('Application authorization runtime integration', () => {
+  it('publishes a unique execution generation only after activation and retracts it across reload or disable', async () => {
+    expect(runtime.snapshot('runtime-app')).toBeNull();
+    await apps.loadApp(writePackage());
+    const first = runtime.snapshot('runtime-app')!;
+    expect(first).toMatchObject({ app: 'runtime-app', catalogRevision: policy.getApp('runtime-app')!.catalogRevision });
+    const record = records.get('runtime-app')!;
+    await runtime.start(record); expect(runtime.snapshot('runtime-app')).toBeNull();
+    runtime.complete(record); expect(runtime.snapshot('runtime-app')!.generation).not.toBe(first.generation);
+    runtime.unregister('runtime-app'); expect(runtime.snapshot('runtime-app')).toBeNull();
+  });
   it('discovers a tenant-scoped app only for a member of its assigned business tenant', async () => {
     await apps.loadApp(writePackage());
     const preview = await policy.previewChange(admin, { action: 'grant', app: 'runtime-app',

@@ -1,4 +1,12 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Keep ticket isolation fixture on a canonical task store for protected result lookup.
+ */
 import express, { type NextFunction, type Request, type Response } from 'express';
+import { InMemoryTaskStore } from '@/entities/task';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { InMemoryTicketStore, TicketService } from '../../src/features/ticketing';
 import { createTicketRoutes } from '../../src/app/routes/ticket-routes';
@@ -56,7 +64,7 @@ describe('ticket API isolation routes', () => {
     app.use(mockOidc('auth0|user-a'));
     app.use('/api/tickets', createTicketRoutes({
       ticketService,
-      taskStore: {},
+      taskStore: new InMemoryTaskStore(),
       messageStore: {},
       orchestrator: {},
       pool: {},

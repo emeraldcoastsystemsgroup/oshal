@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register isolated nightly and first-run suites with honest local-runner prerequisites and a read-only progress probe.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Register signed remote authorization and exact-principal result regressions with a fixed isolated runner.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register bot initialization, specialist context and briefing behavior suites with read-only discovery and explicit runner prerequisites.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -98,4 +99,36 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/jarvis-briefing-identity.spec.ts' },
   ],
   steps: [{ id: 'sources', app: 'jarvis', label: 'Caller-visible sources', run: briefingSources }],
+}, {
+  id: 'protected-remote-application-execution', title: 'Protected remote application execution', group: 'tool',
+  description: 'Current per-user application rights across signed controller dispatch, hosted worker reasoning, immutable queued initiators, history, caches and SSE. Isolated HTTP/SQLite/PostgreSQL fixtures cover allowed, forged, replayed, revoked and stale requests.',
+  regressionTests: [
+    { level: 'integration', path: 'tests/unit/application-remote-execution.spec.ts' },
+    { level: 'integration', path: 'tests/unit/application-remote-execution-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/bot-node-controller-permit.spec.ts' },
+    { level: 'integration', path: 'tests/unit/bot-node-protected-execution.spec.ts' },
+    { level: 'integration', path: 'tests/unit/bot-node-remote-authorization-client.spec.ts' },
+    { level: 'integration', path: 'tests/unit/protected-result-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/protected-jarvis-results.spec.ts' },
+    { level: 'integration', path: 'tests/unit/protected-ticket-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/queued-application-principal.spec.ts' },
+    { level: 'integration', path: 'tests/unit/remote-execution-end-to-end.spec.ts' },
+    { level: 'unit', path: 'tests/unit/authorization-runtime.spec.ts' },
+    { level: 'integration', path: 'tests/unit/bot-node-client-delegation.spec.ts' },
+    { level: 'integration', path: 'tests/unit/bot-node-delegation.spec.ts' },
+    { level: 'unit', path: 'tests/unit/bot-node-delegation-wiring.spec.ts' },
+    { level: 'integration', path: 'tests/unit/bot-node-workspace-owner-binding.spec.ts' },
+    { level: 'integration', path: 'tests/unit/bot-node-swarm-execute-auth.spec.ts' },
+    { level: 'unit', path: 'tests/unit/owner-principal-issuer.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ticket-isolation-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/task-message-isolation-routes.spec.ts' },
+    { level: 'unit', path: 'tests/unit/jarvis-task-lifecycle.spec.ts' },
+    { level: 'integration', path: 'tests/unit/specialist-context-dispatch.spec.ts' },
+    { level: 'integration', path: 'tests/unit/manifest-worker-bot-node-boundary.spec.ts' },
+    { level: 'unit', path: 'tests/unit/autonomous-test-lab-registration.spec.ts' },
+  ],
+  steps: [{ id: 'runner', app: 'test-lab', label: 'Protected remote authorization fixtures', run: async () => ({
+    app: 'test-lab', label: 'Protected remote authorization fixtures', state: 'degraded',
+    detail: 'Run npm run test:remote-authorization with local Node and Docker. Fixtures create disposable databases and SQLite workspaces; no live provider, application data or account is changed. No tests ran from this step.',
+  }) }],
 }];

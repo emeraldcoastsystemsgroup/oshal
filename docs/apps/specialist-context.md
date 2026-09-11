@@ -4,6 +4,10 @@ Packages can register a deterministic, caller-scoped facts reader for a dedicate
 `BotNodeClient` appends its result before constructing the delegated request signature. The
 existing execution, accounting and remote transport boundaries remain in force.
 
+Protected dedicated workers use the [current-rights remote protocol](../security/remote-application-execution.md).
+Its supported mode is direct hosted reasoning without tools. The original grant bounds and current
+account/application state are checked again before inference, completion and result delivery.
+
 Declare `uses: [application-authorization, specialist-context]` in `oshal-app.yaml`. Cores without
 this capability reject the package instead of silently ignoring the context requirement. Register
 the reader synchronously from an existing package route factory:
@@ -55,8 +59,10 @@ stages cannot replace a newer reader. A retired specialist never silently dispat
 
 The supported path is the existing dedicated `BotNodeClient`. Registered specialists fail closed
 on the inline branch, which has no equivalent context transport. Protected remote application bots
-still return `authorization_bot_transport_unavailable` until live signed user-rights revalidation
-exists on the node. This change does not authorize a production Sales task or an unattended CLI.
+support direct hosted reasoning without tools through
+[signed current-rights revalidation](../security/remote-application-execution.md). Protected agentic,
+CLI, provider-intent and raw mesh/batch execution remain refused. Fixture verification does not
+claim a deployed Sales-task result.
 
 The AI Test Lab references two suites: `tests/unit/specialist-context.spec.ts` (unit) and
 `tests/unit/specialist-context-dispatch.spec.ts` (integration). They use temporary installed packages,

@@ -15,6 +15,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Withhold protected completed work from automatic summarization pending a derived-result lineage contract.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: JARVIS_AGENT_ID, APP_ROUTES/loadEffectiveRoutes, runJarvisBot + the classify/delegate/synthesize helpers, summarizeComplexTask, maskPendingComplexSummaries, repairCompletedTaskTableVisuals (route decomposition, no behaviour change).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credential forwarding from Jarvis/model delegation; credentials stay inside audited server-side provider operations.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry the turn's resolved endpoint through the whole turn: the in-process steps (haven passive learning, the legacy classify/synthesize path) now run on the same byoLlmConnection instead of silently falling to the controller's configured CLI harness, and the one bounded retry re-resolves to the NEXT usable endpoint rather than deliberately dropping the connection onto a provider a SEC-05 node refuses.
@@ -29,6 +30,7 @@
 import * as crypto from 'crypto';
 import type { AppContext } from '@/app/composition/app-context';
 import { createChildLogger } from '@/shared/logger';
+import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { learnFromExchange, withHavenContext } from '@/features/user-model';
 import {
@@ -383,9 +385,10 @@ async function delegateOne(
   try {
     // executeBotOrInline resolves the transport itself: a dedicated bot-node goes over
     // HTTP (hasEndpoint), anything still inline runs through the local orchestrator.
+    const protectedReasoning = await isApplicationExecutionProtected({ kind: 'bots', operation: route.agentId });
     const result = await executeBotOrInline(ctx, botClient, route.agentId, {
       text: prompt, taskId: freshTaskId(route.key, sub), workspaceFolderId: `jarvis-${route.key}-${sub}`,
-      agentId: route.agentId, agenticMode: true, direct: true, userSub: sub,
+      agentId: route.agentId, agenticMode: !protectedReasoning, direct: true, userSub: sub,
     });
     const response = String(result.response || '').trim();
     return { key: route.key, name: route.name, response };
@@ -681,10 +684,13 @@ async function summarizeComplexTask(
   ctx: AppContext, sub: string, taskId: string, ticketId: string, title: string,
 ): Promise<void> {
   try {
+  const { hasProtectedJarvisSource } = await import('./jarvis-result-access.js');
+    if (await hasProtectedJarvisSource(ctx, [taskId, ticketId])) return;
     const msgs = (await ctx.messageStore.getByTask(ticketId)) as Array<{
       text?: string;
       metadata?: Record<string, unknown>;
     }>;
+    if (await hasProtectedJarvisSource(ctx, [taskId, ticketId])) return;
     const newestFirst = [...(msgs || [])].reverse();
     const capturedCompletion = newestFirst.find((message) => (
       message.metadata?.source === 'manifest-worker-bot-node'

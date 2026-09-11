@@ -1,7 +1,7 @@
 {
   "name": "oshal-control-plane",
   "version": "2.1.0-beta.1",
-  "description": "OSHAL — Open Swarm Harness Agent LLM. Docker-first multi-agent orchestration platform with pluggable harnesses (Cline, Codex, Claude Code, Gemini), per-bot persona quality gates, and a typed harness extension framework.",
+  "description": "OSHAL \u2014 Open Swarm Harness Agent LLM. Docker-first multi-agent orchestration platform with pluggable harnesses (Cline, Codex, Claude Code, Gemini), per-bot persona quality gates, and a typed harness extension framework.",
   "license": "AGPL-3.0-or-later",
   "author": "oshal maintainers <maintainer@emeraldcoastsystemsgroup.com>",
   "homepage": "",
@@ -121,7 +121,8 @@
     "test:provisioning": "vitest run --no-file-parallelism --hookTimeout 120000 tests/unit/onboarding-provisioning.spec.ts tests/unit/onboarding-provisioning-browser.spec.ts tests/unit/autonomous-test-lab-registration.spec.ts",
     "test:bot-initialization": "vitest run --no-file-parallelism --hookTimeout 120000 tests/unit/manifest-bot-authority.spec.ts tests/unit/manifest-bot-runtime-defaults.spec.ts tests/unit/manifest-bot-runtime.spec.ts tests/unit/manifest-node-bot-dispatch.spec.ts tests/unit/manifest-worker-bot-node-boundary.spec.ts tests/unit/swarm-app-selector-seeding.spec.ts",
     "test:specialist-context": "vitest run --no-file-parallelism --hookTimeout 120000 tests/unit/specialist-context.spec.ts tests/unit/specialist-context-dispatch.spec.ts",
-    "test:briefings": "vitest run --no-file-parallelism --hookTimeout 120000 tests/unit/jarvis-briefing-preferences.spec.ts tests/unit/jarvis-briefing-browser.spec.ts tests/unit/jarvis-briefing-identity.spec.ts"
+    "test:briefings": "vitest run --no-file-parallelism --hookTimeout 120000 tests/unit/jarvis-briefing-preferences.spec.ts tests/unit/jarvis-briefing-browser.spec.ts tests/unit/jarvis-briefing-identity.spec.ts",
+    "test:remote-authorization": "vitest run --no-file-parallelism --hookTimeout 120000 tests/unit/application-remote-execution.spec.ts tests/unit/application-remote-execution-postgres.spec.ts tests/unit/bot-node-controller-permit.spec.ts tests/unit/bot-node-protected-execution.spec.ts tests/unit/bot-node-remote-authorization-client.spec.ts tests/unit/protected-result-routes.spec.ts tests/unit/protected-jarvis-results.spec.ts tests/unit/protected-ticket-routes.spec.ts tests/unit/queued-application-principal.spec.ts tests/unit/remote-execution-end-to-end.spec.ts tests/unit/authorization-runtime.spec.ts tests/unit/bot-node-client-delegation.spec.ts tests/unit/bot-node-delegation.spec.ts tests/unit/bot-node-delegation-wiring.spec.ts tests/unit/bot-node-workspace-owner-binding.spec.ts tests/unit/bot-node-swarm-execute-auth.spec.ts tests/unit/owner-principal-issuer.spec.ts tests/unit/ticket-isolation-routes.spec.ts tests/unit/task-message-isolation-routes.spec.ts tests/unit/jarvis-task-lifecycle.spec.ts tests/unit/specialist-context-dispatch.spec.ts tests/unit/manifest-worker-bot-node-boundary.spec.ts tests/unit/autonomous-test-lab-registration.spec.ts"
   },
   "keywords": [
     "oshal",

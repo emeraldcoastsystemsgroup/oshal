@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Constrain ticket result surfaces by current exact-principal application rights and force nonoperator creation ownership.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial ticket REST API: CRUD, status transitions, task/workspace linking
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Refactored to createTicketRoutes(ctx) pattern matching codebase conventions
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added /sync/pull, /sync/push, /sync/reconcile endpoints for PlaneSyncService API
@@ -25,6 +26,7 @@ import {
 } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
 import { canAccessResource, isOperator, getCaller } from '@/shared/middleware/authz';
+import { canReadTicketApplicationResult } from './ticket-application-access';
 import { emitAuditEvent, type AuditDecision } from '@/features/governance';
 import type { TaskStatus } from '@/shared/types';
 
@@ -75,7 +77,7 @@ async function requireTicketAccess(
     return null;
   }
   const ownerSub = (ticket as { ownerSub?: string | null }).ownerSub ?? null;
-  if (!canAccessResource(req, ownerSub)) {
+  if (!canAccessResource(req, ownerSub) || !await canReadTicketApplicationResult(ctx, req, ticket)) {
     logger.warn({ ticketId }, 'Ticket access denied (caller is not owner/operator) — returning 404');
     auditTicketAccess(ctx, req, ticketId, 'deny');
     res.status(404).json({ error: 'Ticket not found' });
@@ -111,10 +113,10 @@ export function createTicketRoutes(ctx: AppContext): Router {
       }
       logger.info({ parsedTitle: parsed.data.title, parsedType: parsed.data.ticketType }, 'Parsed ticket input');
       // Stamp the creating user's OIDC sub so the ticket is owned (per-user "my tickets" queues).
-      const callerSub = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub;
+      const callerSub = getCaller(req).sub;
       const ticket = await ctx.ticketService.createTicket({
         ...parsed.data,
-        ownerSub: parsed.data.ownerSub ?? (callerSub ? String(callerSub) : null),
+        ownerSub: isOperator(req) ? parsed.data.ownerSub ?? callerSub : callerSub,
       });
       logger.info({ ticketId: ticket.ticketId, storedType: (ticket as any).ticketType }, 'Ticket created by route');
       res.status(201).json(ticket);
@@ -157,7 +159,9 @@ export function createTicketRoutes(ctx: AppContext): Router {
         options.ownerSub = String(callerSub);
       }
 
-      const tickets = await ctx.ticketService.listTickets(options as any);
+      const candidates = await ctx.ticketService.listTickets(options as any);
+      const readable = await Promise.all(candidates.map(ticket => canReadTicketApplicationResult(ctx, req, ticket)));
+      const tickets = candidates.filter((_ticket, index) => readable[index]);
       res.json({ tickets, count: tickets.length });
     } catch (error) {
       logger.error({ err: error }, 'Failed to list tickets');

@@ -376,9 +376,11 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Source proof:** the [specialist context contract](apps/specialist-context.md) inserts authorized
   scalar facts before signed dispatch. Core known-answer/revocation/lifecycle checks and an actual
   package consumer pass locally; the model receives no query or credential.
-- **Remaining:** complete signed current-rights verification on protected remote bot transport,
-  promote core and the owning application, and retain a live known-answer handoff. Protected
-  remote and unsupported inline dispatch remain refused until their required authority is available.
+- **Remote source increment (2026-09-11):** [signed current-rights verification](security/remote-application-execution.md)
+  supports direct hosted reasoning without tools, with immutable queued initiators and current
+  exact-principal result checks. Its local fixture evidence is recorded separately from deployment.
+- **Remaining:** add per-operation authorization to the agentic tool broker before enabling generic
+  queued handoffs, promote core and the owning application, and retain a live known-answer handoff.
 - **Done when:** the same Jarvis question ("how many opportunities are in docs out?") returns the
   live count through the handoff rail on a box whose CRM holds a known stage distribution, with the
   read executed by the package's own operation — never by handing the model a credential.

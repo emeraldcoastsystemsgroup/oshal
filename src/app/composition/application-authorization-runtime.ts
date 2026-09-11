@@ -1,10 +1,14 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Connect dynamic package activation to the shared application policy service and request boundaries.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Bind remote authorization to one fully activated executable policy generation.
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import type { ApplicationAuthorizationService } from '@/features/application-authorization';
 import type { ManifestAuthorizationRegistrar, SwarmAppManifest, SwarmApplicationRecord } from '@/features/swarm-apps';
@@ -13,9 +17,10 @@ import { loadApplicationAuthorization, type AuthorizationActor, type Authorizati
 import { getApplicationAuthorizationActor, runWithApplicationAuthorizationActor } from '@/shared/application-authorization-context';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import { createChildLogger } from '@/shared/logger';
+import type { RemoteApplicationSnapshot } from '@/shared/application-remote-execution';
 
 const logger = createChildLogger({ module: 'application-authorization-runtime' });
-interface RuntimeRegistration { registration: AuthorizationAppRegistration; available: boolean; agents: string[]; tools: string[] }
+interface RuntimeRegistration { registration: AuthorizationAppRegistration; generation: string; available: boolean; agents: string[]; tools: string[] }
 export interface PackageAuthorizationContext {
   registerResource(resource: string, adapter: AuthorizationResourceAdapter): void;
   currentActor(): AuthorizationActor | undefined;
@@ -68,7 +73,7 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
   /** Keep a candidate unavailable until every activation step has completed. */
   async start(record: SwarmApplicationRecord): Promise<void> {
     const registration = this.candidate(record.manifest, record.manifestPath);
-    this.registrations.set(record.name, { registration, available: false,
+    this.registrations.set(record.name, { registration, generation: randomUUID(), available: false,
       agents: (record.manifest.bots ?? []).flatMap(bot => bot.agentId ? [bot.agentId] : []),
       tools: (record.manifest.tools ?? []).map(tool => tool.name) });
     this.service.unregisterApp(record.name);
@@ -83,6 +88,13 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
   protectedApp(appName: string): boolean {
     const state = this.registrations.get(appName);
     return Boolean(state && (state.registration.catalog || state.registration.mode === 'enforce'));
+  }
+  /** @description Bind remote work to one fully activated executable policy generation.
+   * @param appName Controller-resolved application. @returns Live generation or unavailable null.
+   */
+  snapshot(appName: string): RemoteApplicationSnapshot | null {
+    const state = this.registrations.get(appName); const app = this.service.getApp(appName);
+    return state?.available && app ? { app: appName, source: app.source, catalogRevision: app.catalogRevision, generation: state.generation } : null;
   }
   /** Bind package code to its own namespace; it receives no policy-management service. */
   forPackage(appName: string): PackageAuthorizationContext {

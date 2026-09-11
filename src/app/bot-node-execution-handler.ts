@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Enforce authoritative dispatch pins fail-closed: refuse missing records/seams and concurrent mismatches before task creation, and report the effective config source/action/version in every successful result.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: one audited carve in the SEC-05 preflight — a DEMO deployment may run an autonomous CLI harness for a request owned by a configured operator (DEMO_MODE alone, never MOCK_OIDC; exact OSHAL_OPERATOR_SUBS match). Off-demo, non-operator, and identity-less requests keep the refusal, so unattended content-driven work is never unlocked by the flag.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Use one-execution protected workspaces and empty capabilities, with current authority checks around hosted inference.
  */
 
 /**
@@ -75,6 +76,7 @@ import {
   type DispatchConfigRuntime,
 } from './bot-node-dispatch-config';
 import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
+import { getProtectedBotExecution } from './bot-node-protected-context';
 
 const logger = createChildLogger({ module: 'bot-node-execution-handler' });
 const UNBROKERED_AUTONOMOUS_PROVIDERS = new Set([
@@ -142,6 +144,8 @@ let activeExecutions = 0;
  * cost attribution, and prompt assembly decisions.
  */
 export interface BotNodeExecutionDeps {
+  /** Trusted runtime wrapper; raw payloads cannot install protected execution authority. */
+  runApplicationExecution?: (envelope: MeshEnvelope, operation: () => Promise<EnvelopeExecutionResult>) => Promise<EnvelopeExecutionResult>;
   /** Runtime-owned guard over local and requested bot identities, shared by HTTP/mesh/batch. */
   authorizeApplicationExecution?: (requestedAgentId: string) => Promise<void>;
   /** Any-bot TaskController instance (JavaScript, loaded via require()) */
@@ -194,8 +198,9 @@ export interface BotNodeExecutionDeps {
 export function createBotNodeExecutionHandler(
   deps: BotNodeExecutionDeps,
 ): (envelope: MeshEnvelope) => Promise<EnvelopeExecutionResult> {
-  return async (envelope: MeshEnvelope): Promise<EnvelopeExecutionResult> => {
+  const execute = async (envelope: MeshEnvelope): Promise<EnvelopeExecutionResult> => {
     await deps.authorizeApplicationExecution?.(envelope.toAgentId);
+    const protectedExecution = getProtectedBotExecution();
     const agentId = envelope.toAgentId;
     const payload = envelope.payload as Record<string, unknown> | undefined;
     // Direct/interactive reasoning call (not a swarm ticket): skip the swarm
@@ -205,7 +210,7 @@ export function createBotNodeExecutionHandler(
     // Exact authenticated owner identity. This binds memory, workspaces, and audited
     // server operations; it is not authority to place connector secrets in a CLI.
     const userSub = normalizeBotNodeUserSub(payload?.userSub);
-    const tenantId = optionalExactContextId(payload?.tenantId ?? payload?.tenant_id, 'tenantId');
+    const tenantId = protectedExecution ? protectedExecution.binding.tenantId : optionalExactContextId(payload?.tenantId ?? payload?.tenant_id, 'tenantId');
     // Credentials are parsed only for the deterministic provider-intent executor below.
     // They are never passed to TaskController, a child environment, or a workspace.
     const creds = sanitizeBotNodeCreds(payload?.creds);
@@ -226,7 +231,7 @@ export function createBotNodeExecutionHandler(
     const parentExternalId = readOptionalWorkspaceSource(originalTicket, 'parentExternalId');
     const baseTaskId = workspaceTaskId ?? originalExternalId ?? ticketExternalId
       ?? `swarm-${envelope.correlationId}`;
-    const workspaceFolderId = canonicalBotWorkspaceId(baseTaskId);
+    const workspaceFolderId = protectedExecution?.workspaceId ?? canonicalBotWorkspaceId(baseTaskId);
     const taskId = `${workspaceFolderId}::${agentId}`;
     const providerConfigRequired = payload?.providerConfigRequired === true;
     const carriedConfig = parseCarriedDispatchConfig(payload);
@@ -374,9 +379,9 @@ export function createBotNodeExecutionHandler(
         userSub: userSub ?? null,
         ticketId: ticketExternalId ?? workspaceFolderId,
         workloadId: agentId,
-        executionScope: executionScopeId,
+        executionScope: protectedExecution ? '' : executionScopeId,
         layers: personaLayers,
-        resolver: deps.resolvePromptAuthorization,
+        resolver: protectedExecution ? async () => ({ allowedTools: [], scopes: [] }) : deps.resolvePromptAuthorization,
       });
       const skillProfilePattern = typeof payload?.pattern === 'string' ? payload.pattern.trim() : '';
       const assembledPrompt = assemblePromptForAnyBot(
@@ -401,11 +406,13 @@ export function createBotNodeExecutionHandler(
       const effectiveTaskId = workspaceFolderId;
       let task: { id: string };
       try {
+        await protectedExecution?.check();
         const existing = await deps.anyBotTaskController.getTask(effectiveTaskId);
         if (existing) {
           assertExistingTaskOwner(existing, userSub);
           task = { id: effectiveTaskId };
         } else {
+          await protectedExecution?.check();
           // Stamp the owner on the new task record. ADR-060's per-user PATH layout was reverted
           // (the dir stays flat <root>/<taskId>), so this binding — not the path — is what stops
           // the NEXT dispatch for a different user from being handed this workspace: the
@@ -416,7 +423,7 @@ export function createBotNodeExecutionHandler(
           if (task.id !== effectiveTaskId) throw taskWorkspaceMismatchError();
         }
       } catch (error) {
-        if (isTaskSecurityBoundaryError(error)) throw error;
+        if (protectedExecution || isTaskSecurityBoundaryError(error)) throw error;
         task = await deps.anyBotTaskController.createTask(`Swarm execution for ${agentId}`, 'act', { userSub });
       }
 
@@ -426,7 +433,8 @@ export function createBotNodeExecutionHandler(
       const agenticMode = payload?.agenticMode !== undefined ? Boolean(payload.agenticMode) : true;
       const result = await deps.anyBotTaskController.processMessage(task.id, { text: assembledPrompt }, {
           agenticMode,
-          autoApprove: { 'use_mcp_tool': true },
+          autoApprove: protectedExecution ? {} : { 'use_mcp_tool': true },
+          ...(protectedExecution ? { toolLess: true, assertCurrentAuthorization: () => protectedExecution.check() } : {}),
           source: 'swarm-dispatch',
           allowedTools: [...promptAuthority.allowedTools],
           authorizedScopes: [...promptAuthority.scopes],
@@ -568,6 +576,8 @@ export function createBotNodeExecutionHandler(
       activeExecutions -= 1;
     }
   };
+  return envelope => deps.runApplicationExecution
+    ? deps.runApplicationExecution(envelope, () => execute(envelope)) : execute(envelope);
 }
 
 function assertExistingTaskOwner(

@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 23 | maintainer@emeraldcoastsystemsgroup.com | Bind protected dispatch to durable recorded signatures and recheck completed result authority before returning controller-owned lineage.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — thin HTTP client for swarm-to-any-bot dispatch (any-bot-swarm-separation-design.md)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | switchProvider tags pushes with X-Config-Source: oshal-push so the bot does not send them back up as a broadcast (ADR-034)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Token broker: BotNodeRequest.creds carries the caller's short-lived per-user access tokens (OSHAL_CRED_GOOGLE/OSHAL_CRED_TWITTER) so the bot uses a provided token instead of needing SESSION_SECRET to decrypt the connections table. Forwarded verbatim in the request body.
@@ -27,6 +28,10 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Append caller-authorized bounded package facts before signing and recheck bot permission after the read.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
+import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
+import { getApplicationRemoteExecutionAuthority, type ApplicationRemoteExecutionAuthority, type PreparedRemoteExecution } from '@/shared/application-remote-execution';
+import type { AuthorizationActor } from '@/shared/application-authorization';
+import { captureRemoteExecutionResult } from '@/shared/remote-execution-results';
 import { getSpecialistContextRegistry } from '@/shared/specialist-context';
 
 import * as http from 'node:http';
@@ -35,8 +40,9 @@ import { createChildLogger } from '@/shared/logger';
 import { serviceSecretHeaders } from '@/shared/middleware/authz';
 import { normalizePrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import {
-  createDelegationTokenIssuer,
+  createRecordedDelegationTokenIssuer,
   type DelegationTokenIssuer,
+  type RecordedDelegationTokenIssuer,
 } from '@/shared/security/delegation-token';
 import {
   CONTROLLER_SYSTEM_SUBJECT,
@@ -166,6 +172,8 @@ export function resolveDisplayOnline(
  * token capture) and returns a structured result.
  */
 export interface BotNodeResponse {
+  /** Controller-authored lineage; worker response fields are never trusted as authority. */
+  applicationExecutionId?: string;
   success: boolean;
   response: string;
   usage: {
@@ -195,6 +203,8 @@ export interface BotNodeResponse {
  * @description Request payload for any-bot swarm execution.
  */
 export interface BotNodeRequest {
+  /** Reserved controller-created reference, included in the signed body. Callers cannot supply it. */
+  applicationExecutionId?: string;
   text: string;
   taskId: string;
   workspaceFolderId: string;
@@ -304,6 +314,16 @@ export interface BotNodeClientOptions {
   env?: Readonly<Record<string, string | undefined>>;
   /** Injectable controller-only issuer; supplying it enables delegation enforcement. */
   delegationIssuer?: DelegationTokenIssuer;
+  /** Recorded issuer is required when a protected dispatch must be durably bound before sending. */
+  recordedDelegationIssuer?: RecordedDelegationTokenIssuer;
+  /** Optional isolated authority; production resolves the composition-installed shared port. */
+  remoteExecutionAuthority?: ApplicationRemoteExecutionAuthority;
+}
+
+interface RemoteDispatchAuthority {
+  authority?: ApplicationRemoteExecutionAuthority;
+  actor?: AuthorizationActor;
+  prepared: PreparedRemoteExecution | null;
 }
 
 /**
@@ -326,6 +346,8 @@ export class BotNodeClient {
   private readonly delegationIssuer: DelegationTokenIssuer | null;
   private readonly delegationTokenIssuerName: string | null;
   private readonly delegationAudience: string | null;
+  private readonly recordedDelegationIssuer: RecordedDelegationTokenIssuer | null;
+  private readonly remoteExecutionAuthority?: ApplicationRemoteExecutionAuthority;
 
   constructor(resolveEndpoint: BotEndpointResolver, timeoutMs?: number, options: BotNodeClientOptions = {}) {
     this.resolveEndpoint = resolveEndpoint;
@@ -337,11 +359,14 @@ export class BotNodeClient {
       ?? (process.env.BOT_NODE_DISPATCH_TIMEOUT_MS ? parseInt(process.env.BOT_NODE_DISPATCH_TIMEOUT_MS, 10) : undefined)
       ?? 3_900_000;
     const delegationEnv = options.env ?? process.env;
-    const delegationEnabled = options.delegationIssuer !== undefined
+    const delegationEnabled = options.delegationIssuer !== undefined || options.recordedDelegationIssuer !== undefined
       || hasDelegationSigningConfiguration(delegationEnv);
+    this.recordedDelegationIssuer = options.recordedDelegationIssuer
+      ?? (delegationEnabled && !options.delegationIssuer ? createRecordedDelegationTokenIssuer({ env: delegationEnv }) : null);
     this.delegationIssuer = delegationEnabled
-      ? options.delegationIssuer ?? createDelegationTokenIssuer({ env: delegationEnv })
+      ? options.delegationIssuer ?? { issue: grant => this.recordedDelegationIssuer!.issue(grant).token }
       : null;
+    this.remoteExecutionAuthority = options.remoteExecutionAuthority;
     this.delegationTokenIssuerName = delegationEnabled
       ? delegationIssuerFromEnvironment(delegationEnv)
       : null;
@@ -372,17 +397,31 @@ export class BotNodeClient {
     }
 
     const url = `${endpoint}/api/swarm-execute`;
+    // Capture the original grants before any protected facts are appended to the prompt.
+    const authorization = await this.prepareRemoteDispatch(agentId, request);
     const context = getSpecialistContextRegistry();
     const assertFresh = context?.requires(agentId) ? context.capture(agentId) : undefined;
     const enriched = context?.requires(agentId) ? { ...request,
       text: await context.append(agentId, request.text, resolveDelegatedPrincipal(request)) } : request;
-    const send = () => { assertFresh?.(); return this.sendAuthorized(agentId, url, enriched); };
+    const send = () => { assertFresh?.(); return this.sendAuthorized(agentId, url, enriched, authorization, assertFresh); };
     return context?.requires(agentId)
       ? runWithApplicationExecution({ kind: 'bots', operation: agentId, userSub: enriched.userSub }, send) : send();
   }
 
-  private async sendAuthorized(agentId: string, url: string, request: BotNodeRequest): Promise<BotNodeResponse> {
-    const delegated = this.buildDelegatedDispatch(agentId, request);
+  private async prepareRemoteDispatch(agentId: string, request: BotNodeRequest): Promise<RemoteDispatchAuthority> {
+    if (request.applicationExecutionId !== undefined) throw new Error('authorization_execution_reference_reserved');
+    const authority = this.remoteExecutionAuthority ?? getApplicationRemoteExecutionAuthority();
+    const actor = getApplicationAuthorizationActor();
+    const prepared = authority ? await authority.prepare(actor ?? { sub: '', issuer: '', isActive: false, isSwarmAdmin: false },
+      { agentId, taskId: request.taskId, workspaceId: request.workspaceFolderId }) : null;
+    if (prepared && !this.recordedDelegationIssuer) throw new Error('authorization_recorded_delegation_required');
+    return { authority, actor, prepared };
+  }
+
+  private async sendAuthorized(agentId: string, url: string, request: BotNodeRequest,
+    { authority, actor, prepared }: RemoteDispatchAuthority, assertFresh?: () => void): Promise<BotNodeResponse> {
+    const delegated = this.buildDelegatedDispatch(agentId, prepared ? { ...request, applicationExecutionId: prepared.executionId } : request);
+    if (prepared) await authority!.bind(prepared.executionId, delegated.receipt!, delegated.request as unknown as Record<string, unknown>);
     logger.info(
       { agentId, url, taskId: request.taskId, textLength: request.text.length },
       'Dispatching work to bot node',
@@ -391,8 +430,17 @@ export class BotNodeClient {
     // node:http, not fetch: undici's ~5-min headersTimeout would abort a dispatch to a bot
     // that legitimately runs up to the 60-min harness idle ceiling. this.timeoutMs is the only bound.
     try {
-      return await this.postExecution(url, agentId, request.taskId, delegated);
+      assertFresh?.();
+      const result = await this.postExecution(url, agentId, request.taskId, delegated);
+      delete result.applicationExecutionId;
+      if (prepared) {
+        await authority!.assertResultAccess(prepared.executionId, actor!);
+        await captureRemoteExecutionResult(authority!, prepared.executionId, actor!);
+        result.applicationExecutionId = prepared.executionId;
+      }
+      return result;
     } catch (error) {
+      if (prepared) throw new Error('authorization_remote_execution_failed');
       if (error instanceof Error && error.name === 'TimeoutError') {
         throw new Error(`Bot node execution timed out after ${this.timeoutMs}ms for agent ${agentId}`);
       }
@@ -439,7 +487,7 @@ export class BotNodeClient {
   private buildDelegatedDispatch(
     agentId: string,
     request: BotNodeRequest,
-  ): { request: BotNodeRequest; headers: Record<string, string> } {
+  ): { request: BotNodeRequest; headers: Record<string, string>; receipt?: ReturnType<RecordedDelegationTokenIssuer['issue']> } {
     if (!this.delegationIssuer || !this.delegationTokenIssuerName || !this.delegationAudience) {
       return { request, headers: {} };
     }
@@ -449,7 +497,7 @@ export class BotNodeClient {
       userSub: principal.sub,
       principalIssuer: principal.issuer,
     };
-    const token = this.delegationIssuer.issue({
+    const grant = {
       iss: this.delegationTokenIssuerName,
       aud: this.delegationAudience,
       sub: principal.sub,
@@ -460,8 +508,10 @@ export class BotNodeClient {
       path: SWARM_EXECUTE_DELEGATION_PATH,
       body_sha256: delegationRequestBodySha256(delegatedRequest),
       scope: [...SWARM_EXECUTE_DELEGATION_SCOPE],
-    });
-    return { request: delegatedRequest, headers: { [DELEGATION_HTTP_HEADER]: token } };
+    };
+    const receipt = this.recordedDelegationIssuer?.issue(grant);
+    const token = receipt?.token ?? this.delegationIssuer.issue(grant);
+    return { request: delegatedRequest, headers: { [DELEGATION_HTTP_HEADER]: token }, receipt };
   }
 
   /**

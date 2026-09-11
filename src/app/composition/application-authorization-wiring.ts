@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Compose durable policy, current principal resolution, execution guards and registered management tools.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Adopt existing local and verified provider accounts without conflating subjects or granting new operator roles.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Compose durable remote execution and scoped result authority behind schema readiness.
  */
 /** Assemble the control plane without granting it authority over business records. */
 import type { Request } from 'express';
@@ -23,6 +24,8 @@ import { LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issue
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { createChildLogger } from '@/shared/logger';
 import { configureApplicationExecutionPolicy } from '@/shared/application-authorization-execution';
+import { ensureRemoteExecutionSchema } from '@/features/application-remote-execution';
+import { createApplicationRemoteExecutionWiring } from './application-remote-execution-wiring';
 
 const logger = createChildLogger({ module: 'application-authorization-wiring' });
 function createActorPorts(ctx: AppContext, directory: ReturnType<typeof createApplicationPrincipalDirectory>) {
@@ -70,7 +73,7 @@ function createPolicyOptions(ctx: AppContext, appAccess: AppAccessService, getAp
  */
 export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess: AppAccessService,
   getApps: () => SwarmAppService, bootstrap: Promise<unknown>) {
-  const ready = bootstrap.then(() => Promise.all([ensureApplicationAuthorizationSchema(ctx.pool), ensurePrincipalDirectorySchema(ctx.pool)]));
+  const ready = bootstrap.then(() => Promise.all([ensureApplicationAuthorizationSchema(ctx.pool), ensurePrincipalDirectorySchema(ctx.pool), ensureRemoteExecutionSchema(ctx.pool)]));
   // Observe rejection immediately; each operation still waits and refuses on the same failure.
   void ready.catch(error => logger.error({ err: error }, 'Application authorization unavailable'));
   const durable = new PostgresAuthorizationStore(ctx.pool);
@@ -85,6 +88,7 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
   const { resolveActor } = actors;
   const service = new ApplicationAuthorizationService(store, createPolicyOptions(ctx, appAccess, getApps, actors));
   const runtime = new ApplicationAuthorizationRuntime(service, resolveActor, process.env, name => getApps().getApp(name));
+  const remoteExecution = createApplicationRemoteExecutionWiring(ctx.pool, ready, runtime, actors.refreshActor);
   const isProtected = async (app: string) => {
     await ready;
     return (await readApplicationExecutionOwnership(ctx.pool, { kind: 'tools', id: app, app, mode: applicationAuthorizationMode() }))?.protected
@@ -104,6 +108,6 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
   ctx.authorizationTool = authorizationTool;
   const registered = ready.then(() => registerAuthorizationTools(ctx.toolRegistryService, ctx.dynamicToolExecutorRegistry, service));
   void registered.catch(error => logger.error({ err: error }, 'Authorization tool registration failed'));
-  return { service, runtime, authorizationTool, isProtected, observePrincipal: directory.observePrincipal,
+  return { service, runtime, remoteExecution, refreshActor: actors.refreshActor, authorizationTool, isProtected, observePrincipal: directory.observePrincipal,
     resolveActor: (req: Request) => resolveActor(req), targetActor: actors.targetActor, ready: registered };
 }

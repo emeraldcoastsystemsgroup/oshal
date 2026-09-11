@@ -13,8 +13,10 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. The unforced provider order leads with codex (was cline -> claude -> codex) and codex's auto-failover chain drops claude-code (now ['cline-cli']). Naming claude-code in OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER still works — that is a deliberate operator choice, not a default.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Honor DB_MAX_CONNECTIONS for the bot-node Postgres pool and stamp a per-bot application_name, making the existing fleet knob effective for managed-database connection budgets.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Admit verified hosted protected execution and keep only cost bookkeeping in explicit system context.
  */
-import { assertBotNodeApplicationTransport } from './bot-node-application-authorization';
+import { createProtectedBotExecutionBoundary } from './bot-node-protected-execution';
+import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 
 /**
  * Shared bot-node runtime bootstrap.
@@ -120,14 +122,14 @@ export async function createBotNodeRuntime(): Promise<BotNodeRuntime> {
   } = await buildLlmStack();
 
   const executionHandler = createBotNodeExecutionHandler({
-    authorizeApplicationExecution: requestedAgentId => assertBotNodeApplicationTransport(pool, agentId, requestedAgentId),
+    runApplicationExecution: createProtectedBotExecutionBoundary(pool, agentId),
     anyBotTaskController: taskController,
     agentProfileRepository,
     personaLayerStore,
     swarmMemoryService,
     handoverManager: new RALFHandoverManager(),
     resolvePromptAuthorization: createPromptAuthorizationResolver(agentToolRepository),
-    recordCost: (event: Parameters<typeof costTrackingService.recordCost>[0]) => costTrackingService.recordCost(event),
+    recordCost: (event: Parameters<typeof costTrackingService.recordCost>[0]) => runWithSystemIdentity(() => costTrackingService.recordCost(event)),
     ticketService,
     // ADR-034 gap-b push-on-dispatch (bot half): the live provider seam so the handler can
     // reconcile a carried authoritative config against the active provider before executing.

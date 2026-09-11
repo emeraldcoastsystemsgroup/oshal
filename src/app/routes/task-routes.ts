@@ -7,12 +7,16 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added agentId task-list filter support for bot-scoped conversation history queries
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added task-scoped checkpoint create/list routes for non-swarm memory layers
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added task telemetry upsert endpoint so localhost cockpit validation can persist per-agent usage without direct database access
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Require current exact-principal protected result authority before task reads or mutations and strip caller-selected execution lineage.
  */
 
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { TaskUsageSummarySchema, type StoredTask, type TaskUsageSummary } from '@/shared/types';
-import { canAccessResource, getCaller, isOperator } from '@/shared/middleware/authz';
+import { getCaller, isOperator } from '@/shared/middleware/authz';
+import { stripProtectedResultMetadata } from '@/shared/protected-results';
+import { callerCanReadStoredTaskResult, callerCanReadTaskResult } from './protected-result-access';
+import { bindOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import type { AppContext } from '../composition-root';
 
 const logger = createChildLogger({ module: 'task-routes' });
@@ -57,7 +61,7 @@ function handleCreateTask(ctx: AppContext) {
         agentId: req.body.agentId,
         providerId: req.body.providerId,
         ownerSub: getCaller(req).sub ?? undefined,
-        metadata: req.body.metadata ?? {},
+        metadata: bindOwnerPrincipalIssuer(stripProtectedResultMetadata(req.body.metadata), getCaller(req).sub),
       });
 
       logger.info({ taskId: task.taskId, durationMs: Date.now() - startTime }, 'Task created');
@@ -84,12 +88,13 @@ function handleListTasks(ctx: AppContext) {
       const agentId = req.query.agentId as string | undefined;
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
       const ownerSub = resolveTaskListOwnerSub(req);
-      const tasks = await ctx.taskStore.list({
+      const candidates = await ctx.taskStore.list({
         status: status as any,
         agentId: typeof agentId === 'string' && agentId.trim().length > 0 ? agentId.trim() : undefined,
         ownerSub,
-        limit,
       });
+      const visible = await Promise.all(candidates.map(task => callerCanReadTaskResult(ctx, req, task)));
+      const tasks = candidates.filter((_task, index) => visible[index]).slice(0, limit);
 
       logger.info({ count: tasks.length, durationMs: Date.now() - startTime }, 'Tasks listed');
       res.json({ tasks, count: tasks.length });
@@ -116,7 +121,7 @@ function handleGetTask(ctx: AppContext) {
         res.status(404).json({ error: 'Task not found' });
         return;
       }
-      if (!canAccessTask(req, task)) {
+      if (!await canAccessTask(ctx, req, task)) {
         res.status(404).json({ error: 'Task not found' });
         return;
       }
@@ -144,7 +149,7 @@ function handleRecordTaskUsage(ctx: AppContext) {
         res.status(404).json({ error: 'Task not found' });
         return;
       }
-      if (!canAccessTask(req, existing)) {
+      if (!await canAccessTask(ctx, req, existing)) {
         res.status(404).json({ error: 'Task not found' });
         return;
       }
@@ -157,6 +162,7 @@ function handleRecordTaskUsage(ctx: AppContext) {
 
       await ctx.taskStore.recordUsage(taskId, mutation.usageSummary);
       const updatedTask = await applyTaskTelemetryIdentity(ctx, existing, taskId, mutation.agentId, mutation.providerId);
+      if (!await recheckTaskResponse(ctx, req, res, taskId)) return;
       res.json({ success: true, task: updatedTask });
     } catch (error) {
       logger.error({ err: error, taskId }, 'Failed to record task telemetry');
@@ -177,7 +183,7 @@ function handleCreateCheckpoint(ctx: AppContext) {
 
     try {
       const task = await ctx.taskStore.get(taskId);
-      if (!task || !canAccessTask(req, task)) {
+      if (!task || !await canAccessTask(ctx, req, task)) {
         res.status(404).json({ error: 'Task not found' });
         return;
       }
@@ -187,6 +193,7 @@ function handleCreateCheckpoint(ctx: AppContext) {
         trigger: 'manual',
         metadata: req.body?.metadata ?? {},
       });
+      if (!await recheckTaskResponse(ctx, req, res, taskId)) return;
       res.status(201).json({ checkpoint });
     } catch (error) {
       logger.error({ err: error, taskId }, 'Failed to create checkpoint');
@@ -207,11 +214,12 @@ function handleListCheckpoints(ctx: AppContext) {
 
     try {
       const task = await ctx.taskStore.get(taskId);
-      if (!task || !canAccessTask(req, task)) {
+      if (!task || !await canAccessTask(ctx, req, task)) {
         res.status(404).json({ error: 'Task not found' });
         return;
       }
       const checkpoints = await ctx.memoryService.listCheckpoints(taskId);
+      if (!await recheckTaskResponse(ctx, req, res, taskId)) return;
       res.json({ checkpoints, count: checkpoints.length });
     } catch (error) {
       logger.error({ err: error, taskId }, 'Failed to list checkpoints');
@@ -232,7 +240,7 @@ function handleDeleteTask(ctx: AppContext) {
 
     try {
       const task = await ctx.taskStore.get(taskId);
-      if (!task || !canAccessTask(req, task)) {
+      if (!task || !await canAccessTask(ctx, req, task)) {
         res.status(404).json({ error: 'Task not found' });
         return;
       }
@@ -259,11 +267,12 @@ function handleGetWorkspaceStatus(ctx: AppContext) {
 
     try {
       const task = await ctx.taskStore.get(taskId);
-      if (!task || !canAccessTask(req, task)) {
+      if (!task || !await canAccessTask(ctx, req, task)) {
         res.status(404).json({ error: 'Task not found' });
         return;
       }
       const status = await ctx.workspaceBootstrapService.getTaskWorkspaceStatus(taskId);
+      if (!await recheckTaskResponse(ctx, req, res, taskId)) return;
       res.json({ success: true, taskId, status });
     } catch (error) {
       logger.error({ err: error, taskId }, 'Failed to get workspace status');
@@ -284,7 +293,7 @@ function handleBootstrapWorkspace(ctx: AppContext) {
 
     try {
       const task = await ctx.taskStore.get(taskId);
-      if (!task || !canAccessTask(req, task)) {
+      if (!task || !await canAccessTask(ctx, req, task)) {
         res.status(404).json({ error: 'Task not found' });
         return;
       }
@@ -328,6 +337,7 @@ function handleBootstrapWorkspace(ctx: AppContext) {
         },
       });
 
+      if (!await recheckTaskResponse(ctx, req, res, taskId)) return;
       res.json({ success: true, taskId, status, task: nextTask });
     } catch (error) {
       logger.error({ err: error, taskId }, 'Failed to bootstrap workspace');
@@ -343,8 +353,13 @@ function resolveTaskListOwnerSub(req: Request): string | undefined {
   return getCaller(req).sub ?? '__missing-caller__';
 }
 
-function canAccessTask(req: Request, task: StoredTask): boolean {
-  return canAccessResource(req, task.ownerSub ?? null);
+function canAccessTask(ctx: AppContext, req: Request, task: StoredTask): Promise<boolean> {
+  return callerCanReadTaskResult(ctx, req, task);
+}
+
+async function recheckTaskResponse(ctx: AppContext, req: Request, res: Response, taskId: string): Promise<boolean> {
+  if (await callerCanReadStoredTaskResult(ctx, req, taskId)) return true;
+  res.status(404).json({ error: 'Task not found' }); return false;
 }
 
 function inferRepoProvider(repoUrl?: string): string {

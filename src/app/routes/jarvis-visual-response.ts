@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial authenticated Jarvis image route and non-blocking visual integration adapter.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve SEC-01 verified delegation claims before the legacy service-sub compatibility path on owner-scoped visual reads.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Recheck protected source authorization after loading a persisted visual and before sending its bytes.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -51,9 +52,11 @@ export async function createOptionalJarvisVisual(
  * The parent `/api/jarvis` mount admits ordinary user auth or a durable route delegation; this
  * router additionally binds every read to that verified subject so artifact ids cannot cross users.
  * @param service - Visual artifact service shared with the `/ask` integration.
+ * @param canRead - Current source authorization injected by the owning Jarvis router.
  * @returns Express router mounted at `/api/jarvis/visuals`.
  */
-export function createJarvisVisualRoutes(service: VisualResponseService): Router {
+export function createJarvisVisualRoutes(service: VisualResponseService,
+  canRead?: (req: Request, artifact: VisualResponseArtifact) => Promise<boolean>): Router {
   const router = Router();
   router.get('/:artifactId', async (req: Request, res: Response) => {
     const startedAt = Date.now();
@@ -64,7 +67,7 @@ export function createJarvisVisualRoutes(service: VisualResponseService): Router
     if (!UUID_PATTERN.test(artifactId)) { res.status(404).json({ error: 'visual_not_found' }); return; }
     try {
       const artifact = await service.getArtifact(userSub, artifactId);
-      if (!artifact) { res.status(404).json({ error: 'visual_not_found' }); return; }
+      if (!artifact || canRead && !await canRead(req, artifact.metadata)) { res.status(404).json({ error: 'visual_not_found' }); return; }
       res.setHeader('Content-Type', `${artifact.metadata.mimeType}; charset=utf-8`);
       res.setHeader('Content-Length', String(artifact.content.byteLength));
       res.setHeader('Content-Disposition', `inline; filename="jarvis-visual-${artifactId}.svg"`);

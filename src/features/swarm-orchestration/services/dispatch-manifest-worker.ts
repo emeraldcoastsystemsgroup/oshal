@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Restore protected queued authority and persist exact-parent result lineage without permitting a localhost fallback.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded multi-bid specialist fan-out with per-owner credentials, one durable aggregate, truthful routing metadata, partial-result handling, and safe single-winner fallback.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Persist dedicated bot-node completions (including out-of-band provider records) into the shared conversation stores before marking manifest-worker tickets complete; retry writes are deduplicated and localhost dispatch remains single-write.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Extracted dispatchManifestWorkerTicket from queue-manager-service.ts (audit P0 second cut)
@@ -36,6 +37,8 @@ import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middle
 import { isSuperAdminSub } from '@/shared/middleware/superadmin';
 import { resolveSkillProfileByTicketType, composeSkillProfilePrompt } from '@/shared/skill-profiles';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
+import { executeManifestApplicationBot } from './manifest-worker-application-execution';
+import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
 import {
   parseTrustedProviderIntent,
   trustedProviderAgentId,
@@ -769,6 +772,9 @@ export async function dispatchManifestWorkerTicket(
   const text = composeSkillProfilePrompt(baseText, 'summarize', summarizeProfile);
 
   const sendViaLocalhost = async (): Promise<ManifestWorkerDispatchResult> => {
+    if (await isApplicationExecutionProtected({ kind: 'bots', operation: workerAgentId })) {
+      throw new Error('authorization_protected_queue_requires_signed_remote_execution');
+    }
     // Forward the ticket owner so the worker's user-scoped tools (trading, career, gmail) act for
     // the right user instead of failing 401 not_authenticated. Sent over http.request (no default
     // timeout) — see postSendMessageNoTimeout: a full draft can exceed undici's 5-min headersTimeout.
@@ -821,7 +827,7 @@ export async function dispatchManifestWorkerTicket(
           // ADR-034 gap-b: stamp this owner's authoritative config so the bot self-corrects
           // a divergent runtime before executing (default-on; flag-off is compatibility only).
           const ownerConfigFields = await pushOnDispatchFields(deps.runtimeParamsResolver, owner.agentId);
-          const result = await deps.botNodeClient!.execute(owner.agentId, {
+          const result = await executeManifestApplicationBot(deps.botNodeClient!, ticket, owner.agentId, {
             text: fanOutPrompt(text, owner, fanOutOwners),
             taskId: ownerWorkspaceId,
             workspaceFolderId: ownerWorkspaceId,
@@ -830,7 +836,7 @@ export async function dispatchManifestWorkerTicket(
             userSub: ticket.ownerSub ?? undefined,
             principalIssuer: readOwnerPrincipalIssuer(ticket.metadata) ?? undefined,
             ...ownerConfigFields,
-          });
+          }, deps.taskStore);
           return {
             owner,
             result,
@@ -909,7 +915,7 @@ export async function dispatchManifestWorkerTicket(
         // drifted bot self-corrects before executing (default-on; flag-off is compatibility only).
         const configFields = await pushOnDispatchFields(deps.runtimeParamsResolver, workerAgentId);
         authoritativeDispatch = configFields.providerConfigRequired === true;
-        const result = await deps.botNodeClient.execute(workerAgentId, {
+        const result = await executeManifestApplicationBot(deps.botNodeClient, ticket, workerAgentId, {
           text,
           taskId: ticketId,
           workspaceFolderId: ticketId,
@@ -920,7 +926,7 @@ export async function dispatchManifestWorkerTicket(
           ...(providerIntent && creds && Object.keys(creds).length > 0 ? { creds } : {}),
           ...(providerIntent ? { providerIntent } : {}),
           ...configFields,
-        });
+        }, deps.taskStore);
         botNodeResult = result;
         dispatchResult = {
           success: result.success === true,

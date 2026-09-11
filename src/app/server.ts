@@ -4,6 +4,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 171 | maintainer@emeraldcoastsystemsgroup.com | Mount machine-authenticated remote application permit checks and immutable queued-principal installation wiring.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — Express server entry point
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added static file serving for UI assets
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed conflicting manual auth routes and consolidated on express-openid-connect
@@ -322,6 +323,8 @@ import { RagService } from '@/features/rag';
 import { UIProfileService } from '@/features/ui-profile';
 import { AppAccessService, SwarmAppService, SwarmAppRepository } from '@/features/swarm-apps';
 import { createApplicationAuthorizationWiring } from './composition/application-authorization-wiring';
+import { createQueuedApplicationPrincipalWiring } from './composition/queued-application-principal-wiring';
+import { createApplicationRemoteExecutionRoutes } from './routes/application-remote-execution-routes';
 import { resolveManifestBotRuntimeDefaults } from './composition/manifest-bot-runtime-defaults';
 import { SpecialistContextRegistry, configureSpecialistContextRegistry } from '@/shared/specialist-context';
 import { createApplicationAuthorizationGate } from './middleware/application-authorization-gate';
@@ -1083,6 +1086,11 @@ function createApp(): express.Application {
   const appAccessService = new AppAccessService(ctx.pool);
   const applicationAuthorization = createApplicationAuthorizationWiring(ctx, appAccessService,
     () => swarmAppService, waitForBootstrapComplete());
+  createQueuedApplicationPrincipalWiring(ctx, applicationAuthorization.ready);
+  app.use(createApplicationRemoteExecutionRoutes(applicationAuthorization.remoteExecution, (req, res, next) => {
+    if (!hasValidServiceSecret(req)) { res.status(401).json({ error: 'remote_execution_machine_auth_required' }); return; }
+    next();
+  }));
   app.use(applicationAuthorization.observePrincipal);
   app.use(createApplicationActorContext(applicationAuthorization.resolveActor));
   const specialistContext = new SpecialistContextRegistry(applicationAuthorization.runtime);

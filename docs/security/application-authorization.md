@@ -85,13 +85,16 @@ only the read companion. Missing server-created actor context fails closed.
 Controller bot, inline task, tool, and deterministic schedule boundaries recheck package ownership and
 named operations. A service secret or saved subject is not a user principal. Work without the required
 verified actor is refused. Direct remote bot ingress also checks durable protected-app ownership before
-provider execution. **Protected remote package bots are unavailable in this initial release** until
-signed delegation can revalidate current user rights at the worker. Persisted ownership remembers old
-agent IDs across removal/downgrade so those nodes cannot reopen through a legacy path.
+provider execution. [Protected remote application execution](remote-application-execution.md) supports
+direct hosted reasoning without tools using signed delegation and fresh controller permits. It binds
+the original issuer/subject, installation generation and effective grant set through result delivery.
+Protected agentic, CLI, provider-intent and raw mesh/batch paths remain refused. Persisted ownership
+remembers old agent IDs across removal/downgrade so those nodes cannot reopen through a legacy path.
 
-Artifact discovery filters inaccessible apps. Complete artifact redemption, cached result, streaming,
-queue retry, and cross-process revocation protocols remain in AUTH-05/06. Do not treat discovery as a
-capability or use this foundation to claim full business-data or ERP isolation.
+Artifact discovery filters inaccessible apps. Protected remote results now recheck current rights at
+task/message history, ticket, Jarvis cache and per-event streaming boundaries; queued tickets capture
+immutable initiator provenance. Complete artifact redemption and per-operation agentic/queue support
+remain in AUTH-05/06. Discovery alone is not a capability or full business-data/ERP isolation.
 
 ## Installation and verification
 
@@ -113,7 +116,8 @@ election. [Users administration](local-account-administration.md) supports local
 changes; root disable and administrative credential-reset guards remain transactional.
 
 Migrations 127–129 add policy state/audit/app posture, installer proof and verified principal storage;
-migration 131 indexes scoped audit reads. Normal schema
+migration 131 indexes scoped audit reads; migrations 132–133 persist remote execution authority and
+queued initiator provenance. Normal schema
 initialization supports installation. No deployed accounts or app grants are changed by the source
 implementation itself.
 

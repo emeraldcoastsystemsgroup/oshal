@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Expose protected target posture for controller-selected transport without granting execution authority.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  */
 /** Narrow composition-injected boundary for controller tool/bot/job execution. */
@@ -25,6 +26,17 @@ export interface ApplicationExecutionInput {
 let policy: ApplicationExecutionPolicy | undefined;
 /** The application composition root owns this port; features never import the runtime implementation. */
 export function configureApplicationExecutionPolicy(value: ApplicationExecutionPolicy | undefined): void { policy = value; }
+/**
+ * @description Resolve whether a code-selected execution needs the protected application protocol.
+ * @param input Controller-selected target; this posture check grants no execution authority.
+ * @returns Whether the current installed owner is protected; lookup failures propagate.
+ */
+export async function isApplicationExecutionProtected(input: ApplicationExecutionInput): Promise<boolean> {
+  const current = policy;
+  if (!current) return false;
+  const app = input.app ?? (input.kind === 'bots' || input.kind === 'tools' ? await current.owner(input.kind, input.operation) : undefined);
+  return !!app && await current.protectedApp(app);
+}
 export class ApplicationExecutionDeniedError extends Error {
   readonly status = 403;
   readonly statusCode = 403;

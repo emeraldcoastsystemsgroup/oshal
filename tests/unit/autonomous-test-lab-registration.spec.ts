@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Include protected remote authorization in exact local-runner and Lab registration parity.
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Keep autonomous suite registration aligned with runnable local commands and prevent browser claims of host test execution.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -21,6 +22,7 @@ describe('autonomous Test Lab registration', () => {
       for (const path of paths) expect(existsSync(resolve(path)), path).toBe(true);
       const commands: Record<string, string> = {
         'first-run-provisioning': scripts['test:provisioning'],
+        'protected-remote-application-execution': scripts['test:remote-authorization'],
         'manifest-bot-initialization': scripts['test:bot-initialization'],
         'specialist-application-context': scripts['test:specialist-context'],
         'jarvis-briefing-preferences': scripts['test:briefings'],
