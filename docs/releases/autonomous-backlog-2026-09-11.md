@@ -22,6 +22,8 @@ here as each lane is verified. Pending outcomes remain pending until proved.
 
 - Core planning checkpoint: `fc49d42d`; initial implementation checkpoint: `15dcbbd7`, pushed to
   PR431's branch. The pre-push check typechecked the committed tree successfully.
+- Final implementation checkpoint: `f12da8b70af312135bf03ab773b39aa67970a3bd`, including the
+  briefing pool/lifecycle regression fixes and all new core suite registrations.
 - Public pilots: `dc4c0dc` on `feat/package-test-catalog-pilots`; Hello 1.2.0 and Portrait 1.12.0.
   Install only after core provides the `test-catalog` capability.
 - Public briefing adoption: `571838a`; Kalshi 1.5.0 declares `jarvis-briefings` and `test-catalog`.
@@ -105,8 +107,28 @@ bounded-function conventions. GitHub Actions were not added or invoked.
 References: [specialist facts](../apps/specialist-context.md),
 [briefing preferences](../apps/jarvis-briefings.md), [audit history](../security/authorization-audit.md).
 
+## Committed-source compatibility
+
+The final gate passed against core `f12da8b70af312135bf03ab773b39aa67970a3bd` and public store
+`571838aff8a2d874c1edc77b661aba78fb4d6291`: **388 sources across 52 packages**, zero stale modules.
+The same run proved that an invented ambient framework export is rejected by the real compiler
+with TS2305. Both inputs were exported from Git; ignored files and working-tree edits were excluded.
+
+```text
+node scripts/check-store-compatibility.mjs --core C:/Projects/oshal --core-ref f12da8b7 --store C:/Projects/oshal-applications --store-ref 571838a --dependencies C:/Projects/oshal --reports <OS-temp>/oshal-autonomous-compatibility-20260911 --prove-rejection
+```
+
+The retained report is `oshal-autonomous-compatibility-20260911/run-J5pk91/result.json` beneath OS
+temporary storage, beside compiler and rejection logs. The publication gate and pre-push exported
+HEAD typecheck also passed. Implementation commits are pushed; the final evidence update changes
+documentation only.
+
 ## Remaining rollout evidence
 
 All ten selected implementation outcomes have local source proof. Required independent core PR review, installed deployment
 proof, real provider/model runs and a complete unattended green nightly are not established by
 the isolated suites. The previous full-nightly failures remain recorded in the isolated-nightly note.
+Core [PR431](https://github.com/emeraldcoastsystemsgroup/oshal/pull/431) still requires independent
+review before deployment. Public [PR185](https://github.com/emeraldcoastsystemsgroup/oshal-applications/pull/185)
+and the private consumer PR depend on the core capabilities. No live Lab run, account migration,
+application-data action or deployment is claimed by these local results.
