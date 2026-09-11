@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Provide isolated real policy and HTTP fixtures for access administration.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow the actual compiled page adapter to exercise installed asset paths under the same authority checks.
  */
 /** Isolated real management service and disposable loopback HTTP server. No operator database. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -23,7 +24,7 @@ export const CATALOG: AuthorizationCatalog = {
   bindings: { http: [{ id: 'read-records', method: 'GET', path: '/records', allOf: ['records.read'] }] },
 };
 
-export async function createAuthorizationFixture() {
+export async function createAuthorizationFixture(pageFactory = createAuthorizationPageRoutes) {
   let identityFailure: Error | null = null;
   let directoryGroups = [{ issuer: ISSUER, tenantId: 'tenant-one', id: 'engineering', label: 'Engineering' }];
   const actors: Record<string, AuthorizationActor> = {
@@ -55,7 +56,7 @@ export async function createAuthorizationFixture() {
   }, authorizationTool: new AuthorizationToolRuntime(service) };
   const app = express();
   app.use('/api/authorization', createAuthorizationRoutes(service, options));
-  app.use('/access', createAuthorizationPageRoutes(service, options));
+  app.use('/access', pageFactory(service, options));
   app.use('/shared', express.static(resolve('src/shared')));
   app.use('/cockpit/css/themes', express.static(resolve('src/pages/cockpit/css/themes')));
   const server = app.listen(0, '127.0.0.1');

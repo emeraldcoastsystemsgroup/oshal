@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify authorization HTTP and tool parity and actual Test Lab registration.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep explicit live browser acceptance separate from isolated runner parity and honest about pending execution.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove compiled Access HTML delivery and file-error redaction with the real policy and HTTP adapters.
  */
 /** Real HTTP authorization adapter proofs using the actual policy service and isolated repository. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,7 @@ import { AUTHORIZATION_SCENARIOS } from '@/app/routes/test-lab-authorization-sce
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { compileAuthorizationPage } from '../fixtures/compiled-authorization-page';
 
 vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 
@@ -21,6 +23,28 @@ beforeEach(async () => { fixture = await createAuthorizationFixture(); });
 afterEach(async () => { await fixture?.close(); vi.unstubAllEnvs(); });
 
 describe('Access Administration HTTP authority', () => {
+  it('serves authorized HTML from the installed source layout when the route runs under dist', async () => {
+    const compiled = compileAuthorizationPage();
+    try {
+      expect(existsSync(resolve(compiled.root, 'dist/pages/access/index.html'))).toBe(false);
+      await fixture.close(); fixture = await createAuthorizationFixture(compiled.factory);
+      const page = await fetch(fixture.base + '/access/', { headers: { cookie: 'session=admin' } });
+      expect(page.status).toBe(200); expect(page.headers.get('cache-control')).toContain('no-store');
+      expect(await page.text()).toContain('id="administration"');
+      expect((await fetch(fixture.base + '/access/')).status).toBe(401);
+      expect((await fetch(fixture.base + '/access/', { headers: { cookie: 'session=alice' } })).status).toBe(403);
+    } finally { compiled.close(); }
+  });
+
+  it('returns a bounded unavailable response when the installed page is missing', async () => {
+    const currentDirectory = vi.spyOn(process, 'cwd').mockReturnValue(resolve('temp/missing-access-installation'));
+    try {
+      const page = await fetch(fixture.base + '/access/', { headers: { cookie: 'session=admin' } });
+      expect(page.status).toBe(500);
+      expect(await page.json()).toEqual({ error: 'authorization_unavailable' });
+    } finally { currentDirectory.mockRestore(); }
+  });
+
   it('requires authentication and management scope while keeping own access available', async () => {
     expect((await fixture.call('/catalog', undefined, null)).status).toBe(401);
     expect((await fixture.call('/catalog', undefined, 'alice')).status).toBe(403);

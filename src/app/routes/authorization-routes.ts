@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add authenticated Access Administration adapters over the shared policy service and its strict tool schemas.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Serve the installed source asset from compiled runtimes and redact file delivery failures.
  */
 import path from 'node:path';
 import { Router, json, type ErrorRequestHandler, type Request, type RequestHandler, type Response } from 'express';
@@ -103,7 +104,9 @@ export function createAuthorizationPageRoutes(service: ApplicationAuthorizationM
     res.set('Cache-Control', 'private, no-store');
     try {
       await service.catalog(await options.resolveActor(req));
-      res.sendFile(path.resolve(__dirname, '../../pages/access/index.html'));
+      res.sendFile(path.resolve(process.cwd(), 'src/pages/access/index.html'), error => {
+        if (error && !res.headersSent) fail(res, error);
+      });
     } catch (error) { fail(res, error); }
   });
   return router;
