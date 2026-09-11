@@ -17,6 +17,13 @@
         "section": "home",
         "toolUi": { "iframeUrl": "/api/jarvis/", "sidebarLabel": "Jarvis" }
       },
+      {
+        "id": "tool-switchboard-today",
+        "icon": "codicon codicon-inbox",
+        "label": "Switchboard",
+        "section": "home",
+        "toolUi": { "iframeUrl": "/api/switchboard/today", "sidebarLabel": "Switchboard" }
+      },
 
       {
         "id": "tool-lm-dashboard",
@@ -192,6 +199,14 @@
         "toolUi": { "iframeUrl": "/api/sat/app", "sidebarLabel": "Sat Ops" }
       },
       {
+        "id": "tool-aero-lab",
+        "icon": "codicon codicon-symbol-structure",
+        "label": "Aero Lab",
+        "section": "top",
+        "group": "Engineering",
+        "toolUi": { "iframeUrl": "/api/aero-lab/app", "sidebarLabel": "Aero Lab" }
+      },
+      {
         "id": "tool-camera-ops",
         "icon": "codicon codicon-device-camera",
         "label": "Camera Ops",
@@ -215,6 +230,14 @@
         "section": "top",
         "group": "Money",
         "toolUi": { "iframeUrl": "/api/kalshi/", "sidebarLabel": "Kalshi Edge" }
+      },
+      {
+        "id": "tool-payroll-home",
+        "icon": "codicon codicon-organization",
+        "label": "Payroll",
+        "section": "top",
+        "group": "HR",
+        "toolUi": { "iframeUrl": "/api/payroll/", "sidebarLabel": "Payroll" }
       },
 
       {
