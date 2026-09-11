@@ -94,7 +94,12 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
 }, {
   id: 'authorized-package-tools', title: 'Authorized application tools', group: 'tool',
   description: 'Declared handlers register atomically and execute with current caller permissions. Isolated fixtures verify lifecycle, tenant selection, revocation and approval boundaries.',
-  regressionTests: [{ level: 'integration', path: 'tests/unit/package-tools.spec.ts' }],
+  regressionTests: [
+    { level: 'integration', path: 'tests/unit/package-tools.spec.ts' },
+    { level: 'integration', path: 'tests/unit/jarvis-package-tools.spec.ts' },
+    { level: 'integration', path: 'tests/unit/jarvis-package-tools-chat.spec.ts' },
+    { level: 'browser', path: 'tests/unit/jarvis-package-tools-browser.spec.ts' },
+  ],
   steps: [{ id: 'runner', app: 'test-lab', label: 'Package tool fixtures', run: async () => ({
     app: 'test-lab', label: 'Package tool fixtures', state: 'degraded',
     detail: 'Run npm run test:package-tools locally. The browser does not execute host commands or change application data. No tests ran from this step.',

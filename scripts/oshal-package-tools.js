@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Validate explicit in-process package tools through one CLI/runtime contract.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Preserve the manifest approval ceiling for authenticated Jarvis proposals.
  */
 'use strict';
 /** @description Validate fixed package executors without granting any runtime authority.
@@ -22,7 +23,7 @@ function validatePackageTools(manifest) {
       || ['constructor', 'prototype', '__proto__'].includes(tool.name) || tool.name.startsWith('swarm_')) throw new Error('Invalid or reserved package tool name');
     if (!['auto', 'ask', 'off'].includes(tool.defaultAuthMode)) throw new Error('Package tool must declare its defaultAuthMode');
     if (declarations.some(item => item.name === tool.name)) throw new Error('Duplicate package tool declaration');
-    declarations.push({ name: tool.name, enabled: tool.enabled !== false && tool.defaultAuthMode !== 'off' });
+    declarations.push({ name: tool.name, enabled: tool.enabled !== false && tool.defaultAuthMode !== 'off', authMode: tool.defaultAuthMode });
   }
   return declarations;
 }

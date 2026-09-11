@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Bind remote authorization to one fully activated executable policy generation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Revalidate artifact source permissions by registered HTTP mount, retaining inactive ownership.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Validate declared package tools before activation and fence retired handler domain checks.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Identify fully read-only named bindings for automatic Jarvis proposals.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -99,6 +100,14 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
    */
   packageToolDeclarations(appName: string): PackageToolDeclaration[] {
     return (this.registrations.get(appName)?.packageTools ?? []).map(item => ({ ...item }));
+  }
+  /** @description Constrain automatic Jarvis proposals to tools whose complete named binding is read-only.
+   * @param appName Installed owner. @param name Exact tool binding. @returns True only when every required permission has read effect.
+   */
+  packageToolReadOnly(appName: string, name: string): boolean {
+    const catalog = this.registrations.get(appName)?.registration.catalog;
+    const binding = catalog?.bindings.tools?.find(item => item.id === name);
+    return Boolean(binding?.allOf.length && binding.allOf.every(permission => catalog?.permissions[permission]?.effect === 'read'));
   }
   /** @description Bind remote work to one fully activated executable policy generation.
    * @param appName Controller-resolved application. @returns Live generation or unavailable null.

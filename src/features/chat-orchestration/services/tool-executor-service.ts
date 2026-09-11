@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch the authorization family through a fixed typed port and trusted invocation context.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Execute activation-scoped package handlers with exact caller and selected tenant authority.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Keep package input and domain error payloads off the legacy conversation event stream.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { executePackageTool, packageToolTenant, requiresPackageTool } from '@/shared/package-tools';
@@ -159,7 +160,7 @@ export class ToolExecutorService {
     const tenantId = packageTool ? packageToolTenant(toolInput) : undefined;
     return runWithApplicationExecution({ kind: 'tools', operation: toolName, userSub, ...(tenantId ? { tenantId } : {}) }, async () => {
     const startedAt = Date.now();
-    this.streamManager.broadcastToolExecution(taskId, { name: toolName, input: toolInput }, 'started');
+    this.streamManager.broadcastToolExecution(taskId, { name: toolName, ...(packageTool ? {} : { input: toolInput }) }, 'started');
 
     try {
       const result = isAuthorizationTool(toolName)
@@ -175,7 +176,7 @@ export class ToolExecutorService {
       if (error instanceof FollowupQuestionSignal) {
         this.streamManager.broadcastToolExecution(
           taskId,
-          { name: toolName, durationMs: Date.now() - startedAt, question: error.question },
+          { name: toolName, durationMs: Date.now() - startedAt, ...(packageTool ? {} : { question: error.question }) },
           'waiting_for_input',
         );
         throw error;
@@ -183,7 +184,7 @@ export class ToolExecutorService {
       const errMsg = error instanceof Error ? error.message : String(error);
       this.streamManager.broadcastToolExecution(
         taskId,
-        { name: toolName, durationMs: Date.now() - startedAt, error: errMsg },
+        { name: toolName, durationMs: Date.now() - startedAt, error: packageTool ? 'Package tool execution failed' : errMsg },
         'failed',
       );
       throw error;

@@ -13,6 +13,7 @@
  *
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Load strict versioned YAML semantic routing metadata, retain internal role ceilings, rank contextual tools, and expose browser artifact guidance.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add a closed typed authorization feed adapter with caller-scoped operations and targets.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Advertise current-user package proposals through the authenticated panel with explicit approval and workspace metadata.
  *
  * @module jarvis-tool-catalog
  */
@@ -23,6 +24,7 @@ import yaml from 'js-yaml';
 import { roleCanAccess, isSwarmAccessRole, type SwarmAccessRole } from '@/shared/types';
 import type { HandoffDirective } from './jarvis-directives';
 import { AUTHORIZATION_TOOL, AUTHORIZATION_READ_TOOL, type AuthorizationToolDiscovery } from '@/shared/security/authorization-tool-contract';
+import type { JarvisPackageToolDiscovery } from './jarvis-package-tool-service';
 
 /** Semantic metadata helps selection; it grants no execution authority. */
 interface SemanticMetadata { keywords: string[]; useWhen: string; context: string }
@@ -125,7 +127,7 @@ function loadToolCatalog(): ToolCatalog {
  * @param context - Optional request text and current surface; ranking hints only, never authority.
  * @returns Model tool feed with semantic metadata and existing CLI usage.
  */
-export function buildToolsBlock(context: { message?: string; surface?: string; authorizationTools?: AuthorizationToolDiscovery[] } = {}): string {
+export function buildToolsBlock(context: { message?: string; surface?: string; authorizationTools?: AuthorizationToolDiscovery[]; packageTools?: JarvisPackageToolDiscovery[] } = {}): string {
   const catalog = loadToolCatalog();
   const scriptsPath = existsSync('/app/scripts') ? '/app/scripts' : resolve(__dirname, '../../../scripts');
   const mounted = new Set(readdirSync(scriptsPath).filter((file) => /^oshal-.*\.js$/.test(file)));
@@ -143,7 +145,18 @@ export function buildToolsBlock(context: { message?: string; surface?: string; a
     'Ask which tool or account the user intends when context leaves multiple plausible choices. Preserve existing confirmation requirements.',
     ...lines,
     ...typedAuthorizationLines(catalog, context.authorizationTools),
+    ...packageProposalLines(context.packageTools),
   ].join('\n');
+}
+
+function packageProposalLines(tools: JarvisPackageToolDiscovery[] = []): string[] {
+  if (!tools.length) return [];
+  return ['APPLICATION TOOL PROPOSALS: these execute only through the signed-in application panel, never a shell or remote MCP call.',
+    'Select one exact listed tool and workspace. Emit one ```oshal:package-tool fenced JSON object with exactly {"toolName":"listed_name","input":{...}}.',
+    'Input must follow its schema. Include the exact tenantId for a listed business workspace; omit it for personal scope.',
+    'ASK actions require the user to review the exact input and click Approve. Model approval or confirmation is never authority.',
+    'Do not claim success or invent records. Current results appear only in a temporary panel after the real operation; they are not supplied to your model context.',
+    ...tools.map(tool => '- ' + JSON.stringify(tool))];
 }
 
 function typedAuthorizationLines(catalog: ToolCatalog, available: AuthorizationToolDiscovery[] = []): string[] {

@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Publish declared package handlers atomically and execute them under exact current user authority.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Expose active registration fences and read-only approval ceilings for controller-owned proposals.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createRequire } from 'node:module';
@@ -15,11 +16,13 @@ import { runWithRequestIdentity } from '@/shared/services/database/request-ident
 
 export type PackageToolHandler = (input: unknown) => Promise<unknown>;
 export interface PackageToolContext { register(name: string, handler: PackageToolHandler): void }
-export interface PackageToolDeclaration { name: string; enabled: boolean }
+export interface PackageToolDeclaration { name: string; enabled: boolean; authMode: 'auto' | 'ask' | 'off' }
+export interface PackageToolSnapshot { app: string; name: string; mode: 'auto' | 'ask'; generation: string; assertCurrent(): void }
 export interface PackageToolPolicy {
   owner(kind: 'tools', name: string): string | undefined;
   packageToolDeclarations(app: string): PackageToolDeclaration[];
   snapshot(app: string): { generation: string } | null;
+  packageToolReadOnly?(app: string, name: string): boolean;
   authorize(actor: AuthorizationActor, operation: AuthorizationOperation): Promise<AuthorizationDecision>;
 }
 export interface PackageToolStage {
@@ -30,11 +33,14 @@ export interface PackageToolStage {
   publish(): void;
   abort(): void;
 }
-interface Entry { app: string; name: string; enabled: boolean; handler: PackageToolHandler }
+interface Entry { app: string; name: string; enabled: boolean; authMode: 'auto' | 'ask' | 'off'; handler: PackageToolHandler }
 const invocation = new AsyncLocalStorage<{ app: string; assertCurrent(): void }>();
 const contract = createRequire(__filename)(resolve(__dirname, '../../../scripts/oshal-package-tools.js')) as {
   validatePackageTools(manifest: unknown): PackageToolDeclaration[];
 };
+/** @description Validate the shared CLI/runtime package tool declaration contract.
+ * @param manifest Parsed package manifest. @returns Exact names, enabled posture and approval ceiling.
+ */
 export const validatePackageTools = contract.validatePackageTools;
 const denied = (code: string) => Object.assign(new Error(code), { status: 403, statusCode: 403 });
 
@@ -74,6 +80,20 @@ export class PackageToolRegistry {
    * @param name Exact tool name. @returns Whether any accepted activation declared it.
    */
   requires(name: string): boolean { return this.ownership.has(name); }
+  /** @description Enumerate active registrations for subsequent current-user policy filtering.
+   * @returns Fixed active names; this list grants no access.
+   */
+  names(): string[] { return [...this.entries].filter(([, entry]) => entry?.enabled && this.policy.snapshot(entry.app)).map(([name]) => name); }
+  /** @description Capture a live registration and its approval ceiling for a controller-owned proposal.
+   * @param name Declared tool. @returns Server-only activation fence, or null when inactive.
+   */
+  inspect(name: string): PackageToolSnapshot | null {
+    const entry = this.entries.get(name); if (!entry?.enabled) return null;
+    const snapshot = this.policy.snapshot(entry.app); if (!snapshot) return null;
+    const assertCurrent = this.capture(entry, snapshot.generation); assertCurrent();
+    return { app: entry.app, name, generation: snapshot.generation, assertCurrent,
+      mode: entry.authMode === 'auto' && this.policy.packageToolReadOnly?.(entry.app, name) === true ? 'auto' : 'ask' };
+  }
   /** @description Retract all handlers and invalidate pending activation/invocation generations.
    * @param app Owning application. @returns Nothing; tombstones remain for every declared tool.
    */
@@ -95,7 +115,7 @@ export class PackageToolRegistry {
       port: { register: (name, handler) => {
         current(); const declared = declarations.find(item => item.name === name);
         if (!declared || typeof handler !== 'function' || candidates.some(item => item.name === name)) throw denied('package_tool_registration_invalid');
-        candidates.push({ app, name, enabled: declared.enabled, handler });
+        candidates.push({ app, name, enabled: declared.enabled, authMode: declared.authMode, handler });
       } },
       checkpoint: () => candidates.length,
       rollback: checkpoint => { current(); candidates.splice(checkpoint); },

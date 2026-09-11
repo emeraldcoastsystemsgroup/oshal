@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Isolate actual package mounting, current policy and server tool execution without provider or deployment data.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow declared catalog effects to be configured before first activation for controller approval tests.
  */
 import express from 'express';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -51,6 +52,7 @@ const CATALOG: AuthorizationCatalog = {
  * @returns Disposable fixture; initialize before executing and close after each case.
  */
 export class PackageToolsFixture {
+  readonly catalog = structuredClone(CATALOG);
   readonly root = mkdtempSync(join(tmpdir(), 'oshal-package-tools-'));
   readonly store = new MemoryAuthorizationStore();
   actor = structuredClone(toolAlice);
@@ -85,7 +87,7 @@ export class PackageToolsFixture {
    * @returns Nothing; throws on malformed or incomplete registration.
    */
   async mount(): Promise<void> {
-    const catalog = structuredClone(CATALOG);
+    const catalog = structuredClone(this.catalog);
     catalog.bindings.tools = catalog.bindings.tools!.filter(binding => this.manifest.tools!.some(tool => tool.name === binding.id));
     writeFileSync(join(this.root, 'authorization.yaml'), yaml.dump(catalog));
     writeFileSync(join(this.root, 'routes.js'), this.source);

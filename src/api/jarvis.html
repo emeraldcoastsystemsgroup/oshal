@@ -11,6 +11,12 @@
     • a conversation log with markdown / GFM tables / Mermaid diagrams / "Open ↗" handoff chips
   Voice runs in the browser (Web Speech API). The brain is POST /api/jarvis/ask. The cockpit hides
   its generic right-rail chat panel here (it IS the chat). Served by createJarvisRoutes at /api/jarvis/.
+
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | Present live package tool proposals only on the primary transient result surface, outside conversation history.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -541,6 +547,7 @@
 <script src="/api/jarvis/assets/jarvis-speakers.js"></script>
 <script src="/api/jarvis/assets/jarvis-speaker-capture.js"></script>
 <script src="/api/jarvis/assets/jarvis-person-consent.js"></script>
+<script src="/api/jarvis/assets/jarvis-package-tools.js"></script>
 <!-- Surface bridge: Jarvis is the cockpit's chat rail (#chatWorkspaceFrame), so the relay already
      routes the focused app surface's inbound events here. This picks the `context` snapshots out of
      that traffic (what screen the operator is on) and posts back the ops the server parsed from the
@@ -1491,6 +1498,7 @@ async function handleInput(text) {
       html += visualReplayHtml(d.visual);
       bubble.innerHTML = html;
       showInlineResult(html);
+      if (d.packageToolProposal) window.oshalPresentPackageTool?.(d.packageToolProposal, $('resultContent'));
       wireChips(bubble);
       renderMermaidIn(bubble);
       await presentJarvisAnswer(d, d.answer);

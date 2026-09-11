@@ -146,7 +146,10 @@ function smokeHeaders(
   return headers;
 }
 
-/** Resolve explicit user prerequisites without accepting service credentials as a user identity. */
+/** @description Resolve user prerequisites without treating service credentials as user identity.
+ * @param smoke Validated package declaration. @param authorization Caller-provided PAT header.
+ * @returns A pending or failed prerequisite, or undefined when actual HTTP verification may proceed.
+ */
 export function userSmokePrerequisite(
   smoke: SwarmAppSmokeDeclaration,
   authorization: string | undefined,

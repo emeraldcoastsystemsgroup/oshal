@@ -30,6 +30,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Bind cached conversations and visuals to exact issuer and current protected execution lineage; capture nested results before publication.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Resolve closed package proposals before other directives and keep private results out of model history and cached answers.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — unified Jarvis assistant: GET / + /ui (surface), GET /catalog (the apps Jarvis can reach), POST /ask (classify via oshal-assistant → delegate self-serve bots via BotNodeClient.execute with userSub+creds → synthesize one answer; data-apps handed off with a deep link). Route-layer orchestrator, ADR-050.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Serve the authenticated response-stage and ambient-listening browser assets used by the Jarvis surface.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Headless access: callerSub falls back to the trusted-service identity (X-Service-Secret + x-oshal-user-sub) so the swarm CLI and internal bots drive /ask like the chat window.
@@ -111,6 +112,9 @@ import { visibleArtifactActions } from './artifact-action-visibility';
 import type { PickerVisibleApps } from './artifact-picker-routes';
 import { resolveJarvisArtifact, buildArtifactRoutingPrompt, resolveJarvisArtifactAnswer, type JarvisArtifactAction } from './jarvis-artifact-routing';
 import { buildToolsBlock, withImageDeliverableContract } from './jarvis-tool-catalog';
+import { createJarvisPackageToolRoutes } from './jarvis-package-tool-routes';
+import { resolveJarvisPackageToolDirective } from './jarvis-package-tool-directives';
+import type { JarvisPackageToolDiscovery, JarvisPackageToolProposal, JarvisPackageToolService } from './jarvis-package-tool-service';
 import { getApplicationAuthorizationActor, runWithApplicationAuthorizationActor } from '@/shared/application-authorization-context';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY, readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
@@ -243,6 +247,7 @@ interface AskJob {
     // cockpit relay re-validates against the app's manifest allow-list before any surface sees it.
     surfaceOps?: SurfaceDirectiveOp[];
     artifactAction?: JarvisArtifactAction;
+    packageToolProposal?: JarvisPackageToolProposal;
   };
   error?: string;
   createdAt: number;
@@ -427,6 +432,7 @@ function ticketUpdatedAtMs(ticket: InternalTicket): number {
 }
 
 const JARVIS_CLIENT_ASSETS = new Map([
+  ['jarvis-package-tools.js', 'application/javascript; charset=utf-8'],
   ['jarvis-stage.js', 'application/javascript; charset=utf-8'],
   ['jarvis-stage.css', 'text/css; charset=utf-8'],
   ['jarvis-ambient-core.js', 'application/javascript; charset=utf-8'],
@@ -467,7 +473,7 @@ function storedJarvisSourceId(value: unknown): string | undefined {
  * @param apiDir - Directory holding the HTML surface.
  * @returns Express router.
  */
-export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisibleApps?: PickerVisibleApps): Router {
+export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisibleApps?: PickerVisibleApps, packageTools?: JarvisPackageToolService): Router {
   const router = Router();
   const resultActor = async (req: Request) => {
     const resolver = ctx.applicationAuthorization?.resolveActor ?? getJarvisBriefingDelivery()?.resolveActor;
@@ -492,6 +498,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
   router.get('/', servePage(apiDir, 'jarvis.html'));
   router.get('/ui', servePage(apiDir, 'jarvis.html'));
   router.get('/assets/:file', serveJarvisClientAsset(apiDir));
+  if (packageTools) router.use('/package-tools', createJarvisPackageToolRoutes(packageTools, resultActor));
   router.use('/visuals', createJarvisVisualRoutes(visualResponseService, async (req, artifact) => {
     const sub = callerSub(req);
     if (!sub) return false;
@@ -763,12 +770,14 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     // Prepend the auto tool-feed (what Jarvis can actually DO) + the user's recent tasks/results only
     // when a direct model decision is still needed; the deterministic provider path needs neither.
     let botMessage = message;
+    let offeredPackageTools: JarvisPackageToolDiscovery[] = [];
     try {
       if (!providerBoundIntent) {
         const authorizationActor = getApplicationAuthorizationActor();
         const authorizationTools = ctx.authorizationTool && authorizationActor
           ? await ctx.authorizationTool.discover(authorizationActor, true) : [];
-        const tools = buildToolsBlock({ message, surface: surfaceContext?.app, authorizationTools });
+        offeredPackageTools = packageTools && authorizationActor && !artifactSelection ? await packageTools.discover(authorizationActor) : [];
+        const tools = buildToolsBlock({ message, surface: surfaceContext?.app, authorizationTools, packageTools: offeredPackageTools });
         // The deployment's app catalog rides EVERY model turn (before the plan guidance, whose
         // "catalog keys above" refers to it). Without it the persona's baked specialist list was
         // Jarvis's whole world - a store-installed app on this box did not exist to the model.
@@ -902,6 +911,15 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
           return;
         }
 
+        const packageReply = await resolveJarvisPackageToolDirective(answer, packageTools, getApplicationAuthorizationActor(), sessionId, offeredPackageTools);
+        if (packageReply.handled) {
+          await persistJarvisTurn(ctx, sessionId, 'assistant', packageReply.answer);
+          await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
+          const prior = askJobs.get(jobId);
+          askJobs.set(jobId, { sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done', createdAt: prior?.createdAt ?? Date.now(), finishedAt: Date.now(),
+            result: { answer: packageReply.answer, routed: [], handoffs: [], dispatched: [], ...(packageReply.proposal ? { packageToolProposal: packageReply.proposal } : {}) } });
+          return;
+        }
         // Multi-app plan (SEAM D): a data-dependent, cross-app request compiles to ONE 'graph' ticket
         // that the engine runs step-by-step (data passed between app bots; outward steps gated). A
         // single-step "plan" is not a plan — it falls through to the normal handoff path below.
@@ -1020,7 +1038,9 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
       || !await canReadJarvisSession(ctx, sub, job.issuer, job.taskId, () => resultActor(req))) { res.json({ status: 'expired' }); return; }
     if (job.status === 'pending') { res.json({ status: 'pending', label: job.label }); return; }
     if (job.status === 'error') { res.json({ status: 'error', error: job.error, label: job.label, taskId: job.taskId }); return; }
-    res.json({ status: 'done', label: job.label, taskId: job.taskId, ...job.result });
+    const { packageToolProposal: pendingProposal, ...result } = job.result ?? {};
+    const packageToolProposal = pendingProposal && packageTools ? await packageTools.readProposal(await resultActor(req), pendingProposal.id) : undefined;
+    res.json({ status: 'done', label: job.label, taskId: job.taskId, ...result, ...(packageToolProposal ? { packageToolProposal } : {}) });
   });
 
   /** GET /ask/jobs — the caller's session-manager shelf: every non-expired request + its status. */

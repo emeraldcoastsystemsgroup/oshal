@@ -7,6 +7,7 @@
  * 171 | maintainer@emeraldcoastsystemsgroup.com | Mount machine-authenticated remote application permit checks and immutable queued-principal installation wiring.
  * 172 | maintainer@emeraldcoastsystemsgroup.com | Mount exact user roster registration and external business membership administration.
  * 173 | maintainer@emeraldcoastsystemsgroup.com | Bind typed package tools before activation under the current authorization runtime.
+ * 174 | maintainer@emeraldcoastsystemsgroup.com | Mount user-bound Jarvis application proposals and transient result controls.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — Express server entry point
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added static file serving for UI assets
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed conflicting manual auth routes and consolidated on express-openid-connect
@@ -305,6 +306,7 @@ import { createLinkedInAssistantRoutes } from './routes/linkedin-assistant-route
 import { createSecurityRoutes } from './routes/security-routes';
 import { createJoinRoutes } from './routes/join-routes';
 import { createJarvisRoutes } from './routes/jarvis-routes';
+import { createJarvisPackageToolService } from './composition/jarvis-package-tool-wiring';
 import { createJarvisBriefRoutes } from './routes/jarvis-brief-routes';
 import { createJarvisBriefingRoutes } from './routes/jarvis-briefing-routes';
 import { createJarvisBriefingWiring } from './composition/jarvis-briefing-wiring';
@@ -1435,7 +1437,8 @@ function createApp(): express.Application {
   app.use('/api/jarvis/briefings', createJarvisBriefingRoutes(jarvisBriefings.service, requiresAuth, jarvisBriefings.resolveActor));
   // Same durable SEC-01 gate as Graph. Legacy reads retain immediate containment in every mode;
   // enforce also removes the compatibility fleet secret from Jarvis actions.
-  app.use('/api/jarvis', delegatedUserRouteAuth, createJarvisRoutes(ctx, apiDir, artifactVisibleApps));
+  app.use('/api/jarvis', delegatedUserRouteAuth,
+    createJarvisRoutes(ctx, apiDir, artifactVisibleApps, createJarvisPackageToolService(ctx, packageTools)));
   // Vision describe (the visual analog of /api/voice/transcribe): base64 images exceed the global
   // 100kb JSON cap, so this mount is excluded from the default parser above and carries its own
   // 12MB one. serviceSecretOr(requiresAuth): browser session OR the trusted-service identity.
