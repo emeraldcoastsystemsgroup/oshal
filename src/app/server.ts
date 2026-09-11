@@ -179,6 +179,8 @@
  * Home customization | Codex | Mount authenticated Home preference persistence alongside user settings.
  * 165 | maintainer@emeraldcoastsystemsgroup.com | ADR-139 shared artifact picker: source discovery, owner-scoped storage and app visibility.
  * 166 | maintainer@emeraldcoastsystemsgroup.com | Mount browser-bound connector callbacks and caller-scoped installed application tests in the existing Lab.
+ * 167 | maintainer@emeraldcoastsystemsgroup.com | Observe verified external principals before authorization so existing provider accounts retain a canonical management inventory.
+ * 168 | maintainer@emeraldcoastsystemsgroup.com | Seed fresh manifest bots through the authoritative deployment provider and model resolver.
  */
 
 require('dotenv').config();
@@ -316,6 +318,7 @@ import { RagService } from '@/features/rag';
 import { UIProfileService } from '@/features/ui-profile';
 import { AppAccessService, SwarmAppService, SwarmAppRepository } from '@/features/swarm-apps';
 import { createApplicationAuthorizationWiring } from './composition/application-authorization-wiring';
+import { resolveManifestBotRuntimeDefaults } from './composition/manifest-bot-runtime-defaults';
 import { createApplicationAuthorizationGate } from './middleware/application-authorization-gate';
 import { createApplicationActorContext } from './middleware/application-authorization-context';
 import { createAuthorizationRoutes, createAuthorizationPageRoutes } from './routes/authorization-routes';
@@ -1075,6 +1078,7 @@ function createApp(): express.Application {
   const appAccessService = new AppAccessService(ctx.pool);
   const applicationAuthorization = createApplicationAuthorizationWiring(ctx, appAccessService,
     () => swarmAppService, waitForBootstrapComplete());
+  app.use(applicationAuthorization.observePrincipal);
   app.use(createApplicationActorContext(applicationAuthorization.resolveActor));
   const takeoutSliceRegistry = new TakeoutSliceRegistry(ctx);
   const swarmAppService = new SwarmAppService(
@@ -1109,6 +1113,7 @@ function createApp(): express.Application {
     },
     takeoutSliceRegistry,
     applicationAuthorization.runtime,
+    resolveManifestBotRuntimeDefaults,
   );
   // Late-bind the guest-seed fan-out to the now-constructed app registry (see the guest routes
   // mount above) so guest-start can read the active manifests' `guestSeed:` hooks at request time.

@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Build application authorization actors from verified sessions/delegation and current local account state.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve native external account status and configured operator continuity through provider-qualified observed identities.
  */
 import type { Request } from 'express';
 import type { Pool } from 'pg';
@@ -22,6 +23,7 @@ export interface ApplicationActorResolverOptions {
   localSnapshot?: (sub: string) => Promise<{ status: string } | null>;
   tenantIds?: (sub: string, issuer: string) => Promise<string[]>;
   management?: (sub: string, issuer: string, email: string | null) => boolean | Promise<boolean>;
+  nativePrincipal?: (sub: string, issuer: string) => Promise<{ isActive: boolean; isSwarmAdmin: boolean }>;
 }
 
 /** Normalize source-qualified Entra group evidence; protocol claims have already been authenticated. */
@@ -62,6 +64,9 @@ export function createApplicationAuthorizationActorResolver(pool: Pool, options:
     }
     const email = delegated ? null : getCaller(req).email;
     let isActive = true;
+    const native = issuer !== LOCAL_AUTH_PRINCIPAL_ISSUER && issuer !== MOCK_OIDC_PRINCIPAL_ISSUER && options.nativePrincipal
+      ? await options.nativePrincipal(sub, issuer) : undefined;
+    if (native) isActive = native.isActive;
     if (issuer === LOCAL_AUTH_PRINCIPAL_ISSUER) isActive = (await snapshot(sub))?.status === 'active';
     if (issuer === MOCK_OIDC_PRINCIPAL_ISSUER && env.MOCK_OIDC !== 'true') isActive = false;
     const trustedAdminIssuers = new Set((env.OSHAL_AUTHORIZATION_ADMIN_ISSUERS ?? '').split(',').map((s) => s.trim()).filter(Boolean));
@@ -78,7 +83,7 @@ export function createApplicationAuthorizationActorResolver(pool: Pool, options:
       const role = await getRole(pool, sub); // Current rights, including revocations, on every invocation.
       return role?.role === 'root' || role?.role === 'admin';
     };
-    const isSwarmAdmin = isActive && !delegated && (options.management
+    const isSwarmAdmin = isActive && !delegated && (native ? native.isSwarmAdmin : options.management
       ? await options.management(sub, issuer, email) : await management());
     const oidc = req.oidc as unknown as { idTokenClaims?: Claims } | undefined;
     return { sub, issuer, isActive, isSwarmAdmin, tenantIds: isActive ? await tenants(sub, issuer) : [],

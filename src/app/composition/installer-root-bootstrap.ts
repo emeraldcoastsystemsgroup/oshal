@@ -4,10 +4,12 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Bind initial local root to a one-use installer proof and commit account, root and consumption atomically.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep established external principals out of the first-install ceremony and serialize observation with root creation.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { bootstrapFirstAdmin, ensureLocalUserSchema, type LocalUser } from '@/features/local-auth';
+import { ensurePrincipalDirectorySchema } from '@/features/principal-directory';
 import { refreshPrivilegedCache, ensureSwarmRoleSchema } from '@/features/swarm-roles';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -49,12 +51,12 @@ function digest(token: string): string { return createHash('sha256').update(toke
 
 async function initializeInstallationTables(pool: Pool): Promise<void> {
   try {
-    await pool.query(`SELECT u.id, r.user_sub, s.token_hash, s.origin, s.expires_at, s.completed_sub, s.completed_issuer, s.completed_at
-      FROM oshal_local_users u, swarm_roles r, oshal_installer_root_setup s LIMIT 0`);
+    await runWithSystemIdentity(() => pool.query(`SELECT u.id, r.user_sub, s.token_hash, s.origin, s.expires_at, s.completed_sub, s.completed_issuer, s.completed_at
+      FROM oshal_local_users u, swarm_roles r, oshal_installer_root_setup s, oshal_verified_principals p LIMIT 0`));
   } catch (error) {
     logger.error({ err: error }, 'Installer table readiness check failed');
     if ((error as { code?: string }).code !== '42P01') throw error;
-    await ensureLocalUserSchema(pool); await ensureSwarmRoleSchema(pool); await ensureInstallerRootSchema(pool);
+    await ensureLocalUserSchema(pool); await ensureSwarmRoleSchema(pool); await ensureInstallerRootSchema(pool); await ensurePrincipalDirectorySchema(pool);
   }
 }
 function ensureInstallationReady(pool: Pool): Promise<void> {
@@ -74,7 +76,7 @@ async function transaction<T>(pool: Pool, body: (client: PoolClient) => Promise<
     try {
       await client.query('BEGIN');
       // All account/role writers take conflicting row-exclusive locks, including legacy invite/recovery routes.
-      await client.query('LOCK TABLE oshal_local_users, swarm_roles, oshal_installer_root_setup IN EXCLUSIVE MODE');
+      await client.query('LOCK TABLE oshal_local_users, swarm_roles, oshal_verified_principals, oshal_installer_root_setup IN EXCLUSIVE MODE');
       const result = await body(client); await client.query('COMMIT'); return result;
     } catch (error) {
       logger.error({ err: error }, 'Installer root transaction failed');
@@ -85,7 +87,8 @@ async function transaction<T>(pool: Pool, body: (client: PoolClient) => Promise<
 async function requireEmptyInstallation(client: PoolClient): Promise<void> {
   const users = await client.query('SELECT 1 FROM oshal_local_users LIMIT 1');
   const roles = await client.query('SELECT 1 FROM swarm_roles LIMIT 1');
-  if (users.rows.length || roles.rows.length) fail(409, 'installation already has accounts or roles; use existing operator recovery');
+  const principals = await client.query('SELECT 1 FROM oshal_verified_principals LIMIT 1');
+  if (users.rows.length || roles.rows.length || principals.rows.length) fail(409, 'installation already has accounts or roles; use existing operator recovery');
 }
 
 /**

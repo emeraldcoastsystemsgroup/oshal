@@ -3,11 +3,13 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Replace deployment DSNs with private migrated PostgreSQL and remove SQL residue cleanup against shared data.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Named guards for the consolidation reopen rule, run against the real Postgres so the partial-unique live claim, the ON CONFLICT arms and the transactional recurrence are proven by the database rather than by a mock: arm A refire, arm B in-window reopen of the same row, arm C recurrence after an operator close and after a stale auto-close, upward-only severity escalation, membership-based resolution, optimistic-concurrency retries, and a concurrent burst producing exactly one live incident.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
+import { DisposableAlertPostgres } from '../helpers/disposable-alert-postgres';
 import {
   IncidentStore,
   withRevisionRetry,
@@ -15,16 +17,8 @@ import {
 } from '@/features/alert-pipeline/services/incident-store';
 import type { AlertEventRow } from '@/features/alert-pipeline/services/alert-pipeline-types';
 
-/**
- * The published Postgres of the local stack (docker-compose.oshal-local.yml maps
- * 127.0.0.1:${OSHAL_PG_PORT:-55433} to the container's 5432, user/password/db all `oshal`).
- * `ALERT_PIPELINE_TEST_DATABASE_URL` overrides it for a box whose `DATABASE_URL` points at the
- * in-network hostname, which is unreachable from the test runner.
- */
-const CONNECTION_STRING =
-  process.env.ALERT_PIPELINE_TEST_DATABASE_URL
-  ?? process.env.DATABASE_URL
-  ?? 'postgres://oshal:oshal@127.0.0.1:55433/oshal';
+/** A private PostgreSQL instance; deployment URLs are never read. */
+const database = new DisposableAlertPostgres();
 
 /** Every row this run writes carries this prefix, so cleanup can never touch another run's data. */
 const RUN_PREFIX = `zz-incident-reopen-${process.pid}-${Date.now()}-`;
@@ -38,11 +32,6 @@ const BASE_OPTIONS: ConsolidateOptions = {
 let pool: Pool;
 let store: IncidentStore;
 let sequence = 0;
-
-/** Strip credentials before a connection string reaches an error message or a log line. */
-function redact(url: string): string {
-  return url.replace(/\/\/[^@/]*@/, '//***@');
-}
 
 /** A dedup identity unique to this run and this case. */
 function nextKey(name: string): string {
@@ -127,37 +116,11 @@ async function countRows(dedupKey: string): Promise<{ total: number; live: numbe
 }
 
 beforeAll(async () => {
-  // `options` sets row_security on the startup packet, so every pooled connection carries it and
-  // no per-connection hook can be missed.
-  pool = new Pool({
-    connectionString: CONNECTION_STRING,
-    options: '-c row_security=off',
-    max: 12,
-    connectionTimeoutMillis: 5000,
-  });
-  try {
-    const probe = await pool.query(
-      `SELECT to_regclass('public.oshal_incident') AS incident,
-              to_regclass('public.oshal_incident_member') AS member`,
-    );
-    if (!probe.rows[0].incident || !probe.rows[0].member) {
-      throw new Error('oshal_incident / oshal_incident_member are absent — apply scripts/migrations/104-108');
-    }
-  } catch (error) {
-    throw new Error(
-      `alert-incident-reopen requires the live Postgres at ${redact(CONNECTION_STRING)}. `
-        + 'Bring the stack up with scripts/oshal-up.sh, or point ALERT_PIPELINE_TEST_DATABASE_URL at a '
-        + `database with migrations 104-108 applied. Underlying failure: ${(error as Error).message}`,
-    );
-  }
+  pool = await database.start();
   store = new IncidentStore(pool);
-});
+}, 90_000);
 
-afterAll(async () => {
-  if (!pool) return;
-  await pool.query('DELETE FROM oshal_incident WHERE dedup_key LIKE $1', [`${RUN_PREFIX}%`]);
-  await pool.end();
-});
+afterAll(async () => { await database.stop(); }, 60_000);
 
 // Drives a REAL Postgres through the three-arm reopen rule; connection acquisition under
 // full-suite contention can exceed Vitest's five-second default. Bounded budget, no assertion relaxed.

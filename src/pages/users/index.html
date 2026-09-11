@@ -10,11 +10,10 @@
      rendering an empty table that looks broken.
 
   Root is claimable in exactly one situation the UI offers: root is unclaimed AND the caller may
-  claim it (a virgin swarm, or an existing break-glass operator). The API enforces that regardless
+  claim it as an existing operator. Fresh installations use proof-bound setup. The API enforces that regardless
   — the button is a convenience, not the gate.
 
-  Every value is HTML-escaped on render; the page never displays a credential and the roles API
-  never returns one.
+  Every value is HTML-escaped. A newly created one-time invitation is shown only to its administrator; no existing passwords or factor secrets are returned.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -159,11 +158,27 @@
           <tbody id="accountsBody"></tbody>
         </table>
       </div>
+      <form class="grant-form" id="inviteForm" style="margin-top:16px">
+        <input id="inviteEmail" type="email" placeholder="Email address" aria-label="Invitation email" required />
+        <input id="inviteName" type="text" placeholder="Name (optional)" aria-label="Invitation name" />
+        <button type="submit" class="primary">Invite user</button>
+      </form>
+      <div id="inviteResult" hidden>
+        <p id="inviteDelivery" class="hint"></p>
+        <label for="inviteLink">One-time invitation link</label>
+        <input id="inviteLink" type="text" readonly style="width:100%" />
+      </div>
       <p class="hint">Accounts and roles are separate: an account is how somebody signs in, a role is
         what they may administer. Granting a role to an account&rsquo;s subject is what makes them an admin.</p>
     </div>
   </div>
 
+  <div class="wrap"><div class="card" id="providerAccountsCard" hidden>
+    <div class="card-head"><h2>Provider accounts</h2></div>
+    <div id="providerAccounts"></div>
+    <p class="hint">These identities were observed through verified sign-in. Manage their application permissions in
+      <a href="/access">Access Administration</a>. Account sign-in and suspension remain with their identity provider.</p>
+  </div></div>
   <script>
     'use strict';
 
@@ -191,7 +206,7 @@
       var res = await fetch(url, init);
       var payload = null;
       try { payload = await res.json(); } catch (e) { /* empty body is fine for some 2xx */ }
-      if (!res.ok) throw new Error((payload && payload.error) || ('HTTP ' + res.status));
+      if (!res.ok) { var error = new Error((payload && payload.error) || ('HTTP ' + res.status)); error.status = res.status; throw error; }
       return payload;
     }
 
@@ -209,17 +224,15 @@
       if (!st.rootClaimed) {
         banner.classList.add('unclaimed');
         pill.innerHTML = '<span class="pill warn">unclaimed</span>';
-        // Claimable when the swarm has no roles at all, or the caller is already an operator via
-        // the break-glass allowlist. The API re-checks both — this only decides what to offer.
-        var claimable = st.callerIsOperator || (st.rolesLoaded && st.privilegedCount === 0);
+        // Existing operator recovery is the only root claim offered; fresh setup requires installer proof.
+        var claimable = st.callerIsOperator === true;
         body.innerHTML =
           '<p class="sub">No identity holds swarm root. Administration currently depends on the ' +
           '<code>OSHAL_OPERATOR_SUBS</code> / <code>OSHAL_OPERATOR_EMAILS</code> break-glass allowlist ' +
           'in this deployment&rsquo;s environment file &mdash; which nobody can change from a browser.</p>' +
           (claimable
             ? '<p style="margin:14px 0 0"><button class="primary" id="claimBtn" type="button">Claim swarm root</button></p>'
-            : '<p class="hint">You cannot claim root: this swarm already has roles and you are not an ' +
-              'operator. Ask a current admin, or add yourself to the break-glass allowlist and restart.</p>');
+            : '<p class="hint">An existing operator can complete root recovery. Contact a swarm administrator.</p>');
         if (claimable) {
           document.getElementById('claimBtn').addEventListener('click', async function () {
             if (!confirm('Claim swarm root for your account?\n\nYou become the one identity that owns this swarm. You can transfer it later, but it cannot be revoked.')) return;
@@ -318,46 +331,73 @@
       });
     }
 
+    function accountActions(user, role) {
+      if (role === 'root') return '<span class="hint">Transfer root before disabling.</span>';
+      var id = esc(user.id);
+      var action = user.status === 'disabled' ? 'enable' : 'disable';
+      return '<button data-account-action="' + action + '" data-id="' + id + '">' +
+        (action === 'enable' ? 'Enable' : 'Disable') + '</button>' +
+        (user.status === 'disabled' ? '' : '<button data-account-action="reinvite" data-id="' + id + '">Reinvite</button>');
+    }
+
+    function renderAccounts(users) {
+      var known = {};
+      state.roles.forEach(function (role) { known[role.userSub] = role.role; });
+      document.getElementById('accountsCount').textContent = users.length + ' account' + (users.length === 1 ? '' : 's');
+      document.getElementById('accountsBody').innerHTML = users.map(function (user) {
+        var role = known[user.userSub] || 'user';
+        return '<tr><td>' + esc(user.email) + '</td><td><span class="pill user">' + esc(user.status) +
+          '</span></td><td class="mono">' + esc(user.userSub) + '</td><td><div class="row-actions">' +
+          '<span class="pill ' + esc(role) + '">' + esc(role) + '</span>' + accountActions(user, role) + '</div></td></tr>';
+      }).join('');
+      document.querySelectorAll('[data-account-action]').forEach(function (button) {
+        button.addEventListener('click', function () { changeAccount(button); });
+      });
+    }
+
+    function showInvitation(result) {
+      document.getElementById('inviteResult').hidden = false;
+      document.getElementById('inviteLink').value = result.invitePath || '';
+      document.getElementById('inviteDelivery').textContent = result.emailSent ? 'Invitation sent. This link can also be shared with the invitee.' :
+        'Share this one-time link with the invitee. ' + (result.emailDetail || 'Email delivery is unavailable.');
+    }
+
+    async function changeAccount(button) {
+      var action = button.dataset.accountAction;
+      if (!confirm(action === 'reinvite' ? 'Create a new invitation or password reset link for this account?' :
+        (action === 'disable' ? 'Disable this account and end its sessions?' : 'Enable this account?'))) return;
+      button.disabled = true;
+      try {
+        var result = await call('POST', '/api/local-auth/users/' + encodeURIComponent(button.dataset.id) + '/' + action, {});
+        if (action === 'reinvite') showInvitation(result);
+        show('ok', 'Account updated.');
+        await loadAccounts();
+      } catch (error) { show('err', error.message); button.disabled = false; }
+    }
+
     async function loadAccounts() {
       var card = document.getElementById('accountsCard');
       try {
         var data = await call('GET', '/api/local-auth/users');
-        var users = (data && data.users) || [];
         card.style.display = '';
-        document.getElementById('accountsCount').textContent = users.length + ' account' + (users.length === 1 ? '' : 's');
-        var known = {};
-        state.roles.forEach(function (r) { known[r.userSub] = r.role; });
-        document.getElementById('accountsBody').innerHTML = users.map(function (u) {
-          var role = known[u.userSub] || 'user';
-          return '<tr>' +
-            '<td>' + esc(u.email) + '</td>' +
-            '<td><span class="pill user">' + esc(u.status) + '</span></td>' +
-            '<td class="mono">' + esc(u.userSub) + '</td>' +
-            '<td><div class="row-actions">' +
-              (role === 'user'
-                ? '<button data-make-admin="' + esc(u.userSub) + '" data-email="' + esc(u.email) + '">Make admin</button>'
-                : '<span class="pill ' + esc(role) + '">' + esc(role) + '</span>') +
-            '</div></td></tr>';
-        }).join('');
-        document.getElementById('accountsBody').querySelectorAll('button[data-make-admin]').forEach(function (btn) {
-          btn.addEventListener('click', async function () {
-            try {
-              btn.disabled = true;
-              await call('POST', '/api/swarm/roles', {
-                userSub: btn.dataset.makeAdmin, email: btn.dataset.email, role: 'admin',
-              });
-              show('ok', 'Admin granted.');
-              await load();
-            } catch (e) { show('err', e.message); btn.disabled = false; }
-          });
-        });
-      } catch (e) {
-        // Not LOCAL_AUTH, or not permitted — accounts live elsewhere. Stay hidden rather than
-        // rendering an empty table that reads as breakage.
+        renderAccounts((data && data.users) || []);
+      } catch (error) {
         card.style.display = 'none';
+        if (error.status !== 404 && error.status !== 401 && error.status !== 403) show('err', 'Local accounts unavailable: ' + error.message);
       }
     }
 
+    async function loadProviderAccounts() {
+      var card = document.getElementById('providerAccountsCard');
+      try {
+        var data = await call('GET', '/api/authorization/catalog');
+        var users = ((data && data.users) || []).filter(function (user) { return user.issuer !== 'urn:oshal:local-auth'; });
+        card.hidden = users.length === 0;
+        document.getElementById('providerAccounts').innerHTML = users.map(function (user) {
+          return '<p>' + esc(user.label || user.sub) + '<br><span class="root-id">' + esc(user.issuer) + ' / ' + esc(user.sub) + '</span></p>';
+        }).join('');
+      } catch (error) { card.hidden = true; }
+    }
     async function load() {
       try {
         state.me = await call('GET', '/api/swarm/roles/me');
@@ -369,20 +409,41 @@
       renderRoot();
 
       if (!state.status.callerIsOperator) {
+        state.roles = [];
+        document.getElementById('accountsCard').style.display = 'none';
+        document.getElementById('providerAccountsCard').hidden = true;
+        document.getElementById('inviteResult').hidden = true;
+        document.getElementById('inviteLink').value = '';
         document.getElementById('rolesBody').innerHTML =
           '<tr><td colspan="5" class="empty">Only swarm administrators can see the role list.</td></tr>';
         document.getElementById('grantForm').style.display = 'none';
         return;
       }
       try {
+        document.getElementById('grantForm').style.display = '';
         var data = await call('GET', '/api/swarm/roles');
         state.roles = (data && data.roles) || [];
         renderRoles();
-        await loadAccounts();
+        await Promise.all([loadAccounts(), loadProviderAccounts()]);
       } catch (e) { show('err', e.message); }
     }
 
     document.getElementById('refreshBtn').addEventListener('click', load);
+    document.getElementById('inviteForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var button = this.querySelector('button');
+      button.disabled = true;
+      document.getElementById('inviteResult').hidden = true;
+      document.getElementById('inviteLink').value = '';
+      try {
+        var result = await call('POST', '/api/local-auth/users', { email: document.getElementById('inviteEmail').value.trim(),
+          name: document.getElementById('inviteName').value.trim() || undefined });
+        showInvitation(result);
+        this.reset();
+        await loadAccounts();
+      } catch (error) { show('err', error.message); }
+      finally { button.disabled = false; }
+    });
     document.getElementById('grantForm').addEventListener('submit', async function (ev) {
       ev.preventDefault();
       var sub = document.getElementById('grantSub').value.trim();

@@ -42,6 +42,7 @@ const { validateSmokeDeclarations } = require('./oshal-app-smoke');
 const { validateTakeoutDeclarations } = require('./oshal-app-takeout');
 const { validateScheduleDeclarations } = require('./oshal-app-schedules');
 const { loadApplicationAuthorization } = require('./oshal-authorization-contract');
+const { loadPackageTestCatalog } = require('./oshal-test-catalog');
 const {
   loadPackageAuditAssessment,
   resolvePackageAuditMode,
@@ -96,6 +97,7 @@ function validatePackage(dir) {
   }
   if (!m || typeof m !== 'object') return { errors: ['oshal-app.yaml is empty or not a mapping.'], warnings };
   try { loadApplicationAuthorization(dir, m); } catch (error) { err(error.message); }
+  try { loadPackageTestCatalog(dir, m); } catch (error) { err(error.message); }
 
   // ── identity ──────────────────────────────────────────────────────────────
   if (!m.name) err('missing required field: name');

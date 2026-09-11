@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 37 | maintainer@emeraldcoastsystemsgroup.com | Initialize authoritative manifest bot runtime records before activation; preserve stored provider/model choices.
  * 36 | maintainer@emeraldcoastsystemsgroup.com | Publish installed smoke tests after successful activation and retract them before reload/deactivation; extract stateless artifact registration to keep lifecycle orchestration within its module size limit.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
@@ -85,7 +86,6 @@ import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type S
 import {
   interpolate,
   manifestToolToCreateInput,
-  readBotSelectorSeed,
   staticToolNames,
 } from './swarm-app-manifest-mapping';
 import {
@@ -99,6 +99,7 @@ import {
 import { deleteManifestBotToolGrants, deregisterOwnedManifestTools, failClosedManifestActivation, prepareManifestToolUpdate, rollbackNewManifestToolGrants } from './manifest-tool-reconciliation';
 import { SwarmAppRepository, type SwarmAppScopeMeta } from './swarm-app-repository';
 import { InstalledAppTestCatalog } from './installed-app-test-catalog';
+import { upsertManifestBots, type ManifestBotRuntimeDefaultsResolver } from './manifest-bot-runtime';
 import { queryDynamicUiRows } from './dynamic-ui-query';
 import type {
   SwarmAppManifest,
@@ -189,6 +190,7 @@ export class SwarmAppService {
      * loading stays in the app layer; this feature slice owns only lifecycle reconciliation. */
     private readonly takeoutRegistrar?: ManifestTakeoutRegistrar,
     private readonly authorizationRegistrar?: ManifestAuthorizationRegistrar,
+    private readonly runtimeDefaults?: ManifestBotRuntimeDefaultsResolver,
   ) {}
 
   /**
@@ -520,9 +522,18 @@ export class SwarmAppService {
   async toggleApp(name: string, active: boolean): Promise<SwarmApplicationRecord | null> {
     const record = await this.repo.findByName(name);
     if (!record) return null;
+    let updated: SwarmApplicationRecord | null = null;
     if (active) {
+      this.testLabCatalog.validate(record);
       await this.authorizationRegistrar?.prepare(record.manifest, record.manifestPath);
-      try { await this.activate(record); }
+      try {
+        await this.activate(record);
+        updated = await this.repo.updateStatus(name, 'active');
+        if (!updated) throw new Error(`Failed to persist active status for ${name}`);
+        await this.refreshOwnershipCache();
+        this.testLabCatalog.register(updated);
+        this.authorizationRegistrar?.complete(updated);
+      }
       catch (error) {
         this.appStatusCache.set(record.name, 'inactive');
         await failClosedManifestActivation(record.name, error, [() => this.deactivate(record),
@@ -530,11 +541,9 @@ export class SwarmAppService {
       }
     } else {
       await this.deactivate(record);
+      updated = await this.repo.updateStatus(name, 'inactive');
+      await this.refreshOwnershipCache();
     }
-    const updated = await this.repo.updateStatus(name, active ? 'active' : 'inactive');
-    if (updated?.status === 'active') this.testLabCatalog.register(updated);
-    await this.refreshOwnershipCache();
-    if (updated?.status === 'active') this.authorizationRegistrar?.complete(updated);
     logger.info({ name, active }, 'App toggled');
     return updated;
   }
@@ -947,7 +956,7 @@ export class SwarmAppService {
       logger.error({ err, app: record.name }, 'Manifest bot registration failed (non-fatal)');
     }
 
-    await this.upsertBots(record.manifest);
+    await upsertManifestBots(this.pool, record.manifest, record.manifestPath, this.runtimeDefaults);
     await this.setBotStatuses(record.agentIds, 'active');
     this.applyGuestTier(record);
     this.applySkillProfiles(record);
@@ -1187,81 +1196,6 @@ export class SwarmAppService {
       // Per-workflow auto-start — tickets of this type auto-approve so the workflow runs on arrival.
       autoStart: manifest.workflow.autoStart,
     });
-  }
-
-  /**
-   * @description Upserts each manifest-declared bot into the agents table.
-   * On first load of a manifest that brings brand-new bots, this is how
-   * they get seeded. Existing rows (matched by agent_id) are left alone —
-   * operators can edit persona/provider/model via the cockpit without
-   * worrying that a manifest reload will overwrite their changes.
-   */
-  private async upsertBots(manifest: SwarmAppManifest): Promise<void> {
-    for (const bot of manifest.bots ?? []) {
-      try {
-        const selectorSeed = readBotSelectorSeed(bot);
-        const baseRoutingKeywords = selectorSeed.routingKeywords.length > 0
-          ? selectorSeed.routingKeywords
-          : bot.capabilities ?? [];
-        await this.pool.query(
-          `INSERT INTO agents (
-             agent_id, name, api_provider_id, base_capabilities,
-             base_selector_descriptor, base_routing_keywords,
-             metadata, status, persona
-           )
-           VALUES ($1, $2, $3, $4, $5, $6::text[], $7, 'active', $8::jsonb)
-           ON CONFLICT (agent_id)
-           DO UPDATE SET
-             name = EXCLUDED.name,
-             base_capabilities = EXCLUDED.base_capabilities,
-             base_selector_descriptor = CASE
-               WHEN EXCLUDED.base_selector_descriptor <> ''
-                 THEN EXCLUDED.base_selector_descriptor
-               ELSE agents.base_selector_descriptor
-             END,
-             base_routing_keywords = CASE
-               WHEN COALESCE(array_length(EXCLUDED.base_routing_keywords, 1), 0) > 0
-                 THEN EXCLUDED.base_routing_keywords
-               ELSE agents.base_routing_keywords
-             END,
-             metadata = agents.metadata || EXCLUDED.metadata,
-             persona = CASE
-               WHEN agents.persona = '{}'::jsonb OR agents.metadata->>'manifestApp' = $9
-                 THEN EXCLUDED.persona
-               ELSE agents.persona
-             END,
-             status = 'active',
-             updated_at = NOW()`,
-          [
-            bot.agentId,
-            bot.name,
-            process.env.FORCE_LLM_PROVIDER || 'openai-native',
-            bot.capabilities ?? [],
-            selectorSeed.selectorDescriptor,
-            baseRoutingKeywords,
-            JSON.stringify({
-              role: bot.role ?? '',
-              manifestApp: manifest.name,
-              persona: bot.persona ?? '',
-              // Read back by Jarvis's loadEffectiveRoutes to decide delegate-vs-handoff. Only
-              // written when declared, so `metadata || EXCLUDED.metadata` cannot clobber an
-              // operator's stored value with an empty one on every manifest reload.
-              ...(bot.jarvisMode ? { jarvisMode: bot.jarvisMode } : {}),
-            }),
-            JSON.stringify({
-              role: bot.role ?? '',
-              systemPrompt: bot.persona ?? '',
-              capabilities: bot.capabilities ?? [],
-              selectorDescriptor: selectorSeed.selectorDescriptor,
-              routingKeywords: baseRoutingKeywords,
-            }),
-            manifest.name,
-          ],
-        );
-      } catch (err) {
-        logger.error({ err, agentId: bot.agentId, name: bot.name }, 'Bot upsert failed');
-      }
-    }
   }
 
   private async deactivate(record: SwarmApplicationRecord): Promise<void> {

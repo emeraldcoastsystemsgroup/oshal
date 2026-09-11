@@ -15,6 +15,7 @@
  * Result states stay honest: pass | degraded | gap | fail. Surfacing degraded/gap is the point.
  *
  * CHANGE LOG
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Register isolated nightly, provisioning and authoritative bot initialization coverage.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Register installed-case discovery, connector callback boundaries and multi-store control regression suites.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Register artifact scenarios and expose categorized regression suites in the existing Lab catalog.
  * ---------------------------------------------------------------------------
@@ -68,6 +69,7 @@ import { INSTALLATION_SCENARIOS } from './test-lab-installation-scenarios';
 import { CONNECTOR_OAUTH_SCENARIOS } from './test-lab-connector-scenarios';
 import { APP_REGISTRY_SCENARIOS } from './test-lab-app-registry-scenarios';
 import { AUTHORIZATION_SCENARIOS } from './test-lab-authorization-scenarios';
+import { AUTONOMOUS_SCENARIOS } from './test-lab-autonomous-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 
 const SELF_PORT = process.env.PORT || '5000';
@@ -223,6 +225,7 @@ export const SCENARIOS: Scenario[] = [
   ...CONNECTOR_OAUTH_SCENARIOS,
   ...APP_REGISTRY_SCENARIOS,
   ...AUTHORIZATION_SCENARIOS,
+  ...AUTONOMOUS_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,

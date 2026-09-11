@@ -6,6 +6,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Self-service password reset (ADR-117 deferred item): createPasswordReset mints a reset token for an ACTIVE account by email, riding the SAME invite-token machinery (invite_token_hash / findByInviteToken / acceptInvite), never creating an account and never touching invited/disabled rows - so an unauthenticated /forgot request cannot mint accounts, resurrect a disabled login, or stomp a pending admin invitation... and the single-UPDATE shape answers known and unknown emails in one indistinguishable round trip (enumeration safety). Reset links live 60 minutes (RESET_TTL_MS) vs the invite's 7 days: the requester is at their keyboard. acceptInvite deliberately does NOT touch the TOTP columns, so a reset can never strip a second factor.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Local invited-user store (ADR-117). Standalone deployments (a client box with no IdP) need a controlled login: an admin invites a user by email, the invitee follows a one-time link to set a password, and only invited people can sign in. This module owns the oshal_local_users table, scrypt password hashing (Node built-in — no new crypto dependency), the deterministic `local-<sha256(email)[0..16]>` sub (the SAME formula the installer's LocalSub writes into MOCK_OIDC_SUB, so sub-keyed data survives the switch from open mock mode to gated login), and the one-time invite tokens (oshal_inv_ prefixed, sha256 at rest, single-use, 7-day expiry — the PAT trade). Passwords hash into Postgres, NOT the Vault surface: hashes are one-way material that belongs in the identity DB (how Keycloak/AD do it), and the login path must not depend on the Vault facade whose runtime is not built (ADR-040).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Require a transaction client for initial account creation; installer proof and table locks precede this primitive.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Allow account lookup/status primitives within the root-safe administration transaction.
  */
 
 import crypto from 'crypto';
@@ -224,7 +225,7 @@ export interface InviteResult {
  * @returns The user row plus the one-time plaintext token.
  */
 export async function upsertInvite(
-  pool: Pool,
+  pool: Pool | PoolClient,
   input: { email: string; displayName?: string | null; invitedBySub?: string | null },
 ): Promise<InviteResult> {
   const email = normalizeEmail(input.email);
@@ -432,7 +433,7 @@ export async function listUsers(pool: Pool): Promise<LocalUser[]> {
  * @param status - 'active' or 'disabled'.
  * @returns The updated user, or null when the id is unknown.
  */
-export async function setUserStatus(pool: Pool, id: string, status: 'active' | 'disabled'): Promise<LocalUser | null> {
+export async function setUserStatus(pool: Pool | PoolClient, id: string, status: 'active' | 'disabled'): Promise<LocalUser | null> {
   const { rows } = await runWithSystemIdentity(() => pool.query(
     `UPDATE oshal_local_users SET status = $2, token_version = token_version + 1 WHERE id = $1 RETURNING *`,
     [id, status],
@@ -447,7 +448,7 @@ export async function setUserStatus(pool: Pool, id: string, status: 'active' | '
  * @param id - Account id.
  * @returns The user, or null.
  */
-export async function getUserById(pool: Pool, id: string): Promise<LocalUser | null> {
+export async function getUserById(pool: Pool | PoolClient, id: string): Promise<LocalUser | null> {
   const { rows } = await runWithSystemIdentity(() => pool.query(
     'SELECT * FROM oshal_local_users WHERE id = $1 LIMIT 1', [id],
   ));

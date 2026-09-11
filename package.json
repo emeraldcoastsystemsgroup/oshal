@@ -1,7 +1,7 @@
 {
   "name": "oshal-control-plane",
   "version": "2.1.0-beta.1",
-  "description": "OSHAL \u2014 Open Swarm Harness Agent LLM. Docker-first multi-agent orchestration platform with pluggable harnesses (Cline, Codex, Claude Code, Gemini), per-bot persona quality gates, and a typed harness extension framework.",
+  "description": "OSHAL — Open Swarm Harness Agent LLM. Docker-first multi-agent orchestration platform with pluggable harnesses (Cline, Codex, Claude Code, Gemini), per-bot persona quality gates, and a typed harness extension framework.",
   "license": "AGPL-3.0-or-later",
   "author": "oshal maintainers <maintainer@emeraldcoastsystemsgroup.com>",
   "homepage": "",
@@ -40,9 +40,9 @@
     "test": "npx playwright test",
     "test:e2e:green": "node scripts/e2e-green.mjs",
     "test:unit": "vitest run",
-    "test:authorization": "vitest run --no-file-parallelism --hookTimeout 120000 tests/unit/authorization-contract-files.spec.ts tests/unit/authorization-policy.spec.ts tests/unit/authorization-postgres-integration.spec.ts tests/unit/authorization-principal.spec.ts tests/unit/authorization-identity-integration.spec.ts tests/unit/authorization-runtime.spec.ts tests/unit/authorization-execution-boundary.spec.ts tests/unit/authorization-routes.spec.ts tests/unit/authorization-admin-browser.spec.ts tests/unit/authorization-tool.spec.ts tests/unit/authorization-tool-policy.spec.ts tests/unit/installer-root-bootstrap.spec.ts tests/unit/local-auth-routes.spec.ts tests/unit/swarm-app-access-routes.spec.ts tests/unit/kernel-skills.spec.ts",
+    "test:authorization": "vitest run --no-file-parallelism --hookTimeout 120000 tests/unit/authorization-contract-files.spec.ts tests/unit/authorization-policy.spec.ts tests/unit/authorization-postgres-integration.spec.ts tests/unit/authorization-principal.spec.ts tests/unit/authorization-identity-integration.spec.ts tests/unit/authorization-runtime.spec.ts tests/unit/authorization-execution-boundary.spec.ts tests/unit/authorization-routes.spec.ts tests/unit/authorization-admin-browser.spec.ts tests/unit/authorization-tool.spec.ts tests/unit/authorization-tool-policy.spec.ts tests/unit/installer-root-bootstrap.spec.ts tests/unit/local-auth-routes.spec.ts tests/unit/swarm-app-access-routes.spec.ts tests/unit/kernel-skills.spec.ts tests/unit/principal-directory.spec.ts tests/unit/local-account-administration.spec.ts tests/unit/users-administration-browser.spec.ts",
     "test:artifacts": "vitest run --no-file-parallelism --hookTimeout 30000 tests/unit/artifact-exchange.spec.ts tests/unit/jarvis-tool-catalog.spec.ts tests/unit/artifact-mint-bytes-route.spec.ts tests/unit/artifact-redeem-relay.spec.ts tests/unit/artifact-picker.spec.ts tests/unit/jarvis-artifact-routing.spec.ts tests/unit/artifact-dispatch-browser.spec.ts tests/unit/test-lab-artifact-registration.spec.ts",
-    "test:platform-readiness": "vitest run --no-file-parallelism --hookTimeout 30000 tests/unit/installed-app-test-lab.spec.ts tests/unit/test-lab-platform-registration.spec.ts tests/unit/test-lab-scenarios.spec.ts tests/unit/core05-app-smoke.spec.ts tests/unit/connector-oauth-callback.spec.ts tests/unit/connector-reconnect.spec.ts tests/unit/connector-multi-account.spec.ts tests/unit/multi-store-installer.spec.ts tests/unit/multi-store-routes-browser.spec.ts tests/unit/app-registries.spec.ts",
+    "test:platform-readiness": "vitest run --no-file-parallelism --hookTimeout 30000 tests/unit/installed-app-test-lab.spec.ts tests/unit/test-lab-platform-registration.spec.ts tests/unit/test-lab-scenarios.spec.ts tests/unit/core05-app-smoke.spec.ts tests/unit/connector-oauth-callback.spec.ts tests/unit/connector-reconnect.spec.ts tests/unit/connector-multi-account.spec.ts tests/unit/multi-store-installer.spec.ts tests/unit/multi-store-routes-browser.spec.ts tests/unit/app-registries.spec.ts tests/unit/package-test-catalog.spec.ts tests/unit/package-test-catalog-lifecycle.spec.ts tests/unit/package-test-catalog-browser.spec.ts",
     "test:ui": "npx playwright test --ui",
     "app": "node scripts/oshal-app.js",
     "test:live": "npx playwright test --config playwright.live.config.ts",
@@ -116,7 +116,10 @@
     "build:exe:mac": "node scripts/build-executable.js --macos",
     "build:exe:linux": "node scripts/build-executable.js --linux",
     "google-workspace": "node scripts/google-workspace-cli.js",
-    "test:google-workspace": "node tests/google-workspace-cli.test.js"
+    "test:google-workspace": "node tests/google-workspace-cli.test.js",
+    "test:nightly-isolated": "node scripts/ci/run-nightly-isolated.mjs",
+    "test:provisioning": "vitest run --no-file-parallelism --hookTimeout 120000 tests/unit/onboarding-provisioning.spec.ts tests/unit/onboarding-provisioning-browser.spec.ts tests/unit/autonomous-test-lab-registration.spec.ts",
+    "test:bot-initialization": "vitest run --no-file-parallelism --hookTimeout 120000 tests/unit/manifest-bot-authority.spec.ts tests/unit/manifest-bot-runtime-defaults.spec.ts tests/unit/manifest-bot-runtime.spec.ts tests/unit/manifest-node-bot-dispatch.spec.ts tests/unit/manifest-worker-bot-node-boundary.spec.ts tests/unit/swarm-app-selector-seeding.spec.ts"
   },
   "keywords": [
     "oshal",

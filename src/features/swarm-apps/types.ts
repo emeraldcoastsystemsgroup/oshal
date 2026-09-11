@@ -30,6 +30,7 @@
 import type { SwarmAppRouteAuthMode } from '@/shared/route-auth';
 import type { SwarmAccessRole } from '@/shared/types/access-roles';
 import type { ApplicationAuthorizationDeclaration } from '@/shared/application-authorization';
+import type { PackageTestDeclaration } from '@/shared/package-testing';
 import type { GuestTier } from '@/shared/middleware/guest-capability-matrix';
 import type { SkillCapabilityId, SkillProfile } from '@/shared/skill-profiles';
 import type { SurfaceBridgeOpName } from '@/shared/surface-bridge-ops';
@@ -767,6 +768,8 @@ export interface SwarmAppManifest {
   takeout?: SwarmAppTakeoutSliceDeclaration[];
   /** Executable installation proofs run by `oshal-verify --apps ...`. */
   smoke?: SwarmAppSmokeDeclaration[];
+  /** Versioned package-local Test Lab catalog. Declaring it requires uses: [test-catalog]. */
+  testing?: PackageTestDeclaration;
   migrations?: string[];
   /** ADR-085 §5 + ADR-091: glob prefixes of the RAG collections this app owns
    *  (e.g. ["lm-class-*", "lm-cls-*"]). Expanded against live collection names in

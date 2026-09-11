@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Compose durable policy, current principal resolution, execution guards and registered management tools.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Adopt existing local and verified provider accounts without conflating subjects or granting new operator roles.
  */
 /** Assemble the control plane without granting it authority over business records. */
 import type { Request } from 'express';
@@ -14,7 +15,9 @@ import { AuthorizationToolRuntime, registerAuthorizationTools } from './authoriz
 import { createApplicationAuthorizationActorResolver } from '../middleware/application-authorization-identity';
 import { ApplicationAuthorizationService, PostgresAuthorizationStore, ensureApplicationAuthorizationSchema } from '@/features/application-authorization';
 import type { AuthorizationActor, AuthorizationStore, ApplicationAuthorizationServiceOptions } from '@/features/application-authorization';
-import { getSessionSnapshot, listUsers } from '@/features/local-auth';
+import { getSessionSnapshot } from '@/features/local-auth';
+import { ensurePrincipalDirectorySchema } from '@/features/principal-directory';
+import { createApplicationPrincipalDirectory } from './application-principal-directory';
 import type { AppAccessService, SwarmAppService } from '@/features/swarm-apps';
 import { LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -22,16 +25,14 @@ import { createChildLogger } from '@/shared/logger';
 import { configureApplicationExecutionPolicy } from '@/shared/application-authorization-execution';
 
 const logger = createChildLogger({ module: 'application-authorization-wiring' });
-function createActorPorts(ctx: AppContext) {
+function createActorPorts(ctx: AppContext, directory: ReturnType<typeof createApplicationPrincipalDirectory>) {
   const tenants = async (sub: string, issuer = LOCAL_AUTH_PRINCIPAL_ISSUER) => issuer !== LOCAL_AUTH_PRINCIPAL_ISSUER ? [] : runWithSystemIdentity(async () => (await ctx.pool.query<{ tenant_id: string }>(
     'SELECT tenant_id::text FROM oshal_tenant_memberships WHERE user_sub=$1', [sub],
   )).rows.map(row => row.tenant_id));
-  const resolveActor = createApplicationAuthorizationActorResolver(ctx.pool, { tenantIds: tenants });
+  const resolveActor = createApplicationAuthorizationActorResolver(ctx.pool, { tenantIds: tenants, nativePrincipal: directory.nativePrincipal });
   const targetActor = async (sub: string, issuer: string): Promise<AuthorizationActor | null> => {
-    if (issuer !== LOCAL_AUTH_PRINCIPAL_ISSUER) return null;
-    const account = await getSessionSnapshot(ctx.pool, sub);
-    return account ? { sub, issuer, isActive: account.status === 'active', isSwarmAdmin: false,
-      tenantIds: account.status === 'active' ? await tenants(sub) : [], directory: [] } : null;
+    const account = await directory.targetActor(sub,issuer);
+    return account ? { ...account, tenantIds: account.isActive ? await tenants(sub,issuer) : [] } : null;
   };
   const refreshActor = async (original: AuthorizationActor) => {
       const account = original.issuer === LOCAL_AUTH_PRINCIPAL_ISSUER ? await getSessionSnapshot(ctx.pool, original.sub) : null;
@@ -43,7 +44,7 @@ function createActorPorts(ctx: AppContext) {
       return { ...current, directory: original.directory, allowedPermissions: original.allowedPermissions,
         isSwarmAdmin: current.isSwarmAdmin && original.isSwarmAdmin };
     };
-  return { resolveActor, targetActor, refreshActor };
+  return { resolveActor, targetActor, refreshActor, inventory: directory.inventory };
 }
 
 function createPolicyOptions(ctx: AppContext, appAccess: AppAccessService, getApps: () => SwarmAppService,
@@ -58,16 +59,7 @@ function createPolicyOptions(ctx: AppContext, appAccess: AppAccessService, getAp
       }));
       return { tier: access.tier, explicit: access.source !== 'default' };
     },
-    inventory: async actor => {
-      if (!actor.isSwarmAdmin) return { users: [], groups: [] };
-      const accounts = process.env.LOCAL_AUTH === 'true' || actor.issuer === LOCAL_AUTH_PRINCIPAL_ISSUER
-        ? await runWithSystemIdentity(() => listUsers(ctx.pool)) : [];
-      return { users: accounts.map(user => ({ sub: user.userSub, issuer: LOCAL_AUTH_PRINCIPAL_ISSUER,
-        label: `${user.displayName || user.email} (${user.status})` })),
-      groups: (actor.directory ?? []).filter(evidence => evidence.complete).flatMap(evidence => evidence.groups.map(id => ({
-        issuer: evidence.issuer, tenantId: evidence.tenantId, id, label: id,
-      }))) };
-    },
+    inventory: actors.inventory,
   };
 }
 
@@ -78,7 +70,7 @@ function createPolicyOptions(ctx: AppContext, appAccess: AppAccessService, getAp
  */
 export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess: AppAccessService,
   getApps: () => SwarmAppService, bootstrap: Promise<unknown>) {
-  const ready = bootstrap.then(() => ensureApplicationAuthorizationSchema(ctx.pool));
+  const ready = bootstrap.then(() => Promise.all([ensureApplicationAuthorizationSchema(ctx.pool), ensurePrincipalDirectorySchema(ctx.pool)]));
   // Observe rejection immediately; each operation still waits and refuses on the same failure.
   void ready.catch(error => logger.error({ err: error }, 'Application authorization unavailable'));
   const durable = new PostgresAuthorizationStore(ctx.pool);
@@ -87,7 +79,8 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
     read: async () => { await ready; return durable.read(); },
     transaction: async operation => { await ready; return durable.transaction(operation); },
   };
-  const actors = createActorPorts(ctx);
+  const directory = createApplicationPrincipalDirectory(ctx.pool,ready);
+  const actors = createActorPorts(ctx,directory);
   const { resolveActor } = actors;
   const service = new ApplicationAuthorizationService(store, createPolicyOptions(ctx, appAccess, getApps, actors));
   const runtime = new ApplicationAuthorizationRuntime(service, resolveActor, process.env, name => getApps().getApp(name));
@@ -110,5 +103,6 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
   ctx.authorizationTool = authorizationTool;
   const registered = ready.then(() => registerAuthorizationTools(ctx.toolRegistryService, ctx.dynamicToolExecutorRegistry, service));
   void registered.catch(error => logger.error({ err: error }, 'Authorization tool registration failed'));
-  return { service, runtime, authorizationTool, isProtected, resolveActor: (req: Request) => resolveActor(req), ready: registered };
+  return { service, runtime, authorizationTool, isProtected, observePrincipal: directory.observePrincipal,
+    resolveActor: (req: Request) => resolveActor(req), ready: registered };
 }

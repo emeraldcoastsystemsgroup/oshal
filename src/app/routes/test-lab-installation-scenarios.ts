@@ -18,7 +18,7 @@ async function installedCatalog(cookie: string): Promise<StepResult> {
   const body = await response.json() as Record<string, unknown>;
   const apps = body.installedApps as Array<{ name: string; version: string; caseIds: string[] }>;
   const scenarios = body.scenarios as Array<{ id: string; installedTest?: {
-    id: string; appName: string; appVersion: string; revision: string; runnable: boolean; pendingReason?: string;
+    id: string; appName: string; appVersion: string; source: string; revision: string; runner: { kind: string }; runnable: boolean; pendingReason?: string;
   } }>;
   if (!Array.isArray(apps) || !Array.isArray(scenarios)) {
     return { app: 'test-lab', label, state: 'fail', detail: 'Catalog is missing installedApps or scenarios.' };
@@ -29,13 +29,14 @@ async function installedCatalog(cookie: string): Promise<StepResult> {
     if (!test || typeof test !== 'object') return false;
     return typeof test.id === 'string' && test.id.startsWith('app:') && test.id === scenario.id
       && typeof test.appName === 'string' && typeof test.appVersion === 'string' && test.appVersion.length > 0
+      && /^(?:local|store):[a-f0-9]{64}$/.test(test.source) && typeof test.runner?.kind === 'string'
       && /^[a-f0-9]{64}$/.test(test.revision) && typeof test.runnable === 'boolean'
       && (test.runnable || (typeof test.pendingReason === 'string' && test.pendingReason.length > 0))
       && apps.some(app => app?.name === test.appName && app.version === test.appVersion
         && Array.isArray(app.caseIds) && app.caseIds.includes(test.id));
   });
   return { app: 'test-lab', label, state: valid ? 'pass' : 'fail',
-    detail: valid ? `Catalog contract verified: ${cases.length} visible installed smoke cases. No app test was executed.`
+    detail: valid ? `Catalog contract verified: ${cases.filter(scenario => scenario.installedTest?.runner.kind === 'smoke').length} visible installed smoke cases and ${cases.filter(scenario => scenario.installedTest?.runner.kind !== 'smoke').length} declared suites. No app test was executed.`
       : 'Installed cases lost their app/version association or prerequisite state.' };
 }
 
@@ -45,6 +46,9 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
   regressionTests: [
     { level: 'integration', path: 'tests/unit/installed-app-test-lab.spec.ts' },
     { level: 'integration', path: 'tests/unit/test-lab-platform-registration.spec.ts' },
+    { level: 'unit', path: 'tests/unit/package-test-catalog.spec.ts' },
+    { level: 'integration', path: 'tests/unit/package-test-catalog-lifecycle.spec.ts' },
+    { level: 'browser', path: 'tests/unit/package-test-catalog-browser.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'test-lab', label: 'Installed package cases', run: installedCatalog }],
 }];

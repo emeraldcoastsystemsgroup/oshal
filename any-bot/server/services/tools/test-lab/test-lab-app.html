@@ -267,6 +267,13 @@ function renderScenarioCard(scenario) {
     + (scenario.installedTest ? '<div class="scenario-desc">Installed ' + esc(scenario.installedTest.appVersion) + ' &middot; '
       + esc(scenario.installedTest.level) + ' &middot; '
       + (scenario.installedTest.runnable ? 'Ready' : 'Pending: ' + esc(scenario.installedTest.pendingReason)) + '</div>' : '')
+    + (scenario.installedTest ? '<details class="scenario-desc"><summary>Runner and prerequisites</summary>'
+      + '<div>Runner: ' + esc(scenario.installedTest.runner && scenario.installedTest.runner.kind) + '</div>'
+      + '<div>Prerequisites: ' + esc((scenario.installedTest.prerequisites || []).join(', ') || 'None') + '</div>'
+      + '<div>Side effects: ' + esc(scenario.installedTest.sideEffects) + ' &middot; Isolation: ' + esc(scenario.installedTest.isolation && scenario.installedTest.isolation.mode) + '</div>'
+      + '<div>Source: <code>' + esc(scenario.installedTest.source) + '</code></div>'
+      + '<div>Case revision: <code>' + esc(scenario.installedTest.revision) + '</code></div>'
+      + '<div>Expected: ' + esc((scenario.installedTest.expected || []).join(' ')) + '</div></details>' : '')
     + ((scenario.regressionTests || []).length ? '<details class="scenario-desc"><summary>Regression suites</summary>' + scenario.regressionTests.map((test) => '<div>' + esc(test.level) + ': <code>' + esc(test.path) + '</code></div>').join('') + '</details>' : '')
     + '<div class="steps" id="steps-' + esc(scenario.id) + '">'
     + (scenario.steps || []).map((step) => renderStep(step, 'idle', step.app)).join('')
@@ -351,7 +358,7 @@ async function runOne(id) {
     const payload = await fetchJson(API + '/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scenarioId: id }),
+      body: JSON.stringify({ scenarioId: id, expectedCases: installedRevisions() }),
     });
     const result = (payload.results || [])[0];
     if (!result) throw new Error('No result payload returned.');
@@ -363,6 +370,11 @@ async function runOne(id) {
   } finally {
     setCardRunning(id, false);
   }
+}
+
+function installedRevisions() {
+  return Object.fromEntries((catalog.scenarios || []).filter((scenario) => scenario.installedTest)
+    .map((scenario) => [scenario.id, scenario.installedTest.revision]));
 }
 
 async function runAll() {
@@ -378,7 +390,7 @@ async function runAll() {
     const payload = await fetchJson(API + '/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scenarioId: 'all' }),
+      body: JSON.stringify({ scenarioId: 'all', expectedCases: installedRevisions() }),
     });
     const results = payload.results || [];
     if (!results.length) throw new Error('No result payload returned.');

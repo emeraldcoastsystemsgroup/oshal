@@ -71,9 +71,11 @@ export interface TestLabRouteOptions {
 function installedScenario(test: InstalledAppTestCase) {
   return {
     id: test.id, title: `${test.appName}: ${test.name}`, group: 'tool',
-    description: `Installed ${test.appName} ${test.appVersion} smoke: ${test.method} ${test.path}`,
+    description: test.purpose,
     installedTest: test,
-    regressionTests: [{ level: 'integration', path: 'tests/unit/installed-app-test-lab.spec.ts' }],
+    regressionTests: test.runner.kind === 'smoke' ? [{ level: 'integration', path: 'tests/unit/installed-app-test-lab.spec.ts' }]
+      : test.runner.files.map(file => ({ level: test.level,
+        path: test.runner.kind !== 'smoke' && test.runner.scope === 'core' ? `core@${test.runner.revision}:${file}` : `package:${file}` })),
     steps: [{ id: test.id, app: test.appName, label: test.name }],
   };
 }
@@ -132,6 +134,11 @@ export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptio
   router.post('/run', tester(async (req, res) => {
     const cookie = req.headers.cookie || '';
     const id = String(req.body?.scenarioId || req.query.id || 'all');
+    const expectedCases = req.body?.expectedCases;
+    if (expectedCases !== undefined && (!expectedCases || typeof expectedCases !== 'object' || Array.isArray(expectedCases)
+      || Object.values(expectedCases).some(value => typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)))) {
+      res.status(400).json({ error: 'expectedCases must map installed case IDs to their catalog revisions.' }); return;
+    }
     const toRun = id === 'all' ? SCENARIOS : SCENARIOS.filter((s) => s.id === id);
     const installed = (options.installedTests?.list(await visibleApps(req), executionAuth(req)) ?? [])
       .filter(test => id === 'all' || test.id === id);
@@ -151,7 +158,9 @@ export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptio
       results.push({ id: sc.id, title: sc.title, group: sc.group, description: sc.description, state: rollup(stepResults.map((s) => s.state)), steps: stepResults });
     }
     for (const test of installed) {
-      const result = await options.installedTests!.run(test, await visibleApps(req), {
+      const selected = expectedCases === undefined ? test : { ...test,
+        revision: Object.prototype.hasOwnProperty.call(expectedCases, test.id) ? expectedCases[test.id] : '' };
+      const result = await options.installedTests!.run(selected, await visibleApps(req), {
         apiBaseUrl: options.apiBaseUrl ?? `http://127.0.0.1:${process.env.PORT || '5000'}`,
         ...executionAuth(req),
       });
@@ -159,7 +168,8 @@ export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptio
       results.push({ ...installedScenario(test), state, steps: [{
         app: test.appName, label: test.name, state, status: result.httpStatus,
         detail: result.status === 'pending' ? `Pending: ${result.error}` : result.error ?? `Verified ${test.method} ${test.path}`,
-        output: { executionStatus: result.status, appVersion: test.appVersion, revision: test.revision, durationMs: result.durationMs },
+        output: { executionStatus: result.status, appVersion: test.appVersion, source: test.source, revision: test.revision,
+          runner: test.runner.kind, durationMs: result.durationMs },
       }] });
     }
     res.json({ ran: results.length, results });

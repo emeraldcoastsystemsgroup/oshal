@@ -28,6 +28,7 @@ export type KernelSkillId =
   | 'media-generation'
   | 'payments'
   | 'application-authorization'
+  | 'test-catalog'
   | 'spatial-mapping';
 
 /**
@@ -76,6 +77,11 @@ export interface KernelSkillDeclaration {
  * docs/apps/kernel-skills.md. The CI guard then enforces it forever.
  */
 export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
+  {
+    id: 'test-catalog', title: 'Package test catalogs',
+    why: 'Versioned test metadata installs with applications and remains separate from runner execution authority.',
+    modules: [{ specifier: '@/shared/package-testing', distFile: 'dist/shared/package-testing/index.js' }],
+  },
   {
     id: 'application-authorization', title: 'Application authorization',
     why: 'Versioned permission catalogs and actor-bound resource adapters shared by installed applications.',

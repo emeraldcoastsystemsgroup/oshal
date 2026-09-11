@@ -91,3 +91,4 @@ export * as payments from '@/features/payments';
 // (unlike drone/camera). The installed spaces package resolves this from dist.
 export * as spatialMapping from '@/features/spatial-mapping';
 export * as applicationAuthorization from '@/shared/application-authorization';
+export * as packageTesting from '@/shared/package-testing';

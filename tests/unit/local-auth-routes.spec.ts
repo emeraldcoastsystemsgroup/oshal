@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The named guard for the LOCAL_AUTH critical path (ADR-117), exercised through a REAL express app against an in-memory pool: bootstrap-once (installer becomes the first admin, second attempt 409s), login with generic errors + per-email rate limiting, the one-time invite lifecycle (invite → info → accept → reuse 410), admin-gate matrix (anonymous 401 / non-operator 403 / operator + trusted-service 200), disable-kills-login, and the copyable-link fallback when SMTP is absent. If the login wall regresses open, this file goes red.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Guard installer-proof refusal; seed login credentials directly while the companion PostgreSQL suite proves root setup.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Support transactional account administration; companion PostgreSQL tests prove current-root and role-race guards.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
@@ -20,7 +21,10 @@ function fakePool() {
   const byEmail = (email: unknown) => rows.find((r) => r.email === email);
   return {
     rows,
+    async connect() { return { query: this.query.bind(this),release() {} }; },
     async query(sql: string, params: unknown[] = []): Promise<{ rows: Row[] }> {
+      if (/^(BEGIN|COMMIT|ROLLBACK|LOCK TABLE)/.test(sql)) return { rows: [] };
+      if (sql.includes('FROM swarm_roles')) return { rows: [] };
       if (sql.includes('ON CONFLICT (email)')) {
         const [id, email, displayName, userSub, tokenHash, expiresAt, invitedBy] = params;
         const existing = byEmail(email);

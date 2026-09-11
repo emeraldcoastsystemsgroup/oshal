@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove installer proof, atomic first root and recovery against disposable PostgreSQL and real Express routes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Include verified principal state in the isolated first-install ceremony schema and resets.
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID, createHash } from 'node:crypto';
@@ -13,6 +14,7 @@ import express from 'express';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ensureLocalUserSchema, localSubForEmail } from '@/features/local-auth';
+import { ensurePrincipalDirectorySchema } from '@/features/principal-directory';
 import { ensureSwarmRoleSchema, claimRoot } from '@/features/swarm-roles';
 import { clearPrivilegedIdentities } from '@/shared/middleware/privileged-identities';
 import { wrapPoolWithGuc } from '@/shared/services/database/guc-pool';
@@ -40,7 +42,7 @@ beforeAll(async () => {
     try { await owner.query('SELECT 1'); ready = true; break; } catch { await new Promise((done) => setTimeout(done, 200)); }
   }
   if (!ready) throw new Error('Disposable root fixture PostgreSQL unavailable');
-  await ensureLocalUserSchema(owner); await ensureSwarmRoleSchema(owner); await ensureInstallerRootSchema(owner);
+  await ensureLocalUserSchema(owner); await ensureSwarmRoleSchema(owner); await ensureInstallerRootSchema(owner); await ensurePrincipalDirectorySchema(owner);
   await owner.query("CREATE ROLE root_runtime LOGIN PASSWORD 'fixture-runtime' NOSUPERUSER NOBYPASSRLS");
   await owner.query('GRANT USAGE ON SCHEMA public TO root_runtime');
   await owner.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO root_runtime');
@@ -62,7 +64,7 @@ beforeAll(async () => {
 }, 90_000);
 beforeEach(async () => {
   clearPrivilegedIdentities(); vi.stubEnv('OSHAL_OPERATOR_SUBS', ''); vi.stubEnv('OSHAL_OPERATOR_EMAILS', '');
-  await owner.query('TRUNCATE oshal_local_users, swarm_roles, oshal_installer_root_setup');
+  await owner.query('TRUNCATE oshal_local_users, swarm_roles, oshal_installer_root_setup, oshal_verified_principals');
 });
 afterAll(async () => {
   if (server) await new Promise<void>((done) => server.close(() => done()));

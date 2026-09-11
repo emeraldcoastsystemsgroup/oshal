@@ -20,6 +20,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. resolveRuntimeProviderName's env fallback is openai-codex (was claude-code) and the generic DEFAULT_MODEL is gpt-5.5 (was claude-sonnet-4-6) — both only reachable with no persisted config and no LLM_PROVIDER/LLM_MODEL, i.e. exactly the self-install shape. The claude-code harness factory, its apiType check, and the recursion guards are untouched.
  */
 
+// CHANGE LOG 15 | maintainer@emeraldcoastsystemsgroup.com | Share the current model resolver with manifest bot initialization.
 import fs from 'fs';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
@@ -703,7 +704,7 @@ export function createRuntimeProvider(
  * @description Resolves the model name from persisted config for a given provider.
  * @returns Model name or default.
  */
-function resolveRuntimeModelName(): string {
+export function resolveRuntimeModelName(): string {
   // Hard override: bypass global-config.json entirely when set.
   // Use FORCE_LLM_MODEL in compose/K8s to switch models without modifying persistent volumes.
   const forceModel = process.env.FORCE_LLM_MODEL?.trim();

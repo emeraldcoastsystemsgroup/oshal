@@ -23,7 +23,7 @@ const ownerCookie = 'lab-owner=alice';
 beforeAll(async () => {
   const catalog = new InstalledAppTestCatalog();
   catalog.register({
-    name: 'lab-fixture', version: '1.0.0', status: 'active', manifestPath: '/unused/oshal-app.yaml',
+    name: 'lab-fixture', version: '1.0.0', status: 'active', manifestPath: path.join(process.cwd(), 'oshal-app.yaml'),
     manifest: { name: 'lab-fixture', version: '1.0.0', smoke: [{ name: 'ready', method: 'GET',
       path: '/api/lab-fixture/ready', auth: 'public', expect: { status: 200 } }] },
   } as Parameters<InstalledAppTestCatalog['register']>[0]);
