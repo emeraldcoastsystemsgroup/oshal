@@ -202,3 +202,26 @@ it did not preview or apply a live grant. The API already mounts `src/pages` rea
 workspace, so the HTML update is served on refresh without rebuilding or restarting containers.
 The compiled runtime remains the image identified above; the UI change is versioned separately
 in the accompanying source commit. Other application deployments were not interrupted.
+
+## Calendar, layout and bulk administration
+
+The application table now loads automatically for the selected user and supports application/source
+search. Long permission lists expand within compact cells; row actions and column headings stay
+visible while scrolling. Detailed rules, explanations and audit history remain available under
+Advanced access. Expiry fields expose a visible calendar button and a No expiry reset, with local
+timezone guidance and exact timestamp preservation.
+
+Application checkboxes open a separate bulk dialog for up to twenty applications. Each application
+retains its own imported role choices and business tenant. A shared role is offered only when its
+identifier exists in every selected application. The review shows exact identity, reason, roles,
+tenants, expiry and a fixed review deadline. All entries are previewed before writes; application
+transactions then save sequentially with current caller, policy and revision checks. A refusal or
+unresolved response stops later writes and preserves completed receipts in the result display.
+
+The final focused run passed **39 browser cases and 12 HTTP/registration cases** without failures
+or skips. Three additional real Chromium/disposable PostgreSQL audit-history cases passed after
+adapting to the collapsed Advanced access section. The existing AI Test Lab source registrations
+and fixed command remain unchanged and their parity was verified. Combined embedded JavaScript
+and test lint passed, including the function-length guard. Browser acceptance includes a narrow
+viewport, calendar invocation and exact expiry, distinct application roles, common roles, bulk
+revocation, changed catalogs, revoked administrators and ambiguous-response reconciliation.

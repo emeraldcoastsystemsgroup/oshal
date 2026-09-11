@@ -101,6 +101,25 @@ mode show **Legacy access**, because the central role tier does not describe leg
 The registered `authorization-admin-browser.spec.ts` suite exercises these controls with the actual
 policy HTTP service and isolated in-memory assignments; it never edits deployed grants.
 
+The application table loads for the selected user, supports application/source search and keeps
+long role and permission lists in expandable cells. Advanced permission explanations, restrictions
+and audit history remain under **Advanced access**. Each expiry field provides **Choose date** and
+**No expiry** controls. The chooser uses local date and time; the reviewed and saved assignment
+contains the corresponding exact timestamp.
+
+Select application checkboxes and choose **Edit selected** to review up to twenty applications for
+one exact user. The dialog offers each application's own role catalog and business tenant. A shared
+role can be selected only when that role ID is available in every selected application. The reason
+and optional expiry apply to each explicit grant; removing roles still affects direct assignments only.
+
+Bulk changes save sequentially, with a separate audited transaction for each application. Before
+the first write, every selected change is previewed and any independent-approval requirement blocks
+the batch. Each subsequent step verifies the current caller, application policy and expected revision;
+renewed previews preserve the reviewed change and original review deadline. A conflict or refusal
+stops remaining changes while keeping completed changes saved. An ambiguous response is retried once
+with the same preview and idempotency key; an unresolved outcome stops the batch and is shown as
+unknown for audit reconciliation. This is not an atomic multi-application transaction.
+
 Two core role templates can be assigned per application, optionally within a business tenant:
 
 | Core role | Management rights | Business-data rights |

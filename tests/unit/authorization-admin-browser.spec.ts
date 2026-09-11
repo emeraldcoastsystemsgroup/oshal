@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise user deep-links, permission matrices and delegated read-only administration.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Refuse unknown linked identities and obsolete asynchronous access previews.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Verify inline additive roles, exact row scope, live catalog changes and stale response refusal.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Exercise calendar expiry, compact layout and reviewed bulk role changes.
  */
 /** Chromium drives the real Access Administration page and shared policy HTTP service on loopback. */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -26,11 +27,13 @@ beforeEach(async () => {
   page.setDefaultTimeout(10000);
   await page.goto(fixture.base + '/access/');
   await page.locator('#administration').waitFor({ state: 'visible' });
+  await openAdvanced();
   await expect.poll(() => page.locator('#status').textContent()).toContain('Access catalog loaded');
 }, 30000);
 afterEach(async () => { await context?.close(); await fixture?.close(); }, 30000);
 
 async function preview(action = 'grant') {
+  await openAdvanced();
   await page.locator('#operation').selectOption(action);
   await page.locator('#reason').fill('Reviewed in isolated browser test');
   await page.locator('#preview-button').click();
@@ -39,6 +42,11 @@ async function preview(action = 'grant') {
 async function apply() {
   await page.locator('#apply').click();
   await expect.poll(() => page.locator('#status').textContent()).toContain('Change applied');
+}
+
+async function openAdvanced() {
+  const panel = page.locator('#advanced-access');
+  if (!await panel.evaluate(element => (element as HTMLDetailsElement).open)) await panel.locator('summary').first().click();
 }
 
 describe('Access Administration browser workflow', () => {
@@ -52,6 +60,7 @@ describe('Access Administration browser workflow', () => {
     await page.locator('#load-user-applications').click();
     await expect.poll(() => page.locator('#user-applications').textContent()).toContain('fallback-app');
     expect(await page.locator('#user-applications').textContent()).toContain('records.read (own)');
+    await openAdvanced();
     await page.locator('#role').selectOption('@access-auditor'); await preview(); await apply();
     expect(await page.locator('#effective').textContent()).toContain('@access-auditor');
     await context.addCookies([{ name: 'session', value: 'bob', url: fixture.base }]); await page.reload();
@@ -113,7 +122,7 @@ describe('Access Administration browser workflow', () => {
     expect(await page.locator('#review').isHidden()).toBe(true);
     expect(await page.locator('#app-revision').textContent()).toContain('Policy revision: 1');
     expect((await fixture.store.read()).assignments.map(row => row.targetSub)).toEqual(['bob']);
-  });
+  }, 30000);
 
   it('maps and removes a directory group with its source and tenant fixed by the selected inventory', async () => {
     await page.locator('#target-kind').selectOption('group');
@@ -286,7 +295,7 @@ describe('Inline application role editing', () => {
     expect(assignments.some(row => row.deny && row.permission === 'records.read')).toBe(true);
     editor = await editApplication(); await editor.locator('[name="action"]').selectOption('revoke');
     expect(await editor.locator('[name="role"] option').evaluateAll(options => options.map(option => option.value))).not.toContain('reader');
-    expect((await page.locator('tr[data-app="catalog-app"] td').nth(2).textContent())?.split(',').map(role => role.trim())).toContain('reader');
+    expect(await page.locator('tr[data-app="catalog-app"] td').nth(2).locator('li').allTextContents()).toContain('reader');
     expect(fixture.store.auditEvents).toHaveLength(6);
   }, 30000);
 
@@ -457,5 +466,179 @@ describe('Inline application role editing', () => {
     fixture.actors.alice.isActive = false;
     await page.locator('#load-user-applications').click();
     await expect.poll(() => page.locator('tr[data-app="legacy-app"] td').nth(1).textContent()).toMatch(/denied/i);
+  }, 30000);
+});
+
+describe('Access layout and expiry chooser', () => {
+  it('starts with a searchable application table and keeps advanced controls folded away', async () => {
+    await page.reload();
+    await expect.poll(() => page.locator('tr[data-app]').count()).toBe(2);
+    expect(await page.locator('#advanced-access').evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
+    expect(await page.locator('#reason').isHidden()).toBe(true);
+    await page.locator('#application-search').fill('fallback');
+    expect(await page.locator('tr[data-app="catalog-app"]').isHidden()).toBe(true);
+    expect(await page.locator('tr[data-app="fallback-app"]').isVisible()).toBe(true);
+    await page.locator('#bulk-select-visible').click();
+    expect(await page.locator('#bulk-count').textContent()).toContain('1 application');
+    await page.locator('#application-search').fill('no matching application');
+    expect(await page.locator('tr[data-app]:visible').count()).toBe(0);
+    await page.locator('#application-search').clear();
+    expect(await page.locator('tr[data-app]:visible').count()).toBe(2);
+    expect((await fixture.store.read()).assignments).toEqual([]);
+    await page.screenshot({ path: 'temp/access-layout-browser.png', fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }, 30000);
+
+  it('opens the calendar from a named button and saves the exact local expiry, with an explicit no-expiry reset', async () => {
+    await page.evaluate(() => { Object.defineProperty(HTMLInputElement.prototype, 'showPicker', { configurable: true,
+      value(this: HTMLInputElement) { (window as any).chosenExpiryInput = this.id; } }); });
+    const editor = await editApplication();
+    await editor.locator('[data-action="choose-expiry"]').click();
+    expect(await page.evaluate(() => (window as any).chosenExpiryInput)).toBe(await editor.locator('[name="expires"]').getAttribute('id'));
+    const localExpiry = '2099-06-15T14:30';
+    const expectedExpiry = await page.evaluate(value => new Date(value).toISOString(), localExpiry);
+    await editor.locator('[name="expires"]').fill(localExpiry);
+    await reviewRow(editor, 'reader');
+    expect(await editor.locator('[data-role-review]').textContent()).toContain(expectedExpiry);
+    await editor.locator('[data-action="clear-expiry"]').click();
+    expect(await editor.locator('[name="expires"]').inputValue()).toBe('');
+    expect(await editor.locator('[data-role-review]').isHidden()).toBe(true);
+    await editor.locator('[name="expires"]').fill(localExpiry); await reviewRow(editor, 'reader'); await applyRow(editor);
+    expect((await fixture.store.read()).assignments[0].expiresAt).toBe(expectedExpiry);
+    await page.locator('[data-expiry-target="expires"][data-action="choose-expiry"]').click();
+    expect(await page.evaluate(() => (window as any).chosenExpiryInput)).toBe('expires');
+  }, 30000);
+});
+
+async function reviewBulk(roles: Record<string, string> = { 'catalog-app': 'reader', 'fallback-app': '@app-admin' }) {
+  await page.locator('#load-user-applications').click();
+  for (const app of Object.keys(roles)) await page.locator(`tr[data-app="${app}"] [data-bulk-select]`).check();
+  await page.locator('#bulk-edit-selected').click();
+  for (const [app, role] of Object.entries(roles)) await page.locator(`[data-bulk-app="${app}"] [data-bulk-role]`).selectOption(role);
+  await page.locator('#bulk-reason').fill('Reviewed multiple application roles in isolated browser');
+  await page.locator('#bulk-review').click();
+  await page.locator('#bulk-reviewed').waitFor({ state: 'visible' });
+  await expect.poll(() => page.locator('#bulk-apply').isEnabled()).toBe(true);
+}
+
+describe('Reviewed bulk application roles', () => {
+  it('reviews distinct imported roles together and applies them in order through current policy revisions', async () => {
+    await reviewBulk();
+    await page.locator('#bulk-back').click();
+    await page.locator('#bulk-expires').fill('2099-07-20T09:15');
+    const expectedExpiry = await page.evaluate(() => new Date('2099-07-20T09:15').toISOString());
+    await page.locator('#bulk-review').click(); await page.locator('#bulk-reviewed').waitFor({ state: 'visible' });
+    expect((await fixture.store.read()).assignments).toEqual([]);
+    expect(await page.locator('#bulk-review-list').textContent()).toContain('reader');
+    expect(await page.locator('#bulk-review-list').textContent()).toContain('@app-admin');
+    expect(await page.locator('#bulk-review-reason').textContent()).toContain('Reviewed multiple application roles');
+    expect(await page.locator('#bulk-identity').textContent()).toContain(ISSUER);
+    expect(await page.locator('#bulk-review-list').textContent()).toContain(expectedExpiry);
+    await page.screenshot({ path: 'temp/access-bulk-review-browser.png' });
+    await page.locator('#bulk-apply').click();
+    await expect.poll(() => page.locator('#bulk-status').textContent()).toMatch(/^2 changes applied/);
+    expect((await fixture.store.read()).assignments.map(row => [row.app, row.role, row.targetSub, row.targetIssuer])).toEqual([
+      ['catalog-app', 'reader', 'alice', ISSUER], ['fallback-app', '@app-admin', 'alice', ISSUER],
+    ]);
+    expect(fixture.store.auditEvents.map(event => event.revision)).toEqual([1, 2]);
+    expect((await fixture.store.read()).assignments.every(row => row.expiresAt === expectedExpiry)).toBe(true);
+    await page.locator('#bulk-close').click();
+    await expect.poll(() => page.locator('tr[data-app="fallback-app"]').textContent()).toContain('@app-admin');
+  }, 30000);
+
+  it('uses a shared role explicitly and removes only that direct role across the selected applications', async () => {
+    await fixture.apply(); await page.reload();
+    await reviewBulk({ 'catalog-app': '@access-auditor', 'fallback-app': '@access-auditor' });
+    await page.locator('#bulk-back').click(); await page.locator('#bulk-common-role').selectOption('@access-auditor');
+    expect(await page.locator('[data-bulk-role]').evaluateAll(elements => elements.map(element => (element as HTMLSelectElement).value))).toEqual(['@access-auditor', '@access-auditor']);
+    await page.locator('#bulk-review').click(); await page.locator('#bulk-apply').click();
+    await expect.poll(() => page.locator('#bulk-status').textContent()).toMatch(/^2 changes applied/);
+    await page.locator('#bulk-close').click(); await reviewBulk({ 'catalog-app': '@access-auditor', 'fallback-app': '@access-auditor' });
+    await page.locator('#bulk-back').click(); await page.locator('#bulk-operation').selectOption('revoke');
+    await page.locator('#bulk-common-role').selectOption('@access-auditor');
+    await page.locator('#bulk-review').click(); await page.locator('#bulk-apply').click();
+    await expect.poll(() => page.locator('#bulk-status').textContent()).toMatch(/^2 changes applied/);
+    expect((await fixture.store.read()).assignments.map(row => [row.app, row.role])).toEqual([['catalog-app', 'reader']]);
+  }, 30000);
+
+  it('stops bulk writes when the administrator loses current assignment rights after review', async () => {
+    await reviewBulk(); fixture.actors.admin.isSwarmAdmin = false;
+    await page.locator('#bulk-apply').click();
+    await expect.poll(() => page.locator('#bulk-status').textContent()).toContain('batch stopped');
+    expect((await fixture.store.read()).assignments).toEqual([]);
+    expect(await page.locator('#bulk-apply').isDisabled()).toBe(true);
+  }, 30000);
+
+  it('stops remaining changes after an unrelated policy update without undoing the confirmed first change', async () => {
+    await reviewBulk(); let first = true;
+    await page.route('**/api/authorization/apply', async route => {
+      const response = await route.fetch();
+      if (first) { first = false; await fixture.apply({ targetSub: 'bob' }); }
+      await route.fulfill({ response });
+    });
+    await page.locator('#bulk-apply').click();
+    await expect.poll(() => page.locator('#bulk-status').textContent()).toContain('Access changed outside this batch');
+    expect((await fixture.store.read()).assignments.map(row => [row.app, row.targetSub])).toEqual([['catalog-app', 'alice'], ['catalog-app', 'bob']]);
+    expect(await page.locator('#bulk-review-list').textContent()).toContain('applied');
+    expect(await page.locator('#bulk-review-list').textContent()).toContain('failed');
+    expect(await page.locator('#bulk-apply').isDisabled()).toBe(true);
+  }, 30000);
+
+  it('refuses a changed application catalog before the first write', async () => {
+    await reviewBulk();
+    await fixture.service.registerApp({ app: 'fallback-app', source: 'new-store', version: '2.0.0', catalog: null, mode: 'enforce' });
+    await page.locator('#bulk-apply').click();
+    await expect.poll(() => page.locator('#bulk-status').textContent()).toContain('application policy changed');
+    expect((await fixture.store.read()).assignments).toEqual([]);
+  }, 30000);
+
+  it.each([false, true])('reconciles a lost apply response with its original idempotency key; repeated loss=%s', async repeatedLoss => {
+    await reviewBulk(); const payloads: unknown[] = [];
+    await page.route('**/api/authorization/apply', async route => {
+      payloads.push(route.request().postDataJSON()); const response = await route.fetch();
+      if (payloads.length === 1 || repeatedLoss) await route.abort('failed'); else await route.fulfill({ response });
+    });
+    await page.locator('#bulk-apply').click();
+    await expect.poll(() => page.locator('#bulk-status').textContent()).toMatch(repeatedLoss ? /unknown outcome/ : /^2 changes applied/);
+    expect(payloads[0]).toEqual(payloads[1]);
+    expect(fixture.store.auditEvents).toHaveLength(repeatedLoss ? 1 : 2);
+    expect(payloads).toHaveLength(repeatedLoss ? 2 : 3);
+    if (repeatedLoss) expect(await page.locator('#bulk-review-list').textContent()).toContain('unknown');
+    expect(await page.locator('#bulk-apply').isDisabled()).toBe(true);
+  }, 30000);
+
+  it('clears a pending bulk review after the target changes and never submits its late response', async () => {
+    await reviewBulk(); await page.locator('#bulk-back').click();
+    let release!: () => void; let entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    await page.route('**/api/authorization/preview', async route => {
+      const response = await route.fetch(); entered(); await gate; await route.fulfill({ response });
+    });
+    try {
+      await page.locator('#bulk-review').click(); await waiting;
+      await page.locator('#target').evaluate(select => { (select as HTMLSelectElement).value = '1'; select.dispatchEvent(new Event('change')); });
+      const settled = page.waitForResponse(response => response.url().endsWith('/authorization/preview'));
+      release(); await settled;
+      await expect.poll(() => page.locator('#bulk-dialog').isVisible()).toBe(false);
+      expect(await page.locator('#target option:checked').textContent()).toContain('Bob');
+      expect((await fixture.store.read()).assignments).toEqual([]);
+    } finally { release(); }
+  }, 30000);
+
+  it('blocks the entire review when a selected self-management role needs independent approval', async () => {
+    await page.locator('#manual-target summary').click();
+    await page.locator('#manual-issuer').fill(ISSUER); await page.locator('#manual-id').fill('admin');
+    await page.locator('#use-manual-target').click();
+    await page.locator('#load-user-applications').click();
+    await page.locator('tr[data-app="catalog-app"] [data-bulk-select]').check();
+    await page.locator('#bulk-edit-selected').click();
+    await page.locator('[data-bulk-role]').selectOption('@access-admin');
+    await page.locator('#bulk-reason').fill('Review self-management request'); await page.locator('#bulk-review').click();
+    await page.locator('#bulk-reviewed').waitFor({ state: 'visible' });
+    expect(await page.locator('#bulk-status').textContent()).toContain('independent approval');
+    expect(await page.locator('#bulk-apply').isDisabled()).toBe(true);
+    expect((await fixture.store.read()).assignments).toEqual([]);
   }, 30000);
 });

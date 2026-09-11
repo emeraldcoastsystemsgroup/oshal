@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Drive scoped applied-change history in the real Access page backed by PostgreSQL.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Bound sequential browser checks explicitly and release held responses during cleanup.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Open the visible Advanced access disclosure before exercising existing audit controls.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -22,9 +23,17 @@ afterEach(async () => { await context?.unrouteAll({ behavior: 'ignoreErrors' });
 afterAll(async () => {
   try { await browser?.close(); } finally { try { await fixture.close(); } finally { vi.unstubAllEnvs(); } }
 }, 60_000);
+async function openAdvanced() {
+  const advanced = page.locator('#advanced-access');
+  expect(await advanced.getAttribute('open')).toBeNull();
+  expect(await page.locator('#audit-refresh').isVisible()).toBe(false);
+  await advanced.locator(':scope > summary').click();
+  await expect.poll(() => page.locator('#audit-refresh').isVisible(), { timeout: 10_000 }).toBe(true);
+}
 async function open() {
   await page.goto(fixture.base + '/access');
   await expect.poll(() => page.locator('#audit-status').textContent(), { timeout: 10_000 }).toContain('applied changes loaded');
+  await openAdvanced();
 }
 
 describe('Access applied-change history browser', () => {
@@ -48,6 +57,7 @@ describe('Access applied-change history browser', () => {
     await context.addCookies([{ name: 'session', value: 'tenant', url: fixture.base }]);
     await page.goto(fixture.base + '/access');
     await expect.poll(() => page.locator('#audit-status').textContent(), { timeout: 10_000 }).toContain('unavailable');
+    await openAdvanced();
     expect(await page.locator('#audit-global').isHidden()).toBe(true);
     await page.locator('#audit-tenant').fill('tenant-a'); await page.locator('#audit-refresh').click();
     await expect.poll(() => page.locator('#audit-entries tbody tr').count(), { timeout: 10_000 }).toBe(1);
