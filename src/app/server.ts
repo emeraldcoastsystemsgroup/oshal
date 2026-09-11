@@ -176,6 +176,7 @@
  * 163 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 fix (found by stage-3 live verification): /api/files rides serviceSecretOr(requiresAuth) — the artifact-handle relay redeems a files-browser source by re-fetching /api/files/download as the minting caller over the internal rail, and the session-only mount 401'd that fetch, 502-ing every doc-hub "Send to…" dispatch.
  * 164 | maintainer@emeraldcoastsystemsgroup.com   | resolveOpenAiCodexCallbackPort delegates its raw-port read to resolveConfiguredOpenAiCodexCallbackPort (server-auth-helpers seq 4): the compose-forwarded EMPTY OPENAI_CODEX_CALLBACK_PORT parsed to NaN and silently skipped the :1455 codex callback listener, so every cockpit codex login ended at ERR_EMPTY_RESPONSE on localhost:1455. One reader now owns the ""-means-default rule.
  * Home customization | Codex | Mount authenticated Home preference persistence alongside user settings.
+ * 2026-09-10 | maintainer@emeraldcoastsystemsgroup.com | ADR-139 shared artifact picker: source discovery, owner-scoped storage and app visibility.
  */
 
 require('dotenv').config();
@@ -1237,7 +1238,17 @@ function createApp(): express.Application {
   // ADR-139: the artifact exchange — "Send to…" menu resolution, owner-bound handle mint/redeem
   // (the claim-ticket rail), the shared send-to.js component, and the kernel built-in
   // destinations (email compose overlay + save to oshal-local storage).
-  app.use('/api/artifacts', serviceSecretOr(requiresAuth), createArtifactExchangeRoutes(ctx));
+  app.use('/api/artifacts', serviceSecretOr(requiresAuth), createArtifactExchangeRoutes(ctx, async req => {
+    const { sub } = getCaller(req);
+    const visible = new Set((await swarmAppService.listApps('active', { ownerSub: sub, isOperator: isOperator(req) })).map(record => record.name));
+    const readable = new Map<string, string>();
+    for (const manifest of await swarmAppService.getActiveManifests()) {
+      if (!visible.has(manifest.name) || !manifest.artifacts?.provides?.length) continue;
+      if (manifest.access && (await appAccessService.resolve(manifest.name, sub, manifest.access)).tier === 'deny') continue;
+      readable.set(manifest.name, manifest.displayName || manifest.name);
+    }
+    return readable;
+  }));
   // LOCAL_AUTH flows (ADR-117): /invite + /logout pages, login/accept/bootstrap, and the
   // operator-or-trusted-service user administration API. Mounted below the GUC stamp so
   // admin reads ride the caller's RLS identity; the public legs are the front door and

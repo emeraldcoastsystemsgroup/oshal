@@ -3,8 +3,7 @@
 **Status:** Accepted (staged) — operator approved the staged build 2026-09-04 ("ok lets do it in stages") after a design review that surfaced two under-specified spots, resolved in amendment A below. **Stage 1 shipped**: the shared registry + handle store (`src/shared/artifact-exchange/`), the `/api/artifacts` routes + `send-to.js`, fail-closed `artifacts:` manifest parsing with activate/deactivate lifecycle, the cockpit `artifact=` forward, and Portrait Studio as the first registered destination — full loop operator-verified in the browser. **Stage 2 shipped (Amendment B)**: the first kernel built-in destinations — **Email it…** (an in-place compose overlay; the artifact rides as an attachment over the caller's own mailbox, confirm-gated) and **Save to OSHAL Storage** (post-mode into the always-present oshal-local store, which `uploadBytes` now supports) — plus the files browser instrumented as the first document-hub surface (📤 per file). `overlay` is a kernel-reserved dispatch shape: manifests declaring it fail the load, so an app can never point the overlay at an arbitrary page. **Stage 3 shipped (same day)**: **Ingest to RAG** — an overlay that drives the *existing* caller-ACL'd `/api/rag/upload` from the user's own session (the ADR-135 mojibake gate had already been closed: the upload route extracts via doc-extract and never ingests raw bytes), collection picked or named in the overlay, kernel collections still refused server-side for non-admins; and **Summarize with Jarvis** — an overlay that gets the document's text through the owner-bound `POST /builtin/extract-text` (the doc-extract rail) and rides the surface's own `/api/jarvis/ask` + result poll. Both are kernel registrations over the same overlay dispatch as email. **Wave 2 shipped 2026-09-06**: the shared package-side redeem (`redeemArtifactViaRelay` — the promised
 promotion; real-HTTP-guarded) and three destinations riding it (dnd character import, Kid Lens
 Takeout ingest, Spaces video reconstruction) plus the class-materials and career resume/cover
-sources — a pdf's menu offers eight destinations. Stage 4 (sources/`provides` + the generic picker,
-the NL leg) and the remaining rollout items are tracked in the BACKLOG's "what is left" entry. **Rollout complete through wave 2 (2026-09-07)**: twelve destinations registered and ten source surfaces tagged, plus two operational pieces the rollout forced out — the shared package-side redeem (`redeemArtifactViaRelay`) so a new destination is ~30 lines, and `scripts/deploy-store-package.sh`, which copies a package onto a box without silently deactivating it (a bare `docker cp` overwrites `status:` and the loader then reconciles the DB toggle from it — that trap cost three debug cycles). **Amendment D shipped 2026-09-09**: the mint-with-bytes decision is recorded and it is *yes* — a second mint (`POST /handles/upload`) carries the artifact for sources that have no byte-serving URL to point at, under the same owner binding and TTL, bytes in memory only, with a per-sub byte budget the count cap could not provide. The task-explorer Files tab, which could never be tagged, is the live proof. rag-center documents stay untagged for a different reason (a retrieved chunk is not a document) recorded in D4c.
+sources — a pdf's menu offers eight destinations. Stage 4a (sources and the shared picker) is implemented and locally verified below; deployed acceptance and Stage 4b natural-language dispatch remain in BACKLOG. **Rollout complete through wave 2 (2026-09-07)**: twelve destinations registered and ten source surfaces tagged, plus two operational pieces the rollout forced out — the shared package-side redeem (`redeemArtifactViaRelay`) so a new destination is ~30 lines, and `scripts/deploy-store-package.sh`, which copies a package onto a box without silently deactivating it (a bare `docker cp` overwrites `status:` and the loader then reconciles the DB toggle from it — that trap cost three debug cycles). **Amendment D shipped 2026-09-09**: the mint-with-bytes decision is recorded and it is *yes* — a second mint (`POST /handles/upload`) carries the artifact for sources that have no byte-serving URL to point at, under the same owner binding and TTL, bytes in memory only, with a per-sub byte budget the count cap could not provide. The task-explorer Files tab, which could never be tagged, is the live proof. rag-center documents stay untagged for a different reason (a retrieved chunk is not a document) recorded in D4c.
 
 **Date:** 2026-09-04
 
@@ -18,6 +17,30 @@ the NL leg) and the remaining rollout items are tracked in the BACKLOG's "what i
 ---
 
 ## Context
+
+### Stage 4a implementation — shared source picker (2026-09-10)
+
+The source direction now consumes the existing `provides:` registry. `/api/artifacts/sources`
+returns registered listings for active, caller-visible, readable apps, plus connected storage
+registered as `kernel-storage`. `/api/artifacts/picker.js` exposes
+`oshalPickArtifact({accept: ['image/*'], maxBytes})`, resolving to an owner-bound handle or null
+on cancellation. The browser reads source listings using its own session; there is no elevated
+listing proxy. Normal handle redemption still re-fetches selected bytes under the owner identity.
+
+A provider's `list` endpoint returns `{items:[{name,type,source,size?}],folders?:[{name,cursor}],
+nextCursor?:string|null,emptyMessage?:string}`. Pages contain at most 100 items and 100 folders;
+cursors are opaque strings up to 4096 characters. File sources must be same-origin `/api/` byte
+routes with owner checks. Lists are read-only. Optional declaration `label` is at most 60 chars.
+The storage adapter composes existing `listRoots`/`browse` and preserves connected providers;
+it never copies files or exposes paths on disk. MIME/size filtering, cancellation, focus and error
+handling live in one browser component. Portrait Studio 1.11.0 replaces its bespoke modal and
+declares its finished-image gallery as the first app source.
+
+Local real-HTTP/browser acceptance covers file ownership, foreign-handle refusal, registered
+source discovery, folder navigation, filtering, cancellation, and loading both a stored file and
+a gallery image into the actual crop stage. The test doubles authentication and the portrait SQL
+store explicitly. Production rollout remains subject to the protected core merge; this is not
+a claim that the new routes are already deployed. Stage 4b natural-language dispatch remains separate.
 
 The operator's framing, verbatim intent: *"for any artifact (images, documents, etc.) there should be a
 general swarm service that apps register with on load, that subscribes artifact types to applications,

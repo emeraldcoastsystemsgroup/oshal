@@ -50,6 +50,25 @@ successfully. Per-run logs and the two SHAs are retained by
 scope are documented in [the local CI runbook](../runbooks/local-ci.md#corestore-compatibility-release-check).
 This attests to source compatibility, not legacy JavaScript behavior or emitted-output parity.
 
+## Shared artifact picker (2026-09-10)
+
+`tests/unit/artifact-picker.spec.ts` runs the actual framework artifact/file routers, local
+owner-hashed storage directories, short-lived handles, loopback byte redemption and Chromium on
+the shipped Portrait Studio surface and shared picker. It also loads the real Portrait Studio
+source route. Authentication and the portrait SQL store are explicit fixtures; this does not
+claim PostgreSQL/RLS or external connector acceptance. No compiler, filesystem, picker or handle
+redemption implementation is replaced.
+
+The local proof passes for registered/visible source discovery, removal on unregister, MIME
+filtering, invalid navigation, owner-only listings, foreign-handle refusal, byte-identical file
+redemption, folder/back navigation, zero mints on cancellation, rejection of external source URLs,
+late-response cancellation, and selecting both a local file and a gallery image into the actual
+crop stage. No generation or publication is triggered. Mobile width and light/dark theme changes
+pass. The related artifact/auth suites pass together (34 tests); Portrait Studio's standalone
+camera proof passes 23 checks. Run locally with `node node_modules/vitest/vitest.mjs run
+tests/unit/artifact-picker.spec.ts`; set `OSHAL_STORE_REPO` when the repositories are not siblings.
+The deployed signed-in acceptance remains in BACKLOG until the protected core change lands.
+
 ## Rules for future fixes
 
 1. Name the failed boundary in the test header and name what remains doubled.

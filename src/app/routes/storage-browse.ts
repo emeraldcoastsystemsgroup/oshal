@@ -23,6 +23,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: uploadBytes gains the oshal-local branch (safeLocalPath-guarded write into the caller's always-present local store) — the "Save to OSHAL Storage" built-in's backend, and connector-free upload for the files surface.
  *
  * @module storage-browse
+ * 2026-09-10 | maintainer@emeraldcoastsystemsgroup.com | ADR-139 shared artifact picker: source discovery, owner-scoped storage and app visibility.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -475,10 +476,10 @@ export async function deleteEntry(ctx: AppContext, sub: string, provider: Storag
 }
 
 const TEXT_EXT = new Set(['txt', 'md', 'markdown', 'json', 'yaml', 'yml', 'csv', 'tsv', 'log', 'js', 'ts', 'tsx', 'jsx', 'py', 'rb', 'go', 'rs', 'java', 'c', 'h', 'cpp', 'cs', 'sh', 'bash', 'sql', 'html', 'css', 'scss', 'xml', 'svg', 'toml', 'ini', 'env', 'gitignore', 'dockerfile', 'conf']);
-const IMG_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon' };
+const IMG_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', jpe: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon', avif: 'image/avif', heic: 'image/heic', heif: 'image/heif', tif: 'image/tiff', tiff: 'image/tiff' };
 
 /** Best-effort MIME from a file extension. */
-function mimeFor(name: string): string {
+export function mimeFor(name: string): string {
   const ext = name.split('.').pop()?.toLowerCase() || '';
   if (IMG_MIME[ext]) return IMG_MIME[ext];
   if (ext === 'pdf') return 'application/pdf';

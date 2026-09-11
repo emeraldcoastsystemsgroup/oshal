@@ -480,8 +480,9 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** a document sent from the files browser lands as a material in a class the caller may write to, chosen in the dispatch, with a non-teacher's share still going through the existing request-share path; proven by one live dispatch.
 
 ### ADR-139 Stage 4a — the source direction: a generic "pick an artifact" picker
-- **Remaining:** `provides:` declarations are parsed, validated and registered by the loader, and nothing consumes them. Every app still hand-builds its own file picker — Portrait Studio's connected-files modal is the pattern that keeps getting copied. The inverse of "Send to…" is "pick from": one shared component that lists registered sources and hands back a minted handle.
-- **Done when:** a kernel picker component (the `send-to.js` sibling) lists `provides:` sources across apps and returns a handle, and at least one surface adopts it in place of its bespoke picker with the old modal deleted, not left beside it.
+- **Implemented:** shared registry-backed source discovery, connected-storage adapter and picker component; Portrait Studio 1.11.0 consumes it and provides its finished-image gallery. The old modal and its private helpers are deleted. Local real HTTP/file/handle/Chromium acceptance passes; see ADR-139 Stage 4a.
+- **Remaining:** merge the protected core change, install Portrait Studio 1.11.0 and record one signed-in selection on the deployed cockpit.
+- **Done when:** the deployed picker lists registered sources and a selected authorized image reaches Portrait Studio's crop stage through its owner-bound handle.
 
 ### ADR-139 Stage 4b — the NL leg ("Jarvis, send this to X")
 - **Remaining:** language resolution against the same registry, so the menu and the assistant answer from one catalog. Nothing about this needs a new mechanism — a turn resolves `/api/artifacts/actions` for the artifact in hand and dispatches the chosen action.

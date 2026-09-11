@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: the first kernel built-ins, registered at boot through the SAME registry interface apps use. kernel-storage → POST /builtin/save (redeem the handle, uploadBytes to the caller's oshal-local store under artifacts/). kernel-email → the compose overlay (GET /email-compose page; POST /builtin/email sends the artifact as an attachment over the caller's OWN mailbox — sendGmail else the Graph sibling else 409 — behind the standard confirm:true 428 gate). Factory now takes ctx (uploadBytes + connector-token lookups need the pool).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Amendment D (mint-with-bytes): POST /handles/upload — a multipart sibling of the locator mint, for a source that has no byte-serving URL to point at (a client-generated export; a route that answers a JSON preview envelope rather than the file). Authorization runs BEFORE multer buffers attacker-controlled bytes, the per-request limit is the shared inline cap, and the per-sub byte budget is enforced in the handle store. Redeem is unchanged for every caller and every destination: readArtifactBytes serves a carried payload directly and otherwise relays as before, so the built-ins and the package-side redeemArtifactViaRelay needed no change at all.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 3: kernel-rag "Ingest to RAG" (overlay — pick a collection, then the page drives the EXISTING caller-ACL'd /api/rag/upload from the user's own session; no new ingest surface, the doc-extract fix already guards it) and kernel-jarvis "Summarize with Jarvis" (overlay — text via POST /builtin/extract-text, the doc-extract rail, then the surface's own /api/jarvis/ask + result poll). extract-text is read-only and owner-bound like every redeem.
+ * 2026-09-10 | maintainer@emeraldcoastsystemsgroup.com | ADR-139 shared artifact picker: source discovery, owner-scoped storage and app visibility.
  */
 
 import * as path from 'node:path';
@@ -29,6 +30,7 @@ import { extractDocText } from '@/features/doc-extract';
 import { uploadBytes } from './storage-browse';
 import { sendGmail, sendOutlookMail } from './email-routes';
 import { getValidAccessToken } from './connectors-routes';
+import { createArtifactPickerRoutes, type PickerVisibleApps } from './artifact-picker-routes';
 
 const logger = createChildLogger({ module: 'artifact-exchange-routes' });
 
@@ -155,6 +157,7 @@ function registerBuiltins(): void {
   });
   registerAppArtifactActions('kernel-storage', {
     accepts: [{ id: 'save', label: 'Save to OSHAL Storage', icon: '🗄️', types: ['*/*'], mode: 'post', endpoint: '/api/artifacts/builtin/save' }],
+    provides: [{ label: 'Connected files', types: ['*/*'], list: '/api/artifacts/storage' }],
   });
   registerAppArtifactActions('kernel-rag', {
     accepts: [{ id: 'ingest', label: 'Ingest to RAG', icon: '📚', types: DOC_TYPES, mode: 'open', overlay: '/api/artifacts/rag-ingest' }],
@@ -180,9 +183,10 @@ function serveOverlayPage(res: Response, file: string): void {
  * @param ctx - App context (pool — the built-ins' storage/connector lookups ride it).
  * @returns Configured Express router.
  */
-export function createArtifactExchangeRoutes(ctx: AppContext): Router {
+export function createArtifactExchangeRoutes(ctx: AppContext, visibleApps?: PickerVisibleApps): Router {
   const router = Router();
   registerBuiltins();
+  router.use(createArtifactPickerRoutes(ctx, visibleApps));
 
   /** GET /actions?type=<mime> — the "Send to…" menu for one artifact type. Entries the caller
    *  may not ultimately use still fail closed at the destination's own gate on dispatch. */
