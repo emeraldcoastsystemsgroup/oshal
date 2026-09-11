@@ -8,6 +8,11 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 
 ## Promotion, deployment, and regression proof
 
+### Application test cases register with AI Test Lab during installation
+- **Requested:** test cases belong to application packages and register automatically on installation, with upgrade/reload/disable/uninstall reconciliation. Reuse existing package `smoke:` validation and verification; richer local/browser/live suites need versioned catalog and runner metadata.
+- **Backlog:** [Application Test Lab registration](backlog/app-test-lab-registration.md) contains the prioritized core work, complete public-package worklist, pinned suite inventory and lifecycle acceptance cases. Private package rows remain in the private app repository.
+- **Done when:** each application with existing testing installs its cases into the Lab without per-app core edits; lifecycle and ownership tests pass; unavailable prerequisites remain explicit; every inventoried suite has a disposition and representative installation/run evidence. Registration does not automatically execute all tests.
+
 ### Production core-deploy pipeline + version strategy (operator, 2026-09-05)
 - **Remaining:** deploying core to the customer production box (the gsquared CRM landscape) is a
   proven but fully MANUAL procedure: merge to main, then on-box `git reset --hard <sha>` of the

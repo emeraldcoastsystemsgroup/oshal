@@ -70,6 +70,15 @@ updated catalog or its live-model scenarios have already run on the deployed ins
 
 ---
 
+## Planned: application-installed test catalogs
+
+Application test-case catalogs should register through package installation and activation, then
+reconcile on upgrade, reload, disable and uninstall. Existing `smoke:` declarations are the starting
+point. Richer test catalogs and automatic Lab registration are **not implemented yet**; the
+[application registration backlog](backlog/app-test-lab-registration.md) lists the packages, existing
+suites, installation contract work and acceptance criteria. Registering tests must not silently run
+model/device/outward-action suites during installation.
+
 ## Part 2 — Nightly golden loop
 
 Submits "golden" complicated requests as **real tickets**, lets them flow through the **same swarm
