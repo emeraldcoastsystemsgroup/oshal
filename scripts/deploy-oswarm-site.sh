@@ -10,6 +10,7 @@
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | Make the wrangler deploy non-interactive (CI=true, WRANGLER_SEND_METRICS=false) and bound it with `timeout 420`. wrangler 4.114.0 re-armed the first-run metrics-consent prompt, which has no TTY to answer in the hidden nightly task — the deploy hung indefinitely and three days of wedged runs starved the Docker host into an OOM crash loop that took the whole local swarm down. The timeout guarantees a wedge fails loud instead of piling up.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | Generate, stage and hash-verify /product (the application + platform catalog). Its data island is regenerated from the kernel manifests AND the store trunk on every deploy, so the catalog can never drift the way the index grid did when it advertised 7 apps against 54 live.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | Stage and hash-verify the /product + /platform PAGE TREES, not a single page. The one-page catalog it replaces had no URL per app to share or index; the tree is copied whole (a hand-listed set of ~70 pages rots on the next app) and verified one-of-each-shape: hub, shelf, deep app page and platform topic, so a deploy that shipped the hub and dropped the rest fails.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | Stage and hash-verify /create, the hand-authored Create studio landing page (the product front door for create.oshal.ai). Required like the page trees: the address is printed on the studio itself, so a deploy that dropped it would ship a dead link.
 #
 # Usage: bash scripts/deploy-oswarm-site.sh
 # Exit 0 = deployed AND verified. Non-zero = the real error (nothing is claimed live).
@@ -72,6 +73,13 @@ for tree in product platform install build; do
   cp -r "$SRC/$tree" "$STAGE/$tree"
   note "staged /$tree ($(find "$STAGE/$tree" -name index.html | wc -l | tr -d ' ') pages)"
 done
+# The Create landing page (/create — the product front door for create.oshal.ai). Hand-authored
+# like index.html, NOT generated, so it lives outside the product/platform trees. Required: a
+# deploy that silently dropped it would 404 the address printed on the studio itself.
+[ -f "$SRC/create/index.html" ] || fail "missing $SRC/create/index.html"
+mkdir -p "$STAGE/create"
+cp "$SRC/create/index.html" "$STAGE/create/index.html"
+note "staged /create (Create studio landing page)"
 
 # 2) Deploy. Force wrangler NON-INTERACTIVE and time-bounded. In the hidden nightly scheduled task
 #    there is no TTY, so wrangler's first-run "send usage metrics?" consent prompt (re-armed by the
@@ -167,6 +175,7 @@ verify_page "/platform/security/" "$STAGE/platform/security/index.html"
 verify_page "/product/apps/$(basename "$SAMPLE_APP")/" "$SAMPLE_APP/index.html"
 verify_page "/install/" "$STAGE/install/index.html"
 verify_page "/build/" "$STAGE/build/index.html"
+verify_page "/create/" "$STAGE/create/index.html"
 note "VERIFIED: $BASE serves the product site ($(find "$STAGE/product" "$STAGE/platform" "$STAGE/install" "$STAGE/build" -name index.html | wc -l | tr -d ' ') pages staged)"
 
 # 5) When the lab report was staged, hash-verify it too (same edge-lag rationale as the index gate).
