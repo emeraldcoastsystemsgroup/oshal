@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Verify redacted, scoped audit pagination against real PostgreSQL, HTTP and the registered tool handler.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Give sequential PostgreSQL/HTTP integration cases explicit budgets on loaded development hosts.
  */
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { AuthorizationAuditFixture } from '../fixtures/authorization-audit';
@@ -13,10 +14,10 @@ import { ApplicationAuthorizationService, PostgresAuthorizationStore } from '@/f
 
 const fixture = new AuthorizationAuditFixture();
 beforeAll(async () => { vi.stubEnv('OSHAL_SCHEMA_BOOTSTRAP', ''); await fixture.start(); }, 90_000);
-beforeEach(async () => { await fixture.reset(); });
-afterAll(async () => { await fixture.close(); vi.unstubAllEnvs(); }, 30_000);
+beforeEach(async () => { await fixture.reset(); }, 30_000);
+afterAll(async () => { try { await fixture.close(); } finally { vi.unstubAllEnvs(); } }, 60_000);
 
-  it('uses stable descending keyset pages while new changes arrive and a new store instance reads the same history', async () => {
+  it.sequential('uses stable descending keyset pages while new changes arrive and a new store instance reads the same history', { timeout: 30_000 }, async () => {
     for (let i = 0; i < 5; i++) await fixture.apply();
     const first = await fixture.call('/audit?app=app-one&limit=2');
     expect(first.status).toBe(200); expect(first.headers.get('cache-control')).toContain('no-store');
@@ -35,7 +36,7 @@ afterAll(async () => { await fixture.close(); vi.unstubAllEnvs(); }, 30_000);
     expect((await restarted.auditHistory(fixture.actors.root, {})).entries[0].revision).toBe(6);
   });
 
-  it('filters by app and tenant before pagination and denies cross-app, unscoped and ordinary reads', async () => {
+  it.sequential('filters by app and tenant before pagination and denies cross-app, unscoped and ordinary reads', { timeout: 30_000 }, async () => {
     await fixture.apply({ tenantId: 'tenant-a' }); await fixture.apply({ tenantId: 'tenant-b' }); await fixture.apply({ app: 'app-two' });
     const tenant = await fixture.call('/audit?app=app-one&tenantId=tenant-a&limit=1', 'tenant');
     expect(tenant.status).toBe(200); expect(tenant.body.entries.map((entry: { revision: number }) => entry.revision)).toEqual([1]);
@@ -49,7 +50,7 @@ afterAll(async () => { await fixture.close(); vi.unstubAllEnvs(); }, 30_000);
     expect((await fixture.call('/audit', '')).status).toBe(401);
   });
 
-  it('rechecks current authority and delegation ceilings on every continuation; cursors cannot switch actor or scope', async () => {
+  it.sequential('rechecks current authority and delegation ceilings on every continuation; cursors cannot switch actor or scope', { timeout: 30_000 }, async () => {
     await fixture.apply(); await fixture.apply();
     const first = await fixture.call('/audit?app=app-one&limit=1', 'manager');
     const cursor = first.body.nextCursor;
@@ -62,7 +63,7 @@ afterAll(async () => { await fixture.close(); vi.unstubAllEnvs(); }, 30_000);
     expect((await fixture.call('/audit')).status).toBe(401);
   });
 
-  it('rejects unbounded, malformed or authority-bearing requests and preserves database RLS', async () => {
+  it.sequential('rejects unbounded, malformed or authority-bearing requests and preserves database RLS', { timeout: 30_000 }, async () => {
     await fixture.apply();
     for (const query of ['limit=0', 'limit=101', 'limit=1.5', 'limit=1e2', 'limit=1&limit=2', 'actor=root', 'isSwarmAdmin=true', 'cursor=invalid', 'tenantId=tenant-a']) {
       expect((await fixture.call('/audit?' + query)).status).toBe(400);
@@ -74,13 +75,13 @@ afterAll(async () => { await fixture.close(); vi.unstubAllEnvs(); }, 30_000);
     expect(indexes.rows.map(row => row.indexname)).toContain('authorization_audit_tenant_revision');
   });
 
-  it('keeps removed-app history readable only by its current scoped manager or swarm administrator', async () => {
+  it.sequential('keeps removed-app history readable only by its current scoped manager or swarm administrator', { timeout: 30_000 }, async () => {
     await fixture.apply(); fixture.service.unregisterApp('app-one');
     expect((await fixture.call('/audit?app=app-one', 'manager')).body.entries).toHaveLength(1);
     expect((await fixture.call('/audit?app=app-one', 'user')).status).toBe(403);
   });
 
-  it('runs read-only audit through the fixed tool with the same projection and no implicit mutation permission', async () => {
+  it.sequential('runs read-only audit through the fixed tool with the same projection and no implicit mutation permission', { timeout: 30_000 }, async () => {
     await fixture.apply();
     const context = { resolveActor: async () => fixture.actors.manager, allowChanges: false };
     const result = JSON.parse(await fixture.tool.execute(AUTHORIZATION_READ_TOOL, { operation: 'audit_history', query: { app: 'app-one' } }, context));

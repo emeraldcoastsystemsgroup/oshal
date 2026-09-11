@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Compose real PostgreSQL authorization audit, HTTP and browser fixtures without deployment data.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Close fixture keep-alive connections before resetting or removing the disposable database.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -35,7 +36,7 @@ export class AuthorizationAuditFixture {
 
   /** @description Recompose real routes and restore only fixture data. @returns A listening loopback endpoint. */
   async reset(): Promise<void> {
-    if (this.server) await new Promise<void>(done => this.server.close(() => done()));
+    await this.closeServer();
     await this.database.owner.query('TRUNCATE oshal_authorization_assignments,oshal_authorization_previews,oshal_authorization_audit,oshal_authorization_applications');
     await this.database.owner.query('UPDATE oshal_authorization_state SET revision=0');
     const actor = (sub: string): AuthorizationActor => ({ sub, issuer: 'urn:audit-fixture', isActive: true, isSwarmAdmin: false });
@@ -80,7 +81,13 @@ export class AuthorizationAuditFixture {
 
   /** @description Remove this fixture's temporary resources. @returns Cleanup completion. */
   async close(): Promise<void> {
-    if (this.server) await new Promise<void>(done => this.server.close(() => done()));
-    await this.database.close();
+    try { await this.closeServer(); } finally { await this.database.close(); }
+  }
+
+  private async closeServer(): Promise<void> {
+    if (!this.server) return;
+    const closed = new Promise<void>(done => this.server.close(() => done()));
+    this.server.closeAllConnections();
+    await closed;
   }
 }
