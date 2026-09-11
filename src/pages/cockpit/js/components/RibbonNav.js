@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Rail pin (operator request 2026-08-06): a pin toggle in the top-right corner holds the rail expanded; unpinned restores hover-expand. The preference is a UI setting and persists in localStorage (the ?app= URL contract forbids caching the PROFILE there, not this). State lives on the instance, not the DOM — render() rebuilds innerHTML on every profile/tool change, so the class and handler re-apply per render. Hidden on the mobile drawer, which is always full-width.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Platform tools: add 'tool-devices' (Get oshal) — the desktop / phone / TV onboarding page, a static file under src/pages/cockpit/tools/ like the others. The one-click worker-node installer (GET /api/join/node-installer) shipped with no cockpit link at all — its only button lived on career-hunter's Job Board, and only while the user had zero nodes — and the phone PWA and the TV apps were promoted nowhere.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | ADR-147/148: App Loader and Users join Dead Letters as operator-only platform-tray entries (iframe tool views over /app-loader and /users). Operator asked why the store was not reachable from the default /cockpit/ page — it was reachable only by typing the URL. Gated by the same _loadOperatorState flag, which reads whoami -> isOperator(), so a role granted on the Users page surfaces them without an env-file edit; the routes self-gate with requiresOperator regardless.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | app-navigate may carry a `query` (sanitizeToolQuery: k=v&k=v, URL-safe, bounded) that the view controller appends to that tool's OWN iframeUrl — so the Create front door can open AI Office on a purpose (kind/starter/theme). A query onto the already-active tile re-renders it. Nothing here can point a frame anywhere but the tile's own URL.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
@@ -42,6 +43,21 @@ const PINNED_PLATFORM_VIEW_IDS = ['operations', 'connectors'];
 
 /** The single rail entry that a focused app shows in place of the platform tool set. */
 export const PLATFORM_HUB_ID = 'tool-platform-hub';
+
+/**
+ * @description The ONLY shape of query an embedded surface may attach to a tool navigation:
+ * `key=value&key=value` in URL-safe characters, bounded. It is appended to the tool's OWN
+ * iframeUrl by the view controller, never resolved as a URL of its own — so a surface can open a
+ * sibling studio on a purpose ("kind=docx&starter=resume") but can never point the frame anywhere
+ * else, inject a fragment, or smuggle whitespace.
+ * @param {unknown} query - the value from the message.
+ * @returns {string|null} the query verbatim when it is safe, else null.
+ */
+export function sanitizeToolQuery(query) {
+  if (typeof query !== 'string' || !query || query.length > 512) return null;
+  if (!/^[A-Za-z0-9_.~%-]+=[A-Za-z0-9_.~%-]*(?:&[A-Za-z0-9_.~%-]+=[A-Za-z0-9_.~%-]*)*$/.test(query)) return null;
+  return query;
+}
 
 /**
  * @description Decide which views make up the pinned-settings tray at the foot of the rail.
@@ -185,6 +201,9 @@ export class RibbonNav {
         return;
       }
       let id = null;
+      // `query` rides along ONLY on the tool form and only in the sanitized shape — the view
+      // controller appends it to that tool's own iframeUrl when it renders (consumeToolQuery).
+      const toolQuery = d.type === 'app-navigate' && d.tool ? sanitizeToolQuery(d.query) : null;
       if (d.type === 'app-navigate' && d.tool) id = 'tool-' + String(d.tool);
       // `view` addresses a view by its own id, so the hub can reach a tool that is registered but
       // deliberately not on the rail. Resolved against this.views — the admitted set — so this
@@ -208,7 +227,11 @@ export class RibbonNav {
       else if (d.type === 'lm-open-class' && d.classId) id = 'tool-lm-class-' + String(d.classId).substring(0, 8);
       if (!id) return;
       if (this.container && this.container.querySelector(`.ribbon-btn[data-view="${CSS.escape(id)}"]`)) {
-        this.setActive(id);
+        this._pendingToolQuery = toolQuery ? { id, query: toolQuery } : null;
+        // A query onto the tile already showing must still re-render it — setActive is a no-op
+        // for the active view, so notify the shell directly.
+        if (toolQuery && this.activeView === id && this.onViewChange) this.onViewChange(id);
+        else this.setActive(id);
       } else {
         // A silent no-op here is how broken in-app navigation hides for months —
         // surface the miss so the sending page (or a missing ribbon tool) gets fixed.
@@ -800,6 +823,20 @@ export class RibbonNav {
     });
     if (options.notify === false) return;
     if (this.onViewChange) this.onViewChange(viewId);
+  }
+
+  /**
+   * @description Hand the view controller the one-shot query an embedded surface attached to its
+   * navigation, if it is for this view. Consumed on read, so a later plain click on the same tile
+   * renders the tile's own URL again.
+   * @param {string} viewId - The view being rendered.
+   * @returns {string|null} The sanitized query, or null.
+   */
+  consumeToolQuery(viewId) {
+    const pending = this._pendingToolQuery;
+    if (!pending || pending.id !== viewId) return null;
+    this._pendingToolQuery = null;
+    return pending.query;
   }
 
   /**

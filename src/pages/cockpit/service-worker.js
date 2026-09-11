@@ -38,7 +38,7 @@
 /* global self, caches, fetch, Response */
 
 // Bump CACHE_VERSION on any change to the precached shell list so old caches are evicted.
-const CACHE_VERSION = 'oshal-cockpit-v35';
+const CACHE_VERSION = 'oshal-cockpit-v36';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 // The minimal app shell precached at install so the cockpit boots offline. Live data
