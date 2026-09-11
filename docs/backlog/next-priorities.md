@@ -4,6 +4,11 @@ Ranked for the operator's 2026-09-10 request. The first three are independent im
 the remaining items are queued. Local verification and AI Test Lab registration are part of each
 change. No GitHub Actions are required.
 
+**Current operator-directed focus:** [enterprise authorization](enterprise-authorization.md), specified
+in [ADR-149](../adr/149-enterprise-application-authorization.md). This work follows the completed first
+three lanes and takes precedence over the queued ordering below. The specification is ready for
+implementation; runtime enforcement and its planned Test Lab cases are not yet implemented.
+
 | Rank | Outcome | Scope / acceptance | Status |
 |---|---|---|---|
 | 1 | Installed apps automatically register their smoke tests in AI Test Lab | Reuse existing `smoke:` declarations; identify app/version/case; reconcile activation, reload, update and removal; run through the existing verifier with caller-scoped authority and explicit missing prerequisites. | Implemented; awaiting protected review/promotion |

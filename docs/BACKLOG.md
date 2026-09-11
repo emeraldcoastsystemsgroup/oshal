@@ -11,6 +11,12 @@ implementation lanes and the next queued outcomes.
 
 ## Promotion, deployment, and regression proof
 
+### Enterprise authorization: user, application, function and record
+- **Requested:** application permission schemas imported at installation; direct and directory-group grants; installer-established swarm admin; consistent user authority through applications and Jarvis.
+- **Specified:** [ADR-149](adr/149-enterprise-application-authorization.md) proposes the shared contract, admin/data separation, Entra/AD integration boundaries, record/field scopes, delegation, revocation and compatible rollout. This is a proposal, not implemented enforcement.
+- **Work and tests:** [AUTH-01 through AUTH-10](backlog/enterprise-authorization.md) define core/store ownership, three implementation lanes and planned AI Test Lab case registration.
+- **Done when:** one installed business package proves differing user/group function and record rights across UI, API and delegated AI; explicit deny and revocation work; installer root has one authorized winner; test cases register with installation and isolated/live evidence is accurately distinguished.
+
 ### Application test cases register with AI Test Lab during installation
 - **Requested:** test cases belong to application packages and register automatically on installation, with upgrade/reload/disable/uninstall reconciliation. Reuse existing package `smoke:` validation and verification; richer local/browser/live suites need versioned catalog and runner metadata.
 - **Implemented in the current branch:** active package smoke registration, lifecycle reconciliation, caller-filtered discovery, version/revision metadata and existing-verifier execution with explicit pending prerequisites. Richer suite catalogs, historical evidence and the full package inventory remain open.
