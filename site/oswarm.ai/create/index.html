@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create — one studio for everything you make with oshal</title>
+<meta name="description" content="Create is the oshal studio front door: decks, documents and workbooks, portraits, short videos, story episodes and your own LoRA characters — one home page, one rail, on infrastructure you own.">
+<link rel="canonical" href="https://oshal.ai/create/">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237d2ae8'/%3E%3Cpath d='M16 7v18M7 16h18M9.6 9.6l12.8 12.8M22.4 9.6L9.6 22.4' stroke='white' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<meta property="og:title" content="Create — one studio for everything you make with oshal">
+<meta property="og:description" content="Decks, documents, portraits, videos, stories and LoRA characters from one home page. Open source, on your own infrastructure.">
+<meta property="og:url" content="https://oshal.ai/create/">
+<meta property="og:type" content="website">
+<style>
+/* Self-contained like every page on this site: inline CSS, no webfonts, no external requests.
+   This is the light product page for the Create studio — it wears the studio's own palette
+   (white paper, lilac/sky/mint wash, violet accent, violet→teal gradient) rather than the site's
+   night theme, the way the studio itself looks. */
+:root{
+  --paper:#ffffff; --bg:#f8f7fd; --panel:#f3f0fb; --ink:#171236; --ink-2:#4b4670; --ink-3:#8b86a8;
+  --line:rgba(23,18,54,.08); --line-2:rgba(23,18,54,.16);
+  --violet:#7d2ae8; --violet-2:#6a1fcf; --teal:#00c4cc; --grad:linear-gradient(135deg,#7d2ae8 0%,#a259ff 48%,#00c4cc 100%);
+  --hero:linear-gradient(120deg,#e9e2ff 0%,#d9f1ff 48%,#dcfbf1 100%);
+  --peach:#ffe6d9; --lilac:#ebe2ff; --sky:#dcefff; --mint:#d9f7ec; --lemon:#fff3c9; --rose:#ffe0ee;
+  --shadow:0 2px 10px rgba(23,18,54,.06); --shadow-2:0 24px 60px rgba(23,18,54,.12);
+  --sans:system-ui,"Segoe UI Variable Display","Segoe UI",-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"Cascadia Code","JetBrains Mono",Consolas,"SF Mono",Menlo,monospace;
+  --w:1120px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{background:var(--bg);color:var(--ink-2);font-family:var(--sans);font-size:1rem;line-height:1.65;-webkit-font-smoothing:antialiased;overflow-x:hidden;position:relative}
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:
+  radial-gradient(900px 520px at 10% -10%, rgba(162,89,255,.16), transparent 60%),
+  radial-gradient(760px 500px at 100% -6%, rgba(0,196,204,.14), transparent 55%)}
+a{color:var(--violet);text-decoration:none}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+a:focus-visible,button:focus-visible{outline:2px solid var(--violet);outline-offset:3px;border-radius:4px}
+.wrap{max-width:var(--w);margin:0 auto;padding:0 24px}
+@media (max-width:720px){.wrap{padding-inline:16px}}
+h1,h2,h3{color:var(--ink);letter-spacing:-.02em;line-height:1.12}
+h2{font-size:clamp(1.5rem,2.6vw,2rem);margin-bottom:14px}
+p.lead{font-size:1.1rem;max-width:62ch}
+
+nav.top{position:sticky;top:0;z-index:50;background:rgba(248,247,253,.86);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+nav.top .wrap{display:flex;align-items:center;justify-content:space-between;height:64px;gap:24px}
+.brand{display:flex;align-items:center;gap:10px;color:var(--ink)}
+.brand:hover{text-decoration:none}
+.brand .tile{width:30px;height:30px;border-radius:9px;background:var(--grad);display:grid;place-items:center;box-shadow:0 4px 12px -4px rgba(125,42,232,.55)}
+.brand .word{font-weight:800;letter-spacing:-.01em;font-size:1.06rem;white-space:nowrap}
+.brand .word em{font-style:normal;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.navlinks{display:flex;align-items:center;gap:22px;font-size:.92rem}
+.navlinks a{color:var(--ink-2);white-space:nowrap}
+.navlinks a:hover{color:var(--ink);text-decoration:none}
+.btn{display:inline-flex;align-items:center;gap:8px;border-radius:12px;padding:10px 16px;font-weight:700;border:1px solid var(--line-2);background:var(--paper);color:var(--ink);box-shadow:var(--shadow)}
+.btn:hover{text-decoration:none;border-color:var(--violet)}
+.btn.primary{background:var(--violet);border-color:var(--violet);color:#fff}
+.btn.primary:hover{background:var(--violet-2)}
+@media (max-width:820px){.navlinks a:not(.btn){display:none}}
+
+.hero{margin:22px auto 0;padding:72px 24px 56px;border-radius:32px;background:var(--hero);text-align:center;position:relative;overflow:hidden;max-width:var(--w)}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(600px 260px at 50% 0%, rgba(255,255,255,.6), transparent 70%);pointer-events:none}
+.hero>*{position:relative}
+.eyebrow{display:inline-block;font-family:var(--mono);font-size:.74rem;letter-spacing:.14em;text-transform:uppercase;color:var(--violet);background:rgba(255,255,255,.7);border:1px solid rgba(255,255,255,.9);border-radius:999px;padding:6px 12px;margin-bottom:18px}
+.hero h1{font-size:clamp(2.2rem,5.4vw,4rem);font-weight:800;letter-spacing:-.03em;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:16px}
+.hero p{max-width:60ch;margin:0 auto 26px;font-size:1.12rem}
+.cta{display:flex;flex-wrap:wrap;gap:12px;justify-content:center}
+.cta .btn{padding:13px 20px;font-size:1rem}
+.host{margin-top:22px;font-family:var(--mono);font-size:.78rem;color:var(--ink-3)}
+
+/* The studio home, redrawn in CSS: a rail beside a card grid. Static, no screenshot. */
+.mock{max-width:var(--w);margin:-28px auto 0;padding:0 24px;position:relative;z-index:1}
+.mock .frame{background:var(--paper);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow-2);display:grid;grid-template-columns:76px 1fr;overflow:hidden;min-height:250px}
+.mock .rail{background:rgba(255,255,255,.92);border-right:1px solid var(--line);padding:12px 6px;display:flex;flex-direction:column;gap:6px}
+.mock .rail span{display:block;border-radius:12px;padding:8px 2px;font-size:9.5px;font-weight:700;text-align:center;color:var(--ink-2)}
+.mock .rail span::before{content:"";display:block;width:18px;height:18px;border-radius:6px;margin:0 auto 4px;background:var(--ink-3);opacity:.35}
+.mock .rail span.on{background:rgba(125,42,232,.10);color:var(--violet)}
+.mock .rail span.on::before{background:var(--violet);opacity:1}
+.mock .page{padding:18px 20px}
+.mock .bar{height:40px;border-radius:12px;border:2px solid rgba(125,42,232,.35);display:flex;align-items:center;padding:0 14px;color:var(--ink-3);font-size:.9rem;margin-bottom:14px;background:var(--paper)}
+.mock .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.mock .tile{border-radius:16px;padding:44px 12px 12px;font-weight:700;font-size:.86rem;color:#2a2350}
+.t-peach{background:var(--peach)}.t-lilac{background:var(--lilac)}.t-sky{background:var(--sky)}.t-mint{background:var(--mint)}.t-lemon{background:var(--lemon)}.t-rose{background:var(--rose)}
+
+section{padding:64px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:20px;padding:20px;box-shadow:var(--shadow);display:flex;gap:14px;align-items:flex-start}
+.card .mark{flex:0 0 auto;width:56px;height:56px;border-radius:16px;display:grid;place-items:center}
+.card .mark svg{width:34px;height:34px}
+.card h3{font-size:1.05rem;margin-bottom:4px}
+.card p{font-size:.94rem}
+.card .pkg{display:block;margin-top:8px;font-family:var(--mono);font-size:.74rem;color:var(--ink-3)}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;counter-reset:step}
+.step{background:var(--paper);border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:var(--shadow)}
+.step::before{counter-increment:step;content:counter(step);display:inline-grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--grad);color:#fff;font-weight:800;margin-bottom:12px}
+.step h3{font-size:1.02rem;margin-bottom:6px}
+.honest{background:var(--panel);border-radius:28px;padding:40px 28px}
+.honest ul{list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px 24px}
+.honest li{padding-left:26px;position:relative}
+.honest li::before{content:"";position:absolute;left:0;top:.55em;width:14px;height:14px;border-radius:5px;background:var(--grad)}
+.honest li b{color:var(--ink)}
+footer{padding:44px 0 60px;color:var(--ink-3);font-size:.88rem;border-top:1px solid var(--line)}
+footer .wrap{display:flex;flex-wrap:wrap;gap:16px 28px;justify-content:space-between}
+footer a{color:var(--ink-2)}
+footer a:hover{color:var(--violet)}
+</style>
+</head>
+<body>
+
+<nav class="top" aria-label="Primary"><div class="wrap">
+  <a class="brand" href="/" aria-label="oshal home"><span class="tile" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M12 4v16M4 12h16M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></span><span class="word">oshal <em>create</em></span></a>
+  <div class="navlinks">
+    <a href="/product/">Applications</a>
+    <a href="/platform/">Platform</a>
+    <a href="/install/">Install</a>
+    <a class="btn" href="https://oshal.agenticfederal.us/guest">Live demo</a>
+    <a class="btn primary" href="https://create.oshal.ai/">Open Create</a>
+  </div>
+</div></nav>
+
+<header class="hero">
+  <span class="eyebrow">oshal create</span>
+  <h1>What will you create today?</h1>
+  <p>One studio for decks, documents and workbooks, portraits, short videos, story episodes and your own LoRA characters — a single home page that shows what you were working on and one tap to pick up where you left off. Running on infrastructure you own.</p>
+  <div class="cta">
+    <a class="btn primary" href="https://create.oshal.ai/">Open Create</a>
+    <a class="btn" href="https://oshal.agenticfederal.us/guest">Try the live demo</a>
+    <a class="btn" href="https://github.com/emeraldcoastsystemsgroup/oshal-apps/tree/main/create">See the package</a>
+  </div>
+  <div class="host">create.oshal.ai · sign in with the same account as every other oshal studio</div>
+</header>
+
+<div class="mock" aria-hidden="true">
+  <div class="frame">
+    <div class="rail"><span class="on">Home</span><span>AI Office</span><span>Portrait</span><span>Video</span><span>LoRA</span><span>Vids</span><span>Stories</span></div>
+    <div class="page">
+      <div class="bar">Search starters, studios and your recent work</div>
+      <div class="tiles">
+        <div class="tile t-peach">Presentation</div><div class="tile t-lilac">Document</div><div class="tile t-mint">Spreadsheet</div>
+        <div class="tile t-sky">Headshot</div><div class="tile t-rose">Character</div><div class="tile t-lemon">Story episode</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section id="studios"><div class="wrap">
+  <h2>What's inside</h2>
+  <p class="lead">Every studio is its own oshal application, installed from the app store. Create puts them on one rail and reads their saved work onto one page — it never copies a studio or generates anything itself.</p>
+  <div class="grid" style="margin-top:22px">
+    <article class="card"><div class="mark t-peach"><svg viewBox="0 0 88 66" aria-hidden="true"><rect x="10" y="6" width="68" height="54" rx="8" fill="#fff"/><rect x="18" y="14" width="34" height="6" rx="3" fill="#7d2ae8"/><rect x="18" y="26" width="52" height="4" rx="2" fill="#d9d3ee"/><rect x="18" y="34" width="44" height="4" rx="2" fill="#d9d3ee"/><rect x="18" y="44" width="16" height="10" rx="3" fill="#ff8a5b"/><rect x="38" y="42" width="16" height="12" rx="3" fill="#00c4cc"/></svg></div><div><h3>AI Office</h3><p>One outline becomes a themed PowerPoint deck, a Word document or a live Excel workbook — fully editable, saved to the office world you already live in.</p><span class="pkg">presentations</span></div></article>
+    <article class="card"><div class="mark t-lilac"><svg viewBox="0 0 88 66" aria-hidden="true"><rect x="18" y="4" width="52" height="58" rx="10" fill="#fff"/><circle cx="44" cy="26" r="10" fill="#7d2ae8"/><path d="M26 56c2-12 10-16 18-16s16 4 18 16" fill="#a259ff"/></svg></div><div><h3>Portrait Studio</h3><p>Professional headshots, character portraits and group scenes from a photo — composable backdrops, clothing, props and finishes, exported in print and social sizes.</p><span class="pkg">portrait-studio</span></div></article>
+    <article class="card"><div class="mark t-sky"><svg viewBox="0 0 88 66" aria-hidden="true"><rect x="30" y="2" width="28" height="62" rx="7" fill="#fff"/><rect x="34" y="8" width="20" height="46" rx="4" fill="#7d2ae8"/><path d="M41 24l10 7-10 7z" fill="#fff"/></svg></div><div><h3>Video Studio</h3><p>Short-form video from a storyboard the director bot drafts and you approve — free renders first, paid ones only behind a cost gate.</p><span class="pkg">video</span></div></article>
+    <article class="card"><div class="mark t-mint"><svg viewBox="0 0 88 66" aria-hidden="true"><rect x="10" y="6" width="68" height="54" rx="8" fill="#fff"/><path d="M26 44L44 20L62 44M26 44h36M44 20v24" stroke="#10b981" stroke-width="2.5"/><circle cx="26" cy="44" r="6" fill="#7d2ae8"/><circle cx="62" cy="44" r="6" fill="#00c4cc"/><circle cx="44" cy="20" r="6" fill="#ff8a5b"/><circle cx="44" cy="44" r="4" fill="#10b981"/></svg></div><div><h3>LoRA Studio</h3><p>Train, version and score your own characters so every image of them looks like them.</p><span class="pkg">lora</span></div></article>
+    <article class="card"><div class="mark t-sky"><svg viewBox="0 0 88 66" aria-hidden="true"><rect x="10" y="6" width="68" height="54" rx="8" fill="#fff"/><rect x="18" y="14" width="52" height="30" rx="5" fill="#2f9bff"/><path d="M40 22l12 7-12 7z" fill="#fff"/><rect x="18" y="50" width="52" height="4" rx="2" fill="#d9d3ee"/><rect x="18" y="50" width="30" height="4" rx="2" fill="#00c4cc"/></svg></div><div><h3>Vids Studio</h3><p>The render queue: clips and episodes produced on a desktop worker you run, delivered to your content folder and your Drive.</p><span class="pkg">vids</span></div></article>
+    <article class="card"><div class="mark t-lemon"><svg viewBox="0 0 88 66" aria-hidden="true"><rect x="8" y="12" width="72" height="42" rx="6" fill="#fff"/><path d="M8 20h72M8 46h72" stroke="#d9d3ee" stroke-width="2"/><rect x="16" y="24" width="24" height="18" rx="3" fill="#ff8a5b"/><rect x="46" y="24" width="26" height="18" rx="3" fill="#7d2ae8"/></svg></div><div><h3>Stories</h3><p>Kid-safe story episodes from a rotating public-domain library, produced on a schedule by a bot that just keeps making them.</p><span class="pkg">creative-studio</span></div></article>
+  </div>
+</div></section>
+
+<section id="how"><div class="wrap">
+  <h2>How it works</h2>
+  <div class="steps" style="margin-top:18px">
+    <div class="step"><h3>Pick a starter</h3><p>Presentation, document, spreadsheet, headshot, character, group shot, short video, clip, story episode or a LoRA character. Search or filter by kind.</p></div>
+    <div class="step"><h3>The studio opens ready</h3><p>Every starter opens the studio that owns it — the same rail, the same skin, your same account. Nothing to install per studio once it is in your swarm.</p></div>
+    <div class="step"><h3>Pick up where you left off</h3><p>Continue creating gathers your saved work from every studio onto one page, newest first, with the counts each studio keeps for itself.</p></div>
+  </div>
+</div></section>
+
+<section id="honest"><div class="wrap"><div class="honest">
+  <h2>Built the oshal way</h2>
+  <ul>
+    <li><b>The studios own their domains.</b> Create is a launcher with a face — a manifest, a bundled skin, a home page and two static routes. It stores nothing and calls no model.</li>
+    <li><b>Your session, your data.</b> The home page asks each studio's own Home probe in your signed-in session. A probe that cannot answer says so; it never invents a number.</li>
+    <li><b>Nothing is sent from the home page.</b> Generation, rendering and publishing happen in the studio you open, behind that studio's own approvals and cost gates.</li>
+    <li><b>Your infrastructure, your keys.</b> Runs on the swarm you install — laptop, on-prem or cloud — with the providers you connect.</li>
+    <li><b>Open source.</b> The package lives in the public app store under AGPL-3.0-or-later; install it on your own swarm from there.</li>
+  </ul>
+</div></div></section>
+
+<footer><div class="wrap">
+  <div><a href="/">oshal.ai</a> · <a href="/product/">Applications</a> · <a href="/platform/">Platform</a> ·
+  <a href="/build/">Add an app</a> · <a href="/install/">Install</a> ·
+  <a href="https://github.com/emeraldcoastsystemsgroup/oshal">core repo</a> ·
+  <a href="https://github.com/emeraldcoastsystemsgroup/oshal-apps">app store</a></div>
+  <div>AGPL-3.0-or-later. Your infrastructure, your keys, your data.</div>
+</div></footer>
+</body>
+</html>
