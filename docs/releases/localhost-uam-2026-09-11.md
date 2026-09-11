@@ -169,3 +169,12 @@ role guidance only for browser navigation to an exact read-only `app.open` bindi
 retain JSON errors, and the package handler never runs for denied requests. The registered runtime
 suite now passes 22 cases, including escaped application labels, script-free CSP, administrator
 guidance, unchanged assignments and membership revocation.
+
+The final deployed core is `ca43c1081719bcdc9bb40f6ec9dede669fb1bb2d`, image
+`sha256:dd9d49fbbeb74eaf9efae80543b6f33773f43df2de69a613235548ee0d4b67f8`.
+Its committed archive passed publication/typechecking and image probes for SQLite, kernel
+capabilities, installed Access HTML and the compiled denial page. Native browser acceptance
+displayed the readable role guidance inside the focused application. The post-restart installation
+probe again passed all 197 checks. The final stack verifier passed all 35 application services,
+with the 14 infrastructure containers, 11 configuration fingerprints and privilege state preserved.
+Localhost and the configured HTTPS origin report the same final commit.
