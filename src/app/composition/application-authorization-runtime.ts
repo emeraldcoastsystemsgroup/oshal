@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Identify fully read-only named bindings for automatic Jarvis proposals.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Preserve business-only browser navigation while retaining explicit data workspace authorization.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Return role guidance for denied app-open browser documents without dispatching package code.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Check workspace navigation against the current mounted HTTP policy without dispatching a page.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -161,6 +162,32 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
     return this.authorize(actor, { app: owner.app, kind: 'http', method: input.method,
       path: input.path.slice(owner.mount.length) || '/' });
   }
+  /** @description Check an installed surface using the same named GET and shell-only membership rules as browser navigation.
+   * @param actor Verified current caller. @param pathname Local surface pathname without query or fragment.
+   * @param selection Explicit business workspace selected by the declared page URL.
+   * @returns Current mounted admission, or null when no package owns the path; no page handler runs.
+   */
+  async canNavigateHttpPath(actor: AuthorizationActor, pathname: string,
+    selection: { explicit: boolean; tenantId?: string } = { explicit: false }): Promise<boolean | null> {
+    const owner = [...this.registrations.entries()].flatMap(([app, state]) =>
+      (state.registration.mountPaths ?? []).map(mount => ({ app, state, mount })))
+      .filter(row => pathname === row.mount || pathname.startsWith(`${row.mount}/`))
+      .sort((left, right) => right.mount.length - left.mount.length)[0];
+    if (!owner) return null;
+    if (!owner.state.available) return false;
+    const current = () => this.registrations.get(owner.app) === owner.state && owner.state.available;
+    const operation: AuthorizationOperation = { app: owner.app, kind: 'http', method: 'GET', path: pathname.slice(owner.mount.length) || '/',
+      ...(selection.tenantId ? { tenantId: selection.tenantId } : {}) };
+    const decision = await authorizeApplicationNavigation(owner.state.registration, actor, operation, selection.explicit,
+      async operation => {
+        if (!current()) throw new Error('Application generation changed');
+        const decision = await this.authorize(actor, operation);
+        if (!current()) throw new Error('Application generation changed');
+        return decision;
+      });
+    return current() && decision.allowed;
+  }
+
   /** A coarse discovery check can hide inaccessible apps, but can never authorize an operation. */
   async canDiscover(appName: string, actor = getApplicationAuthorizationActor()): Promise<boolean> {
     if (!this.registrations.get(appName)?.available) return false;

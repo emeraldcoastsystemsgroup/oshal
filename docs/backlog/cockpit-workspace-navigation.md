@@ -1,6 +1,7 @@
 # Cockpit workspace navigation
 
-Requested 2026-09-11. **Backlogged design proposal; not shipped functionality.**
+Requested 2026-09-11. **The optional navigation overlay is in implementation; the
+broader dashboard prototype remains a backlogged design proposal.**
 The [clickable HTML prototype](../mockups/cockpit-workspaces.html) is self-contained
 and opens locally without a server. It uses only synthetic content. No application,
 model, microphone, file, message or account is accessed. Its route references are
@@ -10,8 +11,8 @@ display-only; clicks stay within the prototype.
 
 The **Workspace** visual skin is implemented in core source separately from this
 backlogged layout. It applies the prototype's paper background, white surfaces,
-restrained indigo accents and softer borders to **today's Cockpit markup**. It does
-not add top workspace tabs, move navigation or implement the proposed daily dashboard.
+restrained indigo accents and softer borders to **today's Cockpit markup**. The
+color skin itself does not add navigation or implement the proposed daily dashboard.
 Installation and native acceptance are recorded separately from source verification.
 
 Settings → Global Settings → Theme includes Workspace. It becomes the starting
@@ -42,7 +43,42 @@ Chromium component/surface regression; it does not run that suite during its
 read-only asset check. `npm run test:workspace-theme` runs the isolated browser and
 existing theme/catalog regressions without accounts, providers or database writes.
 
-## Direction
+## Optional navigation overlay
+
+The separate **Navigation** setting offers **Sidebar (existing layout)** and
+**Top workspaces + sidebar**. Sidebar remains the default. The preference is local
+to this browser and does not change the saved color theme, current URL, active
+screen or unsaved iframe content. It is available in Global Settings and the
+header's Navigation layout button, including inside focused applications.
+
+The optional rail opens existing complete profiles using ordinary same-tab links:
+`/cockpit/`, `/cockpit/?app=little-monsters`, `/cockpit/?app=create` and
+`/cockpit/?app=intelligent-career`. Learning is a label for Little Monsters, not a
+new application. Other eligible complete applications, including custom skinned
+profiles, appear in **More**. All applications remains reachable there and existing
+sidebar tools remain where their profile puts them. People/HR is not invented.
+
+The server supplies only currently installed, visible and authorized destinations.
+The overlay does not infer access from roles, theme names or an installation list.
+It refreshes discovery when a page becomes visible or focused, discards stale
+responses and removes app links on failure. Opening an app still follows its own
+current authorization, enrollment and workspace checks. The current app is selected
+only by its existing URL; navigation settings never cache an app profile.
+
+Custom pages, member tools, package skins, chat/assistant/status policies, artifact
+handoffs and iframe messages continue through the existing controllers. A workspace
+link starts at that app's canonical entry and does not forward another app's record,
+artifact or business-workspace parameters. Browser Back/Forward and the app's own
+unsaved-work handlers retain their normal behavior. Student/kiosk pages do not add
+workspace switching; zen and fullscreen hide the rail. On narrow screens the major
+links scroll within the bar while More and the existing mobile drawer remain usable.
+
+Source, isolated test results and native deployment acceptance are recorded
+separately. This overlay does not implement the prototype dashboard, replace any
+application's landing page, or turn app discovery into permission to use every
+member action.
+
+## Broader design direction
 
 Put a small number of major workspaces across the top: **OSHAL Cockpit, Learning,
 Create and Intelligent Career**, with **More** for overflow. These are quick entry

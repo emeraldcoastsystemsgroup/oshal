@@ -10,10 +10,12 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added the "Add a computer (remote node)" link (→ /api/join/, the join surface that mints enrollment + join codes) beside Manage swarm apps, revealed by the same probe — the surface existed since 07-08 but nothing in the cockpit linked to it, so adding a node meant knowing the URL by heart
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Added the "Get oshal on your devices" link (→ /cockpit/tools/devices.html) beside it, shown to everyone: the operator-gated join surface is the advanced path, and a basic user who came to Settings looking for "how do I put this on my desktop" found nothing.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Expose Workspace with a clear saved-choice, temporary-app-theme and visual-skin explanation.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Offer optional top workspace navigation as a separate browser-local preference from color themes.
  */
 
 import { createUiLogger, serializeUiError } from '../../../shared/ui-debug.js';
 import { COCKPIT_THEMES } from '../theme-manager.js';
+import { navigationSettingsMarkup, bindNavigationSettings } from '../workspace-navigation.js';
 
 const logger = createUiLogger('cockpit-settings-global-tab');
 
@@ -252,6 +254,7 @@ export class SettingsGlobalTab {
         <div class="setting-section-title" style="font-size:14px;">Theme</div>
         <div class="setting-section-desc">Choose a visual skin saved in this browser. Workspace is the starting choice when no theme has been saved, with a light paper palette and restrained indigo accents. Existing choices are kept. Application-specific themes can temporarily take precedence; the navigation and page layout stay the same.</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap" id="settingsThemePicker">${themeButtons}</div>
+        ${navigationSettingsMarkup()}
         <div style="height:12px;"></div>
         <div class="setting-section-title" style="font-size:14px;">Auto-Approve</div>
         <div class="setting-section-desc">Automatically approve tool execution</div>
@@ -272,6 +275,7 @@ export class SettingsGlobalTab {
   // Attach all global-tab interaction handlers.
   bindEvents() {
     this.bindThemePicker();
+    bindNavigationSettings(this.body);
     this.bindCostControls();
     this.bindProviderControls();
     this.bindRuntimeRefresh();

@@ -72,6 +72,15 @@ Installed packages can carry a [versioned test catalog](../docs/testing/package-
 Declare every suite with its own runner, prerequisites and isolation; reference shared core suites
 by exact commit instead of assuming the installation has a sibling developer checkout.
 
+`npm run test:workspace-navigation` covers the optional top headings using real
+Cockpit components, current profile synthesis and application authorization over
+fixture HTTP. It checks custom iframe drafts/actions, independent theme preferences,
+mobile and immersive layouts, stale discovery and first-install offline assets.
+The **Cockpit workspace navigation** Lab card links its unit, integration and browser
+suites; its live step only reads current admitted links. `npm run test:workspace-theme`
+separately checks the selectable color skin and shared surface inheritance. These
+commands use synthetic identities and pages, not live application records.
+
 The autonomous backlog suites have matching Lab registrations and local commands:
 
 | Command | Coverage |

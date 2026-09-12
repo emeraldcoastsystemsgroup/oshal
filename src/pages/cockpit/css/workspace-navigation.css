@@ -1,0 +1,84 @@
+/*
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Style optional workspace navigation using the current theme without restyling application content.
+ */
+
+#workspaceNavigation[hidden], .workspace-navigation-options[hidden] { display: none; }
+#workspaceNavigation {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  position: relative;
+  z-index: 90;
+  font-size: 13px;
+}
+.workspace-navigation-links { display: flex; align-items: center; min-width: 0; overflow-x: auto; gap: 4px; }
+#workspaceNavigation a, #workspaceNavigation summary, #workspaceNavigation > button {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md, 8px);
+  text-decoration: none;
+  color: var(--text-primary);
+  background: transparent;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#workspaceNavigation a:hover, #workspaceNavigation summary:hover, #workspaceNavigation > button:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border-color);
+}
+#workspaceNavigation a[aria-current="page"] {
+  font-weight: 700;
+  box-shadow: inset 0 -3px var(--accent-primary);
+  background: var(--bg-tertiary);
+}
+#workspaceNavigation :focus-visible, .workspace-navigation-control :focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+#workspaceNavigationMore { flex: 0 0 auto; max-width: min(42%, 240px); }
+#workspaceNavigationMore summary { list-style: none; overflow: hidden; text-overflow: ellipsis; }
+#workspaceNavigationMore summary::after { content: ' ▾'; }
+#workspaceNavigationMore summary::-webkit-details-marker { display: none; }
+.workspace-navigation-more, .workspace-navigation-options {
+  position: absolute;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: var(--panel-shadow);
+  padding: 10px;
+  max-height: min(65vh, 420px);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  z-index: 110;
+}
+.workspace-navigation-more { top: 100%; min-width: 200px; max-width: min(360px, calc(100vw - 24px)); right: 12px; }
+.workspace-navigation-more a { white-space: normal !important; }
+.workspace-navigation-control { position: relative; display: flex; align-items: center; }
+.workspace-navigation-options { top: calc(100% + 10px); right: 0; width: min(270px, calc(100vw - 36px)); }
+.workspace-navigation-options fieldset { border: 0; margin: 0; padding: 0; }
+.workspace-navigation-options legend { font-weight: 700; padding: 6px; }
+.workspace-navigation-options label { display: flex; align-items: center; gap: 8px; padding: 10px 6px; cursor: pointer; }
+.workspace-navigation-options input { accent-color: var(--accent-primary); }
+.workspace-navigation-options p { color: var(--text-secondary); margin: 8px 6px 4px; font-size: 12px; line-height: 1.5; }
+#workspaceNavigation [data-workspace-status] { color: var(--text-secondary); font-size: 12px; }
+body.zen-mode #workspaceNavigation { display: none; }
+@media (max-width: 768px) {
+  #workspaceNavigation { padding: 0 8px; gap: 3px; flex-wrap: wrap; }
+  .workspace-navigation-links { flex: 1 1 0; }
+  #workspaceNavigation a, #workspaceNavigation summary { padding: 10px 9px; }
+  #workspaceNavigation [data-workspace-status] { flex: 1 1 70%; padding: 0 4px 6px; }
+  .workspace-navigation-options { position: fixed; top: calc(var(--header-height) + 8px); right: 10px; }
+}

@@ -10,6 +10,7 @@
  * 174 | maintainer@emeraldcoastsystemsgroup.com | Mount user-bound Jarvis application proposals and transient result controls.
  * 175 | maintainer@emeraldcoastsystemsgroup.com | Preserve validated explicit application selection when root redirects into the cockpit.
  * 176 | maintainer@emeraldcoastsystemsgroup.com | Bind installation smoke checks to the current administrator session and exact registered path.
+ * 177 | maintainer@emeraldcoastsystemsgroup.com | Discover authorized existing application profiles for optional top workspace navigation.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — Express server entry point
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added static file serving for UI assets
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed conflicting manual auth routes and consolidated on express-openid-connect
@@ -202,6 +203,7 @@ import { installProcessCrashGuards } from '@/shared/services/process-crash-guard
 import path from 'path';
 import cookieParser from 'cookie-parser';
 import { createChildLogger } from '@/shared/logger';
+import { createWorkspaceNavigationRoutes } from './routes/workspace-navigation-routes';
 import { registerCodeServerBridgeRoutes, buildCodeServerRedirectUrl } from './routes/code-server-bridge-routes';
 import { registerDebugRoutes } from './routes/debug-routes';
 import { createAppContext } from './composition-root';
@@ -1634,6 +1636,8 @@ function createApp(): express.Application {
     logger.error({ err }, 'Swarm app auto-load failed during boot (non-fatal)');
   }));
   app.use('/api/ui', requiresAuth, createUiProfileRoutes(new UIProfileService(), swarmAppService));
+  app.use('/api/ui', requiresAuth, createWorkspaceNavigationRoutes({ apps: swarmAppService,
+    runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor, access: appAccessService }));
 
   // Demo auth routes — ONLY in MOCK_OIDC mode. In production OIDC deployments
   // express-openid-connect owns /login and /logout, and we must NOT leak the

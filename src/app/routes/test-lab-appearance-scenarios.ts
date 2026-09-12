@@ -5,6 +5,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register a read-only Workspace stylesheet readiness check and actual Cockpit/shared-surface browser regression.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Register current workspace navigation discovery and linked permission and browser regression suites.
  * =============================================================================
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -25,6 +26,25 @@ async function workspaceStylesheet(cookie: string): Promise<StepResult> {
     : 'The Workspace response is not the expected theme stylesheet.' };
 }
 
+/** @description Read the current caller's workspace links without opening an application or changing the navigation preference.
+ * @param cookie Current authenticated request cookie. @returns Honest discovery readiness, separate from linked browser execution.
+ */
+async function workspaceDiscovery(cookie: string): Promise<StepResult> {
+  const response = await fetch(`http://127.0.0.1:${process.env.PORT || '5000'}/api/ui/workspaces`, {
+    headers: cookie ? { cookie } : {}, redirect: 'manual', signal: AbortSignal.timeout(10000),
+  });
+  const base = { app: 'cockpit', label: 'Current workspace navigation', status: response.status };
+  if (response.status !== 200) return { ...base,
+    state: [401, 403, 503].includes(response.status) ? 'degraded' : response.status === 404 ? 'gap' : 'fail',
+    detail: `Workspace discovery returned HTTP ${response.status}. No preference was changed.` };
+  const body = await response.json() as { workspaces?: Array<{ name: string; href: string }> };
+  const pass = Array.isArray(body.workspaces) && body.workspaces.every(item => typeof item.name === 'string'
+    && item.href === `/cockpit/?app=${encodeURIComponent(item.name)}`);
+  return { ...base, state: pass ? 'pass' : 'fail', detail: pass
+    ? `${body.workspaces!.length} currently admitted workspace links. This check does not run the linked browser suite or grant access to application data.`
+    : 'Workspace discovery did not return canonical application links.' };
+}
+
 export const APPEARANCE_SCENARIOS: Scenario[] = [{
   id: 'cockpit-appearance', title: 'Cockpit appearance', group: 'tool',
   description: 'Read the fixed Workspace stylesheet. This does not execute the browser suite or change saved themes; the linked fixture covers Settings, Home and embedded surfaces.',
@@ -33,4 +53,13 @@ export const APPEARANCE_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/surface-theme-bundled-skin.spec.ts' },
   ],
   steps: [{ id: 'workspace-stylesheet', app: 'cockpit', label: 'Workspace stylesheet', run: workspaceStylesheet }],
+}, {
+  id: 'cockpit-workspace-navigation', title: 'Cockpit workspace navigation', group: 'tool',
+  description: 'Read current application workspace links. Existing pages retain their own permissions and setup checks. Linked tests cover the optional layout, custom screens and current policy.',
+  regressionTests: [
+    { level: 'unit', path: 'tests/unit/workspace-navigation-model.spec.ts' },
+    { level: 'integration', path: 'tests/unit/workspace-navigation-routes.spec.ts' },
+    { level: 'browser', path: 'tests/unit/workspace-navigation-browser.spec.ts' },
+  ],
+  steps: [{ id: 'workspace-discovery', app: 'cockpit', label: 'Current workspace navigation', run: workspaceDiscovery }],
 }];

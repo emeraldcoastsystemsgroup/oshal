@@ -23,6 +23,7 @@
   17 | maintainer@emeraldcoastsystemsgroup.com   | Stop loading the unreachable legacy workboard stylesheet so mobile layout support covers only rendered surfaces
   18 | maintainer@emeraldcoastsystemsgroup.com   | Render the generic chat rail collapsed at first paint so its full-screen phone sheet cannot cover the primary surface during asynchronous cockpit startup
   19 | maintainer@emeraldcoastsystemsgroup.com | Load Workspace and resolve the saved-or-default skin before paint without changing application layout.
+  20 | maintainer@emeraldcoastsystemsgroup.com | Load optional top workspace navigation styling independently from the selected color skin.
 -->
 <html lang="en" data-theme="workspace">
 <head>
@@ -88,6 +89,7 @@
   <!-- Layout & Components -->
   <link rel="stylesheet" href="css/layout.css">
   <link rel="stylesheet" href="css/ribbon.css">
+  <link rel="stylesheet" href="css/workspace-navigation.css">
   <link rel="stylesheet" href="css/chat.css">
   <link rel="stylesheet" href="css/ticket-view.css">
   <link rel="stylesheet" href="css/calendar-view.css">

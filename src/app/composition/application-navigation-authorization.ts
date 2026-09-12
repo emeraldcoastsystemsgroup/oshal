@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Admit explicit browser workspace navigation and current shell-only member access without selecting a data workspace.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Explain denied document navigation with escaped static HTML while retaining API JSON and current policy decisions.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Accept the minimal navigation request shape so installed surfaces share workspace validation without unsafe Express casts.
  */
 import type { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
@@ -61,7 +62,7 @@ export function sendApplicationNavigationDenied(req: Request, res: Response, reg
 /** @description Read a browser GET selector using the same untrusted selection contract as the API header.
  * @param req Current request. @returns Valid selection or a closed malformed-input result.
  */
-export function navigationWorkspace(req: Request): { valid: boolean; explicit: boolean; tenantId?: string } {
+export function navigationWorkspace(req: Pick<Request, 'method' | 'url' | 'get'> & Partial<Pick<Request, 'originalUrl'>>): { valid: boolean; explicit: boolean; tenantId?: string } {
   const header = req.get('x-oshal-tenant-id');
   const parameters = new URL(req.originalUrl || req.url, 'http://navigation.invalid').searchParams;
   const values = req.method === 'GET' ? parameters.getAll('workspace') : [];

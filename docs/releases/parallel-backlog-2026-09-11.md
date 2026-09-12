@@ -1,28 +1,31 @@
 # Parallel backlog release — 2026-09-11
 
-Status: implementation and isolated verification in progress. This record does not yet
-establish installation or native acceptance of the changes below.
+Status: the initial core and three packages are installed; native acceptance and
+the subsequent optional navigation release are in progress.
 
-The first combined platform run passed 296 of 298 tests across 27 files. Two existing
-scheduler cases failed: a completed-result watchdog case did not finish within its fixture
-deadline, and an assertion-failure run was recorded as cancelled. Deployment remains pending
-repair and revalidation; the original evidence is retained. A bounded isolated diagnostic
-reproduced a schedule heartbeat failing after 504 ms because the disposable PostgreSQL pool's
-500 ms connection allowance elapsed. The scheduler correctly refused to continue. Fixture
-connection reuse is being corrected without extending acquisition or authorization deadlines.
-The 17 new installation-verification cases passed. Retained fixture connections and a real
-idle-session regression then passed all 18 scheduler cases. The subsequent combined run
-passed 297 of 299 tests: one fixture failed to establish its initial connections, and one
-source-change case could not confirm sandbox cleanup. Both original failure reports remain
-retained; deployment is still pending combined verification. The separately coordinated
-Git-history rewrite has finished with source trees unchanged. The fixture now retries only
-that exact transient connection-startup error, before
-its HTTP server or sandbox exists, with at most three attempts and unchanged per-attempt
-deadlines. A new recovery regression failed against the preceding fixture, then all 19
-scheduler and seven browser cases passed together; strict fixture types and lint passed.
-The source-change cleanup case passed an unchanged isolated diagnostic. Its earlier cleanup
-failure remains unexplained and is retained for the next combined run. No application package
-or live authorization has changed during this investigation.
+The final combined platform run passed 299 of 300 cases across 27 files. Its sole
+failure was the test runner's default five-second outer budget on a real disposable
+container case. Giving that test the same explicit outer allowance as adjacent cases
+passed all 16 affected runner tests, retaining the existing 30-second execution and
+five-second authority limits. All 300 distinct cases are covered across those logs;
+this is not a claim of one 300/300 run. Earlier scheduler failures, connection reuse
+and bounded startup retry regressions, and the original failed reports are retained.
+
+Core 26fe11ea was deployed through the standard preview process with all 35 application
+containers healthy and 14 infrastructure containers preserved. A separately coordinated
+release then advanced the serving core to 8a88d33e. Portrait 1.14.0, Sales 1.20.0 and
+Capture 3.2.0 were installed from immutable stages; all 412 staged files matched.
+The native Access workflow refreshed the existing Portrait manager assignment against
+its new catalog. The two reviewed applications advanced authorization revision 74 to
+76, retained 70 assignments and left the other 69 unchanged. Existing CRM history,
+documents and all 37 preservation checks passed. A separately installed Scan to Print
+package is being accounted for explicitly against the unchanged original baseline.
+
+The native Lab Run control passed Capture's three deadline-input assertions with
+verified sandbox cleanup. Portrait's native page and Lab visibility exposed an obsolete
+legacy default-deny declaration blocking its valid named manager role. The package
+correction is being verified through the real route mounter; final native acceptance
+will follow its installation.
 
 ## Scope
 
@@ -54,8 +57,9 @@ reproduction; this release does not implement that redesign.
 The [workspace navigation prototype](../mockups/cockpit-workspaces.html) explores curated
 top-level tabs, direct Learning entry into Little Monsters, persistent supporting navigation,
 per-workspace themes and compact Jarvis context. It uses synthetic content and performs no
-live operations. [Workspace implementation](../backlog/cockpit-workspace-navigation.md)
-remains backlogged; the prototype does not change the deployed Cockpit.
+live operations. The [optional navigation implementation](../backlog/cockpit-workspace-navigation.md)
+now uses existing complete profiles and current permissions; its deployment is pending.
+The prototype dashboard remains a separate proposal.
 All 40 prototype browser checks passed, including direct local-file opening, workspace
 selection, keyboard entry, short mobile-drawer scrolling, themes and preserved edited drafts.
 
@@ -67,7 +71,16 @@ cases over the real page components, theme selection and contrast, saved-choice 
 before paint, transient application skins and actual service-worker precaching. Regressions
 first reproduced an older stylesheet overriding a newer theme and missing offline assets.
 Source and fixture types and scoped lint passed. Native acceptance remains pending. This
-CSS work does not implement the proposed top navigation or daily dashboard.
+CSS work is separate from the optional top navigation and daily dashboard.
+
+The optional **Top workspaces + sidebar** layout passed 50 HTTP tests over actual
+profile synthesis and authorization, 14 real Chromium cases, four model cases and
+one Lab registration assertion. Another 29 existing catalog regressions passed.
+Tests preserve custom iframe drafts and actions, packaged themes, keyboard/mobile
+navigation and current permissions; both new shell assets also work from the installed
+service-worker cache. An iframe-focus menu race was reproduced and corrected.
+Source and fixture types and scoped lint passed. These use isolated synthetic surfaces;
+native application compatibility and release acceptance are recorded separately.
 
 ## Release requirements
 

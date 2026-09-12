@@ -49,9 +49,11 @@
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | Honor `?ticket=<id>` on load: seed CockpitViewController.pendingTicketSelection and open the Tickets view so a global-search ticket hit lands on the RECORD. Every ticket hit previously linked to bare /cockpit/ - the right screen, the wrong (or no) row - and that is the half of the deep-link contract the API cannot fix by itself. Seeded before the first render rather than via focusTicket after it, because the post-render call races TicketView's list fetch and selects nothing.
  * 44 | maintainer@emeraldcoastsystemsgroup.com   | Keep the full-screen mobile chat sheet collapsed on cold start so a background-created chat task cannot cover the phone's primary surface controls
  * 45 | maintainer@emeraldcoastsystemsgroup.com   | applyStatusBarPolicy(profile?.hideStatusBar === true) on the same durable root-attribute contract as the assistant orb (data-oshal-status-bar-hidden). It runs on every load, so a plain cockpit restores the bar; layout.css hides .status-bar on the attribute and the flex column reclaims the height for the app surface.
+ * 46 | maintainer@emeraldcoastsystemsgroup.com | Mount optional workspace navigation after the current profile resolves, retaining existing screens and student mode.
  */
 
 import { ThemeManager } from './theme-manager.js';
+import { WorkspaceNavigation } from './workspace-navigation.js';
 import { ApiClient } from './api-client.js';
 import { RibbonNav } from './components/RibbonNav.js';
 import { renderModalContent, getAuthToken } from './cockpit-modals.js';
@@ -346,6 +348,7 @@ class CockpitApp {
   initRibbon() {
     this.ribbon = new RibbonNav('ribbonContainer', (viewId) => this.switchView(viewId));
     void this.ribbon.ready.then(() => {
+      this.workspaceNavigation = new WorkspaceNavigation({ profile: this.ribbon.profile, studentMode: this.ribbon.studentMode });
       if (this.pendingView || this.viewController.currentView) return;
       const requestedTicketId = readRequestedTicketId();
       const initialView = requestedTicketId ? 'tickets' : (this.ribbon?.getActive?.() || 'home');
