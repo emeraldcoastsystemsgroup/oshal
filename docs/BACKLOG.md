@@ -13,7 +13,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ### Government contracting CRM and contract management
 - **Delivered:** connected CRM pages, reviewed source import, proposal/award and post-award lifecycle with scoped UI/API/tools and registered tests. Installed import acceptance preserves source records, ownership and documents. See [the scoped backlog](backlog/government-contracting-crm.md); detailed package work stays private.
-- **Remaining:** prove website-origin intake through the installed workflow and add reviewed conversion of historical deadlines into follow-up tasks, with a unified decisions/obligations dashboard. External financial and submission operations retain their separate approval scopes.
+- **Remaining:** prove website-origin intake and the source-implemented reviewed deadline tasks through the installed workflow; extend conversion to unlinked intake/no-bid history and add a unified decisions/obligations dashboard. External financial and submission operations retain their separate approval scopes.
 - **Done when:** a synthetic opportunity travels from intake through reviewed pursuit and award to a managed contract with linked relationships, decisions, documents and obligations; two-user UI/API/Jarvis permissions pass and the package registers its cases with AI Test Lab on installation.
 
 ### Enterprise authorization: user, application, function and record
@@ -26,7 +26,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Requested:** test cases belong to application packages and register automatically on installation, with upgrade/reload/disable/uninstall reconciliation. Reuse existing package `smoke:` validation and verification; richer local/browser/live suites need versioned catalog and runner metadata.
 - **Implemented in the current branch:** versioned package catalogs, shared CLI/runtime validation, lifecycle reconciliation, caller-filtered discovery, sealed Node execution, durable versioned results and local catalog-selected schedules. Installed catalogs include Hello, Portrait, Kalshi, the ten-package adoption cohort and Sports Edge's coach follow-up; unavailable fixtures remain explicit. See the [execution guide](testing/package-test-execution.md) and dated run records for each proof scope.
 - **Backlog:** [Application Test Lab registration](backlog/app-test-lab-registration.md) contains the prioritized core work, complete public-package worklist, pinned suite inventory and lifecycle acceptance cases. Private package rows remain in the private app repository.
-- **Remaining:** add confined database/browser/reference-data fixtures, link mandatory safe checks to installation reports, and finish package-suite adoption with representative installed runs. Historical suite evidence and recurring unit selection are implemented; broad registration remains open.
+- **Remaining:** add confined database/browser/reference-data fixtures, verify the new linked installation reports on the installed runtime, and finish package-suite adoption with representative installed runs. Historical suite evidence and recurring unit selection are implemented; broad registration remains open.
 - **Done when:** each application with existing testing installs its cases into the Lab without per-app core edits; lifecycle and ownership tests pass; unavailable prerequisites remain explicit; every inventoried suite has a disposition and representative installation/run evidence. Registration does not automatically execute all tests.
 
 ### Production core-deploy pipeline + version strategy (operator, 2026-09-05)
@@ -475,6 +475,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** Outlook reconnects and sends, at least one budget denial is proven, and unauthenticated `/api/swarm-execute` is rejected on the deployed stack.
 
 ## Shared product experience
+
+### Top-level workspaces for complete applications
+- **Requested:** a small row of themed workspaces across the top: OSHAL Cockpit, Learning, Create and Intelligent Career. Learning opens Little Monsters directly. Existing supporting navigation stays on the left; additional complete applications belong under More.
+- **Design:** [clickable navigation prototype](mockups/cockpit-workspaces.html) and [implementation backlog](backlog/cockpit-workspace-navigation.md). The prototype uses synthetic content; People/HR is proposed and does not imply a delivered HR application.
+- **Remaining:** connect curated workspace destinations to installed manifests and current application permissions, retain each workspace's page context and theme, and integrate the compact daily dashboard below.
+- **Done when:** desktop and mobile users can switch directly into permitted complete applications, use their existing pages, recover context after reload and reach all remaining applications without a crowded top bar. Hidden or unavailable destinations remain enforced at the application boundary. Register actual implementation tests with AI Test Lab.
 
 ### Jarvis and a compact daily dashboard
 - **Direction confirmed 2026-09-11:** combine application updates and a compact Jarvis area on one useful daily page; keep All applications accessible. The prior separate-surface decision is resolved by this direction. Implementation remains backlogged while the current parallel batch continues.

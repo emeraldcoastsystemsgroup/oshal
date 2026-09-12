@@ -69,12 +69,24 @@ and completed a reviewed import of existing capture records and documents. Read-
 verified original source preservation, exact ownership, document hashes and duplicate-safe
 recognition of the imported records. These are separate checkpoints from isolated workflow tests.
 
+The linked-record historical deadline increment is implemented in source and has passing
+isolated API, PostgreSQL and browser evidence; installed native acceptance is pending. A user
+reviews an explicit future date/time before creating one follow-up task for an imported history
+record linked to a canonical opportunity and organization. Current source, record and activity
+permissions apply. Repeated confirmation reuses the same task, which appears in Activities and
+Calendar and supports completion and reopening. Historical dates, source evidence and task
+lineage are retained; general rescheduling and deletion/undo are not part of this increment.
+
 ## Remaining acceptance and integration
 
 - Prove website-origin intake through the installed workflow. Source-import fixtures do not
   establish that website boundary.
-- Add reviewed conversion of historical deadlines into follow-up tasks and a unified view of
-  decisions and contract obligations. Imported dates currently remain historical metadata.
+- Complete installed native acceptance of the reviewed linked-record deadline workflow.
+  Intake and no-bid histories without canonical linkage remain visibly unavailable for task
+  conversion; their broader linkage and conversion workflow remains open. No historical date
+  becomes a current task automatically.
+- Add the unified view of upcoming decisions, deadlines and contract obligations; the linked
+  tasks in Activities and Calendar do not complete that dashboard.
 - Enable background email filing only with exact workspace and principal scheduling; it remains
   disabled for this application.
 - Scope additional source adapters and mappings separately. Financial posting, external

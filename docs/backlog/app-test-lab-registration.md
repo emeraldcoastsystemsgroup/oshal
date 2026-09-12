@@ -59,7 +59,8 @@ compensation. At that catalog checkpoint, three suites passed 19 tests; later re
 Local source acceptance for TLAB-01/02 is complete. Later accepted slices, described below,
 implemented supported Node execution (TLAB-04), durable versioned history (TLAB-05) and
 local catalog-selected scheduling/drift detection (TLAB-09). TLAB-03 installation-report
-linkage and broader runner fixtures remain separate open work.
+linkage is now implemented with real HTTP, CLI and browser proof; native release acceptance
+is pending. Broader runner fixtures remain open work.
 
 Historical TLAB-06 pilot proof at core `15dcbbd7` / store `dc4c0dc` covered Hello 1.2.0 and Portrait 1.12.0: both existing
 smokes pass through the real core verifier; seven local/core suite references remain pending in the
@@ -171,8 +172,10 @@ totals include apps outside this public cohort; all ten adopted public packages
 have zero missing registrations. They do not imply unsupported fixtures ran.
 
 Remaining priorities are other public package owners, confined database/browser
-and reference-data recipes, private adoption in its owning inventory, and TLAB-03
-installation-report linkage. The local scheduler already selects eligible new
+and reference-data recipes, private adoption in its owning inventory, and installed
+acceptance of TLAB-03 reports. Reports now retain case IDs, revisions, coverage and
+counts, distinguish passed/pending/failed smoke checks and link to the registered Lab
+cards without executing other suites. The local scheduler already selects eligible new
 registrations. Future unattended schedule occurrences require their own receipts.
 
 | ID | Priority / owner | Work | Done when |
