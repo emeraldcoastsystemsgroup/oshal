@@ -12,7 +12,8 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ## Promotion, deployment, and regression proof
 
 ### Government contracting CRM and contract management
-- **Remaining:** extend the application-owned capture workflow into a durable relationship, opportunity, proposal and contract lifecycle, using established sales interaction patterns. Reconcile existing records and package responsibilities first; the website uses the same source of truth. See [the scoped backlog](backlog/government-contracting-crm.md); detailed package work stays private.
+- **Delivered:** connected CRM pages, reviewed source import, proposal/award and post-award lifecycle with scoped UI/API/tools and registered tests. Installed import acceptance preserves source records, ownership and documents. See [the scoped backlog](backlog/government-contracting-crm.md); detailed package work stays private.
+- **Remaining:** prove website-origin intake through the installed workflow and add reviewed conversion of historical deadlines into follow-up tasks, with a unified decisions/obligations dashboard. External financial and submission operations retain their separate approval scopes.
 - **Done when:** a synthetic opportunity travels from intake through reviewed pursuit and award to a managed contract with linked relationships, decisions, documents and obligations; two-user UI/API/Jarvis permissions pass and the package registers its cases with AI Test Lab on installation.
 
 ### Enterprise authorization: user, application, function and record
@@ -23,9 +24,9 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ### Application test cases register with AI Test Lab during installation
 - **Requested:** test cases belong to application packages and register automatically on installation, with upgrade/reload/disable/uninstall reconciliation. Reuse existing package `smoke:` validation and verification; richer local/browser/live suites need versioned catalog and runner metadata.
-- **Implemented in the current branch:** versioned package catalogs, shared CLI/runtime validation, lifecycle reconciliation, caller-filtered discovery, source/content revisions and existing-verifier smoke execution with explicit pending prerequisites. Hello, Portrait and Kalshi provide public package test catalogs; see the run record for each proof scope.
+- **Implemented in the current branch:** versioned package catalogs, shared CLI/runtime validation, lifecycle reconciliation, caller-filtered discovery, sealed Node execution, durable versioned results and local catalog-selected schedules. Installed catalogs include Hello, Portrait, Kalshi, the ten-package adoption cohort and Sports Edge's coach follow-up; unavailable fixtures remain explicit. See the [execution guide](testing/package-test-execution.md) and dated run records for each proof scope.
 - **Backlog:** [Application Test Lab registration](backlog/app-test-lab-registration.md) contains the prioritized core work, complete public-package worklist, pinned suite inventory and lifecycle acceptance cases. Private package rows remain in the private app repository.
-- **Remaining:** implement supported local/browser runners, installation-report linkage, retained historical evidence and the remaining package-suite adoption; promote and prove the pilot packages on the installed deployment.
+- **Remaining:** add confined database/browser/reference-data fixtures, link mandatory safe checks to installation reports, and finish package-suite adoption with representative installed runs. Historical suite evidence and recurring unit selection are implemented; broad registration remains open.
 - **Done when:** each application with existing testing installs its cases into the Lab without per-app core edits; lifecycle and ownership tests pass; unavailable prerequisites remain explicit; every inventoried suite has a disposition and representative installation/run evidence. Registration does not automatically execute all tests.
 
 ### Production core-deploy pipeline + version strategy (operator, 2026-09-05)

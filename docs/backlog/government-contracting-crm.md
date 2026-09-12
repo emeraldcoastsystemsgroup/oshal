@@ -9,7 +9,7 @@ relationship and process from opportunity intake through contract closeout.
 Use the established Intelligent Sales interaction patterns for boards, record cards,
 activities, assignments and follow-ups, adapted to capture and contract delivery. Detailed
 package work belongs in the private application repository. The government-contracting
-website is a view and intake channel over the same system, rather than another source of truth.
+website must use the same system for its views and intake channel.
 
 The clarified scope includes a separately registered Federal CRM application with its own
 focused `/?app=...` entry and theme, discoverable in the default application overview.
@@ -62,12 +62,21 @@ browser suites. Every shipped CRM suite and the historical CRM baseline have exp
 registration; browser/live prerequisites remain visible and do not execute during installation.
 The private repository holds the feature matrix and detailed executable evidence.
 
-Manual acceptance on the installed system verified the default Home card, focused entry/theme,
-Users and the imported Access catalog. The existing operator has swarm administration but no
-application business grant; denied CRM data access is expected until an application role is
-assigned. This preserves the separation between access administration and business authority.
-Authenticated catalog visibility is recorded separately from isolated workflow execution;
-no live source pull, outreach or contract submission was performed for acceptance.
+Initial installed acceptance verified the default Home card, focused entry/theme, Users and
+the imported Access catalog. It also confirmed that swarm administration alone did not grant
+CRM business access. Later acceptance applied application roles through Access Administration
+and completed a reviewed import of existing capture records and documents. Read-only checks
+verified original source preservation, exact ownership, document hashes and duplicate-safe
+recognition of the imported records. These are separate checkpoints from isolated workflow tests.
 
-Real-data migration, financial posting and external
-submission/integration require separately scoped, reviewable work orders.
+## Remaining acceptance and integration
+
+- Prove website-origin intake through the installed workflow. Source-import fixtures do not
+  establish that website boundary.
+- Add reviewed conversion of historical deadlines into follow-up tasks and a unified view of
+  decisions and contract obligations. Imported dates currently remain historical metadata.
+- Enable background email filing only with exact workspace and principal scheduling; it remains
+  disabled for this application.
+- Scope additional source adapters and mappings separately. Financial posting, external
+  submission, outreach and live coordinator execution require their own reviewable work orders;
+  they are not gaps in the implemented internal proposal, award or contract record lifecycle.
