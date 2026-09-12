@@ -5,6 +5,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the actual Cockpit DOM, theme/settings/Home/ribbon modules and shared Budgets surface with synthetic read-only HTTP data.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise the real compact header disclosure and relocated theme control in the component fixture.
  * =============================================================================
  */
 import express from 'express';
@@ -16,10 +17,12 @@ import { registerCockpitStaticRoutes } from '@/app/routes/cockpit-static-routes'
 const ROOT = process.cwd();
 const BOOTSTRAP = `
 import { ThemeManager } from '/cockpit/js/theme-manager.js';
+import { initHeaderOptions } from '/cockpit/js/header-options.js';
 import { SettingsGlobalTab } from '/cockpit/js/views/SettingsGlobalTab.js';
 import { AppsHomeView } from '/cockpit/js/views/AppsHomeView.js';
 import { RibbonNav } from '/cockpit/js/components/RibbonNav.js';
 const theme = new ThemeManager(), main = document.getElementById('mainContent');
+initHeaderOptions();
 const home = new AppsHomeView();
 async function showHome() { await home.render(main); }
 function showSettings() {
@@ -44,6 +47,7 @@ if(new URLSearchParams(location.search).get('app')==='fixture-studio') {
   theme.setApplicationTheme('fixture-studio','/fixture/packaged.css');
 }
 document.getElementById('themeToggle').onclick=()=>theme.cycle();
+document.getElementById('portalSettingsBtn').onclick=()=>showSettings();
 window.workspaceThemeFixture={theme,showHome,showSettings,showSurface};
 await showHome(); document.documentElement.dataset.fixtureReady='true';
 `;

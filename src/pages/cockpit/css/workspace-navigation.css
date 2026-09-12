@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Style optional workspace navigation using the current theme without restyling application content.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep brand, workspaces and actions in one header row, with an unclipped compact disclosure on phones.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Position the More list relative to its own trigger instead of the entire workspace rail.
  */
 
 #workspaceNavigation[hidden], .workspace-navigation-options[hidden] { display: none; }
@@ -54,7 +55,7 @@
   outline: 2px solid var(--accent-primary);
   outline-offset: -2px;
 }
-#workspaceNavigationMore { flex: 0 1 auto; min-width: 62px; max-width: 180px; }
+#workspaceNavigationMore { position: relative; flex: 0 1 auto; min-width: 62px; max-width: 180px; }
 #workspaceNavigationMore summary { list-style: none; overflow: hidden; text-overflow: ellipsis; }
 #workspaceNavigationMore summary::after { content: ' ▾'; }
 #workspaceNavigationMore summary::-webkit-details-marker { display: none; }
@@ -71,9 +72,15 @@
   overflow-wrap: anywhere;
   z-index: 110;
 }
-.workspace-navigation-more { top: calc(100% + 8px); min-width: 200px; max-width: min(360px, calc(100vw - 24px)); right: 0; }
+.workspace-navigation-more { top: calc(100% + 8px); min-width: 200px; max-width: min(360px, calc(100vw - 24px)); left: 0; }
+#workspaceNavigationMore[data-align-end] > .workspace-navigation-more { left: auto; right: 0; }
 .workspace-navigation-more a { white-space: normal !important; }
+.workspace-navigation-more #cockpitHeaderUtilities { position: static; padding: 8px 0 0; margin-top: 8px; border: 0; border-top: 1px solid var(--border-color); box-shadow: none; }
+.workspace-navigation-more-links:empty + #cockpitHeaderUtilities { padding-top: 0; margin-top: 0; border-top: 0; }
 .workspace-navigation-control { position: relative; display: flex; align-items: center; }
+#cockpitHeaderUtilities .workspace-navigation-control { flex-direction: column; align-items: stretch; }
+#cockpitHeaderUtilities #workspaceNavigationToggle { width: 100%; display: flex; gap: 8px; align-items: center; }
+#cockpitHeaderUtilities .workspace-navigation-options { position: static; width: auto; padding: 4px; box-shadow: none; }
 .workspace-navigation-options { top: calc(100% + 10px); right: 0; width: min(270px, calc(100vw - 36px)); }
 .workspace-navigation-options fieldset { border: 0; margin: 0; padding: 0; }
 .workspace-navigation-options legend { font-weight: 700; padding: 6px; }

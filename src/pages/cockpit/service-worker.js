@@ -36,12 +36,13 @@
  * 31 | maintainer@emeraldcoastsystemsgroup.com | Precache the Workspace default stylesheet and shared prepaint theme resolver for the offline shell.
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Precache the optional workspace navigation shell assets independently of live application discovery.
  * 33 | maintainer@emeraldcoastsystemsgroup.com | Refresh shared portal appearance and inline top-header workspace navigation assets.
+ * 34 | maintainer@emeraldcoastsystemsgroup.com | Refresh the compact workspace header and precache its secondary-action disclosure.
  */
 
 /* global self, caches, fetch, Response */
 
 // Bump CACHE_VERSION on any change to the precached shell list so old caches are evicted.
-const CACHE_VERSION = 'oshal-cockpit-v38';
+const CACHE_VERSION = 'oshal-cockpit-v39';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 // The minimal app shell precached at install so the cockpit boots offline. Live data
@@ -62,6 +63,7 @@ const APP_SHELL = [
   '/cockpit/js/app.js',
   '/cockpit/js/theme-manager.js',
   '/cockpit/js/workspace-navigation.js',
+  '/cockpit/js/header-options.js',
   '/cockpit/js/surface-bridge-relay.js',
   '/cockpit/js/first-run.js',
   '/cockpit/icons/icon-192.png',

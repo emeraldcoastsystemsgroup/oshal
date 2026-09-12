@@ -12,6 +12,13 @@ never overwrite `cockpit-theme`. Selecting any portal palette disables applicati
 colors. The preference is browser-local, like the independent Navigation setting.
 The current profile continues to determine application identity, tools and layout.
 
+With top workspace navigation, **More → Settings** opens the full chooser and
+**More → Switch theme** cycles the same saved palettes. Navigation layout, focus,
+knowledge and assistant controls share this menu. In Sidebar layout they remain
+under **Workspace options** beside Profile. These are the original controls, so
+switching navigation layouts preserves their state and the open application.
+The OSHAL Cockpit brand returns to all applications; it is not repeated as a tab.
+
 ## An application surface
 
 Link the shared palette and bootstrap before page-owned styles. Give semantic

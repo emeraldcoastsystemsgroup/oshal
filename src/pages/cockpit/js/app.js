@@ -51,10 +51,12 @@
  * 45 | maintainer@emeraldcoastsystemsgroup.com   | applyStatusBarPolicy(profile?.hideStatusBar === true) on the same durable root-attribute contract as the assistant orb (data-oshal-status-bar-hidden). It runs on every load, so a plain cockpit restores the bar; layout.css hides .status-bar on the attribute and the flex column reclaims the height for the app surface.
  * 46 | maintainer@emeraldcoastsystemsgroup.com | Mount optional workspace navigation after the current profile resolves, retaining existing screens and student mode.
  * 47 | maintainer@emeraldcoastsystemsgroup.com | Apply profile colors only on explicit opt-in so the portal chooser remains authoritative across applications.
+ * 48 | maintainer@emeraldcoastsystemsgroup.com | Bind relocated workspace options to the existing settings and action handlers.
  */
 
 import { ThemeManager } from './theme-manager.js';
 import { WorkspaceNavigation } from './workspace-navigation.js';
+import { initHeaderOptions } from './header-options.js';
 import { ApiClient } from './api-client.js';
 import { RibbonNav } from './components/RibbonNav.js';
 import { renderModalContent, getAuthToken } from './cockpit-modals.js';
@@ -178,6 +180,7 @@ class CockpitApp {
    * @returns {Promise<void>}
    */
   async init() {
+    initHeaderOptions();
     this.initRibbon();
     this.bindChatEvents();
     this.initModals();
@@ -466,6 +469,7 @@ class CockpitApp {
     // permission-aware visibility). The old path bounced a workspace action into the embedded chat
     // iframe and clicked a tool-gated, often-hidden button there — so it silently did nothing.
     document.getElementById('ragBtn')?.addEventListener('click', () => this.openCockpitSettingsPage('knowledge'));
+    document.getElementById('portalSettingsBtn')?.addEventListener('click', () => this.openCockpitSettingsPage());
     document.getElementById('profileBtn')?.addEventListener('click', () => this.openModal('profile'));
     // (The Swarm Apps grid icon was removed — apps launch from the left ribbon; the operator
     //  app-admin console lives at /applications, reached via the Settings "Manage swarm apps" link.)

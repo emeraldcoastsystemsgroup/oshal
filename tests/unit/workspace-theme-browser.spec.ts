@@ -5,6 +5,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove selectable Workspace styling through real Cockpit components, persisted choices, shared iframes and transient package themes in Chromium.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify the existing chooser through relocated header controls with keyboard and pointer dismissal.
  * =============================================================================
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
@@ -38,6 +39,12 @@ async function token(name: string) {
   return page.evaluate(key => getComputedStyle(document.documentElement).getPropertyValue(key).trim(), name);
 }
 
+/** @description Exercise the actual sidebar options disclosure before the existing cycle control. */
+async function cycleTheme() {
+  await page.locator('#cockpitHeaderOptions > summary').click();
+  await page.locator('#themeToggle').click();
+}
+
 /** @description WCAG contrast between the actual opaque hex theme tokens, without synthetic pixel assertions. */
 function contrast(foreground: string, background: string) {
   const luminance = (hex: string) => {
@@ -63,23 +70,23 @@ afterEach(async () => { await context?.close(); });
 
 it('selects through the real Settings picker, persists and stays in the existing theme cycle', async () => {
   await open(); expect(await page.locator('html').getAttribute('data-theme')).toBe('workspace');
-  await page.locator('#themeToggle').click(); expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
+  await cycleTheme(); expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
   await page.locator('.ribbon-btn[data-view=settings]').click();
   const choice = page.locator('#settingsThemePicker [data-theme=workspace]');
   await choice.click(); expect(await choice.innerText()).toContain('Workspace');
   expect(await page.locator('html').getAttribute('data-theme')).toBe('workspace');
   expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe('workspace');
   await expect.poll(() => token('--bg-primary')).toBe('#f5f6f9');
-  await page.locator('#themeToggle').click();
+  await cycleTheme();
   expect(await choice.getAttribute('aria-pressed')).toBe('false');
   expect(await page.locator('#settingsThemePicker [data-theme=midnight]').getAttribute('aria-pressed')).toBe('true');
   expect(await page.locator('#settingsThemePicker button.active').count()).toBe(1);
   await choice.click();
   await page.reload(); await page.waitForSelector('html[data-fixture-ready=true]');
   expect(await page.locator('html').getAttribute('data-theme')).toBe('workspace');
-  await page.locator('#themeToggle').click(); expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
+  await cycleTheme(); expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
   await page.evaluate(() => window.workspaceThemeFixture.theme.apply('amber'));
-  await page.locator('#themeToggle').click(); expect(await page.locator('html').getAttribute('data-theme')).toBe('workspace');
+  await cycleTheme(); expect(await page.locator('html').getAttribute('data-theme')).toBe('workspace');
   expect(errors).toEqual([]);
 }, 30000);
 
@@ -245,6 +252,44 @@ it('keeps the chosen portal palette across application defaults and only enables
   expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
   expect(errors).toEqual([]);
 }, 30000);
+
+it('keeps secondary header actions tucked away and makes the real Settings chooser reachable', async () => {
+  await open('workspace');
+  expect(await page.locator('#themeToggle').isVisible()).toBe(false);
+  expect(await page.locator('#zenModeBtn').isVisible()).toBe(false);
+  expect(await page.locator('#profileBtn').isVisible()).toBe(true);
+  await page.locator('#cockpitHeaderOptions > summary').click();
+  await page.locator('#portalSettingsBtn').click();
+  expect(await page.locator('#settingsThemePicker').isVisible()).toBe(true);
+  expect(await page.locator('#cockpitHeaderOptions').getAttribute('open')).toBeNull();
+  expect(await page.locator('#cockpitHomeLink').getAttribute('href')).toBe('/cockpit/');
+  expect(errors).toEqual([]);
+});
+
+it('returns keyboard focus to the options trigger after switching theme', async () => {
+  await open('midnight');
+  const trigger = page.locator('#cockpitHeaderOptions > summary');
+  await trigger.focus(); await page.keyboard.press('Enter');
+  await page.locator('#themeToggle').focus(); await page.keyboard.press('Enter');
+  expect(await page.locator('html').getAttribute('data-theme')).not.toBe('midnight');
+  expect(await page.locator('#cockpitHeaderOptions').getAttribute('open')).toBeNull();
+  expect(await trigger.evaluate(element => element === document.activeElement)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+it('dismisses the options disclosure using Escape and outside pointer without activating a tool', async () => {
+  await open('midnight');
+  const trigger = page.locator('#cockpitHeaderOptions > summary');
+  await trigger.focus(); await page.keyboard.press('Enter');
+  expect(await page.locator('#themeToggle').isVisible()).toBe(true);
+  await page.keyboard.press('Escape');
+  expect(await page.locator('#themeToggle').isVisible()).toBe(false);
+  expect(await trigger.evaluate(element => element === document.activeElement)).toBe(true);
+  await trigger.click(); await page.locator('#mainContent').click({ position: { x: 5, y: 5 } });
+  expect(await page.locator('#themeToggle').isVisible()).toBe(false);
+  expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
+  expect(errors).toEqual([]);
+});
 
 it('follows the real chooser across open portal tabs without replacing an embedded document or its draft', async () => {
   await open();

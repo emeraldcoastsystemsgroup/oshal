@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify the Career heading uses the admitted app fallback and prefers the group without duplicating the selected destination in More.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Use held real HTTP responses and Chromium virtual time to cover cold discovery beyond five seconds and the bounded thirty-second retry path.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Measure the real top-header layout and unclipped compact menus with long labels, keyboard controls and retained iframe drafts.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Reproduce duplicate destination labels and verify More stays attached to its own trigger through palette and viewport changes.
  * =============================================================================
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
@@ -31,14 +32,28 @@ async function open(path = '/cockpit/', layout?: string, theme?: string) {
     if (theme) localStorage.setItem('cockpit-theme', theme);
   }, { layout, theme });
   await page.goto(fixture.origin + path);
-  await page.locator('#workspaceNavigationToggle').waitFor();
+  await page.locator('#workspaceNavigationToggle').waitFor({ state: 'attached' });
   await editor().locator('h1').waitFor();
 }
 
 /** @description Use only the real header preference controls. */
 async function chooseLayout(value: 'sidebar' | 'workspaces') {
-  if (await page.locator('#workspaceNavigationOptions').isHidden()) await page.locator('#workspaceNavigationToggle').click();
+  const toggle = await headerControl('#workspaceNavigationToggle');
+  if (await page.locator('#workspaceNavigationOptions').isHidden()) await toggle.click();
   await page.locator(`input[name=workspace-navigation-layout][value=${value}]`).check();
+}
+
+/** @description Reach the same real utility control through the currently selected header layout. */
+async function headerControl(selector: string) {
+  const control = page.locator(selector);
+  if (await control.isVisible()) return control;
+  if (await page.locator('html').getAttribute('data-navigation-layout') === 'workspaces') {
+    const compact = page.locator('#workspaceNavigationCompactToggle');
+    if (await compact.isVisible() && await compact.getAttribute('aria-expanded') === 'false') await compact.click();
+    const more = page.locator('#workspaceNavigationMore');
+    if (await more.getAttribute('open') === null) await more.locator('summary').click();
+  } else await page.locator('#cockpitHeaderOptions > summary').click();
+  return control;
 }
 
 /** @description Wait for a current admitted response without relying on generic network-idle. */
@@ -78,7 +93,7 @@ async function expectHeaderRow() {
 
 /** @description Check the visible final menu link remains within the viewport and receives real pointer hits. */
 async function expectMenuReachable() {
-  const link = page.locator('[data-workspace-all]');
+  const link = page.locator('.workspace-navigation-more-links a').last();
   await link.scrollIntoViewIfNeeded();
   const geometry = await link.evaluate(element => {
     const box = element.getBoundingClientRect(), header = document.querySelector('.header-bar')!.getBoundingClientRect();
@@ -89,6 +104,28 @@ async function expectMenuReachable() {
   expect(geometry.left).toBeGreaterThanOrEqual(0); expect(geometry.right).toBeLessThanOrEqual(geometry.width);
   expect(geometry.top).toBeGreaterThanOrEqual(geometry.headerBottom);
   expect(geometry.bottom).toBeLessThanOrEqual(geometry.height); expect(geometry.hit).toBe(true);
+}
+
+/** @description Measure actual dropdown attachment and hit testing, independent of the CSS positioning strategy. */
+async function expectMoreAnchored() {
+  const measure = () => page.locator('#workspaceNavigationMore').evaluate(element => {
+    const trigger = element.querySelector('summary')!.getBoundingClientRect();
+    const menu = element.querySelector('.workspace-navigation-more')!.getBoundingClientRect();
+    const link = element.querySelector('a')!, hit = link.getBoundingClientRect();
+    return { trigger: { left: trigger.left, right: trigger.right, bottom: trigger.bottom },
+      menu: { left: menu.left, top: menu.top, right: menu.right, width: menu.width }, width: innerWidth,
+      reachable: link.contains(document.elementFromPoint(hit.left + hit.width / 2, hit.top + hit.height / 2)) };
+  });
+  await expect.poll(async () => {
+    const geometry = await measure();
+    const edge = geometry.trigger.left + geometry.menu.width > geometry.width - 12 ? 'right' : 'left';
+    return Math.abs(geometry.menu[edge] - geometry.trigger[edge]);
+  }).toBeLessThanOrEqual(1);
+  const geometry = await measure();
+  expect(geometry.menu.top - geometry.trigger.bottom).toBeGreaterThanOrEqual(0);
+  expect(geometry.menu.top - geometry.trigger.bottom).toBeLessThanOrEqual(12);
+  expect(geometry.menu.right).toBeLessThanOrEqual(geometry.width);
+  expect(geometry.reachable).toBe(true);
 }
 
 /** @description Capture optional review evidence containing only the isolated synthetic surface. */
@@ -104,7 +141,7 @@ async function headerThemeVariants(label: string) {
   const documentId = await editor().locator('html').getAttribute('data-document-id');
   expect(await page.locator('html').getAttribute('data-theme')).toBe('workspace');
   await screenshot(`header-${label}-workspace`);
-  await page.locator('#themeToggle').click();
+  await (await headerControl('#themeToggle')).click();
   expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
   await expect.poll(() => editor().locator('html').getAttribute('data-theme')).toBe('midnight');
   await expectHeaderRow(); await screenshot(`header-${label}-midnight`);
@@ -125,14 +162,115 @@ beforeEach(async () => {
 });
 afterEach(async () => { await context?.close(); await fixture?.close(); });
 
+it.each(['create', 'fixture-studio', 'cockpit'])('shows one Home destination and one admitted current application with a stable More label for %s', async name => {
+  await open(name === 'cockpit' ? '/cockpit/' : `/cockpit/?app=${name}`, 'workspaces'); await discovered();
+  const home = page.locator('#cockpitHomeLink');
+  expect(await page.locator('.header-bar a[href="/cockpit/"]').count()).toBe(1);
+  expect(await home.count()).toBe(1);
+  expect(await home.getAttribute('href')).toBe('/cockpit/');
+  expect(await home.innerText()).toBe('OSHAL Cockpit');
+  expect(await page.locator('.header-left .logo-text:not(.workspace-home-label)').isVisible()).toBe(false);
+  expect(await page.locator('#workspaceNavigationMore > summary').innerText()).toBe('More');
+  if (name !== 'cockpit') {
+    const current = page.locator(`#workspaceNavigation [data-workspace="${name}"]`);
+    expect(await current.count()).toBe(1);
+    expect(await current.getAttribute('aria-current')).toBe('page');
+    if (name === 'fixture-studio') await page.locator('#workspaceNavigationMore > summary').click();
+    expect(await current.isVisible()).toBe(true);
+  } else expect(await home.getAttribute('aria-current')).toBe('page');
+  await screenshot(`deduplicated-${name}`);
+  expect(errors).toEqual([]); expect(external).toEqual([]);
+}, 30000);
+
+it('moves one utilities panel between sidebar options and More while retaining its listeners and the active iframe', async () => {
+  page.setDefaultTimeout(5000);
+  await open('/cockpit/?app=create', 'sidebar', 'workspace');
+  await page.locator('#cockpitHeaderUtilities').evaluate(element => { (window as any).fixtureUtilities = element; });
+  const documentId = await editor().locator('html').getAttribute('data-document-id');
+  await editor().locator('#draft').fill('Synthetic utility relocation draft');
+  for (const layout of ['workspaces', 'sidebar', 'workspaces'] as const) {
+    await chooseLayout(layout);
+    if (layout === 'workspaces') await discovered();
+    expect(await page.locator('#cockpitHeaderUtilities').count()).toBe(1);
+    expect(await page.locator('#workspaceNavigationToggle').count()).toBe(1);
+    expect(await page.locator('#cockpitHeaderUtilities').evaluate(element => element === (window as any).fixtureUtilities)).toBe(true);
+    expect(await page.locator('#cockpitHeaderUtilities').evaluate(element => Boolean(element.closest('#workspaceNavigationMore')))).toBe(layout === 'workspaces');
+    await page.keyboard.press('Escape');
+    await (await headerControl('#themeToggle')).click();
+  }
+  expect(await page.locator('#cockpitHeaderOptions').isVisible()).toBe(false);
+  expect(await page.locator('.header-right > button').evaluateAll(buttons => buttons.map(button => button.id))).toEqual(['profileBtn']);
+  expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe('ocean');
+  expect(await editor().locator('html').getAttribute('data-document-id')).toBe(documentId);
+  expect(await editor().locator('#draft').inputValue()).toBe('Synthetic utility relocation draft');
+  expect(errors).toEqual([]); expect(external).toEqual([]);
+}, 30000);
+
+it('returns keyboard focus to More after changing the palette without navigating away from the draft', async () => {
+  await open('/cockpit/?app=create', 'workspaces', 'workspace'); await discovered();
+  await editor().locator('#draft').fill('Synthetic keyboard theme draft');
+  const documentId = await editor().locator('html').getAttribute('data-document-id');
+  await (await headerControl('#themeToggle')).focus(); await page.keyboard.press('Enter');
+  expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
+  expect(await page.locator('#workspaceNavigationMore').getAttribute('open')).toBeNull();
+  expect(await page.locator('#workspaceNavigationMore > summary').evaluate(element => element === document.activeElement)).toBe(true);
+  expect(await editor().locator('html').getAttribute('data-document-id')).toBe(documentId);
+  expect(await editor().locator('#draft').inputValue()).toBe('Synthetic keyboard theme draft');
+  expect(errors).toEqual([]); expect(external).toEqual([]);
+}, 30000);
+
+it.each([1440, 960, 768])('anchors More directly below its own button through resize and palette changes at %ipx', async width => {
+  await page.setViewportSize({ width, height: 960 });
+  await open('/cockpit/?app=fixture-studio', 'workspaces', 'workspace'); await discovered();
+  await editor().locator('#draft').fill('Synthetic anchored-menu draft');
+  const documentId = await editor().locator('html').getAttribute('data-document-id');
+  await page.locator('#workspaceNavigationMore > summary').click();
+  await expectMoreAnchored();
+  await page.evaluate(() => {
+    (window as any).__cockpit.theme.apply('midnight');
+    document.querySelector('.workspace-navigation-links')!.scrollLeft = 10000;
+  });
+  await expectMoreAnchored();
+  await page.setViewportSize({ width: width + 60, height: 844 }); await expectMoreAnchored();
+  await screenshot(`anchored-more-${width}`);
+  await page.locator('.header-bar').click({ position: { x: 1, y: 1 } });
+  expect(await page.locator('#workspaceNavigationMore').getAttribute('open')).toBeNull();
+  expect(await editor().locator('html').getAttribute('data-document-id')).toBe(documentId);
+  expect(await editor().locator('#draft').inputValue()).toBe('Synthetic anchored-menu draft');
+  expect(errors).toEqual([]); expect(external).toEqual([]);
+}, 30000);
+
+it('keeps a long More list reachable at a crowded viewport edge and dismisses it on iframe interaction', async () => {
+  fixture.state.workspaces.find(item => item.name === 'create')!.displayName = 'Synthetic Create with a deliberately long heading';
+  fixture.state.workspaces.find(item => item.name === 'intelligent-career')!.displayName = 'Synthetic Career with a deliberately long heading';
+  for (let index = 0; index < 18; index++) fixture.state.workspaces.push({ name: `synthetic-extra-${index}`,
+    displayName: `Synthetic extra application ${index}`, kind: 'app', href: `/cockpit/?app=synthetic-extra-${index}` });
+  await page.setViewportSize({ width: 768, height: 700 });
+  await open('/cockpit/?app=create', 'workspaces', 'workspace'); await discovered();
+  expect(await page.locator('.workspace-navigation-links').evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
+  const last = page.locator('.workspace-navigation-links a').last();
+  await last.focus();
+  expect(await last.evaluate(element => { const box = element.getBoundingClientRect();
+    return element.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)); })).toBe(true);
+  await page.locator('#workspaceNavigationMore > summary').click();
+  await expectMoreAnchored(); await expectMenuReachable();
+  await screenshot('anchored-more-crowded');
+  await page.locator('.workspace-navigation-more').evaluate(element => { element.scrollTop = 0; });
+  await page.setViewportSize({ width: 1440, height: 960 }); await expectMoreAnchored();
+  await editor().locator('#draft').fill('Synthetic iframe outside interaction');
+  await expect.poll(() => page.locator('#workspaceNavigationMore').getAttribute('open')).toBeNull();
+  expect(errors).toEqual([]); expect(external).toEqual([]);
+}, 30000);
+
 it.each([1440, 960, 768])('places workspace links beside the brand in one unclipped header row at %ipx', async width => {
   fixture.state.profileDisplayName = 'Synthetic application with a deliberately long brand';
   fixture.state.workspaces.find(item => item.name === 'fixture-studio')!.displayName = 'Synthetic studio with a long workspace label';
   await page.setViewportSize({ width, height: 960 });
   await open('/cockpit/?app=fixture-studio', 'workspaces', 'workspace'); await discovered();
   await expectHeaderRow();
-  expect(await page.locator('.logo-text').isVisible()).toBe(true);
-  expect(await page.locator('.logo-text').innerText()).toBe(fixture.state.profileDisplayName);
+  expect(await page.locator('.workspace-home-label').isVisible()).toBe(true);
+  expect(await page.locator('#cockpitHomeLink').innerText()).toBe('OSHAL Cockpit');
+  expect(await page.title()).toBe(fixture.state.profileDisplayName);
   await page.locator('#workspaceNavigationMore > summary').click(); await expectMenuReachable();
   await screenshot(`header-${width}-more`); await page.keyboard.press('Escape');
   await page.keyboard.press('Shift+Tab');
@@ -157,19 +295,19 @@ it('opens an unclipped phone workspace menu beside the brand without replacing a
   await toggle.focus(); await page.keyboard.press('Enter');
   expect(await toggle.getAttribute('aria-expanded')).toBe('true');
   await page.keyboard.press('Tab');
-  expect(await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.workspace)).toBe('cockpit');
+  expect(await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.workspace)).toBe('little-monsters');
   await page.locator('#workspaceNavigationMore > summary').click(); await expectMenuReachable();
   await screenshot('header-phone-more'); await page.keyboard.press('Escape');
   expect(await page.locator('#workspaceNavigationMore').getAttribute('open')).toBeNull();
   await page.keyboard.press('Escape'); expect(await toggle.getAttribute('aria-expanded')).toBe('false');
   expect(await page.evaluate(() => document.activeElement?.id)).toBe('workspaceNavigationCompactToggle');
   await toggle.click(); await page.setViewportSize({ width: 768, height: 960 });
-  expect(await page.locator('#workspaceNavigationCompactToggle').getAttribute('aria-expanded')).toBe('false'); await expectHeaderRow();
+  await expect.poll(() => page.locator('#workspaceNavigationCompactToggle').getAttribute('aria-expanded')).toBe('false'); await expectHeaderRow();
   await page.setViewportSize({ width: 390, height: 844 });
-  expect(await toggle.getAttribute('aria-expanded')).toBe('false'); await expectHeaderRow();
-  await page.locator('#workspaceNavigationToggle').click();
+  await expect.poll(() => toggle.getAttribute('aria-expanded')).toBe('false'); await expectHeaderRow();
+  await (await headerControl('#workspaceNavigationToggle')).click();
   expect(await page.locator('#workspaceNavigationOptions').isVisible()).toBe(true); await page.keyboard.press('Escape');
-  expect(await page.locator('#themeToggle').isVisible()).toBe(true);
+  expect(await (await headerControl('#themeToggle')).isVisible()).toBe(true);
   expect(await editor().locator('#draft').inputValue()).toBe('Synthetic phone draft');
   expect(await editor().locator('html').getAttribute('data-document-id')).toBe(before);
   await headerThemeVariants('390');
@@ -232,14 +370,15 @@ it('offers only admitted canonical destinations and keeps other applications in 
   fixture.state.workspaces.push({ name: 'foreign-target', displayName: 'Forbidden external link', kind: 'app', href: 'https://example.invalid/' });
   await open('/cockpit/?app=fixture-studio', 'workspaces'); await discovered();
   expect(await page.locator('[data-workspace=little-monsters]').innerText()).toBe('Learning');
-  expect(await page.locator('[data-workspace=cockpit]').innerText()).toBe('oshal Cockpit');
+  expect(await page.locator('#cockpitHomeLink').innerText()).toBe('OSHAL Cockpit');
   expect(await page.locator('[data-workspace=intelligent-career]').count()).toBe(0);
   expect(await page.locator('[data-workspace=not-installed]').count()).toBe(0);
   expect(await page.locator('[data-workspace=foreign-target]').count()).toBe(0);
   await page.locator('#workspaceNavigationMore > summary').click();
   expect(await page.locator('[data-workspace=fixture-studio]').getAttribute('aria-current')).toBe('page');
   expect(await page.locator('[data-workspace=fixture-studio]').getAttribute('href')).toBe('/cockpit/?app=fixture-studio');
-  expect(await page.locator('[data-workspace-all]').getAttribute('href')).toBe('/cockpit/');
+  expect(await page.locator('[data-workspace-all]').count()).toBe(0);
+  expect(await page.locator('#cockpitHomeLink').getAttribute('href')).toBe('/cockpit/');
   expect(fixture.state.requests.some(path => /foreign-target|not-installed/.test(path))).toBe(false);
   expect(external).toEqual([]);
 }, 30000);
@@ -253,14 +392,14 @@ it('uses the admitted Career app as the top heading when its group is unavailabl
   expect(await top.innerText()).toBe('Intelligent Career');
   expect(await top.getAttribute('href')).toBe('/cockpit/?app=career-hunter');
   expect(await page.locator('.workspace-navigation-links a').evaluateAll(links => links.map(link => (link as HTMLElement).dataset.workspace)))
-    .toEqual(['cockpit', 'little-monsters', 'create', 'career-hunter']);
+    .toEqual(['little-monsters', 'create', 'career-hunter']);
   expect(await page.locator('#workspaceNavigationMore [data-workspace=career-hunter]').count()).toBe(0);
   expect(await page.locator('[data-workspace=intelligent-career]').count()).toBe(0);
   await top.click(); await page.waitForURL(fixture.origin + '/cockpit/?app=career-hunter'); await discovered();
   expect(await top.getAttribute('aria-current')).toBe('page');
   await editor().locator('#draft').fill('Synthetic Career draft');
   const before = await editor().locator('html').getAttribute('data-document-id');
-  await page.locator('#workspaceNavigationToggle').focus();
+  await (await headerControl('#workspaceNavigationToggle')).focus();
   fixture.state.workspaces = fixture.state.workspaces.filter(item => item.name !== 'career-hunter');
   await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await discovered();
   expect(await page.locator('[data-workspace=career-hunter], [data-workspace=intelligent-career]').count()).toBe(0);
@@ -275,7 +414,7 @@ it('prefers the admitted Career group while keeping its admitted member in More'
   fixture.state.workspaces.unshift({ name: 'career-hunter', displayName: 'Intelligent Career', kind: 'app', href: '/cockpit/?app=career-hunter' });
   await open('/cockpit/?app=career-hunter', 'workspaces'); await discovered();
   expect(await page.locator('.workspace-navigation-links a').evaluateAll(links => links.map(link => (link as HTMLElement).dataset.workspace)))
-    .toEqual(['cockpit', 'little-monsters', 'create', 'intelligent-career']);
+    .toEqual(['little-monsters', 'create', 'intelligent-career']);
   expect(await page.locator('.workspace-navigation-links [data-workspace=intelligent-career]').getAttribute('href'))
     .toBe('/cockpit/?app=intelligent-career');
   expect(await page.locator('[data-workspace=intelligent-career]').count()).toBe(1);
@@ -337,7 +476,7 @@ it('uses native application links and restores the focused query and fragment th
   await editor().locator('h1').waitFor();
   await page.goBack(); await page.waitForURL(fixture.origin + path); await editor().locator('h1').waitFor();
   await discovered(); expect(await page.locator('[data-workspace=create]').getAttribute('aria-current')).toBe('page');
-  await page.locator('[data-workspace=cockpit]').click(); await page.waitForURL(fixture.origin + '/cockpit/');
+  await page.locator('#cockpitHomeLink').click(); await page.waitForURL(fixture.origin + '/cockpit/');
   await editor().locator('h1').waitFor();
   expect(new URL(page.url()).search).toBe(''); expect(new URL(page.url()).hash).toBe('');
   expect(errors).toEqual([]);
@@ -369,7 +508,7 @@ it('inherits explicitly enabled application CSS inside the unchanged custom ifra
   await chooseLayout('workspaces'); await discovered();
   expect(await editor().locator('html').getAttribute('data-theme')).toBe('fixture-studio');
   expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe('workspace');
-  await page.keyboard.press('Escape'); await page.locator('[data-workspace=cockpit]').click();
+  await page.keyboard.press('Escape'); await page.locator('#cockpitHomeLink').click();
   await page.waitForURL(fixture.origin + '/cockpit/'); await editor().locator('h1').waitFor();
   expect(await page.locator('html').getAttribute('data-theme')).toBe('workspace'); expect(errors).toEqual([]);
 }, 30000);
@@ -385,9 +524,9 @@ it('uses an explicit initial profile and clears an obsolete remembered app on th
   await page.locator('#workspaceNavigationMore > summary').click();
   expect(await page.locator('[data-workspace=fixture-studio]').getAttribute('aria-current')).toBe('page');
   expect(await editor().locator('h1').innerText()).toBe('Synthetic editor');
-  await page.locator('[data-workspace=cockpit]').click();
+  await page.locator('#cockpitHomeLink').click();
   await page.waitForURL(fixture.origin + '/cockpit/'); await editor().locator('h1').waitFor(); await discovered();
-  expect(await page.locator('[data-workspace=cockpit]').getAttribute('aria-current')).toBe('page');
+  expect(await page.locator('#cockpitHomeLink').getAttribute('aria-current')).toBe('page');
   expect(await page.locator('html').getAttribute('data-theme')).toBe('ocean');
   expect(await page.evaluate(() => localStorage.getItem('oshal-ui-profile'))).toBeNull();
   expect(errors).toEqual([]);
@@ -406,10 +545,11 @@ it('keeps a delayed or empty discovery usable without remounting the active cust
     expect(await page.locator('[data-workspace=create]').count()).toBe(0);
     release();
     await page.locator('[data-workspace-status]').waitFor({ state: 'detached' });
-    expect(await page.locator('#workspaceNavigation [data-workspace]').count()).toBe(1);
+    expect(await page.locator('#workspaceNavigation [data-workspace]').count()).toBe(0);
     const reads = fixture.state.requests.filter(path => path === 'GET /api/ui/workspaces').length;
     await page.locator('#workspaceNavigationMore > summary').click();
-    expect(await page.locator('[data-workspace-all]').isVisible()).toBe(true);
+    expect(await page.locator('#cockpitHomeLink').isVisible()).toBe(true);
+    expect(await page.locator('#cockpitHeaderUtilities').isVisible()).toBe(true);
     expect(fixture.state.requests.filter(path => path === 'GET /api/ui/workspaces').length).toBe(reads);
     expect(await editor().locator('#draft').inputValue()).toBe('Draft while discovery waits');
     expect(await editor().locator('html').getAttribute('data-document-id')).toBe(documentId);
@@ -461,11 +601,11 @@ it('fails a hung discovery deadline at thirty seconds and admits fresh links thr
     await chooseLayout('workspaces'); await started;
     await page.clock.fastForward(29999);
     expect(await page.locator('[data-workspace-status]').innerText()).toBe('Loading workspaces…');
-    expect(await page.locator('#workspaceNavigation [data-workspace]').count()).toBe(1);
+    expect(await page.locator('#workspaceNavigation [data-workspace]').count()).toBe(0);
     await page.clock.fastForward(1);
     await page.locator('[data-workspace-status]').filter({ hasText: 'Workspaces unavailable' }).waitFor();
-    expect(await page.locator('#workspaceNavigation [data-workspace]').count()).toBe(1);
-    expect(await page.locator('#workspaceNavigation [data-workspace=cockpit]').count()).toBe(1);
+    expect(await page.locator('#workspaceNavigation [data-workspace]').count()).toBe(0);
+    expect(await page.locator('#cockpitHomeLink').isVisible()).toBe(true);
     release(); await page.unroute('**/api/ui/workspaces');
     await page.locator('#workspaceNavigation').getByRole('button', { name: 'Retry', exact: true }).click(); await discovered();
     expect(await page.locator('[data-workspace-status]').count()).toBe(0);
@@ -497,19 +637,20 @@ it('keeps actual custom form, dialog, download and fullscreen actions working un
   expect((await download).suggestedFilename()).toBe('synthetic.txt');
   await editor().locator('#fullscreen').click();
   await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(true);
-  expect(await page.locator('#workspaceNavigation').isHidden()).toBe(true);
+  await expect.poll(() => page.locator('#workspaceNavigation').isHidden()).toBe(true);
   await page.evaluate(() => document.exitFullscreen()); await discovered();
-  expect(await page.locator('#workspaceNavigation').isVisible()).toBe(true); expect(errors).toEqual([]);
+  await expect.poll(() => page.locator('#workspaceNavigation').isVisible()).toBe(true); expect(errors).toEqual([]);
 }, 30000);
 
 it('keeps mobile drawer taps and keyboard layout controls usable without horizontal overflow', async () => {
   fixture.state.workspaces.find(item => item.name === 'fixture-studio')!.displayName = 'Synthetic studio ' + 'long label '.repeat(12);
   await page.setViewportSize({ width: 390, height: 844 }); await open('/cockpit/?app=fixture-studio', 'workspaces'); await discovered();
-  await page.locator('#workspaceNavigationToggle').focus(); await page.keyboard.press('Enter');
+  await (await headerControl('#workspaceNavigationToggle')).focus(); await page.keyboard.press('Enter');
   expect(await page.locator('#workspaceNavigationOptions').isVisible()).toBe(true);
   await page.keyboard.press('Escape');
   expect(await page.evaluate(() => document.activeElement?.id)).toBe('workspaceNavigationToggle');
-  await page.getByRole('button', { name: 'Application workspaces', exact: true }).click();
+  await page.keyboard.press('Escape');
+  expect(await page.locator('#workspaceNavigationMore').getAttribute('open')).toBeNull();
   await page.locator('#workspaceNavigationMore > summary').focus(); await page.keyboard.press('Enter');
   expect(await page.locator('#workspaceNavigationMore').getAttribute('open')).not.toBeNull();
   await page.keyboard.press('Escape'); expect(await page.locator('#workspaceNavigationMore').getAttribute('open')).toBeNull();
@@ -527,7 +668,7 @@ it('respects immersive app policies, kiosk suppression and existing Zen escape c
   expect(await page.locator('.status-bar').isHidden()).toBe(true);
   expect(await page.locator('#chatWorkspaceFrame').getAttribute('src')).toBe('about:blank');
   expect(fixture.state.requests.some(path => path.includes('/swarmbot/chat'))).toBe(false);
-  await page.locator('#zenModeBtn').click(); expect(await page.locator('#workspaceNavigation').isHidden()).toBe(true);
+  await (await headerControl('#zenModeBtn')).click(); expect(await page.locator('#workspaceNavigation').isHidden()).toBe(true);
   await page.keyboard.press('Escape'); expect(await page.locator('#workspaceNavigation').isVisible()).toBe(true);
   for (const mode of ['student=1', 'kiosk=1', 'view=student']) {
     await page.goto(fixture.origin + '/cockpit/?app=little-monsters&' + mode); await editor().locator('h1').waitFor();

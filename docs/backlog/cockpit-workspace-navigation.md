@@ -57,14 +57,22 @@ existing theme/catalog regressions without accounts, providers or database write
 The separate **Navigation** setting offers **Sidebar (existing layout)** and
 **Top workspaces + sidebar**. Sidebar remains the default. The preference is local
 to this browser and does not change the saved color theme, current URL, active
-screen or unsaved iframe content. It is available in Global Settings and the
-header's Navigation layout button, including inside focused applications.
+screen or unsaved iframe content. It is available in Global Settings and under
+**More → Navigation layout**, including inside focused applications. Sidebar
+layout keeps the same controls in **Workspace options** beside Profile.
 
 The September 12 refinement places the workspace navigation **inside the top
 header**, between the application brand and existing controls. It no longer
 consumes a separate desktop row. On phones, an accessible Workspaces disclosure
 opens the same destinations below the header; keyboard focus, More and Retry
 remain available. Navigation remains independent of the color palette.
+
+The subsequent header cleanup keeps one global **OSHAL Cockpit** home link and
+the major workspace tabs. **More** opens beneath its own button, aligns to that
+button's right edge when space is tight, and contains the remaining applications
+plus secondary workspace controls. It always retains the More label; the selected
+extra application is marked once inside the menu. Profile remains in the header.
+Menu and layout changes retain the original action nodes and open application.
 
 The [appearance contract](../apps/appearance.md) documents shared page adoption,
 application defaults and custom document canvases. Career now applies consistent
@@ -79,7 +87,7 @@ The optional rail opens existing complete profiles using ordinary same-tab links
 or uses the admitted `/cockpit/?app=career-hunter` application when the group is
 unavailable. Only the selected entry is removed from More. Learning is a label
 for Little Monsters, not a new application. Other eligible complete applications, including custom skinned
-profiles, appear in **More**. All applications remains reachable there and existing
+profiles, appear in **More**. All applications remains reachable through the Home brand and existing
 sidebar tools remain where their profile puts them. People/HR is not invented.
 
 The server supplies only currently installed, visible and authorized destinations.
@@ -133,8 +141,8 @@ not silently drop anything omitted from this illustrative sidebar.
 
 The top rail is curated. At narrower widths, workspaces move into **More**; the
 current workspace remains identified. On a phone the left navigation becomes a
-keyboard-accessible drawer. **All applications remains reachable from both the
-left navigation and More**, with a searchable directory. Pinning and ordering are
+keyboard-accessible drawer. **All applications remains reachable through the global
+Home brand and existing left navigation**, with a searchable directory. Pinning and ordering are
 future durable preferences, not settings implemented by this mockup.
 
 ## Verified destination mapping
