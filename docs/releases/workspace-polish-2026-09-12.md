@@ -43,10 +43,51 @@ Chromium; each catalog reports its fixture and runner prerequisites.
 
 ## Publication and local acceptance
 
-Publication, exact package staging and the standard local preview rollout are
-recorded separately from the isolated checks above. The pending local acceptance
-must verify the signed-in header, Create and Stories, installed Lab catalogs,
-service health and preservation of unrelated applications and business data.
+Create 1.3.0 and Creative Studio 1.2.1 are published at public package source
+`f4b5ea7f26d72fa6422e17a031345561eb690bde`. The standard installer produced immutable
+stages; all 34 installed files, including provenance stamps, match those stages.
+Unchanged dependencies resolved by the installer were not copied.
+
+The standard local preview command completed the final rollout at 18:01:01 UTC
+on 12 September 2026. All 35 application containers are healthy on core source
+`da3f14045ad7b3d67d2f45036aceec56b030ea72`, image
+`sha256:a98aaa03849424d975ce963bac02d388df054d6bbb8fa560e73323f92eee0c69`;
+deployment parity is clean. Signed-in browser acceptance confirms one global
+Home link, More beneath its trigger, an opaque menu and immediately reachable
+workspace controls despite 33 admitted application destinations. Create Home
+shows seven existing recent pieces; its dedicated catalog has 35 templates.
+Stories retains an unsent title and brief through a Daylight-to-Ocean change.
+More > Settings opens the existing chooser, which restored Daylight; top workspace
+navigation and the application-colors preference were retained. Served navigation
+and layout styles match the published source hashes.
+
+The installed AI Test Lab exposes all eighteen relevant entries: eight Career,
+six Create, two Stories and the two core appearance/navigation cards. Three
+Create 1.3.0 Node suites were executed from the signed-in Lab: Home surface
+contracts passed 9/9, New screen contracts passed 7/7 and packaged local HTTP passed
+4/4, each with verified disposable-container cleanup. These runs pin the unchanged
+package source above and the first rollout's image
+`sha256:5ce38570cf6ff2093ccd1ba9830f4e85b70ebd43a6bab19c7168ad813d5afa59`.
+The final rollout only updates the core menu. Browser recipes remain registered
+with an unavailable-Playwright prerequisite in this installed Lab; their actual
+Chromium results are the local runs reported above.
+
+The first rollout's strict preservation report passes. The final report confirms
+all 57 unrelated packages, business-data checks, configuration, runtime mounts and
+fourteen infrastructure containers are preserved. Its only reported difference
+is authorization revision 76/70 assignments becoming 77/71: a separate concurrent
+operator-requested Scan-to-Print management grant, recorded by its owning session.
+The original strict report and historical baselines retain that difference;
+acceptance of the concurrent change is recorded separately rather than rewriting
+the baseline. An independent read-only transaction verified the exact added grant,
+its consumed preview, applied receipt and audit event. Excluding that one grant
+and audit event reproduces the prior assignment and audit hashes. The separate
+review passes with this documented exception. This appearance release makes no
+permission or business-data changes.
+
+Both branches were published through their normal local gates. No GitHub Actions
+were invoked. Core pull request 431 still requires independent approval before
+merge; the authorized local preview deployment is complete.
 
 ## Remaining backlog
 
