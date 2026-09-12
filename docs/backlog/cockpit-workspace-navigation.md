@@ -1,7 +1,9 @@
 # Cockpit workspace navigation
 
-Requested 2026-09-11. **The optional navigation overlay is in implementation; the
-broader dashboard prototype remains a backlogged design proposal.**
+Requested 2026-09-11. **The optional navigation overlay and independent Workspace
+skin are implemented and deployed; focused native acceptance and preservation
+checks passed. The broader
+dashboard remains a backlogged design proposal.**
 The [clickable HTML prototype](../mockups/cockpit-workspaces.html) is self-contained
 and opens locally without a server. It uses only synthetic content. No application,
 model, microphone, file, message or account is accessed. Its route references are
@@ -9,8 +11,8 @@ display-only; clicks stay within the prototype.
 
 ## Selectable visual skin
 
-The **Workspace** visual skin is implemented in core source separately from this
-backlogged layout. It applies the prototype's paper background, white surfaces,
+The **Workspace** visual skin is implemented separately from the optional navigation
+layout. It applies the prototype's paper background, white surfaces,
 restrained indigo accents and softer borders to **today's Cockpit markup**. The
 color skin itself does not add navigation or implement the proposed daily dashboard.
 Installation and native acceptance are recorded separately from source verification.
@@ -22,6 +24,10 @@ can still apply its own temporary or bundled skin without overwriting the saved
 choice. Shared surfaces follow their current parent theme, or the saved/default
 theme when opened separately. A late stylesheet from a previous app must not undo
 a newer choice.
+
+Embedded chat follows the parent theme without writing that inherited appearance
+into the saved global preference. Standalone chat retains its existing Midnight
+default and query/profile theme behavior.
 
 The styling is configurable in
 [workspace.css](../../src/pages/cockpit/css/themes/workspace.css) through the existing
@@ -53,8 +59,10 @@ header's Navigation layout button, including inside focused applications.
 
 The optional rail opens existing complete profiles using ordinary same-tab links:
 `/cockpit/`, `/cockpit/?app=little-monsters`, `/cockpit/?app=create` and
-`/cockpit/?app=intelligent-career`. Learning is a label for Little Monsters, not a
-new application. Other eligible complete applications, including custom skinned
+`/cockpit/?app=intelligent-career`. The Career slot prefers that admitted group,
+or uses the admitted `/cockpit/?app=career-hunter` application when the group is
+unavailable. Only the selected entry is removed from More. Learning is a label
+for Little Monsters, not a new application. Other eligible complete applications, including custom skinned
 profiles, appear in **More**. All applications remains reachable there and existing
 sidebar tools remain where their profile puts them. People/HR is not invented.
 
@@ -64,6 +72,9 @@ It refreshes discovery when a page becomes visible or focused, discards stale
 responses and removes app links on failure. Opening an app still follows its own
 current authorization, enrollment and workspace checks. The current app is selected
 only by its existing URL; navigation settings never cache an app profile.
+An initial lookup can take longer while installed profiles load. The overlay waits
+up to 30 seconds, keeps the current screen usable and offers Retry if that window
+expires; it does not retain old application links while waiting.
 
 Custom pages, member tools, package skins, chat/assistant/status policies, artifact
 handoffs and iframe messages continue through the existing controllers. A workspace
@@ -77,6 +88,11 @@ Source, isolated test results and native deployment acceptance are recorded
 separately. This overlay does not implement the prototype dashboard, replace any
 application's landing page, or turn app discovery into permission to use every
 member action.
+
+`npm run test:workspace-navigation` runs the isolated profile, authorization,
+preference, browser and catalog regressions. The **Cockpit workspace navigation**
+Lab card reads the current caller's discovery endpoint and links those suites;
+its Run control does not execute the linked browser tests or open application records.
 
 ## Broader design direction
 
