@@ -4,9 +4,10 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Compose actual local schedule HTTP, PostgreSQL, catalog and Docker execution over disposable fixture packages.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Retain four preconnected disposable PostgreSQL sessions so idle retirement cannot introduce connection handshakes into authority checks.
  */
 import express from 'express';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,6 +34,18 @@ export async function waitForSchedule<T>(read: () => Promise<T>, done: (value: T
     await new Promise<void>(resolveDelay => setTimeout(resolveDelay,100));
   }
   throw new Error('Disposable schedule fixture did not finish within its deadline');
+}
+
+/** @description Prepare reusable disposable connections without extending acquisition or query deadlines.
+ * @param pool Caller-owned isolated PostgreSQL pool. @returns Completion after every retained session is ready. */
+async function retainFixtureSessions(pool: Pool): Promise<void> {
+  pool.options.max = 4;
+  pool.options.idleTimeoutMillis = 0;
+  const clients: PoolClient[] = [];
+  try {
+    for (let index = 0; index < 4; index++) clients.push(await pool.connect());
+    await Promise.all(clients.map(client => client.query('SELECT 1')));
+  } finally { clients.forEach(client => client.release()); }
 }
 
 /** @description Bind actual schedule and run endpoints to an explicitly injected fixture identity adapter.
@@ -62,6 +75,7 @@ async function httpFixture(service: () => TestLabScheduleService, runs: TestLabR
 /** @description Own all package files and actual HTTP/runner resources while the caller owns disposable PostgreSQL.
  * @param pool Isolated fixture database only. @returns Current source installation, scheduling and evidence helpers. */
 export async function startTestLabScheduleFixture(pool: Pool) {
+  await retainFixtureSessions(pool);
   const root = mkdtempSync(join(tmpdir(),'oshal-schedule-fixture-')), sandbox = new ObservedPackageTestSandbox();
   const catalog = new InstalledAppTestCatalog({ sandbox,runnerImage: PACKAGE_TEST_IMAGE });
   const runStore = new PostgresTestLabRunStore(pool), runs = new TestLabRunService(runStore,catalog), store = new PostgresTestLabScheduleStore(pool);

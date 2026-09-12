@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise actual scheduled Node execution, exact-owner HTTP, dynamic catalog discovery, durable concurrency and current-rights refusal.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove authority loss at the actual sandbox return boundary records cancellation and withholds output before watchdog timing can determine the outcome.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Reproduce an independent watchdog refusal after real sandbox completion and require cancellation to discard output even when the final current check succeeds.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove disposable schedule PostgreSQL sessions survive idle time and are reused during concurrent lease reads without extending acquisition deadlines.
  */
 import { beforeAll, afterAll, beforeEach, afterEach, expect, it } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -43,6 +44,17 @@ async function runNow(schedule: { id: string; revision: number }, requestId = ra
   const response = await f.call(`/schedules/${schedule.id}/run-now`,'POST',{ revision: schedule.revision,requestId });
   expect(response.status).toBe(202); return (await response.json()).batch;
 }
+
+it('reuses disposable PostgreSQL sessions after idle time without opening connections during lease bursts', async () => {
+  expect(pool.options.connectionTimeoutMillis).toBe(500);
+  const original = await Promise.all(Array.from({ length: 4 },() => pool.query('SELECT pg_backend_pid() AS pid')));
+  const sessions = new Set(original.map(result => result.rows[0].pid));
+  expect(sessions.size).toBe(4);
+  await new Promise<void>(done => setTimeout(done,10500));
+  const current = await Promise.all(Array.from({ length: 4 },() => pool.query('SELECT pg_backend_pid() AS pid')));
+  expect(current.every(result => sessions.has(result.rows[0].pid))).toBe(true);
+  expect(pool.options.connectionTimeoutMillis).toBe(500);
+},30000);
 
 it('creates a disabled draft, runs actual Node assertions once and links the existing exact-owner durable result', async () => {
   f.addPackage(); const saved = await draft();
