@@ -129,6 +129,24 @@ describe('person-model fresh-database gate + deletion/re-projection parity (ADR-
     expect(await inventory()).toEqual(first);
   }, 60_000);
 
+  it('converges a consent trigger created under the earlier BEFORE DELETE OR UPDATE definition', async () => {
+    // A deployment whose lazy DDL first ran in July 2026 carries this trigger shape; the by-name
+    // IF NOT EXISTS guard kept it, and forgetting a consented voice then failed with "append-only".
+    await pool.query('DROP TRIGGER IF EXISTS ambient_speaker_consents_no_mutate ON ambient_speaker_consents');
+    await pool.query(`CREATE OR REPLACE FUNCTION ambient_speaker_consents_append_only() RETURNS trigger AS $fn$
+      BEGIN RAISE EXCEPTION 'ambient_speaker_consents is append-only'; END; $fn$ LANGUAGE plpgsql`);
+    await pool.query(`CREATE TRIGGER ambient_speaker_consents_no_mutate BEFORE DELETE OR UPDATE ON ambient_speaker_consents
+      FOR EACH ROW EXECUTE FUNCTION ambient_speaker_consents_append_only()`);
+    const legacy = await pool.query(`SELECT tgtype FROM pg_trigger WHERE tgname = 'ambient_speaker_consents_no_mutate'`);
+    expect(Number(legacy.rows[0].tgtype) & 8, 'legacy trigger blocks DELETE').not.toBe(0);
+    await applyLazyDdl();
+    const converged = await pool.query(`SELECT tgtype, pg_get_triggerdef(oid) AS def FROM pg_trigger WHERE tgname = 'ambient_speaker_consents_no_mutate'`);
+    expect(converged.rows).toHaveLength(1);
+    expect(Number(converged.rows[0].tgtype) & 8, 'DELETE no longer blocked').toBe(0);
+    expect(String(converged.rows[0].def)).toContain('BEFORE UPDATE ON');
+    expect(String(converged.rows[0].def)).toContain('ambient_speaker_consents_no_flip()');
+  });
+
   it('keeps the consent ledger append-only for UPDATE while DELETE stays cascade-clean', async () => {
     const p0 = randomUUID();
     await insertProfile(A, p0, 99);
@@ -142,6 +160,8 @@ describe('person-model fresh-database gate + deletion/re-projection parity (ADR-
     await insertProfile(A, P1, 1);
     await insertProfile(A, P2, 2);
     await insertProfile(B, P3, 1);
+    // A recorded consent on the voice that will later be forgotten — the live-box failure shape.
+    await pool.query(`INSERT INTO ambient_speaker_consents (owner_sub, profile_id, scope, status, method) VALUES ($1, $2, 'transcript', 'granted', 'owner_attested')`, [A, P1]);
     await insertSegment(A, seg(1), 'Can you drive me to volleyball practice on Thursday?', P1);
     await insertSegment(A, seg(2), 'Volleyball was great today', P1);
     await insertSegment(A, seg(3), 'I still have homework to finish', P2);
@@ -205,6 +225,7 @@ describe('person-model fresh-database gate + deletion/re-projection parity (ADR-
 
   it('forgetting a voice leaves zero derived rows for it and untouched rows for everyone else', async () => {
     expect(await new SpeakerProfileStore(pool).deleteProfile(A, P1)).toBe(true);
+    expect(await count('ambient_speaker_consents WHERE owner_sub = $1 AND profile_id = $2', [A, P1]), 'consent cascades with the profile').toBe(0);
     expect(await count('ambient_person_asks WHERE owner_sub = $1 AND profile_id = $2', [A, P1])).toBe(0);
     expect(await count('ambient_person_asks WHERE owner_sub = $1', [A])).toBe(0);
     expect(await count('ambient_utterance_enrichment WHERE segment_id = ANY($1::text[])', [[seg(1), seg(3)]])).toBe(0);
