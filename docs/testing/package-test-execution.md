@@ -24,7 +24,8 @@ Swarm administrator status does not grant access to business records.
 
 - Only registered file lists and resource limits are accepted. The HTTP request
   selects a case and its revisions; it cannot supply a shell command or image.
-- A bounded source snapshot includes package code, tests, migrations, UI and
+- A bounded source snapshot includes package code, tests, migrations, UI,
+  canonical `src-routes/` sources, `tools/` surfaces and
   root metadata. Runtime data, uploads, output, databases, credentials, dotfiles,
   dependencies and links are excluded. Installer provenance contributes to the
   revision but is not sent to the test process. Source and helper changes invalidate

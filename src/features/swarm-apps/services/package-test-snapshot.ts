@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Seal bounded package source for isolated tests without mounting deployment files or credentials.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Include canonical packaged tool surfaces and TypeScript route sources in sealed test input.
  */
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync } from 'node:fs';
@@ -17,7 +18,7 @@ export interface PackageTestSnapshot {
   sourceCommit?: string;
 }
 const OMIT = new Set(['.git', 'node_modules', '__pycache__', '.cache', 'coverage', 'logs', 'output']);
-const SOURCE_DIRS = new Set(['lib', 'src', 'routes', 'ui', 'scripts', 'migrations', 'tests', 'engine']);
+const SOURCE_DIRS = new Set(['lib', 'src', 'src-routes', 'routes', 'ui', 'tools', 'scripts', 'migrations', 'tests', 'engine']);
 const SOURCE_TYPES = /\.(?:[cm]?js|[cm]?ts|tsx|jsx|json|ya?ml|html|css|sql|py|txt|md|svg)$/i;
 const ROOT_METADATA = new Set(['.oshal-install.json', 'oshal-app.yaml', 'authorization.yaml', 'tools.yaml', 'package.json', 'package-lock.json', 'tsconfig.json']);
 const MAX_BYTES = 32 * 1024 * 1024;

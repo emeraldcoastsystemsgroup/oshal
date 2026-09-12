@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise source growth races and bounded snapshot reads with real temporary files.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Seal packaged route sources and tool surfaces while excluding their runtime and credential files.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -63,4 +64,24 @@ it('detects a newly shipped unregistered suite while ignoring helper files', () 
     appName: 'fixture', missingRegistrations: ['tests/new.spec.ts'],
   });
   expect(inventoryPackageTests('fixture', root, new Set(['tests/known.test.js', 'tests/new.spec.ts'])).missingRegistrations).toEqual([]);
+});
+
+it('includes packaged tool and route sources in revisions without admitting their runtime data', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'lab-package-layout-')); roots.push(root);
+  const included = ['src-routes/identity.ts', 'tools/studio/index.html', 'tools/studio/editor.js'];
+  const excluded = ['tools/output/result.html', 'tools/data/customer.json', 'tools/credentials.json',
+    'src-routes/.env', 'src-routes/tokens.json', 'src-routes/uploads/document.md'];
+  for (const name of [...included, ...excluded]) {
+    mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
+    writeFileSync(path.join(root, name), 'original');
+  }
+  const first = snapshotPackageTests(root);
+  expect(first.files.map(file => file.path).sort()).toEqual(included.sort());
+  for (const name of excluded) writeFileSync(path.join(root, name), 'changed');
+  expect(snapshotPackageTests(root).revision).toBe(first.revision);
+  for (const name of included) {
+    writeFileSync(path.join(root, name), 'changed');
+    expect(snapshotPackageTests(root).revision).not.toBe(first.revision);
+    writeFileSync(path.join(root, name), 'original');
+  }
 });

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise actual package Node execution, immutable source selection and lifecycle authority through the real Docker sandbox.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove runtime-data exclusion in the child and bounded refusal when current authority never resolves.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Execute packaged surface and route-source assertions without forwarding nested runtime data.
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -52,6 +53,31 @@ function registered(options: PackageExecutionFixtureOptions = {}) {
 /** @description Supply only trusted fixture authority to the same catalog run path used by HTTP.
  * @returns A current authorization callback and inert smoke base, unused by Node suites. */
 function executionOptions() { return { apiBaseUrl: 'http://127.0.0.1:1', canRunSuites: true, revalidate: async () => true }; }
+
+it('runs actual packaged surface and route-source assertions in the isolated child', async () => {
+  const f = createPackageExecutionFixture(root);
+  const inputs = { 'tools/editor.html': '<main>Editor</main>', 'src-routes/editor.ts': 'export const title = "Editor";',
+    'tools/data/customer.json': 'PRIVATE_FIXTURE', 'src-routes/credentials.json': 'PRIVATE_FIXTURE' };
+  for (const [name, content] of Object.entries(inputs)) {
+    mkdirSync(dirname(join(f.dir, name)), { recursive: true }); writeFileSync(join(f.dir, name), content);
+  }
+  writeFileSync(f.suitePath, `const { test } = require('node:test');
+const assert = require('node:assert/strict'); const fs = require('node:fs'); const path = require('node:path');
+const root = path.resolve(__dirname, '..');
+test('packaged editor contract and runtime exclusion', () => {
+  assert.match(fs.readFileSync(path.join(root, 'tools/editor.html'), 'utf8'), /<main>Editor<\\/main>/);
+  assert.match(fs.readFileSync(path.join(root, 'src-routes/editor.ts'), 'utf8'), /export const title/);
+  for (const name of ['tools/data/customer.json', 'src-routes/credentials.json']) {
+    assert.equal(fs.existsSync(path.join(root, name)), false);
+  }
+});`);
+  catalog.register(f.record);
+  const visible = new Map([[f.record.name, f.record.displayName]]);
+  const selected = catalog.list(visible, { canRunSuites: true }).find(test => test.id === f.caseId)!;
+  const result = await catalog.run(selected, visible, executionOptions());
+  expect(result.status, result.output).toBe('passed'); expect(result.output).toContain('# pass 1');
+  expect(sandbox.last?.cleanupVerified).toBe(true);
+});
 
 /** @description Seed synthetic business files which must never enter an executable source snapshot.
  * @param dir Disposable package directory.

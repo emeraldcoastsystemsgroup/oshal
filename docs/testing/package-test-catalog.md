@@ -56,7 +56,7 @@ Local runner `files` and `isolation.fixtures` must be exact, existing package-re
 absolute paths, parent traversal and symlink paths are rejected. The catalog is limited to 256 KiB
 and 256 cases; referenced files are limited to 8 MiB each and 32 MiB total. Referenced source bytes
 participate in the case revision. `timeoutMs` permits 100–300000 and `maxMemoryMb` permits 16–4096.
-Local runner limits are requirements for a future runner, not a claim that one has executed.
+Runner limits constrain supported execution; a declaration is not evidence that a test has run.
 
 `expected` records the case's assertions without interpreting them as code. Prerequisites are stable
 IDs such as `runner:playwright`, `account:microsoft`, `ai:configured`, or `device:camera`. Side effects
@@ -106,7 +106,9 @@ bulk runs; callers that omit it select the current catalog at request time. Relo
 atomically; disable/uninstall retracts them; code-free groups refer to visible member cases without
 copying them. Group-owned catalogs remain outside this contract.
 
-Only the existing safe smoke verifier is executable in this implementation. Local, core, browser,
-external-action and additional-prerequisite cases remain visibly pending. Persisted result history,
-installation report linkage, local suite execution and shared-core revision verification are separate
-work orders; catalog registration does not claim they are complete.
+The existing safe smoke verifier and the supported isolated package Node recipe are executable.
+Package suites use fixed registered files, sealed package source and durable versioned history;
+see [installed execution and schedules](package-test-execution.md). Core, browser,
+external-action and unsupported-prerequisite cases remain visibly pending. Installation report
+linkage and shared-core revision verification remain separate work orders; catalog registration
+does not claim those features are complete or that registered tests have passed.
