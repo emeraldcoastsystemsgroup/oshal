@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Compose actual local schedule HTTP, PostgreSQL, catalog and Docker execution over disposable fixture packages.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Retain four preconnected disposable PostgreSQL sessions so idle retirement cannot introduce connection handshakes into authority checks.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Retry only transient fixture startup handshakes within a fixed attempt bound before creating HTTP or runner resources.
  */
 import express from 'express';
 import type { Pool, PoolClient } from 'pg';
@@ -43,9 +44,21 @@ async function retainFixtureSessions(pool: Pool): Promise<void> {
   pool.options.idleTimeoutMillis = 0;
   const clients: PoolClient[] = [];
   try {
-    for (let index = 0; index < 4; index++) clients.push(await pool.connect());
+    for (let index = 0; index < 4; index++) clients.push(await connectFixtureSession(pool));
     await Promise.all(clients.map(client => client.query('SELECT 1')));
   } finally { clients.forEach(client => client.release()); }
+}
+
+/** @description Retry a transient startup handshake without retrying runtime queries or extending acquisition deadlines.
+ * @param pool Caller-owned disposable database. @returns An established fixture session, or the original failure. */
+async function connectFixtureSession(pool: Pool): Promise<PoolClient> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await pool.connect(); }
+    catch (error) {
+      if (attempt === 2 || !(error instanceof Error) || error.message !== 'Connection terminated due to connection timeout') throw error;
+      await new Promise<void>(done => setTimeout(done,100));
+    }
+  }
 }
 
 /** @description Bind actual schedule and run endpoints to an explicitly injected fixture identity adapter.

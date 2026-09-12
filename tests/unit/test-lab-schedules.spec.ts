@@ -7,8 +7,9 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove authority loss at the actual sandbox return boundary records cancellation and withholds output before watchdog timing can determine the outcome.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Reproduce an independent watchdog refusal after real sandbox completion and require cancellation to discard output even when the final current check succeeds.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove disposable schedule PostgreSQL sessions survive idle time and are reused during concurrent lease reads without extending acquisition deadlines.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Prove bounded transient setup recovery and immediate refusal of unrelated connection failures before fixture startup.
  */
-import { beforeAll, afterAll, beforeEach, afterEach, expect, it } from 'vitest';
+import { beforeAll, afterAll, beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -54,6 +55,30 @@ it('reuses disposable PostgreSQL sessions after idle time without opening connec
   const current = await Promise.all(Array.from({ length: 4 },() => pool.query('SELECT pg_backend_pid() AS pid')));
   expect(current.every(result => sessions.has(result.rows[0].pid))).toBe(true);
   expect(pool.options.connectionTimeoutMillis).toBe(500);
+},30000);
+
+it('recovers only bounded transient fixture handshakes before serving actual schedule requests', async () => {
+  const transient = new Error('Connection terminated due to connection timeout');
+  let extra: Awaited<ReturnType<typeof startTestLabScheduleFixture>> | undefined;
+  const recovered = vi.spyOn(pool,'connect').mockImplementationOnce(() => { throw transient; });
+  try {
+    extra = await startTestLabScheduleFixture(pool);
+    expect(recovered).toHaveBeenCalledTimes(5);
+    recovered.mockRestore();
+    expect((await extra.call('/schedules')).status).toBe(200);
+  } finally { recovered.mockRestore(); await extra?.close(); }
+  const invalid = new Error('Fixture authentication failed');
+  const denied = vi.spyOn(pool,'connect').mockImplementation(() => { throw invalid; });
+  try {
+    await expect(startTestLabScheduleFixture(pool)).rejects.toBe(invalid);
+    expect(denied).toHaveBeenCalledTimes(1);
+  } finally { denied.mockRestore(); }
+  const unavailable = vi.spyOn(pool,'connect').mockImplementation(() => { throw transient; });
+  try {
+    await expect(startTestLabScheduleFixture(pool)).rejects.toBe(transient);
+    expect(unavailable).toHaveBeenCalledTimes(3);
+    expect(pool.options.connectionTimeoutMillis).toBe(500);
+  } finally { unavailable.mockRestore(); }
 },30000);
 
 it('creates a disabled draft, runs actual Node assertions once and links the existing exact-owner durable result', async () => {
