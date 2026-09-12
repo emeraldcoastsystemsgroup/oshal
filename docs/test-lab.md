@@ -91,9 +91,11 @@ and prerequisites without running application smokes. **Connector sign-in callba
 identities without installing packages or changing trust. Their linked local suites run using
 `npm run test:platform-readiness`.
 
-Unit/browser catalogs register suite references and limits; these remain pending until a suitable local
-runner executes them. Retained test history, runner execution, remaining package adoption and scheduled
-selection remain in the [application registration backlog](backlog/app-test-lab-registration.md).
+Eligible offline package Node suites now use a disposable runner with Run/Cancel controls and
+durable versioned history. See [package test execution](testing/package-test-execution.md) for
+supported prerequisites, current-user authorization, isolation and local regression commands.
+Unsupported runners remain pending; further runner fixtures and remaining package adoption are in
+the [application registration backlog](backlog/app-test-lab-registration.md).
 Source registration and fixture tests do not establish deployed provider or production results.
 
 The autonomous-run cards also register isolated nightly regressions, manifest bot initialization,

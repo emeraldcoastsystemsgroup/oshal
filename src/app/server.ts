@@ -188,6 +188,7 @@
  * 168 | maintainer@emeraldcoastsystemsgroup.com | Seed fresh manifest bots through the authoritative deployment provider and model resolver.
  * 169 | maintainer@emeraldcoastsystemsgroup.com | Bind package-owned specialist facts to current application authority before accountable dispatch.
  * 170 | maintainer@emeraldcoastsystemsgroup.com | Register per-user Jarvis briefing settings and source lifecycle against current principal and application authority.
+ * 171 | maintainer@emeraldcoastsystemsgroup.com | Connect isolated installed-package tests, current caller policy and durable Test Lab results.
  */
 
 require('dotenv').config();
@@ -292,6 +293,7 @@ import { createPersonalGraphIngestRoutes } from './routes/personal-graph-ingest-
 import { InMemoryGraphStore } from '@/features/personal-graph';
 import { startTravelFareWatchCron } from './routes/travel-farewatch';
 import { createTestLabRoutes } from './routes/test-lab-routes';
+import { createTestLabWiring } from './composition/test-lab-wiring';
 import { createTestLabGoldenRoutes } from './routes/test-lab-golden';
 import { createPersonaEvalRoutes } from './routes/persona-eval-routes';
 import { registerEvalWallRoutes } from './routes/eval-wall-routes';
@@ -1547,24 +1549,8 @@ function createApp(): express.Application {
   // /api/test-lab so /api/test-lab/golden/* resolves here first.
   app.use('/api/test-lab/golden', serviceSecretOr(requiresAuth), createTestLabGoldenRoutes(ctx));
   // AI Test Lab — black-box E2E runner (ADR-063): drives the real endpoints + Jarvis, per-tool + coupled scenarios. requiresAuth-gated.
-  app.use('/api/test-lab', requiresAuth, createTestLabRoutes(ctx, {
-    installedTests: swarmAppService.testLabCatalog,
-    visibleApps: async (req) => {
-      const { sub } = getCaller(req);
-      const visible = new Set((await swarmAppService.listApps('active', { ownerSub: sub, isOperator: isOperator(req) })).map(record => record.name));
-      const readable = new Map<string, string>();
-      for (const manifest of await swarmAppService.getActiveManifests()) {
-        if (!visible.has(manifest.name)) continue;
-        if (manifest.access && (await appAccessService.resolve(manifest.name, sub, manifest.access)).tier === 'deny') continue;
-        readable.set(manifest.name, manifest.displayName || manifest.name);
-      }
-      return readable;
-    },
-    executionAuth: (req) => ({
-      serviceSecret: isOperator(req) ? process.env.SWARM_SERVICE_SECRET : undefined,
-      authorization: req.headers.authorization,
-    }),
-  }));
+  app.use('/api/test-lab', requiresAuth, createTestLabRoutes(ctx,
+    createTestLabWiring(ctx, swarmAppService, appAccessService, applicationAuthorization)));
   // Persona regression evals (golden-task gate): run ai-lab/persona-evals suites through the
   // active provider lane; structural assertions always graded, semantic rubrics skipped-with-notice
   // under noop. Operator-gated (real-lane runs spend tokens; the router re-gates internally too).

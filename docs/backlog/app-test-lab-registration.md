@@ -1,8 +1,9 @@
 # Application test cases installed into AI Test Lab — backlog
 
 Status: **versioned catalogs and installation lifecycle implemented at core `15dcbbd7`;
-Hello and Portrait pilots versioned at store `dc4c0dc`, and Kalshi at `571838a`**. Local/browser runner execution,
-historical results and the remaining package inventory are still open. Requested on 2026-09-10.
+Hello and Portrait pilots versioned at store `dc4c0dc`, and Kalshi at `571838a`**.
+The current execution slice adds isolated package Node suites and durable versioned history.
+Additional runner fixtures and remaining package adoption stay open. Requested on 2026-09-10.
 
 The [enterprise authorization workstream](enterprise-authorization.md) registers its implemented
 policy, HTTP/browser, identity, tool, bootstrap and worker-boundary suites; broader directory,
@@ -65,6 +66,22 @@ and manifest validation pass. No live scan, trade or notification was executed. 
 package also registers its new specialist suite; its scope and evidence remain in the private inventory.
 
 ## Work order and acceptance criteria
+
+### Package execution and evidence slice
+
+TLAB-04 now supports explicitly registered offline package Node suites through a
+disposable Docker runner. Real fixture tests cover failed assertions, source and
+helper changes, credential/data exclusion, revocation, timeout and cancellation.
+TLAB-05 adds exact-owner PostgreSQL history, request retry identity, global run
+capacity and source-version staleness with browser Run/Cancel controls. Current
+account and application access are rechecked for execution and history reads.
+The [execution guide](../testing/package-test-execution.md) describes the supported
+recipe and prerequisites. Broader database, browser and externally connected
+runners remain pending. Installing a catalog alone does not execute these suites.
+
+The next accepted item is TLAB-09: local recurring selection from the installed
+catalog, using the same execution authority and evidence, plus shipped-test drift
+reports. This work does not depend on GitHub Actions.
 
 | ID | Priority / owner | Work | Done when |
 |---|---|---|---|

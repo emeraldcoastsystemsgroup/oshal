@@ -38,6 +38,9 @@ npm run test:platform-readiness
 ```
 
 These suites use disposable package directories, local HTTP/provider fixtures and browser fixtures.
+The package execution/history cases also need Docker and a locally built core image
+(`oshal-bot:latest`, or `OSHAL_TEST_RUNNER_IMAGE`). They execute real package assertions in
+disposable containers and use separate PostgreSQL fixtures for retained evidence.
 They do not install applications into the running deployment or connect real external accounts.
 The matching Lab cards link the suites and run their documented discovery/refusal probes. Installed
 package smokes appear separately, with app/version metadata and any missing execution prerequisites.

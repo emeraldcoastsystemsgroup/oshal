@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Verify pending catalogs and stale-selection refusal through Chromium and real Lab HTTP routes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Assert unavailable runners remain disabled while preserving real stale-smoke and escaped-metadata proofs.
  */
 import express from 'express';
 import type { Server } from 'node:http';
@@ -67,8 +68,8 @@ it('shows escaped suite metadata, remains pending, and refreshes before running 
     expect(await suite.textContent()).toContain('The catalog renders <script> as text.');
     expect(await suite.locator('img, script').count()).toBe(0);
     expect(await page.evaluate(() => (window as any).catalogXss)).toBeUndefined();
-    await suite.getByRole('button', { name: 'Run', exact: true }).click();
-    await expect.poll(() => suite.locator('.badge').textContent()).toBe('degraded');
+    expect(await suite.getByRole('button', { name: 'Run', exact: true }).isDisabled()).toBe(true);
+    expect(await suite.locator('.badge').textContent()).toBe('idle');
     expect(smokeCalls).toBe(0);
 
     record = { ...record, version: '2.0.0', manifest: { ...record.manifest, version: '2.0.0' } };

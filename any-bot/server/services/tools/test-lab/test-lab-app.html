@@ -1,4 +1,11 @@
 <!doctype html>
+<!--
+CHANGE LOG
+-----------------------------------------------------------------------------
+SEQ | AUTHOR | DESCRIPTION
+-----------------------------------------------------------------------------
+1 | maintainer@emeraldcoastsystemsgroup.com | Add cancellable package runs, exact-version evidence and durable caller history alongside live scenarios.
+-->
 <html lang="en" data-theme="midnight">
 <head>
 <meta charset="utf-8" />
@@ -160,6 +167,13 @@
   .step-visual .cap { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
 
   .empty { padding: 24px; color: var(--muted); text-align: center; }
+  .history-panel { padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  .history-panel h2 { margin: 0 0 10px; font-size: 16px; }
+  .history-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+  .history-controls select { max-width: 100%; padding: 8px; color: var(--text); background: var(--bg); border: 1px solid var(--line); }
+  .history-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .history-row .description { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+  .history-output { max-height: 380px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--bg); }
 
   @media (max-width: 760px) {
     .lab-shell { padding: 12px; }
@@ -181,7 +195,7 @@
         <div class="sub">Run black-box scenarios through live OSHAL endpoints — every tool, every app, and the rich visuals Jarvis delivers on demand. Results stay honest: pass, degraded, gap, or fail. No silent spinner states.</div>
       </div>
       <div class="hero-actions">
-        <button id="runAll" class="primary" type="button">Run all</button>
+        <button id="runAll" class="primary" type="button">Run live scenarios</button>
         <button id="refreshCatalog" type="button">Refresh</button>
         <a class="lab-link" href="/api/eval-wall/app">Eval Wall</a>
       </div>
@@ -189,6 +203,14 @@
 
     <section id="summary" class="summary-grid" aria-label="Test Lab summary"></section>
     <section id="runStatus" class="lab-status surface-card"><strong>Loading catalog.</strong><span>Fetching live scenario list...</span></section>
+    <section class="history-panel" aria-label="Package run history">
+      <h2>Package runs</h2>
+      <p>Run one ready package suite in an isolated runner. History follows your signed-in account; earlier package versions stay labelled as stale.</p>
+      <div class="history-controls"><label for="historyApp">Application</label><select id="historyApp"><option value="">All applications</option></select>
+        <button id="refreshHistory" type="button">Refresh history</button></div>
+      <div id="runHistory" aria-live="polite">Loading your recent runs...</div>
+      <div id="runEvidence" aria-live="polite"></div>
+    </section>
     <main id="main"><div class="empty">Loading scenarios...</div></main>
   </div>
 
@@ -202,6 +224,10 @@ const GROUPS = [
 ];
 let catalog = { scenarios: [], apps: [] };
 let scenarioStates = new Map();
+let catalogGeneration = 0;
+let historyGeneration = 0;
+let historyTimer;
+let recentRuns = [];
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -222,11 +248,17 @@ async function fetchJson(path, options) {
 }
 
 async function load() {
+  const generation = ++catalogGeneration;
+  clearEvidence();
   setStatus('Loading catalog.', 'Fetching live scenario list...');
   try {
-    catalog = await fetchJson(API + '/catalog');
+    const next = await fetchJson(API + '/catalog');
+    if (generation !== catalogGeneration) return;
+    catalog = next;
     scenarioStates = new Map((catalog.scenarios || []).map((scenario) => [scenario.id, 'idle']));
     render();
+    refreshHistoryApps();
+    await loadHistory();
     const appCount = (catalog.apps || []).length;
     setStatus('Ready.', (catalog.scenarios || []).length + ' scenarios loaded' + (appCount ? ' across ' + appCount + ' live apps.' : '.'));
   } catch (error) {
@@ -262,7 +294,8 @@ function renderScenarioCard(scenario) {
     + '<div class="scenario-head">'
     + '<div><div class="scenario-title">' + esc(scenario.title) + '</div><div class="scenario-desc">' + esc(scenario.description) + '</div></div>'
     + '<div class="scenario-actions"><span class="badge ' + esc(state) + '" id="badge-' + esc(scenario.id) + '">' + esc(state) + '</span>'
-    + '<button type="button" data-run-id="' + esc(scenario.id) + '">Run</button></div>'
+    + '<button type="button" data-run-id="' + esc(scenario.id) + '"'
+    + (scenario.installedTest && !scenario.installedTest.runnable ? ' disabled' : '') + '>Run</button></div>'
     + '</div>'
     + (scenario.installedTest ? '<div class="scenario-desc">Installed ' + esc(scenario.installedTest.appVersion) + ' &middot; '
       + esc(scenario.installedTest.level) + ' &middot; '
@@ -329,7 +362,8 @@ function setScenarioState(id, state) {
 function setCardRunning(id, running) {
   const card = $('card-' + id);
   if (!card) return;
-  card.querySelectorAll('button').forEach((button) => { button.disabled = running; });
+  const test = (catalog.scenarios || []).find(scenario => scenario.id === id)?.installedTest;
+  card.querySelectorAll('button').forEach((button) => { button.disabled = running || !!test && !test.runnable; });
 }
 
 function paintScenario(result) {
@@ -351,6 +385,10 @@ function paintFailure(id, message) {
 
 async function runOne(id) {
   if (!id) return;
+  const scenario = (catalog.scenarios || []).find(item => item.id === id);
+  if (scenario && scenario.installedTest && scenario.installedTest.runner.kind !== 'smoke') {
+    await runPackage(scenario); return;
+  }
   setScenarioState(id, 'run');
   setCardRunning(id, true);
   setStatus('Running scenario.', id);
@@ -379,9 +417,10 @@ function installedRevisions() {
 
 async function runAll() {
   const button = $('runAll');
+  const live = (catalog.scenarios || []).filter(item => !item.installedTest || item.installedTest.runner.kind === 'smoke' || !item.installedTest.runnable);
   button.disabled = true;
   button.textContent = 'Running...';
-  (catalog.scenarios || []).forEach((scenario) => {
+  live.forEach((scenario) => {
     setScenarioState(scenario.id, 'run');
     setCardRunning(scenario.id, true);
   });
@@ -397,19 +436,121 @@ async function runAll() {
     results.forEach(paintScenario);
     setStatus('All scenarios complete.', results.length + ' scenarios returned results.');
   } catch (error) {
-    (catalog.scenarios || []).forEach((scenario) => {
+    live.forEach((scenario) => {
       if (scenarioStates.get(scenario.id) === 'run') paintFailure(scenario.id, error.message);
     });
     setStatus('Run all failed.', error.message);
   } finally {
-    (catalog.scenarios || []).forEach((scenario) => setCardRunning(scenario.id, false));
+    live.forEach((scenario) => setCardRunning(scenario.id, false));
     button.disabled = false;
-    button.textContent = 'Run all';
+    button.textContent = 'Run live scenarios';
   }
+}
+
+function clearEvidence() { $('runEvidence').replaceChildren(); }
+
+function refreshHistoryApps() {
+  const previous = $('historyApp').value;
+  $('historyApp').innerHTML = '<option value="">All applications</option>' + (catalog.installedApps || [])
+    .map(app => '<option value="' + esc(app.name) + '">' + esc(app.displayName || app.name) + '</option>').join('');
+  if ([...$('historyApp').options].some(option => option.value === previous)) $('historyApp').value = previous;
+}
+
+function packageMutation(path, body) {
+  return fetchJson(API + path, { method: 'POST', headers: { 'content-type': 'application/json', 'X-OSHAL-Test-Lab': '1' }, body: JSON.stringify(body) });
+}
+
+async function runPackage(scenario) {
+  const test = scenario.installedTest;
+  setCardRunning(scenario.id,true);
+  clearEvidence();
+  try {
+    const payload = await packageMutation('/runs',{ caseId: test.id,revision: test.revision,
+      executionRevision: test.executionRevision,requestId: crypto.randomUUID() });
+    setStatus('Package run accepted.', test.name + ' is ' + payload.run.state + '. You can cancel it below.');
+    await loadHistory();
+  } catch (error) { setStatus('Package run unavailable.',error.message); }
+  finally { setCardRunning(scenario.id,false); }
+}
+
+function renderHistoryRun(run) {
+  const running = ['queued','running','cancelling'].includes(run.state);
+  return '<article class="history-row" data-history-id="' + esc(run.id) + '"><div class="description"><strong>'
+    + esc(run.test.appName + ': ' + run.test.name) + '</strong><br>' + esc(run.test.appVersion) + ' · '
+    + esc(new Date(run.createdAt).toLocaleString()) + ' · ' + esc(run.state)
+    + (run.stale ? ' · Earlier version / stale' : ' · Current version') + '</div>'
+    + '<button type="button" data-evidence-id="' + esc(run.id) + '">View result</button>'
+    + (running ? '<button type="button" data-cancel-id="' + esc(run.id) + '"'
+      + (run.state === 'cancelling' ? ' disabled' : '') + '>Cancel</button>' : '') + '</article>';
+}
+
+async function loadHistory() {
+  const generation = ++historyGeneration;
+  clearTimeout(historyTimer);
+  clearEvidence();
+  try {
+    const payload = await fetchJson(API + '/runs?app=' + encodeURIComponent($('historyApp').value));
+    if (generation !== historyGeneration) return;
+    recentRuns = payload.runs || [];
+    $('runHistory').innerHTML = recentRuns.map(renderHistoryRun).join('') || '<p>No package runs in this view.</p>';
+    $('runHistory').querySelectorAll('[data-evidence-id]').forEach(button => button.addEventListener('click',() => showEvidence(button.dataset.evidenceId)));
+    $('runHistory').querySelectorAll('[data-cancel-id]').forEach(button => button.addEventListener('click',() => cancelPackage(button.dataset.cancelId)));
+    const painted = new Set();
+    for (const run of recentRuns) {
+      if (run.stale) continue;
+      if (painted.has(run.test.id)) continue;
+      painted.add(run.test.id);
+      const state = ['queued','running','cancelling'].includes(run.state) ? 'run'
+        : run.state === 'passed' ? 'pass' : run.state === 'failed' ? 'fail' : 'degraded';
+      setScenarioState(run.test.id,state);
+    }
+    if (recentRuns.some(run => ['queued','running','cancelling'].includes(run.state))) historyTimer = setTimeout(loadHistory,1500);
+  } catch (error) {
+    if (generation !== historyGeneration) return;
+    recentRuns = []; clearEvidence();
+    $('runHistory').textContent = error.message;
+  }
+}
+
+async function showEvidence(id) {
+  const generation = historyGeneration;
+  clearEvidence();
+  try {
+    const payload = await fetchJson(API + '/runs/' + encodeURIComponent(id));
+    if (generation !== historyGeneration || document.hidden) return;
+    const run = payload.run;
+    const heading = document.createElement('h3'); heading.textContent = run.test.name + ': ' + run.state;
+    const version = document.createElement('p');
+    version.textContent = 'Package ' + run.test.appVersion + (run.stale ? ' · Earlier version / stale' : ' · Current version');
+    const output = document.createElement('pre'); output.className = 'history-output';
+    output.textContent = run.result ? [run.result.error,run.result.output].filter(Boolean).join('\n') || 'No text output returned.' : 'No completed output is available.';
+    $('runEvidence').append(heading,version,versionEvidence(run),output);
+    setTimeout(() => { if (output.isConnected) clearEvidence(); },30000);
+  } catch (error) { if (generation === historyGeneration) $('runEvidence').textContent = error.message; }
+}
+
+function versionEvidence(run) {
+  const details = document.createElement('details'); const summary = document.createElement('summary');
+  summary.textContent = 'Version and runner evidence';
+  const metadata = document.createElement('pre'); metadata.className = 'history-output';
+  metadata.textContent = ['Case revision: ' + run.test.revision,'Content revision: ' + (run.test.executionRevision || 'unavailable'),
+    'Source commit: ' + (run.test.sourceCommit || 'not recorded'), 'Runner image: ' + (run.result?.image || 'not recorded'),
+    'Duration: ' + (run.result ? run.result.durationMs + ' ms' : 'incomplete'),
+    'Cleanup: ' + (run.result?.cleanupVerified === true ? 'verified' : run.result?.cleanupVerified === false ? 'not verified' : 'not recorded')].join('\n');
+  details.append(summary,metadata); return details;
+}
+
+async function cancelPackage(id) {
+  try { await packageMutation('/runs/' + encodeURIComponent(id) + '/cancel',{}); await loadHistory(); }
+  catch (error) { clearEvidence(); setStatus('Cancellation unavailable.',error.message); }
 }
 
 $('runAll').addEventListener('click', runAll);
 $('refreshCatalog').addEventListener('click', load);
+$('refreshHistory').addEventListener('click',loadHistory);
+$('historyApp').addEventListener('change',loadHistory);
+window.addEventListener('blur',clearEvidence);
+document.addEventListener('visibilitychange',() => { if (document.hidden) clearEvidence(); else void loadHistory(); });
 load();
 </script>
 <script>

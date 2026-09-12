@@ -109,4 +109,5 @@ export type { PackageAuditMode } from './services';
 export type { WorkflowPublishSpec, WorkflowPublishStageInput, WorkflowPublishBotInput } from './services';
 export type { ToolDependent } from './services';
 export { InstalledAppTestCatalog } from './services/installed-app-test-catalog';
-export type { InstalledTestAuth, InstalledAppTestCase } from './services/installed-app-test-catalog';
+export { PackageTestSandbox } from './services/package-test-sandbox';
+export type { InstalledTestAuth, InstalledAppTestCase, InstalledTestRunOptions, InstalledAppTestResult } from './services/installed-app-test-catalog';

@@ -13,6 +13,7 @@
  * -----------------------------------------------------------------------------
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Mount asynchronous package execution and durable exact-caller history beside legacy scenarios.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Include caller-visible installed package smokes and version/prerequisite metadata; reuse the installation verifier with operator/caller-scoped authentication.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register artifact scenarios and expose categorized regression suites in the existing Lab catalog.
  * ---------------------------------------------------------------------------
@@ -35,6 +36,7 @@ import type { AppContext } from '@/app/composition/app-context';
 import { SCENARIOS, rollup, type StepResult } from './test-lab-scenarios';
 import { renderCatalogVisual } from './test-lab-visual-catalog';
 import type { InstalledAppTestCatalog, InstalledTestAuth, InstalledAppTestCase } from '@/features/swarm-apps';
+import { createTestLabRunRoutes, type TestLabRunRouteOptions } from './test-lab-run-routes';
 
 const logger = createChildLogger({ module: 'test-lab-routes' });
 const TOOLS_DIR = 'any-bot/server/services/tools/test-lab';
@@ -60,7 +62,7 @@ function resolveViewerSub(req: Request): string {
 }
 
 // ── Router ─────────────────────────────────────────────────────────────────────
-export interface TestLabRouteOptions {
+export interface TestLabRouteOptions extends TestLabRunRouteOptions {
   installedTests?: InstalledAppTestCatalog;
   /** Current app visibility and access policy, evaluated again before every package test. */
   visibleApps?: (req: Request) => Promise<Map<string, string>>;
@@ -85,6 +87,7 @@ function installedScenario(test: InstalledAppTestCase) {
 
 export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptions = {}): Router {
   const router = Router();
+  router.use(createTestLabRunRoutes(options));
   const visibleApps = (req: Request) => options.visibleApps?.(req) ?? Promise.resolve(new Map<string, string>());
   const executionAuth = (req: Request) => options.executionAuth?.(req) ?? {};
 
@@ -145,6 +148,9 @@ export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptio
     const toRun = id === 'all' ? SCENARIOS : SCENARIOS.filter((s) => s.id === id);
     const installed = (options.installedTests?.list(await visibleApps(req), executionAuth(req)) ?? [])
       .filter(test => id === 'all' || test.id === id);
+    if (id !== 'all' && installed.some(test => test.runner.kind !== 'smoke' && test.runnable)) {
+      res.status(409).json({ error: 'Use the package Run control to create a cancellable run with history.' }); return;
+    }
     if (!toRun.length && !installed.length) { res.status(404).json({ error: `unknown scenario: ${id}` }); return; }
 
     const results = [];
@@ -161,6 +167,7 @@ export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptio
       results.push({ id: sc.id, title: sc.title, group: sc.group, description: sc.description, state: rollup(stepResults.map((s) => s.state)), steps: stepResults });
     }
     for (const test of installed) {
+      if (test.runner.kind !== 'smoke' && test.runnable) continue;
       const selected = expectedCases === undefined ? test : { ...test,
         revision: Object.prototype.hasOwnProperty.call(expectedCases, test.id) ? expectedCases[test.id] : '' };
       const result = await options.installedTests!.run(selected, await visibleApps(req), {
