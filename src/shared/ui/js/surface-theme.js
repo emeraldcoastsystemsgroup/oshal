@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Canonical theme bootstrap for standalone surfaces. 28 of 37 surfaces hardcoded a dark palette and consumed ZERO framework tokens, so they only "worked" in dark by accident. Several DID read the saved theme and set data-theme — then overrode every token with hardcoded hex, so the attribute did nothing. Also adds LIVE switching, which no surface had: they read the theme once at load, so changing it in the cockpit left every open surface stale until reload.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | An EMBEDDED surface now wears what the surrounding cockpit wears. The cockpit applies a focused app's skin transiently on its own <html data-theme> (a per-app core theme, or an ADR-085 package-bundled skin injected as #app-package-theme-css) and never persists it — so every iframed surface kept rendering the operator's SAVED theme and an app's chrome and its content disagreed (a light studio skin around a dark studio). Same-origin parent only, observed live; a packaged skin's stylesheet is copied in and applied once it loads; any failure — cross-origin parent, no parent theme, stylesheet error — falls back to the saved theme exactly as before.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Use Workspace only when no theme is saved, support one-shot shell prepaint, and refuse stale packaged stylesheet completions.
  */
 
 /**
@@ -35,9 +36,10 @@
  *   <script src="/shared/ui/js/surface-theme.js"></script>
  */
 (function () {
+  // Workspace shares the canonical Cockpit palette and the existing parent/saved precedence.
   var SUPPORTED = [
     'midnight', 'daylight', 'ocean', 'sakura', 'forest', 'gray',
-    'black', 'light-blue', 'aurora', 'graphite', 'amber',
+    'black', 'light-blue', 'aurora', 'graphite', 'amber', 'workspace',
   ];
   var FALLBACK = 'midnight';
   /** The cockpit's element id for an injected package-bundled skin (theme-manager.js). */
@@ -60,7 +62,8 @@
    */
   function saved() {
     try {
-      return resolve(localStorage.getItem('cockpit-theme'));
+      var value = localStorage.getItem('cockpit-theme');
+      return value === null ? 'workspace' : resolve(value);
     } catch (_) {
       return FALLBACK;
     }
@@ -97,6 +100,12 @@
     }
   }
 
+  /** @description A completed stylesheet may only change the surface while its exact parent skin remains current. */
+  function isCurrentPackaged(id, href) {
+    var current = parentTheme();
+    return current && current.id === id && current.href === href;
+  }
+
   /**
    * @description Wear a package-bundled skin: copy the cockpit's stylesheet into this document and
    * apply the skin's id once it has loaded (a surface must never paint with no tokens at all). A
@@ -117,8 +126,10 @@
       link.rel = 'stylesheet';
       (document.head || document.documentElement).appendChild(link);
     }
-    link.addEventListener('load', function () { document.documentElement.setAttribute('data-theme', id); });
-    link.addEventListener('error', function () { apply(saved()); });
+    link.addEventListener('load', function () {
+      if (isCurrentPackaged(id, href)) document.documentElement.setAttribute('data-theme', id);
+    });
+    link.addEventListener('error', function () { if (isCurrentPackaged(id, href)) apply(saved()); });
     link.setAttribute('href', href);
   }
 
@@ -135,6 +146,8 @@
   }
 
   sync();
+  // The top-level Cockpit uses the same resolver before paint; ThemeManager owns its live state.
+  if (document.currentScript && document.currentScript.getAttribute('data-theme-once') !== null) return;
 
   // Live-follow the cockpit. `storage` fires in every OTHER same-origin document when the value
   // changes — so switching theme in the cockpit re-themes every open surface immediately.

@@ -64,11 +64,13 @@
  *            | the app store (ADR-085 Wave 3); the trading engine + all 8 autopilot dispatch/
  *            | reconcile loops + the trading-bot/weather-bot nodes stay framework-resident.
  * ---------------------------------------------------------------------------
+ * Appearance | maintainer@emeraldcoastsystemsgroup.com | Register the read-only Workspace asset check and linked actual browser proof.
  * @module test-lab-scenarios
  */
 
 import { ARTIFACT_SCENARIOS } from './test-lab-artifact-scenarios';
 import { INSTALLATION_SCENARIOS } from './test-lab-installation-scenarios';
+import { APPEARANCE_SCENARIOS } from './test-lab-appearance-scenarios';
 import { CONNECTOR_OAUTH_SCENARIOS } from './test-lab-connector-scenarios';
 import { APP_REGISTRY_SCENARIOS } from './test-lab-app-registry-scenarios';
 import { AUTHORIZATION_SCENARIOS } from './test-lab-authorization-scenarios';
@@ -225,6 +227,7 @@ function arrayAssert(field: string, noun: string): Assert {
 export const SCENARIOS: Scenario[] = [
   ...ARTIFACT_SCENARIOS,
   ...INSTALLATION_SCENARIOS,
+  ...APPEARANCE_SCENARIOS,
   ...CONNECTOR_OAUTH_SCENARIOS,
   ...APP_REGISTRY_SCENARIOS,
   ...AUTHORIZATION_SCENARIOS,

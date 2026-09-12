@@ -6,12 +6,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documented and hardened cockpit theme cycling so header theme audits can assert persisted operator-visible behavior
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Expanded cockpit to the full shared swarm theme catalog so shell, settings, and embedded workspaces stay visually aligned
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | applyTransient(theme) — apply a per-app skin (from the focused app's manifest) for this page-load WITHOUT persisting it, so each app opens in its own look while the operator's saved global theme is preserved for plain /cockpit visits.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Add selectable Workspace as the no-saved-choice default while preserving saved preferences, invalid-choice fallback and transient application themes.
  */
 
 /**
  * @description Canonical, ordered list of every cockpit theme id the shell supports; drives validation and the theme cycle order so shell, settings, and embedded workspaces stay visually aligned.
  */
-export const COCKPIT_THEMES = ['midnight', 'daylight', 'ocean', 'sakura', 'forest', 'gray', 'black', 'light-blue', 'aurora', 'graphite', 'amber'];
+export const COCKPIT_THEMES = ['midnight', 'daylight', 'ocean', 'sakura', 'forest', 'gray', 'black', 'light-blue', 'aurora', 'graphite', 'amber', 'workspace'];
 
 /**
  * @description Validate a requested theme id against the supported catalog, falling back to the default 'midnight' so callers can never apply an unknown theme.
@@ -20,6 +21,15 @@ export const COCKPIT_THEMES = ['midnight', 'daylight', 'ocean', 'sakura', 'fores
  */
 export function resolveCockpitTheme(theme) {
   return COCKPIT_THEMES.includes(theme) ? theme : 'midnight';
+}
+
+/** @description Keep both the legacy picker and current Settings buttons aligned with the active shell theme. */
+function syncThemePickers(theme) {
+  document.querySelectorAll('.theme-option, #settingsThemePicker button').forEach(button => {
+    const active = button.dataset.theme === theme;
+    button.classList.toggle('active', active);
+    if (button.tagName === 'BUTTON') button.setAttribute('aria-pressed', String(active));
+  });
 }
 
 /**
@@ -31,7 +41,8 @@ export class ThemeManager {
    */
   constructor() {
     this.themes = COCKPIT_THEMES;
-    this.current = resolveCockpitTheme(localStorage.getItem('cockpit-theme') || 'midnight');
+    const saved = localStorage.getItem('cockpit-theme');
+    this.current = resolveCockpitTheme(saved === null ? 'workspace' : saved);
     this.apply(this.current);
   }
 
@@ -45,10 +56,7 @@ export class ThemeManager {
     document.documentElement.setAttribute('data-theme', nextTheme);
     this.current = nextTheme;
     localStorage.setItem('cockpit-theme', nextTheme);
-    // Sync theme picker buttons
-    document.querySelectorAll('.theme-option').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.theme === nextTheme);
-    });
+    syncThemePickers(nextTheme);
     return nextTheme;
   }
 
@@ -83,9 +91,7 @@ export class ThemeManager {
     }
     document.documentElement.setAttribute('data-theme', theme);
     this.current = theme;
-    document.querySelectorAll('.theme-option').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.theme === theme);
-    });
+    syncThemePickers(theme);
     return theme;
   }
 

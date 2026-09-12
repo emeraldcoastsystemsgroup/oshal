@@ -1,0 +1,96 @@
+/*
+ * =============================================================================
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Add the selectable paper-and-indigo Workspace skin using shared Cockpit tokens; retain the current application layout.
+ * =============================================================================
+ */
+[data-theme="workspace"] {
+  color-scheme: light;
+  --bg-primary: #f5f6f9;
+  --bg-secondary: #fafbfe;
+  --bg-tertiary: #eef0fc;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f8f9fe;
+  --border-color: #e5e8ee;
+  --border-color-hover: #c4c9df;
+  --text-primary: #252b3c;
+  --text-secondary: #566176;
+  --text-muted: #616b80;
+  --accent-primary: #535bc8;
+  --accent-primary-hover: #444cae;
+  --accent-gradient: linear-gradient(135deg, #535bc8, #6972d6);
+  --accent-glow: rgba(83, 91, 200, 0.12);
+  --status-success: #18764f;
+  --status-active: #396da4;
+  --status-warning: #916522;
+  --status-error: #bb3947;
+  --glass-bg: #ffffff;
+  --glass-bg-heavy: #fafbfe;
+  --glass-border: #e5e8ee;
+  --glass-highlight: none;
+  --glass-glare: none;
+  --glass-blur: 0px;
+  --glass-blur-light: 0px;
+  --border-light: #e5e8ee;
+  --border-highlight: #ffffff;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: #c4c9d5;
+  --panel-shadow: 0 4px 18px rgba(34, 48, 77, 0.025);
+  --card-shadow: 0 8px 26px rgba(34, 48, 77, 0.025);
+  --depth-shadow: 0 16px 40px rgba(34, 48, 77, 0.12);
+  --shadow-sm: 0 2px 8px rgba(34, 48, 77, 0.035);
+  --shadow-md: 0 8px 24px rgba(34, 48, 77, 0.07);
+  --shadow-lg: 0 20px 48px rgba(34, 48, 77, 0.12);
+  --radius-sm: 9px;
+  --radius-md: 14px;
+  --radius-lg: 17px;
+  --font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-family-display: var(--font-family);
+  --workspace-picker-text: #252b3c;
+  --workspace-picker-bg: #ffffff;
+  --workspace-picker-selected-bg: #eef0fc;
+  --workspace-picker-border: #c4c9df;
+  --workspace-picker-accent: #535bc8;
+}
+
+/* Cosmetic chrome only: no navigation, visibility or panel-position changes. */
+[data-theme="workspace"] body { background-image: none; }
+[data-theme="workspace"] .header-bar { background: var(--bg-card); }
+[data-theme="workspace"] .logo-text {
+  background: none;
+  color: var(--text-primary);
+  -webkit-text-fill-color: currentColor;
+  font-weight: 650;
+}
+[data-theme="workspace"] :focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 3px;
+}
+[data-theme="workspace"] * {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* Each choice carries its own data-theme for a swatch. Keep its label on the
+   enclosing light skin rather than borrowing that candidate's dark-theme ink. */
+html[data-theme="workspace"] #settingsThemePicker button {
+  color: var(--workspace-picker-text);
+  background: var(--workspace-picker-bg);
+  border: 1px solid var(--workspace-picker-border);
+}
+html[data-theme="workspace"] #settingsThemePicker button::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+}
+html[data-theme="workspace"] #settingsThemePicker button.active {
+  background: var(--workspace-picker-selected-bg);
+  border-color: var(--workspace-picker-accent);
+  font-weight: 650;
+}

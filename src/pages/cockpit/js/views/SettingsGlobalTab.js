@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added the operator-only "Manage swarm apps" link (→ /applications) — the replacement entry for the retired cockpit header apps-grid button; revealed via the dev-console super-admin probe
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added the "Add a computer (remote node)" link (→ /api/join/, the join surface that mints enrollment + join codes) beside Manage swarm apps, revealed by the same probe — the surface existed since 07-08 but nothing in the cockpit linked to it, so adding a node meant knowing the URL by heart
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Added the "Get oshal on your devices" link (→ /cockpit/tools/devices.html) beside it, shown to everyone: the operator-gated join surface is the advanced path, and a basic user who came to Settings looking for "how do I put this on my desktop" found nothing.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Expose Workspace with a clear saved-choice, temporary-app-theme and visual-skin explanation.
  */
 
 import { createUiLogger, serializeUiError } from '../../../shared/ui-debug.js';
@@ -249,7 +250,7 @@ export class SettingsGlobalTab {
         <div class="setting-section-title">Operator Preferences</div>
         <div class="setting-section-desc">Cockpit-local display and approval preferences for this operator session.</div>
         <div class="setting-section-title" style="font-size:14px;">Theme</div>
-        <div class="setting-section-desc">Choose the cockpit theme used for this operator surface.</div>
+        <div class="setting-section-desc">Choose a visual skin saved in this browser. Workspace is the starting choice when no theme has been saved, with a light paper palette and restrained indigo accents. Existing choices are kept. Application-specific themes can temporarily take precedence; the navigation and page layout stay the same.</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap" id="settingsThemePicker">${themeButtons}</div>
         <div style="height:12px;"></div>
         <div class="setting-section-title" style="font-size:14px;">Auto-Approve</div>
@@ -304,8 +305,11 @@ export class SettingsGlobalTab {
         });
         document.documentElement.dataset.theme = theme;
         localStorage.setItem('cockpit-theme', theme);
-        this.body.querySelectorAll('#settingsThemePicker button').forEach((item) => item.classList.remove('active'));
+        this.body.querySelectorAll('#settingsThemePicker button').forEach((item) => {
+          item.classList.remove('active'); item.setAttribute('aria-pressed', 'false');
+        });
         button.classList.add('active');
+        button.setAttribute('aria-pressed', 'true');
         if (this.view.onThemeChange) {
           this.view.onThemeChange(theme);
         }
@@ -490,13 +494,14 @@ function renderThemeButton(theme, active) {
     aurora: 'ph-star-four',
     graphite: 'ph-diamond',
     amber: 'ph-fire',
+    workspace: 'ph-layout',
   };
   const label = theme
     .split('-')
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join(' ');
   const activeClass = active ? ' active' : '';
-  return `<button class="td-action-btn${activeClass}" data-theme="${theme}" style="min-width:90px"><i class="ph ${icons[theme]}"></i> ${label}</button>`;
+  return `<button class="td-action-btn${activeClass}" data-theme="${theme}" aria-pressed="${active}" style="min-width:90px"><i class="ph ${icons[theme]}"></i> ${label}</button>`;
 }
 
 // Render a standard toggle row for operator preferences.

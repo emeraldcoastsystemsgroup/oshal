@@ -33,12 +33,13 @@
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Cache bumped v31 -> v32: the focused-app rail rendered TWO Settings buttons for the same screen. The hub is a member of this.views (that is how it stays navigable while withheld from the rail), so re-pushing it to force it last drew a second identical button. Tray selection is now a pure exported computeBottomTray() with fixtures, instead of three lines of inline filtering nothing could test.
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Cache bumped v33 -> v34 for ribbon.css + RibbonNav.js + jarvis-orb.js together (operator requests 2026-08-06): the rail pin (pinned stays expanded, unpinned hover-expands), the collapsed-icon clipping fix (8px side padding so a 24px icon survives the scrollbar squeezing the button to ~32px), and the orb's drag-to-move / right-click hide with the ?orb=show restore. All three files are precached — without the bump an installed PWA keeps serving the old shell and the pin simply never appears.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | Cache bumped v34 -> v35 for RibbonNav.js (precached): the bottom tray gains the Get oshal platform tool (/cockpit/tools/devices.html). Without the bump an installed PWA keeps serving the old rail and the entry never appears — on the phone, the very device the page exists to onboard.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com | Precache the Workspace default stylesheet and shared prepaint theme resolver for the offline shell.
  */
 
 /* global self, caches, fetch, Response */
 
 // Bump CACHE_VERSION on any change to the precached shell list so old caches are evicted.
-const CACHE_VERSION = 'oshal-cockpit-v35';
+const CACHE_VERSION = 'oshal-cockpit-v36';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 // The minimal app shell precached at install so the cockpit boots offline. Live data
@@ -53,6 +54,8 @@ const APP_SHELL = [
   '/cockpit/css/connector-discover.css',
   '/shared/ui/css/surface-glass.css',
   '/cockpit/css/themes/midnight.css',
+  '/cockpit/css/themes/workspace.css',
+  '/shared/ui/js/surface-theme.js',
   '/cockpit/js/app.js',
   '/cockpit/js/surface-bridge-relay.js',
   '/cockpit/js/first-run.js',

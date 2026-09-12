@@ -22,10 +22,12 @@
   16 | maintainer@emeraldcoastsystemsgroup.com   | Login double-refresh fix: the service-worker controllerchange reload also fired on the FIRST claim of a fresh page (everything had just come from the network — the reload repainted identical bytes). Now reload only when an UPDATED worker replaces one that was already controlling the page. Also: zen (full-window focus) mode — header arrows-out button + floating exit button hide all cockpit chrome so the active surface gets the whole window (Esc restores).
   17 | maintainer@emeraldcoastsystemsgroup.com   | Stop loading the unreachable legacy workboard stylesheet so mobile layout support covers only rendered surfaces
   18 | maintainer@emeraldcoastsystemsgroup.com   | Render the generic chat rail collapsed at first paint so its full-screen phone sheet cannot cover the primary surface during asynchronous cockpit startup
+  19 | maintainer@emeraldcoastsystemsgroup.com | Load Workspace and resolve the saved-or-default skin before paint without changing application layout.
 -->
-<html lang="en" data-theme="midnight">
+<html lang="en" data-theme="workspace">
 <head>
   <meta charset="UTF-8">
+  <script src="/shared/ui/js/surface-theme.js" data-theme-once></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Cockpit</title>
   <!-- ADR-044 Phase 1: installable PWA (Add to Home Screen / App-shell offline) -->
@@ -82,6 +84,7 @@
   <link rel="stylesheet" href="css/themes/aurora.css">
   <link rel="stylesheet" href="css/themes/graphite.css">
   <link rel="stylesheet" href="css/themes/amber.css">
+  <link rel="stylesheet" href="css/themes/workspace.css">
   <!-- Layout & Components -->
   <link rel="stylesheet" href="css/layout.css">
   <link rel="stylesheet" href="css/ribbon.css">

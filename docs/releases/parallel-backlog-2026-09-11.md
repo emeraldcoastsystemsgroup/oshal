@@ -6,7 +6,23 @@ establish installation or native acceptance of the changes below.
 The first combined platform run passed 296 of 298 tests across 27 files. Two existing
 scheduler cases failed: a completed-result watchdog case did not finish within its fixture
 deadline, and an assertion-failure run was recorded as cancelled. Deployment remains pending
-diagnosis; the original evidence is retained. The 17 new installation-verification cases passed.
+repair and revalidation; the original evidence is retained. A bounded isolated diagnostic
+reproduced a schedule heartbeat failing after 504 ms because the disposable PostgreSQL pool's
+500 ms connection allowance elapsed. The scheduler correctly refused to continue. Fixture
+connection reuse is being corrected without extending acquisition or authorization deadlines.
+The 17 new installation-verification cases passed. Retained fixture connections and a real
+idle-session regression then passed all 18 scheduler cases. The subsequent combined run
+passed 297 of 299 tests: one fixture failed to establish its initial connections, and one
+source-change case could not confirm sandbox cleanup. Both original failure reports remain
+retained; deployment is still pending combined verification. The separately coordinated
+Git-history rewrite has finished with source trees unchanged. The fixture now retries only
+that exact transient connection-startup error, before
+its HTTP server or sandbox exists, with at most three attempts and unchanged per-attempt
+deadlines. A new recovery regression failed against the preceding fixture, then all 19
+scheduler and seven browser cases passed together; strict fixture types and lint passed.
+The source-change cleanup case passed an unchanged isolated diagnostic. Its earlier cleanup
+failure remains unexplained and is retained for the next combined run. No application package
+or live authorization has changed during this investigation.
 
 ## Scope
 
@@ -40,6 +56,18 @@ top-level tabs, direct Learning entry into Little Monsters, persistent supportin
 per-workspace themes and compact Jarvis context. It uses synthetic content and performs no
 live operations. [Workspace implementation](../backlog/cockpit-workspace-navigation.md)
 remains backlogged; the prototype does not change the deployed Cockpit.
+All 40 prototype browser checks passed, including direct local-file opening, workspace
+selection, keyboard entry, short mobile-drawer scrolling, themes and preserved edited drafts.
+
+The requested Workspace skin uses the existing Cockpit theme settings and shared surface
+tokens to provide paper backgrounds, white cards and indigo accents on the current layout.
+It is the default when no theme is saved; existing choices and packaged application themes
+remain available. All 107 focused checks passed across four files, including ten Chromium
+cases over the real page components, theme selection and contrast, saved-choice restoration
+before paint, transient application skins and actual service-worker precaching. Regressions
+first reproduced an older stylesheet overriding a newer theme and missing offline assets.
+Source and fixture types and scoped lint passed. Native acceptance remains pending. This
+CSS work does not implement the proposed top navigation or daily dashboard.
 
 ## Release requirements
 

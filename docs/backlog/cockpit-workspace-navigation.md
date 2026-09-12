@@ -6,6 +6,42 @@ and opens locally without a server. It uses only synthetic content. No applicati
 model, microphone, file, message or account is accessed. Its route references are
 display-only; clicks stay within the prototype.
 
+## Selectable visual skin
+
+The **Workspace** visual skin is implemented in core source separately from this
+backlogged layout. It applies the prototype's paper background, white surfaces,
+restrained indigo accents and softer borders to **today's Cockpit markup**. It does
+not add top workspace tabs, move navigation or implement the proposed daily dashboard.
+Installation and native acceptance are recorded separately from source verification.
+
+Settings → Global Settings → Theme includes Workspace. It becomes the starting
+theme only when this browser has no saved theme. Valid existing choices remain;
+an invalid saved ID keeps the established Midnight fallback. A focused application
+can still apply its own temporary or bundled skin without overwriting the saved
+choice. Shared surfaces follow their current parent theme, or the saved/default
+theme when opened separately. A late stylesheet from a previous app must not undo
+a newer choice.
+
+The styling is configurable in
+[workspace.css](../../src/pages/cockpit/css/themes/workspace.css) through the existing
+CSS custom properties for background, cards, text, accent, border, radius, font and
+shadow. These tokens also reach participating embedded surfaces. For example:
+
+```css
+[data-theme="workspace"] {
+  --bg-primary: #f5f6f9;
+  --bg-card: #ffffff;
+  --accent-primary: #535bc8;
+}
+```
+
+This is maintained CSS configuration, not a new arbitrary-CSS upload or runtime
+editor. Preserve readable contrast when changing colors. The existing Test Lab
+**Cockpit appearance** card checks the fixed stylesheet and links the actual
+Chromium component/surface regression; it does not run that suite during its
+read-only asset check. `npm run test:workspace-theme` runs the isolated browser and
+existing theme/catalog regressions without accounts, providers or database writes.
+
 ## Direction
 
 Put a small number of major workspaces across the top: **OSHAL Cockpit, Learning,
