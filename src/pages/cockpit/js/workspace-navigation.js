@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add an optional authorized workspace rail without replacing application screens or their navigation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep iframe-to-shell focus transitions from replacing a navigation control during its click while retaining external-focus policy refresh.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Prefer the admitted Career group with the admitted Career app as its curated fallback, keeping the selected destination out of More.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Allow bounded cold profile discovery to finish within thirty seconds without retaining stale destinations or changing cancellation fences.
  */
 import { createUiLogger, serializeUiError } from '../../shared/ui-debug.js';
 
@@ -206,7 +207,7 @@ export class WorkspaceNavigation {
     const generation = this.generation;
     const controller = new AbortController();
     this.abort = controller;
-    const timer = setTimeout(() => controller.abort(), 5000);
+    const timer = setTimeout(() => controller.abort(), 30000);
     this.notice = 'Loading workspaces…'; this.render();
     try {
       const response = await fetch('/api/ui/workspaces', { credentials: 'same-origin', cache: 'no-store',

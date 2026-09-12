@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove optional workspace navigation preserves real Cockpit custom screens, links, permissions feedback and independent theme preferences.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify the Career heading uses the admitted app fallback and prefers the group without duplicating the selected destination in More.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Use held real HTTP responses and Chromium virtual time to cover cold discovery beyond five seconds and the bounded thirty-second retry path.
  * =============================================================================
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
@@ -289,6 +290,60 @@ it('keeps a delayed or empty discovery usable without remounting the active cust
     await page.locator('[data-workspace-status]').filter({ hasText: 'Workspaces unavailable' }).waitFor();
     expect(fixture.state.requests.filter(path => path === 'GET /api/ui/workspaces').length).toBeGreaterThan(reads);
     expect(errors).toEqual([]);
+  } finally { release(); }
+}, 30000);
+
+it('accepts a valid response after five seconds within the discovery deadline without replacing the draft', async () => {
+  let release!: () => void, requested!: () => void;
+  const held = new Promise<void>(done => { release = done; });
+  const started = new Promise<void>(done => { requested = done; });
+  await page.route('**/api/ui/workspaces', async route => { requested(); await held; await route.continue().catch(() => {}); });
+  try {
+    await open('/cockpit/?app=create&workspace=synthetic-team#draft', undefined, 'ocean');
+    await editor().locator('#draft').fill('Synthetic draft while cold discovery loads');
+    const documentId = await editor().locator('html').getAttribute('data-document-id'), url = page.url();
+    await page.clock.install({ time: new Date('2026-09-12T12:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-09-12T12:01:00Z'));
+    await chooseLayout('workspaces'); await started;
+    await page.clock.fastForward(19000);
+    expect(await page.locator('[data-workspace-status]').innerText()).toBe('Loading workspaces…');
+    expect(await page.locator('#workspaceNavigation [data-workspace=create]').count()).toBe(0);
+    release();
+    await expect.poll(() => page.locator('#workspaceNavigation [data-workspace=create]').count()).toBe(1);
+    expect(await page.locator('[data-workspace-status]').count()).toBe(0);
+    expect(await page.locator('#workspaceNavigation').getByRole('button', { name: 'Retry', exact: true }).count()).toBe(0);
+    expect(await editor().locator('#draft').inputValue()).toBe('Synthetic draft while cold discovery loads');
+    expect(await editor().locator('html').getAttribute('data-document-id')).toBe(documentId);
+    expect(page.url()).toBe(url); expect(await page.locator('html').getAttribute('data-theme')).toBe('ocean');
+    expect(errors).toEqual([]); expect(external).toEqual([]);
+  } finally { release(); }
+}, 30000);
+
+it('fails a hung discovery deadline at thirty seconds and admits fresh links through Retry', async () => {
+  let release!: () => void, requested!: () => void;
+  const held = new Promise<void>(done => { release = done; });
+  const started = new Promise<void>(done => { requested = done; });
+  await page.route('**/api/ui/workspaces', async route => { requested(); await held; await route.continue().catch(() => {}); });
+  try {
+    await open('/cockpit/?app=create');
+    await editor().locator('#draft').fill('Synthetic draft through discovery timeout');
+    const documentId = await editor().locator('html').getAttribute('data-document-id');
+    await page.clock.install({ time: new Date('2026-09-12T12:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-09-12T12:01:00Z'));
+    await chooseLayout('workspaces'); await started;
+    await page.clock.fastForward(29999);
+    expect(await page.locator('[data-workspace-status]').innerText()).toBe('Loading workspaces…');
+    expect(await page.locator('#workspaceNavigation [data-workspace]').count()).toBe(1);
+    await page.clock.fastForward(1);
+    await page.locator('[data-workspace-status]').filter({ hasText: 'Workspaces unavailable' }).waitFor();
+    expect(await page.locator('#workspaceNavigation [data-workspace]').count()).toBe(1);
+    expect(await page.locator('#workspaceNavigation [data-workspace=cockpit]').count()).toBe(1);
+    release(); await page.unroute('**/api/ui/workspaces');
+    await page.locator('#workspaceNavigation').getByRole('button', { name: 'Retry', exact: true }).click(); await discovered();
+    expect(await page.locator('[data-workspace-status]').count()).toBe(0);
+    expect(await editor().locator('#draft').inputValue()).toBe('Synthetic draft through discovery timeout');
+    expect(await editor().locator('html').getAttribute('data-document-id')).toBe(documentId);
+    expect(errors).toEqual([]); expect(external).toEqual([]);
   } finally { release(); }
 }, 30000);
 
