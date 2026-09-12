@@ -170,6 +170,10 @@ The guiding model is:
 - [spatial-capture-playbook.md](./spatial-capture-playbook.md)
   - make a 3D map with the gear you have: the import lane (iPhone/iPad LiDAR, depth cameras, drone →
     `.ply`/`.splat`, no GPU) vs the reconstruct lane (video→3DGS), per-device steps + honest caveats
+- [embodied-mobile-manipulator-hardware.md](./embodied-mobile-manipulator-hardware.md)
+  - ADR-151 companion (design, nothing built): the rolling six-foot arm — statically stable base with
+    the battery as ballast, 8.5–10 in hub motors + corner casters (why not 5 in), move-low/rise-to-work
+    lift, the stability budget the sim and the capability manifest share, real parts, staged assembly
 - [kernel-vs-app-packages.md](./kernel-vs-app-packages.md)
   - what is Tier-0 kernel (always-on: 4 DBs + Redis + Vault + code-server + diarization + the
     controller/API + 19 default bots) vs. what a Tier-2 app package declares; the cross-app

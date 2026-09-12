@@ -5,6 +5,8 @@
 [ADR-114](114-user-owned-remote-nodes.md) (device-bound enrollment, owner-scoped execution),
 [ADR-111](111-spatial-mapping-3d-reconstruction.md) (the Spaces world model), [ADR-150](150-deterministic-object-reconstruction-scan-to-print.md)
 (the occupancy grid), [ADR-036](036-bot-owned-application-architecture.md) (the bot owns its domain).
+**Companion:** [embodied-mobile-manipulator-hardware.md](../architecture/embodied-mobile-manipulator-hardware.md)
+— the mobile base, the stability budget, real parts and the assembly sequence.
 
 ## Context
 
