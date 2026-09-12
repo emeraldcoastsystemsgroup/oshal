@@ -42,6 +42,10 @@ The package execution/history cases also need Docker and a locally built core im
 (`oshal-bot:latest`, or `OSHAL_TEST_RUNNER_IMAGE`). They execute real package assertions in
 disposable containers and use separate PostgreSQL fixtures for retained evidence.
 They do not install applications into the running deployment or connect real external accounts.
+Preview deployment source tests use temporary local Git repositories to check
+published-branch admission, source pinning and image labels without invoking Docker.
+They also exercise the actual startup-readiness function with synthetic logs,
+including large output and producer failures, without restarting services.
 The matching Lab cards link the suites and run their documented discovery/refusal probes. Installed
 package smokes appear separately, with app/version metadata and any missing execution prerequisites.
 

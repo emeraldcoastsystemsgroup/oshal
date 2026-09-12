@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register authenticated installation smoke prerequisite and CLI/runtime contract cases.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register bounded package execution, source sealing and durable browser run evidence.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Register exact-owner scheduled catalog selection, current actor refresh and browser controls.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Register published-preview source admission and rollback outcome regressions with installation coverage.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -65,6 +66,8 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/test-lab-schedule-wiring.spec.ts' },
     { level: 'integration', path: 'tests/unit/test-lab-schedules.spec.ts' },
     { level: 'browser', path: 'tests/unit/test-lab-schedule-browser.spec.ts' },
+    { level: 'integration', path: 'tests/unit/deploy-preview-source.spec.ts' },
+    { level: 'unit', path: 'tests/unit/deploy-rollback-outcome.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'test-lab', label: 'Installed package cases', run: installedCatalog }],
 }];

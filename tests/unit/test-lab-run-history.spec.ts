@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove durable run identity, cancellation, revision and restart behavior through real HTTP and PostgreSQL.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Require cancelled state after execution authority is revoked while preserving output and history refusal checks.
  */
 import { afterAll,beforeAll,beforeEach,describe,expect,it } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -66,7 +67,7 @@ describe('Current authority and durable lifecycle',() => {
   it('withholds output when rights or source change during inference and hides history on loss of app access',async () => {
     fixture.state.hold = true; const run = await start();
     fixture.state.canRun = false; fixture.finish();
-    await expect.poll(async () => (await (await fixture.call('/runs/'+run.id)).json()).run.state).toBe('pending');
+    await expect.poll(async () => (await (await fixture.call('/runs/'+run.id)).json()).run.state).toBe('cancelled');
     expect((await (await fixture.call('/runs/'+run.id)).json()).run.result.output).toBeUndefined();
     fixture.state.visible = false;
     expect((await fixture.call('/runs/'+run.id)).status).toBe(404);

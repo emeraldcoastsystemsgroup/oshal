@@ -4,6 +4,8 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Orchestrate cancellable catalog-only runs and exact-caller versioned history with fresh authority.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Preserve cancellation and verified cleanup when final authority validation refuses a completed sandbox result.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Discard completed output after any observed cancellation, including a concurrent watchdog refusal followed by successful final validation.
  */
 import { randomUUID } from 'node:crypto';
 import type { InstalledAppTestCatalog, InstalledAppTestCase, InstalledAppTestResult } from '@/features/swarm-apps';
@@ -115,9 +117,13 @@ export class TestLabRunService {
       ? { name: run.test.name,path: run.test.path,status: 'pending',durationMs: 0,cleanupVerified: true,error: 'Current test access is unavailable.' }
       : await this.catalog.run(run.test,original.visibleApps,{ ...original.auth,apiBaseUrl: 'http://127.0.0.1',
         signal: controller.signal,revalidate,executionId: run.id });
-    if (!await revalidate()) result = { name: run.test.name,path: run.test.path,status: 'pending',durationMs: result.durationMs,
-      cleanupVerified: result.cleanupVerified,executionRevision: result.executionRevision,image: result.image,
-      error: 'Access or the installed test changed during execution. Output was withheld.' };
+    if (!await revalidate() || controller.signal.aborted || result.cancelled) {
+      controller.abort();
+      result = { name: run.test.name,path: run.test.path,status: 'pending',durationMs: result.durationMs,
+        cancelled: true,timedOut: result.timedOut,cleanupVerified: result.cleanupVerified,
+        executionRevision: result.executionRevision,image: result.image,
+        error: 'Access or the installed test changed during execution. Output was withheld.' };
+    }
     if (result.cleanupVerified !== true) { await this.store.cancel(run.actor,run.id); return; }
     result = { ...result, ...(typeof result.output === 'string' ? { output: result.output.slice(0,65536) } : {}) };
     const state = result.cancelled || controller.signal.aborted ? 'cancelled' : result.status;

@@ -453,6 +453,13 @@ bash scripts/oshal-deploy.sh            # commit + push first — it deploys com
 
 Don't hand-roll `docker build` + `compose up --force-recreate` sequences — a hand-typed recreate filter took down the infra tier on 2026-07-19; the script exists so that class of mistake can't recur. Bind-mounted directories (cockpit JS, persona YAML) update without rebuild. (`oshal-up.sh` stays the bring-up/recovery path after an engine restart; `oshal-deploy.sh` is for shipping new code.)
 
+For an operator-authorized local feature preview before PR merge, use
+`bash scripts/oshal-deploy.sh --preview`. This requires the feature branch to track
+the same branch on origin and match its freshly fetched tip; unpublished work,
+detached HEAD and `--allow-unpushed` are refused. The archive and image are pinned
+to that verified commit. Default releases still require `main`; preview deployment
+does not approve or merge the PR. See [the runbook](docs/runbooks/deploy-parity.md).
+
 If you do recreate something manually, run `bash scripts/deploy-parity-check.sh` after — it flags the api and bot-node containers drifting onto different image builds (the split-image bug where a two-half feature ships broken). `oshal-up.sh` runs it automatically. Runbook: [docs/runbooks/deploy-parity.md](docs/runbooks/deploy-parity.md).
 
 The `tests/unit/**` subtree is excluded from the Playwright runner; Playwright is e2e-only here.

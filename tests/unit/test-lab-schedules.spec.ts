@@ -4,6 +4,8 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise actual scheduled Node execution, exact-owner HTTP, dynamic catalog discovery, durable concurrency and current-rights refusal.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove authority loss at the actual sandbox return boundary records cancellation and withholds output before watchdog timing can determine the outcome.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Reproduce an independent watchdog refusal after real sandbox completion and require cancellation to discard output even when the final current check succeeds.
  */
 import { beforeAll, afterAll, beforeEach, afterEach, expect, it } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -129,6 +131,53 @@ it('revoking operator authority during a real execution cancels the batch and wi
   const actual = await f.runStore.get(SCHEDULE_ACTOR,runs[0].id);
   expect(actual!.state).toBe('cancelled'); expect(actual!.result?.output).toBeUndefined();
   expect(f.sandbox.last?.cleanupVerified).toBe(true);
+},60000);
+
+it('records cancellation when authority disappears at the completed sandbox return boundary', async () => {
+  f.addPackage(); const saved = await draft(), execute = f.catalog.run.bind(f.catalog);
+  f.catalog.run = async (...args) => {
+    const result = await execute(...args);
+    f.state.admin = false;
+    return result;
+  };
+  await runNow(saved); expect((await f.finished(saved.id))!.state).toBe('cancelled');
+  const runs = await waitForSchedule(() => f.runStore.list(SCHEDULE_ACTOR,[...f.state.visible.keys()]),
+    rows => rows.length === 1 && !['queued','running','cancelling'].includes(rows[0].state));
+  const actual = await f.runStore.get(SCHEDULE_ACTOR,runs[0].id);
+  expect(f.sandbox.last).toMatchObject({ exitCode: 0,cleanupVerified: true });
+  expect(f.sandbox.calls).toBe(1); expect(actual!.state).toBe('cancelled');
+  expect(actual!.result).toMatchObject({ cancelled: true,cleanupVerified: true });
+  expect(actual!.result?.output).toBeUndefined();
+},60000);
+
+it.each([false,true])('withholds a completed sandbox result after an independent watchdog refusal (timeout=%s)', async timedOut => {
+  const source = f.addPackage({ delayMs: timedOut ? 10000 : 0 });
+  if (timedOut) {
+    source.test.limits.timeoutMs = 3000;
+    writeFileSync(join(source.dir,'tests/test-lab.yaml'),yaml.dump({ version: 1,cases: [source.test] }));
+    f.catalog.register(source.record);
+  }
+  const saved = await draft(), execute = f.catalog.run.bind(f.catalog), pulse = f.runStore.pulse.bind(f.runStore);
+  let denyWatch = false, denied = 0, finalAllowed = false;
+  f.runStore.pulse = async (...args) => {
+    if (denyWatch) { denyWatch = false; denied++; return null; }
+    return pulse(...args);
+  };
+  f.catalog.run = async (...args) => {
+    const result = await execute(...args);
+    denyWatch = true;
+    await waitForSchedule(async () => args[2].signal?.aborted,aborted => aborted === true);
+    finalAllowed = await args[2].revalidate!();
+    return result;
+  };
+  await runNow(saved); await f.finished(saved.id);
+  const runs = await waitForSchedule(() => f.runStore.list(SCHEDULE_ACTOR,[...f.state.visible.keys()]),
+    rows => rows.length === 1 && !['queued','running','cancelling'].includes(rows[0].state));
+  const actual = await f.runStore.get(SCHEDULE_ACTOR,runs[0].id);
+  expect(denied).toBe(1); expect(finalAllowed).toBe(true); expect(f.state.admin).toBe(true); expect(f.sandbox.calls).toBe(1);
+  expect(f.sandbox.last).toMatchObject({ timedOut,cleanupVerified: true });
+  expect(actual!.state).toBe('cancelled'); expect(actual!.result?.output).toBeUndefined();
+  expect(actual!.result).toMatchObject({ cancelled: true,timedOut,cleanupVerified: true,status: 'pending' });
 },60000);
 
 it('disabling a current generation cancels its active suite and rejects stale enablement edits', async () => {
