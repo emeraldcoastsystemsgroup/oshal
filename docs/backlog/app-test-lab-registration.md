@@ -2,7 +2,8 @@
 
 Status: **versioned catalogs and installation lifecycle implemented at core `15dcbbd7`;
 Hello and Portrait pilots versioned at store `dc4c0dc`, and Kalshi at `571838a`**.
-The current execution slice adds isolated package Node suites and durable versioned history.
+The execution slice adds isolated package Node suites, durable versioned history and local
+catalog-selected schedules, deployed and accepted at core `108919e6` on 2026-09-11.
 Additional runner fixtures and remaining package adoption stay open. Requested on 2026-09-10.
 
 The [enterprise authorization workstream](enterprise-authorization.md) registers its implemented
@@ -85,6 +86,13 @@ Schedules begin disabled; an operator can run a draft once and then enable a fix
 hourly/daily/weekly cadence. New eligible cases are discovered every cycle.
 Unavailable prerequisites, failed assertions, stale run evidence and unregistered
 test files remain distinct. This work does not depend on GitHub Actions.
+
+[Local deployment acceptance](../releases/test-lab-execution-2026-09-11.md) records
+230 passing regression tests, a genuine browser run, an enabled daily unit schedule,
+and unchanged deployed records and roles. The first installed batch passed its one
+eligible suite; 48 suites remain pending runner/fixture support. Current inventory
+also reports 251 unregistered test files across 31 apps. TLAB-09's supported slice
+is complete; broader runner support and package adoption remain open.
 
 | ID | Priority / owner | Work | Done when |
 |---|---|---|---|

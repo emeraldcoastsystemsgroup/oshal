@@ -62,7 +62,7 @@ from `oshal-bot:latest`. No GitHub Actions or production business data are neede
 
 ## Local recurring runs
 
-Use **Local schedules** in the same Lab page. Choose all visible installed
+Use **Scheduled package checks** in the same Lab page. Choose all visible installed
 applications or one application, unit/integration levels, and hourly/daily/weekly
 cadence. Saving creates a disabled draft. **Run now** tests that selection once;
 **Enable** schedules future cycles. **Disable** invalidates current batch authority
@@ -95,3 +95,6 @@ API: `GET/POST /api/test-lab/schedules`, `PATCH /schedules/:id` for revision-che
 enablement, `POST /schedules/:id/run-now` with `{revision, requestId}`, and
 `GET /schedules/:id/history`. New suites and the real browser flow are registered
 on the same **Installed application test registration** card and local command.
+
+See [local deployment acceptance](../releases/test-lab-execution-2026-09-11.md) for
+the serving revision, regression results and verified browser/schedule behavior.
