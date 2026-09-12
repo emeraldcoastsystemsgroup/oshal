@@ -7,6 +7,7 @@ SEQ | AUTHOR | DESCRIPTION
 1 | maintainer@emeraldcoastsystemsgroup.com | Add cancellable package runs, exact-version evidence and durable caller history alongside live scenarios.
 2 | maintainer@emeraldcoastsystemsgroup.com | Add disabled local schedules, current catalog choices and guarded batch-to-run evidence navigation.
 3 | maintainer@emeraldcoastsystemsgroup.com | Recover transient schedule history reads with bounded retries and clear stale evidence before retrying.
+4 | maintainer@emeraldcoastsystemsgroup.com | Serialize schedule refresh with mutations and retract closed-panel evidence so delayed catalog or owner responses cannot erase saved rows or restore stale access.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -575,6 +576,7 @@ let scheduleGeneration = 0;
 let scheduleHistoryGeneration = 0;
 let scheduleOptions = { canSchedule: false };
 let scheduleBusy = false;
+let scheduleRefreshPending = false;
 let scheduleTimer;
 
 function scheduleControls() {
@@ -597,6 +599,9 @@ function renderSchedule(schedule) {
 }
 
 async function loadSchedules() {
+  if (!$('schedulePanel').open) return;
+  if (scheduleBusy) { scheduleRefreshPending = true; return; }
+  scheduleRefreshPending = false;
   const generation = ++scheduleGeneration;
   clearTimeout(scheduleTimer); scheduleHistoryGeneration++;
   $('scheduleHistory').replaceChildren();
@@ -626,25 +631,35 @@ async function loadSchedules() {
 
 async function scheduleMutation(path,body,method = 'POST') {
   if (scheduleBusy) return null;
-  const generation = scheduleGeneration;
+  const generation = ++scheduleGeneration;
+  let refresh = false;
   scheduleBusy = true; scheduleControls(); clearEvidence();
+  clearTimeout(scheduleTimer); scheduleHistoryGeneration++; $('scheduleHistory').replaceChildren();
   try {
     const result = await fetchJson(API + path,{ method,headers: { 'content-type': 'application/json','X-OSHAL-Test-Lab': '1' },body: JSON.stringify(body) });
+    refresh = true;
     if (generation !== scheduleGeneration) return null;
     return result;
-  } catch (error) { if (generation === scheduleGeneration) $('scheduleStatus').textContent = error.message; return null; }
-  finally { scheduleBusy = false; scheduleControls(); }
+  } catch (error) {
+    refresh = error.status === 401 || error.status === 403;
+    if (generation === scheduleGeneration) $('scheduleStatus').textContent = error.message;
+    return null;
+  } finally {
+    scheduleBusy = false;
+    if ($('schedulePanel').open && (refresh || scheduleRefreshPending)) await loadSchedules();
+    scheduleControls();
+  }
 }
 
 async function createSchedule(event) {
   event.preventDefault();
   const levels = [$('scheduleUnit').checked ? 'unit' : '',$('scheduleIntegration').checked ? 'integration' : ''].filter(Boolean);
   if (!levels.length) { $('scheduleStatus').textContent = 'Select at least one test level.'; return; }
-  if (await scheduleMutation('/schedules',{ appName: $('scheduleApp').value,levels,cadence: $('scheduleCadence').value })) await loadSchedules();
+  await scheduleMutation('/schedules',{ appName: $('scheduleApp').value,levels,cadence: $('scheduleCadence').value });
 }
 
 async function changeSchedule(schedule) {
-  if (await scheduleMutation('/schedules/' + encodeURIComponent(schedule.id),{ revision: schedule.revision,enabled: !schedule.enabled },'PATCH')) await loadSchedules();
+  await scheduleMutation('/schedules/' + encodeURIComponent(schedule.id),{ revision: schedule.revision,enabled: !schedule.enabled },'PATCH');
 }
 
 async function runSchedule(schedule) {
@@ -687,7 +702,12 @@ async function scheduleHistory(id,attempt = 0) {
 
 $('schedulePanel').addEventListener('toggle',() => {
   if ($('schedulePanel').open) void loadSchedules();
-  else { clearTimeout(scheduleTimer); scheduleGeneration++; scheduleHistoryGeneration++; $('scheduleHistory').replaceChildren(); }
+  else {
+    clearTimeout(scheduleTimer); scheduleGeneration++; scheduleHistoryGeneration++; scheduleRefreshPending = false;
+    scheduleOptions = { canSchedule: false }; clearEvidence();
+    $('scheduleHistory').replaceChildren(); $('scheduleList').replaceChildren(); $('scheduleApp').replaceChildren();
+    scheduleControls();
+  }
 });
 $('scheduleForm').addEventListener('submit',createSchedule);
 $('refreshSchedules').addEventListener('click',loadSchedules);

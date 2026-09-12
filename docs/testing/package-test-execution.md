@@ -83,6 +83,11 @@ and prevents subsequent scheduled work. Enabling starts the first interval from
 the current time; a restart runs at most one missed occurrence, without replaying
 every missed interval. The controller must be running to execute due work.
 
+Refreshing the catalog during a schedule change waits for that change before
+reloading the current list. Older responses cannot erase a newly saved schedule.
+Closing the schedule section clears its displayed data; reopening refreshes the
+current account and permissions before restoring controls.
+
 Each cycle discovers current registrations again, so new eligible installed cases
 are included without maintaining a list. It runs at most 100 suites sequentially
 through the same durable Run service. Batch history distinguishes assertion

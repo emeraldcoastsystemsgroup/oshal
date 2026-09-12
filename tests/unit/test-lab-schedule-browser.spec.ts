@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify disabled schedule creation, explicit execution, current controls and exact-owner history in the actual Lab browser.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove automatic recovery from a temporary history failure without retrying execution or retaining stale evidence.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Synchronize schedule creation with actual mutation and refreshed history responses, proving delayed creation still preserves stale-revision refusal.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Exercise catalog refresh during an actual pending schedule creation and correlate refreshed rows with their created identifier.
  */
 import { afterAll,afterEach,beforeAll,beforeEach,expect,it } from 'vitest';
 import { chromium,type Browser,type BrowserContext,type Page } from 'playwright';
@@ -30,6 +31,7 @@ beforeEach(async () => {
   fixture = await startTestLabScheduleFixture(pool); fixture.addPackage({ name: 'schedule-browser' });
   context = await browser.newContext(); await context.route('**/*',route => new URL(route.request().url()).origin === fixture.base ? route.continue() : route.abort());
   page = await context.newPage(); page.setDefaultTimeout(15000); await page.goto(fixture.base+'/api/test-lab/app');
+  await expect.poll(() => page.locator('#runStatus').textContent(),{ timeout: 10000 }).toContain('Ready.');
   await page.locator('#schedulePanel > summary').click();
   await expect.poll(() => page.locator('#scheduleStatus').textContent(),{ timeout: 10000 }).toContain('current catalog');
 },30000);
@@ -40,7 +42,11 @@ async function createDraft() {
   await page.locator('#scheduleCadence').selectOption('daily');
   const endpoint = fixture.base+'/api/test-lab/schedules';
   const created = page.waitForResponse(response => response.url() === endpoint && response.request().method() === 'POST');
-  const refreshed = page.waitForResponse(response => response.url() === endpoint && response.request().method() === 'GET').catch(() => undefined);
+  const refreshed = page.waitForResponse(async response => {
+    if (response.url() !== endpoint || response.request().method() !== 'GET' || response.status() !== 200) return false;
+    const schedule = (await (await created).json()).schedule;
+    return (await response.json()).schedules.some((item: { id: string }) => item.id === schedule.id);
+  }).catch(() => undefined);
   await page.locator('#createSchedule').click();
   const response = await created;
   expect(response.status(),await response.text()).toBe(201);
@@ -62,6 +68,79 @@ function historyErrors(service: TestLabScheduleService): string[] {
   };
   return errors;
 }
+
+it('shows the single saved draft when catalog refresh completes during its pending creation',async () => {
+  let release!: () => void, arrived!: () => void;
+  const held = new Promise<void>(done => { release = done; });
+  const entered = new Promise<void>(done => { arrived = done; });
+  const endpoint = fixture.base+'/api/test-lab/schedules';
+  await page.route(endpoint,async route => {
+    if (route.request().method() === 'POST') { arrived(); await held; }
+    await route.continue();
+  });
+  await page.locator('#scheduleApp').selectOption('schedule-browser');
+  const created = page.waitForResponse(response => response.url() === endpoint && response.request().method() === 'POST');
+  try {
+    await page.locator('#createSchedule').click(); await entered;
+    const catalogRead = page.waitForResponse(fixture.base+'/api/test-lab/catalog');
+    await page.locator('#refreshCatalog').click(); await catalogRead;
+    await expect.poll(() => page.locator('#runStatus').textContent()).toContain('Ready.');
+  } finally { release(); }
+  const response = await created;
+  expect(response.status(),await response.text()).toBe(201);
+  const schedule = (await response.json()).schedule;
+  expect((await (await fixture.call('/schedules')).json()).schedules).toEqual([
+    expect.objectContaining({ id: schedule.id,appName: 'schedule-browser',enabled: false }),
+  ]);
+  await expect.poll(() => page.locator('[data-schedule-id]').count()).toBe(1);
+  expect(await page.locator('[data-schedule-id]').getAttribute('data-schedule-id')).toBe(schedule.id);
+});
+
+it('discards a list response captured before the current schedule mutation',async () => {
+  let release!: () => void, arrived!: () => void, reads = 0;
+  const held = new Promise<void>(done => { release = done; });
+  const entered = new Promise<void>(done => { arrived = done; });
+  await page.route('**/api/test-lab/schedules',async route => {
+    if (route.request().method() !== 'GET' || ++reads !== 1) { await route.continue(); return; }
+    const response = await route.fetch(); arrived(); await held; await route.fulfill({ response });
+  });
+  const oldRead = page.waitForResponse(async response => response.url() === fixture.base+'/api/test-lab/schedules'
+    && response.request().method() === 'GET' && (await response.json()).schedules.length === 0);
+  let schedule: { id: string };
+  try {
+    await page.locator('#refreshSchedules').click(); await entered;
+    schedule = await createDraft();
+  } finally { release(); }
+  await (await oldRead).finished();
+  await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+  await expect.poll(() => page.locator('[data-schedule-id]').count()).toBe(1);
+  expect(await page.locator('[data-schedule-id]').getAttribute('data-schedule-id')).toBe(schedule.id);
+});
+
+it('refreshes current authority after closing and reopening during a saved mutation without showing the former owner rows',async () => {
+  const schedule = await createDraft();
+  let release!: () => void, arrived!: () => void;
+  const held = new Promise<void>(done => { release = done; });
+  const entered = new Promise<void>(done => { arrived = done; });
+  await page.route('**/api/test-lab/schedules/'+schedule.id,async route => {
+    const response = await route.fetch(); arrived(); await held; await route.fulfill({ response });
+  });
+  try {
+    await page.locator('[data-schedule-enable]').click(); await entered;
+    await page.locator('#schedulePanel > summary').click();
+    await expect.poll(() => page.locator('#scheduleList').textContent()).toBe('');
+    fixture.state.admin = false;
+    await context.setExtraHTTPHeaders({ 'x-fixture-issuer': 'other' });
+    await page.locator('#schedulePanel > summary').click();
+    expect(await page.locator('#createSchedule').isDisabled()).toBe(true);
+  } finally { release(); }
+  await expect.poll(() => page.locator('#scheduleStatus').textContent()).toContain('operator');
+  expect(await page.locator('#scheduleList').textContent()).toContain('No schedules');
+  expect(await page.locator('#createSchedule').isDisabled()).toBe(true);
+  expect((await (await fixture.call('/schedules')).json()).schedules).toEqual([
+    expect.objectContaining({ id: schedule.id,enabled: true }),
+  ]);
+});
 
 it('creates a disabled selector, explicitly enables and runs it through the sandbox, then follows durable result history',async () => {
   const errors = historyErrors(fixture.service());
