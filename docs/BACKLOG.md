@@ -794,7 +794,15 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** operator decision (2026-09-10): fold these Echo pipeline counts into the DevOps monitoring / self-healing workstream ([ADR-119](adr/119-autonomous-health-ticket-processing.md), [ADR-125](adr/125-operations-stream-event-to-action-pipeline.md)) instead of keeping an orphan table. Identify the April writer; decide how Echo's six stages enter the funnel — a mapping onto `FUNNEL_STAGES`, or new stages each with its own query (a stage added without one fails the build by design); capture them as an `echo` `source` lane; give that lane its own "went quiet" signal for the self-healing path; then retire `echo_pipeline_snapshots`, migrating or dropping its 168 April rows.
 - **Done when:** Echo's per-stage counts appear as their own lane in the Operations Stream funnel on the reference stack; stopping the Echo writer past its window raises an alarm naming the `echo` lane in `/api/ops/alert-pipeline/health` and that alarm reaches the ADR-119 intake as one ticket; and `node scripts/generate-schema-docs.js` reports no undeclared live table.
 
+### Cockpit startup: remove blocking external script dependencies
+
+- **Observed:** the 2026-09-12 Career/navigation rollout included a blank reload with parsing stopped at the synchronous external marked script, before the body or DOMContentLoaded. A hard refresh restored the shell; no service-worker reload loop was established.
+- **Remaining:** serve reviewed, versioned startup dependencies from fixed same-origin assets where practical, and keep optional icon/graph support from blocking the shell. See [Cockpit startup resilience](backlog/cockpit-startup-resilience.md) for the separate parser and database observations.
+- **Done when:** the real shell and selected application remain usable when external dependencies stall or fail; markdown, icons and graphs retain their supported behavior; fresh and updated service-worker cases preserve saved appearance/navigation and the intended single update reload. Offline support requires actual cached-asset proof. This item is not implemented.
+
 ### Bot-recreate thundering herd
+
+- **Observed 2026-09-12:** during the full rollout, six API pool-checkout timeouts accompanied workspace discovery requests lasting 83.155–279.995 seconds. After recovery, discovery returned all 33 admitted links in 0.630–1.358 seconds, and explicit Retry restored the Job Board. The captured errors were not PostgreSQL role-limit refusals; the original connection holders were not identified. [Timing evidence and remaining diagnosis](backlog/cockpit-startup-resilience.md#rollout-time-database-checkout-delays).
 - **Remaining:** deploy the default-on bounded bootstrap-pull jitter, recreate the full bot fleet against the production-sized API database pool, and tune the window only from observed startup/config-convergence results.
 - **Done when:** recreating the full bot fleet causes no pool exhaustion, each bot receives config within a bounded window, and boot authentication/rate limits remain enforced.
 
