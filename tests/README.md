@@ -50,6 +50,12 @@ Preview deployment source tests use temporary local Git repositories to check
 published-branch admission, source pinning and image labels without invoking Docker.
 They also exercise the actual startup-readiness function with synthetic logs,
 including large output and producer failures, without restarting services.
+The PostgreSQL pool-budget suite runs actual Docker Compose configuration resolution
+against an isolated environment file. It checks the API-only 8/2/2 defaults (18 core
+connections within the unchanged 24-connection application-role limit), explicit
+operator overrides, and unchanged worker/service configuration. It starts no containers
+and reads no deployment credentials. This is a default budget; custom overrides still
+require deployment-wide capacity planning.
 The matching Lab cards link the suites and run their documented discovery/refusal probes. Installed
 package smokes appear separately, with app/version metadata and any missing execution prerequisites.
 

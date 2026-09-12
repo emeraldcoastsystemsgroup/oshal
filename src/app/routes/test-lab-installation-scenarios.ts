@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register bounded package execution, source sealing and durable browser run evidence.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Register exact-owner scheduled catalog selection, current actor refresh and browser controls.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register published-preview source admission and rollback outcome regressions with installation coverage.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Register actual Compose API pool-budget resolution and isolated override coverage after role-capacity saturation.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -68,6 +69,7 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'browser', path: 'tests/unit/test-lab-schedule-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/deploy-preview-source.spec.ts' },
     { level: 'unit', path: 'tests/unit/deploy-rollback-outcome.spec.ts' },
+    { level: 'integration', path: 'tests/unit/managed-postgres-pool-budget.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'test-lab', label: 'Installed package cases', run: installedCatalog }],
 }];
