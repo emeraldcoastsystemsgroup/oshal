@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify disabled schedule creation, explicit execution, current controls and exact-owner history in the actual Lab browser.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove automatic recovery from a temporary history failure without retrying execution or retaining stale evidence.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Synchronize schedule creation with actual mutation and refreshed history responses, proving delayed creation still preserves stale-revision refusal.
  */
 import { afterAll,afterEach,beforeAll,beforeEach,expect,it } from 'vitest';
 import { chromium,type Browser,type BrowserContext,type Page } from 'playwright';
@@ -37,9 +38,20 @@ afterEach(async () => { await context?.close(); await fixture?.close(); },60000)
 async function createDraft() {
   await page.locator('#scheduleApp').selectOption('schedule-browser');
   await page.locator('#scheduleCadence').selectOption('daily');
+  const endpoint = fixture.base+'/api/test-lab/schedules';
+  const created = page.waitForResponse(response => response.url() === endpoint && response.request().method() === 'POST');
+  const refreshed = page.waitForResponse(response => response.url() === endpoint && response.request().method() === 'GET').catch(() => undefined);
   await page.locator('#createSchedule').click();
+  const response = await created;
+  expect(response.status(),await response.text()).toBe(201);
+  const schedule = (await response.json()).schedule;
+  const current = await refreshed;
+  expect(current,'Schedule creation must refresh the authoritative list').toBeDefined();
+  expect(current!.status(),await current!.text()).toBe(200);
+  expect((await current!.json()).schedules).toEqual([expect.objectContaining({ id: schedule.id,appName: 'schedule-browser',enabled: false })]);
   await expect.poll(() => page.locator('[data-schedule-id]').count()).toBe(1);
-  return (await (await fixture.call('/schedules')).json()).schedules[0];
+  expect(await page.locator('[data-schedule-id]').getAttribute('data-schedule-id')).toBe(schedule.id);
+  return schedule;
 }
 
 function historyErrors(service: TestLabScheduleService): string[] {
@@ -71,7 +83,16 @@ it('creates a disabled selector, explicitly enables and runs it through the sand
 },90000);
 
 it('refuses a stale enablement revision in the row and refreshes the authoritative current state',async () => {
+  let creations = 0;
+  await page.route('**/api/test-lab/schedules',async route => {
+    if (route.request().method() === 'POST') {
+      creations++;
+      await new Promise(resolveDelay => setTimeout(resolveDelay,1500));
+    }
+    await route.continue();
+  });
   const schedule = await createDraft();
+  expect(creations).toBe(1);
   expect((await fixture.call('/schedules/'+schedule.id,'PATCH',{ revision: schedule.revision,enabled: true })).status).toBe(200);
   await page.locator('[data-schedule-enable]').click();
   await expect.poll(() => page.locator('#scheduleStatus').textContent()).toContain('changed');

@@ -26,6 +26,7 @@
  *            | /visual/:kind.svg) that renders catalog visual kinds through the real renderer.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Corrected Test Lab visual
  *            | documentation from the original eight-kind baseline to the current 15-kind catalog.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Obtain request-bound caller transport only for declared service smokes, keeping session data out of Node execution and public catalog results.
  * ---------------------------------------------------------------------------
  * @module test-lab-routes
  */
@@ -36,7 +37,7 @@ import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
 import { SCENARIOS, rollup, type StepResult } from './test-lab-scenarios';
 import { renderCatalogVisual } from './test-lab-visual-catalog';
-import type { InstalledAppTestCatalog, InstalledTestAuth, InstalledAppTestCase } from '@/features/swarm-apps';
+import type { InstalledAppTestCatalog, InstalledTestAuth, InstalledAppTestCase, AppSmokeVerificationOptions } from '@/features/swarm-apps';
 import { createTestLabRunRoutes, type TestLabRunRouteOptions } from './test-lab-run-routes';
 import { createTestLabScheduleRoutes, type TestLabScheduleRouteOptions } from './test-lab-schedule-routes';
 
@@ -70,6 +71,8 @@ export interface TestLabRouteOptions extends TestLabRunRouteOptions, TestLabSche
   visibleApps?: (req: Request) => Promise<Map<string, string>>;
   /** Server-owned authority only: service credentials may be supplied only for operators. */
   executionAuth?: (req: Request) => InstalledTestAuth;
+  /** Request-bound operator transport; raw session bytes never enter run auth or metadata. */
+  serviceSmokeFetch?: (req: Request, test: InstalledAppTestCase) => Promise<AppSmokeVerificationOptions['serviceSmokeFetch']>;
   /** Test fixture seam; production is fixed loopback, never supplied by the HTTP caller. */
   apiBaseUrl?: string;
 }
@@ -176,6 +179,8 @@ export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptio
       const result = await options.installedTests!.run(selected, await visibleApps(req), {
         apiBaseUrl: options.apiBaseUrl ?? `http://127.0.0.1:${process.env.PORT || '5000'}`,
         ...executionAuth(req),
+        ...(test.runner.kind === 'smoke' && test.auth === 'service'
+          ? { serviceSmokeFetch: await options.serviceSmokeFetch?.(req, test) } : {}),
       });
       const state = result.status === 'passed' ? 'pass' : result.status === 'failed' ? 'fail' : 'degraded';
       results.push({ ...installedScenario(test), state, steps: [{

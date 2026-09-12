@@ -49,6 +49,15 @@ metadata, `GET /runs/:id` reads evidence and `POST /runs/:id/cancel` requests
 cancellation. Mutations require the normal authenticated session and the Lab's
 same-origin request marker. The existing smoke `/run` endpoint stays separate.
 
+Read-only service smokes started from a verified administrator's browser use that
+current session as well as the service credential, so enforced application
+permissions still identify and authorize the real caller. The session stays in a
+request-bound controller callback, restricted to the selected loopback GET/HEAD
+endpoint with redirects refused. It is never stored in a catalog, run receipt,
+schedule or Node sandbox. PAT, public, user-required and mutating smokes retain
+their existing authentication requirements. A missing application role still
+denies the probe; swarm administration does not substitute for that role.
+
 If Docker or the local image is unavailable, execution remains pending with a
 reason. A missing runner is not a test failure or a passing installation check.
 
@@ -60,6 +69,9 @@ They are included in `npm run test:platform-readiness`. Docker and a locally bui
 core image are needed for the sandbox cases; PostgreSQL fixtures use disposable
 containers. Set `OSHAL_TEST_RUNNER_IMAGE` to an existing core image if its tag differs
 from `oshal-bot:latest`. No GitHub Actions or production business data are needed.
+The registered installed-application suite also exercises service-smoke sessions
+through real local HTTP and application policy, including revoked rights, issuer
+collisions, redirect refusal and credential isolation.
 
 ## Local recurring runs
 

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Execute manifest-declared app smokes over the real HTTP boundary with package-local fixtures and deterministic assertions.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-141: a `kind: group` (no code, no smokes of its own) is verified THROUGH its members via options.resolveMember — every member must be installed, active and pass its own smokes, reported as `<member>/<smoke>`; without a resolver the group fails by name rather than passing empty.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Report missing verified-user prerequisites as pending while refusing malformed supplied PATs and executing valid caller tokens over HTTP.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Allow a controller-owned request transport for read-only service smokes without serializing caller sessions or changing other authentication modes.
  */
 
 import fs from 'fs';
@@ -66,6 +67,8 @@ export interface AppSmokeVerificationOptions {
   preOnboarding?: boolean;
   timeoutMs?: number;
   fetchImpl?: AppSmokeFetch;
+  /** Request-bound controller transport; eligible only for read-only service probes. */
+  serviceSmokeFetch?: AppSmokeFetch;
   /** ADR-141: resolves a group's member records — a group has no smokes of its own and is verified
    *  THROUGH its members. Absent → a group fails by name (never silently passes). */
   resolveMember?: (name: string) => Promise<SwarmApplicationRecord | null>;
@@ -179,7 +182,8 @@ async function executeSmoke(
   try {
     const base = new URL(options.apiBaseUrl);
     if (!['http:', 'https:'].includes(base.protocol)) throw new Error('api base must use http or https');
-    const fetchImpl = options.fetchImpl ?? (globalThis.fetch as unknown as AppSmokeFetch);
+    const fetchImpl = smoke.auth === 'service' && !smoke.requiresUser && ['GET', 'HEAD'].includes(smoke.method) && options.serviceSmokeFetch
+      ? options.serviceSmokeFetch : options.fetchImpl ?? (globalThis.fetch as unknown as AppSmokeFetch);
     const response = await fetchImpl(new URL(smoke.path, base).toString(), {
       method: smoke.method,
       headers: smokeHeaders(smoke, options),

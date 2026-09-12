@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove installed Test Lab registration through real lifecycle and HTTP boundaries with disposable package/persistence fixtures.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise clearable user prerequisites, explicit malformed-token failures and protected Portrait smoke execution.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove real caller session plus service authentication reaches enforced package readiness without weakening principal, redirect, mode or credential boundaries.
  */
 
 import express from 'express';
@@ -20,6 +21,9 @@ import { createTestLabRoutes } from '@/app/routes/test-lab-routes';
 import { readManifest, SwarmAppService, type SwarmAppManifest, type SwarmApplicationRecord } from '@/features/swarm-apps';
 import { InstalledAppTestCatalog } from '@/features/swarm-apps/services/installed-app-test-catalog';
 import { artifactActionsForType } from '@/shared/artifact-exchange';
+import { startServiceSmokeFixture, smokeRequest, SMOKE_SECRET } from '../fixtures/service-smoke-session';
+import { createPackageExecutionFixture } from '../fixtures/package-test-execution';
+import { verifyAppSmokes } from '@/features/swarm-apps';
 
 const pool = { query: async () => ({ rows: [], rowCount: 0 }) };
 const ctx = { pool } as unknown as AppContext;
@@ -363,4 +367,95 @@ describe('installed smoke registration isolation', () => {
     expect(removed.status).toBe('pending');
     expect(hits).toEqual([]);
   });
+});
+
+it('combines real operator session and service authentication under current exact application rights', async () => {
+  const fixture = await startServiceSmokeFixture();
+  try {
+    fixture.enable(false);
+    const before = await fixture.run();
+    expect(before.body.results[0]).toMatchObject({ state: 'fail', steps: [{ detail: 'HTTP 401, expected 200' }] });
+    fixture.enable(true);
+    const after = await fixture.run();
+    expect(after.body.results[0]).toMatchObject({ state: 'pass' });
+    expect(after.body.results[0].steps[0].status).toBe(200);
+    expect(JSON.stringify(after.body)).not.toContain('session=');
+    expect(JSON.stringify(after.body)).not.toContain(SMOKE_SECRET);
+    expect((await fixture.run('foreign')).body.results[0]).toMatchObject({ state: 'fail', steps: [{ detail: 'HTTP 403, expected 200' }] });
+    await fixture.change('revoke');
+    expect((await fixture.run()).body.results[0]).toMatchObject({ state: 'fail', steps: [{ detail: 'HTTP 403, expected 200' }] });
+  } finally { await fixture.close(); }
+});
+
+it('keeps anonymous and nonoperator requests outside the service-session transport', async () => {
+  const fixture = await startServiceSmokeFixture();
+  try {
+    expect((await fixture.run('unknown')).status).toBe(401);
+    const reader = await fixture.run('reader');
+    expect(reader.body.results[0].state).toBe('degraded');
+    expect(reader.body.results[0].steps[0].output.executionStatus).toBe('pending');
+    expect(await fixture.transport('unknown')).toBeUndefined();
+    expect(await fixture.transport('reader')).toBeUndefined();
+    expect(await fixture.transport('owner', PAT)).toBeUndefined();
+    const transport = (await fixture.transport())!;
+    fixture.actors.owner.isSwarmAdmin = false;
+    await expect(transport(fixture.base + fixture.smokePath, smokeRequest())).rejects.toThrow(/Current service smoke authority/);
+  } finally { await fixture.close(); }
+});
+
+it('refuses a changed exact actor before the request-bound service smoke leaves the controller', async () => {
+  const fixture = await startServiceSmokeFixture();
+  try {
+    const transport = (await fixture.transport())!;
+    fixture.actors.owner.issuer = fixture.actors.foreign.issuer;
+    await expect(transport(fixture.base + fixture.smokePath, smokeRequest())).rejects.toThrow(/Current service smoke authority/);
+  } finally { await fixture.close(); }
+});
+
+it('never constructs a caller-session transport for a runnable Node package case', async () => {
+  const fixture = await startServiceSmokeFixture();
+  try {
+    const node = createPackageExecutionFixture(fixture.root, { name: 'session-smoke' });
+    fixture.catalog.register(node.record);
+    const test = fixture.catalog.list(new Map([['session-smoke', 'Session smoke']]), { canRunSuites: true })
+      .find(item => item.id === node.caseId);
+    expect(test).toMatchObject({ runnable: true, runner: { kind: 'node-test' }, auth: 'none' });
+    const result = await fixture.run('owner', node.caseId);
+    expect(result).toMatchObject({ status: 409, body: { error: expect.stringContaining('cancellable run with history') } });
+    expect(fixture.callbacks()).toBe(0);
+    expect(JSON.stringify(test)).not.toContain('session=');
+  } finally { await fixture.close(); }
+});
+
+it('never sends session bytes to another origin, path, mutation or redirect target', async () => {
+  const fixture = await startServiceSmokeFixture();
+  let leaked = 0;
+  const listener = createServer((_req, res) => { leaked++; res.end('unexpected'); });
+  await new Promise<void>(done => listener.listen(0, '127.0.0.1', done));
+  const destination = `http://127.0.0.1:${(listener.address() as AddressInfo).port}/outside`;
+  try {
+    const transport = (await fixture.transport())!;
+    await expect(transport(destination, smokeRequest())).rejects.toThrow(/approved local read boundary/);
+    await expect(transport(fixture.base + '/another-path', smokeRequest())).rejects.toThrow(/approved local read boundary/);
+    await expect(transport(fixture.base + fixture.smokePath, { ...smokeRequest(), method: 'POST' })).rejects.toThrow(/approved local read boundary/);
+    fixture.redirect(destination);
+    expect((await transport(fixture.base + fixture.smokePath, { ...smokeRequest(), redirect: 'follow' as 'manual' })).status).toBe(302);
+    expect(leaked).toBe(0);
+  } finally { listener.closeAllConnections(); await new Promise<void>(done => listener.close(() => done())); await fixture.close(); }
+});
+
+it.each([
+  { auth: 'public', method: 'GET' }, { auth: 'pat', method: 'GET' },
+  { auth: 'service', method: 'POST' }, { auth: 'service', method: 'GET', requiresUser: true },
+] as const)('keeps $auth/$method user=$requiresUser outside the service-session callback', async selection => {
+  const input = manifest('mode-boundary');
+  Object.assign(input.smoke![0], selection);
+  const installed = await install(manifest('mode-boundary'));
+  let transported = 0, normal = 0;
+  const result = await verifyAppSmokes([{ requestedName: input.name, record: { ...installed, manifest: input } }], {
+    apiBaseUrl: baseUrl, authorization: PAT, serviceSecret: SMOKE_SECRET,
+    serviceSmokeFetch: async () => { transported++; throw new Error('Unexpected session transport'); },
+    fetchImpl: async () => { normal++; return { status: 200, text: async () => '{"package":"ready"}' }; },
+  });
+  expect(transported).toBe(0); expect(normal).toBe(1); expect(result.success).toBe(true);
 });

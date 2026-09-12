@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register installed package smokes in the AI Test Lab and reuse the installation verifier with caller-scoped execution authority.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Derive clearable verified-user prerequisites, exclude user probes from unattended installation eligibility, and fail malformed supplied tokens.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Execute sealed offline Node suites in a disposable sandbox with current authority and source checks.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Carry an optional request-bound service-smoke transport without adding caller sessions to reusable execution authority.
  */
 
 import { createHash } from 'crypto';
@@ -20,7 +21,7 @@ import { inventoryPackageTests, type PackageTestInventory } from './package-test
 export type { InstalledAppTestResult } from './package-test-execution';
 
 export type InstalledTestAuth = Pick<AppSmokeVerificationOptions, 'serviceSecret' | 'authorization'> & { canRunSuites?: boolean };
-export interface InstalledTestRunOptions extends Pick<AppSmokeVerificationOptions, 'apiBaseUrl' | 'timeoutMs'>, InstalledTestAuth {
+export interface InstalledTestRunOptions extends Pick<AppSmokeVerificationOptions, 'apiBaseUrl' | 'timeoutMs' | 'serviceSmokeFetch'>, InstalledTestAuth {
   signal?: AbortSignal;
   executionId?: string;
   revalidate?: () => Promise<boolean>;
