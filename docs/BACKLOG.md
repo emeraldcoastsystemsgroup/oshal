@@ -795,6 +795,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ## Application-package follow-ups
 
+### Create visual workspace and integrated editing — deferred
+- **Requested:** Canva-style page layout and a shared generate, manually edit, point/annotate, regenerate and edit-again workflow. Basic image text/crop/filters and video trim/splice/audio come before advanced layers and professional editing depth.
+- **Owner:** [`create/BACKLOG.md`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/create/BACKLOG.md) holds the phased application roadmap and acceptance. Reuse Portrait, Video and AI Office capabilities, registered artifact handoffs and current permissions. Project history and supported editable formats must survive editor round-trips.
+- **Status:** deferred at the operator's request; the first future slice improves page/workspace layout. Core retains only demonstrated shared transport or provider-capability dependencies.
+- **Done when:** the commissioned phase works through the installed Create entry, retains manual edits and accepted revisions, exports real media, and registers meaningful tests in AI Test Lab. Advanced editing remains a later phase.
+
 ### SEC-06 application-store route, ownership, and CI closure
 - **Remaining:** promote the completed route/source, ownership/RLS, dependency-lock, secret-allowlist, immutable-action, and blocking-workflow changes through the protected application branch, then retain the first remote workflow evidence for each blocking gate. Re-run the LoRA, Vids, D&D, and Little Monsters disposable-PostgreSQL jobs against the promoted SHA; local source and CI-definition tests do not prove that branch protection actually requires them.
 - **Done when:** protected-branch rules require the security workflow, the promoted workflow records green source/generated drift, route-inventory mutation, two-owner forced-RLS, dependency/action immutability, and secret-scan jobs, and a sanctioned fail-then-pass fixture proves each remote gate is blocking rather than advisory.
