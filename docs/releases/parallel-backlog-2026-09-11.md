@@ -23,9 +23,17 @@ package is being accounted for explicitly against the unchanged original baselin
 
 The native Lab Run control passed Capture's three deadline-input assertions with
 verified sandbox cleanup. Portrait's native page and Lab visibility exposed an obsolete
-legacy default-deny declaration blocking its valid named manager role. The package
-correction is being verified through the real route mounter; final native acceptance
-will follow its installation.
+legacy default-deny declaration blocking its valid named manager role. Portrait 1.14.1
+removes that obsolete declaration while retaining the unchanged named catalog. The
+real route-mounter regression reproduces the original refusal; all 16 HTTP and 13
+browser cases pass after correction. Final native acceptance will follow installation.
+
+Native Federal CRM reads retain the existing pipeline and imported research, and its
+Activities and Calendar pages open normally. The deadline review exposed a presentation
+defect: its wrapper did not use the mature application's modal class, leaving the form
+outside the visible area after opening scrolled research. The package correction will
+use the existing dialog styles and verify visibility against actual packaged CSS.
+No deadline task was created during the native check.
 
 ## Scope
 
@@ -70,7 +78,13 @@ remain available. All 107 focused checks passed across four files, including ten
 cases over the real page components, theme selection and contrast, saved-choice restoration
 before paint, transient application skins and actual service-worker precaching. Regressions
 first reproduced an older stylesheet overriding a newer theme and missing offline assets.
-Source and fixture types and scoped lint passed. Native acceptance remains pending. This
+Source and fixture types and scoped lint passed. Native acceptance exposed an additional
+embedded-chat compatibility defect: chat's old theme list normalized Workspace to
+Midnight and wrote that inherited value into the global preference. Chat now supports
+Workspace and keeps inherited appearance separate from the saved global preference.
+The real-frame regression reproduced the original defect; all 114 focused theme cases
+pass, including six new actual chat browser cases and their Lab registration check.
+The original Daylight preference was restored through Settings pending deployment. This
 CSS work is separate from the optional top navigation and daily dashboard.
 
 The optional **Top workspaces + sidebar** layout passed 50 HTTP tests over actual

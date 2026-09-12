@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register a read-only Workspace stylesheet readiness check and actual Cockpit/shared-surface browser regression.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register current workspace navigation discovery and linked permission and browser regression suites.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Link the actual embedded chat theme and global preference regression to the appearance scenario.
  * =============================================================================
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -50,6 +51,7 @@ export const APPEARANCE_SCENARIOS: Scenario[] = [{
   description: 'Read the fixed Workspace stylesheet. This does not execute the browser suite or change saved themes; the linked fixture covers Settings, Home and embedded surfaces.',
   regressionTests: [
     { level: 'browser', path: 'tests/unit/workspace-theme-browser.spec.ts' },
+    { level: 'browser', path: 'tests/unit/workspace-chat-theme-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/surface-theme-bundled-skin.spec.ts' },
   ],
   steps: [{ id: 'workspace-stylesheet', app: 'cockpit', label: 'Workspace stylesheet', run: workspaceStylesheet }],

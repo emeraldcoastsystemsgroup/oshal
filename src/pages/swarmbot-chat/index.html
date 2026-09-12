@@ -13,6 +13,7 @@
   8 | maintainer@emeraldcoastsystemsgroup.com   | UI compaction: icon-only close/refresh, user-friendly labels, removed verbose subtitles, tightened spacing
   9 | maintainer@emeraldcoastsystemsgroup.com   | Major layout rework: collapsed runtime chrome to single status bar, added pop-out button, maximised chat vertical space
   10 | maintainer@emeraldcoastsystemsgroup.com   | Replaced the inline swarm-bot RAG markup with a shared placeholder so chat, swarm, and cockpit can reuse one knowledge workspace renderer
+  11 | maintainer@emeraldcoastsystemsgroup.com | Include Workspace in chat prepaint, stylesheet loading and bot appearance choices.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -23,7 +24,7 @@
   <script>
     (() => {
       const params = new URLSearchParams(window.location.search);
-      const supportedThemes = ['midnight', 'daylight', 'ocean', 'sakura', 'forest', 'gray', 'black', 'light-blue', 'aurora', 'graphite', 'amber'];
+      const supportedThemes = ['midnight', 'daylight', 'ocean', 'sakura', 'forest', 'gray', 'black', 'light-blue', 'aurora', 'graphite', 'amber', 'workspace'];
       const queryEmbed = params.get('embed') === 'cockpit';
       const requestedTheme = params.get('theme');
       let persistedTheme = '';
@@ -93,6 +94,7 @@
   <link rel="stylesheet" href="/cockpit/css/themes/aurora.css">
   <link rel="stylesheet" href="/cockpit/css/themes/graphite.css">
   <link rel="stylesheet" href="/cockpit/css/themes/amber.css">
+  <link rel="stylesheet" href="/cockpit/css/themes/workspace.css">
   <link rel="stylesheet" href="/cockpit/css/layout.css">
   <link rel="stylesheet" href="/cockpit/css/chat.css">
   <link rel="stylesheet" href="/cockpit/css/components.css">
@@ -240,6 +242,7 @@
             <option value="aurora">Aurora</option>
             <option value="graphite">Graphite</option>
             <option value="amber">Amber</option>
+            <option value="workspace">Workspace</option>
           </select>
         </label>
         <label class="workspace-field">

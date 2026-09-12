@@ -114,10 +114,12 @@ function assets(app: express.Application) {
 
 /**
  * @description Start a real Cockpit browser fixture on an ephemeral local HTTP port with synthetic responses only.
+ * @param configure Optional synthetic routes registered before the default fixture responses.
  * @returns Local origin, controlled synthetic responses and complete server cleanup.
  */
-export async function startWorkspaceNavigationFixture() {
+export async function startWorkspaceNavigationFixture(configure?: (app: express.Application) => void) {
   const app = express(), current = state();
+  configure?.(app);
   readResponses(app, current); surfaceResponses(app, current); assets(app);
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(done => server.once('listening', done));

@@ -25,6 +25,7 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Wired the surface-bridge producer: live assistant replies run through relayReply (parses the reply's oshal:surface fence → posts validated bot→surface ops to the shell relay; the bubble shows the fence-stripped text), history replay runs stripDirectives (strip-only, no re-emit), and a relayed inbound surface→bot op (select/field_change/submit/event) is turned into a chat message and dispatched to the bot — closing the chat↔surface loop. Extracted dispatchMessage from sendMessage so the composer and inbound selections share one send path.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Import the surface-bridge producer from its new SHARED home (/shared/ui/js/, next to surface-bridge-client.js) — it moved out of this pages slice so an app surface (workflow-studio talk-to-build) can share it without a pages→pages cross-slice import. No behaviour change here; default postTarget stays the chat-rail (parent/shell-relay) path.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: render the server's honest ai_disabled state in chat instead of leaving an unhandled send error or noop-looking reply.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com | Use the canonical Cockpit theme resolver and keep embedded parent/profile updates from overwriting the saved global preference.
  */
 
 import { initializeSharedRagWorkspacePopup } from '/chat-assets/chat-rag-workspace-popup.mjs';
@@ -32,6 +33,7 @@ import { SwarmBotWorkspaceActions } from '/swarmbot/chat/swarmbot-workspace-acti
 import { appendMessage } from '/swarmbot/chat/swarmbot-messages.js';
 import { createSurfaceProducer } from '/shared/ui/js/surface-bridge-producer.js';
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
+import { resolveCockpitTheme } from '/cockpit/js/theme-manager.js';
 
 const logger = createUiLogger('swarmbot-chat');
 const COCKPIT_CONTEXT_EVENT = 'oshal-cockpit-context';
@@ -40,7 +42,6 @@ const COCKPIT_WORKSPACE_ACTION_ACK_EVENT = 'oshal-cockpit-workspace-action-ack';
 const COCKPIT_WORKSPACE_READY_EVENT = 'oshal-cockpit-workspace-ready';
 const COCKPIT_LOAD_TASK_EVENT = 'oshal-cockpit-load-task';
 const COCKPIT_THEME_EVENT = 'oshal-cockpit-theme';
-const SUPPORTED_THEMES = ['midnight', 'daylight', 'ocean', 'sakura', 'forest', 'gray', 'black', 'light-blue', 'aurora', 'graphite', 'amber'];
 const PROVIDER_AUTH_CONFIG = {
   'auto': {
     configOnly: true,
@@ -755,8 +756,15 @@ class SwarmBotWorkspaceApp {
   }
 
   applyTheme(theme) {
-    const nextTheme = resolveTheme(theme);
+    // Bot profiles and parent messages are inherited appearance, not a new global preference.
+    if (isEmbedded()) {
+      try {
+        if (window.parent !== window) theme = window.parent.document.documentElement.getAttribute('data-theme') || theme;
+      } catch (_error) { /* A cross-origin parent can still supply the existing message fallback. */ }
+    }
+    const nextTheme = resolveCockpitTheme(readString(theme));
     document.documentElement.setAttribute('data-theme', nextTheme);
+    if (isEmbedded()) return;
     try {
       window.localStorage.setItem('cockpit-theme', nextTheme);
     } catch (_error) {
@@ -817,10 +825,6 @@ class SwarmBotWorkspaceApp {
 
 function readQueryValue(key) {
   return readString(new URLSearchParams(window.location.search).get(key));
-}
-
-function resolveTheme(theme) {
-  return SUPPORTED_THEMES.includes(readString(theme)) ? readString(theme) : 'midnight';
 }
 
 function consumeWorkspaceActionQuery() {
