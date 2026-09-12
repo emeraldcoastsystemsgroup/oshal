@@ -4,25 +4,19 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The consolidation cutover guard: a delivery that reaches the intake must leave a durable oshal_incident row carrying the identity, pointing at the ticket it opened, and tallying a refire onto that same row instead of a second one. Before the cutover the incident lived only in the ticket's metadata blob, so every assertion here failed by returning nothing at all.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Isolate the intake in disposable migrated PostgreSQL; avoid a deployment queue consumer and close cleanly after failed setup.
  */
 
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
-import { Pool } from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Pool } from 'pg';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createAlertmanagerRoutes } from '@/app/routes/alertmanager-routes';
 import { InMemoryTicketStore, TicketService } from '@/features/ticketing';
+import { DisposableAlertPostgres } from '../helpers/disposable-alert-postgres';
 
-const DSN =
-  process.env.ALERT_PIPELINE_TEST_DSN ??
-  process.env.TEST_DATABASE_URL ??
-  `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
-
-/** Strips the password out of a DSN so a connection failure message is safe to print. */
-function safeDsn(dsn: string): string {
-  return dsn.replace(/\/\/([^:@/]+):[^@/]*@/, '//$1:***@');
-}
+const database = new DisposableAlertPostgres();
 
 const TOKEN = 'cutover-spec-token';
 /** Unique per run so a parallel run and a leftover row can never be mistaken for this one's. */
@@ -78,57 +72,47 @@ async function incidentsForRun(): Promise<IncidentRowShape[]> {
   return rows;
 }
 
-/** Waits for the in-request drain to finish, which is fire-and-forget by design. */
-async function settle(): Promise<void> {
+/** Wait for the drain transaction to commit, not merely for an intermediate incident write. */
+async function settle(expectedEvents: number): Promise<void> {
   for (let i = 0; i < 40; i += 1) {
-    const rows = await incidentsForRun();
-    if (rows.length > 0) return;
+    const result = await pool.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM oshal_alert_event WHERE target = $1 AND processed_at IS NOT NULL', [TARGET]);
+    if (result.rows[0].n === expectedEvents) return;
     await new Promise((r) => setTimeout(r, 250));
   }
+  throw new Error(`Alert request drain did not finish ${expectedEvents} fixture events`);
 }
 
 beforeAll(async () => {
-  process.env.ALERT_WEBHOOK_TOKEN = TOKEN;
-  process.env.ALERT_APPROVED_NAMES = ALERTNAME;
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try {
-    await pool.query('SELECT 1');
-  } catch (error) {
-    throw new Error(
-      `alert-incident-cutover requires the live oshal Postgres at ${safeDsn(DSN)} — bring the ` +
-        `stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`,
-    );
-  }
-  const present = await pool.query<{ t: string | null }>(
-    `SELECT to_regclass('public.oshal_incident')::text AS t`,
-  );
-  if (!present.rows[0]?.t) {
-    throw new Error(`migration 105 is not applied to ${safeDsn(DSN)} — oshal_incident is missing`);
-  }
+  vi.stubEnv('ALERT_WEBHOOK_TOKEN', TOKEN);
+  vi.stubEnv('ALERT_APPROVED_NAMES', ALERTNAME);
+  for (const key of ['ALERT_WEBHOOK_HMAC_SECRET', 'ALERT_CLAIMS_FILE', 'ALERT_BACKLOG_NAMES']) vi.stubEnv(key, '');
+  vi.stubEnv('ALERT_DEFAULT_INTAKE', 'backlog');
+  pool = await database.start();
 
   ticketService = new TicketService(new InMemoryTicketStore());
   const app = express();
   app.use(express.json());
-  app.use('/api/alerts', createAlertmanagerRoutes(ticketService, { pool }));
-  server = app.listen(0);
+  const interval = vi.spyOn(globalThis, 'setInterval');
+  try {
+    app.use('/api/alerts', createAlertmanagerRoutes(ticketService, { pool, startPendingSweep: false }));
+    expect(interval).not.toHaveBeenCalled();
+  } finally { interval.mockRestore(); }
+  server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.once('listening', resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-}, 60_000);
+}, 90_000);
 
 afterAll(async () => {
-  await new Promise<void>((resolve) => server?.close(() => resolve()));
-  if (!pool) return;
-  await pool.query('DELETE FROM oshal_incident WHERE primary_target = $1', [TARGET]);
-  await pool.query('DELETE FROM oshal_alert_event WHERE target = $1', [TARGET]);
-  await pool.query(`DELETE FROM oshal_alert_dispatch WHERE dedup_key LIKE '%' AND ticket_id IS NULL AND payload IS NULL AND dedup_key IN (SELECT dedup_key FROM oshal_incident WHERE primary_target = $1)`, [TARGET]);
-  await pool.end();
+  try { if (server) await new Promise<void>((resolve) => server.close(() => resolve())); }
+  finally { await database.stop(); vi.unstubAllEnvs(); }
 }, 60_000);
 
 describe('consolidation cutover — the incident is a row, not a JSON blob', () => {
   it('writes a durable incident carrying the identity and pointing at the ticket', async () => {
     const res = await postAlert();
     expect(res.status).toBe(202);
-    await settle();
+    await settle(1);
 
     const rows = await incidentsForRun();
     // The whole point of the cutover: this is non-empty. Before it, the incident existed only
@@ -166,12 +150,7 @@ describe('consolidation cutover — the incident is a row, not a JSON blob', () 
     const res = await postAlert();
     expect(res.status).toBe(202);
 
-    // Wait for the occurrence tally to move rather than for a row to appear.
-    for (let i = 0; i < 40; i += 1) {
-      const now = (await incidentsForRun())[0];
-      if (now && Number(now.occurrence_count) > Number(before.occurrence_count)) break;
-      await new Promise((r) => setTimeout(r, 250));
-    }
+    await settle(2);
 
     const rows = await incidentsForRun();
     // Still exactly one incident — the partial unique index is the guarantee, not a convention.

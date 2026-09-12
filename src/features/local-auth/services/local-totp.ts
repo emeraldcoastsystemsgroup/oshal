@@ -4,10 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | TOTP second factor for LOCAL_AUTH logins (ADR-117 follow-on). The operator's constraint was "I don't know how to implement this without an external provider" — RFC 6238 is the answer: a shared secret plus the clock, verified with HMAC-SHA1, so nothing leaves the box and no vendor, SMS gateway or per-message fee is involved. Enrolment renders locally (the `qrcode` dependency already ships). Emailed codes were the alternative and were rejected as the primary factor because email is the SAME channel as the invite/reset link — an attacker holding the mailbox would satisfy both factors. Three things here are load-bearing and easy to get wrong: the secret is encrypted at rest (a DB dump alone must not yield working codes), the last accepted step is recorded so a code cannot be replayed inside its own window, and recovery codes exist at all — TOTP without them turns a lost phone into a permanent lockout, which is how 2FA gets switched off in anger.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow second-factor administration within a transaction that guards the current root.
  */
 
 import crypto from 'crypto';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -321,7 +322,7 @@ function isUndefinedColumn(err: unknown): boolean {
  * @param sub - The `local-…` sub.
  * @returns State, or null when no such account.
  */
-export async function getTotpState(pool: Pool, sub: string): Promise<TotpState | null> {
+export async function getTotpState(pool: Pool | PoolClient, sub: string): Promise<TotpState | null> {
   let rows: Array<Record<string, unknown>>;
   try {
     ({ rows } = await runWithSystemIdentity(() => pool.query(
@@ -492,7 +493,7 @@ async function consumeRecoveryCode(
  * @param sub - The `local-…` sub.
  * @returns Resolves when cleared.
  */
-export async function disableTotp(pool: Pool, sub: string): Promise<void> {
+export async function disableTotp(pool: Pool | PoolClient, sub: string): Promise<void> {
   await runWithSystemIdentity(() => pool.query(
     `UPDATE oshal_local_users
         SET totp_secret_enc = NULL, totp_enabled = FALSE, totp_confirmed_at = NULL,
@@ -513,7 +514,7 @@ export async function disableTotp(pool: Pool, sub: string): Promise<void> {
  * @param required - Whether the factor is mandatory.
  * @returns Resolves when stored.
  */
-export async function setTotpRequired(pool: Pool, sub: string, required: boolean): Promise<void> {
+export async function setTotpRequired(pool: Pool | PoolClient, sub: string, required: boolean): Promise<void> {
   await runWithSystemIdentity(() => pool.query(
     'UPDATE oshal_local_users SET totp_required = $2 WHERE user_sub = $1', [sub, required],
   ));

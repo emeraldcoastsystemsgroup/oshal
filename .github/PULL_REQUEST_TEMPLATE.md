@@ -27,7 +27,9 @@
 
 - [ ] `npx tsc --noEmit` clean
 - [ ] Affected Playwright specs pass: `<list spec files>`
-- [ ] Behavior tests added for new logic (not just regex-against-source)
+- [ ] Behavior tests added for new functionality and regression tests for fixed failures
+- [ ] Feature scenarios registered in AI Test Lab with unit/integration/browser suite references
+- [ ] Local test command and results recorded; model/provider fixtures and live-proof gaps identified
 - [ ] If touching the live container: rebuilt + recreated `oshal-api`,
       verified end-to-end
 

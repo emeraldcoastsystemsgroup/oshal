@@ -11,6 +11,8 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Fixed haywire Main↔Chat drag-resize: kill the chat-panel width transition during drag (was chasing the cursor) and disable iframe pointer-events so the embedded app surface stops swallowing mousemove
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Zen (full-window focus) mode: body.zen-mode hides all cockpit chrome (header, ribbon, status bar, chat rail, per-surface title bar) so the active surface gets the whole window — the desktop analogue of the phone full-bleed rules below. Plus the floating semi-transparent exit button.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | :root[data-oshal-status-bar-hidden="true"] .status-bar {display:none} — the manifest-declared per-app hide of the status bar (ribbon.hideStatusBar, set on the root by app.js). Zen mode hides it for everyone in a session; this drops it permanently for one app.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Keep Home singular and group secondary actions in a theme-aware options disclosure.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Keep the sidebar utility disclosure opaque over application content.
  */
 
 /* ===== Layout — Cockpit Shell (Apple Liquid Glass) ===== */
@@ -98,6 +100,34 @@ body {
 }
 
 .header-btn:active { transform: scale(0.95); }
+
+#cockpitHomeLink { text-decoration: none; }
+#cockpitHomeLink:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 4px; border-radius: var(--radius-sm); }
+.workspace-home-label { display: none; }
+[data-navigation-layout="workspaces"] #cockpitHomeLink .logo-text:not(.workspace-home-label) { display: none; }
+[data-navigation-layout="workspaces"] #cockpitHomeLink .workspace-home-label { display: block; }
+.header-options { position: relative; }
+.header-options[hidden] { display: none; }
+.header-options > summary { list-style: none; }
+.header-options > summary::-webkit-details-marker { display: none; }
+.header-options > .header-utilities {
+  position: absolute; top: calc(100% + 8px); right: 0; width: min(260px, calc(100vw - 24px));
+  max-height: calc(100dvh - 80px); overflow-y: auto; z-index: 110;
+  padding: 8px; border: 1px solid var(--border-color); border-radius: var(--radius-lg);
+  background: var(--bg-primary); color: var(--text-primary); box-shadow: var(--panel-shadow);
+}
+.header-utilities-label { padding: 8px 10px; font-size: 12px; font-weight: 700; color: var(--text-secondary); }
+#cockpitHeaderUtilities .header-btn {
+  display: flex; align-items: center; justify-content: flex-start; gap: 10px;
+  width: 100%; height: auto; min-height: 40px; padding: 10px; font: inherit;
+  font-size: 13px; text-align: left; white-space: normal; color: var(--text-primary);
+}
+#cockpitHeaderUtilities .header-btn svg { flex: 0 0 auto; }
+#cockpitHeaderUtilities .header-btn:hover { transform: none; background: var(--bg-tertiary); }
+#cockpitHeaderUtilities .header-btn:focus-visible, .header-options > summary:focus-visible {
+  outline: 2px solid var(--accent-primary); outline-offset: -2px;
+}
+:root[data-oshal-assistant-hidden="true"] #cockpitHeaderUtilities #agentsBtn { display: none; }
 
 .engineering-link { text-decoration: none; }
 
@@ -371,6 +401,7 @@ body.resizing iframe { pointer-events: none !important; }
      diamond mark and cut the height so the app gets that vertical space back. */
   .header-bar { height: 46px; padding: 0 8px; gap: 6px; }
   .logo-text { display: none; }
+  [data-navigation-layout="workspaces"] #cockpitHomeLink .workspace-home-label { display: none; }
   .header-left .logo svg { width: 22px; height: 22px; }
   .header-right { gap: 2px; }
   .header-btn { width: 36px; height: 36px; }

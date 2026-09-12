@@ -41,6 +41,7 @@
  *   }
  *
  * Own your surface's CSS; consume the framework theme READ-ONLY. Never edit the theme files.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Make the Workspace token palette available to every participating shared surface.
  */
 
 @import url('/cockpit/css/themes/midnight.css');
@@ -54,3 +55,4 @@
 @import url('/cockpit/css/themes/aurora.css');
 @import url('/cockpit/css/themes/graphite.css');
 @import url('/cockpit/css/themes/amber.css');
+@import url('/cockpit/css/themes/workspace.css');

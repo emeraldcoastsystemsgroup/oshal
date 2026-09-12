@@ -1,5 +1,7 @@
 /**
  * CHANGE LOG
+ * 37 | maintainer@emeraldcoastsystemsgroup.com | Initialize authoritative manifest bot runtime records before activation; preserve stored provider/model choices.
+ * 36 | maintainer@emeraldcoastsystemsgroup.com | Publish installed smoke tests after successful activation and retract them before reload/deactivation; extract stateless artifact registration to keep lifecycle orchestration within its module size limit.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -67,10 +69,8 @@ import {
   registerAppSkillProfiles,
   unregisterAppSkillProfiles,
 } from '@/shared/skill-profiles';
-import {
-  registerAppArtifactActions,
-  unregisterAppArtifactActions,
-} from '@/shared/artifact-exchange';
+import { unregisterAppArtifactActions } from '@/shared/artifact-exchange';
+import { applyArtifactActions } from './manifest-artifact-registration';
 import {
   assertGroupResolvable,
   groupDashboardTile,
@@ -86,8 +86,6 @@ import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type S
 import {
   interpolate,
   manifestToolToCreateInput,
-  parseSafeWhere,
-  readBotSelectorSeed,
   staticToolNames,
 } from './swarm-app-manifest-mapping';
 import {
@@ -100,6 +98,10 @@ import {
 } from './tool-ownership';
 import { deleteManifestBotToolGrants, deregisterOwnedManifestTools, failClosedManifestActivation, prepareManifestToolUpdate, rollbackNewManifestToolGrants } from './manifest-tool-reconciliation';
 import { SwarmAppRepository, type SwarmAppScopeMeta } from './swarm-app-repository';
+import { InstalledAppTestCatalog } from './installed-app-test-catalog';
+import { upsertManifestBots, type ManifestBotRuntimeDefaultsResolver } from './manifest-bot-runtime';
+import type { ManifestBriefingRegistrar } from '@/shared/briefings';
+import { queryDynamicUiRows } from './dynamic-ui-query';
 import type {
   SwarmAppManifest,
   SwarmAppAccessDeclaration,
@@ -112,6 +114,7 @@ import type {
   ManifestScheduleRegistrar,
   ManifestScheduleDeregistrar,
   ManifestRouteMounter,
+  ManifestAuthorizationRegistrar,
   ManifestBotRegistrar,
   ManifestTakeoutRegistrar,
   RagCollectionTeardown,
@@ -138,6 +141,7 @@ const logger = createChildLogger({ module: 'swarm-app-service' });
  *   - Dynamic workflow pipeline    — WORKFLOW_PIPELINES array still static
  */
 export class SwarmAppService {
+  readonly testLabCatalog = new InstalledAppTestCatalog();
   /**
    * Mount-path → owning app name map. Built from every loaded manifest's
    * routes[] block. Used by the route-gate middleware to answer "is the
@@ -186,6 +190,9 @@ export class SwarmAppService {
     /** Registers package-owned Takeout archive slices while the app is active. Package-module
      * loading stays in the app layer; this feature slice owns only lifecycle reconciliation. */
     private readonly takeoutRegistrar?: ManifestTakeoutRegistrar,
+    private readonly authorizationRegistrar?: ManifestAuthorizationRegistrar,
+    private readonly runtimeDefaults?: ManifestBotRuntimeDefaultsResolver,
+    private readonly briefingRegistrar?: ManifestBriefingRegistrar,
   ) {}
 
   /**
@@ -240,12 +247,12 @@ export class SwarmAppService {
     // Read the stored revision BEFORE upsert. Once overwritten, names removed from the new
     // manifest are otherwise unknowable and their persisted executor/grants survive forever.
     const previous = await this.repo.findByName(manifest.name);
+    await this.authorizationRegistrar?.prepare(manifest, manifestPath);
     await this.assertToolOwnership(manifest);
     const prepared = await prepareManifestToolUpdate(this.pool, previous, manifest,
       (retiredManifest) => this.deregisterManifestTools(retiredManifest, true),
     );
-    const toolNames = staticToolNames(manifest);
-    const record = await this.repo.upsert(manifest, manifestPath, toolNames, scopeMeta);
+    const record = await this.repo.upsert(manifest, manifestPath, staticToolNames(manifest), scopeMeta);
     await this.deregisterRetiredManifestSchedules(previous, manifest);
     if (record.status === 'active') {
       try {
@@ -255,6 +262,8 @@ export class SwarmAppService {
         await deleteManifestBotToolGrants(
           this.pool, prepared.retired.agentIds, prepared.retired.toolNames,
         );
+        this.testLabCatalog.register(record);
+        this.authorizationRegistrar?.complete(record);
       } catch (error) {
         this.appStatusCache.set(record.name, 'inactive');
         await failClosedManifestActivation(record.name, error, [
@@ -515,13 +524,28 @@ export class SwarmAppService {
   async toggleApp(name: string, active: boolean): Promise<SwarmApplicationRecord | null> {
     const record = await this.repo.findByName(name);
     if (!record) return null;
+    let updated: SwarmApplicationRecord | null = null;
     if (active) {
-      await this.activate(record);
+      this.testLabCatalog.validate(record);
+      await this.authorizationRegistrar?.prepare(record.manifest, record.manifestPath);
+      try {
+        await this.activate(record);
+        updated = await this.repo.updateStatus(name, 'active');
+        if (!updated) throw new Error(`Failed to persist active status for ${name}`);
+        await this.refreshOwnershipCache();
+        this.testLabCatalog.register(updated);
+        this.authorizationRegistrar?.complete(updated);
+      }
+      catch (error) {
+        this.appStatusCache.set(record.name, 'inactive');
+        await failClosedManifestActivation(record.name, error, [() => this.deactivate(record),
+          async () => { await this.repo.updateStatus(record.name, 'inactive'); }]);
+      }
     } else {
       await this.deactivate(record);
+      updated = await this.repo.updateStatus(name, 'inactive');
+      await this.refreshOwnershipCache();
     }
-    const updated = await this.repo.updateStatus(name, active ? 'active' : 'inactive');
-    await this.refreshOwnershipCache();
     logger.info({ name, active }, 'App toggled');
     return updated;
   }
@@ -901,6 +925,8 @@ export class SwarmAppService {
   // ── Internal: activation / deactivation primitives ─────────────────────
 
   private async activate(record: SwarmApplicationRecord): Promise<void> {
+    this.testLabCatalog.unregister(record.name);
+    await this.authorizationRegistrar?.start(record);
     // ADR-141 D2/D3: a group activates only when every borrowed surface and every setup readiness
     // resolves against its ACTIVE members — it never renders a dead tile. Throws with the member
     // and surface/readiness named; loadApp fail-closes the record to inactive.
@@ -932,11 +958,13 @@ export class SwarmAppService {
       logger.error({ err, app: record.name }, 'Manifest bot registration failed (non-fatal)');
     }
 
-    await this.upsertBots(record.manifest);
+    await upsertManifestBots(this.pool, record.manifest, record.manifestPath, this.runtimeDefaults);
+    if (record.manifest.briefings?.length && !this.briefingRegistrar) throw new Error('Briefing registry unavailable');
+    await this.briefingRegistrar?.register(record.name, record.version, record.manifest.briefings ?? []);
     await this.setBotStatuses(record.agentIds, 'active');
     this.applyGuestTier(record);
     this.applySkillProfiles(record);
-    this.applyArtifactActions(record);
+    applyArtifactActions(record);
     // Dynamic UI discovery is the last activation step that may throw directly. Complete it
     // before enabling model tools or seeding grants, then keep only non-throwing/caught steps
     // after the privilege boundary. loadApp still compensates if an unexpected later error escapes.
@@ -958,11 +986,12 @@ export class SwarmAppService {
    * Non-fatal: a route module that fails to load must not break app activation.
    */
   private async mountManifestRoutes(record: SwarmApplicationRecord): Promise<void> {
-    if (!this.routeMounter || !record.manifest.routes?.length) return;
+    if (!this.routeMounter) return;
     try {
       const packageDir = dirname(record.manifestPath);
-      await this.routeMounter.mount(record.name, packageDir, record.manifest.routes, record.manifest.access);
+      await this.routeMounter.mount(record.name, packageDir, record.manifest.routes ?? [], record.manifest.access);
     } catch (err) {
+      if (record.manifest.authorization || this.authorizationRegistrar) throw err;
       logger.error({ err, app: record.name }, 'Manifest route mount failed (non-fatal)');
     }
   }
@@ -1173,82 +1202,10 @@ export class SwarmAppService {
     });
   }
 
-  /**
-   * @description Upserts each manifest-declared bot into the agents table.
-   * On first load of a manifest that brings brand-new bots, this is how
-   * they get seeded. Existing rows (matched by agent_id) are left alone —
-   * operators can edit persona/provider/model via the cockpit without
-   * worrying that a manifest reload will overwrite their changes.
-   */
-  private async upsertBots(manifest: SwarmAppManifest): Promise<void> {
-    for (const bot of manifest.bots ?? []) {
-      try {
-        const selectorSeed = readBotSelectorSeed(bot);
-        const baseRoutingKeywords = selectorSeed.routingKeywords.length > 0
-          ? selectorSeed.routingKeywords
-          : bot.capabilities ?? [];
-        await this.pool.query(
-          `INSERT INTO agents (
-             agent_id, name, api_provider_id, base_capabilities,
-             base_selector_descriptor, base_routing_keywords,
-             metadata, status, persona
-           )
-           VALUES ($1, $2, $3, $4, $5, $6::text[], $7, 'active', $8::jsonb)
-           ON CONFLICT (agent_id)
-           DO UPDATE SET
-             name = EXCLUDED.name,
-             base_capabilities = EXCLUDED.base_capabilities,
-             base_selector_descriptor = CASE
-               WHEN EXCLUDED.base_selector_descriptor <> ''
-                 THEN EXCLUDED.base_selector_descriptor
-               ELSE agents.base_selector_descriptor
-             END,
-             base_routing_keywords = CASE
-               WHEN COALESCE(array_length(EXCLUDED.base_routing_keywords, 1), 0) > 0
-                 THEN EXCLUDED.base_routing_keywords
-               ELSE agents.base_routing_keywords
-             END,
-             metadata = agents.metadata || EXCLUDED.metadata,
-             persona = CASE
-               WHEN agents.persona = '{}'::jsonb OR agents.metadata->>'manifestApp' = $9
-                 THEN EXCLUDED.persona
-               ELSE agents.persona
-             END,
-             status = 'active',
-             updated_at = NOW()`,
-          [
-            bot.agentId,
-            bot.name,
-            process.env.FORCE_LLM_PROVIDER || 'openai-native',
-            bot.capabilities ?? [],
-            selectorSeed.selectorDescriptor,
-            baseRoutingKeywords,
-            JSON.stringify({
-              role: bot.role ?? '',
-              manifestApp: manifest.name,
-              persona: bot.persona ?? '',
-              // Read back by Jarvis's loadEffectiveRoutes to decide delegate-vs-handoff. Only
-              // written when declared, so `metadata || EXCLUDED.metadata` cannot clobber an
-              // operator's stored value with an empty one on every manifest reload.
-              ...(bot.jarvisMode ? { jarvisMode: bot.jarvisMode } : {}),
-            }),
-            JSON.stringify({
-              role: bot.role ?? '',
-              systemPrompt: bot.persona ?? '',
-              capabilities: bot.capabilities ?? [],
-              selectorDescriptor: selectorSeed.selectorDescriptor,
-              routingKeywords: baseRoutingKeywords,
-            }),
-            manifest.name,
-          ],
-        );
-      } catch (err) {
-        logger.error({ err, agentId: bot.agentId, name: bot.name }, 'Bot upsert failed');
-      }
-    }
-  }
-
   private async deactivate(record: SwarmApplicationRecord): Promise<void> {
+    this.testLabCatalog.unregister(record.name);
+    this.authorizationRegistrar?.unregister(record.name);
+    this.routeMounter?.unmount(record.name);
     // Close package ingestion first so a handler cannot remain reachable during asynchronous
     // teardown. The registry operation is synchronous and idempotent.
     try {
@@ -1256,6 +1213,9 @@ export class SwarmAppService {
     } catch (err) {
       logger.error({ err, app: record.name }, 'Manifest Takeout deregistration failed (non-fatal)');
     }
+    const briefingRetraction = this.briefingRegistrar?.unregister(record.name).catch(err => {
+      logger.warn({ err, app: record.name }, 'Briefing source persistence unavailable after local retraction');
+    });
     await this.setBotStatuses(record.agentIds, 'inactive');
     // ADR-085 D4: retract the guest tier — a toggled-off app must not keep granting guests reach
     // into routes its own gate now blocks. Idempotent; the segment falls back to the read-only default.
@@ -1293,11 +1253,11 @@ export class SwarmAppService {
     WorkflowPipelineRegistry.getInstance().unregisterApp(record.name);
     // Unmount any package routes this app dynamically mounted (ADR-085 P1). No-op when
     // no mounter is injected or the app declared none. Idempotent.
-    this.routeMounter?.unmount(record.name);
     // ADR-085 P0 — tear down the app's registered schedules so a toggled-off app's
     // recurring polls STOP firing (and billing). Before this, deactivate() had no
     // counterpart to registerManifestSchedules and the polls outlived the toggle.
     await this.deregisterManifestSchedules(record.manifest);
+    await briefingRetraction;
   }
 
   /**
@@ -1467,27 +1427,6 @@ export class SwarmAppService {
    * @param tier - The tier to approve, or null to revoke.
    * @returns The updated record, or null when the app doesn't exist.
    */
-  /**
-   * @description Register the app's "Send to…" artifact declarations (ADR-139) into the shared
-   * registry. Called from activate(); deactivate() retracts. Mirrors applySkillProfiles — the
-   * negative case RETRACTS rather than skips, so an edit-reload that removes the artifacts:
-   * block clears the prior registration instead of leaving stale menu entries live.
-   * @param record - The app being activated.
-   */
-  private applyArtifactActions(record: SwarmApplicationRecord): void {
-    const decl = record.manifest.artifacts;
-    const empty = !decl || ((decl.accepts?.length ?? 0) === 0 && (decl.provides?.length ?? 0) === 0);
-    if (empty) {
-      unregisterAppArtifactActions(record.name);
-      return;
-    }
-    try {
-      registerAppArtifactActions(record.name, decl);
-    } catch (err) {
-      logger.error({ err, app: record.name }, 'Artifact-action registration failed (non-fatal)');
-    }
-  }
-
   async approveGuestTier(name: string, tier: GuestTier | null): Promise<SwarmApplicationRecord | null> {
     const record = await this.repo.setGuestTierApproval(name, tier);
     if (!record) return null;
@@ -1671,37 +1610,10 @@ export class SwarmAppService {
     }
   }
 
-  private async queryDynamicRows(dyn: SwarmAppDynamicUi): Promise<Array<Record<string, unknown>>> {
-    // `source` and `where` can arrive via manifest upload (POST /api/swarm/apps/load
-    // or /import), so they must be treated as UNTRUSTED. Raw SQL concatenation
-    // would let an uploaded manifest run arbitrary queries against the pool.
-    //
-    // Contract for dyn.where: a very small allowlist of "column = literal" clauses
-    // joined by AND. Each clause's column must match /^[a-z_][a-z0-9_]*$/, and
-    // literals are bound as parameters ($1, $2, ...) — never concatenated.
-    const safeSource = /^[a-z_][a-z0-9_]*$/i.test(dyn.source) ? dyn.source : null;
-    if (!safeSource) {
-      logger.warn({ source: dyn.source }, 'Rejected dynamic UI source — unsafe identifier');
-      return [];
-    }
-
-    const { whereSql, params } = parseSafeWhere(dyn.where);
-    if (dyn.where && whereSql === null) {
-      logger.warn({ where: dyn.where, source: safeSource }, 'Rejected dynamic UI where — does not match safe-clause allowlist');
-      return [];
-    }
-
-    try {
-      const { rows } = await this.pool.query(
-        `SELECT * FROM ${safeSource} ${whereSql ?? ''}`.trim(),
-        params,
-      );
-      return rows as Array<Record<string, unknown>>;
-    } catch (err) {
-      logger.error({ err, source: safeSource }, 'Dynamic UI row query failed');
-      return [];
-    }
+  private queryDynamicRows(dyn: SwarmAppDynamicUi): Promise<Array<Record<string, unknown>>> {
+    return queryDynamicUiRows(this.pool, dyn);
   }
+
 }
 
 export type { SwarmApplicationRecord, SwarmApplicationSummary, SwarmAppManifest } from '../types';

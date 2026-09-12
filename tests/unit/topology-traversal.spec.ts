@@ -3,10 +3,12 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Behavioural guard for TopologyStore against the LIVE Postgres: a cyclic fixture terminates with minimum hop counts, the hub gate is MUTATION-TESTED (same fixture, gate on = two components, gate off = one), depth is exact at the boundary and clamped at the cap, an edgeless node correlates to itself, and the proportional sweep brake refuses a half-slice delete while permitting a small one.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Replace deployment DSNs with private migrated PostgreSQL; discard the whole fixture on success or failure.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Behavioural guard for TopologyStore against real, disposable Postgres: a cyclic fixture terminates with minimum hop counts, the hub gate is MUTATION-TESTED (same fixture, gate on = two components, gate off = one), depth is exact at the boundary and clamped at the cap, an edgeless node correlates to itself, and the proportional sweep brake refuses a half-slice delete while permitting a small one.
  */
 
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
+import { DisposableAlertPostgres } from '../helpers/disposable-alert-postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type {
@@ -18,21 +20,8 @@ import {
   TopologyStore,
 } from '../../src/features/alert-pipeline/services/topology-store';
 
-/**
- * The traversal is a recursive CTE, the sweep brake is a transactional measurement, and the upserts
- * are ON CONFLICT statements — none of that has any behaviour outside Postgres, so this spec runs
- * against the live database. It NEVER skips: a missing database is a red test, because a guard that
- * quietly disappears when its dependency is absent is not a guard.
- */
-const DSN =
-  process.env.ALERT_PIPELINE_TEST_DSN ??
-  process.env.TEST_DATABASE_URL ??
-  `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
-
-/** Strips the password out of a DSN so a connection failure message is safe to print. */
-function safeDsn(dsn: string): string {
-  return dsn.replace(/\/\/([^:@/]+):[^@/]*@/, '//$1:***@');
-}
+/** Recursive SQL and transactional sweeps run in private migrated PostgreSQL; never skip. */
+const database = new DisposableAlertPostgres();
 
 /** Unique, LIKE-safe key namespace for this run so parallel runs never collide or sweep each other. */
 const PFX = `topo-${process.pid.toString(36)}-${Date.now().toString(36)}-${Math.random()
@@ -117,42 +106,12 @@ async function loadFixtures(): Promise<void> {
 }
 
 beforeAll(async () => {
-  // row_security=off is set per connection at startup so every pooled connection reads the
-  // fixtures the same way, rather than depending on which connection a SET happened to land on.
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try {
-    await pool.query('SELECT 1');
-  } catch (error) {
-    throw new Error(
-      `topology traversal spec requires the live oshal Postgres at ${safeDsn(DSN)} — ` +
-        `start it with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`,
-    );
-  }
-  const present = await pool.query<{ node: string | null; edge: string | null; run: string | null }>(
-    `SELECT to_regclass('public.oshal_topology_node')::text AS node,
-            to_regclass('public.oshal_topology_edge')::text AS edge,
-            to_regclass('public.oshal_topology_loader_run')::text AS run`,
-  );
-  const missing = Object.entries(present.rows[0] ?? {})
-    .filter(([, value]) => value === null)
-    .map(([name]) => name);
-  if (missing.length > 0) {
-    throw new Error(
-      `migration 107 is not applied to ${safeDsn(DSN)} — missing topology table(s): ${missing.join(', ')}`,
-    );
-  }
+  pool = await database.start();
   store = new TopologyStore(pool);
   await loadFixtures();
-}, 60000);
+}, 90_000);
 
-afterAll(async () => {
-  if (!pool) return;
-  const like = `${PFX}%`;
-  await pool.query('DELETE FROM oshal_topology_edge WHERE src_key LIKE $1 OR dst_key LIKE $1', [like]);
-  await pool.query('DELETE FROM oshal_topology_node WHERE node_key LIKE $1', [like]);
-  await pool.query('DELETE FROM oshal_topology_loader_run WHERE loader_scope LIKE $1', [like]);
-  await pool.end();
-}, 60000);
+afterAll(async () => { await database.stop(); }, 60_000);
 
 // Graph traversal over a seeded store; under full-suite contention the fixture build alone can
 // exceed Vitest's five-second default. Bounded budget, no assertion relaxed.

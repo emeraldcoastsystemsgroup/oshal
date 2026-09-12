@@ -1,9 +1,23 @@
 <!doctype html>
+<!--
+CHANGE LOG
+-----------------------------------------------------------------------------
+SEQ | AUTHOR | DESCRIPTION
+-----------------------------------------------------------------------------
+1 | maintainer@emeraldcoastsystemsgroup.com | Add cancellable package runs, exact-version evidence and durable caller history alongside live scenarios.
+2 | maintainer@emeraldcoastsystemsgroup.com | Add disabled local schedules, current catalog choices and guarded batch-to-run evidence navigation.
+3 | maintainer@emeraldcoastsystemsgroup.com | Recover transient schedule history reads with bounded retries and clear stale evidence before retrying.
+4 | maintainer@emeraldcoastsystemsgroup.com | Serialize schedule refresh with mutations and retract closed-panel evidence so delayed catalog or owner responses cannot erase saved rows or restore stale access.
+5 | maintainer@emeraldcoastsystemsgroup.com | Focus caller-visible installation case links after catalog loading without executing tests or changing schedule refresh state.
+6 | maintainer@emeraldcoastsystemsgroup.com | Inherit live shared palettes and native control colors in standalone and embedded Lab views.
+-->
 <html lang="en" data-theme="midnight">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>AI Test Lab</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+<script src="/shared/ui/js/surface-theme.js"></script>
 <style>
   :root {
     --bg: var(--bg-primary, #090b13);
@@ -16,7 +30,7 @@
     --success: var(--status-success, #34d399);
     --warning: var(--status-warning, #fbbf24);
     --danger: var(--status-error, #f87171);
-    --gap: #a78bfa;
+    --gap: var(--accent-primary);
     --radius: 8px;
     --font: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
@@ -45,7 +59,7 @@
     cursor: pointer;
   }
 
-  button.primary { background: var(--accent); border-color: color-mix(in srgb, var(--accent) 75%, white 10%); color: #fff; }
+  button.primary { background: var(--accent); border-color: color-mix(in srgb, var(--accent) 75%, white 10%); color: var(--text-on-accent, #fff); }
   button:disabled { opacity: 0.55; cursor: default; }
 
   .lab-shell { min-height: 100vh; padding: 18px 20px 42px; display: flex; flex-direction: column; gap: 14px; }
@@ -160,6 +174,13 @@
   .step-visual .cap { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
 
   .empty { padding: 24px; color: var(--muted); text-align: center; }
+  .history-panel { padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  .history-panel h2 { margin: 0 0 10px; font-size: 16px; }
+  .history-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+  .history-controls select { max-width: 100%; padding: 8px; color: var(--text); background: var(--bg); border: 1px solid var(--line); }
+  .history-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .history-row .description { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+  .history-output { max-height: 380px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--bg); }
 
   @media (max-width: 760px) {
     .lab-shell { padding: 12px; }
@@ -181,7 +202,7 @@
         <div class="sub">Run black-box scenarios through live OSHAL endpoints — every tool, every app, and the rich visuals Jarvis delivers on demand. Results stay honest: pass, degraded, gap, or fail. No silent spinner states.</div>
       </div>
       <div class="hero-actions">
-        <button id="runAll" class="primary" type="button">Run all</button>
+        <button id="runAll" class="primary" type="button">Run live scenarios</button>
         <button id="refreshCatalog" type="button">Refresh</button>
         <a class="lab-link" href="/api/eval-wall/app">Eval Wall</a>
       </div>
@@ -189,6 +210,28 @@
 
     <section id="summary" class="summary-grid" aria-label="Test Lab summary"></section>
     <section id="runStatus" class="lab-status surface-card"><strong>Loading catalog.</strong><span>Fetching live scenario list...</span></section>
+    <section class="history-panel" aria-label="Package run history">
+      <h2>Package runs</h2>
+      <p>Run one ready package suite in an isolated runner. History follows your signed-in account; earlier package versions stay labelled as stale.</p>
+      <div class="history-controls"><label for="historyApp">Application</label><select id="historyApp"><option value="">All applications</option></select>
+        <button id="refreshHistory" type="button">Refresh history</button></div>
+      <div id="runHistory" aria-live="polite">Loading your recent runs...</div>
+      <div id="runEvidence" aria-live="polite"></div>
+    </section>
+    <details id="schedulePanel" class="history-panel">
+      <summary>Scheduled package checks</summary>
+      <p>Select current installed suites on a local schedule. New schedules begin disabled. Unavailable prerequisites stay pending; no outside CI service is started.</p>
+      <form id="scheduleForm" class="history-controls">
+        <label for="scheduleApp">Application</label><select id="scheduleApp" required></select>
+        <label for="scheduleCadence">Frequency</label><select id="scheduleCadence"><option value="hourly">Hourly</option><option value="daily" selected>Daily</option><option value="weekly">Weekly</option></select>
+        <label><input id="scheduleUnit" type="checkbox" checked> Unit tests</label>
+        <label><input id="scheduleIntegration" type="checkbox"> Integration tests</label>
+        <button id="createSchedule" type="submit">Create disabled schedule</button>
+        <button id="refreshSchedules" type="button">Refresh schedules</button>
+      </form>
+      <p id="scheduleStatus" role="status">Open this section to load your schedules.</p>
+      <div id="scheduleList"></div><div id="scheduleHistory" aria-live="polite"></div>
+    </details>
     <main id="main"><div class="empty">Loading scenarios...</div></main>
   </div>
 
@@ -202,6 +245,10 @@ const GROUPS = [
 ];
 let catalog = { scenarios: [], apps: [] };
 let scenarioStates = new Map();
+let catalogGeneration = 0;
+let historyGeneration = 0;
+let historyTimer;
+let recentRuns = [];
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -216,17 +263,25 @@ async function fetchJson(path, options) {
   try { body = await response.json(); } catch {}
   if (!response.ok) {
     const message = body && (body.error || body.message) ? (body.error || body.message) : 'HTTP ' + response.status;
-    throw new Error(message);
+    throw Object.assign(new Error(message), { status: response.status });
   }
   return body || {};
 }
 
 async function load() {
+  const generation = ++catalogGeneration;
+  clearEvidence();
   setStatus('Loading catalog.', 'Fetching live scenario list...');
   try {
-    catalog = await fetchJson(API + '/catalog');
+    const next = await fetchJson(API + '/catalog');
+    if (generation !== catalogGeneration) return;
+    catalog = next;
     scenarioStates = new Map((catalog.scenarios || []).map((scenario) => [scenario.id, 'idle']));
     render();
+    focusLinkedCase();
+    refreshHistoryApps();
+    await loadHistory();
+    if ($('schedulePanel').open) await loadSchedules();
     const appCount = (catalog.apps || []).length;
     setStatus('Ready.', (catalog.scenarios || []).length + ' scenarios loaded' + (appCount ? ' across ' + appCount + ' live apps.' : '.'));
   } catch (error) {
@@ -234,6 +289,18 @@ async function load() {
     setStatus('Unavailable.', error.message);
     renderSummary();
   }
+}
+
+function focusLinkedCase() {
+  let requested;
+  try { requested = decodeURIComponent(window.location.hash.slice(1)); } catch { return; }
+  const selected = (catalog.scenarios || []).find(scenario => scenario.installedTest && 'card-' + scenario.id === requested);
+  if (!selected) return;
+  const card = document.getElementById(requested);
+  if (!card) return;
+  card.tabIndex = -1;
+  card.focus({ preventScroll: true });
+  card.scrollIntoView({ block: 'center' });
 }
 
 function render() {
@@ -262,8 +329,20 @@ function renderScenarioCard(scenario) {
     + '<div class="scenario-head">'
     + '<div><div class="scenario-title">' + esc(scenario.title) + '</div><div class="scenario-desc">' + esc(scenario.description) + '</div></div>'
     + '<div class="scenario-actions"><span class="badge ' + esc(state) + '" id="badge-' + esc(scenario.id) + '">' + esc(state) + '</span>'
-    + '<button type="button" data-run-id="' + esc(scenario.id) + '">Run</button></div>'
+    + '<button type="button" data-run-id="' + esc(scenario.id) + '"'
+    + (scenario.installedTest && !scenario.installedTest.runnable ? ' disabled' : '') + '>Run</button></div>'
     + '</div>'
+    + (scenario.installedTest ? '<div class="scenario-desc">Installed ' + esc(scenario.installedTest.appVersion) + ' &middot; '
+      + esc(scenario.installedTest.level) + ' &middot; '
+      + (scenario.installedTest.runnable ? 'Ready' : 'Pending: ' + esc(scenario.installedTest.pendingReason)) + '</div>' : '')
+    + (scenario.installedTest ? '<details class="scenario-desc"><summary>Runner and prerequisites</summary>'
+      + '<div>Runner: ' + esc(scenario.installedTest.runner && scenario.installedTest.runner.kind) + '</div>'
+      + '<div>Prerequisites: ' + esc((scenario.installedTest.prerequisites || []).join(', ') || 'None') + '</div>'
+      + '<div>Side effects: ' + esc(scenario.installedTest.sideEffects) + ' &middot; Isolation: ' + esc(scenario.installedTest.isolation && scenario.installedTest.isolation.mode) + '</div>'
+      + '<div>Source: <code>' + esc(scenario.installedTest.source) + '</code></div>'
+      + '<div>Case revision: <code>' + esc(scenario.installedTest.revision) + '</code></div>'
+      + '<div>Expected: ' + esc((scenario.installedTest.expected || []).join(' ')) + '</div></details>' : '')
+    + ((scenario.regressionTests || []).length ? '<details class="scenario-desc"><summary>Regression suites</summary>' + scenario.regressionTests.map((test) => '<div>' + esc(test.level) + ': <code>' + esc(test.path) + '</code></div>').join('') + '</details>' : '')
     + '<div class="steps" id="steps-' + esc(scenario.id) + '">'
     + (scenario.steps || []).map((step) => renderStep(step, 'idle', step.app)).join('')
     + '</div></article>';
@@ -318,7 +397,8 @@ function setScenarioState(id, state) {
 function setCardRunning(id, running) {
   const card = $('card-' + id);
   if (!card) return;
-  card.querySelectorAll('button').forEach((button) => { button.disabled = running; });
+  const test = (catalog.scenarios || []).find(scenario => scenario.id === id)?.installedTest;
+  card.querySelectorAll('button').forEach((button) => { button.disabled = running || !!test && !test.runnable; });
 }
 
 function paintScenario(result) {
@@ -340,6 +420,10 @@ function paintFailure(id, message) {
 
 async function runOne(id) {
   if (!id) return;
+  const scenario = (catalog.scenarios || []).find(item => item.id === id);
+  if (scenario && scenario.installedTest && scenario.installedTest.runner.kind !== 'smoke') {
+    await runPackage(scenario); return;
+  }
   setScenarioState(id, 'run');
   setCardRunning(id, true);
   setStatus('Running scenario.', id);
@@ -347,7 +431,7 @@ async function runOne(id) {
     const payload = await fetchJson(API + '/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scenarioId: id }),
+      body: JSON.stringify({ scenarioId: id, expectedCases: installedRevisions() }),
     });
     const result = (payload.results || [])[0];
     if (!result) throw new Error('No result payload returned.');
@@ -361,11 +445,17 @@ async function runOne(id) {
   }
 }
 
+function installedRevisions() {
+  return Object.fromEntries((catalog.scenarios || []).filter((scenario) => scenario.installedTest)
+    .map((scenario) => [scenario.id, scenario.installedTest.revision]));
+}
+
 async function runAll() {
   const button = $('runAll');
+  const live = (catalog.scenarios || []).filter(item => !item.installedTest || item.installedTest.runner.kind === 'smoke' || !item.installedTest.runnable);
   button.disabled = true;
   button.textContent = 'Running...';
-  (catalog.scenarios || []).forEach((scenario) => {
+  live.forEach((scenario) => {
     setScenarioState(scenario.id, 'run');
     setCardRunning(scenario.id, true);
   });
@@ -374,57 +464,272 @@ async function runAll() {
     const payload = await fetchJson(API + '/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scenarioId: 'all' }),
+      body: JSON.stringify({ scenarioId: 'all', expectedCases: installedRevisions() }),
     });
     const results = payload.results || [];
     if (!results.length) throw new Error('No result payload returned.');
     results.forEach(paintScenario);
     setStatus('All scenarios complete.', results.length + ' scenarios returned results.');
   } catch (error) {
-    (catalog.scenarios || []).forEach((scenario) => {
+    live.forEach((scenario) => {
       if (scenarioStates.get(scenario.id) === 'run') paintFailure(scenario.id, error.message);
     });
     setStatus('Run all failed.', error.message);
   } finally {
-    (catalog.scenarios || []).forEach((scenario) => setCardRunning(scenario.id, false));
+    live.forEach((scenario) => setCardRunning(scenario.id, false));
     button.disabled = false;
-    button.textContent = 'Run all';
+    button.textContent = 'Run live scenarios';
   }
+}
+
+function clearEvidence() { $('runEvidence').replaceChildren(); }
+
+function refreshHistoryApps() {
+  const previous = $('historyApp').value;
+  $('historyApp').innerHTML = '<option value="">All applications</option>' + (catalog.installedApps || [])
+    .map(app => '<option value="' + esc(app.name) + '">' + esc(app.displayName || app.name) + '</option>').join('');
+  if ([...$('historyApp').options].some(option => option.value === previous)) $('historyApp').value = previous;
+}
+
+function packageMutation(path, body) {
+  return fetchJson(API + path, { method: 'POST', headers: { 'content-type': 'application/json', 'X-OSHAL-Test-Lab': '1' }, body: JSON.stringify(body) });
+}
+
+async function runPackage(scenario) {
+  const test = scenario.installedTest;
+  setCardRunning(scenario.id,true);
+  clearEvidence();
+  try {
+    const payload = await packageMutation('/runs',{ caseId: test.id,revision: test.revision,
+      executionRevision: test.executionRevision,requestId: crypto.randomUUID() });
+    setStatus('Package run accepted.', test.name + ' is ' + payload.run.state + '. You can cancel it below.');
+    await loadHistory();
+  } catch (error) { setStatus('Package run unavailable.',error.message); }
+  finally { setCardRunning(scenario.id,false); }
+}
+
+function renderHistoryRun(run) {
+  const running = ['queued','running','cancelling'].includes(run.state);
+  return '<article class="history-row" data-history-id="' + esc(run.id) + '"><div class="description"><strong>'
+    + esc(run.test.appName + ': ' + run.test.name) + '</strong><br>' + esc(run.test.appVersion) + ' · '
+    + esc(new Date(run.createdAt).toLocaleString()) + ' · ' + esc(run.state)
+    + (run.stale ? ' · Earlier version / stale' : ' · Current version') + '</div>'
+    + '<button type="button" data-evidence-id="' + esc(run.id) + '">View result</button>'
+    + (running ? '<button type="button" data-cancel-id="' + esc(run.id) + '"'
+      + (run.state === 'cancelling' ? ' disabled' : '') + '>Cancel</button>' : '') + '</article>';
+}
+
+async function loadHistory() {
+  const generation = ++historyGeneration;
+  clearTimeout(historyTimer);
+  clearEvidence();
+  try {
+    const payload = await fetchJson(API + '/runs?app=' + encodeURIComponent($('historyApp').value));
+    if (generation !== historyGeneration) return;
+    recentRuns = payload.runs || [];
+    $('runHistory').innerHTML = recentRuns.map(renderHistoryRun).join('') || '<p>No package runs in this view.</p>';
+    $('runHistory').querySelectorAll('[data-evidence-id]').forEach(button => button.addEventListener('click',() => showEvidence(button.dataset.evidenceId)));
+    $('runHistory').querySelectorAll('[data-cancel-id]').forEach(button => button.addEventListener('click',() => cancelPackage(button.dataset.cancelId)));
+    const painted = new Set();
+    for (const run of recentRuns) {
+      if (run.stale) continue;
+      if (painted.has(run.test.id)) continue;
+      painted.add(run.test.id);
+      const state = ['queued','running','cancelling'].includes(run.state) ? 'run'
+        : run.state === 'passed' ? 'pass' : run.state === 'failed' ? 'fail' : 'degraded';
+      setScenarioState(run.test.id,state);
+    }
+    if (recentRuns.some(run => ['queued','running','cancelling'].includes(run.state))) historyTimer = setTimeout(loadHistory,1500);
+  } catch (error) {
+    if (generation !== historyGeneration) return;
+    recentRuns = []; clearEvidence();
+    $('runHistory').textContent = error.message;
+  }
+}
+
+async function showEvidence(id) {
+  const generation = historyGeneration;
+  clearEvidence();
+  try {
+    const payload = await fetchJson(API + '/runs/' + encodeURIComponent(id));
+    if (generation !== historyGeneration || document.hidden) return;
+    const run = payload.run;
+    const heading = document.createElement('h3'); heading.textContent = run.test.name + ': ' + run.state;
+    const version = document.createElement('p');
+    version.textContent = 'Package ' + run.test.appVersion + (run.stale ? ' · Earlier version / stale' : ' · Current version');
+    const output = document.createElement('pre'); output.className = 'history-output';
+    output.textContent = run.result ? [run.result.error,run.result.output].filter(Boolean).join('\n') || 'No text output returned.' : 'No completed output is available.';
+    $('runEvidence').append(heading,version,versionEvidence(run),output);
+    setTimeout(() => { if (output.isConnected) clearEvidence(); },30000);
+  } catch (error) { if (generation === historyGeneration) $('runEvidence').textContent = error.message; }
+}
+
+function versionEvidence(run) {
+  const details = document.createElement('details'); const summary = document.createElement('summary');
+  summary.textContent = 'Version and runner evidence';
+  const metadata = document.createElement('pre'); metadata.className = 'history-output';
+  metadata.textContent = ['Case revision: ' + run.test.revision,'Content revision: ' + (run.test.executionRevision || 'unavailable'),
+    'Source commit: ' + (run.test.sourceCommit || 'not recorded'), 'Runner image: ' + (run.result?.image || 'not recorded'),
+    'Duration: ' + (run.result ? run.result.durationMs + ' ms' : 'incomplete'),
+    'Cleanup: ' + (run.result?.cleanupVerified === true ? 'verified' : run.result?.cleanupVerified === false ? 'not verified' : 'not recorded')].join('\n');
+  details.append(summary,metadata); return details;
+}
+
+async function cancelPackage(id) {
+  try { await packageMutation('/runs/' + encodeURIComponent(id) + '/cancel',{}); await loadHistory(); }
+  catch (error) { clearEvidence(); setStatus('Cancellation unavailable.',error.message); }
 }
 
 $('runAll').addEventListener('click', runAll);
 $('refreshCatalog').addEventListener('click', load);
+window.addEventListener('hashchange', focusLinkedCase);
+$('refreshHistory').addEventListener('click',loadHistory);
+$('historyApp').addEventListener('change',loadHistory);
+window.addEventListener('blur',clearEvidence);
+document.addEventListener('visibilitychange',() => { if (document.hidden) clearEvidence(); else void loadHistory(); });
 load();
 </script>
 <script>
-(function(){
-  const map = {
-    '--bg': '--bg-primary',
-    '--panel': '--bg-secondary',
-    '--panel2': '--bg-tertiary',
-    '--line': '--border-color',
-    '--text': '--text-primary',
-    '--muted': '--text-secondary',
-    '--accent': '--accent-primary',
-    '--success': '--status-success',
-    '--warning': '--status-warning',
-    '--danger': '--status-error'
-  };
-  function syncTheme(){
-    try {
-      const parent = window.parent && window.parent !== window ? window.parent : null;
-      if (!parent) return;
-      const styles = parent.getComputedStyle(parent.document.documentElement);
-      Object.keys(map).forEach((local) => {
-        const value = styles.getPropertyValue(map[local]).trim();
-        if (value) document.documentElement.style.setProperty(local, value);
-      });
-    } catch {}
+let scheduleGeneration = 0;
+let scheduleHistoryGeneration = 0;
+let scheduleOptions = { canSchedule: false };
+let scheduleBusy = false;
+let scheduleRefreshPending = false;
+let scheduleTimer;
+
+function scheduleControls() {
+  $('scheduleForm').querySelectorAll('input,select,button').forEach(control => {
+    control.disabled = scheduleBusy || (!scheduleOptions.canSchedule && control.id !== 'refreshSchedules');
+  });
+  $('scheduleList').querySelectorAll('[data-schedule-enable],[data-schedule-run]').forEach(button => {
+    button.disabled = scheduleBusy || (button.dataset.canStop !== 'true' && (!scheduleOptions.canSchedule || button.dataset.unavailable === 'true'));
+  });
+}
+
+function renderSchedule(schedule) {
+  const name = schedule.unavailable ? 'Unavailable application' : schedule.appName === '*' ? 'All visible applications' : schedule.appName;
+  return '<article class="history-row" data-schedule-id="' + esc(schedule.id) + '"><div class="description"><strong>' + esc(name)
+    + '</strong><br>' + esc(schedule.levels.join(', ')) + ' · ' + esc(schedule.cadence) + ' · '
+    + (schedule.enabled ? 'Enabled · Next ' + esc(new Date(schedule.nextRunAt).toLocaleString()) : 'Disabled') + '</div>'
+    + '<button type="button" data-schedule-enable data-can-stop="' + Boolean(schedule.enabled) + '" data-unavailable="' + Boolean(schedule.unavailable) + '">'
+    + (schedule.enabled ? 'Disable' : 'Enable') + '</button>'
+    + '<button type="button" data-schedule-run data-unavailable="' + Boolean(schedule.unavailable) + '">Run now</button><button type="button" data-schedule-history>History</button></article>';
+}
+
+async function loadSchedules() {
+  if (!$('schedulePanel').open) return;
+  if (scheduleBusy) { scheduleRefreshPending = true; return; }
+  scheduleRefreshPending = false;
+  const generation = ++scheduleGeneration;
+  clearTimeout(scheduleTimer); scheduleHistoryGeneration++;
+  $('scheduleHistory').replaceChildren();
+  try {
+    const payload = await fetchJson(API + '/schedules');
+    if (generation !== scheduleGeneration) return;
+    scheduleOptions = payload.options;
+    const selected = $('scheduleApp').value;
+    $('scheduleApp').innerHTML = '<option value="*">All visible applications</option>' + payload.options.apps.map(app =>
+      '<option value="' + esc(app.name) + '">' + esc(app.displayName || app.name) + ' (' + Number(app.eligible) + ' ready, ' + Number(app.pending) + ' pending)</option>').join('');
+    if ([...$('scheduleApp').options].some(option => option.value === selected)) $('scheduleApp').value = selected;
+    $('scheduleList').innerHTML = payload.schedules.map(renderSchedule).join('') || '<p>No schedules yet.</p>';
+    for (const schedule of payload.schedules) {
+      const row = $('scheduleList').querySelector('[data-schedule-id="' + CSS.escape(schedule.id) + '"]');
+      row.querySelector('[data-schedule-enable]').onclick = () => changeSchedule(schedule);
+      row.querySelector('[data-schedule-run]').onclick = () => runSchedule(schedule);
+      row.querySelector('[data-schedule-history]').onclick = () => scheduleHistory(schedule.id);
+    }
+    $('scheduleStatus').textContent = payload.options.canSchedule ? 'Schedules use the current catalog and your current access at every run.' : 'An operator is required to create or change schedules.';
+    scheduleControls();
+  } catch (error) {
+    if (generation !== scheduleGeneration) return;
+    scheduleOptions = { canSchedule: false }; $('scheduleList').replaceChildren(); $('scheduleApp').replaceChildren(); scheduleControls();
+    $('scheduleStatus').textContent = error.message;
   }
-  syncTheme();
-  document.addEventListener('DOMContentLoaded', syncTheme);
-  window.addEventListener('storage', (event) => { if (event.key === 'cockpit-theme') setTimeout(syncTheme, 30); });
-})();
+}
+
+async function scheduleMutation(path,body,method = 'POST') {
+  if (scheduleBusy) return null;
+  const generation = ++scheduleGeneration;
+  let refresh = false;
+  scheduleBusy = true; scheduleControls(); clearEvidence();
+  clearTimeout(scheduleTimer); scheduleHistoryGeneration++; $('scheduleHistory').replaceChildren();
+  try {
+    const result = await fetchJson(API + path,{ method,headers: { 'content-type': 'application/json','X-OSHAL-Test-Lab': '1' },body: JSON.stringify(body) });
+    refresh = true;
+    if (generation !== scheduleGeneration) return null;
+    return result;
+  } catch (error) {
+    refresh = error.status === 401 || error.status === 403;
+    if (generation === scheduleGeneration) $('scheduleStatus').textContent = error.message;
+    return null;
+  } finally {
+    scheduleBusy = false;
+    if ($('schedulePanel').open && (refresh || scheduleRefreshPending)) await loadSchedules();
+    scheduleControls();
+  }
+}
+
+async function createSchedule(event) {
+  event.preventDefault();
+  const levels = [$('scheduleUnit').checked ? 'unit' : '',$('scheduleIntegration').checked ? 'integration' : ''].filter(Boolean);
+  if (!levels.length) { $('scheduleStatus').textContent = 'Select at least one test level.'; return; }
+  await scheduleMutation('/schedules',{ appName: $('scheduleApp').value,levels,cadence: $('scheduleCadence').value });
+}
+
+async function changeSchedule(schedule) {
+  await scheduleMutation('/schedules/' + encodeURIComponent(schedule.id),{ revision: schedule.revision,enabled: !schedule.enabled },'PATCH');
+}
+
+async function runSchedule(schedule) {
+  const result = await scheduleMutation('/schedules/' + encodeURIComponent(schedule.id) + '/run-now',{ revision: schedule.revision,requestId: crypto.randomUUID() });
+  if (result) { await scheduleHistory(schedule.id); await loadHistory(); }
+}
+
+function renderScheduleBatch(batch) {
+  const summary = batch.summary || {};
+  return '<article class="history-row"><div class="description"><strong>' + esc(batch.state) + '</strong> · '
+    + Number(summary.selected || 0) + ' selected · ' + Number(summary.deferred || 0) + ' deferred'
+    + (summary.error ? '<p>' + esc(summary.error) + '</p>' : '')
+    + (summary.unavailable || []).map(item => '<p>' + esc(item.appName + ': ' + item.caseId + ' — ' + item.reason) + '</p>').join('')
+    + (summary.drift || []).map(item => '<p>' + esc(item.appName) + ': ' + (item.missingRegistrations || []).length + ' unregistered test files'
+      + (item.inventoryError ? ' · ' + esc(item.inventoryError) : '') + '</p>'
+      + (item.missingRegistrations?.length ? '<details><summary>Unregistered files</summary><p>' + esc(item.missingRegistrations.join(', ')) + '</p></details>' : '')).join('')
+    + (summary.runs || []).map(run => '<p>' + esc(run.appName + ': ' + run.caseId + ' · ' + run.state)
+      + ' <button type="button" data-schedule-evidence="' + esc(run.runId) + '">View result</button></p>').join('') + '</div></article>';
+}
+
+async function scheduleHistory(id,attempt = 0) {
+  const generation = ++scheduleHistoryGeneration; clearTimeout(scheduleTimer);
+  try {
+    const payload = await fetchJson(API + '/schedules/' + encodeURIComponent(id) + '/history');
+    if (generation !== scheduleHistoryGeneration) return;
+    $('scheduleHistory').innerHTML = payload.batches.map(renderScheduleBatch).join('') || '<p>No runs for this schedule yet.</p>';
+    $('scheduleHistory').querySelectorAll('[data-schedule-evidence]').forEach(button => {
+      button.onclick = () => showEvidence(button.dataset.scheduleEvidence);
+    });
+    if (payload.batches.some(batch => batch.state === 'running')) scheduleTimer = setTimeout(() => scheduleHistory(id),2000);
+  } catch (error) {
+    if (generation !== scheduleHistoryGeneration) return;
+    clearEvidence(); $('scheduleHistory').textContent = error.message;
+    if ((!error.status || error.status >= 500) && attempt < 3 && $('schedulePanel').open && !document.hidden) {
+      $('scheduleHistory').textContent = 'Schedule history is temporarily unavailable. Retrying...';
+      scheduleTimer = setTimeout(() => scheduleHistory(id,attempt+1),1000 * 2 ** attempt);
+    }
+  }
+}
+
+$('schedulePanel').addEventListener('toggle',() => {
+  if ($('schedulePanel').open) void loadSchedules();
+  else {
+    clearTimeout(scheduleTimer); scheduleGeneration++; scheduleHistoryGeneration++; scheduleRefreshPending = false;
+    scheduleOptions = { canSchedule: false }; clearEvidence();
+    $('scheduleHistory').replaceChildren(); $('scheduleList').replaceChildren(); $('scheduleApp').replaceChildren();
+    scheduleControls();
+  }
+});
+$('scheduleForm').addEventListener('submit',createSchedule);
+$('refreshSchedules').addEventListener('click',loadSchedules);
 </script>
+
 </body>
 </html>

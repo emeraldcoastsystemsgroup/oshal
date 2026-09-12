@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-117 self-service password reset (BACKLOG done-when), driven through the REAL router: (1) ENUMERATION SAFETY — known-active, unknown, and disabled addresses get byte-identical responses, an unknown address mints NO account and NO token, and the response returns while delivery is still pending (a hanging mail transport cannot become a timing oracle); (2) the full reset flow — /forgot mints a one-time link (captured from the mocked SMTP rail), /accept sets the new password, the old one dies, the new one signs in; (3) a reset NEVER strips the second factor — a TOTP-enabled account still gets secondFactor:'required' after the reset and signs in only with a code; (4) per-IP rate limiting answers 429 over the cap, and the per-EMAIL cap silently stops token rotation with an identical 200; (5) a pending admin INVITE is not stomped by a forgot request (the reset only touches active accounts).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Seed established fixture accounts directly after proof-bound setup and exercise recovery through transactional account primitives.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import express from 'express';
@@ -26,7 +27,7 @@ vi.mock('@/features/notifications', () => ({
 }));
 
 import { createLocalAuthRoutes } from '@/app/routes/local-auth-routes';
-import { base32Decode, currentStep, totpCodeForStep } from '@/features/local-auth';
+import { base32Decode, currentStep, totpCodeForStep, bootstrapFirstAdmin } from '@/features/local-auth';
 
 // ── In-memory stand-in for oshal_local_users (the local-auth-routes.spec.ts fake,
 //    extended with the reset UPDATE the forgot flow issues) ────────────────────
@@ -37,7 +38,9 @@ function fakePool() {
   const byEmail = (email: unknown) => rows.find((r) => r.email === email);
   return {
     rows,
+    async connect() { return { query: this.query.bind(this), release() {} }; },
     async query(sql: string, params: unknown[] = []): Promise<{ rows: Row[] }> {
+      if (/^(BEGIN|COMMIT|ROLLBACK|LOCK TABLE)/.test(sql) || sql.includes('FROM swarm_roles')) return { rows: [] };
       if (sql.includes('ON CONFLICT (email)')) {
         const [id, email, displayName, userSub, tokenHash, expiresAt, invitedBy] = params;
         const existing = byEmail(email);
@@ -261,7 +264,7 @@ describe('forgot-password is enumeration-safe', () => {
     pool = fakePool();
     await startApp();
     const svc = { 'X-Service-Secret': SVC_SECRET };
-    await post('/api/local-auth/bootstrap', { email: 'admin@example.com', password: 'example-admin-pw-000001' });
+    await bootstrapFirstAdmin(pool as never, { email: 'admin@example.com', password: 'example-admin-pw-000001' });
 
     // A disabled account too — a reset must not resurrect it.
     const invited = await post('/api/local-auth/users', { email: 'gone@example.com' }, svc);
@@ -296,7 +299,7 @@ describe('forgot-password is enumeration-safe', () => {
     pool = fakePool();
     await startApp();
     const svc = { 'X-Service-Secret': SVC_SECRET };
-    await post('/api/local-auth/bootstrap', { email: 'admin2@example.com', password: 'example-admin-pw-000001' });
+    await bootstrapFirstAdmin(pool as never, { email: 'admin2@example.com', password: 'example-admin-pw-000001' });
     await post('/api/local-auth/users', { email: 'newhire@example.com' }, svc);
     const before = pool.rows.find((r) => r.email === 'newhire@example.com')!.invite_token_hash;
 
@@ -309,7 +312,7 @@ describe('forgot-password is enumeration-safe', () => {
     clientIp = '10.1.0.3';
     pool = fakePool();
     await startApp();
-    await post('/api/local-auth/bootstrap', { email: 'slow@example.com', password: 'example-admin-pw-000001' });
+    await bootstrapFirstAdmin(pool as never, { email: 'slow@example.com', password: 'example-admin-pw-000001' });
 
     let release!: () => void;
     smtp.gate = {
@@ -331,7 +334,7 @@ describe('the reset flow end to end', () => {
     await startApp();
     const email = 'resetme@example.com';
     const svc = { 'X-Service-Secret': SVC_SECRET };
-    await post('/api/local-auth/bootstrap', { email: 'admin3@example.com', password: 'example-admin-pw-000001' });
+    await bootstrapFirstAdmin(pool as never, { email: 'admin3@example.com', password: 'example-admin-pw-000001' });
     const invited = await post('/api/local-auth/users', { email }, svc);
     const inviteToken = decodeURIComponent(String(invited.data.invitePath).split('token=')[1]);
     await post('/api/local-auth/accept', { token: inviteToken, password: 'example-old-pw-0000001' });
@@ -356,7 +359,7 @@ describe('the reset flow end to end', () => {
     await startApp();
     const email = 'twofactor@example.com';
     const svc = { 'X-Service-Secret': SVC_SECRET };
-    await post('/api/local-auth/bootstrap', { email: 'admin4@example.com', password: 'example-admin-pw-000001' });
+    await bootstrapFirstAdmin(pool as never, { email: 'admin4@example.com', password: 'example-admin-pw-000001' });
     const invited = await post('/api/local-auth/users', { email }, svc);
     const inviteToken = decodeURIComponent(String(invited.data.invitePath).split('token=')[1]);
     await post('/api/local-auth/accept', { token: inviteToken, password: 'example-old-pw-0000002' });
@@ -407,7 +410,7 @@ describe('forgot-password rate limits', () => {
   it('caps per-EMAIL silently: the answer stays identical but the token stops rotating', async () => {
     pool = fakePool();
     await startApp();
-    await post('/api/local-auth/bootstrap', { email: 'victim@example.com', password: 'example-admin-pw-000001' });
+    await bootstrapFirstAdmin(pool as never, { email: 'victim@example.com', password: 'example-admin-pw-000001' });
     const row = () => pool.rows.find((r) => r.email === 'victim@example.com')!;
 
     let last: unknown = null;

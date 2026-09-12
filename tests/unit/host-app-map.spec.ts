@@ -4,13 +4,33 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for HOST_APP_MAP: an unset map or an unmatched hostname must fall through unchanged, a matched hostname must land on that app, matching is case-insensitive, and whitespace around entries doesn't break the split.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep focused root links intact without allowing malformed or ambiguous selectors to become redirects.
  */
 
 import { describe, it, expect } from 'vitest';
 
 import { resolveHostLandingPath } from '@/app/host-app-map';
+import { APP_REGISTRY_SCENARIOS } from '@/app/routes/test-lab-app-registry-scenarios';
 
 describe('resolveHostLandingPath', () => {
+  it('opens an explicitly selected application even on a different themed host', () => {
+    expect(resolveHostLandingPath('create.example=create', 'create.example', '/custom-home', 'fixture-crm'))
+      .toBe('/cockpit/?app=fixture-crm');
+    expect(resolveHostLandingPath(undefined, undefined, '/cockpit/', 'fixture-crm'))
+      .toBe('/cockpit/?app=fixture-crm');
+  });
+
+  it('does not interpret malformed, repeated or structured selectors as a destination', () => {
+    for (const app of ['', '//foreign.example', '../users', 'app&next=/users', 'a'.repeat(101), ['one', 'two'], { name: 'app' }]) {
+      expect(resolveHostLandingPath(undefined, 'example.test', '/cockpit/', app)).toBe('/cockpit/');
+    }
+  });
+
+  it('registers focused-entry regressions with the existing Test Lab', () => {
+    expect(APP_REGISTRY_SCENARIOS.find(scenario => scenario.id === 'focused-application-entry')?.regressionTests)
+      .toContainEqual({ level: 'unit', path: 'tests/unit/host-app-map.spec.ts' });
+  });
+
   it('falls back when HOST_APP_MAP is unset', () => {
     expect(resolveHostLandingPath(undefined, 'dnd.oshal.ai', '/cockpit/')).toBe('/cockpit/');
   });

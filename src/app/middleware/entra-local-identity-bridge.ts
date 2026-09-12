@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add the opt-in Entra-to-local identity bridge used during LOCAL_AUTH migration: tenant-bound verified OIDC identities link once to an existing active/invited local account by asserted email, then every request retains the canonical local subject and issuer. Includes a hybrid pilot flag with combined local/Microsoft sign-in and fail-closed configuration.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Read stable protocol identity from verified idTokenClaims because express-openid-connect removes issuer and other protocol claims from its presentation-filtered user view.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Retain verified directory evidence through canonical mapping and enforce absolute cache freshness under continuous requests.
  */
 
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
@@ -16,6 +17,7 @@ import {
 } from '@/features/local-auth';
 import { createChildLogger } from '@/shared/logger';
 import { LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
+import { preserveVerifiedDirectoryClaims } from '@/shared/middleware/verified-directory-claims';
 import { requireExactUserSubject } from '@/shared/security/exact-user-subject';
 import {
   buildOwnerRlsPolicyStatements,
@@ -309,6 +311,7 @@ function replaceOidcIdentity(req: BridgeRequest, identity: CanonicalLocalIdentit
   if (!original) return;
   const externalUser = original.user ?? {};
   const externalClaims = original.idTokenClaims ?? externalUser;
+  preserveVerifiedDirectoryClaims(req, externalClaims);
   const mappedUser = {
     ...externalUser,
     iss: LOCAL_AUTH_PRINCIPAL_ISSUER,
@@ -421,8 +424,9 @@ export function createEntraLocalIdentityBridgeMiddleware(
       const cached = identityCache.get(cacheKey);
       const assertedEmail = assertedAccountEmail(verifiedClaims ?? {}) ?? assertedAccountEmail(user ?? {});
       const firstLinkEmail = assertedEmail && firstLinkEmails.has(assertedEmail) ? assertedEmail : null;
-      const identity = cached && Date.now() - cached.at < IDENTITY_CACHE_TTL_MS
-        ? cached.identity
+      const cacheFresh = Boolean(cached && Date.now() - cached.at < IDENTITY_CACHE_TTL_MS);
+      const identity = cacheFresh
+        ? cached!.identity
         : await resolveIdentity(issuer, externalSub, firstLinkEmail, tokenTenant, entraObjectId);
       if (!identity) {
         identityCache.delete(cacheKey);
@@ -430,7 +434,7 @@ export function createEntraLocalIdentityBridgeMiddleware(
         rejectUnlinked(res, localFallback);
         return;
       }
-      identityCache.set(cacheKey, { identity, at: Date.now() });
+      if (!cacheFresh) identityCache.set(cacheKey, { identity, at: Date.now() });
       replaceOidcIdentity(req, identity);
       next();
     } catch (error) {

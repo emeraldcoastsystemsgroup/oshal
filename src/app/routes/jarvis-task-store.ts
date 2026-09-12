@@ -10,6 +10,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Scope durable work rows to verified issuer and withhold protected source text from automatic prompts without derived lineage.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: ensureJarvisSchema / saveTaskPending / finishTask / findJarvisTaskSessionId / buildOpenWorkBlock / persistJarvisTurn / markJarvisSessionTaskStatus / mapJarvisTaskStatusFromTicketStatus / storedVisual (route decomposition, no behaviour change).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | jarvisFailureNoteForTicketStatus: an escalated/cancelled ticket left the shelf row's error column NULL, so a failed multi-app plan rendered as status 'error' with no message. Say the run stopped — never summarize an outcome that does not exist.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Stale DONE results are WITHHELD from the block (title + age stay): the fourth live iteration proved guidance cannot stop the model quoting numbers it can see - the month-old demo-era pull kept winning however it was framed. Deterministic beats instruction: past STALE_RESULT_DAYS the result text simply is not in the context.
@@ -28,6 +29,10 @@ import {
 } from '@/features/visual-response';
 import { createChildLogger } from '@/shared/logger';
 import type { CapturedFile } from './jarvis-deliverable-files';
+import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
+import { getRequestIdentity } from '@/shared/services/database/request-identity';
+import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
+import { filterJarvisResultRows, hasProtectedJarvisSource } from './jarvis-result-access';
 
 const logger = createChildLogger({ module: 'jarvis-task-store' });
 
@@ -66,6 +71,8 @@ export async function ensureJarvisSchema(pool: AppContext['pool']): Promise<void
         'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS visual JSONB',
         'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS delivered BOOLEAN DEFAULT FALSE',
         'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS files JSONB',
+        'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS briefing_source_id TEXT',
+        'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS principal_issuer TEXT',
         'ALTER TABLE jarvis_tasks ADD COLUMN IF NOT EXISTS summarize_started_at TIMESTAMPTZ',
         'CREATE INDEX IF NOT EXISTS idx_jarvis_tasks_user ON jarvis_tasks (user_sub, created_at DESC)',
       ],
@@ -85,6 +92,8 @@ export async function ensureJarvisSchema(pool: AppContext['pool']): Promise<void
             'visual',
             'delivered',
             'files',
+            'briefing_source_id',
+            'principal_issuer',
             'created_at',
             'finished_at',
             'summarize_started_at',
@@ -103,15 +112,30 @@ export async function ensureJarvisSchema(pool: AppContext['pool']): Promise<void
 export async function saveTaskPending(
   pool: AppContext['pool'], id: string, sub: string, sessionId: string, title: string,
   kind: 'simple' | 'complex' = 'simple', ticketId?: string,
-): Promise<void> {
+): Promise<boolean> {
   const status = kind === 'complex' ? 'queued' : 'pending';
   try {
-    await pool.query(
-      `INSERT INTO jarvis_tasks (id, user_sub, session_id, title, status, kind, ticket_id) VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (id) DO UPDATE SET title = $4, status = $5, kind = $6, ticket_id = COALESCE($7, jarvis_tasks.ticket_id), error = NULL, result = NULL, visual = NULL, files = NULL, finished_at = NULL`,
-      [id, sub, sessionId, title.slice(0, 200), status, kind, ticketId ?? null],
+    const briefings = getJarvisBriefingDelivery();
+    if (briefings) {
+      const accepted = await briefings.service.publish(sub, sessionId, async (client, issuer, sourceId) => {
+        const result = await client.query(`INSERT INTO jarvis_tasks
+          (id,user_sub,session_id,title,status,kind,ticket_id,briefing_source_id,principal_issuer) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+          ON CONFLICT(id) DO NOTHING RETURNING id`,
+        [id,sub,sessionId,title.slice(0,200),status,kind,ticketId ?? null,sourceId,issuer]);
+        return Boolean(result.rowCount);
+      });
+      if (accepted !== undefined) return accepted;
+    }
+    const identity = getRequestIdentity();
+    const issuer = identity?.sub === sub ? identity.principalIssuer ?? null : null;
+    const result = await pool.query(
+      `INSERT INTO jarvis_tasks (id, user_sub, session_id, title, status, kind, ticket_id, principal_issuer) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (id) DO UPDATE SET title = $4, status = $5, kind = $6, ticket_id = COALESCE($7, jarvis_tasks.ticket_id), error = NULL, result = NULL, visual = NULL, files = NULL, finished_at = NULL
+       WHERE jarvis_tasks.user_sub=EXCLUDED.user_sub AND jarvis_tasks.principal_issuer IS NOT DISTINCT FROM EXCLUDED.principal_issuer`,
+      [id, sub, sessionId, title.slice(0, 200), status, kind, ticketId ?? null, issuer],
     );
-  } catch (err) { logger.warn({ err }, 'jarvis: saveTaskPending failed'); }
+    return result.rowCount !== 0;
+  } catch (err) { logger.warn({ err }, 'jarvis: saveTaskPending failed'); return false; }
 }
 
 /** @description Marks a work task done (with result) or errored — durable so it survives restarts.
@@ -168,12 +192,35 @@ export async function findJarvisTaskSessionId(
 /** DONE results older than this leave the auto-injected prompt (title + age remain). */
 const STALE_RESULT_DAYS = 7;
 
+async function automaticWorkRows<T extends { id: string; principal_issuer?: string | null; ticket_id?: string | null; session_id?: string | null }>(
+  ctx: AppContext, sub: string, rows: T[],
+): Promise<T[]> {
+  const visible = await filterJarvisResultRows(ctx, sub, rows, async () => {
+    const actor = getApplicationAuthorizationActor();
+    if (actor) return actor;
+    const issuer = getRequestIdentity()?.principalIssuer;
+    const target = issuer ? await getJarvisBriefingDelivery()?.targetActor(sub, issuer) : null;
+    if (!target) throw new Error('Jarvis result identity unavailable');
+    return target;
+  });
+  const safe = [];
+  for (const row of visible) if (!await hasProtectedJarvisSource(ctx, [row.id, row.ticket_id, row.session_id].filter((id): id is string => Boolean(id)))) safe.push(row);
+  return safe;
+}
+
 export async function buildOpenWorkBlock(ctx: AppContext, sub: string): Promise<string> {
   try {
-    const rows = (await ctx.pool.query(
-      `SELECT id, title, status, kind, result, created_at FROM jarvis_tasks WHERE user_sub = $1 ORDER BY created_at DESC LIMIT 8`,
+    let rows = (await ctx.pool.query(
+      `SELECT id, user_sub, session_id, ticket_id, briefing_source_id, principal_issuer, title, status, kind, result, created_at FROM jarvis_tasks WHERE user_sub = $1 ORDER BY created_at DESC LIMIT 8`,
       [sub],
-    )).rows as Array<{ id: string; title: string; status: string; kind: string; result: string | null; created_at?: string | Date }>;
+    )).rows as Array<{ id: string; session_id?: string; ticket_id?: string; briefing_source_id?: string; principal_issuer?: string; title: string; status: string; kind: string; result: string | null; created_at?: string | Date }>;
+    const briefings = getJarvisBriefingDelivery();
+    if (briefings) {
+      const issuer = getRequestIdentity()?.principalIssuer;
+      const actor = issuer ? await briefings.targetActor(sub, issuer) : null;
+      rows = await briefings.service.listTasks(sub, actor, 8);
+    }
+    rows = await automaticWorkRows(ctx, sub, rows);
     if (!rows.length) return '';
     const lines = rows.map((r) => {
       // The age is part of the record: without it a month-old demo-era pull read exactly like

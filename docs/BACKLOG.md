@@ -6,7 +6,28 @@ Framework, kernel, shared-service, security-boundary, and orchestration work bel
 
 Every item has an observable **Done when**. Live-proof requirements cannot be closed from unit results alone.
 
+The operator's [ranked ten priorities](backlog/next-priorities.md) link each autonomous implementation
+outcome to its local proof. This queue retains the remaining rollout and broader acceptance work.
+
 ## Promotion, deployment, and regression proof
+
+### Government contracting CRM and contract management
+- **Delivered:** connected CRM pages, reviewed source import, proposal/award and post-award lifecycle with scoped UI/API/tools and registered tests. Installed import acceptance preserves source records, ownership and documents. See [the scoped backlog](backlog/government-contracting-crm.md); detailed package work stays private.
+- **Remaining:** prove website-origin intake and the source-implemented reviewed deadline tasks through the installed workflow; extend conversion to unlinked intake/no-bid history and add a unified decisions/obligations dashboard. External financial and submission operations retain their separate approval scopes.
+- **Done when:** a synthetic opportunity travels from intake through reviewed pursuit and award to a managed contract with linked relationships, decisions, documents and obligations; two-user UI/API/Jarvis permissions pass and the package registers its cases with AI Test Lab on installation.
+
+### Enterprise authorization: user, application, function and record
+- **Requested:** application permission schemas imported at installation; direct and directory-group grants; installer-established swarm admin; consistent user authority through applications and Jarvis.
+- **Implemented foundation:** imported catalogs, durable policy and browsable applied-change history, central Access Administration, existing principal inventory, Users administration, registered typed tools, package HTTP/controller enforcement and local installer proof. [As-built behavior](security/application-authorization.md) distinguishes these from the complete [ADR-149](adr/149-enterprise-application-authorization.md) target.
+- **Remaining:** [AUTH-01 through AUTH-10](backlog/enterprise-authorization.md) retain directory provisioning, live worker revalidation, business-data adapters and rollout evidence. Isolated implementation suites are registered in AI Test Lab.
+- **Done when:** one installed business package proves differing user/group function and record rights across UI, API and delegated AI; explicit deny and revocation work; installer root has one authorized winner; test cases register with installation and isolated/live evidence is accurately distinguished.
+
+### Application test cases register with AI Test Lab during installation
+- **Requested:** test cases belong to application packages and register automatically on installation, with upgrade/reload/disable/uninstall reconciliation. Reuse existing package `smoke:` validation and verification; richer local/browser/live suites need versioned catalog and runner metadata.
+- **Implemented in the current branch:** versioned package catalogs, shared CLI/runtime validation, lifecycle reconciliation, caller-filtered discovery, sealed Node execution, durable versioned results and local catalog-selected schedules. Installed catalogs include Hello, Portrait, Kalshi, the ten-package adoption cohort and Sports Edge's coach follow-up; unavailable fixtures remain explicit. See the [execution guide](testing/package-test-execution.md) and dated run records for each proof scope.
+- **Backlog:** [Application Test Lab registration](backlog/app-test-lab-registration.md) contains the prioritized core work, complete public-package worklist, pinned suite inventory and lifecycle acceptance cases. Private package rows remain in the private app repository.
+- **Remaining:** add confined database/browser/reference-data fixtures, verify the new linked installation reports on the installed runtime, and finish package-suite adoption with representative installed runs. Historical suite evidence and recurring unit selection are implemented; broad registration remains open.
+- **Done when:** each application with existing testing installs its cases into the Lab without per-app core edits; lifecycle and ownership tests pass; unavailable prerequisites remain explicit; every inventoried suite has a disposition and representative installation/run evidence. Registration does not automatically execute all tests.
 
 ### Production core-deploy pipeline + version strategy (operator, 2026-09-05)
 - **Remaining:** deploying core to the customer production box (the gsquared CRM landscape) is a
@@ -143,7 +164,7 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** `%LOCALAPPDATA%\oshal\ci-local.log` records at least one PASSED nightly run, every gate still red has a dated BACKLOG entry, and the notifier reports the streak and which gates are *newly* red rather than sending an identical failure mail each night.
 
 ### Add-a-bot checklist omits the scrape target
-- **Remaining:** ~~add the scrape step to the checklist~~ — **superseded 2026-08-13.** Prometheus now discovers bots by container label (BUG-15 closed), so there is no scrape step to document and nothing for a checklist to omit. What remains is smaller: `docs/building-a-bot.md` and CLAUDE.md's bot-registry section should say that monitoring is INHERITED from the `x-bot-common` anchor, so nobody re-adds a manual step or wonders where to register a new bot.
+- **Remaining:** update `docs/building-a-bot.md` and the bot-registry section of CLAUDE.md to explain monitoring inherited from `x-bot-common`; container-label discovery makes a manual scrape-target step unnecessary.
 - **Done when:** both surfaces state that a bot inheriting `x-bot-common` is scraped automatically, and neither instructs anyone to edit `ops/monitoring/prometheus.yml`.
 
 ### DB-backed alert specs borrow the operator's database
@@ -183,10 +204,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 ### Deploy — the api process exits during the bot-recreate storm
 - **Remaining:** on the 2026-09-05 deploy of f59494b7, while `oshal-deploy.sh` recreated the 34 bots the api sat above 200% CPU, host-port HTTP timed out for about three minutes, and the process then exited (exit 1) on `terminating connection due to idle-in-transaction timeout` raised through process-crash-guards (api log 04:43:20Z; `docker events` shows die then start). Docker restarted it in the same container, it was healthy about 40 s later, and the gate reported DEPLOYED with the advisory scan counting 19 error lines — so a deploy currently carries roughly a minute of api downtime that only the container's RestartCount records. Which transaction idles through the storm is not yet identified.
 - **Done when:** a full `oshal-deploy.sh` run on the dev box recreates every bot with the api container's RestartCount unchanged and zero `idle-in-transaction` error lines in the api log for that window, proven by a log/inspect probe recorded in the real-boundary audit; if the fix is pacing the recreate rather than closing the transaction, the deploy log says so.
-
-### No gate compiles store packages against the real framework types
-- **Remaining:** store packages type-check their `@/…` imports against a per-package ambient `src-routes/core-modules.d.ts`, and nothing validates those stubs against the framework they claim to describe. A stub that declares an export core never had compiles fine on its own and fails the shared compile — and because `rebuild-store-routes.mjs` stages every source-bearing package into ONE tsc program, a single package's drift blocks the build for every other package. Proven live: `marketing-engine` declared a `QueryablePool` export and left the connector spec `unknown`, which took the whole-store build down from 2026-08-25 until it was found by hand on 09-08 and fixed in store PR #146 — nothing red went off in between. `store-ci.yml` runs per-package `node --test` suites but never the framework compile, and its `pull_request` trigger is moot while Actions stay manual-only ([ci-disabled-pending-billing]). The open question is where the gate runs: the store repo has no framework checkout, so this needs either a core-side job that clones the store, a store-side job that checks out core, or a local pre-publish gate — that placement decision is the work, not the script. Author guidance shipped meanwhile in store `BUILDING-EXTENSIONS.md` §5 (PR #147).
-- **Done when:** one command run from a clean checkout compiles every store package against the real framework types and exits non-zero on a package whose ambient stub disagrees with core; a deliberately reintroduced bad stub (an invented export) makes it go red; and the gate is reachable the way this project actually runs gates today (a documented `ci-local.sh`-style invocation at minimum, not only a workflow that never fires).
 
 ### A store build can leave package sources behind in the kernel's `src/app/routes/`
 - **Remaining:** observed 2026-09-09 — seventeen untracked files (`package-smoke.ts`, `sports-*.ts`) sat in core's `src/app/routes/`, byte-identical to `sports-edge/src-routes/` in the store checkout, with an mtime hours older than the session that found them; a concurrent session removed them by hand. The store compiler stages sources under core's `src/` and clears them in a `finally` (the store repo's `scripts/security/rebuild-store-routes.mjs`, staging prefix `__oshal_store_parity_`; core's [scripts/oshal-app.js](../scripts/oshal-app.js) `build` has the same shape), so either that cleanup can lose a race or an interrupted build skips it — the exact trigger is not established and reproducing it is the first task. The hazard is Rule 0c: `check-repo-separation.js` only inspects **tracked** paths, so leaked sources pass every gate until someone stages them, and a single `git add -A` would land application code in the kernel.
@@ -298,8 +315,9 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** that state produces a user-facing "Jarvis has no AI engine connected — add one under Settings → BYO LLM" (surface and TTS), a guard proves the message appears when resolution is empty and the harness is unbrokered, and the briefing shelf (which needs no live model) still renders instead of being dragged down with the ask path.
 
 ### Jarvis briefing preferences (operator ask, 2026-08-09)
-- **Remaining:** the Kalshi playable-hand briefing is loved, but it is the only proactive update Jarvis gives and there is no control surface. Operator asked for: a config screen listing every briefing-capable bot with per-bot on/off, an update frequency, and a delivery-channel choice per briefing — voice, bubble, or main-Jarvis-screen-only.
-- **Done when:** a Jarvis settings surface lists briefing sources discovered from registered bots (not hardcoded), each with enable/frequency/channel persisted per user; the cron honors them; a disabled source never briefs; and the Kalshi briefing continues working unchanged for a user who touches nothing.
+- **Source proof:** registered application sources, exact-user settings, announcement cadence, channel delivery and Kalshi producer adoption pass isolated PostgreSQL/HTTP/browser and package tests. [The contract](apps/jarvis-briefings.md) distinguishes announcement cadence from collection schedules.
+- **Remaining:** promote core and Kalshi 1.5.0, then verify the settings and eligible untouched defaults through the installed browser and producer path; adopt additional package-owned briefing sources.
+- **Done when:** the installed settings surface lists registered sources, per-user changes survive restart, disabled sources never deliver, channel and cadence choices govern announcements, and an eligible user with untouched preferences still receives Kalshi updates.
 
 ### ADR-045 graph-tier residuals
 - **Remaining:** decide/build RCA-persona graph use, add `subgraph()` if still needed, and make store-package graph dependencies explicit through `uses:` or an ADR-backed alternative.
@@ -346,25 +364,24 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** the deployed worker self-corrects to the dispatched provider/model, a missing authoritative record is refused before task creation, and the returned result records `providerConfigSource: "authoritative-dispatch"` with the config version.
 
 ### Manifest bots get an ADR-034 authoritative record at load
-- **Remaining:** the gsquared CRM boxes had an EMPTY `agent_config` table, so with push-on-dispatch
-  default-on every queue dispatch to any node bot failed closed ("Authoritative provider config was
-  required but no actionable record was available") while direct chat paths worked — found live
-  2026-09-04 chasing the Jarvis→sales-concierge handoff. Interim: records seeded by hand on both
-  boxes (openai-codex/gpt-5.5, matching their env truth). The durable fix: loading a manifest that
-  declares `bots:` seeds/updates each bot's `agent_config` record from its persona `runtime:` block
-  or the deployment default, so a fresh box is queue-dispatchable without hand seeding.
+- **Source proof:** manifest loads seed authoritative persona/deployment defaults while preserving
+  operator changes; disposable PostgreSQL and deterministic dispatch checks pass. See
+  [the implementation reference](testing/manifest-bot-initialization.md).
+- **Remaining:** promote the implementation and retain fresh installed-node dispatch evidence
+  without hand-seeded configuration, under the existing runtime and authorization requirements.
 - **Done when:** a clean-DB manifest load leaves a dispatchable record for every declared node bot,
   a unit guard proves it (and goes red when seeding is dropped), and `dispatch-manifest-worker` to a
   freshly loaded packaged bot succeeds on a box with no hand-seeded rows.
 
 ### Queue-dispatched concierge answers carry the app's data context
-- **Remaining:** the ADR-083 rail now completes end to end for the CRM (Jarvis files the pull,
-  keyword call-out picks sales-concierge, the node executes and the ticket completes — proven live
-  2026-09-05 on the gsquared staging box), but the concierge answered honestly that it had no board
-  data: the bare swarm-execute prompt does not engage the package's route-backed board tools the
-  interactive path uses, so a data question completes without the data. The dispatch (or the bot
-  node's tool layer) needs to let the concierge reach its own deterministic board reads on ticket
-  work, per the ADR-036 boundary (server-side data access, model sees normalized results only).
+- **Source proof:** the [specialist context contract](apps/specialist-context.md) inserts authorized
+  scalar facts before signed dispatch. Core known-answer/revocation/lifecycle checks and an actual
+  package consumer pass locally; the model receives no query or credential.
+- **Remote source increment (2026-09-11):** [signed current-rights verification](security/remote-application-execution.md)
+  supports direct hosted reasoning without tools, with immutable queued initiators and current
+  exact-principal result checks. Its local fixture evidence is recorded separately from deployment.
+- **Remaining:** add per-operation authorization to the agentic tool broker before enabling generic
+  queued handoffs, promote core and the owning application, and retain a live known-answer handoff.
 - **Done when:** the same Jarvis question ("how many opportunities are in docs out?") returns the
   live count through the handoff rail on a box whose CRM holds a known stage distribution, with the
   read executed by the package's own operation — never by handing the model a credential.
@@ -380,7 +397,8 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 ## Connectors, channels, and external systems
 
 ### Connector OAuth started from a themed subdomain dies at the callback
-- **Remaining:** the generic connector ceremony builds its redirect from `APP_URL` ([connector-oauth-ceremony.ts](../src/app/routes/connector-oauth-ceremony.ts)), so every provider sends the browser back to `oshal.agenticfederal.us` regardless of which surface started the flow. A session on `finance.oshal.ai` lives in a cookie scoped to `.oshal.ai`, so the callback arrives with no session and `requiresAuth` rejects it with 401 JSON — tokens are never stored. Live-hit 2026-08-17 reconnecting Schwab from the finance surface (api log: authenticated `/schwab/start` 22:16:18Z → unauthenticated `/schwab/callback` 22:16:36Z). Workaround: run the connect from `oshal.agenticfederal.us` itself. Candidate fixes: authenticate the callback from the signed state it already carries (provider + sub + ts HMAC — treat its verification like the token broker), or have `/start` bounce the browser through the `APP_URL` origin first so the whole ceremony runs inside one cookie family. Registering per-host callbacks does not generalize — Schwab accepts exactly one callback URL, byte-for-byte.
+- **Implemented in the current branch:** the exact OAuth callback can receive a one-time state without a session and relays an opaque ticket to the initiating configured origin. Only completion with that origin's authenticated owner and browser cookie exchanges and stores tokens. The provider's fixed callback stays unchanged. Local HTTP/provider fixtures cover cross-domain completion, PKCE, expiry, replay and browser/owner binding.
+- **Remaining:** merge/deploy and record a real themed-domain provider connection. Pending ceremonies are process-local: a restart requires starting consent again; multiple controllers require routing affinity across configured origins or a shared atomic ceremony store.
 - **Done when:** a connect started from `finance.oshal.ai` (or any `*.oshal.ai` surface) completes and stores tokens without the user pre-logging into `oshal.agenticfederal.us`, a forged or expired state is still refused, and a guard covers the cross-cookie-family origin case.
 
 ### The ESPN "Log in + push" button has not reached a running node
@@ -456,22 +474,30 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** register Outlook under `maintainer@emeraldcoastsystemsgroup.com`, set real daily cost caps, and configure `SWARM_SERVICE_SECRET` so bot-node auth is fail-closed.
 - **Done when:** Outlook reconnects and sends, at least one budget denial is proven, and unauthenticated `/api/swarm-execute` is rejected on the deployed stack.
 
+### Complete and cancel nightly backup checks safely
+- **Observed 2026-09-12:** the scheduled live dump/restore diagnostic held a table lock needed by API startup. Cancelling that exact dump restored progress, but the diagnostic still produced passing evidence from a partial restore. The generated evidence was marked incomplete and its original output preserved; release backups were unaffected.
+- **Remaining:** require successful completion of both dump and restore, reject partial output, bound execution and cleanup, and coordinate live database checks with the deployment lock. Ensure the scheduled launcher uses the reviewed implementation rather than an older checkout.
+- **Done when:** cancellation and restore-error regressions cannot publish accepted backup evidence; cleanup preserves the source database, and a concurrent deployment cannot remain blocked by this diagnostic. Register the executable regressions with AI Test Lab.
+
 ## Shared product experience
 
-### Cockpit landing: a summary dashboard, not a setup screen
-- **Operator direction 2026-09-09:** *"its great that applications have a setup screen but i need a summary dashboard and a real update ... 18 new emails, account breakdown, category breakdown ... click and open in new tab ... stocks performance."* The landing today is readiness/setup plus a single advisory banner (e.g. the connector-liveness "gcp access expires today - Review"). What is wanted is a standing per-app summary with live counts that click through.
-- **The data mostly exists and is not collected anywhere a human sees at once:** live broker positions/P&L per book (`getBrokerReader` through the registered Schwab token resolver), the equity series (`oshal_trading_daily_equity`), watchdog findings, connector liveness (`GET /api/connect/liveness`), and per-app readiness (ADR-141 `readiness:`).
-- **Blocked on one decision the operator must make:** does this REPLACE the `/cockpit/` landing for every app, or is it a new surface alongside it? That decides whether this touches the shared landing (load-bearing for every installed app) or ships as an additional tile.
-- **Also specified:** a dismissed item ("2 configs missing - ignore") must never reappear on the summary and must remain visible only in a detail view - so dismissal is per-user durable state, not a session flag.
-- **Done when:** the landing shows live per-app counts sourced from the owning app (never hand-typed, per the counts-are-generated rule), each tile opens its app in a new tab, a dismissed advisory stays dismissed across sessions and reloads while remaining in the detail view, and a per-app section renders "unavailable" rather than a zero when its source read fails.
+### Top-level workspaces for complete applications
 
-### ADR-139 artifact exchange — what shipped, and the shared context for the five entries below
-- **Done already (2026-09-04→07, all merged, deployed and live-verified):** the spine — registry, owner-bound short-TTL handles, the shared `send-to.js`, the cockpit `artifact=` forward — plus the standard UX tag (three `data-artifact-*` attributes + one include; chip and right-click injected centrally, so presentation stays a one-file decision), the shared package-side redeem (`redeemArtifactViaRelay`, which makes a new destination ~30 lines), and [`scripts/deploy-store-package.sh`](../scripts/deploy-store-package.sh) which copies a package onto a box without silently deactivating it. **Twelve destinations:** Email-it, Save-to-OSHAL-Storage, Ingest-to-RAG, Summarize-with-Jarvis (kernel) + Portrait Studio, Career, AI Office, little-monsters Tutor, Print inbox, D&D, Kid Lens, Spaces (apps). **Eleven tagged source surfaces:** files browser, portrait gallery, AI Office files, Video Studio cards, Jarvis deliverable chips, career board resume/cover, career submission screenshots, class materials, lecture audio, venture-plan exports, and (Amendment D) the task-explorer file preview. Verified on the box: pdf offers 8 destinations, json 5, mp4 3, png 4. Design + the two integration recipes: [ADR-139](adr/139-artifact-exchange-send-to-registry.md).
-- **Remaining:** tracked as the five entries below, each with its own done-when — the mint-with-bytes rollout, one product gap, one app destination, and the two halves of the source direction. Nothing else from the rollout is open. (The mint-with-bytes *decision* closed 2026-09-09 as Amendment D; what is left of that entry is tagging the surfaces it unblocked.)
-- **The per-application inventory the wave-by-wave rollout never produced now exists:** [docs/apps/artifact-exchange-coverage.md](apps/artifact-exchange-coverage.md) — all 51 store packages, what each accepts, what each can send, and which endpoints do not exist yet. It is the authority for the scope of the entries below, and it settles the question that kept recurring: the destination side is essentially complete (every package that already had a way to take a file in is wired), the source side has **three** untagged packages that serve real bytes (storage, aero-lab, payroll), and roughly half the store genuinely has no artifact to exchange — that absence is correct, not debt. ⚠ Two grep heuristics over-count badly and are recorded there: a bare `sendFile|download|Content-Disposition` scan reports ~26 packages because almost every package uses the same `serveFile(surfaceDir, fileName)` helper for its own tool HTML, and `type="file"` proves an upload control rather than a gap.
+- **Requested:** a small row of themed workspaces across the top: OSHAL Cockpit, Learning, Create and Intelligent Career. Learning opens Little Monsters directly. Existing supporting navigation stays on the left; additional complete applications belong under More.
+- **Design:** [clickable navigation prototype](mockups/cockpit-workspaces.html) and [implementation backlog](backlog/cockpit-workspace-navigation.md). The prototype uses synthetic content; People/HR is proposed and does not imply a delivered HR application.
+- **Earlier deployed checkpoint:** Workspace and the separate optional Navigation setting preserve existing pages and the default Sidebar. Current profile synthesis and application permissions determine destinations; Career prefers its admitted group or falls back to its admitted application. The earlier checks passed 114 appearance cases, 50 profile/authorization cases (28 new HTTP cases), 18 Chromium cases, four model cases, one Lab registration assertion and 29 separate catalog regressions. Slow discovery has a bounded thirty-second window and Retry removes expired application links. Native and preservation evidence for that checkpoint remains in the [preceding release record](releases/parallel-backlog-2026-09-11.md).
+- **Appearance and navigation:** the deployed palette/header checkpoint is recorded in the [facelift release](releases/workspace-facelift-2026-09-12.md). The subsequent [workspace polish release](releases/workspace-polish-2026-09-12.md) records removal of duplicate navigation, the anchored More menu, quieter header, Create 1.3.0 layout and Stories 1.2.1 palette adoption, with separate source and installed acceptance.
+- **Contextual navigation and Career:** the [Career navigation release](releases/career-navigation-2026-09-12.md) records the Federal CRM top tab, delegated sidebar duplicates, retained unique tools and the Job Board/Open jobs search refinement.
+- **Remaining:** implement the compact daily dashboard below. The dashboard prototype remains separate from the implemented navigation and appearance settings.
+- **Done when:** desktop and mobile users can switch directly into permitted complete applications, use their existing pages, recover context after reload and reach all remaining applications without a crowded top bar. Hidden or unavailable destinations remain enforced at the application boundary. Register actual implementation tests with AI Test Lab.
 
-### ADR-139 — tag the sources that mint-with-bytes unblocked
-- **Done already (2026-09-09, ADR-139 Amendment D):** the decision the four blocked surfaces were waiting on is recorded and it is **yes** — `POST /api/artifacts/handles/upload` mints a handle that CARRIES the artifact, for a source with no byte-serving URL to point at. Same owner binding, same 15-minute TTL, bytes in memory only (never disk — a handle is a gesture in flight, and disk would give up D2's "no bytes at rest" property for a cleanup obligation), a per-handle cap and a per-sub BYTE budget (the shipped per-sub *count* cap does not bound memory), and authorization ahead of multer so anonymous bytes are never buffered. Downstream nothing changed: one helper serves a carried payload and otherwise relays as before, so every existing destination and the package-side `redeemArtifactViaRelay` inherited it untouched. Source-side, `send-to.js` takes `meta.blob` or the declarative `data-artifact-blob` (`blob:`/`data:` only). Live proof: the **task-explorer Files tab**, whose route answers a JSON preview envelope and could never be tagged before.
+### Jarvis and a compact daily dashboard
+- **Direction confirmed 2026-09-11:** combine application updates and a compact Jarvis area on one useful daily page; keep All applications accessible. The prior separate-surface decision is resolved by this direction. Implementation remains backlogged while the current parallel batch continues.
+- **Reported defects:** overlapping eye/response text, persistent Engineering activity, crowded controls, repetitive Kalshi entries, missing morning reports and fixture/probe cards in Home. Reproduce the causes before claiming a fix.
+- **Remaining:** redesign the assistant and page layout, group alerts with durable per-user state, adopt additional package-owned briefing sources, and connect update details to context-aware navigation and editable drafts. Reuse existing Home summaries, briefing preferences and the validated surface bridge.
+- **Done when:** [JDX-01 through JDX-06](backlog/jarvis-daily-dashboard.md) pass actual browser, source, ownership and installed-workflow acceptance. Counts come from owning applications; unavailable sources never appear as zero. A user can open an update, review details, prepare a reply and return without losing context or manual edits.
+
+### ADR-139 — adopt artifact source tags
 - **Remaining:** the other client-generated exports now have a rail and are simply not tagged yet — Switchboard's composed post image, camera captures, payroll NACHA files, ocean-lab CAD, workflow-studio JSON. Each is the standard tag over a Blob the surface already holds, not new plumbing. **Plus three packages that serve real bytes over an existing owner-scoped URL and were never tagged** — `storage` (`res.download` of the user's own stored files), `aero-lab` (run artifacts) and `payroll` (the W2 report and its sibling); those need no Blob and no new endpoint, only the tag. The audit also names four packages whose existing import route could back an `accepts:` block with the ~30-line `redeemArtifactViaRelay` adapter: marketing-engine, payroll, switchboard, video. **RAG Center documents are NOT in this set** and are not unblocked: a retrieved corpus chunk is not a file, so what a handle would carry there is an open product question, not a missing route.
 - **Done when:** each of those surfaces carries the tag and one dispatch per surface is live-proven; and the RAG Center question is either answered in the ADR or explicitly declared out of scope, so nobody re-attempts it as plumbing.
 
@@ -484,15 +510,16 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** a document sent from the files browser lands as a material in a class the caller may write to, chosen in the dispatch, with a non-teacher's share still going through the existing request-share path; proven by one live dispatch.
 
 ### ADR-139 Stage 4a — the source direction: a generic "pick an artifact" picker
-- **Remaining:** `provides:` declarations are parsed, validated and registered by the loader, and nothing consumes them. Every app still hand-builds its own file picker — Portrait Studio's connected-files modal is the pattern that keeps getting copied. The inverse of "Send to…" is "pick from": one shared component that lists registered sources and hands back a minted handle.
-- **Done when:** a kernel picker component (the `send-to.js` sibling) lists `provides:` sources across apps and returns a handle, and at least one surface adopts it in place of its bespoke picker with the old modal deleted, not left beside it.
+- **Implemented:** shared registry-backed source discovery, connected-storage adapter and picker component; Portrait Studio 1.11.0 consumes it and provides its finished-image gallery. The old modal and its private helpers are deleted. Local real HTTP/file/handle/Chromium acceptance passes; see ADR-139 Stage 4a.
+- **Remaining:** merge the protected core change, install Portrait Studio 1.11.0 and record one signed-in selection on the deployed cockpit.
+- **Done when:** the deployed picker lists registered sources and a selected authorized image reaches Portrait Studio's crop stage through its owner-bound handle.
 
-### ADR-139 Stage 4b — the NL leg ("Jarvis, send this to X")
-- **Remaining:** language resolution against the same registry, so the menu and the assistant answer from one catalog. Nothing about this needs a new mechanism — a turn resolves `/api/artifacts/actions` for the artifact in hand and dispatches the chosen action.
-- **Done when:** one live-proven Jarvis turn dispatches an artifact to a destination the user named in words, with the destination's own confirm gate intact (an outward-acting destination still asks), and a refused/ambiguous name answers with the available destinations instead of guessing.
+### ADR-139 Stage 4b ? the NL leg ("Jarvis, send this to X")
+- **Implemented:** Jarvis loads versioned YAML tool metadata with keywords and usage context. An explicitly selected artifact supplies a live compatible/visible destination catalog; strict model proposals resolve to the existing browser dispatcher, retaining owner checks and destination confirmation. Local model-fixture, registry/handle and browser proof are documented in ADR-139.
+- **Remaining:** protected core merge, deployment, and a signed-in turn using the actual model to name a destination; exercise an ambiguous request and a confirmation-requiring destination.
+- **Done when:** one live-proven Jarvis turn dispatches the selected artifact to the named destination, outward actions retain their confirmation gate, and ambiguous/unavailable targets return available choices without dispatch.
 
 ### Surface theming — visual spot check across themes
-- **Done already:** [BUG-12](operations/bug-log.md) is fixed and gated — every governed surface links a theme source, sets a default `data-theme`, and declares no bare hex in `:root`; 315 hardcoded colours across 37 files were remapped onto framework tokens by semantic role. `tests/unit/surface-theming.spec.ts` is mutation-proved and fails on all three regressions.
 - **Remaining:** the gate proves the *mechanism*, not the *result*. Walk the converted surfaces in one light theme and one dark theme and look for contrast casualties — a role mapped to a plausible-but-wrong token (a status hue used as a background tint, a border that reads as text) is invisible to a static check. Highest-risk files are the ones with the largest remaps: `swarm-control.css` (53), `task-explorer.css` (21), `workflow-studio.css` (27 across two passes), and `applications/index.html`, which was authored light and now follows the theme.
 - **Done when:** each converted surface has been seen in a light and a dark theme with no unreadable text or invisible border, and any mis-mapped role is corrected at its token rather than by reintroducing a hex.
 
@@ -501,7 +528,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** a connection whose stored token has passed its expiry renders the expired marker and is counted by the Need-attention tile and filter; a unit assertion pins the response keys the shipped surfaces read, so dropping a consumed field goes red.
 
 ### In-app help: per-surface affordances and first-run
-- **Done already:** the per-surface guides live in [docs/guides/](guides/README.md) and are now reachable in-product — `/api/help` renders them behind auth, `?for=<surface>` deep-links a screen to its own page, and a **Help** entry is pinned in the cockpit ribbon. The image ships the corpus and a guard covers the dead-deep-link, traversal, ribbon, mount and Dockerfile-COPY failure modes.
 - **Remaining:** the reader still has to know to click Help. Add a per-surface `? Help` affordance on the `sat-ops` pattern that opens `/api/help?for=<surface>` from the screen itself, and honest empty states for the screens that look broken when they are not (Intelligent Processing's parked backlog is the worst offender — a parked row should say whether it is waiting for a person or was stopped on budget). Decide whether the first-run strip should stop suppressing itself on the full framework profile (`src/pages/cockpit/js/first-run.js`), which is why a new user currently gets no orientation at all on the cockpit carrying every surface.
 - **Done when:** every covered surface exposes a help affordance that lands on its own guide without the user navigating the ribbon; a parked Intelligent Processing row states its reason on-screen; and first-run behaviour on the full profile is either fixed or explicitly recorded as intended.
 
@@ -571,11 +597,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** expose the captured timeline with prompt/response inspection, rewind, hand-edit, and forward play; clearly mark non-replayable frames.
 - **Done when:** an operator opens a finished run, edits the failing call, and replays the tail while preserving the original immutable baseline and audit trail.
 
-### Variant-selection switches (learned re-routing reframed as a non-goal, 2026-08-09)
-- **Decision (operator):** routing is the operator-approved keep-winner switch — promote an LLM-judged, strictly-cheaper winner, optionally apply it to the owning bot via the ADR-034 push, audited and one-click revertible, with cockpit promote/revert controls in the Optimizer. An autonomous learned/trained selector is a ROADMAP non-goal; nothing re-routes without approval (auto mode stays behind `TOKEN_CHASE_AUTO_PROMOTE`, default off).
-- **Remaining (optional, unscheduled):** a corpus-backed query-type lookup that *suggests* a switch before any spend — an advisor that proposes for approval, never a re-router.
-- **Done when:** closed by the promotion switch; reopen only if the suggestion advisor is commissioned.
-
 ## Career and job application
 
 ### Career scoring/tailoring bot-node migration
@@ -616,6 +637,7 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** `world_metrics` carries `congress_*` rows with a recorded `observed_at`, the watchlist can be populated from that feed with the disclosure date shown beside each name, and no congressional holding is ever written from anything but the feed.
 
 ### Arming a second autopilot leg is a deliberate, gated act
+- **Remaining:** make the existing one-book dispatch boundary explicit in an arming acknowledgement and regression guard before any second leg is authorized.
 - **Context 2026-09-09:** the rollover book `b-77146871` (CASH ...8271) was enabled at operator request. Enabling is inert for trading on its own - the autopilot resolves ONE book per schedule from that schedule's own `bookId` and never enumerates enabled books - so the book gained watchdog coverage and nothing else. That safety depends on a property that is currently only implied by the dispatch code.
 - **Why this needs its own entry:** if a leg is ever armed for that book, three things become live at once - daily gravity rotation (`TRADING_SLEEVE_ROTATION=true`, `TRADING_ROTATION_EVERY_DAYS=1`) against roughly $224k of idle cash, protective exits over positions the operator chose by hand, and the sell side of rotation ("dropped out of the top 33") on names picked for reasons the model cannot see. Note also that pinned lots are NOT a ring-fence for existing holdings: a pinned lot at `open` places real GTC sell orders at the venue.
 - **Done when:** arming a leg for a book whose positions were not opened by the engine requires an explicit acknowledgement recorded against that book; there is a guard proving `enabled` alone never widens the set of books a schedule dispatches; and the operator-facing copy states plainly that a hand-picked position under an armed leg is subject to rotation sells.
@@ -666,7 +688,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** the Trends tab's Paper · auto tile and curve are bankroll-based and labelled paper; open alerts show price-since-announced; and Real · auto is either still "not built" with the gate stated, or built behind a PROVEN scorecard row plus a double opt-in flag, with orders audited like the manual path.
 
 ### Trading watchdog hardening — the rest of the checks (ADR-134 D3.7)
-- **Shipped 2026-09-07:** the decidable half moved to `scripts/lib/trading-watchdog-checks.js` — pure functions the ps1 delivers into the api container — which is what makes every threshold, alert key and message mutation-provable. The old position audit read ONE book (the legacy live ref), so with three live books two real-money accounts had nothing auditing their positions; it now reads account, positions and orders per book for EVERY live book the roster returns, enabled or disabled, and reports held-past-the-stop, stranded working sells, negative buying power or cash, an anomalous open-position count, and single-name concentration. Suppression is per book and per symbol with a worsening band measured from the severity at the last alert (not a high-water mark, which would let a name slide silently through a whole window) plus a one-shot recovery line. No check can pass by not running: every docker exec and cp runs under a deadline, and an empty result, a non-zero exit or a timeout raises its own infrastructure alert. The container-side audit budget is DERIVED from that deadline and sliced per book — measured on the box, three wedged books went from 126 s (killed at the deadline, losing the healthy books' findings too) to 7 s with one error line each.
 - **Remaining:** quote volume/recency corroboration beyond the pre-market gap check; broker-number parsing; and the deliberate narrowing recorded in ADR-134 — "uncovered position" for autopilot-managed names is approximated as held-past-the-stop rather than reconciled against the venue's own working stop orders, because the watchdog reads the ledger, not the venue.
 - **Done when:** the remaining checks ship with the same mutation guards, and the uncovered-position check compares against venue-resident stops rather than a loss threshold.
 
@@ -773,7 +794,15 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** operator decision (2026-09-10): fold these Echo pipeline counts into the DevOps monitoring / self-healing workstream ([ADR-119](adr/119-autonomous-health-ticket-processing.md), [ADR-125](adr/125-operations-stream-event-to-action-pipeline.md)) instead of keeping an orphan table. Identify the April writer; decide how Echo's six stages enter the funnel — a mapping onto `FUNNEL_STAGES`, or new stages each with its own query (a stage added without one fails the build by design); capture them as an `echo` `source` lane; give that lane its own "went quiet" signal for the self-healing path; then retire `echo_pipeline_snapshots`, migrating or dropping its 168 April rows.
 - **Done when:** Echo's per-stage counts appear as their own lane in the Operations Stream funnel on the reference stack; stopping the Echo writer past its window raises an alarm naming the `echo` lane in `/api/ops/alert-pipeline/health` and that alarm reaches the ADR-119 intake as one ticket; and `node scripts/generate-schema-docs.js` reports no undeclared live table.
 
+### Cockpit startup: remove blocking external script dependencies
+
+- **Observed:** the 2026-09-12 Career/navigation rollout included a blank reload with parsing stopped at the synchronous external marked script, before the body or DOMContentLoaded. A hard refresh restored the shell; no service-worker reload loop was established.
+- **Source implemented, publication/native acceptance pending:** marked's existing locked build and exact Phosphor 2.1.2 regular assets now use fixed authenticated local routes; the unused parent graph preload is removed. The registered full-shell browser recipe covers blocked external requests, Markdown/icons/Mesh, offline asset bytes and worker-update preference continuity. See [Cockpit startup resilience](backlog/cockpit-startup-resilience.md) for scope and the separate open database investigation.
+- **Remaining:** publish and verify installed startup plus an existing-tab update. This does not claim offline application data or fix rollout-time database checkout delays.
+
 ### Bot-recreate thundering herd
+
+- **Observed 2026-09-12:** during the full rollout, six API pool-checkout timeouts accompanied workspace discovery requests lasting 83.155–279.995 seconds. After recovery, discovery returned all 33 admitted links in 0.630–1.358 seconds, and explicit Retry restored the Job Board. The captured errors were not PostgreSQL role-limit refusals; the original connection holders were not identified. [Timing evidence and remaining diagnosis](backlog/cockpit-startup-resilience.md#rollout-time-database-checkout-delays).
 - **Remaining:** deploy the default-on bounded bootstrap-pull jitter, recreate the full bot fleet against the production-sized API database pool, and tune the window only from observed startup/config-convergence results.
 - **Done when:** recreating the full bot fleet causes no pool exhaustion, each bot receives config within a bounded window, and boot authentication/rate limits remain enforced.
 
@@ -786,6 +815,12 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** each app is installable from its platform store or that store's private/beta channel under the business developer account, a store-installed copy completes `/tv` pairing against the public swarm and speaks a Jarvis answer, and the TV tile links to the listings instead of the sideload guide.
 
 ## Application-package follow-ups
+
+### Create visual workspace and integrated editing — deferred
+- **Requested:** Canva-style page layout and a shared generate, manually edit, point/annotate, regenerate and edit-again workflow. Basic image text/crop/filters and video trim/splice/audio come before advanced layers and professional editing depth.
+- **Owner:** [`create/BACKLOG.md`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/create/BACKLOG.md) holds the phased application roadmap and acceptance. Reuse Portrait, Video and AI Office capabilities, registered artifact handoffs and current permissions. Project history and supported editable formats must survive editor round-trips.
+- **Status:** the operator commissioned the advanced editor as a parallel track on 2026-09-12. Create 1.5.0 is in implementation: manual image layers, private durable projects, undo/revisions, crop/transforms and PNG/JPEG/editable export, with explicit app roles and registered proof. The prior Home/template layout slice is delivered; see the [workspace polish release](releases/workspace-polish-2026-09-12.md). AI region regeneration, video timelines and deeper desktop-editor compatibility remain separately staged. Core retains only demonstrated shared transport or provider-capability dependencies.
+- **Done when:** the commissioned phase works through the installed Create entry, retains manual edits and accepted revisions, exports real media, and registers meaningful tests in AI Test Lab. Advanced editing remains a later phase.
 
 ### SEC-06 application-store route, ownership, and CI closure
 - **Remaining:** promote the completed route/source, ownership/RLS, dependency-lock, secret-allowlist, immutable-action, and blocking-workflow changes through the protected application branch, then retain the first remote workflow evidence for each blocking gate. Re-run the LoRA, Vids, D&D, and Little Monsters disposable-PostgreSQL jobs against the promoted SHA; local source and CI-definition tests do not prove that branch protection actually requires them.
@@ -803,6 +838,8 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** keep [`aero-lab/BACKLOG.md`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/aero-lab/BACKLOG.md) authoritative while closing its red real-drive gate: use the vendored engine by default, derive BEMT and buoyant-trim tolerances from convergence, attribute structured aero refusals, step PackEcm exactly once per accepted mission timestep, run the four verification anchors, add browser/server numerical parity and mesh self-intersection checks, then rerun the pinned 30k sweep. Physical certification still needs vent/ballonet design, verified barrier film and helium purity, and a weighed propulsion/power ledger reconciled with BOM/CAD.
 - **Done when:** all four reference designs pass or fail for an explicit structured validity reason on the fingerprinted real engine; the f=0.2–0.8 trim sweep, cold-night thermal/heater ledger, four anchors, browser parity, mesh, and deterministic sweep gates pass; and no build is certified until the physical pressure/material/purity/mass evidence reconciles to the exported design.
 
+### YouTube archive slice adoption
+- **Remaining:** reconcile the package-owned YouTube slice installation and whole-archive routing evidence with the package README; this acceptance was previously misplaced beneath Aero Lab.
 - **Done when:** installing the package registers its YouTube slice, uninstalling removes it, whole-archive upload routes correctly with owner isolation, and the package README is the canonical per-item product queue.
 
 ### Game Show core dependencies
@@ -813,20 +850,11 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** make the [`payroll` README](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/payroll/README.md) the canonical queue for additional cited state/local tables, workweek overtime, protected identifiers, employee isolation, repayment/garnishment/deposit rules, benefits/payment traces, verified EFW2 2026, and enrolled filing/payment rails.
 - **Done when:** each commissioned package item has primary-source citations where legally material, a focused calculation/isolation guard, and clean-tenant output evidence; core retains only shared framework dependencies. See [ADR-123](adr/123-payroll-app.md).
 
-### Person-model Phases 2-4
-- **Remaining:** implement consent-ledger enrichment, semantic recall, and person pages exactly as staged in [ADR-100](adr/100-ambient-person-model.md), preserving recall-only Phase 1 behavior until each gate passes.
-- **Done when:** each ADR phase meets its own red-provable ownership, consent, provenance, deletion, and UX criteria without silently enriching people who have not opted in.
-
-### Person-model fresh-database enable gate
-- **Remaining:** apply the current migration chain to a database predating the feature and exercise enable/disable trigger paths.
-- **Done when:** every object is created once, both trigger states behave correctly, rerun is idempotent, and no existing tenant data is exposed or rewritten unexpectedly.
-
 ### World Intelligence licensed outlet ratings
 - **Remaining:** license Ad Fontes and/or AllSides, map the data with provenance, and replace placeholder bias/reliability seeds; this requires operator budget and license approval.
 - **Done when:** every rating displayed in the World package is sourced to the licensed dataset/version and unknown outlets are represented as unknown rather than guessed. See [ADR-061](adr/061-world-intelligence-layer.md).
 
-### Marketing engine — remaining phases (P0/P1 shipped 2026-08-23)
-- **Shipped 2026-08-23** (ADR-[131](adr/131-marketing-engine-package.md)/[132](adr/132-public-site-analytics.md)/[133](adr/133-outbound-marketing-connectors.md)): the `marketing-engine` store package (campaign board, consent rows default-OFF, deterministic ingest + scorecard, backlog-gated weekly review tickets, four inline bots, LinkedIn/Mastodon/Bluesky/Resend rails), config-driven site analytics (default none), Search Console read spec. Operator setup: [marketing-engine-runbook](business/marketing-engine-runbook.md).
+### Marketing engine — remaining phases
 - **Remaining:** P2 launch execution is human-paced (checklists exist); P3 paid ads — ads-operator bot-node + Google Ads/Microsoft/Meta deterministic provider intents behind the existing budget-proposal flow, gated on a live paid product + server-side conversion tracking + a funded tier; P4 automated weekly reallocation proposals from real channel CPA; site waitlist capture (static site needs an endpoint decision: ESP-hosted form vs Pages function); X pay-per-use posting decision; per-user Mastodon instance URLs; a bounded PostHog stats resource (the current spec lists only unbounded resources, so scorecard site-traffic ingest honestly records `resource_unavailable`).
 - **Blocked on the operator, verified idle 2026-09-09:** the engine is deployed and healthy — app `active`, all three routes mounted, both schedules registered (`app-route_marketing-engine-{daily-metrics-ingest,weekly-campaign-review}`), smoke green — but every table is empty and both handlers correctly no-op: `ingest: users=0 … github no_data (no_token)` and `weekly review: week=2026-09-07; owners=0; tickets=0`. That is the design (no campaign ⇒ no owner to review for), not a fault, and it means **no weekly ticket has ever been produced**. The unblock is operator-only and takes minutes: create one campaign in `/cockpit/?app=marketing-engine` → Board → New campaign (that alone starts the Monday ticket and gives ingest an owner), then work [Checklist A](business/marketing-engine-runbook.md) for the accounts that fill the scorecard.
 - **Done when:** each remaining phase meets its done-when in [the spec §14](business/marketing-engine-spec.md); every spend increase remains proposal→confirm-gated; the scorecard keeps failing loud (NO DATA, never invented numbers) as sources come online; and one Monday review ticket has actually appeared in the cockpit backlog from a real campaign.
@@ -844,7 +872,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** an ADR names ownership, auth/data boundary, installation, and lifecycle, and one read-only end-to-end flow proves the chosen integration.
 
 ### print-drop swarm adoption (print-to-swarm / print-to-RAG)
-- **Shipped 2026-09-02/03** (PRs #256–#266): `packages/oshal-print-drop` — standalone IPP Everywhere + WSD virtual printer; LAN clients print and documents land as PDF/XPS in a local drop folder with a `.json` metadata sidecar. Proven end-to-end on the operator's box (Microsoft IPP Class Driver, real job → PDF).
 - **Remaining:** the adoption phase the operator named at kickoff — an opt-in (default OFF, per the automation directive) drop-folder watcher that feeds oshal: (a) print-to-swarm (a printed document opens a ticket / reaches Jarvis) and (b) print-to-bot (routes into a chosen bot's RAG corpus keyed on the sidecar metadata). Ships as a store package (Rule 0c), not core; the drop folder is untrusted LAN input and must be parsed defensively.
 - **Designed 2026-09-03, awaiting operator review:** [ADR-135](adr/135-print-to-swarm-and-print-to-rag.md) + [print-ingest-spec](apps/print-ingest-spec.md). Five phases (P0 core extraction fix → P4 print-to-ticket) and five open questions the operator must settle before build. The RAG review that ADR carries found a **blocking core defect**: `/api/rag/upload` does `buffer.toString('utf-8')` with no text extraction while the Knowledge tab advertises `.pdf`/`.docx`, so every uploaded PDF is embedded as mojibake — `src/features/doc-extract/` already solves it and is wired only to `/api/vision/read-doc`. That fix (P0) is a prerequisite for print-to-RAG and a bug worth fixing on its own.
 - **Done when:** a store package watches the drop folder only after the operator explicitly enables it, each printed document reaches the chosen corpus/ticket with provenance from its sidecar, hostile file content cannot escape the parser, and a fresh install does nothing until opted in.
@@ -854,6 +881,7 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** a user with an indexed resume completes a review conversation from Strengthen that leaves at least one story on every role title; the master resume document shows the stories under their bullets; a generated resume for a job cites a story; and the readiness route reports the count the profile actually holds (guarded by an engine test over a fixture profile).
 
 ### Fantasy football — the draft engine, the league site, and the live-draft node (operator, 2026-09-06)
+- **Remaining:** complete the management-engine residuals and evidence below; retain the separately gated league-site and draft-node phases in their existing priority order.
 - **What was asked:** three halves of one product. (1) The **algorithms** — how to actually pick, framed roster-first by the operator: "the methods and algorithms to pick a team and build from the team out", not a global best-player cheat sheet. (2) A **website on this platform** that does what any fantasy site does — league creation, scoring rules, a draft room, in-season lineups/waivers/trades/standings — with configuration and commissioner/administrative controls. (3) A **remote-node add-on** that assists a live draft dynamically inside an ESPN draft room, which needs the operator's own ESPN login. The operator's ESPN team "is having some issues", so phase one deliberately does not depend on reading their private league; the app must draft standalone (offline/paper mode) with the node as an accelerant, not a dependency.
 - **Re-scoped 2026-09-09 — managing comes before drafting.** The operator's draft already happened and went badly: *"we have been positioned last … we picked up running backs first round 2 times that were specifically left over by the other team owners … because we missed the first 2 rounds maybe first 4."* An autopicked roster of other managers' leftovers is the starting position, and ESPN's public season endpoint reports **week 1** (checked live 2026-09-09), so the whole season is still ahead of it. The draft engine is not dropped — it is needed next pre-season and for mocks — but it moves to P2 behind the engine that fixes a roster you already have. **The math barely changes:** the marginal weekly-optimal-lineup value is the same function whether the candidate is a pick, a waiver claim or a trade; only the set of remaining weeks differs.
 - **Designed 2026-09-09, awaiting operator review:** [ADR-146](adr/146-fantasy-football-draft-platform.md) (four decisions, exactly one of which touches core — the `fantasy-leagues` kernel skill; the league model stays in-package and the live-draft node needs no new rail) + [fantasy-football-spec](apps/fantasy-football-spec.md) (the buildable detail: every formula below, the data model, the routes, the node loop, six guards). Three operator questions in the ADR gate P1 but not P0.
@@ -926,15 +954,16 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 ## Provisioning and operator experience
 
 ### First-run provisioning wizard
-- **Remaining:** extend `/welcome` through trusted store selection, package choice/install, invited users, and safe backup/secret defaults; third-party store URLs require an explicit trust design.
+- **Source proof:** trusted source selection, reviewed package install/retry, saved progress and existing-account links pass isolated HTTP/Chromium checks; [the provisioning guide](testing/first-run-provisioning.md) records the implemented flow.
+- **Remaining:** prove the promoted flow on a fresh installed swarm and complete the separate safe backup/secret-default setup acceptance; third-party sources continue through the existing explicit registry trust controls.
 - **Done when:** a fresh LOCAL_AUTH admin completes or skips each re-enterable step, failures name the package, anonymous users cannot invoke installation, and an ADR prevents a typed store URL from gaining unchecked code execution. See [ADR-117](adr/117-local-auth-invited-users.md).
 
 ### Swarm root — the three pieces ADR-148 did not build
 - **Remaining:** [ADR-148](adr/148-swarm-root.md) shipped the role store, root claim/transfer, the
   role-aware `isOperatorIdentity`, bootstrap-claims-root and the `/users` page. Three things remain:
   (1) a `MOCK_OIDC` box's installer-configured identity stays break-glass-only until someone claims
-  root from `/users` — nothing adopts it; (2) `/users` lists local accounts and grants roles, but
-  inviting and disabling accounts still go through the local-auth admin API rather than the page;
+  root from `/users` — nothing adopts it; (2) promote and verify the new `/users` invite/disable
+  controls, already covered by isolated PostgreSQL and Chromium tests;
   (3) no spec drives an operator-gated route through the real Express middleware chain as a signed-in
   NON-operator — the shipped guards cover the store and `isOperatorIdentity` against live Postgres,
   and the 401/200 route paths were verified on the box, but the authenticated-non-operator 403 was not.
@@ -944,20 +973,18 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
   signed-in non-operator and 200 as an admin granted through `swarm_roles`.
 
 ### App Loader — the ADR-147 decisions that did not ship
-- **Remaining:** (1) **D6 collision** — installing a package name that is already installed from a
-  DIFFERENT registry replaces it (the installer removes and re-copies `deployed-apps/<name>`); the
-  API must refuse with 409 unless the operator confirms a replace. Latent until a second registry
-  publishes a clashing name. (2) **D7** — dependencies resolve only from the origin registry;
+- **Implemented in the current branch:** cross-source replacement requires explicit approval bound
+  to the observed installed provenance and is rechecked at the installer write; Applications Discover
+  reads the aggregate catalog; App Loader can revoke trust and requires typed-host confirmation to
+  restore it. Local CLI, HTTP and browser regressions cover these paths.
+- **Remaining:** **D7** — dependencies resolve only from the origin registry;
   cross-registry resolution (exactly-one-other-trusted-registry, shown in the preview) and the
-  two-registries fail-closed rule are not built. (3) **D10** — a public hostname that resolves to a
+  two-registries fail-closed rule are not built. **D10** — a public hostname that resolves to a
   private address is not refused; the durable fix pins the resolved address for the fetch rather
-  than validating then fetching. (4) **P3** — `/applications` Discover still reads
-  `/api/swarm/apps/catalog`; it should read the aggregate. (5) The page has no "revoke trust" button
-  (the API supports `trustState: "revoked"`).
-- **Done when:** each item ships with its guard — a 409 spec for a cross-registry name collision; a
-  two-registry dependency spec that fails closed; a fence spec where a hostname resolving to
-  `10.0.0.0/8` is refused through a real local resolver seam; Discover rendering packages from a
-  second registry; and ADR-147's As built section updated to drop each line as it lands.
+  than validating then fetching.
+- **Done when:** a two-registry dependency spec fails closed on ambiguity; a fence spec where a
+  hostname resolving to `10.0.0.0/8` is refused through a real local resolver seam; and ADR-147's
+  As built section records the completed behavior and evidence.
 
 ### `swarm-cli` zsh completion
 - **Remaining:** execute the current completion in real zsh, covering sourced/autoloaded modes, command/state dispatch, and saved context completion.
@@ -975,12 +1002,10 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** a rule can be armed, listed and cancelled from the account page; a paper rule on a held name has fired end-to-end on a real 2.02 filing with the classification, the numbers read and the filing URL in its decision rationale, and a miss on the same rule has sold; and the operator has explicitly decided whether to arm one on a live book (paper-first is the recommendation, with the attempt bound at 1 for the strictest posture).
 
 ### Trading — IPO playbook, Anthropic first (ADR-136 D6)
-- **Shipped 2026-09-04 (core #284, trading 1.7.0) and 2026-09-06 (core #351):** the day-one plan runs as ordinary order types through the one order path (no market-on-open; a day LIMIT at IPO × (1 + premium cap), percent-or-dollar sizing under the fleet guardrail, take-profit and stop GTC plus a time stop); the public S-1/F-1 alert announces once through an injectable notify seam on the existing notification router and Jarvis shelf; and the COTP reminder sequence fires on trading days before the pricing date, its text derived from the computed date rather than a fixed "deadline today". The platform still cannot submit the COTP — Schwab requires the client to do that and confirm after pricing — so the reminder is the deliverable.
 - **Remaining:** the live proof, and two deliberate departures from the original design worth deciding on rather than leaving implied — v1 sizes the entry off the IPO price, not the first-30-minute range/VWAP, and places a fixed STOP rather than a trailing stop.
 - **Done when:** the watch fires on the public S-1 filing; the reminder sequence fires at T-3/T-1 days and T-0 morning with the schwab.com link; the playbook's orders are dry-run-listable for the chosen account before pricing day.
 
 ### Trading surface — the browser half of the strict-CSP proof (ADR-136 D2 tail)
-- **Shipped 2026-09-07 (trading 1.10.3):** every inline event-handler attribute is gone from the surface — delegated listeners per view host, keyed on `data-act`, with labels and ids resolved from state at click time — and every `load*` in `tools/ui` captures its render token (and sub-tab generation) before its first await and bails before painting. Guards pin both, including the cross-module globals the delegation created, from both ends.
 - **Remaining:** the browser half, which the repo cannot fake — load the surface with `OSHAL_STRICT_CSP=on` on the dev box and exercise every action. Note the precedence the guard records: `OSHAL_CSP_REPORT_ONLY` beats `OSHAL_STRICT_CSP`, so a canary run with report-only still set proves nothing. (The earlier `CSP_MODE=strict` in this entry was not a real flag.)
 - **Done when:** a human has driven the surface under enforced strict CSP with zero violation reports for `/api/trading/*`, and the run is recorded.
 
@@ -993,7 +1018,6 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Done when:** with the paper key configured the movers report covers the whole US-equity board for winners/losers/active with source + `last_updated` shown on the surface; without it (or on a screener error) it degrades to today's bounded report, never a blank.
 
 ### Trading — cash-account settlement: the autopilot clamp (ADR-134 D8 tail)
-- **Shipped 2026-09-06 (ADR-134 D8):** the engine's single order path refuses (or warns on) a BUY funded by unsettled proceeds on any live book whose type is not known to be margin, naming the settlement date; the ticket pre-checks and sizes a percent order against settled cash; the policy is config-first (`TRADING_CASH_SETTLEMENT_POLICY` fleet default, a per-book `settlement_policy` override, `off` env-only). A real-DB spec drives both refusals through `placeDecisionOrder`.
 - **Remaining:** wire the autopilot clamp. `settledBuyingPower(account, book)` is exported and unit-pinned but `capAccount` is untouched, because the dispatch module is being decomposed. CONSEQUENCE until it lands: an autonomous BUY on an ENABLED cash book that needs unsettled proceeds is REFUSED at the engine rather than sized down — noisy but safe, and moot today because the IRA book is disabled.
 - **Done when:** `capAccount` in the post-decomposition dispatch module starts with `account = settledBuyingPower(account, book);` and a spec pins that a rotation's post-sell re-read on a cash book sizes against settled cash only.
 

@@ -1,0 +1,12 @@
+/* ADR-139 shared picker. All surfaces inherit the active framework theme. */
+.oshal-artifact-picker { font: 14px/1.5 system-ui, sans-serif; color: var(--text-primary, CanvasText); background: var(--bg-primary, Canvas); border: 1px solid var(--border-color, GrayText); border-radius: 12px; width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 20px; box-sizing: border-box; }
+.oshal-artifact-picker::backdrop { background: rgb(0 0 0 / 65%); }
+.oshal-artifact-picker .ap-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.oshal-artifact-picker h2 { font: inherit; font-size: 1.25rem; margin: 0; }
+.oshal-artifact-picker button { font: inherit; color: inherit; background: var(--bg-secondary, ButtonFace); border: 1px solid var(--border-color, GrayText); border-radius: 6px; padding: 10px 12px; cursor: pointer; overflow-wrap: anywhere; text-align: left; }
+.oshal-artifact-picker button:focus-visible { outline: 2px solid var(--accent-primary, Highlight); outline-offset: 2px; }
+.oshal-artifact-picker button[aria-pressed=true] { border-color: var(--accent-primary, Highlight); font-weight: 700; }
+.oshal-artifact-picker button:disabled { opacity: .6; cursor: wait; }
+.oshal-artifact-picker .ap-sources, .oshal-artifact-picker .ap-navigation { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.oshal-artifact-picker .ap-list { display: grid; gap: 6px; margin-top: 14px; max-height: 45dvh; overflow-y: auto; }
+.oshal-artifact-picker .ap-status { font-size: .9rem; min-height: 1.2em; overflow-wrap: anywhere; }

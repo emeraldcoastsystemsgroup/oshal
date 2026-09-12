@@ -1,5 +1,7 @@
 /* ═══ Sakura — Cherry Blossom Rose Dark ═══ */
 [data-theme="sakura"] {
+  /* Shared controls use the palette's readable accent ink and native color scheme. */
+  --text-on-accent: #111827;
   --bg-primary: #1a0a14;
   --bg-secondary: rgba(30, 14, 24, 0.85);
   --bg-tertiary: rgba(48, 22, 38, 0.7);
@@ -30,3 +32,6 @@
   --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(236,72,153,0.06);
   --depth-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
+
+/* Native controls follow this palette even when a page declares a root default. */
+html[data-theme="sakura"] { color-scheme: dark; }

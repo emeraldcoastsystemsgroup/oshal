@@ -59,6 +59,7 @@ async function start(rows: ConnectionRow[]): Promise<string> {
   await new Promise<void>((resolve) => { server = app.listen(0, () => resolve()); });
   const addr = server!.address();
   if (!addr || typeof addr === 'string') throw new Error('test server did not bind');
+  vi.stubEnv('OIDC_BASE_URLS', `http://127.0.0.1:${addr.port}`);
   return `http://127.0.0.1:${addr.port}`;
 }
 
@@ -69,7 +70,10 @@ beforeAll(() => {
   process.env.OIDC_CLIENT_ID = process.env.OIDC_CLIENT_ID || 'test-google-client';
   process.env.OIDC_CLIENT_SECRET = process.env.OIDC_CLIENT_SECRET || 'test-google-secret';
 });
-afterEach(() => new Promise<void>((resolve) => (server ? server.close(() => { server = undefined; resolve(); }) : resolve())));
+afterEach(() => {
+  vi.unstubAllEnvs();
+  return new Promise<void>((resolve) => (server ? server.close(() => { server = undefined; resolve(); }) : resolve()));
+});
 
 describe('reconnect-in-place repairs a dead connection without delete + re-add', () => {
   it('pins login_hint to the STORED account and keeps prompt=consent (no account chooser)', async () => {
@@ -85,16 +89,16 @@ describe('reconnect-in-place repairs a dead connection without delete + re-add',
     expect(loc.searchParams.get('access_type')).toBe('offline');
   });
 
-  it('carries the STORED label through the signed state so the repair cannot rename the account', async () => {
+  it('keeps reconnect details server-side behind an opaque signed ceremony nonce', async () => {
     const base = await start([googleRow()]);
     const res = await fetch(`${base}/api/connect/google/start?reconnect=conn-google-work`, { redirect: 'manual' });
     const loc = new URL(res.headers.get('location') || '');
     const state = verifyState(loc.searchParams.get('state') || '');
     expect(state).not.toBeNull();
-    expect(state!.provider).toBe('google');
-    expect(state!.sub).toBe(SUB);
-    // Without this, the callback's upsert label refresh resets "work email" to the account email.
-    expect(state!.label).toBe('work email');
+    expect(state!.nonce).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(state!.provider).toBeUndefined();
+    expect(state!.sub).toBeUndefined();
+    expect(state!.label).toBeUndefined();
   });
 
   it('404s for a connection id outside the caller-accessible rows — no redirect leaves the app', async () => {

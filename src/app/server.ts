@@ -1,8 +1,16 @@
 /**
  * CHANGE LOG
+ * 166 | maintainer@emeraldcoastsystemsgroup.com | Share active artifact app visibility between the picker, destination menus and Jarvis.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 171 | maintainer@emeraldcoastsystemsgroup.com | Mount machine-authenticated remote application permit checks and immutable queued-principal installation wiring.
+ * 172 | maintainer@emeraldcoastsystemsgroup.com | Mount exact user roster registration and external business membership administration.
+ * 173 | maintainer@emeraldcoastsystemsgroup.com | Bind typed package tools before activation under the current authorization runtime.
+ * 174 | maintainer@emeraldcoastsystemsgroup.com | Mount user-bound Jarvis application proposals and transient result controls.
+ * 175 | maintainer@emeraldcoastsystemsgroup.com | Preserve validated explicit application selection when root redirects into the cockpit.
+ * 176 | maintainer@emeraldcoastsystemsgroup.com | Bind installation smoke checks to the current administrator session and exact registered path.
+ * 177 | maintainer@emeraldcoastsystemsgroup.com | Discover authorized existing application profiles for optional top workspace navigation.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — Express server entry point
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added static file serving for UI assets
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed conflicting manual auth routes and consolidated on express-openid-connect
@@ -176,6 +184,13 @@
  * 163 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 fix (found by stage-3 live verification): /api/files rides serviceSecretOr(requiresAuth) — the artifact-handle relay redeems a files-browser source by re-fetching /api/files/download as the minting caller over the internal rail, and the session-only mount 401'd that fetch, 502-ing every doc-hub "Send to…" dispatch.
  * 164 | maintainer@emeraldcoastsystemsgroup.com   | resolveOpenAiCodexCallbackPort delegates its raw-port read to resolveConfiguredOpenAiCodexCallbackPort (server-auth-helpers seq 4): the compose-forwarded EMPTY OPENAI_CODEX_CALLBACK_PORT parsed to NaN and silently skipped the :1455 codex callback listener, so every cockpit codex login ended at ERR_EMPTY_RESPONSE on localhost:1455. One reader now owns the ""-means-default rule.
  * Home customization | Codex | Mount authenticated Home preference persistence alongside user settings.
+ * 165 | maintainer@emeraldcoastsystemsgroup.com | ADR-139 shared artifact picker: source discovery, owner-scoped storage and app visibility.
+ * 166 | maintainer@emeraldcoastsystemsgroup.com | Mount browser-bound connector callbacks and caller-scoped installed application tests in the existing Lab.
+ * 167 | maintainer@emeraldcoastsystemsgroup.com | Observe verified external principals before authorization so existing provider accounts retain a canonical management inventory.
+ * 168 | maintainer@emeraldcoastsystemsgroup.com | Seed fresh manifest bots through the authoritative deployment provider and model resolver.
+ * 169 | maintainer@emeraldcoastsystemsgroup.com | Bind package-owned specialist facts to current application authority before accountable dispatch.
+ * 170 | maintainer@emeraldcoastsystemsgroup.com | Register per-user Jarvis briefing settings and source lifecycle against current principal and application authority.
+ * 171 | maintainer@emeraldcoastsystemsgroup.com | Connect isolated installed-package tests, current caller policy and durable Test Lab results.
  */
 
 require('dotenv').config();
@@ -188,6 +203,7 @@ import { installProcessCrashGuards } from '@/shared/services/process-crash-guard
 import path from 'path';
 import cookieParser from 'cookie-parser';
 import { createChildLogger } from '@/shared/logger';
+import { createWorkspaceNavigationRoutes } from './routes/workspace-navigation-routes';
 import { registerCodeServerBridgeRoutes, buildCodeServerRedirectUrl } from './routes/code-server-bridge-routes';
 import { registerDebugRoutes } from './routes/debug-routes';
 import { createAppContext } from './composition-root';
@@ -240,7 +256,7 @@ import { createConfigRoutes } from './routes/config-routes';
 import { createProviderRoutes, listConfiguredProviders } from './routes/provider-routes';
 import { onboardingRequired } from './onboarding-gate';
 import { registerReadinessRoutes } from './routes/readiness-routes';
-import { createConnectorsRoutes, createFacebookDataDeletionRoute } from './routes/connectors-routes';
+import { connectorCallbackAuth, createConnectorsRoutes, createFacebookDataDeletionRoute } from './routes/connectors-routes';
 import { createConnectorLivenessRoutes } from './routes/connector-liveness';
 import { createByoLlmRoutes } from './routes/byo-llm-routes';
 import { createFreeTierRoutes } from './routes/free-tier-routes';
@@ -280,6 +296,7 @@ import { createPersonalGraphIngestRoutes } from './routes/personal-graph-ingest-
 import { InMemoryGraphStore } from '@/features/personal-graph';
 import { startTravelFareWatchCron } from './routes/travel-farewatch';
 import { createTestLabRoutes } from './routes/test-lab-routes';
+import { createServiceSmokeFetch, createTestLabWiring } from './composition/test-lab-wiring';
 import { createTestLabGoldenRoutes } from './routes/test-lab-golden';
 import { createPersonaEvalRoutes } from './routes/persona-eval-routes';
 import { registerEvalWallRoutes } from './routes/eval-wall-routes';
@@ -295,7 +312,10 @@ import { createLinkedInAssistantRoutes } from './routes/linkedin-assistant-route
 import { createSecurityRoutes } from './routes/security-routes';
 import { createJoinRoutes } from './routes/join-routes';
 import { createJarvisRoutes } from './routes/jarvis-routes';
+import { createJarvisPackageToolService } from './composition/jarvis-package-tool-wiring';
 import { createJarvisBriefRoutes } from './routes/jarvis-brief-routes';
+import { createJarvisBriefingRoutes } from './routes/jarvis-briefing-routes';
+import { createJarvisBriefingWiring } from './composition/jarvis-briefing-wiring';
 import { createChatChannelRoutes } from './routes/chat-channel-routes';
 import { createUserModelRoutes } from './routes/user-model-routes';
 import { createDevConsoleRoutes } from './routes/dev-console-routes';
@@ -312,6 +332,17 @@ import { createGlobalSearchRoutes } from './routes/global-search-routes';
 import { RagService } from '@/features/rag';
 import { UIProfileService } from '@/features/ui-profile';
 import { AppAccessService, SwarmAppService, SwarmAppRepository } from '@/features/swarm-apps';
+import { createApplicationAuthorizationWiring } from './composition/application-authorization-wiring';
+import { createQueuedApplicationPrincipalWiring } from './composition/queued-application-principal-wiring';
+import { createApplicationRemoteExecutionRoutes } from './routes/application-remote-execution-routes';
+import { resolveManifestBotRuntimeDefaults } from './composition/manifest-bot-runtime-defaults';
+import { SpecialistContextRegistry, configureSpecialistContextRegistry } from '@/shared/specialist-context';
+import { PackageToolRegistry, configurePackageToolRegistry } from '@/shared/package-tools';
+import { createApplicationAuthorizationGate } from './middleware/application-authorization-gate';
+import { createApplicationActorContext } from './middleware/application-authorization-context';
+import { createAuthorizationRoutes, createAuthorizationPageRoutes } from './routes/authorization-routes';
+import { createUserDirectoryRoutes } from './routes/user-directory-routes';
+import { createExternalTenantMembershipRoutes } from './routes/external-tenant-membership-routes';
 // Manifest schedule registrar/deregistrar + per-user reconciler + nightly oshal-dev schedule —
 // extracted verbatim to swarm-app-schedule-wiring.ts (1000-line cap decomposition).
 import { createManifestScheduleRegistrar, createManifestScheduleDeregistrar, registerPerUserScheduleReconciler, registerNightlyDevDocsSchedule } from './swarm-app-schedule-wiring';
@@ -941,6 +972,7 @@ function createApp(): express.Application {
       process.env.HOST_APP_MAP,
       req.hostname,
       process.env.LANDING_PATH || '/cockpit/',
+      req.query.app,
     );
     // First-run gate: every user sees onboarding once, and a working LLM is mandatory.
     if (await needsOnboarding(req)) {
@@ -1066,6 +1098,23 @@ function createApp(): express.Application {
   const manifestScheduleRegistrar = createManifestScheduleRegistrar(manifestServiceScheduleRegistry);
   const manifestScheduleDeregistrar = createManifestScheduleDeregistrar(manifestServiceScheduleRegistry);
   const appAccessService = new AppAccessService(ctx.pool);
+  const applicationAuthorization = createApplicationAuthorizationWiring(ctx, appAccessService,
+    () => swarmAppService, waitForBootstrapComplete());
+  createQueuedApplicationPrincipalWiring(ctx, applicationAuthorization.ready);
+  app.use(createApplicationRemoteExecutionRoutes(applicationAuthorization.remoteExecution, (req, res, next) => {
+    if (!hasValidServiceSecret(req)) { res.status(401).json({ error: 'remote_execution_machine_auth_required' }); return; }
+    next();
+  }));
+  app.use(applicationAuthorization.observePrincipal);
+  app.use(createApplicationActorContext(applicationAuthorization.resolveActor));
+  const specialistContext = new SpecialistContextRegistry(applicationAuthorization.runtime);
+  configureSpecialistContextRegistry(specialistContext);
+  const packageTools = new PackageToolRegistry(applicationAuthorization.runtime, {
+    reservedNames: ctx.dynamicToolExecutorRegistry.listAll()
+      .filter(row => !row.runtimeRegistered).map(row => row.toolName),
+  });
+  configurePackageToolRegistry(packageTools);
+  const jarvisBriefings = createJarvisBriefingWiring(ctx, applicationAuthorization);
   const takeoutSliceRegistry = new TakeoutSliceRegistry(ctx);
   const swarmAppService = new SwarmAppService(
     ctx.pool,
@@ -1079,7 +1128,7 @@ function createApp(): express.Application {
     manifestScheduleRegistrar,
     // ADR-085 P1: lets an installed app package mount its OWN compiled-JS routes at activation
     // (flag-gated on APP_PACKAGE_DYNAMIC_ROUTES → no-op by default, hardcoded mounts below still apply).
-    new ManifestRouteMounterImpl(app, requiresAuth, ctx, appAccessService),
+    new ManifestRouteMounterImpl(app, requiresAuth, ctx, appAccessService, applicationAuthorization.runtime, specialistContext, packageTools),
     manifestScheduleDeregistrar,
     // ADR-085: packaged bots join the ACTIVE bot registry as inline-concierge entries
     // (container oshal-api, port 3010; validated manifest runtime or legacy Claude default)
@@ -1098,6 +1147,9 @@ function createApp(): express.Application {
       deleteCollection: (name: string) => new RagService().deleteCollection(name),
     },
     takeoutSliceRegistry,
+    applicationAuthorization.runtime,
+    resolveManifestBotRuntimeDefaults,
+    jarvisBriefings.service,
   );
   // Late-bind the guest-seed fan-out to the now-constructed app registry (see the guest routes
   // mount above) so guest-start can read the active manifests' `guestSeed:` hooks at request time.
@@ -1118,13 +1170,25 @@ function createApp(): express.Application {
   app.use(
     '/api/install-verification',
     serviceSecretOr(requiresAuth),
-    createInstallVerificationRoutes(ctx, swarmAppService),
+    createInstallVerificationRoutes(ctx, swarmAppService, {
+      serviceSmokeFetch: (req, test) => createServiceSmokeFetch(req, applicationAuthorization.resolveActor,
+        `http://127.0.0.1:${process.env.PORT || '5000'}`, test.path),
+    }),
   );
 
   // Gate middleware — 503s requests to any path claimed by a swarm-app
   // manifest whose owning app is currently inactive. Framework paths
   // (paths no manifest claims) pass through untouched.
   app.use(createSwarmAppGateMiddleware(swarmAppService, appAccessService));
+  app.use(createApplicationAuthorizationGate(swarmAppService, applicationAuthorization.runtime));
+  const authorizationRoutes = { requiresAuth, resolveActor: applicationAuthorization.resolveActor,
+    authorizationTool: applicationAuthorization.authorizationTool };
+  app.use('/api/authorization/tenant-memberships', createExternalTenantMembershipRoutes(applicationAuthorization.memberships, authorizationRoutes));
+  app.use('/api/authorization', createAuthorizationRoutes(applicationAuthorization.service, authorizationRoutes));
+  app.use('/api/user-directory', createUserDirectoryRoutes({ ready: applicationAuthorization.ready,
+    registrations: applicationAuthorization.directory.registrations, roster: async actor => applicationAuthorization.directory.roster(actor,
+      (await applicationAuthorization.service.catalog(actor)).users) }, authorizationRoutes));
+  app.use('/access', createAuthorizationPageRoutes(applicationAuthorization.service, authorizationRoutes));
 
   // Node Pool Mode (phase0) — register /node/* endpoints when running as a pool node.
   // Opt-in via env, so this is inert on the normal controller/bot-node runtime.
@@ -1151,7 +1215,7 @@ function createApp(): express.Application {
   // every handler reads the authenticated sub and never accepts a subject parameter.
   app.use('/api/settings/llm-default', requiresAuth, createLlmPreferenceRoutes(ctx));
   // Connectors / Utilities hub — per-user provider authorization (Gmail, etc.)
-  app.use('/api/connect', requiresAuth, createConnectorsRoutes(ctx));
+  app.use('/api/connect', connectorCallbackAuth(requiresAuth), createConnectorsRoutes(ctx));
   // Live connection health (INSTALLER-GAPS G14): GET /api/connect/liveness probes whether the
   // provider will actually HONOR the stored grant (forced refresh / account read, cached ≤15min)
   // so the Connections screen's "connected" badge stops trusting a bare DB row.
@@ -1237,7 +1301,20 @@ function createApp(): express.Application {
   // ADR-139: the artifact exchange — "Send to…" menu resolution, owner-bound handle mint/redeem
   // (the claim-ticket rail), the shared send-to.js component, and the kernel built-in
   // destinations (email compose overlay + save to oshal-local storage).
-  app.use('/api/artifacts', serviceSecretOr(requiresAuth), createArtifactExchangeRoutes(ctx));
+  const artifactVisibleApps = async (req: express.Request): Promise<Map<string, string>> => {
+    const { sub } = getCaller(req);
+    const visible = new Set((await swarmAppService.listApps('active', { ownerSub: sub, isOperator: isOperator(req) })).map(record => record.name));
+    const readable = new Map<string, string>();
+    for (const manifest of await swarmAppService.getActiveManifests()) {
+      if (!visible.has(manifest.name) || !manifest.artifacts) continue;
+      if (applicationAuthorization.runtime.protectedApp(manifest.name)
+        && !await applicationAuthorization.runtime.canDiscover(manifest.name, await applicationAuthorization.resolveActor(req))) continue;
+      if (manifest.access && (await appAccessService.resolve(manifest.name, sub, manifest.access)).tier === 'deny') continue;
+      readable.set(manifest.name, manifest.displayName || manifest.name);
+    }
+    return readable;
+  };
+  app.use('/api/artifacts', serviceSecretOr(requiresAuth), createArtifactExchangeRoutes(ctx, artifactVisibleApps));
   // LOCAL_AUTH flows (ADR-117): /invite + /logout pages, login/accept/bootstrap, and the
   // operator-or-trusted-service user administration API. Mounted below the GUC stamp so
   // admin reads ride the caller's RLS identity; the public legs are the front door and
@@ -1367,9 +1444,11 @@ function createApp(): express.Application {
   // Morning brief claims ONLY GET /brief + /brief.html with per-route user auth and passes every
   // other Jarvis path through to the later SEC-01 gate (the ambient routes use the same ordering).
   app.use('/api/jarvis', createJarvisBriefRoutes(requiresAuth, ctx));
+  app.use('/api/jarvis/briefings', createJarvisBriefingRoutes(jarvisBriefings.service, requiresAuth, jarvisBriefings.resolveActor));
   // Same durable SEC-01 gate as Graph. Legacy reads retain immediate containment in every mode;
   // enforce also removes the compatibility fleet secret from Jarvis actions.
-  app.use('/api/jarvis', delegatedUserRouteAuth, createJarvisRoutes(ctx, apiDir));
+  app.use('/api/jarvis', delegatedUserRouteAuth,
+    createJarvisRoutes(ctx, apiDir, artifactVisibleApps, createJarvisPackageToolService(ctx, packageTools)));
   // Vision describe (the visual analog of /api/voice/transcribe): base64 images exceed the global
   // 100kb JSON cap, so this mount is excluded from the default parser above and carries its own
   // 12MB one. serviceSecretOr(requiresAuth): browser session OR the trusted-service identity.
@@ -1476,7 +1555,8 @@ function createApp(): express.Application {
   // /api/test-lab so /api/test-lab/golden/* resolves here first.
   app.use('/api/test-lab/golden', serviceSecretOr(requiresAuth), createTestLabGoldenRoutes(ctx));
   // AI Test Lab — black-box E2E runner (ADR-063): drives the real endpoints + Jarvis, per-tool + coupled scenarios. requiresAuth-gated.
-  app.use('/api/test-lab', requiresAuth, createTestLabRoutes(ctx));
+  app.use('/api/test-lab', requiresAuth, createTestLabRoutes(ctx,
+    createTestLabWiring(ctx, swarmAppService, appAccessService, applicationAuthorization)));
   // Persona regression evals (golden-task gate): run ai-lab/persona-evals suites through the
   // active provider lane; structural assertions always graded, semantic rubrics skipped-with-notice
   // under noop. Operator-gated (real-lane runs spend tokens; the router re-gates internally too).
@@ -1506,7 +1586,9 @@ function createApp(): express.Application {
   app.use('/api/swarm/registries', createAppRegistryRoutes(ctx.pool, requiresAuth, {
     loadApp: (manifestPath, scopeMeta) => swarmAppService.loadApp(manifestPath, scopeMeta),
   }));
-  app.use('/api/swarm/apps', requiresAuth, createSwarmAppRoutes(swarmAppService, appAccessService));
+  app.use('/api/swarm/apps', requiresAuth, createSwarmAppRoutes(swarmAppService, appAccessService, {
+    isAuthorizationProtected: app => applicationAuthorization.isProtected(app.name),
+  }));
   app.use('/api/swarm/packs', requiresAuth, createSwarmPackRoutes(swarmAppService));
   // ADR-085 packaged skins: surfaces authored against core skins request
   // /cockpit/css/themes/<id>.css. The cockpit express.static mount (registered earlier)
@@ -1554,6 +1636,8 @@ function createApp(): express.Application {
     logger.error({ err }, 'Swarm app auto-load failed during boot (non-fatal)');
   }));
   app.use('/api/ui', requiresAuth, createUiProfileRoutes(new UIProfileService(), swarmAppService));
+  app.use('/api/ui', requiresAuth, createWorkspaceNavigationRoutes({ apps: swarmAppService,
+    runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor, access: appAccessService }));
 
   // Demo auth routes — ONLY in MOCK_OIDC mode. In production OIDC deployments
   // express-openid-connect owns /login and /logout, and we must NOT leak the
@@ -1576,7 +1660,9 @@ function createApp(): express.Application {
     (toolName) => swarmAppService.manifestToolOwner(toolName),
   ));
   // Claude Code MCP tools bridge: list/execute a bot's swarm-registered tools (scripts/oshal-tools-mcp.mjs).
-  app.use('/api/tools', serviceSecretOr(requiresAuth), createInternalToolBridgeRoutes(ctx));
+  app.use('/api/tools', serviceSecretOr(requiresAuth), createInternalToolBridgeRoutes(ctx, {
+    authorizationTool: applicationAuthorization.authorizationTool, resolveActor: applicationAuthorization.resolveActor,
+  }));
   app.use('/api/tools/verify', requiresAuth, createVerificationRoutes(ctx.verificationController));
   app.use('/api/agents', requiresAuth, createAgentProfileRoutes(ctx.agentProfileController));
   app.use('/api/agents', requiresAuth, createAgentToolRoutes(ctx.agentToolController));

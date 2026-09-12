@@ -17,6 +17,8 @@ relevant ADR or feature documentation, release notes, and git history.
   and safe next-step expansion.
 - [capture-crm-plugin-open-work.md](./capture-crm-plugin-open-work.md) — Capture CRM swarm-app
   plugin, open work / handover.
+- [government-contracting-crm.md](./government-contracting-crm.md) — relationships, capture and
+  contract management requested for the government-contracting site.
 - [education-content-sources.md](./education-content-sources.md) — education content sources and
   search.
 - [lm-class-config-open-work.md](./lm-class-config-open-work.md) — Little Monsters class

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 1: person-model schema — a generated tsvector FTS column on ambient_transcript_segments (exact recall leg) plus the versioned inference/asks/rollup/relations/consent tables beside the ambient canon, all owner-RLS'd, segment-FK CASCADE for deletion parity, and an append-only trigger on the consent ledger.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the lazy-DDL schema apply in runWithSystemIdentity — the chokepoint is often first hit with no request in scope; the global DDL must stamp operator under OSHAL_DB_GUC_STRICT=deny (guc warn-audit site).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Converge the consent-ledger trigger: a live box still carried the earlier BEFORE DELETE OR UPDATE shape (the by-name IF NOT EXISTS guard never replaced it), so forgetting a consented voice and the discovered account delete failed with "append-only". A DELETE-blocking variant is dropped before the UPDATE-only trigger is (re)created; the parity gate recreates the legacy shape and asserts convergence.
  */
 
 import type { Pool } from 'pg';
@@ -124,7 +125,17 @@ export function personModelSchemaStatements(): string[] {
            BEGIN RAISE EXCEPTION 'ambient_speaker_consents is append-only (record a new row to change a decision)'; END; $fn$ LANGUAGE plpgsql;
        END IF;
      END $$`,
+    // Converge, don't just create: a deployment whose lazy DDL first ran under the earlier definition
+    // carries a BEFORE DELETE OR UPDATE trigger (tgtype DELETE bit = 8), and the by-name IF NOT EXISTS
+    // guard kept it — forgetting a consented voice then failed with "append-only" (live, 2026-09-12).
+    // The table is ours, so dropping the DELETE-blocking variant is within the app role's rights.
     `DO $$ BEGIN
+       IF EXISTS (SELECT 1 FROM pg_trigger
+                   WHERE tgname='ambient_speaker_consents_no_mutate'
+                     AND tgrelid='ambient_speaker_consents'::regclass
+                     AND (tgtype::int & 8) <> 0) THEN
+         DROP TRIGGER ambient_speaker_consents_no_mutate ON ambient_speaker_consents;
+       END IF;
        IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='ambient_speaker_consents_no_mutate') THEN
          CREATE TRIGGER ambient_speaker_consents_no_mutate
            BEFORE UPDATE ON ambient_speaker_consents

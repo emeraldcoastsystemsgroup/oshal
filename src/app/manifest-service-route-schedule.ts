@@ -14,7 +14,9 @@
  * 1   | maintainer@emeraldcoastsystemsgroup.com     | Add confined, lifecycle-scoped deterministic service-route handler registration and dispatch.
  *
  * @module manifest-service-route-schedule
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  */
+import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 
 import fs from 'fs';
 import path from 'path';
@@ -167,11 +169,11 @@ export class ManifestServiceRouteScheduleRegistry implements ManifestServiceRout
     }
 
     try {
-      const result = await target.handler(target.packageContext, {
+      const result = await runWithApplicationExecution({ app: target.appName, kind: 'jobs', operation: target.scheduleId }, () => Promise.resolve(target.handler(target.packageContext, {
         scheduleId: target.scheduleId,
         scheduledAtIso: new Date().toISOString(),
         body: target.body,
-      });
+      })));
       const normalized = validateResult(result, target);
       logger.info(
         { app: target.appName, scheduleId: schedule.id, route: target.route, reportedSummary: Boolean(normalized.summary) },

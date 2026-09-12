@@ -1,9 +1,17 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Keep the inline credential-isolation fixture independent of production bot endpoint registration.
+ */
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryMessageStore } from '../../src/entities/message';
 import { InMemoryTaskStore } from '../../src/entities/task';
 import { createMessageRoutes } from '../../src/app/routes/message-routes';
 import { createTaskRoutes } from '../../src/app/routes/task-routes';
+import { BotNodeClient } from '../../src/features/agent-management';
 
 const brokerMocks = vi.hoisted(() => ({ resolveBotCreds: vi.fn(async () => ({ OSHAL_CRED_GOOGLE: 'token' })) }));
 vi.mock('../../src/app/routes/connector-token-broker', () => brokerMocks);
@@ -29,6 +37,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const key of ENV_KEYS) {
     if (savedEnv[key] === undefined) delete process.env[key];
     else process.env[key] = savedEnv[key];
@@ -151,6 +160,7 @@ describe('task/message API isolation routes', () => {
   });
 
   it('never brokers connector credentials into localhost model fallback', async () => {
+    vi.spyOn(BotNodeClient.prototype, 'hasEndpoint').mockReturnValue(false);
     const taskStore = new InMemoryTaskStore();
     const messageStore = new InMemoryMessageStore();
     for (const taskId of ['fallback-email', 'fallback-weather']) {

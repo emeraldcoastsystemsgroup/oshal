@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The named guard for the LOCAL_AUTH critical path (ADR-117), exercised through a REAL express app against an in-memory pool: bootstrap-once (installer becomes the first admin, second attempt 409s), login with generic errors + per-email rate limiting, the one-time invite lifecycle (invite → info → accept → reuse 410), admin-gate matrix (anonymous 401 / non-operator 403 / operator + trusted-service 200), disable-kills-login, and the copyable-link fallback when SMTP is absent. If the login wall regresses open, this file goes red.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Guard installer-proof refusal; seed login credentials directly while the companion PostgreSQL suite proves root setup.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Support transactional account administration; companion PostgreSQL tests prove current-root and role-race guards.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
 import type { Server } from 'http';
 import { createLocalAuthRoutes } from '@/app/routes/local-auth-routes';
-import { base32Decode, currentStep, totpCodeForStep } from '@/features/local-auth';
+import { base32Decode, currentStep, totpCodeForStep, bootstrapFirstAdmin } from '@/features/local-auth';
 
 // ── In-memory stand-in for the oshal_local_users table ───────────────────────
 type Row = Record<string, unknown>;
@@ -19,7 +21,10 @@ function fakePool() {
   const byEmail = (email: unknown) => rows.find((r) => r.email === email);
   return {
     rows,
+    async connect() { return { query: this.query.bind(this),release() {} }; },
     async query(sql: string, params: unknown[] = []): Promise<{ rows: Row[] }> {
+      if (/^(BEGIN|COMMIT|ROLLBACK|LOCK TABLE)/.test(sql)) return { rows: [] };
+      if (sql.includes('FROM swarm_roles')) return { rows: [] };
       if (sql.includes('ON CONFLICT (email)')) {
         const [id, email, displayName, userSub, tokenHash, expiresAt, invitedBy] = params;
         const existing = byEmail(email);
@@ -224,27 +229,19 @@ afterEach(() => new Promise<void>((resolve) => (server ? server.close(() => reso
 // ── The flows ────────────────────────────────────────────────────────────────
 
 describe('local-auth bootstrap (the installer is the first admin)', () => {
-  it('offers bootstrap only while the store is empty, creates once, then refuses', async () => {
+  it('offers setup while empty but refuses public account/root creation without installer proof', async () => {
     pool = fakePool();
     await startApp();
 
-    let state = await (await fetch(`${base}/api/local-auth/state`)).json();
+    const state = await (await fetch(`${base}/api/local-auth/state`)).json();
     expect(state.bootstrapRequired).toBe(true);
 
     const created = await post('/api/local-auth/bootstrap', {
       email: 'Installer@Example.com', name: 'The Installer', password: 'example-first-admin-pw-00',
     });
-    expect(created.status).toBe(201);
-    expect(created.data.sub).toMatch(/^local-[0-9a-f]{16}$/);
-    expect(created.setCookie).toContain('oshal_local=');
-
-    state = await (await fetch(`${base}/api/local-auth/state`)).json();
-    expect(state.bootstrapRequired).toBe(false);
-
-    const again = await post('/api/local-auth/bootstrap', {
-      email: 'second@example.com', password: 'example-other-pw-000001',
-    });
-    expect(again.status).toBe(409);
+    expect(created.status).toBe(403);
+    expect(created.setCookie).toBeNull();
+    expect(pool.rows).toEqual([]);
   });
 });
 
@@ -252,7 +249,8 @@ describe('local-auth login', () => {
   it('answers every failure with one generic message and sanitizes returnTo', async () => {
     pool = fakePool();
     await startApp();
-    await post('/api/local-auth/bootstrap', { email: 'admin@example.com', password: 'example-admin-pw-000001' });
+    // Seed the credential fixture directly; the real installer transaction has its own PostgreSQL suite.
+    await bootstrapFirstAdmin(pool as never, { email: 'admin@example.com', password: 'example-admin-pw-000001' });
 
     const wrongPw = await post('/api/local-auth/login', { email: 'admin@example.com', password: 'nope-nope-nope' });
     const unknown = await post('/api/local-auth/login', { email: 'ghost@example.com', password: 'nope-nope-nope' });
@@ -272,7 +270,7 @@ describe('local-auth login', () => {
   it('rate-limits after repeated failures for the same email', async () => {
     pool = fakePool();
     await startApp();
-    await post('/api/local-auth/bootstrap', { email: 'ratelimit@example.com', password: 'example-admin-pw-000001' });
+    await bootstrapFirstAdmin(pool as never, { email: 'ratelimit@example.com', password: 'example-admin-pw-000001' });
     for (let i = 0; i < 10; i += 1) {
       const fail = await post('/api/local-auth/login', { email: 'ratelimit@example.com', password: 'wrong-password' });
       expect(fail.status).toBe(401);

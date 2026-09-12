@@ -19,7 +19,13 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Replace the dynamic CLI's best-effort identity write with the shared exact-subject, link-safe atomic writer; serialize same-workspace invocations and remove only the identity file each invocation still owns.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: deny model-driven RAG ingestion into kernel-owned swarm collections.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: execute dynamic CLI tools with an explicit OS/runtime allowlist instead of the controller environment; retain only the exact caller identity marker.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch the authorization family through a fixed typed port and trusted invocation context.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Execute activation-scoped package handlers with exact caller and selected tenant authority.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Keep package input and domain error payloads off the legacy conversation event stream.
  */
+import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
+import { executePackageTool, packageToolTenant, requiresPackageTool } from '@/shared/package-tools';
 
 import fs from 'fs';
 import path from 'path';
@@ -43,6 +49,7 @@ import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middle
 import { acquireScopedSubjectLease } from '@/shared/security/scoped-subject-lease';
 import { FollowupQuestionSignal } from './followup-question-signal';
 import { guardTemplateValue } from './runtime-template-guard';
+import { isAuthorizationTool, type AuthorizationToolExecutor, type AuthorizationToolInvocation } from '@/shared/security/authorization-tool-contract';
 
 const execAsync = promisify(execCallback);
 const execFileAsync = promisify(execFileCallback);
@@ -84,6 +91,7 @@ const DEFAULT_BOT_RUNTIME_ROOT = path.resolve(process.cwd(), 'output', 'bot-runt
  * stream broadcaster plus optional services for workspace, agent config, and dynamic tools.
  */
 export interface ToolExecutorServiceDeps {
+  authorizationToolExecutor?: AuthorizationToolExecutor;
   streamManager: StreamManager;
   /** Optional workspace service for ticket→workspace resolution */
   workspaceService?: WorkspaceService;
@@ -106,6 +114,7 @@ export interface ToolExecutorServiceDeps {
  * File and shell tools are scoped to the task workspace to prevent cross-task access.
  */
 export class ToolExecutorService {
+  private readonly authorizationToolExecutor?: AuthorizationToolExecutor;
   private readonly streamManager: StreamManager;
   private readonly workspaceRoot: string;
   private readonly workspaceService?: WorkspaceService;
@@ -120,6 +129,7 @@ export class ToolExecutorService {
    * @param deps - Stream manager plus optional workspace, agent config, and dynamic tool services
    */
   constructor(deps: ToolExecutorServiceDeps) {
+    this.authorizationToolExecutor = deps.authorizationToolExecutor;
     this.streamManager = deps.streamManager;
     this.workspaceService = deps.workspaceService;
     this.agentConfigService = deps.agentConfigService;
@@ -144,12 +154,18 @@ export class ToolExecutorService {
     toolInput: Record<string, unknown>,
     agentId?: string,
     userSub?: string,
+    authorizationInvocation?: AuthorizationToolInvocation,
   ): Promise<string> {
+    const packageTool = requiresPackageTool(toolName) || this.dynamicToolExecutorRegistry?.resolve(toolName)?.builtinKey === 'package';
+    const tenantId = packageTool ? packageToolTenant(toolInput) : undefined;
+    return runWithApplicationExecution({ kind: 'tools', operation: toolName, userSub, ...(tenantId ? { tenantId } : {}) }, async () => {
     const startedAt = Date.now();
-    this.streamManager.broadcastToolExecution(taskId, { name: toolName, input: toolInput }, 'started');
+    this.streamManager.broadcastToolExecution(taskId, { name: toolName, ...(packageTool ? {} : { input: toolInput }) }, 'started');
 
     try {
-      const result = await this.dispatchTool(taskId, toolName, toolInput, agentId, userSub);
+      const result = isAuthorizationTool(toolName)
+        ? await this.executeAuthorizationTool(toolName, toolInput, authorizationInvocation)
+        : await this.dispatchTool(taskId, toolName, toolInput, agentId, userSub);
       this.streamManager.broadcastToolExecution(
         taskId,
         { name: toolName, durationMs: Date.now() - startedAt },
@@ -160,7 +176,7 @@ export class ToolExecutorService {
       if (error instanceof FollowupQuestionSignal) {
         this.streamManager.broadcastToolExecution(
           taskId,
-          { name: toolName, durationMs: Date.now() - startedAt, question: error.question },
+          { name: toolName, durationMs: Date.now() - startedAt, ...(packageTool ? {} : { question: error.question }) },
           'waiting_for_input',
         );
         throw error;
@@ -168,11 +184,21 @@ export class ToolExecutorService {
       const errMsg = error instanceof Error ? error.message : String(error);
       this.streamManager.broadcastToolExecution(
         taskId,
-        { name: toolName, durationMs: Date.now() - startedAt, error: errMsg },
+        { name: toolName, durationMs: Date.now() - startedAt, error: packageTool ? 'Package tool execution failed' : errMsg },
         'failed',
       );
       throw error;
     }
+    });
+  }
+
+  private async executeAuthorizationTool(name: string, input: unknown, invocation?: AuthorizationToolInvocation): Promise<string> {
+    const descriptor = this.dynamicToolExecutorRegistry?.resolve(name);
+    if (!this.authorizationToolExecutor || !descriptor || descriptor.executorType !== 'builtin'
+      || descriptor.builtinKey !== name || descriptor.runtimeRegistered) {
+      throw new Error('Authorization tool is unavailable');
+    }
+    return this.authorizationToolExecutor.execute(name, input, invocation);
   }
 
   /**
@@ -191,6 +217,7 @@ export class ToolExecutorService {
     userSub?: string,
   ): Promise<string> {
     const descriptor = this.dynamicToolExecutorRegistry?.resolve(toolName);
+    if (requiresPackageTool(toolName) || descriptor?.builtinKey === 'package') return executePackageTool(toolName, toolInput, userSub);
     if (descriptor && descriptor.executorType !== 'builtin') {
       return this.handleDynamicExecutor(taskId, descriptor, toolInput, agentId, userSub);
     }

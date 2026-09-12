@@ -198,7 +198,16 @@ Smoke declarations are validated by both the package CLI and the server loader:
 - `path` must be a canonical `/api/...` path below a route declared by the same package. Prefer a
   dedicated read-only or otherwise idempotent `_smoke` handler.
 - `auth` is exactly `service`, `pat`, or `public`; the verifier sends only that declared credential.
-  Installer-driven probes normally use `service`. A `pat` probe requires the calling operator's PAT.
+  Installer-driven probes normally use `service`. A `pat` probe uses the caller's own PAT.
+- Set `requiresUser: true` for a protected read-only probe that needs an authenticated user.
+  It is valid only with `method: GET` or `HEAD`, `auth: pat`, and a closest owning route whose
+  `auth` is `oidc` or `service-or-oidc`. Without a caller PAT the result is **pending**, including
+  during installation with a service secret. A malformed supplied token fails; a correctly shaped
+  `Bearer oshal_pat_<48 lowercase hexadecimal characters>` is sent to the actual route, which
+  checks the user's current permissions. HTTP 401/403 remains a failure. Service credentials
+  cannot satisfy this prerequisite or substitute for application access.
+  Use a PAT minted from the verified signed-in account. Legacy subject-only bootstrap tokens
+  have no verified issuer and cannot satisfy protected application access.
 - `bodyFixture`, when present, is package-relative JSON, at most 64 KiB, and cannot escape through
   traversal or symlinks. Fixtures are static data: secret or environment interpolation is rejected.
 - `expect.status` is exact. `jsonPointer` uses RFC 6901, and `rejectValues` prevents a placeholder
@@ -209,7 +218,8 @@ Smoke declarations are validated by both the package CLI and the server loader:
 
 ## Per-user readiness (`readiness:`)
 
-`smoke:` proves a package is operational at install time, with the service secret. `readiness:` is
+`smoke:` verifies the package's declared route and assertions; a `requiresUser` smoke waits for a
+caller PAT when installation has no user context. `readiness:` is
 its per-user sibling: it answers "what does this *person* still have to set up" — "your resume is
 indexed", "your Facebook is connected" — and a group's setup dashboard (below) asks it **in the
 signed-in user's own session**, never with the service secret and never with a PAT.

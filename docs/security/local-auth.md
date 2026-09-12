@@ -58,9 +58,11 @@ production, but passwords travel in the login POST — TLS is not optional for a
 
 ## The flows
 
-- **Fresh install** — the first visit to `/login` offers *Create the administrator account*.
-  That first account is the admin; put its email in `OSHAL_OPERATOR_EMAILS` (the installer
-  does this already) so it can also call the platform user-administration API.
+- **Fresh install** — `/login` offers *Create the administrator account*, requiring the
+  one-use code issued by `node scripts/oshal-setup-root.mjs --origin <browser-origin>` in
+  the configured API environment. The code expires after fifteen minutes. Account creation,
+  root assignment and code consumption commit together; an arbitrary first visitor cannot
+  become root. See [application authorization](application-authorization.md).
 - **Inviting someone** — `POST /api/local-auth/users {email, name}` (operator session or a
   trusted service call). The response always contains `invitePath` — a one-time link you can
   paste into any channel — and `emailSent` telling you whether SMTP delivered it. Links work

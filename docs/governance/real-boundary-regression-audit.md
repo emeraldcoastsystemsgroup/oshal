@@ -30,6 +30,58 @@ provider claim still needs a separate live acceptance run.
 
 `tests/unit/app-home-customization.spec.ts` uses a recording pool only for HTTP input/owner binding and failure branches. Its real companion is the store's `identity/tests/home-summary.integration.cjs`: actual PostgreSQL with the canonical owner-RLS policy and a non-superuser role, the production GUC wrapper and preference queries, the compiled Identity extractor and real accessible-connections helper, plus Chromium on the actual Home module/CSS. Mock authentication and seeded source records remain intentional boundaries; this is not live-provider acceptance. The harness rejects nonlocal/non-test database names and removes only its generated schema/role. Passed for owner isolation, stale revisions, shared-account scope, renewable expiry, unavailable-source failures, keyboard editing and desktop/mobile rendering.
 
+## Core/store compatibility gate (2026-09-10)
+
+`tests/unit/store-compatibility.spec.ts` uses real disposable Git repositories, the shipped store
+compiler and the installed TypeScript compiler; none of those boundaries are mocked. It proves
+committed-only selection despite dirty/untracked source, TS2305 rejection of a consumer whose
+ambient stub invents a core export, dependency-lock mismatch refusal, normal cleanup, and source
+repository preservation when the compiler process tree is forcibly interrupted.
+
+The full exported pair `9655afde416e09058562cba0b965521bff1a0550` (core) and
+`f5db2153a25d8ebd18709dec10a03b130dac559c` (applications) passed on 2026-09-10:
+386 sources across 52 packages, followed by a failing real TS2305 compile naming
+`compatibility-negative-probe/probe.ts` and `inventedCompatibilityExport`. These are dated
+compiler-produced counts, not an inventory constant. The first acceptance run explicitly reused
+manifest/lock-matching provisioned dependencies. A second full run installed fresh dependencies
+with `npm ci` from the pinned core lockfile and passed with the same counts; both exports cleaned
+successfully. Per-run logs and the two SHAs are retained by
+[`check-store-compatibility.mjs`](../../scripts/check-store-compatibility.mjs); invocation and
+scope are documented in [the local CI runbook](../runbooks/local-ci.md#corestore-compatibility-release-check).
+This attests to source compatibility, not legacy JavaScript behavior or emitted-output parity.
+
+## Shared artifact picker (2026-09-10)
+
+`tests/unit/artifact-picker.spec.ts` runs the actual framework artifact/file routers, local
+owner-hashed storage directories, short-lived handles, loopback byte redemption and Chromium on
+the shipped Portrait Studio surface and shared picker. It also loads the real Portrait Studio
+source route. Authentication and the portrait SQL store are explicit fixtures; this does not
+claim PostgreSQL/RLS or external connector acceptance. No compiler, filesystem, picker or handle
+redemption implementation is replaced.
+
+The local proof passes for registered/visible source discovery, removal on unregister, MIME
+filtering, invalid navigation, owner-only listings, foreign-handle refusal, byte-identical file
+redemption, folder/back navigation, zero mints on cancellation, rejection of external source URLs,
+late-response cancellation, and selecting both a local file and a gallery image into the actual
+crop stage. No generation or publication is triggered. Mobile width and light/dark theme changes
+pass. The related artifact/auth suites pass together (34 tests); Portrait Studio's standalone
+camera proof passes 23 checks. Run locally with `node node_modules/vitest/vitest.mjs run
+tests/unit/artifact-picker.spec.ts`; set `OSHAL_STORE_REPO` when the repositories are not siblings.
+The deployed signed-in acceptance remains in BACKLOG until the protected core change lands.
+
+## Jarvis YAML routing and artifact handoff (2026-09-10)
+
+`tests/unit/jarvis-tool-catalog.spec.ts` loads the shipped YAML and mutates invalid metadata and
+role grants. `tests/unit/jarvis-artifact-routing.spec.ts` exercises actual registry and owner-bound
+handle selection, post-model expiry/visibility checks, and the real Jarvis ask/result HTTP path.
+Its model and persistence are explicit fixtures; no live deployment database is used.
+
+`tests/unit/artifact-dispatch-browser.spec.ts` runs Chromium with the shipped dispatcher and Jarvis
+surface, actual artifact HTTP routes and registry, and explicit authentication/model-result/source
+fixtures. It checks same-ref dispatch, confirmation refusal, foreign handles, removed destinations,
+and stale selection. This does not prove deployed model disambiguation. Keep ADR-139 Stage 4b open
+until a signed-in live model handoff and ambiguous-target refusal are recorded after deployment.
+
 ## Rules for future fixes
 
 1. Name the failed boundary in the test header and name what remains doubled.

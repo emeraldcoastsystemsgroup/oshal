@@ -8,6 +8,8 @@
 
 /* ═══ Light Blue — Frosted Sky Glass ═══ */
 [data-theme="light-blue"] {
+  /* Shared controls use the palette's readable accent ink and native color scheme. */
+  --text-on-accent: #111827;
   --bg-primary: #eaf4ff;
   --bg-secondary: rgba(255, 255, 255, 0.78);
   --bg-tertiary: rgba(222, 237, 255, 0.74);
@@ -38,3 +40,6 @@
   --card-shadow: 0 3px 10px rgba(59, 130, 246, 0.08), inset 0 1px 0 rgba(255,255,255,0.88);
   --depth-shadow: 0 22px 58px rgba(59, 130, 246, 0.14);
 }
+
+/* Native controls follow this palette even when a page declares a root default. */
+html[data-theme="light-blue"] { color-scheme: light; }

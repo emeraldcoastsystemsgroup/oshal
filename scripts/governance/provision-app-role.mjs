@@ -5,6 +5,12 @@
  * The managed-Postgres one-shot calls this before migrations (so migration 099
  * can never create a development-password bot role) and after migrations (to
  * converge ownership/default privileges and verify SECURITY DEFINER helpers).
+ *
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Check effective MAINTAIN privileges on PostgreSQL 17 and later while preserving PostgreSQL 16 ACL verification.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -254,7 +260,13 @@ function expectedBotColumnPrivilege(tableName, columnName, privilege) {
 
 async function verifyBotAcl(client) {
   const tableChecks = TABLE_PRIVILEGES
-    .map((privilege) => `has_table_privilege('oshal_bot', c.oid, '${privilege}') AS can_${privilege.toLowerCase()}`)
+    .map((privilege) => {
+      const effective = `has_table_privilege('oshal_bot', c.oid, '${privilege}')`;
+      const supported = privilege === 'MAINTAIN'
+        ? `CASE WHEN current_setting('server_version_num')::int >= 170000 THEN ${effective} ELSE false END`
+        : effective;
+      return `${supported} AS can_${privilege.toLowerCase()}`;
+    })
     .join(',\n           ');
   const tables = await client.query(`
     SELECT c.relname,

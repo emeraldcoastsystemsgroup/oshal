@@ -4,19 +4,18 @@
   SEQ                 | AUTHOR                      | DESCRIPTION
   -----------------------------------------------------------------------------
   1 | maintainer@emeraldcoastsystemsgroup.com   | Added OSHAL-native mesh dashboard engineering page for real channel, ticket, and participant process flow visibility
+  2 | maintainer@emeraldcoastsystemsgroup.com | Follow the shared portal theme live without replacing page content.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
 <head>
+  <!-- Shared portal palette: resolve before paint and follow the parent or saved choice live. -->
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+  <script src="/shared/ui/js/surface-theme.js"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mesh Dashboard</title>
-  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
-  <script>
-    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
-    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
-    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
-  </script>
+
   <link rel="stylesheet" href="/mesh-dashboard/mesh-dashboard.css">
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>

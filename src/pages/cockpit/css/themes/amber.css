@@ -1,5 +1,7 @@
 /* ═══ Amber — Warm Brass Glass ═══ */
 [data-theme="amber"] {
+  /* Shared controls use the palette's readable accent ink and native color scheme. */
+  --text-on-accent: #111827;
   --bg-primary: #120b06;
   --bg-secondary: rgba(28, 18, 10, 0.88);
   --bg-tertiary: rgba(44, 28, 16, 0.74);
@@ -30,3 +32,6 @@
   --card-shadow: 0 3px 10px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255,237,213,0.04);
   --depth-shadow: 0 24px 72px rgba(0, 0, 0, 0.5);
 }
+
+/* Native controls follow this palette even when a page declares a root default. */
+html[data-theme="amber"] { color-scheme: dark; }

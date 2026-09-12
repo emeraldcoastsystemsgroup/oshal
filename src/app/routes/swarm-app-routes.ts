@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: add framework-owned operator APIs for the user-by-app access matrix, assignment updates, and explicit-assignment clearing.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | GET /:name is now viewer-scoped (getAppForViewer) instead of serving the raw record. It had no visibility check of any kind, so any caller who could name an app — including a guest, for whom the mount-level requiresAuth is a no-op — received the installing operator's real OIDC subject. Not-visible now answers 404 like not-found, so it cannot be used to confirm another user's app exists.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | ADR-141: GET /:name/setup (the group setup-dashboard plan — manifest data only, probes are fetched by the page in the viewer's own session) and GET /:name/setup-dashboard (the ONE kernel-served setup / connection-status page every group gets, src/pages/cockpit/tools/app-group-setup.html). 404 for anything that is not an active group.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | Require protected application assignments to use authorization preview/apply instead of the legacy tier mutation API.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
@@ -32,6 +33,7 @@ import {
   buildHomePlan,
   type SwarmAppScope,
   type SwarmAppManifest,
+  type SwarmApplicationRecord,
 } from '@/features/swarm-apps';
 import { getCaller, isOperator } from '@/shared/middleware/authz';
 import { GUEST_TIERS, isGuestTier } from '@/shared/middleware/guest-capability-matrix';
@@ -90,7 +92,8 @@ const upload = multer({
  * @param service - SwarmAppService instance
  * @returns Express Router
  */
-export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAccessService): Router {
+export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAccessService,
+  options: { isAuthorizationProtected?: (app: SwarmApplicationRecord) => boolean | Promise<boolean> } = {}): Router {
   const router = Router();
 
   router.get('/', async (req: Request, res: Response) => {
@@ -202,6 +205,12 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAc
       const app = await service.getApp(name);
       if (!app) {
         res.status(404).json({ error: 'App not found' });
+        return;
+      }
+      // Legacy explicit tiers can supply fallback app-admin. Do not let this alternate
+      // write path bypass policy previews, issuer binding, approvals or audit receipts.
+      if (app.manifest.authorization || await options.isAuthorizationProtected?.(app)) {
+        res.status(409).json({ error: 'authorization_managed_by_policy', managementUrl: '/access' });
         return;
       }
       const declaration = app.manifest.access;

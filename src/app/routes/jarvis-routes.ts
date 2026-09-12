@@ -25,9 +25,12 @@
  * delegation replaces it.
  *
  * CHANGE LOG
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Load contextual YAML tool hints and caller-visible artifact targets; bind proposed browser handoffs to the selected owner handle.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Bind cached conversations and visuals to exact issuer and current protected execution lineage; capture nested results before publication.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Resolve closed package proposals before other directives and keep private results out of model history and cached answers.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — unified Jarvis assistant: GET / + /ui (surface), GET /catalog (the apps Jarvis can reach), POST /ask (classify via oshal-assistant → delegate self-serve bots via BotNodeClient.execute with userSub+creds → synthesize one answer; data-apps handed off with a deep link). Route-layer orchestrator, ADR-050.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Serve the authenticated response-stage and ambient-listening browser assets used by the Jarvis surface.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Headless access: callerSub falls back to the trusted-service identity (X-Service-Secret + x-oshal-user-sub) so the swarm CLI and internal bots drive /ask like the chat window.
@@ -42,8 +45,10 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | SCREEN AWARENESS: /ask accepts a `context` snapshot (the surface-bridge `context` op the focused app relays), folds it into the turn beside the attachment block, and returns the `oshal:surface` ops Jarvis emitted back to the client. Before this the floating assistant could not know which app screen the operator was on — it answered "I'm not currently being handed the live Resume Studio document contents", which was literally true — while extractSurfaceDirectives sat fully built and imported by tests only. Ops are dropped (and logged) when the turn carried no context, so a model can never drive a surface the operator is not actually looking at.
  *
  * @module jarvis-routes
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2/3: the deterministic ambient hook now answers open asks, weekly trends and person connections through the person-model front door (detectPersonModelIntent / answerPersonModelIntent); recall phrasing is unchanged. Net -2 code lines on this over-cap file.
  */
 
+import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
 import { Router, type Request, type Response, type RequestHandler } from 'express';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -70,9 +75,8 @@ import {
   stripPlanDirective,
 } from '@/features/swarm-orchestration';
 import {
-  detectRecallIntent,
-  recallQuery,
-  buildRecallSpokenAnswer,
+  detectPersonModelIntent,
+  answerPersonModelIntent,
   ownerHasAmbientData,
 } from '@/features/person-model';
 import { createJarvisVisualRoutes, createOptionalJarvisVisual } from './jarvis-visual-response';
@@ -104,7 +108,19 @@ import {
   schedulingTimezone,
 } from './jarvis-schedule-intent';
 import { visualSpecForDirectRequest } from './jarvis-visuals';
+import { visibleArtifactActions } from './artifact-action-visibility';
+import type { PickerVisibleApps } from './artifact-picker-routes';
+import { resolveJarvisArtifact, buildArtifactRoutingPrompt, resolveJarvisArtifactAnswer, type JarvisArtifactAction } from './jarvis-artifact-routing';
 import { buildToolsBlock, withImageDeliverableContract } from './jarvis-tool-catalog';
+import { createJarvisPackageToolRoutes } from './jarvis-package-tool-routes';
+import { resolveJarvisPackageToolDirective } from './jarvis-package-tool-directives';
+import type { JarvisPackageToolDiscovery, JarvisPackageToolProposal, JarvisPackageToolService } from './jarvis-package-tool-service';
+import { getApplicationAuthorizationActor, runWithApplicationAuthorizationActor } from '@/shared/application-authorization-context';
+import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
+import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY, readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
+import { runWithRemoteExecutionResults } from '@/shared/remote-execution-results';
+import { persistProtectedResultTask } from './protected-result-persistence';
+import { canReadJarvisSession, filterJarvisResultRows, hasProtectedJarvisSource } from './jarvis-result-access';
 import { buildBots, buildComms, buildActivity, buildCalendar } from './jarvis-overview';
 import {
   ensureJarvisSchema,
@@ -210,6 +226,7 @@ function servePage(apiDir: string, file: string): RequestHandler {
  */
 interface AskJob {
   sub: string;
+  issuer: string | null;
   label: string;            // short request text — the shelf item's title
   taskId: string;           // the bot task/workspace this job ran in (clickable from the shelf)
   status: 'pending' | 'done' | 'error';
@@ -229,6 +246,8 @@ interface AskJob {
     // isolation key. The client's producer stamps it from the shell's trusted binding, and the
     // cockpit relay re-validates against the app's manifest allow-list before any surface sees it.
     surfaceOps?: SurfaceDirectiveOp[];
+    artifactAction?: JarvisArtifactAction;
+    packageToolProposal?: JarvisPackageToolProposal;
   };
   error?: string;
   createdAt: number;
@@ -319,7 +338,7 @@ const pendingWeatherClarifications = new Map<string, { request: string; createdA
 
 /** Keep in-memory chat-ticket ownership explicit; a client-supplied session id is not globally unique. */
 function threadTicketKey(ownerSub: string, sessionId: string): string {
-  return `${ownerSub}\u0000${sessionId}`;
+  return `${ownerSub}\u0000${getApplicationAuthorizationActor()?.issuer ?? ''}\u0000${sessionId}`;
 }
 
 /**
@@ -327,21 +346,24 @@ function threadTicketKey(ownerSub: string, sessionId: string): string {
  * (ticket_task_links) AND conversation persistence (chat_messages) both FK-reference this task id;
  * without it every persistence write fails (observed live: history never saved). Idempotent + best-effort.
  */
-async function ensureSessionTask(ctx: AppContext, sub: string, sessionId: string, message: string): Promise<boolean> {
+async function ensureSessionTask(ctx: AppContext, sub: string, issuer: string | null, sessionId: string, message: string): Promise<boolean> {
   try {
+    if (await getJarvisBriefingDelivery()?.service.isProducerSession(sessionId)) return false;
     const existing = await ctx.taskStore.get(sessionId);
-    if (existing) return existing.ownerSub === sub;
+    if (existing) return existing.ownerSub === sub && (readOwnerPrincipalIssuer(existing.metadata) === issuer
+      || !issuer && !ctx.applicationAuthorization);
     const created = await ctx.taskStore.create({
       taskId: sessionId,
       title: (message.split('\n')[0] || message).slice(0, 90) || 'Jarvis chat',
       processingMode: 'agentic',
       agentId: JARVIS_AGENT_ID,
       ownerSub: sub, // per-owner budget attribution (Phase 2)
-      metadata: { origin: 'jarvis-chat' },
+      metadata: { origin: 'jarvis-chat', ...(issuer ? { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: issuer } : {}) },
     });
     // `create` returns an existing row when a concurrent caller wins the task-id race. Re-check the
     // returned owner so a guessed session id can never become a cross-tenant append channel.
-    return !created || created.ownerSub === sub;
+    return Boolean(created && created.ownerSub === sub && (readOwnerPrincipalIssuer(created.metadata) === issuer
+      || !issuer && !ctx.applicationAuthorization));
   } catch (err) {
     logger.warn({ err, sessionId }, 'jarvis: ensureSessionTask failed (non-fatal)');
     return false;
@@ -410,6 +432,7 @@ function ticketUpdatedAtMs(ticket: InternalTicket): number {
 }
 
 const JARVIS_CLIENT_ASSETS = new Map([
+  ['jarvis-package-tools.js', 'application/javascript; charset=utf-8'],
   ['jarvis-stage.js', 'application/javascript; charset=utf-8'],
   ['jarvis-stage.css', 'text/css; charset=utf-8'],
   ['jarvis-ambient-core.js', 'application/javascript; charset=utf-8'],
@@ -450,19 +473,38 @@ function storedJarvisSourceId(value: unknown): string | undefined {
  * @param apiDir - Directory holding the HTML surface.
  * @returns Express router.
  */
-export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
+export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisibleApps?: PickerVisibleApps, packageTools?: JarvisPackageToolService): Router {
   const router = Router();
+  const resultActor = async (req: Request) => {
+    const resolver = ctx.applicationAuthorization?.resolveActor ?? getJarvisBriefingDelivery()?.resolveActor;
+    if (!resolver) throw new Error('Jarvis result identity unavailable');
+    return resolver(req);
+  };
+  const resultIssuer = (req: Request) => getApplicationAuthorizationActor()?.issuer ?? getAuthenticatedPrincipalIssuer(req);
   registerLegacyReadContainment(router);
   // Legacy mode can still arrive with the fleet secret. Narrow only that compatibility path to its
   // asserted owner; OIDC/PAT and verified delegation already carry authoritative user identity.
   router.use(requireTrustedServiceUserIdentity);
+  router.use(async (req, _res, next) => {
+    if (!ctx.applicationAuthorization) { next(); return; }
+    try {
+      const actor = await ctx.applicationAuthorization.resolveActor(req);
+      runWithApplicationAuthorizationActor(actor, next);
+    } catch { next(); } // Protected discovery/execution refuses without a verified actor.
+  });
   const visualResponseService = new VisualResponseService(ctx.pool);
   void ensureJarvisSchema(ctx.pool);   // durable Tasks list table
 
   router.get('/', servePage(apiDir, 'jarvis.html'));
   router.get('/ui', servePage(apiDir, 'jarvis.html'));
   router.get('/assets/:file', serveJarvisClientAsset(apiDir));
-  router.use('/visuals', createJarvisVisualRoutes(visualResponseService));
+  if (packageTools) router.use('/package-tools', createJarvisPackageToolRoutes(packageTools, resultActor));
+  router.use('/visuals', createJarvisVisualRoutes(visualResponseService, async (req, artifact) => {
+    const sub = callerSub(req);
+    if (!sub) return false;
+    return Boolean((await filterJarvisResultRows(ctx, sub, [{ id: artifact.provenance.sourceJobId,
+      session_id: artifact.provenance.sourceSessionId }], () => resultActor(req))).length);
+  }));
 
   /** GET /catalog — the apps Jarvis can reach (drives the surface's "what I can do" chips).
    *  Uses the SAME effective-route set as classify/delegate (loadEffectiveRoutes): the curated
@@ -476,7 +518,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
       res.json({ apps: routes.map((r) => ({ key: r.key, name: r.name, blurb: r.blurb, mode: r.mode, deepLink: r.deepLink })) });
     } catch (err) {
       logger.warn({ err }, 'Jarvis /catalog dynamic build failed — falling back to curated routes');
-      const visible = APP_ROUTES.filter((r) => isBotAccessibleTo(r.agentId, 'jarvis'));
+      const visible = ctx.applicationAuthorization ? [] : APP_ROUTES.filter((r) => isBotAccessibleTo(r.agentId, 'jarvis'));
       res.json({ apps: visible.map((r) => ({ key: r.key, name: r.name, blurb: r.blurb, mode: r.mode, deepLink: r.deepLink })) });
     }
   });
@@ -493,7 +535,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
       // Missing and foreign sessions deliberately produce the same empty history. This keeps a
       // guessed id from becoming an existence oracle and prevents both text and visual metadata
       // from crossing the task-owner boundary.
-      if (!task || task.ownerSub !== sub) { res.json({ turns: [] }); return; }
+      if (!task || !await canReadJarvisSession(ctx, sub, resultIssuer(req), sessionId, () => resultActor(req))) { res.json({ turns: [] }); return; }
       const msgs = (await ctx.messageStore.getByTask(sessionId)) as Array<{
         role?: string; type?: string; text?: string; metadata?: Record<string, unknown>;
       }>;
@@ -538,6 +580,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
           };
         })
         .filter((t) => t.text.length > 0);
+      if (!await canReadJarvisSession(ctx, sub, resultIssuer(req), sessionId, () => resultActor(req))) { res.json({ turns: [] }); return; }
       res.json({ turns });
     } catch (err) {
       logger.warn({ err }, 'jarvis history failed');
@@ -551,9 +594,12 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     try {
-      const rows = (await ctx.pool.query(
-        `SELECT id, title, status, result, error, kind, ticket_id, visual, files, delivered, created_at, finished_at
+      let rows = (await ctx.pool.query(
+        `SELECT id, user_sub, session_id, briefing_source_id, principal_issuer, title, status, result, error, kind, ticket_id, visual, files, delivered, created_at, finished_at
            FROM jarvis_tasks WHERE user_sub = $1 ORDER BY created_at DESC LIMIT 50`, [sub])).rows;
+      const briefings = getJarvisBriefingDelivery();
+      if (briefings) rows = await briefings.service.listTasks(sub, await briefings.resolveActor(req), 50);
+      rows = await filterJarvisResultRows(ctx, sub, rows, () => resultActor(req));
       // For complex tasks (filed with the swarm), the live status lives on the ticket — map it in.
       const hasComplex = rows.some((r) => r.kind === 'complex' && r.ticket_id);
       let ticketStatus = new Map<string, string>();
@@ -582,17 +628,22 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
           id: r.id, title: r.title, status, result: r.result as string | null, error,
           kind: r.kind, ticketId: r.ticket_id, delivered: r.delivered === true, createdAt: r.created_at, finishedAt: r.finished_at,
           ...(visual ? { visual } : {}),
+          ...(r.briefing ? { briefing: r.briefing } : {}),
           ...(files.length ? { files } : {}),
         };
       });
       // For finished complex tasks, have Jarvis READ the deliverable and summarize it in his voice
       // (once, in the background). Until that lands, the task stays masked as in-flight — see
       // maskPendingComplexSummaries for why it must never surface as 'done' early.
-      await maskPendingComplexSummaries(ctx, sub, tasks);
+      const automaticTasks = [];
+      const sourceSessions = new Map(rows.map(row => [row.id, row.session_id]));
+      for (const task of tasks) if (!await hasProtectedJarvisSource(ctx, [task.id, task.ticketId, sourceSessions.get(task.id)].filter((id): id is string => Boolean(id)))) automaticTasks.push(task);
+      await maskPendingComplexSummaries(ctx, sub, automaticTasks);
       // Older completed rows may already contain a useful Markdown table but predate persisted
       // visual metadata. Repair at most three per owner poll; ordinary prose remains text-only.
-      await repairCompletedTaskTableVisuals(ctx, visualResponseService, sub, tasks);
-      res.json({ tasks });
+      await repairCompletedTaskTableVisuals(ctx, visualResponseService, sub, automaticTasks);
+      const stillVisible = new Set((await filterJarvisResultRows(ctx, sub, rows, () => resultActor(req))).map(row => row.id));
+      res.json({ tasks: tasks.filter(task => stillVisible.has(task.id)) });
     } catch (err) {
       logger.warn({ err }, 'jarvis tasks failed');
       res.json({ tasks: [] });
@@ -605,7 +656,9 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     try {
-      await ctx.pool.query('UPDATE jarvis_tasks SET delivered = TRUE WHERE id = $1 AND user_sub = $2', [String(req.params.id), sub]);
+      const rows = (await ctx.pool.query('SELECT id,user_sub,principal_issuer,session_id,ticket_id FROM jarvis_tasks WHERE id=$1 AND user_sub=$2', [String(req.params.id), sub])).rows;
+      if (!(await filterJarvisResultRows(ctx, sub, rows, () => resultActor(req))).length) { res.json({ ok: false }); return; }
+      await ctx.pool.query('UPDATE jarvis_tasks SET delivered = TRUE WHERE id = $1 AND user_sub = $2 AND briefing_source_id IS NULL', [String(req.params.id), sub]);
       res.json({ ok: true });
     } catch (err) {
       logger.warn({ err }, 'jarvis mark-delivered failed');
@@ -633,8 +686,15 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
    *  agentic turn exceeds Cloudflare's ~100s edge timeout if the connection is held. */
   router.post('/ask', requireAiEnabled, async (req: Request, res: Response) => {
     const sub = callerSub(req);
+    const issuer = resultIssuer(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
-    const body = (req.body || {}) as { message?: string; sessionId?: string; attachments?: unknown; context?: unknown };
+    const body = (req.body || {}) as { message?: string; sessionId?: string; attachments?: unknown; context?: unknown; artifact?: unknown };
+    const artifactSelection = resolveJarvisArtifact(body.artifact, sub);
+    if (body.artifact !== undefined && !artifactSelection) { res.status(404).json({ error: 'Choose the file again; this selection is unavailable.' }); return; }
+    let artifactActions: Awaited<ReturnType<typeof visibleArtifactActions>> = [];
+    try {
+      if (artifactSelection) artifactActions = await visibleArtifactActions(req, artifactSelection.type, artifactVisibleApps);
+    } catch { res.status(503).json({ error: 'Artifact destinations are temporarily unavailable.' }); return; }
     let message = String(body.message || '').trim();
     // What the operator has on screen right now, relayed from the focused app surface through the
     // surface bridge. Validated against the REAL contract; anything malformed degrades to a
@@ -656,8 +716,10 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
     gcAskJobs();
     // Register the thread as a chat_task FIRST — the chat-ticket link + saveTurn (chat_messages) both
     // FK-reference it; without it every persistence write fails (no durable history). Idempotent.
-    const ownsSession = await ensureSessionTask(ctx, sub, sessionId, message);
-    if (!ownsSession) { res.status(404).json({ error: 'session_not_found' }); return; }
+    const ownsSession = await ensureSessionTask(ctx, sub, issuer, sessionId, message);
+    if (!ownsSession || !await canReadJarvisSession(ctx, sub, issuer, sessionId, () => resultActor(req))) {
+      res.status(404).json({ error: 'session_not_found' }); return;
+    }
     await markJarvisSessionTaskStatus(ctx, sessionId, 'processing');
     // Quick push on send: open (or reuse) this thread's chat-ticket before we ack — one fast insert.
     const chatTicketId = await ensureThreadChatTicket(ctx, sub, sessionId, message);
@@ -665,7 +727,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
     if (hasAttachments) logger.info({ sessionId, images: attachments.imageCount, docs: attachments.docCount }, 'jarvis /ask: attachments enriched');
     const jobId = crypto.randomUUID();
     const label = message.replace(/\s+/g, ' ').trim().slice(0, 90);
-    askJobs.set(jobId, { sub, label, taskId: sessionId, kind: 'chat', status: 'pending', createdAt: Date.now() });
+    askJobs.set(jobId, { sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'pending', createdAt: Date.now() });
     // Provider-bound information must be fetched by the worker that owns the live provider. This
     // deterministic guard runs before the direct model turn, preventing a plausible-looking weather
     // or inbox answer from model memory. Product/code asks intentionally fall through to Jarvis.
@@ -675,12 +737,12 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
     // owner actually having ambient data, so an ordinary question is never hijacked into an empty read.
     // Media turns go straight to an enriched Jarvis turn — the deterministic weather/inbox/recall
     // guards would only misfire on "what's in this photo?" and never own the attached context.
-    const recallIntent = hasAttachments ? null : detectRecallIntent(message);
+    const recallIntent = (hasAttachments || artifactSelection) ? null : detectPersonModelIntent(message);
     const doRecall = recallIntent ? await ownerHasAmbientData(ctx.pool, sub) : false;
     const clarificationKey = threadTicketKey(sub, sessionId);
     const pendingWeather = pendingWeatherClarifications.get(clarificationKey);
-    let providerBoundIntent = (doRecall || hasAttachments) ? undefined : detectProviderBoundHandoff(message);
-    if (!doRecall && !hasAttachments && pendingWeather && Date.now() - pendingWeather.createdAt <= PENDING_WEATHER_TTL_MS) {
+    let providerBoundIntent = (doRecall || hasAttachments || artifactSelection) ? undefined : detectProviderBoundHandoff(message);
+    if (!doRecall && !hasAttachments && !artifactSelection && pendingWeather && Date.now() - pendingWeather.createdAt <= PENDING_WEATHER_TTL_MS) {
       const followUp = classifyWeatherLocationFollowUp(pendingWeather.request, message);
       if (followUp.action === 'resolved') {
         providerBoundIntent = followUp.intent;
@@ -702,38 +764,53 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
     // a media turn, a provider-bound ask, or a plain question — and only when a runner exists to fire
     // it (jarvisSchedulingAvailable). The fired prompt re-enters the orchestrator with
     // autoApprove:false, so any outward action still hits the interactive approval gates.
-    const scheduleIntent = (!doRecall && !hasAttachments && !providerBoundIntent && !providerClarification && jarvisSchedulingAvailable())
+    const scheduleIntent = (!doRecall && !hasAttachments && !artifactSelection && !providerBoundIntent && !providerClarification && jarvisSchedulingAvailable())
       ? detectScheduleIntent(message, { now: new Date(), timezone: schedulingTimezone() })
       : null;
     // Prepend the auto tool-feed (what Jarvis can actually DO) + the user's recent tasks/results only
     // when a direct model decision is still needed; the deterministic provider path needs neither.
     let botMessage = message;
-    if (!providerBoundIntent) {
-      const tools = buildToolsBlock();
-      // The deployment's app catalog rides EVERY model turn (before the plan guidance, whose
-      // "catalog keys above" refers to it). Without it the persona's baked specialist list was
-      // Jarvis's whole world - a store-installed app on this box did not exist to the model.
-      const catalog = await buildCatalogBlock(ctx);
-      const openWork = await buildOpenWorkBlock(ctx, sub);
-      const ctxBlocks = [tools, catalog, openWork, PLAN_DIRECTIVE_GUIDANCE].filter(Boolean).join('\n\n');
-      // The live screen sits with the attached media: both are authoritative context for THIS turn,
-      // and both belong immediately before the user's words so they frame the question being asked.
-      const screenBlock = buildSurfaceContextPrompt(surfaceContext);
-      const userPart = [screenBlock, attachments.hasAny ? attachments.promptBlock : '', message]
-        .filter(Boolean).join('\n\n');
-      botMessage = ctxBlocks ? `${ctxBlocks}\n\n---\n\n${userPart}` : userPart;
+    let offeredPackageTools: JarvisPackageToolDiscovery[] = [];
+    try {
+      if (!providerBoundIntent) {
+        const authorizationActor = getApplicationAuthorizationActor();
+        const authorizationTools = ctx.authorizationTool && authorizationActor
+          ? await ctx.authorizationTool.discover(authorizationActor, true) : [];
+        offeredPackageTools = packageTools && authorizationActor && !artifactSelection ? await packageTools.discover(authorizationActor) : [];
+        const tools = buildToolsBlock({ message, surface: surfaceContext?.app, authorizationTools, packageTools: offeredPackageTools });
+        // The deployment's app catalog rides EVERY model turn (before the plan guidance, whose
+        // "catalog keys above" refers to it). Without it the persona's baked specialist list was
+        // Jarvis's whole world - a store-installed app on this box did not exist to the model.
+        const catalog = await buildCatalogBlock(ctx);
+        const openWork = await buildOpenWorkBlock(ctx, sub);
+        const artifactBlock = buildArtifactRoutingPrompt(artifactSelection, artifactActions);
+        const ctxBlocks = [tools, catalog, openWork, artifactBlock, ...(artifactSelection ? [] : [PLAN_DIRECTIVE_GUIDANCE])].filter(Boolean).join('\n\n');
+        // The live screen sits with the attached media: both are authoritative context for THIS turn,
+        // and both belong immediately before the user's words so they frame the question being asked.
+        const screenBlock = buildSurfaceContextPrompt(surfaceContext);
+        const userPart = [screenBlock, attachments.hasAny ? attachments.promptBlock : '', message]
+          .filter(Boolean).join('\n\n');
+        botMessage = ctxBlocks ? `${ctxBlocks}\n\n---\n\n${userPart}` : userPart;
+      }
+    } catch (err) {
+      logger.error({ err, sessionId }, 'jarvis: tool context unavailable');
+      askJobs.delete(jobId);
+      await markJarvisSessionTaskStatus(ctx, sessionId, 'failed');
+      res.status(503).json({ error: 'Jarvis tool context is temporarily unavailable.' });
+      return;
     }
     // MUST be agentic:true — the codex provider has no plain-LLM path (agenticMode:false →
     // "activeLlm.generateResponse is not a function"). The persona is what keeps the decision turn
     // from running heavy tools: it answers, or emits a handoff directive, without shelling out.
-    void (async () => {
+    void runWithRemoteExecutionResults({ taskId: sessionId, record: async executionId => {
+      await persistProtectedResultTask(ctx, sessionId, JARVIS_AGENT_ID, executionId, await resultActor(req));
+    } }, async () => {
       try {
         if (doRecall && recallIntent) {
           // Deterministic transcript read — the count/quotes come straight from the owner's store.
           let answer: string;
           try {
-            const result = await recallQuery(ctx.pool, sub, recallIntent);
-            answer = buildRecallSpokenAnswer(recallIntent, result);
+            answer = await answerPersonModelIntent(ctx.pool, sub, recallIntent);
           } catch (err) {
             logger.warn({ err }, 'jarvis: ambient recall failed');
             answer = 'I could not reach your ambient recall just now — try again in a moment.';
@@ -742,7 +819,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
           await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
           const j = askJobs.get(jobId);
           askJobs.set(jobId, {
-            sub, label, taskId: sessionId, kind: 'chat', status: 'done',
+            sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done',
             createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
             result: { answer, routed: [], handoffs: [], dispatched: [] },
           });
@@ -755,7 +832,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
           await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
           const j = askJobs.get(jobId);
           askJobs.set(jobId, {
-            sub, label, taskId: sessionId, kind: 'chat', status: 'done',
+            sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done',
             createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
             result: { answer, routed: [], handoffs: [], dispatched: [] },
           });
@@ -766,7 +843,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
           await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
           const j = askJobs.get(jobId);
           askJobs.set(jobId, {
-            sub, label, taskId: sessionId, kind: 'chat', status: 'done',
+            sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done',
             createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
             result: { answer: providerClarification, routed: [], handoffs: [], dispatched: [] },
           });
@@ -780,7 +857,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
           await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
           const j = askJobs.get(jobId);
           askJobs.set(jobId, {
-            sub, label, taskId: sessionId, kind: 'chat', status: 'done',
+            sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done',
             createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
             result: {
               answer: providerBoundIntent.acknowledgement,
@@ -804,7 +881,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
           ]);
           answer = raced.answer;
         } catch (e) {
-          if ((e as Error).message !== 'DECISION_TIMEOUT') throw e;
+          if ((e as Error).message !== 'DECISION_TIMEOUT' || artifactSelection) throw e;
           const workJobId = crypto.randomUUID();
           let ticketId: string | undefined;
           try {
@@ -827,17 +904,26 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
           await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
           const j = askJobs.get(jobId);
           askJobs.set(jobId, {
-            sub, label, taskId: sessionId, kind: 'chat', status: 'done', createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
+            sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done', createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
             result: { answer: ack, routed: [], handoffs: [], dispatched: [{ workJobId, title: message.slice(0, 120) }] },
           });
           return;
         }
 
+        const packageReply = await resolveJarvisPackageToolDirective(answer, packageTools, getApplicationAuthorizationActor(), sessionId, offeredPackageTools);
+        if (packageReply.handled) {
+          await persistJarvisTurn(ctx, sessionId, 'assistant', packageReply.answer);
+          await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
+          const prior = askJobs.get(jobId);
+          askJobs.set(jobId, { sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done', createdAt: prior?.createdAt ?? Date.now(), finishedAt: Date.now(),
+            result: { answer: packageReply.answer, routed: [], handoffs: [], dispatched: [], ...(packageReply.proposal ? { packageToolProposal: packageReply.proposal } : {}) } });
+          return;
+        }
         // Multi-app plan (SEAM D): a data-dependent, cross-app request compiles to ONE 'graph' ticket
         // that the engine runs step-by-step (data passed between app bots; outward steps gated). A
         // single-step "plan" is not a plan — it falls through to the normal handoff path below.
         const plan = extractPlanDirective(answer);
-        if (isMultiAppPlan(plan)) {
+        if (!artifactSelection && !/```oshal:artifact\b/i.test(answer) && isMultiAppPlan(plan)) {
           const { byKey } = await loadEffectiveRoutes(ctx);
           const planDispatched = await compileAndDispatchPlan(ctx, sub, sessionId, plan, byKey);
           if (planDispatched.length) {
@@ -851,7 +937,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
             await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
             const jp = askJobs.get(jobId);
             askJobs.set(jobId, {
-              sub, label, taskId: sessionId, kind: 'chat', status: 'done',
+              sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done',
               createdAt: jp?.createdAt ?? Date.now(), finishedAt: Date.now(),
               result: { answer: ack, routed: [], handoffs: [], dispatched: planDispatched },
             });
@@ -870,16 +956,18 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
         // the fence, or the raw JSON leaks into the user's answer. Ops are validated fail-closed
         // here and re-validated by the cockpit relay against the app's manifest allow-list.
         const surface = extractSurfaceDirectives(directives.cleanAnswer);
-        const surfaceOps = surfaceContext ? surface.ops : [];
+        let surfaceOps = surfaceContext && !artifactSelection ? surface.ops : [];
         if (surface.ops.length && !surfaceContext) {
           logger.warn({ sessionId, ops: surface.ops.length }, 'jarvis: surface ops emitted with no surface context — dropped');
         }
-        const cleanAnswer = stripPlanDirective(surface.cleanAnswer);
-        const dispatched = handoffs.length ? await dispatchHandoffs(ctx, sub, sessionId, handoffs) : [];
+        const artifactReply = await resolveJarvisArtifactAnswer(stripPlanDirective(surface.cleanAnswer), artifactSelection, req, sub, artifactActions, artifactVisibleApps);
+        const cleanAnswer = artifactReply.cleanAnswer;
+        if (artifactReply.hadDirective) surfaceOps = [];
+        const dispatched = !artifactSelection && !artifactReply.hadDirective && handoffs.length ? await dispatchHandoffs(ctx, sub, sessionId, handoffs) : [];
         const directAnswerSource = `jarvis-answer:${jobId}`;
         // An explicit "show me a diagram" request wins; otherwise the deterministic default picker
         // gives a structured direct answer a fitting visual. Acks and plain prose stay text-only.
-        const directVisualSpec = visualSpecForDirectRequest(directives, message, directAnswerSource)
+        const directVisualSpec = artifactReply.hadDirective ? undefined : visualSpecForDirectRequest(directives, message, directAnswerSource)
           ?? (!directives.hadHandoffFence && handoffs.length === 0
             ? inferVisualSpec({ answer: cleanAnswer, request: message }) ?? undefined
             : undefined);
@@ -901,20 +989,21 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
         await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
         const j = askJobs.get(jobId);
         askJobs.set(jobId, {
-          sub, label, taskId: sessionId, kind: 'chat', status: 'done', createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
+          sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done', createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now(),
           result: {
             answer: cleanAnswer, routed: [], handoffs: [], dispatched,
             ...(directVisual ? { visual: directVisual } : {}),
             ...(surfaceOps.length ? { surfaceOps } : {}),
+            ...(artifactReply.artifactAction ? { artifactAction: artifactReply.artifactAction } : {}),
           },
         });
       } catch (err) {
         logger.error({ err }, 'jarvis ask failed');
         await markJarvisSessionTaskStatus(ctx, sessionId, 'failed');
         const j = askJobs.get(jobId);
-        askJobs.set(jobId, { sub, label, taskId: sessionId, kind: 'chat', status: 'error', error: (err as Error).message, createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now() });
+        askJobs.set(jobId, { sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'error', error: (err as Error).message, createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now() });
       }
-    })();
+    });
     res.status(202).json({ jobId, sessionId, chatTicketId });
   });
 
@@ -940,25 +1029,33 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
 
   /** GET /ask/result?jobId — status for one job. PERSISTENT (not one-shot) so the shelf can
    *  re-open a finished item. Caller-scoped. */
-  router.get('/ask/result', (req: Request, res: Response) => {
+  router.get('/ask/result', async (req: Request, res: Response) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     const job = askJobs.get(String(req.query.jobId || ''));
-    if (!job || job.sub !== sub) { res.json({ status: 'expired' }); return; }
+    if (!job || job.sub !== sub || job.issuer !== resultIssuer(req)
+      || !await canReadJarvisSession(ctx, sub, job.issuer, job.taskId, () => resultActor(req))) { res.json({ status: 'expired' }); return; }
     if (job.status === 'pending') { res.json({ status: 'pending', label: job.label }); return; }
     if (job.status === 'error') { res.json({ status: 'error', error: job.error, label: job.label, taskId: job.taskId }); return; }
-    res.json({ status: 'done', label: job.label, taskId: job.taskId, ...job.result });
+    const { packageToolProposal: pendingProposal, ...result } = job.result ?? {};
+    const packageToolProposal = pendingProposal && packageTools ? await packageTools.readProposal(await resultActor(req), pendingProposal.id) : undefined;
+    res.json({ status: 'done', label: job.label, taskId: job.taskId, ...result, ...(packageToolProposal ? { packageToolProposal } : {}) });
   });
 
   /** GET /ask/jobs — the caller's session-manager shelf: every non-expired request + its status. */
-  router.get('/ask/jobs', (req: Request, res: Response) => {
+  router.get('/ask/jobs', async (req: Request, res: Response) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     gcAskJobs();
     // The shelf is the WORK QUEUE — handed-off background items only. Chat turns are answered
     // inline and never belong on the shelf.
-    const jobs = [...askJobs.entries()]
-      .filter(([, j]) => j.sub === sub && j.kind === 'work')
+    const visibleJobs = [];
+    for (const entry of askJobs) {
+      const job = entry[1];
+      if (job.sub === sub && job.issuer === resultIssuer(req) && job.kind === 'work'
+        && await canReadJarvisSession(ctx, sub, job.issuer, job.taskId, () => resultActor(req))) visibleJobs.push(entry);
+    }
+    const jobs = visibleJobs
       .map(([jobId, j]) => ({ jobId, label: j.label, status: j.status, taskId: j.taskId, createdAt: j.createdAt, finishedAt: j.finishedAt }))
       .sort((a, b) => b.createdAt - a.createdAt);
     res.json({ jobs });
@@ -970,7 +1067,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string): Router {
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     const id = String((req.query.jobId || (req.body as { jobId?: string })?.jobId) || '');
     const job = askJobs.get(id);
-    if (job && job.sub === sub) askJobs.delete(id);
+    if (job && job.sub === sub && job.issuer === resultIssuer(req)) askJobs.delete(id);
     res.json({ ok: true });
   });
 

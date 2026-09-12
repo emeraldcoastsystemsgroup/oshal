@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Turn-time hosted-brain failover: a lane that passes its resolution probe can exhaust its quota mid-turn (Gemini free tier = 20 requests/day), and the provider's 429 was handed to the caller AS THE ANSWER. The turn now reports the failure (cools the free-tier row / drops the cached operator-lane verdict) and replays ONCE on the next resolved lane via retryHostedBrainTurn — same bounded-retry shape the Jarvis path uses. Explicit BYO connections keep surfacing their own failures unretried.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Close seq 17's blind spot (live 2026-08-11: the 429 STILL became the answer on THIS route): agentic turns catch provider errors inside task-orchestrator.handleError and RESOLVE with { success:false, error }, so the catch never fired. swallowedTurnFailure inspects the resolved result and feeds the same retryHostedBrainTurn; a non-retryable failure (reportResolvedLlmFailure's gate) keeps the original failed result.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | ONE-CHOKEPOINT node dispatch: when the resolved agent has a dedicated node endpoint, this route now executes the turn through executeBotOrInline (budget gate + ADR-090 skills + the ADR-127 REMOTE brain stamp — the demo operator's mounted CLI, a guest's hosted lane) instead of calling the controller orchestrator directly with the hosted-ONLY ladder — which is exactly how a node-backed bot's chat turns kept dying on an exhausted hosted key while a healthy CLI login sat mounted at its node. The controller persists both turns (persistJarvisTurn, the shared chat-turn writer) so GET /api/:taskId/messages replays node threads; ticket/chat-task bookkeeping and guest chatOnly containment are identical to the inline path. Inline bots are byte-identical to seq 18.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Require current exact-principal authorization for protected thread writes and history reads, including after asynchronous history retrieval.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -38,6 +39,10 @@ import { NoHostedBrainError, executeBotOrInline, hostedBrainWire, resolveHostedB
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { persistJarvisTurn } from './jarvis-task-store';
 import type { AppContext } from '../composition-root';
+import { callerCanReadTaskResult } from './protected-result-access';
+import { persistProtectedResultTask } from './protected-result-persistence';
+import { hasProtectedTaskResults, readProtectedResultExecutions, type ProtectedResultTask } from '@/shared/protected-results';
+import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 
 const logger = createChildLogger({ module: 'message-routes' });
 
@@ -59,13 +64,24 @@ async function callerMayAccessTask(ctx: AppContext, req: Request, taskId: string
       logger.debug({ err, taskId }, 'message ownership lookup could not resolve ticket owner');
       return null;
     });
-    return callerOwnsResource(req, owner);
+    return await callerCanReadTaskResult(ctx, req, { ...task, ownerSub: owner }) || mayStartEmptyTask(ctx, req, task);
   }
   const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
     logger.debug({ err, taskId }, 'message ownership lookup could not resolve missing-task owner');
     return null;
   });
+  if (await hasProtectedTaskResults(taskId)) return callerCanReadTaskResult(ctx, req, { taskId, ownerSub: owner });
   return owner ? callerOwnsResource(req, owner) : true;
+}
+
+async function mayStartEmptyTask(ctx: AppContext, req: Request, task: ProtectedResultTask): Promise<boolean> {
+  try {
+    if (!ctx.applicationAuthorization || readProtectedResultExecutions(task.metadata).length
+      || await hasProtectedTaskResults(task.taskId)) return false;
+    const actor = await ctx.applicationAuthorization.resolveActor(req);
+    if (!actor.isActive || actor.sub !== task.ownerSub || actor.issuer !== readOwnerPrincipalIssuer(task.metadata)) return false;
+    return !(await ctx.messageStore.getByTask(task.taskId)).length;
+  } catch { return false; }
 }
 
 /**
@@ -83,13 +99,13 @@ async function callerMayReadMessages(ctx: AppContext, req: Request, taskId: stri
       logger.debug({ err, taskId }, 'message history lookup could not resolve ticket owner');
       return null;
     });
-    return callerOwnsResource(req, owner);
+    return callerCanReadTaskResult(ctx, req, { ...task, ownerSub: owner });
   }
   const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
     logger.debug({ err, taskId }, 'message history lookup could not resolve missing-task owner');
     return null;
   });
-  return owner ? callerOwnsResource(req, owner) : false;
+  return owner ? callerCanReadTaskResult(ctx, req, { taskId, ownerSub: owner }) : false;
 }
 
 /** Compare ownership against the validated session or the secret-gated service assertion. */
@@ -271,11 +287,20 @@ function handleSendMessage(ctx: AppContext) {
           direct: !isMachineCall && Boolean(sessionSub),
           userSub: callerSub,
         });
+        const executionId = (result as { applicationExecutionId?: string }).applicationExecutionId;
+        if (executionId) {
+          if (!ctx.applicationAuthorization) throw new Error('protected_result_identity_unavailable');
+          await persistProtectedResultTask(ctx, nodeContext.taskId, resolvedAgentId, executionId,
+            await ctx.applicationAuthorization.resolveActor(req));
+        }
         // The turn executed remotely, so the controller owns thread durability: persist both
         // turns to the SAME store GET /api/:taskId/messages replays. persistJarvisTurn is the
         // shared best-effort chat-turn writer (one save shape, no drift) despite its name.
         await persistJarvisTurn(ctx, nodeContext.taskId, 'user', text);
         await persistJarvisTurn(ctx, nodeContext.taskId, 'assistant', String(result.response || ''));
+        if (executionId && !await callerMayReadMessages(ctx, req, nodeContext.taskId)) {
+          res.status(404).json({ error: 'not found' }); return;
+        }
         logger.info(
           {
             taskId: nodeContext.taskId,
@@ -495,6 +520,10 @@ function handleGetMessages(ctx: AppContext) {
       const messages = limit
         ? await ctx.messageStore.getRecent(taskId, limit)
         : await ctx.messageStore.getByTask(taskId);
+
+      if (!await callerMayReadMessages(ctx, req, taskId)) {
+        res.status(404).json({ error: 'not found' }); return;
+      }
 
       res.json({ messages, count: messages.length });
     } catch (error) {

@@ -1,4 +1,11 @@
 <!--
+CHANGE LOG
+-----------------------------------------------------------------------------
+SEQ | AUTHOR | DESCRIPTION
+-----------------------------------------------------------------------------
+1 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
+-->
+<!--
   Applications — the operator app-admin console AND the signed-in app catalog, one page.
   Backed by /api/swarm/apps. Apps LAUNCH from the cockpit left ribbon; this page is for
   MANAGING them: the operator admin bar (build / packs / load manifest / import YAML / focus)
@@ -20,22 +27,18 @@
   <meta charset="UTF-8" />
   <title>Swarm Applications — OSHAL</title>
   <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
-  <script>
-    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
-    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
-    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
-  </script>
+  <script src="/shared/ui/js/surface-theme.js"></script>
   <link rel="stylesheet" href="/fonts/codicon.css" />
   <style>
     :root {
       --bg: var(--bg-primary);
       --panel: var(--bg-secondary);
-      --card: #ffffff;
-      --ink: var(--bg-primary);
+      --card: var(--bg-card);
+      --ink: var(--text-primary);
       --ink-muted: var(--text-secondary);
-      --line: rgba(21, 27, 34, 0.10);
-      --line-dark: rgba(21, 27, 34, 0.15);
-      --navy: var(--bg-secondary);
+      --line: var(--border-color);
+      --line-dark: var(--border-color-hover);
+      --navy: var(--accent-primary);
       --teal: var(--accent-primary);
       --amber: var(--status-warning);
       --green: var(--status-success);
@@ -99,9 +102,9 @@
     .admin-row input[type="text"]:focus { outline: none; border-color: var(--teal); }
     .admin-row .sep { flex-basis: 100%; height: 0; }
     .admin-row label.inline { color: var(--ink-muted); font-size: 0.82rem; font-weight: 600; }
-    .tb-build { background: var(--navy); color: #fff; border-color: var(--navy); text-decoration: none;
+    .tb-build { background: var(--navy); color: var(--text-on-accent, #fff); border-color: var(--navy); text-decoration: none;
       border-radius: 8px; padding: 7px 12px; font-weight: 700; font-size: 0.86rem; display: inline-flex; align-items: center; gap: 6px; }
-    .tb-build:hover { background: var(--teal); color: #fff; }
+    .tb-build:hover { background: var(--teal); color: var(--text-on-accent, #fff); }
     .tb-secondary { background: var(--card); border: 1px solid var(--line-dark); color: var(--ink); text-decoration: none;
       border-radius: 8px; padding: 7px 12px; font-weight: 700; font-size: 0.86rem; display: inline-flex; align-items: center; gap: 6px; }
     .tb-secondary:hover { border-color: var(--teal); color: var(--teal); }
@@ -167,8 +170,8 @@
     .status-preview { color: var(--amber); border-color: rgba(164, 97, 25, 0.4); background: rgba(164, 97, 25, 0.1); }
 
     .app-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-    .open-link { background: var(--navy); color: #fff; border-color: var(--navy); font-weight: 700; padding: 7px 14px; }
-    .open-link:hover { background: var(--teal); color: #fff; border-color: var(--teal); }
+    .open-link { background: var(--navy); color: var(--text-on-accent, #fff); border-color: var(--navy); font-weight: 700; padding: 7px 14px; }
+    .open-link:hover { background: var(--teal); color: var(--text-on-accent, #fff); border-color: var(--teal); }
     .open-link:disabled { background: var(--card); color: var(--ink-muted); border-color: var(--line-dark); }
     .op-actions { display: flex; gap: 5px; flex-wrap: wrap; }
     .op-actions button { padding: 5px 9px; font-size: 0.76rem; font-weight: 600; }
@@ -195,7 +198,7 @@
       border-radius: 8px; color: var(--ink); font-size: 0.9rem; line-height: 1.45;
     }
     body.is-guest .guest-banner { display: flex; }
-    .guest-banner a { flex: 0 0 auto; margin-left: auto; background: var(--navy); color: #fff;
+    .guest-banner a { flex: 0 0 auto; margin-left: auto; background: var(--navy); color: var(--text-on-accent, #fff);
       text-decoration: none; border-radius: 8px; padding: 7px 14px; font-weight: 700; font-size: 0.86rem; }
     .guest-banner a:hover { background: var(--teal); }
 
@@ -231,6 +234,7 @@
     <div class="admin">
       <div class="admin-head"><span class="codicon codicon-tools"></span> Swarm administration</div>
       <div class="admin-row">
+        <a class="tb-secondary" href="/access">Application access</a>
         <a id="buildBtn" class="tb-build" href="/swarmbot/chat?agentId=a0000000-0000-0000-0000-000000000030" title="Describe a swarm and codex-packer builds the manifest + bots">&var(--status-success);&#65039; Build a swarm</a>
         <a id="packsBtn" class="tb-secondary" href="/api/swarm/packs/studio" title="View flow, download, or deploy the swarms you scoped with codex-packer">&var(--status-success); Packs</a>
         <span class="sep"></span>
@@ -629,12 +633,14 @@
     // ── Discover: the store catalog (ADR-085 D7) ─────────────────────────────
     const discoverEl = document.getElementById('discover');
     let installedNames = new Set();
-    let storeCatalog = null; // last GET /api/swarm/apps/catalog payload
+    let storeCatalog = null;
 
     async function fetchCatalog() {
       try {
-        const res = await fetch('/api/swarm/apps/catalog');
-        storeCatalog = res.ok ? await res.json() : { available: false, reason: `HTTP ${res.status}`, apps: [] };
+        let res = await fetch('/api/swarm/registries/catalog');
+        // Guest/member browsing retains the public store; trusted private registries are admin-only.
+        if (res.status === 403) res = await fetch('/api/swarm/apps/catalog');
+        storeCatalog = res.ok ? { available: true, ...await res.json() } : { available: false, reason: `HTTP ${res.status}`, apps: [] };
       } catch (err) {
         storeCatalog = { available: false, reason: err.message, apps: [] };
       }
@@ -648,16 +654,18 @@
         discoverEl.innerHTML = `<div class="empty">Store catalog unavailable: ${escapeHtml(storeCatalog.reason || 'unknown')}</div>`;
         return;
       }
-      const rows = (storeCatalog.apps || []).filter((a) => !installedNames.has(a.name));
+      const rows = storeCatalog.apps || [];
+      const failedSources = (storeCatalog.sources || []).filter((source) => !source.ok);
+      const sourceNotice = failedSources.length ? `<div class="empty">Some sources are unavailable: ${failedSources.map((source) => escapeHtml(source.label || source.slug) + ' — ' + escapeHtml(source.reason || 'unavailable')).join('; ')}</div>` : '';
       if (!rows.length) {
-        discoverEl.innerHTML = '<div class="empty">Everything the store publishes is already installed on this swarm.</div>';
+        discoverEl.innerHTML = sourceNotice + '<div class="empty">No packages are available from the configured sources.</div>';
         return;
       }
       const rowHtml = (a) => {
         const installable = a.status === 'ready';
         const initial = escapeHtml(String(a.displayName || a.name || '?').trim().charAt(0).toUpperCase() || '?');
         return `
-        <div class="app-row" data-store-name="${escapeHtml(a.name)}">
+        <div class="app-row" data-store-name="${escapeHtml(a.name)}" data-store-registry="${escapeHtml(a.registry || '')}">
           <div class="app-ico">${initial}</div>
           <div class="app-main">
             <div class="app-titleline">
@@ -666,11 +674,12 @@
               <span class="status-badge status-${installable ? 'active' : 'coming'}">${escapeHtml(a.status)}</span>
             </div>
             <div class="app-desc">${escapeHtml(a.description)}</div>
+            <div class="app-desc">${escapeHtml(a.registryLabel || 'Public app store')}${installedNames.has(a.name) ? ' · A package with this name is installed' : ''}</div>
           </div>
           <div class="app-right">
             <div class="op-actions">
-              ${installable
-                ? '<button data-act="install">Install</button>'
+              ${installable && a.registry
+                ? '<button data-act="install">' + (installedNames.has(a.name) ? 'Review source' : 'Review install') + '</button>'
                 : `<button disabled title="Not installable yet — store status is ${escapeHtml(a.status)}">Install</button>`}
             </div>
           </div>
@@ -681,7 +690,7 @@
       const more = [];
       const sorted = [...rows].sort((x, y) => String(x.displayName).localeCompare(String(y.displayName)));
       for (const a of sorted) (bySuite.get(a.suite) || more).push(a);
-      discoverEl.innerHTML = SUITES.map(([key, label]) => [label, bySuite.get(key)])
+      discoverEl.innerHTML = sourceNotice + SUITES.map(([key, label]) => [label, bySuite.get(key)])
         .concat([['More', more]])
         .filter(([, group]) => group.length > 0)
         .map(([label, group]) => `
@@ -692,17 +701,9 @@
         .join('');
 
       discoverEl.querySelectorAll('button[data-act="install"]').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const name = btn.closest('.app-row').dataset.storeName;
-          if (!confirm(`Install "${name}" from the app store? The package is fetched into deployed-apps/ and hot-loaded live.`)) return;
-          btn.disabled = true; btn.textContent = 'Installing…';
-          try {
-            await call('POST', '/api/swarm/apps/install-remote', { name });
-            await fetchApps();    // the new app appears in the installed list …
-            renderDiscover();     // … and drops out of Discover
-          } catch (_) {
-            btn.disabled = false; btn.textContent = 'Install';
-          }
+        btn.addEventListener('click', () => {
+          const row = btn.closest('.app-row');
+          window.location.href = '/app-loader/?' + new URLSearchParams({ registry: row.dataset.storeRegistry, name: row.dataset.storeName });
         });
       });
     }

@@ -4,16 +4,23 @@
   A read-only view over the run-trace read-model: enter a ticket id (or pass ?ticketId=)
   and see one waterfall — ticket -> phases -> bot executions -> per-LLM-call cost. It only
   fetches /api/trace/<id> (auth-gated, caller-scoped); it never writes.
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | Follow selected shared surfaces and text without an OS palette override.
   Author: maintainer@emeraldcoastsystemsgroup.com
 -->
 <html lang="en" data-theme="midnight">
 <head>
+  <!-- Shared portal palette: resolve before paint and follow the parent or saved choice live. -->
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+  <script src="/shared/ui/js/surface-theme.js"></script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Run Trace</title>
 <style>
-  :root{--bg:#fff;--fg:var(--bg-primary);--mut:var(--text-secondary);--line:var(--text-primary);--card:var(--text-primary);--acc:var(--accent-primary)}
-  @media (prefers-color-scheme:dark){:root{--bg:var(--bg-primary);--fg:var(--text-primary);--mut:var(--text-secondary);--line:var(--bg-tertiary);--card:var(--bg-primary)}}
+  :root{--bg:var(--bg-primary);--fg:var(--text-primary);--mut:var(--text-secondary);--line:var(--border-color);--card:var(--bg-card);--acc:var(--accent-primary)}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif}
   .wrap{max-width:1100px;margin:0 auto;padding:24px}
@@ -21,7 +28,7 @@
   .sub{color:var(--mut);margin:0 0 20px}
   form{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}
   input{flex:1;min-width:260px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit}
-  button{padding:9px 16px;border:0;border-radius:8px;background:var(--acc);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+  button{padding:9px 16px;border:0;border-radius:8px;background:var(--acc);color:var(--text-on-accent,#fff);font:inherit;font-weight:600;cursor:pointer}
   .totals{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px}
   .tot{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;min-width:130px}
   .tot .k{display:block;color:var(--mut);font-size:12px}
@@ -40,12 +47,7 @@
   code{font-size:12px}
   @media (max-width:640px){.row{grid-template-columns:140px 1fr}.mt{display:none}}
 </style>
-  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
-  <script>
-    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
-    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
-    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
-  </script>
+
 <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>
 <body>

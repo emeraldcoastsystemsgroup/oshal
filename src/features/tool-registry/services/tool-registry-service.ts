@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Added 7 persona tools (bash, browser, read-file, write-file, fetch, chroma-mcp, plane-mcp)
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Extracted baseline/persona seed catalogs into dedicated modules to satisfy file-size governance limits
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Existence checks now use getToolByName instead of scanning getAllTools() (capped at LIMIT 100) — once the tools table passed 100 rows, seeding collided on the unique name constraint and aborted; seeding also tolerates the concurrent-container 23505 race
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Protect the code-owned authorization family from package registration and mutation.
  */
 
 import { Tool } from '@/shared/types/tool';
@@ -21,6 +22,7 @@ import { ToolRepository, ToolFiltersSchema, type CreateToolInput, type UpdateToo
 import { TOOL_REGISTRY_BASELINE_TOOLS } from './tool-registry-baseline-tools';
 import { TOOL_REGISTRY_PERSONA_TOOLS } from './tool-registry-persona-tools';
 import { z } from 'zod';
+import { isAuthorizationTool } from '@/shared/security/authorization-tool-contract';
 type ToolFilters = z.infer<typeof ToolFiltersSchema>;
 
 /**
@@ -44,6 +46,7 @@ export class ToolRegistryService {
    * @throws Error if tool name already exists
    */
   async registerTool(input: CreateToolInput): Promise<Tool> {
+    if (isAuthorizationTool(input.name)) throw new Error('Authorization tools are reserved for core registration');
     // Exact indexed lookup — getAllTools() pages at LIMIT 100, so scanning it misses
     // any existing tool past the first page and the insert dies on tools_name_key.
     const existing = await this.toolRepo.getToolByName(input.name);
@@ -79,6 +82,7 @@ export class ToolRegistryService {
    * @returns Upserted tool and whether a new row was created
    */
   async registerOrUpdateTool(input: CreateToolInput): Promise<{ tool: Tool; created: boolean }> {
+    if (isAuthorizationTool(input.name)) throw new Error('Authorization tools are reserved for core registration');
     const existing = await this.toolRepo.getToolByName(input.name);
     if (!existing) {
       const tool = await this.registerTool(input);
@@ -92,6 +96,31 @@ export class ToolRegistryService {
     }
 
     return { tool: updated, created: false };
+  }
+
+  /**
+   * @description Restore the reserved catalog after restart, without changing agent AUTO/ASK grants.
+   * @param input Fixed descriptor supplied by core composition, never a route/package input.
+   * @returns Persisted tool metadata.
+   */
+  async seedAuthorizationTool(input: CreateToolInput): Promise<Tool> {
+    if (!isAuthorizationTool(input.name)) throw new Error('Expected core authorization tool name');
+    let existing = await this.toolRepo.getToolByName(input.name);
+    if (!existing) {
+      try { return await this.toolRepo.createTool(input); }
+      catch (error) {
+        this.logger.error({ err: error, name: input.name }, 'Core tool seed insert failed');
+        if ((error as { code?: string }).code !== '23505') throw error;
+        existing = await this.toolRepo.getToolByName(input.name);
+        if (!existing) throw error;
+      }
+    }
+    if (existing.registeredBy !== 'core:authorization') {
+      throw new Error('Reserved authorization name is already owned by a different registrant');
+    }
+    const tool = await this.toolRepo.updateTool(existing.toolId, input);
+    if (!tool) throw new Error('Core authorization tool disappeared during registration');
+    return tool;
   }
 
   /**
@@ -124,6 +153,10 @@ export class ToolRegistryService {
    * @throws Error if new name conflicts with existing tool
    */
   async updateTool(toolId: string, updates: UpdateToolInput): Promise<Tool | null> {
+    const current = await this.toolRepo.getToolById(toolId);
+    if (isAuthorizationTool(current?.name ?? '') || isAuthorizationTool(updates.name ?? '')) {
+      throw new Error('Authorization tool metadata is code-owned');
+    }
     // If name is being updated, check for uniqueness
     if (updates.name) {
       const allTools = await this.toolRepo.getAllTools();
@@ -153,6 +186,8 @@ export class ToolRegistryService {
    * @returns true if deleted, false if tool not found
    */
   async deleteTool(toolId: string): Promise<boolean> {
+    const current = await this.toolRepo.getToolById(toolId);
+    if (isAuthorizationTool(current?.name ?? '')) throw new Error('Authorization tool metadata is code-owned');
     const deleted = await this.toolRepo.deleteTool(toolId);
     if (deleted) {
       this.logger.info({ toolId }, 'Tool deleted successfully');
