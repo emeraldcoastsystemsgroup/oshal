@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial host-side nightly golden-scenario runner, report writer, and optional report committer.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require TEST_LAB_OWNER_SUB and send it only in the secret-authenticated trust header so the API can establish a non-operator owner identity instead of using its ambient service-secret operator stamp.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Drop the hardcoded model co-author trailer from the auto-commit message. No model attribution is allowed in this repo's commits (operator directive); the message now names only what the nightly changed.
  *
  * AI Test Lab — nightly runner (host-side) — ADR-063 §nightly.
  * -----------------------------------------------------------------------------
@@ -164,7 +165,7 @@ function renderMarkdown(report, prev) {
 function commit(report) {
   try {
     execSync('git add docs/test-lab-reports/', { cwd: ROOT, stdio: 'pipe' });
-    const msg = `chore(test-lab): nightly golden report ${dateSlug()} (${report.passed}/${report.total} passed)\n\nAuto-committed report + baseline only (propose-you-approve; no framework changes).\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`;
+    const msg = `chore(test-lab): nightly golden report ${dateSlug()} (${report.passed}/${report.total} passed)\n\nAuto-committed report + baseline only (propose-you-approve; no framework changes).`;
     execSync(`git commit -F -`, { cwd: ROOT, input: msg, stdio: 'pipe' });
     console.log('[test-lab-nightly] committed report + baseline.');
   } catch (e) {
