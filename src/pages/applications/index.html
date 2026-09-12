@@ -1,4 +1,11 @@
 <!--
+CHANGE LOG
+-----------------------------------------------------------------------------
+SEQ | AUTHOR | DESCRIPTION
+-----------------------------------------------------------------------------
+1 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
+-->
+<!--
   Applications — the operator app-admin console AND the signed-in app catalog, one page.
   Backed by /api/swarm/apps. Apps LAUNCH from the cockpit left ribbon; this page is for
   MANAGING them: the operator admin bar (build / packs / load manifest / import YAML / focus)
@@ -20,22 +27,18 @@
   <meta charset="UTF-8" />
   <title>Swarm Applications — OSHAL</title>
   <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
-  <script>
-    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
-    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
-    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
-  </script>
+  <script src="/shared/ui/js/surface-theme.js"></script>
   <link rel="stylesheet" href="/fonts/codicon.css" />
   <style>
     :root {
       --bg: var(--bg-primary);
       --panel: var(--bg-secondary);
-      --card: #ffffff;
-      --ink: var(--bg-primary);
+      --card: var(--bg-card);
+      --ink: var(--text-primary);
       --ink-muted: var(--text-secondary);
-      --line: rgba(21, 27, 34, 0.10);
-      --line-dark: rgba(21, 27, 34, 0.15);
-      --navy: var(--bg-secondary);
+      --line: var(--border-color);
+      --line-dark: var(--border-color-hover);
+      --navy: var(--accent-primary);
       --teal: var(--accent-primary);
       --amber: var(--status-warning);
       --green: var(--status-success);
@@ -99,9 +102,9 @@
     .admin-row input[type="text"]:focus { outline: none; border-color: var(--teal); }
     .admin-row .sep { flex-basis: 100%; height: 0; }
     .admin-row label.inline { color: var(--ink-muted); font-size: 0.82rem; font-weight: 600; }
-    .tb-build { background: var(--navy); color: #fff; border-color: var(--navy); text-decoration: none;
+    .tb-build { background: var(--navy); color: var(--text-on-accent, #fff); border-color: var(--navy); text-decoration: none;
       border-radius: 8px; padding: 7px 12px; font-weight: 700; font-size: 0.86rem; display: inline-flex; align-items: center; gap: 6px; }
-    .tb-build:hover { background: var(--teal); color: #fff; }
+    .tb-build:hover { background: var(--teal); color: var(--text-on-accent, #fff); }
     .tb-secondary { background: var(--card); border: 1px solid var(--line-dark); color: var(--ink); text-decoration: none;
       border-radius: 8px; padding: 7px 12px; font-weight: 700; font-size: 0.86rem; display: inline-flex; align-items: center; gap: 6px; }
     .tb-secondary:hover { border-color: var(--teal); color: var(--teal); }
@@ -167,8 +170,8 @@
     .status-preview { color: var(--amber); border-color: rgba(164, 97, 25, 0.4); background: rgba(164, 97, 25, 0.1); }
 
     .app-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-    .open-link { background: var(--navy); color: #fff; border-color: var(--navy); font-weight: 700; padding: 7px 14px; }
-    .open-link:hover { background: var(--teal); color: #fff; border-color: var(--teal); }
+    .open-link { background: var(--navy); color: var(--text-on-accent, #fff); border-color: var(--navy); font-weight: 700; padding: 7px 14px; }
+    .open-link:hover { background: var(--teal); color: var(--text-on-accent, #fff); border-color: var(--teal); }
     .open-link:disabled { background: var(--card); color: var(--ink-muted); border-color: var(--line-dark); }
     .op-actions { display: flex; gap: 5px; flex-wrap: wrap; }
     .op-actions button { padding: 5px 9px; font-size: 0.76rem; font-weight: 600; }
@@ -195,7 +198,7 @@
       border-radius: 8px; color: var(--ink); font-size: 0.9rem; line-height: 1.45;
     }
     body.is-guest .guest-banner { display: flex; }
-    .guest-banner a { flex: 0 0 auto; margin-left: auto; background: var(--navy); color: #fff;
+    .guest-banner a { flex: 0 0 auto; margin-left: auto; background: var(--navy); color: var(--text-on-accent, #fff);
       text-decoration: none; border-radius: 8px; padding: 7px 14px; font-weight: 700; font-size: 0.86rem; }
     .guest-banner a:hover { background: var(--teal); }
 

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Canonical theme bootstrap for standalone surfaces. 28 of 37 surfaces hardcoded a dark palette and consumed ZERO framework tokens, so they only "worked" in dark by accident. Several DID read the saved theme and set data-theme — then overrode every token with hardcoded hex, so the attribute did nothing. Also adds LIVE switching, which no surface had: they read the theme once at load, so changing it in the cockpit left every open surface stale until reload.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | An EMBEDDED surface now wears what the surrounding cockpit wears. The cockpit applies a focused app's skin transiently on its own <html data-theme> (a per-app core theme, or an ADR-085 package-bundled skin injected as #app-package-theme-css) and never persists it — so every iframed surface kept rendering the operator's SAVED theme and an app's chrome and its content disagreed (a light studio skin around a dark studio). Same-origin parent only, observed live; a packaged skin's stylesheet is copied in and applied once it loads; any failure — cross-origin parent, no parent theme, stylesheet error — falls back to the saved theme exactly as before.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Use Workspace only when no theme is saved, support one-shot shell prepaint, and refuse stale packaged stylesheet completions.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Follow cleared preferences and support documented standalone defaults and explicit tool theme URLs through the same shared bootstrap.
  */
 
 /**
@@ -42,6 +43,15 @@
     'black', 'light-blue', 'aurora', 'graphite', 'amber', 'workspace',
   ];
   var FALLBACK = 'midnight';
+  var bootstrapScript = document.currentScript;
+  // A standalone tool can retain a documented default or an explicit theme URL;
+  // the surrounding portal remains authoritative whenever the tool is embedded.
+  var defaultTheme = bootstrapScript && bootstrapScript.getAttribute('data-theme-default');
+  var queryTheme = null;
+  if (bootstrapScript && bootstrapScript.getAttribute('data-theme-query') !== null) {
+    try { queryTheme = new URLSearchParams(window.location.search).get('theme'); }
+    catch (_) { /* A non-browser harness has no standalone URL override. */ }
+  }
   /** The cockpit's element id for an injected package-bundled skin (theme-manager.js). */
   var PACKAGE_LINK_ID = 'app-package-theme-css';
   var SKIN_ID = /^[a-z0-9-]+$/i;
@@ -61,9 +71,10 @@
    * @returns {string} The saved theme, or the fallback.
    */
   function saved() {
+    if (SUPPORTED.indexOf(queryTheme) !== -1) return queryTheme;
     try {
       var value = localStorage.getItem('cockpit-theme');
-      return value === null ? 'workspace' : resolve(value);
+      return value === null ? (defaultTheme ? resolve(defaultTheme) : 'workspace') : resolve(value);
     } catch (_) {
       return FALLBACK;
     }
@@ -152,7 +163,7 @@
   // Live-follow the cockpit. `storage` fires in every OTHER same-origin document when the value
   // changes — so switching theme in the cockpit re-themes every open surface immediately.
   window.addEventListener('storage', function (e) {
-    if (e.key === 'cockpit-theme') sync();
+    if (e.key === 'cockpit-theme' || e.key === null) sync();
   });
 
   // Some surfaces are opened standalone (not in the cockpit) and the operator may switch themes in

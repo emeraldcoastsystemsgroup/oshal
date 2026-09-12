@@ -19,15 +19,18 @@ Installation and native acceptance are recorded separately from source verificat
 
 Settings → Global Settings → Theme includes Workspace. It becomes the starting
 theme only when this browser has no saved theme. Valid existing choices remain;
-an invalid saved ID keeps the established Midnight fallback. A focused application
-can still apply its own temporary or bundled skin without overwriting the saved
-choice. Shared surfaces follow their current parent theme, or the saved/default
-theme when opened separately. A late stylesheet from a previous app must not undo
-a newer choice.
+an invalid saved ID keeps the established Midnight fallback. The portal palette
+now takes precedence across applications and open tabs. **Application colors**
+explicitly enables each application's declared or bundled skin while preserving
+the saved portal palette. Choosing any portal theme turns that option off again.
+Shared surfaces follow their current parent theme, or the saved/default theme
+when opened separately. A late stylesheet from a previous app must not undo a
+newer choice. Blocked browser storage retains this tab's selection for its lifetime.
 
 Embedded chat follows the parent theme without writing that inherited appearance
-into the saved global preference. Standalone chat retains its existing Midnight
-default and query/profile theme behavior.
+into the saved global preference. Standalone chat follows a saved portal choice
+live, retains its Midnight default when no choice exists, and honors explicit
+theme URLs. Inherited bot profile colors never overwrite a saved portal choice.
 
 The styling is configurable in
 [workspace.css](../../src/pages/cockpit/css/themes/workspace.css) through the existing
@@ -56,6 +59,19 @@ The separate **Navigation** setting offers **Sidebar (existing layout)** and
 to this browser and does not change the saved color theme, current URL, active
 screen or unsaved iframe content. It is available in Global Settings and the
 header's Navigation layout button, including inside focused applications.
+
+The September 12 refinement places the workspace navigation **inside the top
+header**, between the application brand and existing controls. It no longer
+consumes a separate desktop row. On phones, an accessible Workspaces disclosure
+opens the same destinations below the header; keyboard focus, More and Retry
+remain available. Navigation remains independent of the color palette.
+
+The [appearance contract](../apps/appearance.md) documents shared page adoption,
+application defaults and custom document canvases. Career now applies consistent
+palette-derived branding to its thirteen existing screens. Core administration,
+AI Test Lab and operations pages use the same live theme bootstrap, with semantic
+colors for cards, controls and previews. Deployment and exact verification are
+recorded in the [September 12 release](../releases/workspace-facelift-2026-09-12.md).
 
 The optional rail opens existing complete profiles using ordinary same-tab links:
 `/cockpit/`, `/cockpit/?app=little-monsters`, `/cockpit/?app=create` and

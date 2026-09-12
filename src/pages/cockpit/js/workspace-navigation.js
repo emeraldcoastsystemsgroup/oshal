@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep iframe-to-shell focus transitions from replacing a navigation control during its click while retaining external-focus policy refresh.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Prefer the admitted Career group with the admitted Career app as its curated fallback, keeping the selected destination out of More.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Allow bounded cold profile discovery to finish within thirty seconds without retaining stale destinations or changing cancellation fences.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Place workspaces beside the header brand and expose the same admitted destinations through an accessible compact phone disclosure.
  */
 import { createUiLogger, serializeUiError } from '../../shared/ui-debug.js';
 
@@ -126,7 +127,15 @@ export class WorkspaceNavigation {
     this.rail.id = 'workspaceNavigation';
     this.rail.setAttribute('aria-label', 'Application workspaces');
     this.rail.hidden = true;
-    document.querySelector('.header-bar').after(this.rail);
+    this.rail.innerHTML = `<button type="button" id="workspaceNavigationCompactToggle"
+      aria-label="Application workspaces" title="Application workspaces" aria-expanded="false" aria-controls="workspaceNavigationDestinations">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+        <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+      </svg></button><div id="workspaceNavigationDestinations" class="workspace-navigation-destinations"></div>`;
+    document.querySelector('.header-left').after(this.rail);
+    this.compactToggle = this.rail.querySelector('#workspaceNavigationCompactToggle');
+    this.destinations = this.rail.querySelector('#workspaceNavigationDestinations');
     this.toggle = this.control.querySelector('button');
     this.options = this.control.querySelector('#workspaceNavigationOptions');
   }
@@ -139,11 +148,17 @@ export class WorkspaceNavigation {
 
   listen() {
     this.on(this.toggle, 'click', () => this.showOptions(this.options.hidden));
+    this.on(this.compactToggle, 'click', () => this.showCompact(!this.compactOpen));
+    this.on(matchMedia('(max-width: 640px)'), 'change', () => this.showCompact(false));
+    this.on(this.rail, 'focusin', event => {
+      event.target.closest('.workspace-navigation-links a')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
     this.on(this.control, 'change', event => {
       if (event.target.name === 'workspace-navigation-layout') setNavigationLayout(event.target.value);
     });
     this.on(document, 'pointerdown', event => {
       if (!this.control.contains(event.target)) this.showOptions(false);
+      if (!this.rail.contains(event.target)) this.showCompact(false);
     });
     this.on(document, 'keydown', event => this.handleKey(event));
     this.on(window, CHANGE_EVENT, event => this.update(event.detail));
@@ -165,15 +180,24 @@ export class WorkspaceNavigation {
 
   handleKey(event) {
     if (event.key !== 'Escape') return;
-    if (!this.options.hidden) { this.showOptions(false); this.toggle.focus(); event.stopPropagation(); }
+    if (!this.options.hidden) { this.showOptions(false); this.toggle.focus(); event.stopPropagation(); return; }
     const more = this.rail.querySelector('details[open]');
-    if (more) { more.open = false; more.querySelector('summary').focus(); event.stopPropagation(); }
+    if (more) { more.open = false; more.querySelector('summary').focus(); event.stopPropagation(); return; }
+    if (this.compactOpen) { this.showCompact(false); this.compactToggle.focus(); event.stopPropagation(); }
   }
 
   showOptions(open) {
+    if (open) this.showCompact(false);
     this.options.hidden = !open;
     this.toggle.setAttribute('aria-expanded', String(open));
     if (open) this.options.querySelector('input:checked')?.focus();
+  }
+
+  /** Keep the compact disclosure independent from discovery and the active application's document. */
+  showCompact(open) {
+    this.compactOpen = open;
+    this.rail.toggleAttribute('data-compact-open', open);
+    this.compactToggle.setAttribute('aria-expanded', String(open));
   }
 
   /** Update chrome only; no URL changes, theme changes or application rerender. */
@@ -190,6 +214,7 @@ export class WorkspaceNavigation {
 
   syncVisibility() {
     this.rail.hidden = this.layout !== 'workspaces' || Boolean(document.fullscreenElement);
+    if (this.rail.hidden) this.showCompact(false);
   }
 
   /** Never retain admitted names across a hidden page, failed refresh or layout opt-out. */
@@ -233,14 +258,14 @@ export class WorkspaceNavigation {
     const links = document.createElement('div'); links.className = 'workspace-navigation-links';
     links.append(workspaceLink({ name: 'cockpit', displayName: 'oshal Cockpit', href: '/cockpit/' }, active));
     for (const item of curated) links.append(workspaceLink(item, active));
-    this.rail.replaceChildren(links, this.moreMenu(active, curated));
+    this.destinations.replaceChildren(links, this.moreMenu(active, curated));
     if (this.notice) {
       const status = document.createElement('span'); status.dataset.workspaceStatus = '';
       status.setAttribute('role', 'status'); status.textContent = this.notice;
-      this.rail.append(status);
+      this.destinations.append(status);
       if (this.notice.startsWith('Workspaces unavailable')) {
         const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry';
-        retry.addEventListener('click', () => this.refresh()); this.rail.append(retry);
+        retry.addEventListener('click', () => this.refresh()); this.destinations.append(retry);
       }
     }
   }

@@ -26,6 +26,7 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Import the surface-bridge producer from its new SHARED home (/shared/ui/js/, next to surface-bridge-client.js) — it moved out of this pages slice so an app surface (workflow-studio talk-to-build) can share it without a pages→pages cross-slice import. No behaviour change here; default postTarget stays the chat-rail (parent/shell-relay) path.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: render the server's honest ai_disabled state in chat instead of leaving an unhandled send error or noop-looking reply.
  * 23 | maintainer@emeraldcoastsystemsgroup.com | Use the canonical Cockpit theme resolver and keep embedded parent/profile updates from overwriting the saved global preference.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com | Follow shared standalone and bundled parent palettes without saving inherited bot colors.
  */
 
 import { initializeSharedRagWorkspacePopup } from '/chat-assets/chat-rag-workspace-popup.mjs';
@@ -33,7 +34,7 @@ import { SwarmBotWorkspaceActions } from '/swarmbot/chat/swarmbot-workspace-acti
 import { appendMessage } from '/swarmbot/chat/swarmbot-messages.js';
 import { createSurfaceProducer } from '/shared/ui/js/surface-bridge-producer.js';
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
-import { resolveCockpitTheme } from '/cockpit/js/theme-manager.js';
+import { COCKPIT_THEMES, resolveCockpitTheme } from '/cockpit/js/theme-manager.js';
 
 const logger = createUiLogger('swarmbot-chat');
 const COCKPIT_CONTEXT_EVENT = 'oshal-cockpit-context';
@@ -756,20 +757,21 @@ class SwarmBotWorkspaceApp {
   }
 
   applyTheme(theme) {
-    // Bot profiles and parent messages are inherited appearance, not a new global preference.
+    // The shared bootstrap owns same-origin parent palettes, including bundled skins.
+    // Bot profile defaults and message fallbacks never become global user preferences.
     if (isEmbedded()) {
       try {
-        if (window.parent !== window) theme = window.parent.document.documentElement.getAttribute('data-theme') || theme;
+        if (window.parent !== window && window.parent.document.documentElement.getAttribute('data-theme')) return;
       } catch (_error) { /* A cross-origin parent can still supply the existing message fallback. */ }
+    } else {
+      const requested = new URLSearchParams(window.location.search).get('theme');
+      let saved = null;
+      try { saved = window.localStorage.getItem('cockpit-theme'); }
+      catch (_error) { /* Keep the tool's default when browser storage is unavailable. */ }
+      theme = [requested, saved, theme].find(value => COCKPIT_THEMES.includes(value));
     }
     const nextTheme = resolveCockpitTheme(readString(theme));
     document.documentElement.setAttribute('data-theme', nextTheme);
-    if (isEmbedded()) return;
-    try {
-      window.localStorage.setItem('cockpit-theme', nextTheme);
-    } catch (_error) {
-      // Ignore storage failures so the workspace can still repaint in restricted contexts.
-    }
   }
 
   async syncTaskContextFromSendResponse(payload) {

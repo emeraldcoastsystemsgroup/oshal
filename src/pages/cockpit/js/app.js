@@ -50,6 +50,7 @@
  * 44 | maintainer@emeraldcoastsystemsgroup.com   | Keep the full-screen mobile chat sheet collapsed on cold start so a background-created chat task cannot cover the phone's primary surface controls
  * 45 | maintainer@emeraldcoastsystemsgroup.com   | applyStatusBarPolicy(profile?.hideStatusBar === true) on the same durable root-attribute contract as the assistant orb (data-oshal-status-bar-hidden). It runs on every load, so a plain cockpit restores the bar; layout.css hides .status-bar on the attribute and the flex column reclaims the height for the app surface.
  * 46 | maintainer@emeraldcoastsystemsgroup.com | Mount optional workspace navigation after the current profile resolves, retaining existing screens and student mode.
+ * 47 | maintainer@emeraldcoastsystemsgroup.com | Apply profile colors only on explicit opt-in so the portal chooser remains authoritative across applications.
  */
 
 import { ThemeManager } from './theme-manager.js';
@@ -219,13 +220,9 @@ class CockpitApp {
       applyStatusBarPolicy(profile?.hideStatusBar === true);
       if (!profile) return;
 
-      // Per-app skin: apply the focused app's theme for this page-load only, so each
-      // app looks distinct without overwriting the operator's saved global theme.
-      // themeCssUrl = an ADR-085 package-bundled skin (a store-installed app brings
-      // its own stylesheet; core doesn't register it).
-      if (profile.theme) {
-        this.theme.applyTransient(profile.theme, profile.themeCssUrl);
-      }
+      // The portal palette follows the user across applications. App defaults remain
+      // available through Application colors, without replacing the saved palette.
+      this.theme.setApplicationTheme(profile.theme, profile.themeCssUrl);
 
       // Apps that are themselves the chat surface (e.g. Jarvis) ask us to drop the
       // generic right-rail chat panel. Set the flag before init()'s own

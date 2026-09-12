@@ -11,10 +11,11 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Added the "Get oshal on your devices" link (→ /cockpit/tools/devices.html) beside it, shown to everyone: the operator-gated join surface is the advanced path, and a basic user who came to Settings looking for "how do I put this on my desktop" found nothing.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Expose Workspace with a clear saved-choice, temporary-app-theme and visual-skin explanation.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Offer optional top workspace navigation as a separate browser-local preference from color themes.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Make the portal theme authoritative and expose optional application colors without changing content.
  */
 
 import { createUiLogger, serializeUiError } from '../../../shared/ui-debug.js';
-import { COCKPIT_THEMES } from '../theme-manager.js';
+import { COCKPIT_THEMES, usesApplicationColors, setApplicationColors } from '../theme-manager.js';
 import { navigationSettingsMarkup, bindNavigationSettings } from '../workspace-navigation.js';
 
 const logger = createUiLogger('cockpit-settings-global-tab');
@@ -252,8 +253,12 @@ export class SettingsGlobalTab {
         <div class="setting-section-title">Operator Preferences</div>
         <div class="setting-section-desc">Cockpit-local display and approval preferences for this operator session.</div>
         <div class="setting-section-title" style="font-size:14px;">Theme</div>
-        <div class="setting-section-desc">Choose a visual skin saved in this browser. Workspace is the starting choice when no theme has been saved, with a light paper palette and restrained indigo accents. Existing choices are kept. Application-specific themes can temporarily take precedence; the navigation and page layout stay the same.</div>
+        <div class="setting-section-desc">Choose a theme for the portal and its applications. Your choice follows you between pages and open tabs in this browser. Workspace uses light paper surfaces and indigo accents.</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap" id="settingsThemePicker">${themeButtons}</div>
+        <div class="setting-field">
+          <label><input type="checkbox" id="settingsApplicationColors"${usesApplicationColors() ? ' checked' : ''}> Application colors</label>
+          <span class="field-hint">Use each application's own skin, such as Little Monsters or Create. Choosing a portal theme above returns every application to that palette.</span>
+        </div>
         ${navigationSettingsMarkup()}
         <div style="height:12px;"></div>
         <div class="setting-section-title" style="font-size:14px;">Auto-Approve</div>
@@ -301,22 +306,28 @@ export class SettingsGlobalTab {
 
   // Bind theme selection buttons.
   bindThemePicker() {
+    this.body.querySelector('#settingsApplicationColors')?.addEventListener('change', event => {
+      setApplicationColors(event.target.checked);
+    });
     this.body.querySelectorAll('#settingsThemePicker button').forEach((button) => {
       button.addEventListener('click', () => {
         const theme = button.dataset.theme;
         logger.info('Updating cockpit theme preference', {
           theme,
         });
+        if (this.view.onThemeChange) {
+          this.view.onThemeChange(theme);
+          return;
+        }
         document.documentElement.dataset.theme = theme;
-        localStorage.setItem('cockpit-theme', theme);
+        try { localStorage.setItem('cockpit-theme', theme); }
+        catch (_error) { /* The selected palette remains usable without persistent storage. */ }
+        setApplicationColors(false);
         this.body.querySelectorAll('#settingsThemePicker button').forEach((item) => {
           item.classList.remove('active'); item.setAttribute('aria-pressed', 'false');
         });
         button.classList.add('active');
         button.setAttribute('aria-pressed', 'true');
-        if (this.view.onThemeChange) {
-          this.view.onThemeChange(theme);
-        }
       });
     });
   }

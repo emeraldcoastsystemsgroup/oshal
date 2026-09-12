@@ -1,32 +1,19 @@
+<!--
+CHANGE LOG
+-----------------------------------------------------------------------------
+SEQ | AUTHOR | DESCRIPTION
+-----------------------------------------------------------------------------
+1 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
+-->
 <!doctype html>
 <html lang="en" data-theme="midnight">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OSHAL Admin Console</title>
-  <script>
-    (() => {
-      const supported = ['midnight','daylight','ocean','sakura','forest','gray','black','light-blue','aurora','graphite','amber'];
-      try {
-        const saved = localStorage.getItem('cockpit-theme');
-        if (saved && supported.includes(saved)) {
-          document.documentElement.setAttribute('data-theme', saved);
-        }
-      } catch (_) {}
-    })();
-  </script>
+  <script src="/shared/ui/js/surface-theme.js"></script>
   <link rel="stylesheet" href="/fonts/codicon.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/midnight.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/daylight.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/ocean.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/sakura.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/forest.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/gray.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/black.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/light-blue.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/aurora.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/graphite.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/amber.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
   <link rel="stylesheet" href="/admin/admin.css" />
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>

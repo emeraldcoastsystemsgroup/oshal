@@ -8,6 +8,8 @@
 
 /* ═══ Black — Onyx High Contrast ═══ */
 [data-theme="black"] {
+  /* Shared controls use the palette's readable accent ink and native color scheme. */
+  --text-on-accent: #111827;
   --bg-primary: #050505;
   --bg-secondary: rgba(10, 10, 10, 0.9);
   --bg-tertiary: rgba(22, 22, 22, 0.8);
@@ -38,3 +40,6 @@
   --card-shadow: 0 3px 10px rgba(0, 0, 0, 0.46), inset 0 1px 0 rgba(255,255,255,0.04);
   --depth-shadow: 0 26px 70px rgba(0, 0, 0, 0.72);
 }
+
+/* Native controls follow this palette even when a page declares a root default. */
+html[data-theme="black"] { color-scheme: dark; }

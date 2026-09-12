@@ -14,6 +14,7 @@
   9 | maintainer@emeraldcoastsystemsgroup.com   | Major layout rework: collapsed runtime chrome to single status bar, added pop-out button, maximised chat vertical space
   10 | maintainer@emeraldcoastsystemsgroup.com   | Replaced the inline swarm-bot RAG markup with a shared placeholder so chat, swarm, and cockpit can reuse one knowledge workspace renderer
   11 | maintainer@emeraldcoastsystemsgroup.com | Include Workspace in chat prepaint, stylesheet loading and bot appearance choices.
+  12 | maintainer@emeraldcoastsystemsgroup.com | Share live portal and bundled-skin inheritance with standalone tools while retaining explicit chat URL themes.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -22,63 +23,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Swarm Bot Workspace</title>
   <script>
+    // Only embed metadata is tool-specific; the shared bootstrap owns all palettes.
     (() => {
-      const params = new URLSearchParams(window.location.search);
-      const supportedThemes = ['midnight', 'daylight', 'ocean', 'sakura', 'forest', 'gray', 'black', 'light-blue', 'aurora', 'graphite', 'amber', 'workspace'];
-      const queryEmbed = params.get('embed') === 'cockpit';
-      const requestedTheme = params.get('theme');
-      let persistedTheme = '';
-      try {
-        persistedTheme = window.localStorage.getItem('cockpit-theme') || '';
-      } catch (_error) {
-        persistedTheme = '';
-      }
-      const iframeEmbed = (() => {
-        try {
-          return window.self !== window.top;
-        } catch (_error) {
-          return true;
-        }
-      })();
-      if (queryEmbed || iframeEmbed) {
-        document.documentElement.setAttribute('data-embedded', 'cockpit');
-      }
-      // Prefer the parent cockpit's live data-theme when embedded — storage
-      // and query params are only a fallback for standalone loads.
-      let parentTheme = '';
-      try {
-        if (iframeEmbed && window.parent && window.parent !== window) {
-          parentTheme = window.parent.document.documentElement.getAttribute('data-theme') || '';
-        }
-      } catch (_error) { /* cross-origin parent — use persisted instead */ }
-      const nextTheme = supportedThemes.includes(parentTheme)
-        ? parentTheme
-        : (supportedThemes.includes(requestedTheme)
-          ? requestedTheme
-          : (supportedThemes.includes(persistedTheme) ? persistedTheme : 'midnight'));
-      document.documentElement.setAttribute('data-theme', nextTheme);
-
-      // Live-sync: when embedded in the cockpit, mirror any subsequent
-      // parent theme changes. storage events don't fire in the writing
-      // window, so a MutationObserver on the parent <html> is the reliable
-      // path for same-tab propagation.
-      try {
-        if (iframeEmbed && window.parent && window.parent !== window) {
-          const parentHtml = window.parent.document.documentElement;
-          new MutationObserver((mutations) => {
-            for (const m of mutations) {
-              if (m.attributeName === 'data-theme') {
-                const t = parentHtml.getAttribute('data-theme');
-                if (t && supportedThemes.includes(t)) {
-                  document.documentElement.setAttribute('data-theme', t);
-                }
-              }
-            }
-          }).observe(parentHtml, { attributes: true, attributeFilter: ['data-theme'] });
-        }
-      } catch (_error) { /* cross-origin parent — live sync unavailable */ }
+      let embedded = new URLSearchParams(window.location.search).get('embed') === 'cockpit';
+      try { embedded = embedded || window.parent !== window; }
+      catch (_) { /* Explicit embed metadata remains available across origins. */ }
+      if (embedded) document.documentElement.setAttribute('data-embedded', 'cockpit');
     })();
   </script>
+  <script src="/shared/ui/js/surface-theme.js" data-theme-default="midnight" data-theme-query></script>
   <!-- B4/CM-2: Codicon font served from @vscode/codicons npm package via /fonts route -->
   <link rel="stylesheet" href="/fonts/codicon.css">
   <script src="https://unpkg.com/@phosphor-icons/web"></script>

@@ -17,6 +17,7 @@ declare global {
   interface Window {
     workspaceThemeFixture: { theme: {
       apply(theme: string): string; applyTransient(theme: string, cssUrl?: string): string;
+      setApplicationTheme(theme?: string, cssUrl?: string): string;
     }; showHome(): Promise<void>; showSettings(): void; showSurface(): void };
   }
 }
@@ -212,7 +213,7 @@ it('precaches the default Workspace palette and prepaint bootstrap on the first 
     return { theme: await theme?.text(), bootstrap: await bootstrap?.text() };
   });
   expect(assets.theme).toContain('[data-theme="workspace"]');
-  expect(assets.bootstrap).toContain("value === null ? 'workspace'");
+  expect(assets.bootstrap).toContain("defaultTheme ? resolve(defaultTheme) : 'workspace'");
 }, 30000);
 
 it('loads the real guarded CSS route and registers its browser proof without claiming it executes during a Lab asset check', async () => {
@@ -224,3 +225,78 @@ it('loads the real guarded CSS route and registers its browser proof without cla
   expect(scenario?.regressionTests).toContainEqual({ level: 'browser', path: 'tests/unit/workspace-theme-browser.spec.ts' });
   expect(scenario?.description).toContain('does not execute the browser suite');
 });
+
+it('keeps the chosen portal palette across application defaults and only enables app colors on request', async () => {
+  await page.goto(fixture.origin + '/cockpit/?app=fixture-studio');
+  await page.waitForSelector('html[data-fixture-ready=true]');
+  expect(await page.locator('html').getAttribute('data-theme')).toBe('workspace');
+  await page.evaluate(() => window.workspaceThemeFixture.showSettings());
+  await page.locator('#settingsApplicationColors').check();
+  await expect.poll(() => page.locator('html').getAttribute('data-theme')).toBe('fixture-studio');
+  expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe('workspace');
+  await page.reload(); await page.waitForSelector('html[data-fixture-ready=true]');
+  expect(await page.locator('html').getAttribute('data-theme')).toBe('fixture-studio');
+  await page.evaluate(() => window.workspaceThemeFixture.showSettings());
+  await page.locator('#settingsThemePicker [data-theme=midnight]').click();
+  expect(await page.locator('#settingsApplicationColors').isChecked()).toBe(false);
+  await page.reload(); await page.waitForSelector('html[data-fixture-ready=true]');
+  expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
+  await page.evaluate(() => window.workspaceThemeFixture.theme.setApplicationTheme('daylight'));
+  expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
+  expect(errors).toEqual([]);
+}, 30000);
+
+it('follows the real chooser across open portal tabs without replacing an embedded document or its draft', async () => {
+  await open();
+  const other = await context.newPage();
+  await other.goto(fixture.origin + '/cockpit/?app=fixture-studio');
+  await other.waitForSelector('html[data-fixture-ready=true]');
+  await other.evaluate(() => window.workspaceThemeFixture.showSurface());
+  const frame = other.frameLocator('#shared-surface');
+  await frame.locator('body').waitFor();
+  await frame.locator('body').evaluate(body => {
+    const input = document.createElement('input'); input.id = 'appearance-draft';
+    input.value = 'Keep this unsaved note'; body.append(input);
+  });
+  const documentBefore = await frame.locator('html').elementHandle();
+  await page.bringToFront(); await page.locator('.ribbon-btn[data-view=settings]').click();
+  await page.locator('#settingsThemePicker [data-theme=daylight]').click();
+  await expect.poll(() => other.locator('html').getAttribute('data-theme')).toBe('daylight');
+  await expect.poll(() => frame.locator('html').getAttribute('data-theme')).toBe('daylight');
+  expect(await frame.locator('#appearance-draft').inputValue()).toBe('Keep this unsaved note');
+  expect(await documentBefore?.evaluate(element => element === document.documentElement)).toBe(true);
+  await page.locator('#settingsThemePicker [data-theme=workspace]').click();
+  await expect.poll(() => frame.locator('body').evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgb(245, 246, 249)');
+  expect(await frame.locator('#appearance-draft').inputValue()).toBe('Keep this unsaved note');
+  await other.close(); expect(errors).toEqual([]);
+}, 30000);
+
+it('offers readable primary-control ink and correct native control schemes in every portal palette', async () => {
+  await open();
+  const themes = ['midnight','daylight','ocean','sakura','forest','gray','black','light-blue','aurora','graphite','amber','workspace'];
+  for (const theme of themes) {
+    await page.evaluate(value => window.workspaceThemeFixture.theme.apply(value), theme);
+    expect(contrast(await token('--text-on-accent'), await token('--accent-primary')), theme).toBeGreaterThanOrEqual(4.5);
+    const scheme = await page.locator('html').evaluate(element => getComputedStyle(element).colorScheme);
+    expect(scheme, theme).toBe(['daylight','light-blue','workspace'].includes(theme) ? 'light' : 'dark');
+  }
+  expect(errors).toEqual([]);
+}, 30000);
+
+it('keeps the actual theme picker usable when browser preference writes are blocked', async () => {
+  await context.addInitScript(() => {
+    Storage.prototype.setItem = () => { throw new DOMException('Storage blocked', 'SecurityError'); };
+  });
+  await open(); await page.locator('.ribbon-btn[data-view=settings]').click();
+  await page.locator('#settingsThemePicker [data-theme=midnight]').click();
+  expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
+  await page.evaluate(() => window.workspaceThemeFixture.theme.setApplicationTheme('forest'));
+  await page.locator('#settingsApplicationColors').check();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  expect(await page.locator('html').getAttribute('data-theme')).toBe('forest');
+  await page.locator('#settingsThemePicker [data-theme=workspace]').click();
+  await expect.poll(() => token('--bg-primary')).toBe('#f5f6f9');
+  expect(errors).toEqual([]);
+}, 30000);

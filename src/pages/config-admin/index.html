@@ -8,6 +8,7 @@
   3 | maintainer@emeraldcoastsystemsgroup.com   | Added agent-scope section anchors and structure markers so bot-scoped /config links can open directly to per-bot settings
   4 | maintainer@emeraldcoastsystemsgroup.com   | Added shared Presentron runtime configuration to Config Admin so service-backed workspaces can hand operators to one canonical screen
   5 | maintainer@emeraldcoastsystemsgroup.com   | CM-6: Added RAG Engine and Google Search MCP service runtime configuration sections
+  6 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -15,28 +16,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Config Admin</title>
-  <script>
-    (() => {
-      const supported = ['midnight','daylight','ocean','sakura','forest','gray','black','light-blue','aurora','graphite','amber'];
-      try {
-        const saved = localStorage.getItem('cockpit-theme');
-        if (saved && supported.includes(saved)) {
-          document.documentElement.setAttribute('data-theme', saved);
-        }
-      } catch (_) {}
-    })();
-  </script>
-  <link rel="stylesheet" href="/cockpit/css/themes/midnight.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/daylight.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/ocean.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/sakura.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/forest.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/gray.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/black.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/light-blue.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/aurora.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/graphite.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/amber.css">
+  <script src="/shared/ui/js/surface-theme.js"></script>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
   <link rel="stylesheet" href="/config-admin/config-admin.css">
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>

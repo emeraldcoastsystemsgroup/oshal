@@ -84,7 +84,7 @@ it('does not let another open chat iframe overwrite a newer global selection', a
     });
   });
   expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe('workspace');
-  expect(await chat(previousTab).locator('html').getAttribute('data-theme')).toBe('daylight');
+  await expect.poll(() => chat(previousTab).locator('html').getAttribute('data-theme')).toBe('workspace');
   await previousTab.close(); expect(errors).toEqual([]);
 }, 30000);
 
@@ -123,3 +123,17 @@ it('registers actual chat inheritance coverage alongside the appearance browser 
   expect(SCENARIOS.find(item => item.id === 'cockpit-appearance')?.regressionTests).toContainEqual(
     { level: 'browser', path: 'tests/unit/workspace-chat-theme-browser.spec.ts' });
 });
+
+it('updates an open standalone chat from the portal chooser without losing its draft or saving bot colors', async () => {
+  await seed('workspace'); await open();
+  const standalone = await context.newPage();
+  await standalone.goto(fixture.origin + '/swarmbot/chat?agentId=fixture-bot&taskId=fixture-task');
+  await standalone.locator('#workspaceTitle').filter({ hasText: 'Synthetic theme bot' }).waitFor();
+  expect(await standalone.locator('html').getAttribute('data-theme')).toBe('workspace');
+  await standalone.locator('#messageInput').fill('Unsent standalone note');
+  await select('midnight');
+  await expect.poll(() => standalone.locator('html').getAttribute('data-theme')).toBe('midnight');
+  expect(await standalone.locator('#messageInput').inputValue()).toBe('Unsent standalone note');
+  expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe('midnight');
+  await standalone.close(); expect(errors).toEqual([]);
+}, 30000);

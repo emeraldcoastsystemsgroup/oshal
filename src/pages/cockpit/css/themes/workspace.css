@@ -8,7 +8,8 @@
  * =============================================================================
  */
 [data-theme="workspace"] {
-  color-scheme: light;
+  /* Shared controls use the palette's readable accent ink and native color scheme. */
+  --text-on-accent: #ffffff;
   --bg-primary: #f5f6f9;
   --bg-secondary: #fafbfe;
   --bg-tertiary: #eef0fc;
@@ -94,3 +95,6 @@ html[data-theme="workspace"] #settingsThemePicker button.active {
   border-color: var(--workspace-picker-accent);
   font-weight: 650;
 }
+
+/* Native controls follow this palette even when a page declares a root default. */
+html[data-theme="workspace"] { color-scheme: light; }

@@ -4,27 +4,34 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Style optional workspace navigation using the current theme without restyling application content.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep brand, workspaces and actions in one header row, with an unclipped compact disclosure on phones.
  */
 
 #workspaceNavigation[hidden], .workspace-navigation-options[hidden] { display: none; }
+[data-navigation-layout="workspaces"] .header-bar {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) max-content;
+  gap: 12px;
+}
+[data-navigation-layout="workspaces"] .header-left { min-width: 0; max-width: min(22vw, 240px); }
+[data-navigation-layout="workspaces"] .header-left .logo { min-width: 0; gap: 8px; }
+[data-navigation-layout="workspaces"] .header-left .logo svg { flex-shrink: 0; }
+[data-navigation-layout="workspaces"] .logo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-navigation-layout="workspaces"] .header-right { margin-left: 0; }
 #workspaceNavigation {
   display: flex;
   align-items: center;
-  flex: 0 0 auto;
-  gap: 10px;
-  min-height: 46px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--border-color);
+  min-width: 0;
+  min-height: 40px;
   color: var(--text-primary);
-  background: var(--bg-secondary);
   position: relative;
-  z-index: 90;
   font-size: 13px;
 }
-.workspace-navigation-links { display: flex; align-items: center; min-width: 0; overflow-x: auto; gap: 4px; }
-#workspaceNavigation a, #workspaceNavigation summary, #workspaceNavigation > button {
+.workspace-navigation-destinations { display: flex; align-items: center; min-width: 0; width: 100%; gap: 4px; }
+.workspace-navigation-links { display: flex; align-items: center; min-width: 0; overflow-x: auto; gap: 2px; }
+#workspaceNavigation a, #workspaceNavigation summary, #workspaceNavigation button {
   display: block;
-  padding: 10px 12px;
+  padding: 9px 10px;
   border: 1px solid transparent;
   border-radius: var(--radius-md, 8px);
   text-decoration: none;
@@ -34,7 +41,7 @@
   white-space: nowrap;
   cursor: pointer;
 }
-#workspaceNavigation a:hover, #workspaceNavigation summary:hover, #workspaceNavigation > button:hover {
+#workspaceNavigation a:hover, #workspaceNavigation summary:hover, #workspaceNavigation button:hover {
   background: var(--bg-tertiary);
   border-color: var(--border-color);
 }
@@ -47,7 +54,7 @@
   outline: 2px solid var(--accent-primary);
   outline-offset: -2px;
 }
-#workspaceNavigationMore { flex: 0 0 auto; max-width: min(42%, 240px); }
+#workspaceNavigationMore { flex: 0 1 auto; min-width: 62px; max-width: 180px; }
 #workspaceNavigationMore summary { list-style: none; overflow: hidden; text-overflow: ellipsis; }
 #workspaceNavigationMore summary::after { content: ' ▾'; }
 #workspaceNavigationMore summary::-webkit-details-marker { display: none; }
@@ -64,7 +71,7 @@
   overflow-wrap: anywhere;
   z-index: 110;
 }
-.workspace-navigation-more { top: 100%; min-width: 200px; max-width: min(360px, calc(100vw - 24px)); right: 12px; }
+.workspace-navigation-more { top: calc(100% + 8px); min-width: 200px; max-width: min(360px, calc(100vw - 24px)); right: 0; }
 .workspace-navigation-more a { white-space: normal !important; }
 .workspace-navigation-control { position: relative; display: flex; align-items: center; }
 .workspace-navigation-options { top: calc(100% + 10px); right: 0; width: min(270px, calc(100vw - 36px)); }
@@ -73,12 +80,34 @@
 .workspace-navigation-options label { display: flex; align-items: center; gap: 8px; padding: 10px 6px; cursor: pointer; }
 .workspace-navigation-options input { accent-color: var(--accent-primary); }
 .workspace-navigation-options p { color: var(--text-secondary); margin: 8px 6px 4px; font-size: 12px; line-height: 1.5; }
-#workspaceNavigation [data-workspace-status] { color: var(--text-secondary); font-size: 12px; }
+#workspaceNavigation [data-workspace-status] { min-width: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.25; }
+#workspaceNavigation button { flex-shrink: 0; }
+#workspaceNavigation #workspaceNavigationCompactToggle { display: none; }
 body.zen-mode #workspaceNavigation { display: none; }
-@media (max-width: 768px) {
-  #workspaceNavigation { padding: 0 8px; gap: 3px; flex-wrap: wrap; }
-  .workspace-navigation-links { flex: 1 1 0; }
-  #workspaceNavigation a, #workspaceNavigation summary { padding: 10px 9px; }
-  #workspaceNavigation [data-workspace-status] { flex: 1 1 70%; padding: 0 4px 6px; }
-  .workspace-navigation-options { position: fixed; top: calc(var(--header-height) + 8px); right: 10px; }
+@media (max-width: 960px) {
+  [data-navigation-layout="workspaces"] .header-bar { padding: 0 12px; gap: 8px; }
+  [data-navigation-layout="workspaces"] .header-left { max-width: 150px; }
+  [data-navigation-layout="workspaces"] .logo-text { font-size: 14px; }
+  #workspaceNavigation a, #workspaceNavigation summary { padding: 9px 8px; }
+  #workspaceNavigationMore { max-width: 130px; }
+}
+@media (max-width: 640px) {
+  [data-navigation-layout="workspaces"] .header-bar { grid-template-columns: max-content minmax(40px, 1fr) max-content; padding: 0 8px; gap: 6px; }
+  #workspaceNavigation { position: static; }
+  #workspaceNavigation #workspaceNavigationCompactToggle { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 0; }
+  .workspace-navigation-destinations {
+    display: none; position: absolute; top: calc(100% + 6px); left: 8px; right: 8px; width: auto;
+    flex-direction: column; align-items: stretch; gap: 4px; padding: 8px;
+    max-height: calc(100dvh - 70px); overflow-y: auto; overscroll-behavior: contain;
+    background: var(--bg-secondary); border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg, 12px); box-shadow: var(--panel-shadow); z-index: 110;
+  }
+  #workspaceNavigation[data-compact-open] .workspace-navigation-destinations { display: flex; }
+  .workspace-navigation-links { flex: 0 0 auto; flex-direction: column; align-items: stretch; overflow: visible; }
+  #workspaceNavigation a, #workspaceNavigation summary { padding: 12px; white-space: normal; }
+  #workspaceNavigationMore { min-width: 0; max-width: none; flex: 0 0 auto; }
+  #workspaceNavigationMore summary { white-space: nowrap; }
+  .workspace-navigation-more { position: static; min-width: 0; max-width: none; max-height: none; padding: 4px; box-shadow: none; }
+  #workspaceNavigation [data-workspace-status] { padding: 8px 12px; }
+  .workspace-navigation-options { position: fixed; top: 54px; right: 8px; }
 }

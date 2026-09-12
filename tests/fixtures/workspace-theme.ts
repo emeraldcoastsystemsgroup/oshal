@@ -28,7 +28,7 @@ function showSettings() {
   const body = document.getElementById('settingsBody');
   const settings = new SettingsGlobalTab({settings:{},onThemeChange:value=>theme.apply(value)},body);
   body.innerHTML = settings.renderOperatorPreferencesSection(); settings.bindThemePicker();
-  body.querySelectorAll('input').forEach(input=>input.disabled=true);
+  body.querySelectorAll('input:not(#settingsApplicationColors)').forEach(input=>input.disabled=true);
 }
 function showSurface() {
   home.destroy(); main.replaceChildren();
@@ -40,6 +40,9 @@ const ribbon = new RibbonNav('ribbonContainer',id=>{
   if(id==='settings')showSettings(); else if(id==='tool-budgets')showSurface(); else void showHome();
 });
 await ribbon.ready;
+if(new URLSearchParams(location.search).get('app')==='fixture-studio') {
+  theme.setApplicationTheme('fixture-studio','/fixture/packaged.css');
+}
 document.getElementById('themeToggle').onclick=()=>theme.cycle();
 window.workspaceThemeFixture={theme,showHome,showSettings,showSurface};
 await showHome(); document.documentElement.dataset.fixtureReady='true';

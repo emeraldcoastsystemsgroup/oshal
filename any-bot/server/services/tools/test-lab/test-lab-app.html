@@ -9,12 +9,15 @@ SEQ | AUTHOR | DESCRIPTION
 3 | maintainer@emeraldcoastsystemsgroup.com | Recover transient schedule history reads with bounded retries and clear stale evidence before retrying.
 4 | maintainer@emeraldcoastsystemsgroup.com | Serialize schedule refresh with mutations and retract closed-panel evidence so delayed catalog or owner responses cannot erase saved rows or restore stale access.
 5 | maintainer@emeraldcoastsystemsgroup.com | Focus caller-visible installation case links after catalog loading without executing tests or changing schedule refresh state.
+6 | maintainer@emeraldcoastsystemsgroup.com | Inherit live shared palettes and native control colors in standalone and embedded Lab views.
 -->
 <html lang="en" data-theme="midnight">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>AI Test Lab</title>
+<link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+<script src="/shared/ui/js/surface-theme.js"></script>
 <style>
   :root {
     --bg: var(--bg-primary, #090b13);
@@ -27,7 +30,7 @@ SEQ | AUTHOR | DESCRIPTION
     --success: var(--status-success, #34d399);
     --warning: var(--status-warning, #fbbf24);
     --danger: var(--status-error, #f87171);
-    --gap: #a78bfa;
+    --gap: var(--accent-primary);
     --radius: 8px;
     --font: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
@@ -56,7 +59,7 @@ SEQ | AUTHOR | DESCRIPTION
     cursor: pointer;
   }
 
-  button.primary { background: var(--accent); border-color: color-mix(in srgb, var(--accent) 75%, white 10%); color: #fff; }
+  button.primary { background: var(--accent); border-color: color-mix(in srgb, var(--accent) 75%, white 10%); color: var(--text-on-accent, #fff); }
   button:disabled { opacity: 0.55; cursor: default; }
 
   .lab-shell { min-height: 100vh; padding: 18px 20px 42px; display: flex; flex-direction: column; gap: 14px; }
@@ -727,35 +730,6 @@ $('schedulePanel').addEventListener('toggle',() => {
 $('scheduleForm').addEventListener('submit',createSchedule);
 $('refreshSchedules').addEventListener('click',loadSchedules);
 </script>
-<script>
-(function(){
-  const map = {
-    '--bg': '--bg-primary',
-    '--panel': '--bg-secondary',
-    '--panel2': '--bg-tertiary',
-    '--line': '--border-color',
-    '--text': '--text-primary',
-    '--muted': '--text-secondary',
-    '--accent': '--accent-primary',
-    '--success': '--status-success',
-    '--warning': '--status-warning',
-    '--danger': '--status-error'
-  };
-  function syncTheme(){
-    try {
-      const parent = window.parent && window.parent !== window ? window.parent : null;
-      if (!parent) return;
-      const styles = parent.getComputedStyle(parent.document.documentElement);
-      Object.keys(map).forEach((local) => {
-        const value = styles.getPropertyValue(map[local]).trim();
-        if (value) document.documentElement.style.setProperty(local, value);
-      });
-    } catch {}
-  }
-  syncTheme();
-  document.addEventListener('DOMContentLoaded', syncTheme);
-  window.addEventListener('storage', (event) => { if (event.key === 'cockpit-theme') setTimeout(syncTheme, 30); });
-})();
-</script>
+
 </body>
 </html>

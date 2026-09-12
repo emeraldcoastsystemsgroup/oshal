@@ -1,5 +1,7 @@
 /* ═══ Midnight — Apple Liquid Glass Dark ═══ */
 [data-theme="midnight"] {
+  /* Shared controls use the palette's readable accent ink and native color scheme. */
+  --text-on-accent: #111827;
   --bg-primary: #0a0a12;
   --bg-secondary: rgba(18, 18, 30, 0.85);
   --bg-tertiary: rgba(30, 30, 52, 0.7);
@@ -30,3 +32,6 @@
   --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.04);
   --depth-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
+
+/* Native controls follow this palette even when a page declares a root default. */
+html[data-theme="midnight"] { color-scheme: dark; }

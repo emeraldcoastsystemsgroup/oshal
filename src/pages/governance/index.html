@@ -7,7 +7,7 @@
   per-resource access_audit_log (both gated to admins when OSHAL_RBAC_ENFORCE is on).
 
   Framework surface conventions: local CSS vars are overridden from the cockpit's active theme by
-  the theme-sync script at the bottom (light/dark aware, reacts to data-theme + cockpit-theme), so
+  the shared live theme bootstrap, so
   this page does NOT hardcode a palette beyond its standalone defaults. Vanilla fetch, no build.
 
   CHANGE LOG
@@ -16,16 +16,19 @@
     | optimistic on/off light or checking retired environment names.
   2 | maintainer@emeraldcoastsystemsgroup.com | Display explicit shared-HKDF DEK-store break-glass
     | as a warning instead of presenting it as the normal per-user envelope posture.
+  3 | maintainer@emeraldcoastsystemsgroup.com | Follow the shared portal theme live without replacing page content.
 -->
 <html lang="en" data-theme="midnight"><head>
+  <!-- Shared portal palette: resolve before paint and follow the parent or saved choice live. -->
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+  <script src="/shared/ui/js/surface-theme.js"></script>
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Compliance & Posture</title>
 <style>
-  /* Standalone defaults; the theme-sync script overrides surfaces/text/borders from the cockpit. */
+  /* Local aliases consume the shared portal palette without copying computed colors. */
   :root {
-    --bg:var(--bg-primary); --panel:var(--bg-secondary); --panel2:var(--bg-tertiary); --line:var(--bg-tertiary);
+    --bg:var(--bg-primary); --panel:var(--bg-secondary); --panel2:var(--bg-tertiary); --line:var(--border-color);
     --text:var(--text-primary); --muted:var(--text-secondary); --accent:var(--accent-primary); --accent2:var(--status-success);
-    --scrollbar-thumb:rgba(255,255,255,.14);
     --good:var(--status-success); --warn:var(--status-warning); --bad:var(--status-error);
     --radius:14px; --font:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
   }
@@ -70,12 +73,7 @@
   .stamp { color:var(--muted); font-size:11.5px; margin-top:14px; }
   .skeleton { height:120px; border-radius:var(--radius); background:var(--panel2); opacity:.5; }
 </style>
-  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
-  <script>
-    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
-    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
-    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
-  </script>
+
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>
 <body>
@@ -225,8 +223,5 @@ document.getElementById('jsonBtn').onclick = () => download('/api/governance/aud
 load();
 </script>
 
-<!-- Framework theme-sync: copy the cockpit's active theme tokens onto our locals (light/dark
-     aware, reacts to data-theme + cockpit-theme). Same script every in-cockpit surface uses. -->
-<script>(function(){const M={'--bg':'--bg-primary','--panel':'--bg-secondary','--panel2':'--bg-tertiary','--line':'--border-color','--text':'--text-primary','--muted':'--text-secondary','--accent':'--accent-primary','--accent2':'--status-success','--scrollbar-thumb':'--scrollbar-thumb'};function m(){try{const p=(window.parent&&window.parent!==window)?window.parent:null;if(!p)return;const cs=p.getComputedStyle(p.document.documentElement);for(const k in M){const v=cs.getPropertyValue(M[k]).trim();if(v)document.documentElement.style.setProperty(k,v);}}catch(e){}}m();window.addEventListener('storage',e=>{if(e.key==='cockpit-theme')setTimeout(m,30);});try{const p=window.parent;if(p&&p!==window)new MutationObserver(m).observe(p.document.documentElement,{attributes:true,attributeFilter:['data-theme']});}catch(e){}document.addEventListener('DOMContentLoaded',m);})();</script>
 </body>
 </html>

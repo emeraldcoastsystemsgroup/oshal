@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added shared glass treatment for static
  *                     |               | cockpit, app, and tool surfaces.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Let Workspace surfaces use opaque paper cards and palette-aware reduced-transparency controls.
  *
  * OSHAL Surface Glass
  * -----------------------------------------------------------------------------
@@ -106,14 +107,28 @@ body {
 
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --oshal-glass-bg: rgba(18, 20, 32, 0.94);
-    --oshal-glass-bg-strong: rgba(24, 28, 44, 0.98);
-    --oshal-glass-bg-subtle: rgba(24, 28, 44, 0.82);
-    --oshal-control-bg: rgba(8, 10, 20, 0.92);
+    --oshal-glass-bg: var(--bg-card, #121420);
+    --oshal-glass-bg-strong: var(--bg-card-hover, #181c2c);
+    --oshal-glass-bg-subtle: var(--bg-secondary, #181c2c);
+    --oshal-control-bg: var(--bg-secondary, #080a14);
   }
 
   :where(*) {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
+}
+
+/* The same semantic surface classes keep their layout and pick up the selected
+   Workspace finish. Higher specificity avoids order-dependent glass overrides. */
+html[data-theme="workspace"] {
+  --oshal-glass-bg: var(--bg-card);
+  --oshal-glass-bg-strong: var(--bg-card-hover);
+  --oshal-glass-bg-subtle: var(--bg-secondary);
+  --oshal-glass-border: var(--border-color);
+  --oshal-glass-border-strong: var(--border-color-hover);
+  --oshal-glass-shadow: var(--card-shadow);
+  --oshal-glass-shadow-soft: var(--panel-shadow);
+  --oshal-glass-blur: 0px;
+  --oshal-control-bg: var(--bg-card);
 }

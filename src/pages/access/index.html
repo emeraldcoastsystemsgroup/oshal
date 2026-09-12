@@ -7,6 +7,7 @@ SEQ | AUTHOR | DESCRIPTION
 1 | maintainer@emeraldcoastsystemsgroup.com | Present per-user application permissions and core delegated management roles.
 2 | maintainer@emeraldcoastsystemsgroup.com | Review additive role changes inside exact user/application/tenant rows.
 3 | maintainer@emeraldcoastsystemsgroup.com | Focus application editing, condense permission summaries and provide explicit local expiry controls.
+4 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
 -->
 <!doctype html>
 <html lang="en" data-theme="midnight">
@@ -15,12 +16,8 @@ SEQ | AUTHOR | DESCRIPTION
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Access Administration — OSHAL</title>
   <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
-  <script>
-    try { const theme = localStorage.getItem('cockpit-theme'); if (theme) document.documentElement.dataset.theme = theme; } catch {}
-  </script>
+  <script src="/shared/ui/js/surface-theme.js"></script>
   <style>
-    :root { color-scheme: dark; }
-    :root[data-theme="daylight"], :root[data-theme="light-blue"] { color-scheme: light; }
     * { box-sizing: border-box; }
     body { margin: 0; color: var(--text-primary, #e5e7eb); background: var(--bg-primary, #111827); font: 14px/1.5 system-ui, sans-serif; }
     main { max-width: 1440px; margin: auto; padding: 22px 24px 48px; }
@@ -42,7 +39,7 @@ SEQ | AUTHOR | DESCRIPTION
     input, select, textarea { width: 100%; background: var(--bg-primary, #111827); color: inherit; padding: 9px 10px; }
     textarea { min-height: 80px; resize: vertical; }
     button { padding: 9px 14px; cursor: pointer; background: var(--bg-tertiary, #374151); color: inherit; font-weight: 650; }
-    button.primary { color: var(--bg-primary, #111827); background: var(--accent-primary, #a5b4fc); border-color: transparent; }
+    button.primary { color: var(--text-on-accent, #fff); background: var(--accent-primary, #a5b4fc); border-color: transparent; }
     button:disabled { opacity: .5; cursor: not-allowed; }
     :focus-visible { outline: 2px solid var(--accent-primary, #a5b4fc); outline-offset: 3px; }
     .field { margin-bottom: 14px; }
@@ -101,6 +98,8 @@ SEQ | AUTHOR | DESCRIPTION
     [hidden] { display: none !important; }
     @media (max-width: 780px) { .selectors, .layout, .role-editor .editor-extra { grid-template-columns: 1fr; } main { padding: 18px 12px 36px; } .application-search { max-width: none; } }
   </style>
+<!-- Shared semantic cards follow the selected portal finish without changing page layout. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css">
 </head>
 <body>
 <main>
