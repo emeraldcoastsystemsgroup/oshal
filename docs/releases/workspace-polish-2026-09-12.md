@@ -8,6 +8,12 @@ flows within the workspace drawer. Sidebar layout retains Workspace options.
 The original controls and iframe stay mounted through layout changes. Keyboard
 theme activation returns focus to the disclosure that opened it.
 
+Installed Daylight review exposed text bleeding through translucent menu surfaces
+and options buried beneath a long application list. The follow-up uses each
+palette's solid background for disclosures and gives application links a separate
+scroll area, keeping workspace controls visible. Pixel comparisons against light
+and dark content verify that the background no longer bleeds through.
+
 Create **1.3.0** separates recent work, quick starts and studios on Home and gives
 templates one dedicated, searchable catalog. Default Office templates appear once.
 Keyboard activation retains the same format handoff as clicking a card. Stories
@@ -24,8 +30,9 @@ independent source review.
 
 The six-file core appearance run passes 231 cases; a later focused header run
 passes seventeen cases including the reproduced keyboard-focus regression.
-Core type checking and scoped root JavaScript/fixture lint pass. The five-file
-navigation run passes 112 cases, including the new keyboard activation check. Tests
+Core type checking and scoped root JavaScript/fixture lint pass. The final five-file
+navigation run passes 123 cases, including eleven later opacity, long-list and
+short-window regressions beyond the initial 112. Tests
 cover duplicate removal, anchored placement, menu dismissal, responsive layouts
 and retention of the original controls and open document.
 

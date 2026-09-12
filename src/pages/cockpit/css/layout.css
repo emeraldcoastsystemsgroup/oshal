@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Zen (full-window focus) mode: body.zen-mode hides all cockpit chrome (header, ribbon, status bar, chat rail, per-surface title bar) so the active surface gets the whole window — the desktop analogue of the phone full-bleed rules below. Plus the floating semi-transparent exit button.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | :root[data-oshal-status-bar-hidden="true"] .status-bar {display:none} — the manifest-declared per-app hide of the status bar (ribbon.hideStatusBar, set on the root by app.js). Zen mode hides it for everyone in a session; this drops it permanently for one app.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Keep Home singular and group secondary actions in a theme-aware options disclosure.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Keep the sidebar utility disclosure opaque over application content.
  */
 
 /* ===== Layout — Cockpit Shell (Apple Liquid Glass) ===== */
@@ -113,7 +114,7 @@ body {
   position: absolute; top: calc(100% + 8px); right: 0; width: min(260px, calc(100vw - 24px));
   max-height: calc(100dvh - 80px); overflow-y: auto; z-index: 110;
   padding: 8px; border: 1px solid var(--border-color); border-radius: var(--radius-lg);
-  background: var(--bg-secondary); color: var(--text-primary); box-shadow: var(--panel-shadow);
+  background: var(--bg-primary); color: var(--text-primary); box-shadow: var(--panel-shadow);
 }
 .header-utilities-label { padding: 8px 10px; font-size: 12px; font-weight: 700; color: var(--text-secondary); }
 #cockpitHeaderUtilities .header-btn {

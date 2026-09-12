@@ -9,12 +9,14 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Use held real HTTP responses and Chromium virtual time to cover cold discovery beyond five seconds and the bounded thirty-second retry path.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Measure the real top-header layout and unclipped compact menus with long labels, keyboard controls and retained iframe drafts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Reproduce duplicate destination labels and verify More stays attached to its own trigger through palette and viewport changes.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Compare rendered menu backdrops and retain accessible utilities and applications in full and short viewports.
  * =============================================================================
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import sharp from 'sharp';
 import { startWorkspaceNavigationFixture } from '../fixtures/workspace-navigation';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
 
@@ -255,7 +257,7 @@ it('keeps a long More list reachable at a crowded viewport edge and dismisses it
   await page.locator('#workspaceNavigationMore > summary').click();
   await expectMoreAnchored(); await expectMenuReachable();
   await screenshot('anchored-more-crowded');
-  await page.locator('.workspace-navigation-more').evaluate(element => { element.scrollTop = 0; });
+  await page.locator('.workspace-navigation-more-links').evaluate(element => { element.scrollTop = 0; });
   await page.setViewportSize({ width: 1440, height: 960 }); await expectMoreAnchored();
   await editor().locator('#draft').fill('Synthetic iframe outside interaction');
   await expect.poll(() => page.locator('#workspaceNavigationMore').getAttribute('open')).toBeNull();
@@ -711,4 +713,106 @@ it('precaches both navigation assets on first install and serves their real byte
   expect(await page.locator('[data-workspace=create]').count()).toBe(0);
   expect(await editor().locator('h1').innerText()).toBe('Synthetic editor');
   expect(errors).toEqual([]);
+}, 30000);
+
+/** @description Compare rendered menu pixels while only the synthetic iframe backdrop changes. */
+async function menuBackdropPixels(selector: string, color: string) {
+  await editor().locator('body').evaluate((element, background) => {
+    element.style.backgroundColor = background; element.style.minHeight = '100vh';
+  }, color);
+  const pixels = sharp(await page.locator(selector).screenshot({ animations: 'disabled' }));
+  const { width, height } = await pixels.metadata();
+  return pixels.extract({ left: 12, top: 12, width: width! - 24, height: height! - 24 }).removeAlpha().raw().toBuffer();
+}
+
+it.each([
+  ['daylight', 'workspaces', 1440], ['midnight', 'workspaces', 1440],
+  ['daylight', 'workspaces', 390], ['midnight', 'workspaces', 390],
+  ['daylight', 'sidebar', 1440], ['midnight', 'sidebar', 1440],
+] as const)('keeps the %s %s menu opaque over actual iframe content at %ipx', async (theme, layout, width) => {
+  await page.setViewportSize({ width, height: 960 });
+  await open('/cockpit/?app=create', layout, theme);
+  if (layout === 'workspaces') await discovered();
+  await editor().locator('#draft').fill('Synthetic opacity regression draft');
+  const documentId = await editor().locator('html').getAttribute('data-document-id');
+  await headerControl('#themeToggle');
+  const selector = layout === 'sidebar' ? '#cockpitHeaderUtilities'
+    : width === 390 ? '.workspace-navigation-destinations' : '.workspace-navigation-more';
+  const black = await menuBackdropPixels(selector, '#000000');
+  const white = await menuBackdropPixels(selector, '#ffffff');
+  expect(white.length).toBe(black.length);
+  let difference = 0;
+  for (let index = 0; index < black.length; index++) difference = Math.max(difference, Math.abs(black[index] - white[index]));
+  await screenshot(`opaque-${theme}-${layout}-${width}`);
+  expect(difference).toBe(0);
+  expect(await editor().locator('html').getAttribute('data-document-id')).toBe(documentId);
+  expect(await editor().locator('#draft').inputValue()).toBe('Synthetic opacity regression draft');
+  expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe(theme);
+  expect(errors).toEqual([]); expect(external).toEqual([]);
+}, 30000);
+
+/** @description Require actual visible pixels and pointer access, not only a nonzero DOM box. */
+async function menuControlReachable(selector: string) {
+  return page.locator(selector).evaluate(element => {
+    const box = element.getBoundingClientRect();
+    return box.top >= 0 && box.bottom <= innerHeight
+      && element.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2));
+  });
+}
+
+it.each([[1440, 960], [960, 700], [390, 844]])('keeps utilities visible with thirty-three admitted apps and scrolls only their list at %ipx', async (width, height) => {
+  for (let index = 0; index < 29; index++) fixture.state.workspaces.push({ name: `synthetic-extra-${index}`,
+    displayName: `Synthetic extra application ${index}`, kind: 'app', href: `/cockpit/?app=synthetic-extra-${index}` });
+  await page.setViewportSize({ width, height });
+  await open('/cockpit/?app=create', 'workspaces', 'daylight'); await discovered();
+  await editor().locator('#draft').fill('Synthetic long-menu draft');
+  const documentId = await editor().locator('html').getAttribute('data-document-id');
+  if (width === 390) await page.locator('#workspaceNavigationCompactToggle').click();
+  await page.locator('#workspaceNavigationMore > summary').click();
+  await screenshot(`utilities-thirty-three-${width}`);
+  expect(await menuControlReachable('#themeToggle')).toBe(true);
+  expect(await menuControlReachable('#portalSettingsBtn')).toBe(true);
+  const list = page.locator('.workspace-navigation-more-links');
+  expect(await list.locator('a').count()).toBe(30);
+  await list.locator('a').last().scrollIntoViewIfNeeded();
+  expect(await list.evaluate(element => element.scrollTop > 0)).toBe(true);
+  expect(await menuControlReachable('.workspace-navigation-more-links a:last-child')).toBe(true);
+  expect(await menuControlReachable('#themeToggle')).toBe(true);
+  expect(await menuControlReachable('#portalSettingsBtn')).toBe(true);
+  expect(await editor().locator('html').getAttribute('data-document-id')).toBe(documentId);
+  expect(await editor().locator('#draft').inputValue()).toBe('Synthetic long-menu draft');
+  expect(errors).toEqual([]); expect(external).toEqual([]);
+}, 30000);
+
+it.each([[1440, 360], [960, 500]])('keeps applications and expanded layout controls reachable in a short %ipx desktop', async (width, height) => {
+  for (let index = 0; index < 29; index++) fixture.state.workspaces.push({ name: `synthetic-extra-${index}`,
+    displayName: `Synthetic extra application ${index}`, kind: 'app', href: `/cockpit/?app=synthetic-extra-${index}` });
+  await page.setViewportSize({ width, height });
+  await open('/cockpit/?app=create', 'workspaces', 'daylight'); await discovered();
+  await editor().locator('#draft').fill('Synthetic short-window draft');
+  const documentId = await editor().locator('html').getAttribute('data-document-id');
+  await page.locator('#workspaceNavigationMore > summary').click();
+  const list = page.locator('.workspace-navigation-more-links');
+  expect(await list.evaluate(element => element.clientHeight)).toBeGreaterThanOrEqual(44);
+  await page.locator('#workspaceNavigationToggle').click();
+  expect(await list.evaluate(element => element.clientHeight)).toBeGreaterThanOrEqual(44);
+  const menu = page.locator('.workspace-navigation-more');
+  const geometry = await menu.evaluate(element => {
+    const box = element.getBoundingClientRect();
+    return { top: box.top, bottom: box.bottom, height: innerHeight,
+      scrollable: element.scrollHeight > element.clientHeight && /auto|scroll/.test(getComputedStyle(element).overflowY) };
+  });
+  expect(geometry.top).toBeGreaterThanOrEqual(0); expect(geometry.bottom).toBeLessThanOrEqual(geometry.height);
+  expect(geometry.scrollable).toBe(true);
+  const radio = 'input[name=workspace-navigation-layout][value=workspaces]';
+  await page.locator(radio).focus();
+  expect(await menuControlReachable(radio)).toBe(true);
+  await screenshot(`short-expanded-menu-${width}`);
+  await list.locator('a').last().focus();
+  expect(await menuControlReachable('.workspace-navigation-more-links a:last-child')).toBe(true);
+  await page.locator('#themeToggle').focus();
+  expect(await menuControlReachable('#themeToggle')).toBe(true);
+  expect(await editor().locator('html').getAttribute('data-document-id')).toBe(documentId);
+  expect(await editor().locator('#draft').inputValue()).toBe('Synthetic short-window draft');
+  expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
