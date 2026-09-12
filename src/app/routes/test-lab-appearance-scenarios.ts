@@ -9,6 +9,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Link the actual embedded chat theme and global preference regression to the appearance scenario.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Register actual core-page palette, native control and live-inheritance browser coverage.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Link contextual sidebar, Federal CRM navigation and actual Career group integration checks with explicit store-fixture prerequisites.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Link full-head local asset startup, rendering and service-worker browser coverage without changing the read-only readiness check.
  * =============================================================================
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -50,8 +51,9 @@ async function workspaceDiscovery(cookie: string): Promise<StepResult> {
 
 export const APPEARANCE_SCENARIOS: Scenario[] = [{
   id: 'cockpit-appearance', title: 'Cockpit appearance', group: 'tool',
-  description: 'Read the fixed Workspace stylesheet. This does not execute the browser suite or change saved themes; linked fixtures cover the portal chooser, application colors, open tabs, chat, administration and operations surfaces.',
+  description: 'Read the fixed Workspace stylesheet. This does not execute the browser suite or change saved themes; linked fixtures cover local-asset startup, the portal chooser, application colors, open tabs, chat, administration and operations surfaces.',
   regressionTests: [
+    { level: 'browser', path: 'tests/unit/cockpit-startup-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/workspace-theme-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/workspace-chat-theme-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/core-surface-theme-browser.spec.ts' },

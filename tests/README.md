@@ -81,6 +81,14 @@ suites; its live step only reads current admitted links. `npm run test:workspace
 separately checks the selectable color skin and shared surface inheritance. These
 commands use synthetic identities and pages, not live application records.
 
+`npm run test:cockpit-startup` keeps the complete Cockpit head and boot scripts in
+real Chromium, blocks external requests, and checks local Markdown, regular icon
+glyphs, the Mesh screen, authenticated asset bytes and service-worker install/update.
+It includes offline cached-asset proof, not offline application-data support. The
+existing **Cockpit appearance** Lab card links the browser recipe; its live
+stylesheet readiness check does not run Chromium. The remaining command cases
+retain existing static-surface, cache-header and Lab-registration contracts.
+
 The autonomous backlog suites have matching Lab registrations and local commands:
 
 | Command | Coverage |

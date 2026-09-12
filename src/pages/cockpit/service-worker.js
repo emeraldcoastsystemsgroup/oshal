@@ -39,12 +39,13 @@
  * 34 | maintainer@emeraldcoastsystemsgroup.com | Refresh the compact workspace header and precache its secondary-action disclosure.
  * 35 | maintainer@emeraldcoastsystemsgroup.com | Refresh opaque workspace menus and keep options visible beside long application lists.
  * 36 | maintainer@emeraldcoastsystemsgroup.com | Evict cached navigation for contextual sidebars and the admitted Federal CRM top workspace.
+ * 37 | maintainer@emeraldcoastsystemsgroup.com | Precache locked local Markdown and regular icon assets and evict the CDN-dependent shell.
  */
 
 /* global self, caches, fetch, Response */
 
 // Bump CACHE_VERSION on any change to the precached shell list so old caches are evicted.
-const CACHE_VERSION = 'oshal-cockpit-v41';
+const CACHE_VERSION = 'oshal-cockpit-v42';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 // The minimal app shell precached at install so the cockpit boots offline. Live data
@@ -52,6 +53,12 @@ const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const APP_SHELL = [
   '/cockpit/',
   '/cockpit/index.html',
+  '/cockpit/vendor/marked.umd.js',
+  '/cockpit/vendor/phosphor/style.css',
+  '/cockpit/vendor/phosphor/Phosphor.woff2',
+  '/cockpit/vendor/phosphor/Phosphor.woff',
+  '/cockpit/vendor/phosphor/Phosphor.ttf',
+  '/cockpit/vendor/phosphor/Phosphor.svg',
   '/cockpit/manifest.webmanifest',
   '/cockpit/css/base.css',
   '/cockpit/css/layout.css',

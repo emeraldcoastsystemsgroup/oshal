@@ -1,8 +1,9 @@
 # Cockpit startup resilience
 
-**Status: open follow-up, observed 2026-09-12.** No startup or pool-handling fix
-is implemented by this record. The Career/navigation release recovered and its
-native Retry checks passed; the two failures below remain distinct.
+**Status: local-asset startup slice implemented in source; publication and native
+acceptance pending.** The rollout-time database checkout investigation remains
+open. The earlier Career/navigation release recovered through native Retry; that
+recovery and the startup change are separate checkpoints.
 
 ## Blocking external scripts
 
@@ -12,24 +13,42 @@ jsDelivr marked script after the shared theme bootstrap. A hard refresh restored
 the shell. No CDN failure code or persistent service-worker reload loop was
 captured.
 
-The [actual shell](../../src/pages/cockpit/index.html) loads marked, Phosphor and
-vis-network synchronously from external CDNs in the head, before the body.
+At that checkpoint, the [shell](../../src/pages/cockpit/index.html) loaded marked,
+Phosphor and vis-network synchronously from external CDNs in the head, before the body.
 The [service worker](../../src/pages/cockpit/service-worker.js) passes cross-origin
 requests through. Its update path intentionally reloads an already controlled
 page once; first activation does not trigger that reload.
 
-**Remaining:** replace required external startup dependencies with reviewed,
-versioned same-origin assets where practical. Marked already has a locked package
-dependency and a bundled UMD build; audit the other libraries before choosing
-local or optional loading. A `defer` attribute alone is insufficient if required
-application boot still waits indefinitely for the external script.
+**Source change:** the shell now loads marked's existing locked 18.0.2 UMD build
+and the regular Phosphor 2.1.2 stylesheet/font from fixed local GET routes under
+`/cockpit/vendor/`. The [allowlist](../../src/app/routes/cockpit-vendor-assets.ts)
+uses the existing Cockpit session gate and `no-store` policy; it does not expose
+arbitrary dependency files. Both packages retain their upstream MIT licenses in
+the installed dependency, with package versions and registry integrity recorded in
+`package-lock.json`. Phosphor is the only new dependency; no package was upgraded.
 
-**Done when:** real Cockpit browser tests stall and refuse each external dependency
-while the shell, Home/navigation and selected application remain usable within a
-bounded interval. Verify actual markdown rendering and supported icon/graph
-behavior, fresh installation and service-worker update, saved palette/layout and
-the intended single reload. Offline claims require actual cache verification.
-Keep the separate [Jarvis Mermaid follow-up](jarvis-voice-and-visuals.md) open.
+The unused parent vis-network preload is removed. No Cockpit code referenced
+that global: the supported Mesh screen renders its existing flow cards, topology
+and participant tables using local code. This change does not add or replace a
+graph engine. Service-worker cache v42 includes the parser, CSS and all four
+referenced font formats. Auth/session-expiry and single-update-reload behavior
+remain unchanged.
+
+**Verification:** `npm run test:cockpit-startup` runs the actual complete HTML and
+boot modules against synthetic HTTP fixtures. Its browser recipe is linked from
+the existing **Cockpit appearance** Lab card; that card's live stylesheet GET
+does not execute these browser tests. Coverage includes stalled/refused external
+requests, the real ticket Markdown renderer, loaded distinct icon glyphs, Mesh
+navigation/refresh, fixed authenticated asset bytes, cached assets offline, and
+one worker-update reload preserving the palette, layout and focused app. The
+unchanged before test failed because no body parsed within three seconds.
+The focused command passed **87/87 cases** across four files, including all nine
+new browser/HTTP cases; scoped TypeScript, lint and diff checks passed.
+
+**Remaining:** publish the reviewed source and verify normal installed startup
+and an existing-tab update. Cached asset proof is not a claim that live data or
+every application works offline. Keep the separate
+[Jarvis Mermaid follow-up](jarvis-voice-and-visuals.md) open.
 
 ## Rollout-time database checkout delays
 
@@ -71,4 +90,6 @@ acceptance checks.
 Operator-local, ignored receipts: `temp/career-navigation-native-reload-diagnostic.json`
 and `temp/career-navigation-runtime-timeout-summary.json`. The latter retains only
 timestamps, durations, counts and error categories. Recovery was observed during
-native release acceptance; it does not close either backlog item.
+native release acceptance; it does not close the database investigation or serve
+as native acceptance of the later local-asset change. Local before/after startup
+receipts are retained separately under `temp/cockpit-startup-*.log`.

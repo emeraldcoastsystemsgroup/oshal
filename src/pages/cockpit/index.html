@@ -25,6 +25,7 @@
   19 | maintainer@emeraldcoastsystemsgroup.com | Load Workspace and resolve the saved-or-default skin before paint without changing application layout.
   20 | maintainer@emeraldcoastsystemsgroup.com | Load optional top workspace navigation styling independently from the selected color skin.
   21 | maintainer@emeraldcoastsystemsgroup.com | Keep one Home destination and group labeled secondary controls outside the top workspace row.
+  22 | maintainer@emeraldcoastsystemsgroup.com | Load locked local Markdown and icon assets so external CDNs cannot block shell parsing; remove the unused parent graph preload.
 -->
 <html lang="en" data-theme="workspace">
 <head>
@@ -104,13 +105,11 @@
   <link rel="stylesheet" href="css/connector-discover.css">
   <link rel="stylesheet" href="css/logs-view.css">
   <link rel="stylesheet" href="css/advanced-view.css">
-  <!-- Vendor - Phosphor Icons re-enabled for localhost (PHASE_70 fix) -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <!-- Locked startup assets use fixed authenticated local routes; no external request blocks the parser. -->
+  <script src="/cockpit/vendor/marked.umd.js"></script>
+  <link rel="stylesheet" href="/cockpit/vendor/phosphor/style.css">
   <!-- B4/CM-2: Codicon font served from @vscode/codicons npm package via /fonts route -->
   <link rel="stylesheet" href="/fonts/codicon.css">
-  <!-- vis-network for graph topology visualizer -->
-  <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
   <!-- ADR-044 Phase 1: register the PWA service worker (scope /cockpit/). Failures are
        non-fatal — the cockpit works identically without it; only offline/install is lost. -->
   <script>

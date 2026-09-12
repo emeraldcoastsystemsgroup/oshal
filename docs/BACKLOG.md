@@ -797,8 +797,8 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### Cockpit startup: remove blocking external script dependencies
 
 - **Observed:** the 2026-09-12 Career/navigation rollout included a blank reload with parsing stopped at the synchronous external marked script, before the body or DOMContentLoaded. A hard refresh restored the shell; no service-worker reload loop was established.
-- **Remaining:** serve reviewed, versioned startup dependencies from fixed same-origin assets where practical, and keep optional icon/graph support from blocking the shell. See [Cockpit startup resilience](backlog/cockpit-startup-resilience.md) for the separate parser and database observations.
-- **Done when:** the real shell and selected application remain usable when external dependencies stall or fail; markdown, icons and graphs retain their supported behavior; fresh and updated service-worker cases preserve saved appearance/navigation and the intended single update reload. Offline support requires actual cached-asset proof. This item is not implemented.
+- **Source implemented, publication/native acceptance pending:** marked's existing locked build and exact Phosphor 2.1.2 regular assets now use fixed authenticated local routes; the unused parent graph preload is removed. The registered full-shell browser recipe covers blocked external requests, Markdown/icons/Mesh, offline asset bytes and worker-update preference continuity. See [Cockpit startup resilience](backlog/cockpit-startup-resilience.md) for scope and the separate open database investigation.
+- **Remaining:** publish and verify installed startup plus an existing-tab update. This does not claim offline application data or fix rollout-time database checkout delays.
 
 ### Bot-recreate thundering herd
 
@@ -819,7 +819,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### Create visual workspace and integrated editing — deferred
 - **Requested:** Canva-style page layout and a shared generate, manually edit, point/annotate, regenerate and edit-again workflow. Basic image text/crop/filters and video trim/splice/audio come before advanced layers and professional editing depth.
 - **Owner:** [`create/BACKLOG.md`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/create/BACKLOG.md) holds the phased application roadmap and acceptance. Reuse Portrait, Video and AI Office capabilities, registered artifact handoffs and current permissions. Project history and supported editable formats must survive editor round-trips.
-- **Status:** the Home/template layout slice is delivered in Create 1.3.0; manual image editing and the broader generation/editing workflow remain deferred. See the [workspace polish release](releases/workspace-polish-2026-09-12.md) for source and installed acceptance. Core retains only demonstrated shared transport or provider-capability dependencies.
+- **Status:** the operator commissioned the advanced editor as a parallel track on 2026-09-12. Create 1.5.0 is in implementation: manual image layers, private durable projects, undo/revisions, crop/transforms and PNG/JPEG/editable export, with explicit app roles and registered proof. The prior Home/template layout slice is delivered; see the [workspace polish release](releases/workspace-polish-2026-09-12.md). AI region regeneration, video timelines and deeper desktop-editor compatibility remain separately staged. Core retains only demonstrated shared transport or provider-capability dependencies.
 - **Done when:** the commissioned phase works through the installed Create entry, retains manual edits and accepted revisions, exports real media, and registers meaningful tests in AI Test Lab. Advanced editing remains a later phase.
 
 ### SEC-06 application-store route, ownership, and CI closure
