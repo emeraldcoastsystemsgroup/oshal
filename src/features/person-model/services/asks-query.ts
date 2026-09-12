@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 2: open-asks query ("what has Ella asked me that I haven't followed up on") + status transition. Every ask is returned beside its verbatim source_quote and marked an inference — a follow-up is OSHAL's read, never presented as transcript fact.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Accept an explicit profileId filter — the profile surface asks by voice id, not by spoken name.
  */
 
 import type { Pool } from 'pg';
@@ -29,7 +30,7 @@ export interface PersonAsk {
  * @param opts - Optional personName filter.
  * @returns Open asks (empty if a named person does not resolve).
  */
-export async function getOpenAsks(pool: Pool, ownerSub: string, opts: { personName?: string } = {}): Promise<PersonAsk[]> {
+export async function getOpenAsks(pool: Pool, ownerSub: string, opts: { personName?: string; profileId?: string } = {}): Promise<PersonAsk[]> {
   const params: unknown[] = [ownerSub];
   let personFilter = '';
   if (opts.personName && opts.personName.trim()) {
@@ -37,6 +38,10 @@ export async function getOpenAsks(pool: Pool, ownerSub: string, opts: { personNa
     if (profiles.length === 0) return [];
     params.push(profiles.map((p) => p.profileId));
     personFilter = `AND a.profile_id = ANY($${params.length}::uuid[])`;
+  }
+  if (opts.profileId) {
+    params.push(opts.profileId);
+    personFilter = `AND a.profile_id = $${params.length}::uuid`;
   }
   const { rows } = await pool.query(
     `SELECT a.ask_id, a.kind, a.text, a.source_quote, a.status, a.created_at,

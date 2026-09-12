@@ -834,14 +834,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** make the [`payroll` README](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/payroll/README.md) the canonical queue for additional cited state/local tables, workweek overtime, protected identifiers, employee isolation, repayment/garnishment/deposit rules, benefits/payment traces, verified EFW2 2026, and enrolled filing/payment rails.
 - **Done when:** each commissioned package item has primary-source citations where legally material, a focused calculation/isolation guard, and clean-tenant output evidence; core retains only shared framework dependencies. See [ADR-123](adr/123-payroll-app.md).
 
-### Person-model Phases 2-4
-- **Remaining:** implement consent-ledger enrichment, semantic recall, and person pages exactly as staged in [ADR-100](adr/100-ambient-person-model.md), preserving recall-only Phase 1 behavior until each gate passes.
-- **Done when:** each ADR phase meets its own red-provable ownership, consent, provenance, deletion, and UX criteria without silently enriching people who have not opted in.
-
-### Person-model fresh-database enable gate
-- **Remaining:** apply the current migration chain to a database predating the feature and exercise enable/disable trigger paths.
-- **Done when:** every object is created once, both trigger states behave correctly, rerun is idempotent, and no existing tenant data is exposed or rewritten unexpectedly.
-
 ### World Intelligence licensed outlet ratings
 - **Remaining:** license Ad Fontes and/or AllSides, map the data with provenance, and replace placeholder bias/reliability seeds; this requires operator budget and license approval.
 - **Done when:** every rating displayed in the World package is sourced to the licensed dataset/version and unknown outlets are represented as unknown rather than guessed. See [ADR-061](adr/061-world-intelligence-layer.md).

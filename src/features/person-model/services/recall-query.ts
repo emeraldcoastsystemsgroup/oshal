@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 1: owner-scoped recall query — resolves a spoken name to voice profiles (custom name / tenant display name / "Unidentified Person N" / self), then counts + quotes matching utterances via the generated tsvector column, bounded to the owner's local day.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export ownerTimeZone so the Phase 3/4 presence, trend and semantic reads share one owner-local day boundary.
  */
 
 import type { Pool } from 'pg';
@@ -129,8 +130,14 @@ export async function ownerHasAmbientData(pool: Pool, ownerSub: string): Promise
   }
 }
 
-/** Reads the owner's IANA time zone (defaults to UTC), used for the owner-local "today" boundary. */
-async function ownerTimeZone(pool: Pool, ownerSub: string): Promise<string> {
+/**
+ * @description Reads the owner's IANA time zone (defaults to UTC) — the owner-local "today" boundary
+ * shared by recall, presence, and the semantic leg.
+ * @param pool - GUC-aware Postgres pool.
+ * @param ownerSub - Owner sub.
+ * @returns An IANA zone name.
+ */
+export async function ownerTimeZone(pool: Pool, ownerSub: string): Promise<string> {
   const { rows } = await pool.query('SELECT time_zone FROM ambient_user_settings WHERE user_sub = $1', [ownerSub]);
   const tz = rows[0]?.time_zone;
   return typeof tz === 'string' && tz.trim() ? tz : 'UTC';

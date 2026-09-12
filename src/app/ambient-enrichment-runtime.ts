@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 2: micro-batch ambient enrichment runtime. OFF by default (OSHAL_AMBIENT_ENRICH); when on, sweeps unenriched, consent-eligible, attributed segments per owner and hands one bounded batch to the ambient-analyst concierge via executeBotOrInline (ADR-036 — cost lands in chat_tasks under the analyst's agentId; the controller never calls an LLM). The nightly rollup/retention pass is a separate future step.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Ran the enrichment sweep + person-model maintenance under runWithSystemIdentity — cross-owner background work over the FORCE-RLS ambient and person-model tables + chat_tasks; SYSTEM keeps it visible once OSHAL_DB_GUC_STRICT denies the identity-less case.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 3: the sweep also projects consent-eligible segments into ambient-recall chunks (local embedder, no LLM), and the nightly pass adds the orphan-chunk anti-join backstop beside the retention purge.
  */
 
 import type { Pool } from 'pg';
@@ -13,6 +14,7 @@ import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-
 import { executeBotOrInline } from '@/app/routes/inline-bot-execution';
 import {
   eligibleProfileIds, enrichBatch, purgeExpiredPersonModelData, TAXONOMY_VERSION, type EnrichBatchItem,
+  ownersWithUnprojectedSegments, projectOwnerSegments, purgeOrphanChunks,
 } from '@/features/person-model';
 import { createChildLogger } from '@/shared/logger';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -38,8 +40,8 @@ const maintenanceStarted = new WeakSet<object>();
 export function startPersonModelMaintenanceRuntime(pool: Pool): void {
   if (maintenanceStarted.has(pool)) return;
   maintenanceStarted.add(pool);
-  const tick = () => void runWithSystemIdentity(() => purgeExpiredPersonModelData(pool)).catch((error: unknown) => {
-    logger.error({ err: error, operation: 'purgeExpiredPersonModelData' }, 'person-model maintenance failed');
+  const tick = () => void runWithSystemIdentity(() => runMaintenancePass(pool)).catch((error: unknown) => {
+    logger.error({ err: error, operation: 'runMaintenancePass' }, 'person-model maintenance failed');
   });
   const timer = setInterval(tick, MAINTENANCE_MS);
   timer.unref();
@@ -82,7 +84,7 @@ export function startAmbientEnrichmentRuntime(ctx: AppContext): void {
  * @param botClient - Bot-node client for the analyst call.
  * @returns Counts of owners swept and utterances enriched.
  */
-export async function runEnrichmentSweep(ctx: AppContext, botClient: BotNodeClient): Promise<{ owners: number; enriched: number }> {
+export async function runEnrichmentSweep(ctx: AppContext, botClient: BotNodeClient): Promise<{ owners: number; enriched: number; projected: number }> {
   const { rows } = await ctx.pool.query(
     `SELECT DISTINCT s.user_sub FROM ambient_transcript_segments s
        JOIN ambient_user_settings u ON u.user_sub = s.user_sub
@@ -100,8 +102,41 @@ export async function runEnrichmentSweep(ctx: AppContext, botClient: BotNodeClie
       logger.error({ err: error, operation: 'enrichOwner' }, 'owner enrichment failed');
     }
   }
-  if (enriched > 0) logger.info({ owners: rows.length, enriched }, 'ambient enrichment sweep complete');
-  return { owners: rows.length, enriched };
+  const projected = await runProjectionSweep(ctx.pool);
+  if (enriched > 0 || projected > 0) logger.info({ owners: rows.length, enriched, projected }, 'ambient enrichment sweep complete');
+  return { owners: rows.length, enriched, projected };
+}
+
+/**
+ * @description ADR-100 Phase 3 incremental projection: for a bounded set of owners, embed every
+ * consent-eligible segment that has no `ambient-recall` chunk yet. Local embedder, no LLM; a no-op
+ * on deployments without pgvector.
+ * @param pool - GUC-aware pool under SYSTEM identity.
+ * @returns Chunks written this sweep.
+ */
+export async function runProjectionSweep(pool: Pool): Promise<number> {
+  let projected = 0;
+  for (const owner of await ownersWithUnprojectedSegments(pool, MAX_OWNERS_PER_SWEEP)) {
+    try {
+      projected += await projectOwnerSegments(pool, owner);
+    } catch (error) {
+      logger.error({ err: error, operation: 'projectOwnerSegments' }, 'owner projection failed');
+    }
+  }
+  return projected;
+}
+
+/**
+ * @description The nightly pure-SQL pass: retention purge of the aggregate stores plus the
+ * anti-join backstop that removes any `ambient-recall` chunk whose segment is gone.
+ * @param pool - GUC-aware pool under SYSTEM identity.
+ * @returns Counts for the log.
+ */
+export async function runMaintenancePass(pool: Pool): Promise<{ topicDaily: number; relations: number; orphanChunks: number }> {
+  const purged = await purgeExpiredPersonModelData(pool);
+  const orphanChunks = await purgeOrphanChunks(pool);
+  logger.info({ operation: 'runMaintenancePass', ...purged, orphanChunks }, 'person-model maintenance pass complete');
+  return { ...purged, orphanChunks };
 }
 
 /** Enriches one bounded, consent-eligible batch for a single owner. */

@@ -45,6 +45,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | SCREEN AWARENESS: /ask accepts a `context` snapshot (the surface-bridge `context` op the focused app relays), folds it into the turn beside the attachment block, and returns the `oshal:surface` ops Jarvis emitted back to the client. Before this the floating assistant could not know which app screen the operator was on — it answered "I'm not currently being handed the live Resume Studio document contents", which was literally true — while extractSurfaceDirectives sat fully built and imported by tests only. Ops are dropped (and logged) when the turn carried no context, so a model can never drive a surface the operator is not actually looking at.
  *
  * @module jarvis-routes
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2/3: the deterministic ambient hook now answers open asks, weekly trends and person connections through the person-model front door (detectPersonModelIntent / answerPersonModelIntent); recall phrasing is unchanged. Net -2 code lines on this over-cap file.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -74,9 +75,8 @@ import {
   stripPlanDirective,
 } from '@/features/swarm-orchestration';
 import {
-  detectRecallIntent,
-  recallQuery,
-  buildRecallSpokenAnswer,
+  detectPersonModelIntent,
+  answerPersonModelIntent,
   ownerHasAmbientData,
 } from '@/features/person-model';
 import { createJarvisVisualRoutes, createOptionalJarvisVisual } from './jarvis-visual-response';
@@ -737,7 +737,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     // owner actually having ambient data, so an ordinary question is never hijacked into an empty read.
     // Media turns go straight to an enriched Jarvis turn — the deterministic weather/inbox/recall
     // guards would only misfire on "what's in this photo?" and never own the attached context.
-    const recallIntent = (hasAttachments || artifactSelection) ? null : detectRecallIntent(message);
+    const recallIntent = (hasAttachments || artifactSelection) ? null : detectPersonModelIntent(message);
     const doRecall = recallIntent ? await ownerHasAmbientData(ctx.pool, sub) : false;
     const clarificationKey = threadTicketKey(sub, sessionId);
     const pendingWeather = pendingWeatherClarifications.get(clarificationKey);
@@ -810,8 +810,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
           // Deterministic transcript read — the count/quotes come straight from the owner's store.
           let answer: string;
           try {
-            const result = await recallQuery(ctx.pool, sub, recallIntent);
-            answer = buildRecallSpokenAnswer(recallIntent, result);
+            answer = await answerPersonModelIntent(ctx.pool, sub, recallIntent);
           } catch (err) {
             logger.warn({ err }, 'jarvis: ambient recall failed');
             answer = 'I could not reach your ambient recall just now — try again in a moment.';

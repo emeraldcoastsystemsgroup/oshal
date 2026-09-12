@@ -9,6 +9,9 @@
        the cockpit's theme-manager overwrites it to the operator's pick. Consumed read-only
        (contract: tests/unit/surface-theme-inheritance.spec.ts). -->
   <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <!-- Follow the cockpit theme live (embedded parent wins, else the saved theme). Contract:
+       tests/unit/surface-theme-inheritance.spec.ts and tests/unit/person-model-surface.spec.ts. -->
+  <script src="/shared/ui/js/surface-theme.js"></script>
   <style>
     /* Consume the framework theme read-only; own only this surface's layout. The hex fallbacks
        only apply where the token stylesheet failed to load (e.g. served outside the api origin). */
@@ -16,38 +19,70 @@
       color-scheme: light dark;
       --pm-accent: var(--accent-primary, var(--accent-primary));
       --pm-line: var(--border-color, rgba(128,128,128,0.28));
+      --pm-soft: rgba(128,128,128,0.06);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       background: var(--bg-primary, transparent); color: var(--text-primary, inherit); padding: 22px;
     }
-    .wrap { max-width: 760px; margin: 0 auto; }
+    .wrap { max-width: 820px; margin: 0 auto; }
     h1 { font-size: 1.35rem; margin: 0 0 4px; }
-    .sub { opacity: 0.7; margin: 0 0 18px; font-size: 0.9rem; }
-    .ask { display: flex; gap: 8px; flex-wrap: wrap; }
-    .ask input {
-      flex: 1 1 340px; padding: 11px 13px; border: 1px solid var(--pm-line); border-radius: 10px;
-      background: rgba(128,128,128,0.06); color: inherit; font-size: 15px;
+    h2 { font-size: 1.05rem; margin: 18px 0 8px; }
+    h3 { font-size: 0.95rem; margin: 14px 0 6px; }
+    .sub { opacity: 0.7; margin: 0 0 14px; font-size: 0.9rem; }
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--pm-line); margin-bottom: 18px; }
+    .tabs button, .subtabs button {
+      background: transparent; border: 0; border-bottom: 2px solid transparent; color: inherit; cursor: pointer;
+      padding: 8px 12px; font-size: 14px; opacity: 0.75;
     }
-    .ask button, .playbtn {
+    .tabs button[aria-selected="true"], .subtabs button[aria-selected="true"] { border-bottom-color: var(--pm-accent); opacity: 1; font-weight: 650; }
+    .subtabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 10px 0; border-bottom: 1px solid var(--pm-line); }
+    .ask, .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .ask input, .row input, .row select {
+      flex: 1 1 260px; padding: 11px 13px; border: 1px solid var(--pm-line); border-radius: 10px;
+      background: var(--pm-soft); color: inherit; font-size: 15px;
+    }
+    .row select { flex: 0 1 140px; }
+    .ask button, .playbtn, .btn {
       padding: 11px 16px; border: 0; border-radius: 10px; background: var(--pm-accent); color: #06121f;
       font-weight: 650; cursor: pointer; font-size: 14px;
     }
-    .ask button:disabled { opacity: 0.5; cursor: default; }
+    .btn.ghost, .playbtn { background: transparent; border: 1px solid var(--pm-accent); color: inherit; }
+    .btn.small { padding: 6px 10px; font-size: 12.5px; }
+    .ask button:disabled, .btn:disabled { opacity: 0.5; cursor: default; }
     .examples { margin: 10px 0 0; font-size: 0.82rem; opacity: 0.66; }
     .examples code { cursor: pointer; border-bottom: 1px dashed var(--pm-line); }
     .answer { margin-top: 22px; }
     .headline { font-size: 1.1rem; font-weight: 650; margin: 0 0 4px; }
     .meta { opacity: 0.65; font-size: 0.82rem; margin: 0 0 14px; }
-    .receipt {
+    .receipt, .card {
       border-left: 3px solid var(--pm-accent); padding: 8px 12px; margin: 8px 0;
-      background: rgba(128,128,128,0.06); border-radius: 0 8px 8px 0;
+      background: var(--pm-soft); border-radius: 0 8px 8px 0;
     }
-    .receipt .t { display: block; opacity: 0.6; font-size: 0.74rem; margin-bottom: 2px; }
+    .receipt.related { border-left-style: dashed; opacity: 0.85; }
+    .receipt .t, .card .t { display: block; opacity: 0.6; font-size: 0.74rem; margin-bottom: 2px; }
+    .card .actions { margin-top: 6px; display: flex; gap: 6px; }
     .note { padding: 12px 14px; border: 1px solid var(--pm-line); border-radius: 10px; opacity: 0.85; }
-    .inference-tag { font-size: 0.7rem; opacity: 0.6; margin-top: 12px; }
-    .playbtn { margin-top: 10px; background: transparent; border: 1px solid var(--pm-accent); color: inherit; }
+    .inference-tag { display: inline-block; font-size: 0.7rem; opacity: 0.65; border: 1px solid var(--pm-line); border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: middle; }
+    .playbtn { margin-top: 10px; }
+    .people { list-style: none; padding: 0; margin: 0; }
+    .people li { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--pm-line); border-radius: 10px; margin: 8px 0; cursor: pointer; }
+    .people li:hover { background: var(--pm-soft); }
+    .people .who { font-weight: 650; }
+    .people .cnt { opacity: 0.7; font-size: 0.85rem; }
+    .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 0.9rem; margin: 8px 0; }
+    .kv dt { opacity: 0.65; } .kv dd { margin: 0; }
+    .bars { list-style: none; padding: 0; margin: 0; }
+    .bars li { display: grid; grid-template-columns: 110px 1fr 40px; gap: 8px; align-items: center; font-size: 0.85rem; margin: 3px 0; }
+    .bars .bar { height: 10px; border-radius: 5px; background: var(--pm-accent); opacity: 0.8; min-width: 2px; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--pm-line); vertical-align: top; }
+    th { opacity: 0.7; font-weight: 600; font-size: 0.8rem; }
+    .status { margin-top: 26px; font-size: 0.78rem; opacity: 0.6; }
+    .back { background: transparent; border: 0; color: inherit; cursor: pointer; opacity: 0.75; padding: 0; font-size: 0.85rem; }
+    .back:hover { opacity: 1; }
+    .scroll { overflow-x: auto; }
   </style>
   <!-- Shared glass treatment (contract: tests/unit/surface-glass-assets.spec.ts); after local styles. -->
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
@@ -55,46 +90,124 @@
 <body>
   <div class="wrap">
     <h1>Ambient Recall</h1>
-    <p class="sub">Ask what someone said. Answers are counted from your own transcripts — the number is exact, the lines are quoted verbatim, and playback re-speaks them in the assistant voice. No audio is ever stored.</p>
+    <p class="sub">Ask what someone said. Answers are counted from your own transcripts — the number is exact, the lines are quoted verbatim, and playback re-speaks them in the assistant voice. Topics, asks and trends are OSHAL's read of those words, always shown beside them, and can be deleted. No audio is ever stored.</p>
 
-    <div class="ask">
-      <input id="q" type="text" autocomplete="off"
-             placeholder="How many times has Ella mentioned volleyball today?" />
-      <button id="go">Recall</button>
-    </div>
-    <p class="examples">Try:
-      <code data-ex="How many times has Ella mentioned volleyball today?">count a topic</code> ·
-      <code data-ex="What did Sam say about the school trip?">what did they say</code>
-    </p>
+    <nav class="tabs" role="tablist" aria-label="Ambient Recall sections">
+      <button type="button" role="tab" data-tab="recall" aria-selected="true">Recall</button>
+      <button type="button" role="tab" data-tab="asks" aria-selected="false">Asks</button>
+      <button type="button" role="tab" data-tab="people" aria-selected="false">People</button>
+      <button type="button" role="tab" data-tab="trends" aria-selected="false">Trends</button>
+    </nav>
 
-    <div id="answer" class="answer" hidden></div>
+    <section data-panel="recall">
+      <div class="ask">
+        <input id="q" type="text" autocomplete="off"
+               placeholder="How many times has Ella mentioned volleyball today?" />
+        <button id="go" type="button">Recall</button>
+      </div>
+      <p class="examples">Try:
+        <code data-ex="How many times has Ella mentioned volleyball today?">count a topic</code> ·
+        <code data-ex="What did Sam say about the school trip?">what did they say</code> ·
+        <code data-ex="What has Ella asked me?">open asks</code>
+      </p>
+      <div id="answer" class="answer" hidden></div>
+    </section>
+
+    <section data-panel="asks" hidden>
+      <div class="row">
+        <input id="asks-person" type="text" autocomplete="off" placeholder="Person (blank = anyone)" />
+        <button id="asks-load" type="button" class="btn">Show open asks</button>
+      </div>
+      <p class="meta">Asks and commitments are inferences — OSHAL's read of what was said — and each one is shown beside the words it came from so you can judge it. Marking one done is your call, never the model's.</p>
+      <div id="asks-list"></div>
+    </section>
+
+    <section data-panel="people" hidden>
+      <div id="people-list"></div>
+      <div id="profile" hidden></div>
+    </section>
+
+    <section data-panel="trends" hidden>
+      <h2>Topics by week</h2>
+      <div class="row">
+        <input id="trend-person" type="text" autocomplete="off" placeholder="Person (blank = anyone)" />
+        <select id="trend-weeks" aria-label="Weeks">
+          <option value="1">this week</option><option value="2" selected>2 weeks</option>
+          <option value="4">4 weeks</option><option value="8">8 weeks</option><option value="12">12 weeks</option>
+        </select>
+        <button id="trend-load" type="button" class="btn">Show</button>
+      </div>
+      <div id="trend-out"></div>
+      <h2>What two people both talk about</h2>
+      <div class="row">
+        <input id="conn-a" type="text" autocomplete="off" placeholder="First person" />
+        <input id="conn-b" type="text" autocomplete="off" placeholder="Second person" />
+        <button id="conn-load" type="button" class="btn">Compare</button>
+      </div>
+      <div id="conn-out"></div>
+    </section>
+
+    <footer id="status" class="status"></footer>
   </div>
 
   <script>
+    const API = '/api/jarvis/ambient/person';
     const $ = (id) => document.getElementById(id);
     let lastReceipts = [];
 
+    function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+    function when(iso) { const d = new Date(iso); return Number.isNaN(d.getTime()) ? esc(iso) : esc(d.toLocaleString()); }
+    function day(iso) { return esc(String(iso || '').slice(0, 10)); }
+
+    async function getJson(path) {
+      const res = await fetch(API + path, { credentials: 'same-origin' });
+      if (res.status === 401) throw new Error('sign_in');
+      return { ok: res.ok, status: res.status, body: res.ok || res.status < 500 ? await res.json().catch(() => ({})) : {} };
+    }
+    async function postJson(path, body) {
+      const res = await fetch(API + path, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      return { ok: res.ok, status: res.status, body: await res.json().catch(() => ({})) };
+    }
+    function noteFor(err) {
+      return err && err.message === 'sign_in'
+        ? '<div class="note">Please sign in to use your ambient transcripts.</div>'
+        : '<div class="note">Ambient Recall is unavailable right now.</div>';
+    }
+
+    // ── Tabs + deep links (?tab=people&profile=<id>) ────────────────────────────────────────────
+    function showTab(name, opts = {}) {
+      document.querySelectorAll('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+      document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== name; });
+      const url = new URL(location.href);
+      url.searchParams.set('tab', name);
+      if (!opts.profile) url.searchParams.delete('profile');
+      history.replaceState(null, '', url.toString());
+      if (name === 'asks' && !$('asks-list').innerHTML) loadAsks();
+      if (name === 'people' && !opts.profile) loadPeople();
+    }
+    document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
+    // ── Recall ──────────────────────────────────────────────────────────────────────────────────
     async function recall() {
       const q = $('q').value.trim();
       if (!q) return;
       $('go').disabled = true;
       const box = $('answer'); box.hidden = false; box.innerHTML = '<p class="meta">Searching your transcripts…</p>';
       try {
-        const res = await fetch('/api/jarvis/ambient/person/recall?q=' + encodeURIComponent(q), { credentials: 'include' });
-        if (res.status === 401) { box.innerHTML = '<div class="note">Please sign in to search your ambient transcripts.</div>'; return; }
-        if (res.status === 400) { box.innerHTML = '<div class="note">That is not a recall question. Try “how many times has &lt;person&gt; mentioned &lt;topic&gt;”.</div>'; return; }
-        if (!res.ok) { box.innerHTML = '<div class="note">Recall is unavailable right now.</div>'; return; }
-        render(await res.json());
+        const { ok, status, body } = await getJson('/recall?q=' + encodeURIComponent(q));
+        if (status === 400) { box.innerHTML = '<div class="note">That is not a recall question. Try “how many times has &lt;person&gt; mentioned &lt;topic&gt;”, or ask about asks and trends in their tabs.</div>'; return; }
+        if (!ok) { box.innerHTML = '<div class="note">Recall is unavailable right now.</div>'; return; }
+        renderRecall(body);
       } catch (e) {
-        box.innerHTML = '<div class="note">Could not reach the recall service.</div>';
+        box.innerHTML = noteFor(e);
       } finally {
         $('go').disabled = false;
       }
     }
 
-    function esc(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
-
-    function render(data) {
+    function renderRecall(data) {
       const box = $('answer');
       if (!data.resolved) {
         box.innerHTML = '<div class="note">No enrolled or named voice matches “' + esc(data.intent?.personName || '') +
@@ -104,16 +217,24 @@
       lastReceipts = data.receipts || [];
       const who = esc(data.personLabel || 'They');
       const topic = data.terms ? ' about “' + esc(data.terms) + '”' : '';
-      const when = data.range === 'today' ? 'today' : 'on record';
+      const range = data.range === 'today' ? 'today' : 'on record';
       const headline = data.count === 0
-        ? who + ' has not been heard' + topic + ' ' + when + '.'
-        : who + ' was heard' + topic + ' <b>' + data.count + '</b> time' + (data.count === 1 ? '' : 's') + ' ' + when + '.';
+        ? who + ' has not been heard' + topic + ' ' + range + '.'
+        : who + ' was heard' + topic + ' <b>' + data.count + '</b> time' + (data.count === 1 ? '' : 's') + ' ' + range + '.';
       let html = '<p class="headline">' + headline + '</p>';
       html += '<p class="meta">Counted from your transcripts — exact, not an estimate.</p>';
       for (const r of lastReceipts) {
-        html += '<div class="receipt"><span class="t">' + esc(new Date(r.capturedAt).toLocaleString()) + '</span>“' + esc(r.quote) + '”</div>';
+        html += '<div class="receipt"><span class="t">' + when(r.capturedAt) + '</span>“' + esc(r.quote) + '”</div>';
       }
-      if (lastReceipts.length) html += '<button class="playbtn" id="play">🔊 Play it back</button>';
+      if (lastReceipts.length) html += '<button class="playbtn" id="play" type="button">🔊 Play it back</button>';
+      const related = data.related || [];
+      if (related.length) {
+        html += '<h3>Possibly related <span class="inference-tag">not counted</span></h3>';
+        html += '<p class="meta">Paraphrase matches from the same transcripts. They never change the number above.</p>';
+        for (const r of related) {
+          html += '<div class="receipt related"><span class="t">' + when(r.capturedAt) + '</span>“' + esc(r.quote) + '”</div>';
+        }
+      }
       box.innerHTML = html;
       const play = $('play');
       if (play) play.onclick = playback;
@@ -125,9 +246,197 @@
       for (const r of lastReceipts) speechSynthesis.speak(new SpeechSynthesisUtterance(r.quote));
     }
 
+    // ── Asks ────────────────────────────────────────────────────────────────────────────────────
+    function askCard(a, onChange) {
+      const kind = a.kind === 'commitment' ? 'Commitment' : 'Ask';
+      return '<div class="card" data-ask="' + esc(a.askId) + '"><span class="t">' + esc(a.personLabel) + ' · ' + when(a.createdAt) + '</span>'
+        + '<b>' + kind + ':</b> ' + esc(a.text) + '<span class="inference-tag">OSHAL\'s read</span>'
+        + '<div class="meta" style="margin:4px 0 0">Heard as: “' + esc(a.sourceQuote) + '”</div>'
+        + (onChange ? '<div class="actions"><button type="button" class="btn small" data-status="done">Mark done</button>'
+        + '<button type="button" class="btn small ghost" data-status="dismissed">Dismiss</button></div>' : '') + '</div>';
+    }
+
+    async function setAskStatus(askId, status) {
+      const { ok } = await postJson('/asks/' + encodeURIComponent(askId) + '/status', { status });
+      return ok;
+    }
+
+    function wireAskActions(container, reload) {
+      container.querySelectorAll('[data-ask]').forEach((card) => {
+        card.querySelectorAll('[data-status]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            if (await setAskStatus(card.dataset.ask, btn.dataset.status)) reload(); else btn.disabled = false;
+          });
+        });
+      });
+    }
+
+    async function loadAsks() {
+      const person = $('asks-person').value.trim();
+      const out = $('asks-list'); out.innerHTML = '<p class="meta">Loading…</p>';
+      try {
+        const { ok, body } = await getJson('/asks' + (person ? '?person=' + encodeURIComponent(person) : ''));
+        if (!ok) { out.innerHTML = '<div class="note">Could not load asks.</div>'; return; }
+        const asks = body.asks || [];
+        if (!asks.length) {
+          out.innerHTML = '<div class="note">Nothing open' + (person ? ' from ' + esc(person) : '') + '. Asks appear after the analyst has read new transcript — modeling is per person and off until you allow it under People → Consent.</div>';
+          return;
+        }
+        out.innerHTML = asks.map((a) => askCard(a, true)).join('');
+        wireAskActions(out, loadAsks);
+      } catch (e) {
+        out.innerHTML = noteFor(e);
+      }
+    }
+    $('asks-load').onclick = loadAsks;
+    $('asks-person').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadAsks(); });
+
+    // ── People + profile ────────────────────────────────────────────────────────────────────────
+    async function loadPeople() {
+      const out = $('people-list'); out.hidden = false; $('profile').hidden = true;
+      out.innerHTML = '<p class="meta">Loading…</p>';
+      try {
+        const { ok, body } = await getJson('/people');
+        if (!ok) { out.innerHTML = '<div class="note">Could not load people.</div>'; return; }
+        const people = body.people || [];
+        if (!people.length) { out.innerHTML = '<div class="note">No voices heard yet. Turn on ambient listening in the Jarvis panel and name voices under Manage Voices.</div>'; return; }
+        out.innerHTML = '<ul class="people">' + people.map((p) => '<li data-profile="' + esc(p.profileId) + '"><span class="who">' + esc(p.label)
+          + (p.isSelf ? ' <span class="inference-tag">you</span>' : '') + '</span><span class="cnt">' + p.utterances + ' line' + (p.utterances === 1 ? '' : 's')
+          + (p.lastHeardAt ? ' · last ' + day(p.lastHeardAt) : '') + '</span></li>').join('') + '</ul>';
+        out.querySelectorAll('[data-profile]').forEach((li) => li.addEventListener('click', () => loadProfile(li.dataset.profile)));
+      } catch (e) {
+        out.innerHTML = noteFor(e);
+      }
+    }
+
+    async function loadProfile(profileId, subtab) {
+      const box = $('profile'); box.hidden = false; $('people-list').hidden = true;
+      box.innerHTML = '<p class="meta">Loading…</p>';
+      const url = new URL(location.href); url.searchParams.set('tab', 'people'); url.searchParams.set('profile', profileId);
+      history.replaceState(null, '', url.toString());
+      try {
+        const { ok, status, body } = await getJson('/profile/' + encodeURIComponent(profileId));
+        if (status === 404) { box.innerHTML = '<div class="note">That voice is not in your transcripts.</div>'; return; }
+        if (!ok) { box.innerHTML = '<div class="note">Could not load the profile.</div>'; return; }
+        renderProfile(body.profile, subtab || 'topics');
+      } catch (e) {
+        box.innerHTML = noteFor(e);
+      }
+    }
+
+    function renderProfile(p, subtab) {
+      const box = $('profile');
+      const consent = p.consent || {};
+      const posture = consent.eligible ? 'modeling allowed' : (consent.status === 'declined' ? 'declined' : 'not modeled (default)');
+      let html = '<button type="button" class="back" id="back">← All people</button>';
+      html += '<h2>' + esc(p.label) + (p.isSelf ? ' <span class="inference-tag">you</span>' : '') + '</h2>';
+      html += '<dl class="kv"><dt>Utterances</dt><dd>' + p.utterances + '</dd>'
+        + '<dt>First heard</dt><dd>' + (p.firstHeardAt ? when(p.firstHeardAt) : '—') + '</dd>'
+        + '<dt>Last heard</dt><dd>' + (p.lastHeardAt ? when(p.lastHeardAt) : '—') + '</dd>'
+        + '<dt>Modeling</dt><dd>' + esc(posture) + '</dd></dl>';
+      html += '<nav class="subtabs" role="tablist">' + ['topics', 'asks', 'presence', 'consent'].map((t) =>
+        '<button type="button" role="tab" data-sub="' + t + '" aria-selected="' + (t === subtab) + '">' + t[0].toUpperCase() + t.slice(1) + '</button>').join('') + '</nav>';
+      html += '<div id="sub-out"></div>';
+      box.innerHTML = html;
+      $('back').onclick = () => showTab('people');
+      box.querySelectorAll('[data-sub]').forEach((b) => b.addEventListener('click', () => renderProfile(p, b.dataset.sub)));
+      const out = $('sub-out');
+      if (subtab === 'topics') out.innerHTML = renderTopics(p.topics);
+      else if (subtab === 'asks') { out.innerHTML = p.asks.length ? p.asks.map((a) => askCard(a, true)).join('') : '<div class="note">Nothing open from ' + esc(p.label) + '.</div>'; wireAskActions(out, () => loadProfile(p.profileId, 'asks')); }
+      else if (subtab === 'presence') out.innerHTML = renderPresence(p.presence, p.timeZone);
+      else renderConsent(out, p);
+    }
+
+    function renderTopics(topics) {
+      if (!topics.length) return '<div class="note">No modeled topics yet. Topics accrue once modeling is allowed for this person and the analyst has read their lines.</div>';
+      const max = Math.max(...topics.map((t) => t.mentions));
+      return '<p class="meta">OSHAL\'s read of what this person talks about — mention counts from the transcript rollup.</p><ul class="bars">'
+        + topics.map((t) => '<li><span>' + esc(t.topic) + '</span><span class="bar" style="width:' + Math.max(2, Math.round(100 * t.mentions / max)) + '%"></span><span>' + t.mentions + '</span></li>').join('') + '</ul>';
+    }
+
+    function renderPresence(days, tz) {
+      if (!days.length) return '<div class="note">Not heard in the last 30 days.</div>';
+      const max = Math.max(...days.map((d) => d.utterances));
+      return '<p class="meta">Lines heard per day (' + esc(tz) + '), last 30 days — a transcript fact.</p><ul class="bars">'
+        + days.map((d) => '<li><span>' + day(d.localDate) + '</span><span class="bar" style="width:' + Math.max(2, Math.round(100 * d.utterances / max)) + '%"></span><span>' + d.utterances + '</span></li>').join('') + '</ul>';
+    }
+
+    function renderConsent(out, p) {
+      const c = p.consent || {};
+      out.innerHTML = '<p class="meta">Per-person modeling is off by default. Allowing it lets the analyst derive topics, tone and asks from this person\'s lines as deletable inferences; declining stops that and purges what was already inferred about them. Your own voice is always modeled.</p>'
+        + '<dl class="kv"><dt>Current</dt><dd>' + esc(c.status || 'no decision recorded') + (c.isMinor ? ' (minor — never modeled)' : '') + '</dd></dl>'
+        + (p.isSelf ? '' : '<div class="actions"><button type="button" class="btn small" data-consent="granted">Allow modeling</button>'
+        + '<button type="button" class="btn small ghost" data-consent="declined">Decline and purge</button></div>');
+      out.querySelectorAll('[data-consent]').forEach((btn) => btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const { ok } = await postJson('/consents', { profileId: p.profileId, status: btn.dataset.consent, scope: 'transcript' });
+        if (ok) loadProfile(p.profileId, 'consent'); else btn.disabled = false;
+      }));
+    }
+
+    // ── Trends ──────────────────────────────────────────────────────────────────────────────────
+    async function loadTrends() {
+      const person = $('trend-person').value.trim();
+      const weeks = $('trend-weeks').value;
+      const out = $('trend-out'); out.innerHTML = '<p class="meta">Loading…</p>';
+      try {
+        const { ok, body } = await getJson('/trends?weeks=' + encodeURIComponent(weeks) + (person ? '&person=' + encodeURIComponent(person) : ''));
+        if (!ok) { out.innerHTML = '<div class="note">Could not load trends.</div>'; return; }
+        if (!body.personResolved) { out.innerHTML = '<div class="note">No named voice matches “' + esc(person) + '”.</div>'; return; }
+        if (!body.rows.length) { out.innerHTML = '<div class="note">No modeled topics for ' + esc(body.personLabel) + ' in that window.</div>'; return; }
+        out.innerHTML = '<p class="meta">' + esc(body.personLabel) + ' · mention counts per week (OSHAL\'s read).</p><div class="scroll"><table><thead><tr><th>Week of</th><th>Person</th><th>Topic</th><th>Mentions</th></tr></thead><tbody>'
+          + body.rows.map((r) => '<tr><td>' + day(r.weekStart) + '</td><td>' + esc(r.personLabel) + '</td><td>' + esc(r.topic) + '</td><td>' + r.mentions + '</td></tr>').join('') + '</tbody></table></div>';
+      } catch (e) {
+        out.innerHTML = noteFor(e);
+      }
+    }
+    async function loadConnections() {
+      const a = $('conn-a').value.trim(); const b = $('conn-b').value.trim();
+      const out = $('conn-out');
+      if (!a || !b) { out.innerHTML = '<div class="note">Name two people.</div>'; return; }
+      out.innerHTML = '<p class="meta">Loading…</p>';
+      try {
+        const { ok, body } = await getJson('/connections?a=' + encodeURIComponent(a) + '&b=' + encodeURIComponent(b));
+        if (!ok) { out.innerHTML = '<div class="note">Could not compare.</div>'; return; }
+        if (!body.resolved) { out.innerHTML = '<div class="note">One of those names does not match a named voice.</div>'; return; }
+        if (!body.topics.length) { out.innerHTML = '<div class="note">' + esc(body.labelA) + ' and ' + esc(body.labelB) + ' have not brought up the same topics yet.</div>'; return; }
+        out.innerHTML = '<div class="scroll"><table><thead><tr><th>Topic</th><th>' + esc(body.labelA) + '</th><th>' + esc(body.labelB) + '</th><th>Last</th></tr></thead><tbody>'
+          + body.topics.map((t) => '<tr><td>' + esc(t.topic) + '</td><td>' + t.daysA + ' day' + (t.daysA === 1 ? '' : 's') + '</td><td>' + t.daysB + ' day' + (t.daysB === 1 ? '' : 's') + '</td><td>' + day(t.lastObservedOn) + '</td></tr>').join('') + '</tbody></table></div>';
+      } catch (e) {
+        out.innerHTML = noteFor(e);
+      }
+    }
+    $('trend-load').onclick = loadTrends;
+    $('conn-load').onclick = loadConnections;
+
+    // ── Status line: is the semantic leg on, and how far does the projection lag canon? ────────
+    async function loadStatus() {
+      try {
+        const { ok, body } = await getJson('/projection');
+        if (!ok) return;
+        const l = body.ledger;
+        $('status').textContent = 'Semantic recall: ' + (body.semanticAvailable ? 'on' : 'off (exact search only)')
+          + (l ? ' · projected ' + l.projectedRows + ' of ' + l.canonRows + ' lines (' + l.status + ')' : '');
+      } catch { /* status is decorative */ }
+    }
+
+    // ── Boot ────────────────────────────────────────────────────────────────────────────────────
     $('go').onclick = recall;
     $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') recall(); });
-    document.querySelectorAll('[data-ex]').forEach((el) => el.addEventListener('click', () => { $('q').value = el.dataset.ex; recall(); }));
+    document.querySelectorAll('[data-ex]').forEach((el) => el.addEventListener('click', () => {
+      const ex = el.dataset.ex;
+      if (/asked me/i.test(ex)) { showTab('asks'); $('asks-person').value = 'Ella'; loadAsks(); return; }
+      $('q').value = ex; recall();
+    }));
+    (function boot() {
+      const params = new URLSearchParams(location.search);
+      const profile = params.get('profile');
+      const tab = params.get('tab') || (profile ? 'people' : 'recall');
+      showTab(tab, { profile: Boolean(profile) });
+      if (profile) loadProfile(profile);
+      loadStatus();
+    })();
   </script>
 </body>
 </html>
