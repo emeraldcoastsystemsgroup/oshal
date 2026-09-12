@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise actual package Node execution, immutable source selection and lifecycle authority through the real Docker sandbox.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove runtime-data exclusion in the child and bounded refusal when current authority never resolves.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Execute packaged surface and route-source assertions without forwarding nested runtime data.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Give the real packaged-surface Docker fixture the same outer test budget as neighboring isolated execution cases.
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -77,7 +78,7 @@ test('packaged editor contract and runtime exclusion', () => {
   const result = await catalog.run(selected, visible, executionOptions());
   expect(result.status, result.output).toBe('passed'); expect(result.output).toContain('# pass 1');
   expect(sandbox.last?.cleanupVerified).toBe(true);
-});
+}, 60000);
 
 /** @description Seed synthetic business files which must never enter an executable source snapshot.
  * @param dir Disposable package directory.
