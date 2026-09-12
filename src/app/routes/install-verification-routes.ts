@@ -5,14 +5,18 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | CORE-05 installer verification API: named package smokes and one PAT-only live generation with durable cost-attribution proof.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-141: hand the verifier a member resolver so a `kind: group` is verified through its members' own smokes.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Link installation results to registered Lab identities and execute only eligible smoke checks with honest pending reports.
  */
 
 import crypto from 'crypto';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import {
-  verifyAppSmokes,
   type AppSmokeFetch,
   type SwarmAppService,
+  type InstalledAppTestCase,
+  type InstallationVerificationReport,
+  verifyInstalledApplications,
+  formatInstallationVerification,
 } from '@/features/swarm-apps';
 import { createChildLogger } from '@/shared/logger';
 import {
@@ -30,11 +34,12 @@ const MAX_APPS = 64;
 const LIVE_TIMEOUT_MS = 90_000;
 const LIVE_PROMPT = 'Reply with exactly OSHAL_LIVE_OK and nothing else.';
 
-/** Injectable seams are test-only; production uses loopback HTTP and random task ids. */
+/** @description Trusted composition dependencies: request-bound smoke transport and optional fixture seams. */
 export interface InstallVerificationRouteOptions {
   apiBaseUrl?: string;
   fetchImpl?: AppSmokeFetch;
   randomUUID?: () => string;
+  serviceSmokeFetch?: (req: Request, test: InstalledAppTestCase) => Promise<AppSmokeFetch | undefined>;
 }
 
 /** @description Service secret is sufficient for install smokes; human callers must be operators. */
@@ -77,6 +82,42 @@ function isDishonestLiveValue(value: unknown): boolean {
   return !normalized || ['noop', 'stub', 'empty'].includes(normalized) || /\b(?:noop|stub)\b/.test(normalized);
 }
 
+function sendInstallationReport(req: Request, res: Response, report: InstallationVerificationReport): void {
+  res.status(report.success ? 200 : 503).set('Cache-Control', 'no-store');
+  if (req.accepts(['json', 'text']) === 'text') res.type('text/plain').send(formatInstallationVerification(report));
+  else res.json(report);
+}
+
+function unavailableReport(names: string[]): InstallationVerificationReport {
+  return { reportVersion: 1, success: false, verified: false, verificationStatus: 'failed', failedApps: names, pendingApps: [],
+    summary: { registeredCases: 0, smokesPassed: 0, smokesFailed: 0, smokesPending: 0, suitesNotRun: 0 },
+    apps: names.map(appName => ({ appName, status: 'failed', verified: false, stale: false, smokes: [], cases: [],
+      registration: { coverage: 'unavailable', caseCount: 0, smokeCount: 0, suiteCount: 0, caseIds: [] }, error: 'Verification unavailable.' })) };
+}
+
+async function verifyAppRequest(req: Request, res: Response, swarmApps: SwarmAppService,
+  options: InstallVerificationRouteOptions): Promise<void> {
+  const names = requestedApps(req.body);
+  if (!names) { res.status(400).json({ error: 'apps must be a non-empty array of at most 64 package-name slugs' }); return; }
+  try {
+    const records = await Promise.all(names.map(async requestedName => ({ requestedName, record: await swarmApps.getApp(requestedName) })));
+    const authorization = String(req.headers.authorization || '');
+    const report = await verifyInstalledApplications(records, swarmApps.testLabCatalog, {
+      apiBaseUrl: apiBaseUrl(options),
+      serviceSecret: String(process.env.SWARM_SERVICE_SECRET || '').trim() || undefined,
+      ...(PAT_AUTHORIZATION.test(authorization) ? { authorization } : {}),
+      fetchImpl: options.fetchImpl,
+      resolveMember: name => swarmApps.getApp(name),
+      serviceSmokeFetch: options.serviceSmokeFetch ? test => options.serviceSmokeFetch!(req, test) : undefined,
+    });
+    logger.info({ requestedApps: names, failedApps: report.failedApps, pendingApps: report.pendingApps }, 'Package installation verification completed');
+    sendInstallationReport(req, res, report);
+  } catch (error) {
+    logger.warn({ err: error, requestedApps: names }, 'Package installation verification unavailable');
+    sendInstallationReport(req, res, unavailableReport(names));
+  }
+}
+
 /**
  * @description Build installer-only verification routes. Mount behind serviceSecretOr(requiresAuth):
  * app smokes accept the machine secret, while the spend-bearing live proof additionally requires
@@ -90,44 +131,8 @@ export function createInstallVerificationRoutes(
   const router = Router();
   router.use(serviceOrOperator);
 
-  /** POST /apps — execute every smoke declared by each exact installed app name. */
-  router.post('/apps', async (req: Request, res: Response) => {
-    const names = requestedApps(req.body);
-    if (!names) {
-      res.status(400).json({ error: 'apps must be a non-empty array of at most 64 package-name slugs' });
-      return;
-    }
-    try {
-      const records = await Promise.all(names.map(async (requestedName) => ({
-        requestedName,
-        record: await swarmApps.getApp(requestedName),
-      })));
-      const authorization = String(req.headers.authorization || '');
-      const result = await verifyAppSmokes(records, {
-        apiBaseUrl: apiBaseUrl(options),
-        serviceSecret: String(process.env.SWARM_SERVICE_SECRET || '').trim() || undefined,
-        ...(PAT_AUTHORIZATION.test(authorization) ? { authorization } : {}),
-        noAi: isAiDisabled(),
-        preOnboarding: req.body?.preOnboarding === true,
-        fetchImpl: options.fetchImpl,
-        // ADR-141: a group is verified through its members' own smokes.
-        resolveMember: (name) => swarmApps.getApp(name),
-      });
-      logger.info(
-        { requestedApps: names, failedApps: result.failedApps, pendingApps: result.pendingApps },
-        'Package smoke verification completed',
-      );
-      res.status(result.success ? 200 : 503).json(result);
-    } catch (error) {
-      logger.warn({ err: error, requestedApps: names }, 'Package smoke verification failed before execution');
-      res.status(503).json({
-        success: false,
-        failedApps: names,
-        pendingApps: [],
-        apps: names.map((appName) => ({ appName, status: 'failed', smokes: [], error: 'verification unavailable' })),
-      });
-    }
-  });
+  /** POST /apps — retain catalog evidence and run only eligible registered installation smokes. */
+  router.post('/apps', (req, res) => { void verifyAppRequest(req, res, swarmApps, options); });
 
   /**
    * POST /live — exactly one ordinary direct-mode chat request, no retry and no tool loop. This is

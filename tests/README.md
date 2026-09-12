@@ -59,6 +59,15 @@ require deployment-wide capacity planning.
 The matching Lab cards link the suites and run their documented discovery/refusal probes. Installed
 package smokes appear separately, with app/version metadata and any missing execution prerequisites.
 
+`npm run test:installation-verification` checks installation reports over actual
+fixture HTTP, executes the shipped Bash verifier, and opens report links in Chromium.
+It verifies registered case IDs/revisions, member ownership, safe-smoke failure,
+explicit pending coverage, caller-bound transport and unload/reload refusal.
+Node/browser suites remain unrun during installation. Both new suites are registered
+on the Installed application test registration card and in the platform command;
+the focused command also retains the existing smoke, live-proof and installer checks.
+All identities and HTTP endpoints in this command are disposable fixtures.
+
 Installed packages can carry a [versioned test catalog](../docs/testing/package-test-catalog.md).
 Declare every suite with its own runner, prerequisites and isolation; reference shared core suites
 by exact commit instead of assuming the installation has a sibling developer checkout.

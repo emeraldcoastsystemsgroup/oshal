@@ -6,6 +6,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | INSTALLER-GAPS G1 — the postflight capability verifier. Governing rule: a deployment must not report success while a capability it advertises has no credential behind it. The G-Squared box passed every check it had (container counts, /api/health) while the engine, STT, TTS and a routing-critical bot were all dead. This script fails LOUDLY, naming the broken leg: kernel containers healthy -> GET /api/readiness (server-side, ACTIVE-registry-scoped legs: llm / bots / credentials / voice / db) -> when the bots leg fails and the repo's swarm-routability-check.sh is present, runs it as the host-side drill-down (that script stays THE heartbeat prober — this one consumes the same signal server-side via /api/readiness rather than duplicating it). Two postures: strict (default — any fail leg fails the run) and --pre-onboarding (install-time: llm/credentials/voice legs the browser wizard is about to satisfy report PENDING instead of failing). --no-ai (or OSHAL_NO_AI=true in --env-file) asserts the DECLARED model-less posture: llm must be 'off', and 'fail' means the declaration did not reach the container.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the `catalogs` leg check. This script's governing rule is "a deployment must not report success while a capability it advertises has no credential behind it" — and on 2026-08-01 it passed a box that had registered ZERO connector tools after an ENOMEM scandir, because no leg could see a catalog that loaded nothing. Never PENDING even in --pre-onboarding: an empty catalog is not something the browser wizard goes on to satisfy. An empty leg value is reported as off, so this script stays usable against an api image that predates the leg.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: --apps executes manifest-owned package smokes through the canonical verifier API; explicit --live requires OSHAL_VERIFY_PAT and proves exactly one real generation plus persisted cost attribution. --skip-containers lets the native PowerShell installer invoke this exact verifier inside the shipped image.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Consume the canonical installed-case report, print Lab links and distinguish pending verification from a passed deployment.
 #
 # Usage:
 #   bash scripts/oshal-verify.sh                          # strict operational check
@@ -170,19 +171,22 @@ if [ -n "$APPS" ]; then
     APP_BODY="$(curl -sS -m 120 --request POST \
       --url "$API/api/install-verification/apps" \
       --header 'content-type: application/json' \
+      --header 'accept: text/plain' \
       --data "$APPS_JSON" --config - <<EOF
 header = "X-Service-Secret: $SERVICE_SECRET"
 EOF
     )" || APP_BODY=""
     if [ -z "$APP_BODY" ]; then
       bad "apps: canonical verifier endpoint is unreachable"
-    elif printf '%s' "$APP_BODY" | grep -q '"success":true'; then
-      ok "apps: every named package executed its declared smoke(s)"
-      if ! printf '%s' "$APP_BODY" | grep -q '"pendingApps":\[\]'; then
-        pend "apps: AI-backed package smoke(s) await model setup: $APP_BODY"
-      fi
     else
-      bad "apps: package smoke verification failed (failing app is named in response): $APP_BODY"
+      APP_STATE="${APP_BODY%%$'\n'*}"
+      case "$APP_STATE" in
+        'OSHAL_APP_VERIFICATION passed') ok "apps: eligible installation smokes passed; registered suites were not run" ;;
+        'OSHAL_APP_VERIFICATION pending') pend "apps: installation verification awaits the reported prerequisites" ;;
+        *) bad "apps: package verification failed or returned an unsupported report" ;;
+      esac
+      printf '%s\n' "$APP_BODY"
+      printf 'Test Lab: %s/api/test-lab/app\n' "${API%/}"
     fi
   fi
 fi
@@ -220,7 +224,7 @@ if [ "$FAILS" -gt 0 ]; then
   exit 1
 fi
 if [ "$PENDING" -gt 0 ]; then
-  echo "RESULT: PASS (pre-onboarding) — $PENDING leg(s) pending the browser wizard. The install is NOT finished until the wizard completes."
+  echo "RESULT: PENDING — $PENDING leg(s) await the reported prerequisites. Installation verification is not complete."
   exit 0
 fi
 echo "RESULT: PASS — every advertised capability has something real behind it."

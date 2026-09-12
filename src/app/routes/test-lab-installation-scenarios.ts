@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Register exact-owner scheduled catalog selection, current actor refresh and browser controls.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register published-preview source admission and rollback outcome regressions with installation coverage.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register actual Compose API pool-budget resolution and isolated override coverage after role-capacity saturation.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Register installation report HTTP/CLI and actual browser case-link verification.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -53,6 +54,8 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
   description: 'Read the current caller-visible package test catalog and check case identity, version and prerequisites. Lifecycle behavior is covered by the linked isolated suite.',
   regressionTests: [
     { level: 'integration', path: 'tests/unit/core05-app-smoke.spec.ts' },
+    { level: 'integration', path: 'tests/unit/app-installation-verification.spec.ts' },
+    { level: 'browser', path: 'tests/unit/app-installation-verification-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/installed-app-test-lab.spec.ts' },
     { level: 'integration', path: 'tests/unit/test-lab-platform-registration.spec.ts' },
     { level: 'unit', path: 'tests/unit/package-test-catalog.spec.ts' },

@@ -8,6 +8,7 @@ SEQ | AUTHOR | DESCRIPTION
 2 | maintainer@emeraldcoastsystemsgroup.com | Add disabled local schedules, current catalog choices and guarded batch-to-run evidence navigation.
 3 | maintainer@emeraldcoastsystemsgroup.com | Recover transient schedule history reads with bounded retries and clear stale evidence before retrying.
 4 | maintainer@emeraldcoastsystemsgroup.com | Serialize schedule refresh with mutations and retract closed-panel evidence so delayed catalog or owner responses cannot erase saved rows or restore stale access.
+5 | maintainer@emeraldcoastsystemsgroup.com | Focus caller-visible installation case links after catalog loading without executing tests or changing schedule refresh state.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -274,6 +275,7 @@ async function load() {
     catalog = next;
     scenarioStates = new Map((catalog.scenarios || []).map((scenario) => [scenario.id, 'idle']));
     render();
+    focusLinkedCase();
     refreshHistoryApps();
     await loadHistory();
     if ($('schedulePanel').open) await loadSchedules();
@@ -284,6 +286,18 @@ async function load() {
     setStatus('Unavailable.', error.message);
     renderSummary();
   }
+}
+
+function focusLinkedCase() {
+  let requested;
+  try { requested = decodeURIComponent(window.location.hash.slice(1)); } catch { return; }
+  const selected = (catalog.scenarios || []).find(scenario => scenario.installedTest && 'card-' + scenario.id === requested);
+  if (!selected) return;
+  const card = document.getElementById(requested);
+  if (!card) return;
+  card.tabIndex = -1;
+  card.focus({ preventScroll: true });
+  card.scrollIntoView({ block: 'center' });
 }
 
 function render() {
@@ -565,6 +579,7 @@ async function cancelPackage(id) {
 
 $('runAll').addEventListener('click', runAll);
 $('refreshCatalog').addEventListener('click', load);
+window.addEventListener('hashchange', focusLinkedCase);
 $('refreshHistory').addEventListener('click',loadHistory);
 $('historyApp').addEventListener('change',loadHistory);
 window.addEventListener('blur',clearEvidence);

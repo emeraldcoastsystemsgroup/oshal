@@ -63,6 +63,34 @@ reason. A missing runner is not a test failure or a passing installation check.
 
 ## Registered regression coverage
 
+Installation verification uses these same registrations. `POST
+/api/install-verification/apps` accepts only installed package names and reports
+the captured version, source, case revision, registration coverage and stable Lab
+link for every selected case. Group reports retain member-owned IDs and deduplicate
+shared checks. Legacy packages show `smoke-only` or `not-declared` coverage.
+
+Only eligible read-only installation smokes execute. User-required, AI, mutating
+or unavailable checks remain pending with a reason. Registered Node, browser and
+other suites are listed as `not-run`; registration and installation verification
+do not start them. A failing safe smoke makes the report failed (HTTP 503).
+Missing smoke coverage or pending prerequisites cannot make `verified` true.
+An app or group replacement during checking invalidates the verification.
+
+JSON reports retain legacy `success` (no failed apps) and add `verified` and
+`verificationStatus`. Consumers must use those explicit verification fields:
+`success: true` can still mean pending. The shipped `oshal-verify.sh` requests the
+server's plain-text format, prints case counts/outcomes/links, and distinguishes
+`RESULT: PASS`, `RESULT: PENDING` and `RESULT: FAIL` without requiring Node or jq
+on the installer host. Pending preserves the installer's zero exit status while
+stating that verification is incomplete; failed or unsupported reports exit 1.
+CLI and server must support the same report format. Opening a case link focuses
+the current caller-visible Lab card after catalog loading and never starts it.
+
+Run `npm run test:installation-verification` for the real HTTP/CLI report tests,
+Chromium link tests and existing smoke/live/installer contract regressions. This
+focused command uses synthetic identities, local HTTP and temporary package files;
+it does not need Docker, a provider, deployed credentials or business data.
+
 The **Installed application test registration** Lab card links the source-growth,
 sandbox, catalog execution, durable history and actual Chromium page suites.
 They are included in `npm run test:platform-readiness`. Docker and a locally built

@@ -9,6 +9,7 @@
  * 173 | maintainer@emeraldcoastsystemsgroup.com | Bind typed package tools before activation under the current authorization runtime.
  * 174 | maintainer@emeraldcoastsystemsgroup.com | Mount user-bound Jarvis application proposals and transient result controls.
  * 175 | maintainer@emeraldcoastsystemsgroup.com | Preserve validated explicit application selection when root redirects into the cockpit.
+ * 176 | maintainer@emeraldcoastsystemsgroup.com | Bind installation smoke checks to the current administrator session and exact registered path.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — Express server entry point
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added static file serving for UI assets
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed conflicting manual auth routes and consolidated on express-openid-connect
@@ -293,7 +294,7 @@ import { createPersonalGraphIngestRoutes } from './routes/personal-graph-ingest-
 import { InMemoryGraphStore } from '@/features/personal-graph';
 import { startTravelFareWatchCron } from './routes/travel-farewatch';
 import { createTestLabRoutes } from './routes/test-lab-routes';
-import { createTestLabWiring } from './composition/test-lab-wiring';
+import { createServiceSmokeFetch, createTestLabWiring } from './composition/test-lab-wiring';
 import { createTestLabGoldenRoutes } from './routes/test-lab-golden';
 import { createPersonaEvalRoutes } from './routes/persona-eval-routes';
 import { registerEvalWallRoutes } from './routes/eval-wall-routes';
@@ -1167,7 +1168,10 @@ function createApp(): express.Application {
   app.use(
     '/api/install-verification',
     serviceSecretOr(requiresAuth),
-    createInstallVerificationRoutes(ctx, swarmAppService),
+    createInstallVerificationRoutes(ctx, swarmAppService, {
+      serviceSmokeFetch: (req, test) => createServiceSmokeFetch(req, applicationAuthorization.resolveActor,
+        `http://127.0.0.1:${process.env.PORT || '5000'}`, test.path),
+    }),
   );
 
   // Gate middleware — 503s requests to any path claimed by a swarm-app
