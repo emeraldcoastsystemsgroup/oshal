@@ -38,12 +38,13 @@
  * 33 | maintainer@emeraldcoastsystemsgroup.com | Refresh shared portal appearance and inline top-header workspace navigation assets.
  * 34 | maintainer@emeraldcoastsystemsgroup.com | Refresh the compact workspace header and precache its secondary-action disclosure.
  * 35 | maintainer@emeraldcoastsystemsgroup.com | Refresh opaque workspace menus and keep options visible beside long application lists.
+ * 36 | maintainer@emeraldcoastsystemsgroup.com | Evict cached navigation for contextual sidebars and the admitted Federal CRM top workspace.
  */
 
 /* global self, caches, fetch, Response */
 
 // Bump CACHE_VERSION on any change to the precached shell list so old caches are evicted.
-const CACHE_VERSION = 'oshal-cockpit-v40';
+const CACHE_VERSION = 'oshal-cockpit-v41';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 // The minimal app shell precached at install so the cockpit boots offline. Live data

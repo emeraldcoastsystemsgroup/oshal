@@ -9,13 +9,36 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Allow bounded cold profile discovery to finish within thirty seconds without retaining stale destinations or changing cancellation fences.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Place workspaces beside the header brand and expose the same admitted destinations through an accessible compact phone disclosure.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Deduplicate Home and current workspace labels, anchor More to its trigger, and share one utilities panel with the sidebar header.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Add admitted Federal CRM and delegate repeated default-sidebar pages only while their complete workspace is available on top.
  */
 import { createUiLogger, serializeUiError } from '../../shared/ui-debug.js';
 
 const logger = createUiLogger('cockpit-workspace-navigation');
 const STORAGE_KEY = 'oshal-navigation-layout';
 const CHANGE_EVENT = 'oshal-navigation-layout-changed';
-const CURATED = [['little-monsters'], ['create'], ['intelligent-career', 'career-hunter']];
+const CURATED = [['little-monsters'], ['create'], ['intelligent-career', 'career-hunter'], ['capture-crm']];
+/** Current top destinations, sent to sidebar presentation without changing view registrations. */
+export const WORKSPACE_DESTINATIONS_EVENT = 'oshal-workspace-destinations-changed';
+
+/**
+ * @description Name the sidebar delegations fulfilled by selected top destinations, including the Career fallback.
+ * @param {Array<{name: string}>} items Currently admitted, selected top workspace records.
+ * @returns {string[]} Exact workspace slugs whose pages are available through the top rail.
+ */
+export function workspaceSidebarNames(items) {
+  return CURATED.filter(names => items.some(item => names.includes(item.name))).flat();
+}
+
+/**
+ * @description Only explicit metadata in the default framework profile delegates a sidebar page.
+ * @param {object} view Registered sidebar view, never removed from the navigation registry.
+ * @param {string} profileName Current resolved profile name.
+ * @param {string[]} names Current admitted top-workspace delegations.
+ * @returns {boolean} Whether the top navigation already exposes the complete workspace for this page.
+ */
+export function isWorkspaceDelegated(view, profileName, names) {
+  return profileName === 'oshal-framework' && typeof view?.workspace === 'string' && names.includes(view.workspace);
+}
 
 /** Read only the layout preference; a missing, invalid or unavailable value keeps the existing sidebar. */
 export function readNavigationLayout() {
@@ -93,7 +116,7 @@ function curatedWorkspaces(items) {
   return selected;
 }
 
-/** Optional shell chrome. Application content, ribbon registrations and surface message bridges are not modified. */
+/** Optional shell chrome. Application content and ribbon registrations remain with their existing controllers. */
 export class WorkspaceNavigation {
   constructor({ profile, studentMode = false } = {}) {
     this.profile = profile;
@@ -276,6 +299,7 @@ export class WorkspaceNavigation {
     } else links.append(workspaceLink({ name: 'cockpit', displayName: 'oshal Cockpit', href: '/cockpit/' }, active));
     for (const item of curated) links.append(workspaceLink(item, active));
     this.destinations.replaceChildren(links, this.moreMenu(active, curated));
+    this.publishSidebarDestinations(curated);
     this.resizeObserver.disconnect();
     this.resizeObserver.observe(this.rail); this.resizeObserver.observe(links);
     if (this.notice) {
@@ -287,6 +311,15 @@ export class WorkspaceNavigation {
         retry.addEventListener('click', () => this.refresh()); this.destinations.append(retry);
       }
     }
+  }
+
+  /** Share only currently represented workspaces; retraction restores the default sidebar immediately. */
+  publishSidebarDestinations(curated) {
+    const names = this.layout === 'workspaces' ? workspaceSidebarNames(curated) : [];
+    const key = names.join('|');
+    if (key === this.sidebarDestinations) return;
+    this.sidebarDestinations = key;
+    window.dispatchEvent(new CustomEvent(WORKSPACE_DESTINATIONS_EVENT, { detail: names }));
   }
 
   moreMenu(active, curated) {
@@ -323,6 +356,7 @@ export class WorkspaceNavigation {
   /** Release only this overlay's resources; active app content belongs to the existing controller. */
   destroy() {
     this.generation += 1; this.abort?.abort();
+    this.publishSidebarDestinations([]);
     this.resizeObserver?.disconnect();
     this.cleanups.forEach(remove => remove());
     if (this.utilitiesHome) this.utilitiesHome.append(this.utilities);

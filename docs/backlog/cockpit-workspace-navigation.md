@@ -83,12 +83,23 @@ recorded in the [September 12 release](../releases/workspace-facelift-2026-09-12
 
 The optional rail opens existing complete profiles using ordinary same-tab links:
 `/cockpit/`, `/cockpit/?app=little-monsters`, `/cockpit/?app=create` and
-`/cockpit/?app=intelligent-career`. The Career slot prefers that admitted group,
+`/cockpit/?app=intelligent-career` and `/cockpit/?app=capture-crm`. The Career slot prefers that admitted group,
 or uses the admitted `/cockpit/?app=career-hunter` application when the group is
 unavailable. Only the selected entry is removed from More. Learning is a label
 for Little Monsters, not a new application. Other eligible complete applications, including custom skinned
 profiles, appear in **More**. All applications remains reachable through the Home brand and existing
-sidebar tools remain where their profile puts them. People/HR is not invented.
+sidebar tools remain reachable through their owning workspaces. People/HR is not invented.
+
+The contextual sidebar refinement removes the default Home sidebar's repeated
+Learning, Career and Create pages only when the corresponding admitted workspace
+is on top. Explicit `workspace` metadata delegates those entries; labels and URL
+prefixes never infer ownership. Focused applications retain their internal pages.
+An already open delegated page remains reachable until the user leaves it, and
+Sidebar layout or failed discovery restores the full default rail. Federal CRM
+opens the existing integrated `capture-crm` application. Its source Capture Board
+and Formation Plan remain available under **Federal source tools**; Camera Ops,
+Forge, Workflow Studio and Pumpkin remain under **Tools** because Create does not
+include them. These changes affect presentation, not permissions or data ownership.
 
 The server supplies only currently installed, visible and authorized destinations.
 The overlay does not infer access from roles, theme names or an installation list.

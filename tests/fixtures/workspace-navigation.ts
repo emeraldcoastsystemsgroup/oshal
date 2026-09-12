@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the real Cockpit boot, navigation and iframe controller over isolated synthetic application responses.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow a synthetic long application brand to exercise the real responsive header geometry.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Supply explicit synthetic profile and dynamic-tool variants for real contextual-sidebar navigation tests.
  * =============================================================================
  */
 import express from 'express';
@@ -64,18 +65,20 @@ function customSurface(detail: boolean) {
 
 /** @description Synthetic HTTP state never refers to accounts, providers or installed application data. */
 function state() {
-  return { workspaces: destinations(), workspaceStatus: 200, profileDisplayName: '', requests: [] as string[], saves: 0, allowSave: true };
+  return { workspaces: destinations(), workspaceStatus: 200, profileDisplayName: '', requests: [] as string[], saves: 0, allowSave: true,
+    profiles: {} as Record<string, ReturnType<typeof profile>>, dynamicTools: [] as Record<string, unknown>[] };
 }
 
 /** @description Supply inert boot/Settings data while recording every request made by the real shell. */
 function readResponses(app: express.Application, current: ReturnType<typeof state>) {
   app.use((req, _res, next) => { current.requests.push(`${req.method} ${req.path}`); next(); });
-  app.get('/api/ui/profile', (req, res) => res.json({ profile: { ...profile(String(req.query.name || '')),
+  app.get('/api/ui/profile', (req, res) => res.json({ profile: { ...(current.profiles[String(req.query.name || '')] || profile(String(req.query.name || ''))),
     ...(current.profileDisplayName ? { displayName: current.profileDisplayName } : {}) } }));
   app.get('/api/ui/workspaces', (_req, res) => res.status(current.workspaceStatus).json({ workspaces: current.workspaces }));
+  app.get('/api/tools/dynamic', (_req, res) => res.json({ tools: current.dynamicTools }));
   const reads: Record<string, unknown> = {
     '/api/auth/user': { sub: 'synthetic-navigation-user', guestMode: false },
-    '/api/cli-tokens/whoami': { operator: false }, '/api/tools': { tools: [] }, '/api/tools/dynamic': { tools: [] },
+    '/api/cli-tokens/whoami': { operator: false }, '/api/tools': { tools: [] },
     '/api/agents': { agents: [] }, '/api/swarm/bots/registry': { bots: [] }, '/api/providers': [],
     '/api/config': {}, '/api/config/ownership': null, '/api/config/rag': { config: {} },
     '/api/v1/metrics/summary': {}, '/api/dev-console/access': { superAdmin: false },

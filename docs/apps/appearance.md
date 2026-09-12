@@ -17,6 +17,10 @@ With top workspace navigation, **More → Settings** opens the full chooser and
 knowledge and assistant controls share this menu. In Sidebar layout they remain
 under **Workspace options** beside Profile. These are the original controls, so
 switching navigation layouts preserves their state and the open application.
+Top workspaces include Federal CRM when the current user can open it. In the
+default Home sidebar, explicit workspace metadata removes repeated Learning,
+Career and Create pages while those top destinations are available. A focused
+application keeps its own pages; Sidebar layout restores the full default rail.
 The OSHAL Cockpit brand returns to all applications; it is not repeated as a tab.
 
 ## An application surface

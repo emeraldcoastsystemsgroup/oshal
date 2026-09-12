@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register current workspace navigation discovery and linked permission and browser regression suites.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Link the actual embedded chat theme and global preference regression to the appearance scenario.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Register actual core-page palette, native control and live-inheritance browser coverage.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Link contextual sidebar, Federal CRM navigation and actual Career group integration checks with explicit store-fixture prerequisites.
  * =============================================================================
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -59,11 +60,14 @@ export const APPEARANCE_SCENARIOS: Scenario[] = [{
   steps: [{ id: 'workspace-stylesheet', app: 'cockpit', label: 'Workspace stylesheet', run: workspaceStylesheet }],
 }, {
   id: 'cockpit-workspace-navigation', title: 'Cockpit workspace navigation', group: 'tool',
-  description: 'Read current application workspace links. Existing pages retain their own permissions and setup checks. Linked tests cover the optional layout, custom screens and current policy.',
+  description: 'Read current application workspace links. Linked tests cover contextual sidebars, Federal CRM, custom screens and current policy. The Career group integration recipe requires the public store checkout (OSHAL_PUBLIC_STORE_ROOT); this read-only check does not execute it.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/workspace-navigation-model.spec.ts' },
     { level: 'integration', path: 'tests/unit/workspace-navigation-routes.spec.ts' },
     { level: 'browser', path: 'tests/unit/workspace-navigation-browser.spec.ts' },
+    { level: 'browser', path: 'tests/unit/workspace-navigation-contextual-browser.spec.ts' },
+    { level: 'integration', path: 'tests/unit/career-group-navigation.spec.ts' },
+    { level: 'integration', path: 'tests/unit/swarm-app-groups.spec.ts' },
   ],
   steps: [{ id: 'workspace-discovery', app: 'cockpit', label: 'Current workspace navigation', run: workspaceDiscovery }],
 }];
