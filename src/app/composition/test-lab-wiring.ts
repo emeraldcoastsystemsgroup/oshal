@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Wire isolated package runs to fresh exact-principal authority and durable versioned evidence.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Share the same current-principal runner with local catalog schedules.
  */
 import type { Request } from 'express';
 import type { AppContext } from './app-context';
@@ -15,8 +16,9 @@ import { TestLabRunService } from '../routes/test-lab-run-service';
 import { PostgresTestLabRunStore } from '../routes/test-lab-run-store';
 import { ensureTestLabRunSchema } from '../routes/test-lab-run-schema';
 import type { TestLabRouteOptions } from '../routes/test-lab-routes';
+import { createTestLabScheduleWiring, type TestLabScheduledActorPorts } from './test-lab-schedule-wiring';
 
-interface AuthorizationPorts {
+interface AuthorizationPorts extends TestLabScheduledActorPorts {
   ready: Promise<unknown>;
   resolveActor(req: Request): Promise<AuthorizationActor>;
   runtime: { protectedApp(name: string): boolean; canDiscover(name: string, actor: AuthorizationActor): Promise<boolean> };
@@ -49,8 +51,10 @@ export function createTestLabWiring(ctx: AppContext, apps: SwarmAppService, acce
     return { actor: { issuer: actor.issuer, sub: actor.sub }, visibleApps: await visibleCases(apps, access, authorization, actor),
       auth: { ...executionAuth(req), canRunSuites: actor.isSwarmAdmin } };
   };
-  return { installedTests: apps.testLabCatalog, executionAuth, runContext,
+  const runService = new TestLabRunService(new PostgresTestLabRunStore(ctx.pool, ready,
+    async ids => (await Promise.all(ids.map(id => new PackageTestSandbox().cleanupExecution(id)))).every(Boolean)), apps.testLabCatalog);
+  return { installedTests: apps.testLabCatalog, executionAuth, runContext, runService,
     visibleApps: async req => (await runContext(req)).visibleApps,
-    runService: new TestLabRunService(new PostgresTestLabRunStore(ctx.pool, ready,
-      async ids => (await Promise.all(ids.map(id => new PackageTestSandbox().cleanupExecution(id)))).every(Boolean)), apps.testLabCatalog) };
+    scheduleService: createTestLabScheduleWiring({ ctx, apps, runs: runService, ready, authorization,
+      visible: actor => visibleCases(apps, access, authorization, actor) }) };
 }

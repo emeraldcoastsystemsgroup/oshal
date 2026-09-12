@@ -79,9 +79,12 @@ The [execution guide](../testing/package-test-execution.md) describes the suppor
 recipe and prerequisites. Broader database, browser and externally connected
 runners remain pending. Installing a catalog alone does not execute these suites.
 
-The next accepted item is TLAB-09: local recurring selection from the installed
-catalog, using the same execution authority and evidence, plus shipped-test drift
-reports. This work does not depend on GitHub Actions.
+TLAB-09 adds exact-owner local recurring selection from the installed catalog,
+using the same execution authority and evidence, plus shipped-test drift reports.
+Schedules begin disabled; an operator can run a draft once and then enable a fixed
+hourly/daily/weekly cadence. New eligible cases are discovered every cycle.
+Unavailable prerequisites, failed assertions, stale run evidence and unregistered
+test files remain distinct. This work does not depend on GitHub Actions.
 
 | ID | Priority / owner | Work | Done when |
 |---|---|---|---|

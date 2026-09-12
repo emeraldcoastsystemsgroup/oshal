@@ -8,7 +8,7 @@
 import { afterAll,afterEach,beforeAll,beforeEach,describe,expect,it } from 'vitest';
 import { chromium,type Browser,type BrowserContext,type Page } from 'playwright';
 import { mkdtempSync,readFileSync,writeFileSync,rmSync } from 'node:fs';
-import { join,relative,resolve } from 'node:path';
+import { join,relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { InstalledAppTestCatalog } from '@/features/swarm-apps';
 import { createPackageExecutionFixture,ObservedPackageTestSandbox,PACKAGE_TEST_IMAGE } from '../fixtures/package-test-execution';
@@ -50,11 +50,7 @@ describe('Real browser-to-sandbox package repair',() => {
       await screen.getByRole('button',{ name: 'Refresh',exact: true }).click();
       await expect.poll(() => screen.locator('#runHistory').textContent()).toContain('Earlier version / stale');
       await screen.locator('[data-run-id="' + source.caseId + '"]').click();
-      await expect.poll(async () => {
-        const rows = await actual.pool.query('SELECT state,result,test FROM oshal_test_lab_runs ORDER BY created_at');
-        writeFileSync(resolve('temp/test-lab-browser-repair-evidence.json'),JSON.stringify(rows.rows));
-        return screen.locator('#runHistory').textContent();
-      },{ timeout: 45000 }).toContain('passed');
+      await expect.poll(() => screen.locator('#runHistory').textContent(),{ timeout: 45000 }).toContain('passed');
       await screen.reload(); await expect.poll(() => screen.locator('[data-history-id]').count()).toBe(2);
       expect(await screen.locator('#runHistory').textContent()).toContain('Earlier version / stale');
       expect(sandbox.calls).toBe(2); expect(sandbox.last?.cleanupVerified).toBe(true);

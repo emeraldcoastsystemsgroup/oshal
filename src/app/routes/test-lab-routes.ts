@@ -13,6 +13,7 @@
  * -----------------------------------------------------------------------------
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Mount exact-owner local catalog schedule controls beside durable package runs.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Mount asynchronous package execution and durable exact-caller history beside legacy scenarios.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Include caller-visible installed package smokes and version/prerequisite metadata; reuse the installation verifier with operator/caller-scoped authentication.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register artifact scenarios and expose categorized regression suites in the existing Lab catalog.
@@ -37,6 +38,7 @@ import { SCENARIOS, rollup, type StepResult } from './test-lab-scenarios';
 import { renderCatalogVisual } from './test-lab-visual-catalog';
 import type { InstalledAppTestCatalog, InstalledTestAuth, InstalledAppTestCase } from '@/features/swarm-apps';
 import { createTestLabRunRoutes, type TestLabRunRouteOptions } from './test-lab-run-routes';
+import { createTestLabScheduleRoutes, type TestLabScheduleRouteOptions } from './test-lab-schedule-routes';
 
 const logger = createChildLogger({ module: 'test-lab-routes' });
 const TOOLS_DIR = 'any-bot/server/services/tools/test-lab';
@@ -62,7 +64,7 @@ function resolveViewerSub(req: Request): string {
 }
 
 // ── Router ─────────────────────────────────────────────────────────────────────
-export interface TestLabRouteOptions extends TestLabRunRouteOptions {
+export interface TestLabRouteOptions extends TestLabRunRouteOptions, TestLabScheduleRouteOptions {
   installedTests?: InstalledAppTestCatalog;
   /** Current app visibility and access policy, evaluated again before every package test. */
   visibleApps?: (req: Request) => Promise<Map<string, string>>;
@@ -88,6 +90,7 @@ function installedScenario(test: InstalledAppTestCase) {
 export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptions = {}): Router {
   const router = Router();
   router.use(createTestLabRunRoutes(options));
+  router.use(createTestLabScheduleRoutes(options));
   const visibleApps = (req: Request) => options.visibleApps?.(req) ?? Promise.resolve(new Map<string, string>());
   const executionAuth = (req: Request) => options.executionAuth?.(req) ?? {};
 

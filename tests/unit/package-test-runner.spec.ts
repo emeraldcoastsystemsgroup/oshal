@@ -14,8 +14,19 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { InstalledAppTestCatalog } from '@/features/swarm-apps/services/installed-app-test-catalog';
 import { createPackageExecutionFixture, ObservedPackageTestSandbox, PACKAGE_TEST_IMAGE,
   type PackageExecutionFixtureOptions } from '../fixtures/package-test-execution';
+import { executePackageTest } from '@/features/swarm-apps/services/package-test-execution';
+import type { PackageTestSandbox } from '@/features/swarm-apps/services/package-test-sandbox';
 
 let root: string, sandbox: ObservedPackageTestSandbox, catalog: InstalledAppTestCatalog;
+
+it('distinguishes an unavailable execution process from failing package assertions', async () => {
+  const unavailable = { run: async () => ({ exitCode: null, output: '', image: '', timedOut: false,
+    cancelled: false, cleanupVerified: true }) } as PackageTestSandbox;
+  const snapshot = { revision: 'fixture', files: [] };
+  const result = await executePackageTest({ name: 'Fixture', path: 'tests/fixture.test.js', suiteFiles: [], timeoutMs: 1000,
+    snapshot, snapshotNow: () => snapshot, current: async () => true, sandbox: unavailable });
+  expect(result).toMatchObject({ status: 'pending', cleanupVerified: true, error: 'The isolated runner is unavailable.' });
+});
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'oshal-package-execution-'));
   sandbox = new ObservedPackageTestSandbox();

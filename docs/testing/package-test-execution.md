@@ -59,3 +59,39 @@ They are included in `npm run test:platform-readiness`. Docker and a locally bui
 core image are needed for the sandbox cases; PostgreSQL fixtures use disposable
 containers. Set `OSHAL_TEST_RUNNER_IMAGE` to an existing core image if its tag differs
 from `oshal-bot:latest`. No GitHub Actions or production business data are needed.
+
+## Local recurring runs
+
+Use **Local schedules** in the same Lab page. Choose all visible installed
+applications or one application, unit/integration levels, and hourly/daily/weekly
+cadence. Saving creates a disabled draft. **Run now** tests that selection once;
+**Enable** schedules future cycles. **Disable** invalidates current batch authority
+and prevents subsequent scheduled work. Enabling starts the first interval from
+the current time; a restart runs at most one missed occurrence, without replaying
+every missed interval. The controller must be running to execute due work.
+
+Each cycle discovers current registrations again, so new eligible installed cases
+are included without maintaining a list. It runs at most 100 suites sequentially
+through the same durable Run service. Batch history distinguishes assertion
+results, unavailable prerequisites, deferred work and inventory drift. A completed
+batch can contain failed suites; completion is not a passing test result.
+Canonical `tests/**/*.test.*` and `tests/**/*.spec.*` files missing from package
+runner declarations are reported as registration drift. Helper files are excluded
+from that comparison. Inventory read errors remain explicit.
+
+A saved schedule retains the exact issuer and subject, selector and cadence. It
+stores no session cookie, token, service secret or directory group claims. The
+controller refreshes the observed account and current administrator/application
+permissions on every cycle and throughout execution. A revoked or disabled owner
+cannot continue scheduled work. Each batch links its versioned runs; private
+metadata is withheld if application access changes, including idempotent retries.
+
+The local scheduler has its own bounded batch lease and shares the existing global
+package runner capacity. Crashed batches become interrupted. An orphaned package
+container must be positively removed before another package execution is admitted.
+This scheduler does not dispatch the separate golden-ticket workflow.
+
+API: `GET/POST /api/test-lab/schedules`, `PATCH /schedules/:id` for revision-checked
+enablement, `POST /schedules/:id/run-now` with `{revision, requestId}`, and
+`GET /schedules/:id/history`. New suites and the real browser flow are registered
+on the same **Installed application test registration** card and local command.

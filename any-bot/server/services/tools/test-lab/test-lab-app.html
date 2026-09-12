@@ -5,6 +5,8 @@ CHANGE LOG
 SEQ | AUTHOR | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com | Add cancellable package runs, exact-version evidence and durable caller history alongside live scenarios.
+2 | maintainer@emeraldcoastsystemsgroup.com | Add disabled local schedules, current catalog choices and guarded batch-to-run evidence navigation.
+3 | maintainer@emeraldcoastsystemsgroup.com | Recover transient schedule history reads with bounded retries and clear stale evidence before retrying.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -211,6 +213,20 @@ SEQ | AUTHOR | DESCRIPTION
       <div id="runHistory" aria-live="polite">Loading your recent runs...</div>
       <div id="runEvidence" aria-live="polite"></div>
     </section>
+    <details id="schedulePanel" class="history-panel">
+      <summary>Scheduled package checks</summary>
+      <p>Select current installed suites on a local schedule. New schedules begin disabled. Unavailable prerequisites stay pending; no outside CI service is started.</p>
+      <form id="scheduleForm" class="history-controls">
+        <label for="scheduleApp">Application</label><select id="scheduleApp" required></select>
+        <label for="scheduleCadence">Frequency</label><select id="scheduleCadence"><option value="hourly">Hourly</option><option value="daily" selected>Daily</option><option value="weekly">Weekly</option></select>
+        <label><input id="scheduleUnit" type="checkbox" checked> Unit tests</label>
+        <label><input id="scheduleIntegration" type="checkbox"> Integration tests</label>
+        <button id="createSchedule" type="submit">Create disabled schedule</button>
+        <button id="refreshSchedules" type="button">Refresh schedules</button>
+      </form>
+      <p id="scheduleStatus" role="status">Open this section to load your schedules.</p>
+      <div id="scheduleList"></div><div id="scheduleHistory" aria-live="polite"></div>
+    </details>
     <main id="main"><div class="empty">Loading scenarios...</div></main>
   </div>
 
@@ -242,7 +258,7 @@ async function fetchJson(path, options) {
   try { body = await response.json(); } catch {}
   if (!response.ok) {
     const message = body && (body.error || body.message) ? (body.error || body.message) : 'HTTP ' + response.status;
-    throw new Error(message);
+    throw Object.assign(new Error(message), { status: response.status });
   }
   return body || {};
 }
@@ -259,6 +275,7 @@ async function load() {
     render();
     refreshHistoryApps();
     await loadHistory();
+    if ($('schedulePanel').open) await loadSchedules();
     const appCount = (catalog.apps || []).length;
     setStatus('Ready.', (catalog.scenarios || []).length + ' scenarios loaded' + (appCount ? ' across ' + appCount + ' live apps.' : '.'));
   } catch (error) {
@@ -552,6 +569,128 @@ $('historyApp').addEventListener('change',loadHistory);
 window.addEventListener('blur',clearEvidence);
 document.addEventListener('visibilitychange',() => { if (document.hidden) clearEvidence(); else void loadHistory(); });
 load();
+</script>
+<script>
+let scheduleGeneration = 0;
+let scheduleHistoryGeneration = 0;
+let scheduleOptions = { canSchedule: false };
+let scheduleBusy = false;
+let scheduleTimer;
+
+function scheduleControls() {
+  $('scheduleForm').querySelectorAll('input,select,button').forEach(control => {
+    control.disabled = scheduleBusy || (!scheduleOptions.canSchedule && control.id !== 'refreshSchedules');
+  });
+  $('scheduleList').querySelectorAll('[data-schedule-enable],[data-schedule-run]').forEach(button => {
+    button.disabled = scheduleBusy || (button.dataset.canStop !== 'true' && (!scheduleOptions.canSchedule || button.dataset.unavailable === 'true'));
+  });
+}
+
+function renderSchedule(schedule) {
+  const name = schedule.unavailable ? 'Unavailable application' : schedule.appName === '*' ? 'All visible applications' : schedule.appName;
+  return '<article class="history-row" data-schedule-id="' + esc(schedule.id) + '"><div class="description"><strong>' + esc(name)
+    + '</strong><br>' + esc(schedule.levels.join(', ')) + ' · ' + esc(schedule.cadence) + ' · '
+    + (schedule.enabled ? 'Enabled · Next ' + esc(new Date(schedule.nextRunAt).toLocaleString()) : 'Disabled') + '</div>'
+    + '<button type="button" data-schedule-enable data-can-stop="' + Boolean(schedule.enabled) + '" data-unavailable="' + Boolean(schedule.unavailable) + '">'
+    + (schedule.enabled ? 'Disable' : 'Enable') + '</button>'
+    + '<button type="button" data-schedule-run data-unavailable="' + Boolean(schedule.unavailable) + '">Run now</button><button type="button" data-schedule-history>History</button></article>';
+}
+
+async function loadSchedules() {
+  const generation = ++scheduleGeneration;
+  clearTimeout(scheduleTimer); scheduleHistoryGeneration++;
+  $('scheduleHistory').replaceChildren();
+  try {
+    const payload = await fetchJson(API + '/schedules');
+    if (generation !== scheduleGeneration) return;
+    scheduleOptions = payload.options;
+    const selected = $('scheduleApp').value;
+    $('scheduleApp').innerHTML = '<option value="*">All visible applications</option>' + payload.options.apps.map(app =>
+      '<option value="' + esc(app.name) + '">' + esc(app.displayName || app.name) + ' (' + Number(app.eligible) + ' ready, ' + Number(app.pending) + ' pending)</option>').join('');
+    if ([...$('scheduleApp').options].some(option => option.value === selected)) $('scheduleApp').value = selected;
+    $('scheduleList').innerHTML = payload.schedules.map(renderSchedule).join('') || '<p>No schedules yet.</p>';
+    for (const schedule of payload.schedules) {
+      const row = $('scheduleList').querySelector('[data-schedule-id="' + CSS.escape(schedule.id) + '"]');
+      row.querySelector('[data-schedule-enable]').onclick = () => changeSchedule(schedule);
+      row.querySelector('[data-schedule-run]').onclick = () => runSchedule(schedule);
+      row.querySelector('[data-schedule-history]').onclick = () => scheduleHistory(schedule.id);
+    }
+    $('scheduleStatus').textContent = payload.options.canSchedule ? 'Schedules use the current catalog and your current access at every run.' : 'An operator is required to create or change schedules.';
+    scheduleControls();
+  } catch (error) {
+    if (generation !== scheduleGeneration) return;
+    scheduleOptions = { canSchedule: false }; $('scheduleList').replaceChildren(); $('scheduleApp').replaceChildren(); scheduleControls();
+    $('scheduleStatus').textContent = error.message;
+  }
+}
+
+async function scheduleMutation(path,body,method = 'POST') {
+  if (scheduleBusy) return null;
+  const generation = scheduleGeneration;
+  scheduleBusy = true; scheduleControls(); clearEvidence();
+  try {
+    const result = await fetchJson(API + path,{ method,headers: { 'content-type': 'application/json','X-OSHAL-Test-Lab': '1' },body: JSON.stringify(body) });
+    if (generation !== scheduleGeneration) return null;
+    return result;
+  } catch (error) { if (generation === scheduleGeneration) $('scheduleStatus').textContent = error.message; return null; }
+  finally { scheduleBusy = false; scheduleControls(); }
+}
+
+async function createSchedule(event) {
+  event.preventDefault();
+  const levels = [$('scheduleUnit').checked ? 'unit' : '',$('scheduleIntegration').checked ? 'integration' : ''].filter(Boolean);
+  if (!levels.length) { $('scheduleStatus').textContent = 'Select at least one test level.'; return; }
+  if (await scheduleMutation('/schedules',{ appName: $('scheduleApp').value,levels,cadence: $('scheduleCadence').value })) await loadSchedules();
+}
+
+async function changeSchedule(schedule) {
+  if (await scheduleMutation('/schedules/' + encodeURIComponent(schedule.id),{ revision: schedule.revision,enabled: !schedule.enabled },'PATCH')) await loadSchedules();
+}
+
+async function runSchedule(schedule) {
+  const result = await scheduleMutation('/schedules/' + encodeURIComponent(schedule.id) + '/run-now',{ revision: schedule.revision,requestId: crypto.randomUUID() });
+  if (result) { await scheduleHistory(schedule.id); await loadHistory(); }
+}
+
+function renderScheduleBatch(batch) {
+  const summary = batch.summary || {};
+  return '<article class="history-row"><div class="description"><strong>' + esc(batch.state) + '</strong> · '
+    + Number(summary.selected || 0) + ' selected · ' + Number(summary.deferred || 0) + ' deferred'
+    + (summary.error ? '<p>' + esc(summary.error) + '</p>' : '')
+    + (summary.unavailable || []).map(item => '<p>' + esc(item.appName + ': ' + item.caseId + ' — ' + item.reason) + '</p>').join('')
+    + (summary.drift || []).map(item => '<p>' + esc(item.appName) + ': ' + (item.missingRegistrations || []).length + ' unregistered test files'
+      + (item.inventoryError ? ' · ' + esc(item.inventoryError) : '') + '</p>'
+      + (item.missingRegistrations?.length ? '<details><summary>Unregistered files</summary><p>' + esc(item.missingRegistrations.join(', ')) + '</p></details>' : '')).join('')
+    + (summary.runs || []).map(run => '<p>' + esc(run.appName + ': ' + run.caseId + ' · ' + run.state)
+      + ' <button type="button" data-schedule-evidence="' + esc(run.runId) + '">View result</button></p>').join('') + '</div></article>';
+}
+
+async function scheduleHistory(id,attempt = 0) {
+  const generation = ++scheduleHistoryGeneration; clearTimeout(scheduleTimer);
+  try {
+    const payload = await fetchJson(API + '/schedules/' + encodeURIComponent(id) + '/history');
+    if (generation !== scheduleHistoryGeneration) return;
+    $('scheduleHistory').innerHTML = payload.batches.map(renderScheduleBatch).join('') || '<p>No runs for this schedule yet.</p>';
+    $('scheduleHistory').querySelectorAll('[data-schedule-evidence]').forEach(button => {
+      button.onclick = () => showEvidence(button.dataset.scheduleEvidence);
+    });
+    if (payload.batches.some(batch => batch.state === 'running')) scheduleTimer = setTimeout(() => scheduleHistory(id),2000);
+  } catch (error) {
+    if (generation !== scheduleHistoryGeneration) return;
+    clearEvidence(); $('scheduleHistory').textContent = error.message;
+    if ((!error.status || error.status >= 500) && attempt < 3 && $('schedulePanel').open && !document.hidden) {
+      $('scheduleHistory').textContent = 'Schedule history is temporarily unavailable. Retrying...';
+      scheduleTimer = setTimeout(() => scheduleHistory(id,attempt+1),1000 * 2 ** attempt);
+    }
+  }
+}
+
+$('schedulePanel').addEventListener('toggle',() => {
+  if ($('schedulePanel').open) void loadSchedules();
+  else { clearTimeout(scheduleTimer); scheduleGeneration++; scheduleHistoryGeneration++; $('scheduleHistory').replaceChildren(); }
+});
+$('scheduleForm').addEventListener('submit',createSchedule);
+$('refreshSchedules').addEventListener('click',loadSchedules);
 </script>
 <script>
 (function(){

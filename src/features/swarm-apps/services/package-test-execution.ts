@@ -62,6 +62,7 @@ export async function executePackageTest(options: PackageTestExecution): Promise
     if (watch.denied() || !await currentAuthority(options)) return { ...refused('Application or execution authority changed during the test.'), ...cleanup };
     if (options.snapshotNow().revision !== options.snapshot.revision) return { ...refused('Package source changed during the test. Refresh the catalog.'), ...cleanup };
     if (options.signal?.aborted || result.cancelled) return { ...refused('Test cancelled.'), cancelled: true, cleanupVerified: result.cleanupVerified };
+    if (result.exitCode === null && !result.timedOut) return { ...refused('The isolated runner is unavailable.'), ...cleanup };
     const passed = result.exitCode === 0 && !result.timedOut && result.cleanupVerified;
     return { ...base, status: passed ? 'passed' : 'failed', durationMs: Date.now() - started,
       output: result.output, image: result.image, timedOut: result.timedOut, cleanupVerified: result.cleanupVerified,

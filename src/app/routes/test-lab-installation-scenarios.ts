@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register installed application smoke discovery and its local lifecycle regression suite in the AI Test Lab.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register authenticated installation smoke prerequisite and CLI/runtime contract cases.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register bounded package execution, source sealing and durable browser run evidence.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Register exact-owner scheduled catalog selection, current actor refresh and browser controls.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -61,6 +62,9 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/package-test-runner.spec.ts' },
     { level: 'integration', path: 'tests/unit/test-lab-run-history.spec.ts' },
     { level: 'browser', path: 'tests/unit/test-lab-run-browser.spec.ts' },
+    { level: 'unit', path: 'tests/unit/test-lab-schedule-wiring.spec.ts' },
+    { level: 'integration', path: 'tests/unit/test-lab-schedules.spec.ts' },
+    { level: 'browser', path: 'tests/unit/test-lab-schedule-browser.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'test-lab', label: 'Installed package cases', run: installedCatalog }],
 }];
