@@ -5,13 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add an optional authorized workspace rail without replacing application screens or their navigation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep iframe-to-shell focus transitions from replacing a navigation control during its click while retaining external-focus policy refresh.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Prefer the admitted Career group with the admitted Career app as its curated fallback, keeping the selected destination out of More.
  */
 import { createUiLogger, serializeUiError } from '../../shared/ui-debug.js';
 
 const logger = createUiLogger('cockpit-workspace-navigation');
 const STORAGE_KEY = 'oshal-navigation-layout';
 const CHANGE_EVENT = 'oshal-navigation-layout-changed';
-const CURATED = ['little-monsters', 'create', 'intelligent-career'];
+const CURATED = [['little-monsters'], ['create'], ['intelligent-career', 'career-hunter']];
 
 /** Read only the layout preference; a missing, invalid or unavailable value keeps the existing sidebar. */
 export function readNavigationLayout() {
@@ -77,6 +78,16 @@ function workspaceLink(item, active) {
   if (item.name === 'little-monsters') link.title = 'Open Little Monsters';
   if (item.name === active) link.setAttribute('aria-current', 'page');
   return link;
+}
+
+/** Choose each slot from currently admitted destinations in preference order. */
+function curatedWorkspaces(items) {
+  const selected = [];
+  for (const names of CURATED) {
+    const item = names.map(name => items.find(candidate => candidate.name === name)).find(Boolean);
+    if (item) selected.push(item);
+  }
+  return selected;
 }
 
 /** Optional shell chrome. Application content, ribbon registrations and surface message bridges are not modified. */
@@ -217,13 +228,11 @@ export class WorkspaceNavigation {
   render() {
     if (!this.rail) return;
     const active = currentWorkspace();
+    const curated = curatedWorkspaces(this.items);
     const links = document.createElement('div'); links.className = 'workspace-navigation-links';
     links.append(workspaceLink({ name: 'cockpit', displayName: 'oshal Cockpit', href: '/cockpit/' }, active));
-    for (const name of CURATED) {
-      const item = this.items.find(candidate => candidate.name === name);
-      if (item) links.append(workspaceLink(item, active));
-    }
-    this.rail.replaceChildren(links, this.moreMenu(active));
+    for (const item of curated) links.append(workspaceLink(item, active));
+    this.rail.replaceChildren(links, this.moreMenu(active, curated));
     if (this.notice) {
       const status = document.createElement('span'); status.dataset.workspaceStatus = '';
       status.setAttribute('role', 'status'); status.textContent = this.notice;
@@ -235,10 +244,10 @@ export class WorkspaceNavigation {
     }
   }
 
-  moreMenu(active) {
+  moreMenu(active, curated) {
     const more = document.createElement('details'); more.id = 'workspaceNavigationMore';
     const summary = document.createElement('summary');
-    const extras = this.items.filter(item => !CURATED.includes(item.name));
+    const extras = this.items.filter(item => !curated.includes(item));
     summary.textContent = extras.find(item => item.name === active)?.displayName || 'More';
     const body = document.createElement('div'); body.className = 'workspace-navigation-more';
     for (const item of extras) body.append(workspaceLink(item, active));

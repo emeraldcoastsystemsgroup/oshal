@@ -5,6 +5,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove optional workspace navigation preserves real Cockpit custom screens, links, permissions feedback and independent theme preferences.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify the Career heading uses the admitted app fallback and prefers the group without duplicating the selected destination in More.
  * =============================================================================
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
@@ -113,6 +114,56 @@ it('offers only admitted canonical destinations and keeps other applications in 
   expect(await page.locator('[data-workspace-all]').getAttribute('href')).toBe('/cockpit/');
   expect(fixture.state.requests.some(path => /foreign-target|not-installed/.test(path))).toBe(false);
   expect(external).toEqual([]);
+}, 30000);
+
+it('uses the admitted Career app as the top heading when its group is unavailable', async () => {
+  fixture.state.workspaces = fixture.state.workspaces.filter(item => item.name !== 'intelligent-career');
+  fixture.state.workspaces.push({ name: 'career-hunter', displayName: 'Intelligent Career', kind: 'app', href: '/cockpit/?app=career-hunter' });
+  await open('/cockpit/?app=create&workspace=synthetic-team#draft', 'workspaces'); await discovered();
+  const top = page.locator('.workspace-navigation-links [data-workspace=career-hunter]');
+  expect(await top.count()).toBe(1);
+  expect(await top.innerText()).toBe('Intelligent Career');
+  expect(await top.getAttribute('href')).toBe('/cockpit/?app=career-hunter');
+  expect(await page.locator('.workspace-navigation-links a').evaluateAll(links => links.map(link => (link as HTMLElement).dataset.workspace)))
+    .toEqual(['cockpit', 'little-monsters', 'create', 'career-hunter']);
+  expect(await page.locator('#workspaceNavigationMore [data-workspace=career-hunter]').count()).toBe(0);
+  expect(await page.locator('[data-workspace=intelligent-career]').count()).toBe(0);
+  await top.click(); await page.waitForURL(fixture.origin + '/cockpit/?app=career-hunter'); await discovered();
+  expect(await top.getAttribute('aria-current')).toBe('page');
+  await editor().locator('#draft').fill('Synthetic Career draft');
+  const before = await editor().locator('html').getAttribute('data-document-id');
+  await page.locator('#workspaceNavigationToggle').focus();
+  fixture.state.workspaces = fixture.state.workspaces.filter(item => item.name !== 'career-hunter');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await discovered();
+  expect(await page.locator('[data-workspace=career-hunter], [data-workspace=intelligent-career]').count()).toBe(0);
+  expect(await editor().locator('html').getAttribute('data-document-id')).toBe(before);
+  expect(await editor().locator('#draft').inputValue()).toBe('Synthetic Career draft');
+  expect(errors).toEqual([]); expect(external).toEqual([]);
+}, 30000);
+
+it('prefers the admitted Career group while keeping its admitted member in More', async () => {
+  const group = fixture.state.workspaces.find(item => item.name === 'intelligent-career')!;
+  group.kind = 'group'; group.displayName = 'Intelligent Career';
+  fixture.state.workspaces.unshift({ name: 'career-hunter', displayName: 'Intelligent Career', kind: 'app', href: '/cockpit/?app=career-hunter' });
+  await open('/cockpit/?app=career-hunter', 'workspaces'); await discovered();
+  expect(await page.locator('.workspace-navigation-links a').evaluateAll(links => links.map(link => (link as HTMLElement).dataset.workspace)))
+    .toEqual(['cockpit', 'little-monsters', 'create', 'intelligent-career']);
+  expect(await page.locator('.workspace-navigation-links [data-workspace=intelligent-career]').getAttribute('href'))
+    .toBe('/cockpit/?app=intelligent-career');
+  expect(await page.locator('[data-workspace=intelligent-career]').count()).toBe(1);
+  await page.locator('#workspaceNavigationMore > summary').click();
+  const member = page.locator('#workspaceNavigationMore [data-workspace=career-hunter]');
+  expect(await member.isVisible()).toBe(true);
+  expect(await member.getAttribute('href')).toBe('/cockpit/?app=career-hunter');
+  expect(await member.getAttribute('aria-current')).toBe('page');
+  expect(await page.locator('#workspaceNavigationMore [data-workspace=fixture-studio]').isVisible()).toBe(true);
+  expect(await page.locator('[data-workspace=career-hunter]').count()).toBe(1);
+  fixture.state.workspaces = fixture.state.workspaces.filter(item => item.name !== 'intelligent-career');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await discovered();
+  expect(await page.locator('.workspace-navigation-links [data-workspace=career-hunter]').count()).toBe(1);
+  expect(await page.locator('#workspaceNavigationMore [data-workspace=career-hunter]').count()).toBe(0);
+  expect(await page.locator('[data-workspace=intelligent-career]').count()).toBe(0);
+  expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
 
 it('retracts stale headings on failed or revoked discovery without replacing the active app', async () => {
