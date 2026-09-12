@@ -43,6 +43,30 @@ integration. AUTH-06 is mandatory before claiming business-data separation. AUTH
 lanes; AUTH-10 proves release behavior. SCIM/LDAPS completion is not required to prove the initial
 Entra/direct-assignment slice and must not be implied by it.
 
+### AUTH-07: reviewed catalog upgrades remain open
+
+The Create 1.4.0 to 1.5.0 transition on 2026-09-12 exposed a management workflow gap.
+The registration guard correctly refused the changed catalog while an assignment
+still referenced the old one (`authorization_catalog_migration_required`). After a
+restart with the new files, the old catalog was unavailable to the normal revocation
+screen. The reviewed manual recovery restores the exact old package and catalog,
+revokes its old role through Access Administration, activates the new package, then
+grants the explicitly reviewed named role. This is not an implemented upgrade flow.
+
+**Done when:** the existing installer and Access Administration can preview and apply
+this transition without manually restoring package files:
+
+- Show exact old/new source and catalog revisions, affected assignments and permission
+  changes; require reviewed mappings that retain issuer, tenant and scope boundaries.
+- Preserve the working package and a normal management path until the transition can
+  complete. Revalidate administrator authority, package hashes and policy revisions;
+  reject stale changes and make retries idempotent with durable audit provenance.
+- Coordinate activation, routes, tools and Test Lab discovery; failed upgrades and
+  rollback retain prior grants/history without exposing mixed catalog behavior.
+- Prove legacy-to-named roles, permission expansion, cross-issuer targets, concurrent
+  changes, failure and restart through real isolated PostgreSQL, installer/mounter
+  and management-browser tests, registered in the existing authorization/Test Lab cards.
+
 ## Test cases and AI Test Lab registration
 
 The existing Lab now registers **`authorization-management`**, with real isolated suite references and

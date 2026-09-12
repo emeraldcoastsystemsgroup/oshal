@@ -1,7 +1,9 @@
 # Cockpit startup resilience
 
-**Status: local-asset startup slice implemented in source; publication and native
-acceptance pending.** The rollout-time database checkout investigation remains
+**Status: local-asset startup slice deployed and verified on 2026-09-12.**
+Core `2739e250` serves the locked local assets; a signed-in existing browser tab
+reloaded successfully, retained Create and its palette, and confirmed a complete
+document, loaded Markdown parser and icon font. The rollout-time database checkout investigation remains
 open. The earlier Career/navigation release recovered through native Retry; that
 recovery and the startup change are separate checkpoints.
 
@@ -45,9 +47,14 @@ unchanged before test failed because no body parsed within three seconds.
 The focused command passed **87/87 cases** across four files, including all nine
 new browser/HTTP cases; scoped TypeScript, lint and diff checks passed.
 
-**Remaining:** publish the reviewed source and verify normal installed startup
-and an existing-tab update. Cached asset proof is not a claim that live data or
-every application works offline. Keep the separate
+The standard preview deployment completed at 21:12:39 UTC with all 35 application
+containers healthy. Read-only checks matched all six vendor asset hashes and
+confirmed anonymous requests receive HTTP 401. Native receipt:
+`temp/create-editor-native-shell.json`; deployment receipt:
+`temp/create-editor-core-deploy-readonly-v2.json`.
+
+Cached asset proof is not a claim that live data or every application works
+offline. Keep the separate
 [Jarvis Mermaid follow-up](jarvis-voice-and-visuals.md) open.
 
 ## Rollout-time database checkout delays
@@ -87,9 +94,25 @@ acceptance checks.
 
 ## Evidence scope
 
+During later Create acceptance, the three optional persistence stores positively
+reported PostgreSQL enabled after API restart, with no corresponding fallback
+events. Two tunnel origin-connection resets at 22:29:57 UTC accompanied failed
+browser requests; explicit retries recovered. A subsequent bounded check found
+healthy API responses, no PostgreSQL blockers or active transactions, and no
+recognized checkout errors in the current API boot. This does not locate every
+protected-request delay or close the database investigation. The fixed-category
+receipts are `temp/create-editor-latency-read.json` and
+`temp/create-editor-latency-log-detail.json`; no pool limits were increased.
+
+The final Create activation at 22:46:12 UTC again enabled all three PostgreSQL
+stores without fallback. One subsequent loopback health request timed out at ten
+seconds; a bounded follow-up returned HTTP 200 with all 35 containers healthy.
+Both outcomes are retained in `temp/create-editor-activation-b92013b4-detail.json`.
+Successful editor and Lab acceptance does not close this intermittent-delay work.
+
 Operator-local, ignored receipts: `temp/career-navigation-native-reload-diagnostic.json`
 and `temp/career-navigation-runtime-timeout-summary.json`. The latter retains only
 timestamps, durations, counts and error categories. Recovery was observed during
-native release acceptance; it does not close the database investigation or serve
-as native acceptance of the later local-asset change. Local before/after startup
+native release acceptance; it does not close the database investigation. The
+later local-asset acceptance is recorded above. Local before/after startup
 receipts are retained separately under `temp/cockpit-startup-*.log`.
