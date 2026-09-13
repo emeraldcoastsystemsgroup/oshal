@@ -138,6 +138,37 @@ unavailable response with a false empty result. Native Lab's earlier depth suite
 was cancelled at 01:30:58 UTC with no output. Its generic authority/source
 wording does not prove a grant changed; that result is not a passing suite.
 
+During the daily-dashboard rollout on 2026-09-13, the native browser displayed
+HTTP 524 at **03:41:49 UTC**. A bounded read-only capture at 03:43:32-03:44:00
+then measured successful health responses taking 7.271 seconds inside the API,
+10.534 seconds through host loopback and 9.877 seconds through the hosted origin.
+The PostgreSQL activity read took 128 ms and found zero blocked sessions, with
+three sessions idle in transaction for up to nine seconds. API logs included
+pool-checkout timeouts. The API retained the same process and container with
+zero restarts and no reported OOM during the capture. These observations do not
+establish the cause of the delay or close this investigation. Receipt:
+`temp/daily-dashboard-startup-incident.json`; the later 35/35 healthy deployment
+census is recorded separately in the [release checkpoint](../releases/daily-dashboard-2026-09-13.md).
+
+The 03:47 UTC resource capture observed substantial system CPU/memory pressure
+and nearly full Linux swap, without API cgroup throttling or OOM. These are bounded
+observations, not a measured root cause. Receipt:
+`temp/daily-dashboard-resource-pressure.json`. A later native HTTP 502 at
+03:53:49 UTC coincided with another agent's package reload; keep it separate from
+the earlier stall on an unchanged process. Native dashboard and Lab acceptance
+subsequently passed. At 04:16:02 UTC, a bounded health request returned 200 in
+103 ms; that recovery does not close this investigation.
+
+**Next measurement:** trace one correlated authenticated reload across middleware,
+pool checkout, SQL duration, main-process event-loop delay and work remaining
+after a client disconnect. Current source performs serial workspace authorization
+reads with repeated assignment snapshots and no request-abort stop. Protected
+Jarvis assets also pass identity middleware, whereas successful Cockpit static
+responses terminate before the later global principal/actor layers. Measure
+these paths separately, retain current authorization checks, and record only
+timings/counts rather than identity claims or business values. Pool pressure alone
+does not explain the slow public health handler, which precedes those layers.
+
 Operator-local, ignored receipts: `temp/career-navigation-native-reload-diagnostic.json`
 and `temp/career-navigation-runtime-timeout-summary.json`. The latter retains only
 timestamps, durations, counts and error categories. Recovery was observed during

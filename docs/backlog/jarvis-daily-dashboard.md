@@ -1,12 +1,12 @@
 # Jarvis and the daily dashboard
 
-Requested 2026-09-11. Status: **compact presentation implemented; installed acceptance pending**.
-Reconfirmed 2026-09-13: the Jarvis layout remains unsatisfactory. Treat the
-compact layout as P1, make Finance a named area, and place miscellaneous
+Requested 2026-09-11. Status: **compact presentation delivered; native acceptance passed**.
+The September 13 follow-up addressed the unsatisfactory Jarvis layout as P1:
+make the assistant compact, make Finance a named area, and place miscellaneous
 applications in the OSHAL menu instead of an `Other` dashboard section.
 This work continues the cockpit landing request and the existing briefing and surface-context work.
 
-## September 13 implementation checkpoint
+## September 13 delivered presentation
 
 Home now composes the existing Jarvis page beside at most seven named areas, four
 application summaries and one selected source's details. Finance is named. The
@@ -14,6 +14,20 @@ complete authorized directory, including hidden and unclassified applications,
 remains searchable through **OSHAL menu → All applications**. Dashboard redraws,
 summary refreshes, source selection and preference saves retain the mounted Jarvis
 document and unfinished composer. Leaving Home follows the existing view lifecycle.
+
+Native acceptance confirmed the actual embedded Jarvis page, seven named areas,
+at most four updates and one selected detail, with Finance in the top navigation
+and no `Other` shelf. An unfinished message survived Refresh, area selection and
+opening/closing **OSHAL menu → All applications**. The centered directory found
+the installed Embodied 0.4 application. Jarvis followed the portal palette, and
+the original Workspace choice was restored.
+
+The [release record](../releases/daily-dashboard-2026-09-13.md) separates backend
+core `0c287223` / image `e92d3468` from the published, bind-mounted modal CSS at
+`d8080f56`; that static correction required no second fleet recreation.
+Intermittent origin/startup delays remain in the
+[startup investigation](cockpit-startup-resilience.md). Presentation acceptance
+does not establish that those delays are resolved.
 
 Jarvis uses explicit Ready, Listening, Thinking, Speaking and Stopped feedback,
 a visible text composer, Talk/Add/Stop and an Options disclosure. Existing task
@@ -24,7 +38,7 @@ label came from the canvas category display; removing that background is not a
 claim that a server dispatch or task-lifecycle defect was repaired.
 
 This delivers the initial JDX-01/JDX-02 presentation and portions of JDX-03/JDX-06.
-Durable grouping/replay/snooze semantics, additional producer adoption (JDX-04),
+Durable grouping/replay/snooze semantics (JDX-03), additional producer adoption (JDX-04),
 and selected-record editable-field context actions (JDX-05) remain open. The Home
 embed does not broaden the focused-application surface bridge. Sources still own
 their data and actions; an unavailable summary is not rendered as a zero count.
@@ -33,6 +47,10 @@ their data and actions; an unavailable summary is not rendered as a zero count.
 **Jarvis and daily dashboard** scenario registers the browser, lifecycle and HTTP
 asset suites and separately provides three read-only installed-asset readiness
 steps. Running those readiness steps does not execute the linked source tests.
+At 04:06–04:07 UTC, the two actual native Run controls for this scenario and
+**Cockpit workspace navigation** passed four readiness steps in total; discovery
+reported 33 admitted links. These core results are in-page observations, not
+durable package-run history or execution of the registered source suites.
 
 ## Product direction
 
@@ -68,8 +86,9 @@ that another application's lack of updates proves its producer ran successfully.
 | JDX-05 | P1 | Context-aware navigation and editable drafts beside an update. | From an update, the user can open its authorized application/record, ask Jarvis to navigate or fill supported fields, inspect the changes and continue editing. The surface acknowledges applied operations; unsupported or rejected operations never produce a false completion claim. |
 | JDX-06 | P1 | Simplify the assistant controls and prove the complete daily workflow. | Text and voice share a clear composer, Add has an attachment purpose, Stop appears during active work, and New, history, language and appearance controls have predictable locations. Closing/minimizing retains the defined draft/history state. The end-to-end browser and installed-source acceptance below passes. |
 
-Start with JDX-01 and a reviewable JDX-02 layout. Then implement grouping and source adoption;
-extend context actions against that shared page. The existing full response stage can remain
+The initial JDX-01/JDX-02 presentation is delivered. Continue with durable grouping
+and source adoption, then extend context actions against that shared page. The
+existing full response stage can remain
 available for content that needs more space. The default animation and optional appearance
 settings should be reviewed as part of the layout rather than preserving the eye as a constraint.
 

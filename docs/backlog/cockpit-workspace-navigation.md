@@ -2,8 +2,8 @@
 
 Requested 2026-09-11. **The optional navigation overlay and independent Workspace
 skin are implemented and deployed; focused native acceptance and preservation
-checks passed. The September 13 compact Home/Jarvis and Finance/OSHAL-menu source
-checkpoint is implemented; installed acceptance is pending.** Additional briefing
+checks passed. The September 13 compact Home/Jarvis and Finance/OSHAL-menu
+presentation is delivered and its native acceptance passed.** Additional briefing
 producers and editable-field context actions remain backlogged. The prototype
 below remains an illustrative design artifact, separate from the implementation.
 The [clickable HTML prototype](../mockups/cockpit-workspaces.html) is self-contained
@@ -127,6 +127,16 @@ separately. The compact daily Home checkpoint uses existing summary and Jarvis
 contracts; prototype-only editable drafts and producer adoption remain proposed.
 Workspace navigation does not replace application landing pages or grant member actions.
 
+The [September 13 release](../releases/daily-dashboard-2026-09-13.md) records actual
+native Finance visibility, compact Home without an `Other` shelf, and an unfinished
+Jarvis message retained through Refresh, area changes and the OSHAL directory.
+The centered searchable directory found installed Embodied 0.4. The two native
+core Lab Run controls passed four readiness steps, including 33 admitted workspace
+links; these are in-page readiness results, not executions of their linked suites.
+Backend core `0c287223` / image `e92d3468` serves the published modal CSS `d8080f56`
+through the existing read-only pages mount, without a second fleet recreation.
+The [startup delay investigation](cockpit-startup-resilience.md) remains open.
+
 `npm run test:workspace-navigation` runs the isolated profile, authorization,
 preference, browser and catalog regressions. The **Cockpit workspace navigation**
 Lab card reads the current caller's discovery endpoint and links those suites;
@@ -139,7 +149,8 @@ Reconfirmed 2026-09-13 alongside the
 and miscellaneous applications belong in the OSHAL menu. The personal dashboard
 must not use a large `Other` shelf as a substitute for useful daily information.
 
-Implemented source checkpoint: admitted Finance is a curated top workspace at
+Delivered presentation, with source and native checks recorded above: admitted
+Finance is a curated top workspace at
 `/cockpit/?app=finance`; Home labels its daily area Finance; unknown/missing suites
 remain in the searchable authorized directory without an Other daily shelf.
 The brand remains a Home link with an adjacent OSHAL menu disclosure. Only the
@@ -169,13 +180,13 @@ Done when:
    Only explicit workspace delegation removes a duplicate destination; every
    remaining authorized tool stays reachable. Open pages, drafts and current
    application context survive menu/theme changes and permission refreshes.
-5. **Prove the implemented change and register its tests.** Extend the existing
-   workspace-navigation and Home-grouping suites, including
-   `tests/unit/app-home-plan.spec.ts`, plus actual browser and authorization
-   coverage. Replace the current unknown-suite-to-Other expectation with lossless
-   menu/directory access. Cover Finance present/absent/revoked, retained unique
-   tools, no duplicate entries, 390 px width, 200% zoom and theme changes. Register
-   actual implementation coverage with AI Test Lab and verify the installed UI.
+5. **Keep implementation coverage registered.** The existing workspace-navigation,
+   Home-grouping and actual browser/authorization suites cover Finance
+   present/absent/revoked, retained unique tools, directory access, 390 px width,
+   200% zoom and theme changes. Internal catalog grouping may retain `Other` for
+   saved choices; the daily view has no such shelf and the complete directory
+   remains reachable. AI Test Lab links these source suites separately from its
+   native readiness checks; installed presentation acceptance is recorded above.
 
 This is presentation and navigation work. It does not complete Finance provider
 setup, initiate transactions, create an umbrella application or implement the

@@ -26,6 +26,12 @@ The OSHAL Cockpit brand returns to daily Home; it is not repeated as a tab.
 Home's embedded Jarvis follows the same live parent palette without replacing its
 document or unfinished message when dashboard summaries or preferences redraw.
 
+The [September 13 native acceptance](../releases/daily-dashboard-2026-09-13.md)
+confirmed that the embedded Jarvis followed the portal palette and that Workspace
+was restored afterward. Home's centered native dialogs use the published `d8080f56`
+CSS through the existing pages mount; the backend remains core `0c287223` / image
+`e92d3468`. This static correction required no second fleet recreation.
+
 ## An application surface
 
 Link the shared palette and bootstrap before page-owned styles. Give semantic

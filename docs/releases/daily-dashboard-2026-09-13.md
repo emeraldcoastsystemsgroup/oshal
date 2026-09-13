@@ -1,7 +1,8 @@
 # Compact daily dashboard and Finance navigation
 
-Source published and standard preview deployed on 2026-09-13. Native acceptance
-and final preservation remain pending.
+Source published and standard preview deployed on 2026-09-13. Native presentation
+and Lab readiness acceptance passed. Preservation results and the registry
+comparison limitation are recorded below.
 
 Home now keeps the existing Jarvis conversation beside a bounded daily view:
 seven named areas at most, four application summaries and one selected source's
@@ -93,9 +94,9 @@ The retained deployment log is `temp/daily-dashboard-deploy.log`.
 
 The rollout also encountered slow origin responses and a native HTTP 524 page;
 the existing [startup investigation](../backlog/cockpit-startup-resilience.md)
-records those observations without assigning a cause. A successful container
-census does not establish native UI acceptance or final preservation. Both
-remain pending for this checkpoint; early failed attempts remain retained.
+records those observations without assigning a single cause. Initial navigation,
+discovery and preference failures remain retained separately from later passing
+acceptance. An independently owned Embodied package reload occurred afterward.
 
 Native acceptance found that Cockpit's universal margin reset placed the Home
 directory dialog at the upper-left corner. The scoped correction explicitly
@@ -104,8 +105,81 @@ Four existing registered Chromium cases now assert populated and unavailable
 dialog geometry at desktop and phone widths; all four pass. They are repeat
 checks within the 413-case ledger, not four additional cases. This focused run
 required the existing exact-owned browser cleanup fallback, with exit verified.
-The correction's installed acceptance remains pending. Its source receipt is
-`temp/app-home-modal-centering-release.json`.
+The correction is published in `d8080f563e8a3637420e0c13d60d92d4d20b955c`.
+The existing read-only `/app/src/pages` bind serves its exact Git bytes; no second
+fleet recreation was needed. Backend/image provenance remains `0c287223`/`e92d3468`.
+Native hard reload verified the centered populated directory. Source and mounted
+byte receipts are `temp/app-home-modal-centering-release.json` and
+`temp/app-home-modal-static-provenance-d8080f56.json`.
+
+## Installed acceptance
+
+Actual native Chrome checks verified the compact Home/Jarvis composition, named
+Finance area and top workspace, OSHAL menu placement/filtering, and centered
+searchable directory including the independently installed Embodied application.
+An unsubmitted message survived Refresh, area selection and directory open/close.
+The portal theme reached the embedded assistant; Workspace was restored. Task
+group expansion retained the immediate unread count and individual result controls.
+Finance opened `/cockpit/?app=finance` with its contextual sidebar; its OSHAL
+directory action returned to ordinary Home and opened the directory. Test drafts
+were cleared without sending, and Home was left active.
+
+Two native **Run** controls in AI Test Lab passed four readiness steps: three
+dashboard assets and workspace discovery with **33 admitted links**. These core
+cases use the synchronous `/api/test-lab/run` path and do not create durable
+package-run IDs or execute their linked source suites. No provider generation,
+outbound message, trading/payment, physical print or role grant was invoked.
+
+Native receipts are `temp/daily-dashboard-native-acceptance-final.json`
+(SHA256 `296144e2a2bc8108fa5c66ce52e8f30fb1de8b6bc4f00d06a377b1d3af93e72f`)
+and `temp/daily-dashboard-core-lab-native-final.json`
+(SHA256 `cb286bfbd0ca9e8d85b834c857a2afe87a3e01c96dd13f31ff12760e9758274d`).
+Mobile geometry is established by the registered isolated browser cases, not a
+physical-phone run. Later recovery does not close the intermittent startup work.
+
+## Preservation
+
+The original before snapshot and strict comparison remain immutable. The completed
+04:09 UTC capture verified 59 unchanged packages, 57 unchanged selected tables,
+unchanged authorization revision/assignments/audits (**80/72/80**), and the checked
+CRM, Create, Scan and Embodied business records and private files. It also verified
+35 healthy application containers on the expected image, unchanged environment
+apart from the authorized core `GIT_SHA` update, unchanged mounts and commands,
+14 running infrastructure containers and six existing stopped auxiliary containers.
+
+The other bot independently installed Embodied **0.4.0** from
+`a31c07720e95d960fb7bf7e6c94438c227e6aa2c`. All 79 published package files plus its
+install stamp matched exactly; this package change is attributed separately.
+
+The strict result remains **failed for package and registry differences**, not a
+blanket preservation pass. The `swarm_applications` table retained 84 rows and its
+row-policy hash, but its whole-row hash changed. A proposed four-field projection
+for Embodied's old description/version did not reproduce the baseline and was
+rejected. [Migration 022](../../scripts/migrations/022-swarm-applications.sql)
+also updates `updated_at` on every row update, including
+normal loader upserts. Because the original snapshot retained only full aggregate
+hashes, it cannot retrospectively distinguish all registry content changes from
+those timestamps. No baseline or comparison was weakened and no user data was
+restored or removed to obtain a pass.
+
+Retained receipts include `temp/daily-dashboard-preservation-0c287223-strict.json`
+and `temp/daily-dashboard-embodied-attribution.json`. Earlier collection failures
+are separate from comparison failures. A reviewed collection wrapper extended
+only bulk Docker inspection from 30 to 90 seconds; original data comparisons,
+database/read deadlines and the 60-second package collector remained unchanged.
+
+The final partial ledger is `temp/daily-dashboard-final-preservation-ledger-v2.json`
+(SHA256 `48a09f7fb30ef85cd679599689aaf92121e1ed5ee275a16908396e5045e21a03`).
+At **04:16:02 UTC**, one bounded health request returned HTTP 200 in 103 ms. The
+API retained the expected image and was healthy after the independently recorded
+package reload; its actual process start was 03:55:14 UTC with one restart and no
+reported OOM. This is current responsiveness, not closure of the startup issue.
+
+For the next deployment, capture a stable registry hash excluding only the
+source-defined volatile `updated_at`, and retain each row's timestamp separately.
+Keep identity, owner, tenant, scope, status, load time and all manifest/tool metadata
+in the stable comparison. This improves future evidence; it cannot repair today's
+missing baseline detail retrospectively.
 
 ## Remaining work
 
