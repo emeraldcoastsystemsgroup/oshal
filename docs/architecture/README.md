@@ -174,6 +174,13 @@ The guiding model is:
   - ADR-151 companion (design, nothing built): the rolling six-foot arm — statically stable base with
     the battery as ballast, 8.5–10 in hub motors + corner casters (why not 5 in), move-low/rise-to-work
     lift, the stability budget the sim and the capability manifest share, real parts, staged assembly
+- [embodied-recon-drone-hardware.md](./embodied-recon-drone-hardware.md)
+  - ADR-151/152 companion (design, nothing built): the recon drone we print ourselves — the sensor
+    requirements the 0.4.0 sim wrote (upward and nadir rangers, 12 m ring, pad fiducial, registration
+    every 2 m), the 3-D vs 2-D sensor-set decision with the sim's measured verdict on each, momentum-
+    theory propulsion sizing (6 in, 750 g, 4S 1500 mAh), every structural part printable on a 220 mm
+    bed, mass budget, electronics with ArduPilot + Pi Zero node, what aero-lab's propeller work must
+    deliver, S1–S9 bring-up
 - [kernel-vs-app-packages.md](./kernel-vs-app-packages.md)
   - what is Tier-0 kernel (always-on: 4 DBs + Redis + Vault + code-server + diarization + the
     controller/API + 19 default bots) vs. what a Tier-2 app package declares; the cross-app
