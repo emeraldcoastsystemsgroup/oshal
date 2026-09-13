@@ -148,7 +148,15 @@ baseline, so a learned policy is always compared to something that already works
   MuJoCo plant started as a node against the real routes. The suite found and the seam fixed a defect
   both truth models share: a climb overshoot of 3.4 cm the plant called settled (5 cm tolerance) put
   the first scan into the voxel layer above the mission altitude and the return leg was refused as
-  unknown; a hover now counts as reached only inside the commanded layer.
+  unknown; a hover now counts as reached only inside the commanded layer. A node belongs to one person
+  (ADR-114): its heartbeats carry the owner as the trusted service user sub and only that owner's
+  worlds see it (0.9.1). **On the dev box the core ADR-149 guard refuses the node's heartbeats**
+  (`401 authorization_identity_required`, with the secret and with the owner's sub alike: its actor
+  resolver admits only a session or a controller-minted workload delegation, which a package node
+  cannot obtain) — the drone and camera node rails sit behind the same gate; the choice between
+  admitting a mounter-verified `service` caller as its owner, exempting `auth: service` mounts, or
+  minting delegations for enrolled nodes is a core decision the package's BACKLOG B20 records with the
+  evidence. The dialled bridge is unaffected.
 - **Not built, recorded as BACKLOG with done-when:** a real node behind the same envelopes (B6: kind
   `drone`, refusing `load` and `clone`, its own link-loss failsafe — the node double is that shape),
   a training recipe that beats the controller on three seeds (B19), tasks D5.2–D5.4.

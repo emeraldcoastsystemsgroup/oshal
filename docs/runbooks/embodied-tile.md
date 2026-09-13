@@ -70,9 +70,21 @@ Run from inside the api container, `install-engine.sh` also makes the engine con
 swarm** (ADR-099, the way the drone and camera nodes join): it inherits `SWARM_SERVICE_SECRET` from the
 api's environment, passes it to the container (never to a file), and the container heartbeats into
 `POST /api/embodied/nodes/heartbeat` as `embodied-plant` every two seconds and takes command envelopes
-at `embodied-engine:7414`. The installer prints `node rail: on` and, after the self-test, waits for
+at `embodied-engine:7414`. A node belongs to one person: set `EMBODIED_NODE_OWNER_SUB` to that
+person's sub (the operator's, `OSHAL_OPERATOR_SUBS`, on the dev box) before running the installer —
+the heartbeats carry it as the trusted service user identity and only that person's worlds see the
+node. The installer prints `node rail: on`, who owns it, and, after the self-test, waits for
 `node rail: the api acknowledged the plant's heartbeat`; run from a shell without the secret it prints
 `node rail: OFF` and the bridge alone serves.
+
+**Status on this box (2026-09-13): refused by core.** Under ADR-149 enforce the application
+authorization guard answers `401 authorization_identity_required` to the node's heartbeats — with the
+secret alone and with the owner's trusted sub — because its actor resolver admits only a session or a
+controller-minted workload delegation. The installer therefore ends with the 20 s warning, the
+container log reads `heartbeat rejected by the controller: HTTP 401`, and the tile's header says
+`rail: no node has heartbeat in`. The dialled bridge (`physics (MuJoCo)`) is unaffected. The drone and
+camera packages' node heartbeats sit behind the same gate. The decision is core's and is recorded in
+the package's BACKLOG B20 with the evidence.
 
 - The tile's header reads `rail: embodied-plant online`; the truth-model selector then offers
   **rail node embodied-plant (mujoco 3.3.5)**. Reset world on it and the node panel reads
