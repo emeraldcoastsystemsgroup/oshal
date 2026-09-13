@@ -816,6 +816,14 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ## Application-package follow-ups
 
+### Editable CAD Studio and scan-to-design workflow
+
+- **Requested 2026-09-13 UTC:** connect Create's Scan-to-Print workflow to useful mechanical CAD, including an optional SOLIDWORKS integration.
+- **Current:** Scan to Print exports measured STL/OBJ meshes and overall-dimension SVG; Ocean/Aero have specialist engineering/export functions. No general CAD editor or SOLIDWORKS adapter was found in the inspected packages. Software `oshal-engineering` is not mechanical CAD.
+- **Owner and plan:** the store-owned [CAD Studio delivery plan](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/feat/package-test-catalog-pilots/scan-to-print/CAD-PLAN.md) defines CAD-01 through CAD-10. Recommend a bounded CadQuery worker and a separate CAD document owner exposed through Create; preserve original scans, explicit units, revisions and native documents. STEP/STL remain derived outputs.
+- **First useful checkpoint:** create a plate with holes, edit dimensions, undo, save/reopen and independently reimport its real STEP solid and STL. Scan artifact-source handoff and worker feasibility can proceed independently; Video editing remains a parallel application track.
+- **Done when:** the installed application imports its roles, registers meaningful model/kernel/database/browser/export tests with prerequisites, passes the full native task and preserves other applications. Licensed SOLIDWORKS operations require actual adapter/workstation proof before being advertised.
+
 ### Create visual workspace and integrated editing — active parallel track
 
 - **Current template release:** Create 1.6.0 at `54c1e789` delivers eight original editable image templates, real previews, filtering and safe new-project selection. The [release record](releases/create-templates-2026-09-13.md) records 37 new plus 93 retained local checks, 16 registered Lab cases, five installed runs totaling 58 checks, native standalone editing/export and strict preservation. A recovered origin stall remains separate. The [Create product brief](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/feat/package-test-catalog-pilots/create/PRODUCT.md) defines the requested “Canva but better” direction. The parallel [Video editor plan](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/feat/package-test-catalog-pilots/video/EDITOR-PLAN.md) has an isolated FFmpeg trim/join/title/audio proof; the timeline UI, persistence and export-job workflow remain open.
