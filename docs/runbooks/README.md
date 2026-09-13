@@ -5,6 +5,10 @@ OSHAL pipelines and surfaces. One file per procedure.
 
 ## Recovery / incident
 
+- [embodied-tile.md](./embodied-tile.md) — the Embodied Swarm tile: explore, draft, execute, take
+  command, reset with a sensor set and a truth model, the CAD Studio hand-off; installing the MuJoCo
+  physics engine container and running the first training task; the two install landmines; what each
+  test suite proves
 - [claude-auth-and-token-keepalive.md](./claude-auth-and-token-keepalive.md) — how Claude Code
   auth flows from the host into every ro-mounted container, the 401-escalation failure signature,
   the 2-hourly "OSHAL Claude token keepalive" scheduled task (the CLI won't rotate a still-valid

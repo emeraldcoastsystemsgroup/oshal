@@ -174,6 +174,10 @@ The guiding model is:
   - ADR-151 companion (design, nothing built): the rolling six-foot arm — statically stable base with
     the battery as ballast, 8.5–10 in hub motors + corner casters (why not 5 in), move-low/rise-to-work
     lift, the stability budget the sim and the capability manifest share, real parts, staged assembly
+- [embodied-buy-decision.md](./embodied-buy-decision.md)
+  - what the `embodied` simulation proves before any drone is bought (measured, with the test that
+    proves each claim), what it cannot prove, what must be true first (S4 hand-carried mapping, the
+    propeller curve, the safety class), and the recommendation: recon-mini after S4
 - [embodied-recon-drone-hardware.md](./embodied-recon-drone-hardware.md)
   - ADR-151/152 companion (design, nothing built): the recon drone we print ourselves — the sensor
     requirements the 0.4.0 sim wrote (upward and nadir rangers, 12 m ring, pad fiducial, registration

@@ -213,3 +213,25 @@ of the pad column until S8 has been repeated ten times without a registration lo
 - Outdoor anything. No GPS, no wind model, 12 m sensors.
 - Gimballed camera; the pictures the sim renders come from a fixed nadir camera here.
 - A second drone. The swarm supports it (fleet mission in the `drone` package); this design does not need it yet.
+
+## 11. The plant model the physics lab flies (generated, 0.7.0)
+
+`GET /api/embodied/physics/mjcf?fit=recon-mini` is the MuJoCo model of this drone and the kitchen,
+generated from the same parts model as §3–§5 (ADR-152 D1). What it encodes for recon-mini:
+
+| Quantity | Value | Source |
+|---|---|---|
+| Mass | 0.746 kg | the §5 mass budget, summed |
+| Inertia (estimate) | Ixx = Iyy = 0.0026 kg·m², Izz = 0.0052 kg·m² | motors, props, arms, guards and feet at the 130 mm arm radius; the rest a disc of the 55 mm plate radius — replace by a swing test at assembly |
+| Rotors | ±92 mm on the diagonals, X configuration | §4 layout (wheelbase 260 mm) |
+| Motor thrust limit | 3.66 N each (T:W 2 at the budget mass); hover 1.83 N | §3 sizing |
+| Reaction torque | 0.012 N·m per newton | placeholder until §7 delivers the curves |
+| Hull | 178 mm half-width box, 30 mm half-height, resting on the 30 mm pad plate | prop tips + the guard ring |
+| Sensor sites | ring at the flight plane (mast 0), nadir and depth camera 20 mm under | §2 sensor set |
+| Physics step | 2 ms, `implicitfast` | — |
+
+Measured on it (the engine's own tests): rests at 30 mm; climbs to 2.075 m and holds within 8 cm
+under a seeded gust (σ 0.15 N·s^-½, τ 1 s); tracks a 1 m/s leg with under 25 cm of lag; reports a
+contact when flown into the island. The plant's cascaded controller, used as the baseline for the
+first training task, ends a 3 s hold within 1.0 cm and a 1.4 m leg within 1.5 cm over ten seeded
+episodes without a crash.
