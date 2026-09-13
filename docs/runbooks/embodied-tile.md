@@ -98,6 +98,38 @@ the package's BACKLOG B20 with the evidence.
 - `GET /api/embodied/physics/status` lists the fleet (`nodes`: online, `stale`, telemetry, events).
 - A real drone node joins the same way (kind `drone`, refusing `load` and `clone`) — BACKLOG B6.
 
+## Sandbox: the rail on this box, on the real image, without touching the stack
+
+The core ADR-149 gate refuses package node heartbeats on the dev box (above). To prove the rail on the
+platform's own code anyway, run a second api from the same image beside the stack — its own database
+and redis, the mock identity, the documented `legacy` compatibility mode — and the engine container
+as its node. Done 2026-09-13; the recipe, from a shell on the box:
+
+1. Isolation: `docker exec oshal-local-db psql -U oshal -d postgres -c "create database oshal_sandbox owner oshal_app"`
+   and `docker run -d --name oshal-sandbox-redis --network oshal-local_oshal redis:7-alpine`.
+2. The package, LF-exact, with an install stamp: `git -c core.autocrlf=false archive <store sha> embodied | tar -x -C <ws>/deployed-apps`
+   plus a `.oshal-install.json` of the box's shape (name, repo, ref, sha, installedAt, audit).
+3. The api: clone the live api container's environment (`docker inspect oshal-local-api`) into an env
+   file and override — `DATABASE_URL` and `BOOTSTRAP_DATABASE_URL` to `/oshal_sandbox`, `REDIS_URL` to
+   the sandbox redis, `MOCK_OIDC=true`, `MOCK_OIDC_SUB=sandbox-owner`, `FORCE_LLM_PROVIDER=noop`,
+   `OSHAL_APPLICATION_AUTHORIZATION_MODE=legacy`, a fresh `SWARM_SERVICE_SECRET`,
+   `EMBODIED_ENGINE_ADDR=oshal-sandbox-engine:7413`; drop `OSHAL_OPERATOR_*`, `LOCAL_AUTH*`. Then
+   `docker run -d --name oshal-sandbox-api --network oshal-local_oshal -p 127.0.0.1:35458:5000 --env-file <env> -v <ws>:/app/workspace-shared oshal-bot:latest`
+   and delete the env file (it carries the live secrets). Migrations run on the fresh database at boot
+   (about 40 s to `loadedCount`).
+4. The node: `docker run -d --name oshal-sandbox-engine --network oshal-local_oshal --read-only --tmpfs /tmp -e SWARM_SERVICE_SECRET=<the same> -e OSHAL_API_URL=http://oshal-sandbox-api:5000 -e EMBODIED_NODE_ENDPOINT=http://oshal-sandbox-engine:7414 -e EMBODIED_NODE_OWNER_SUB=sandbox-owner oshal-embodied-engine:local`.
+
+What it showed: the engine container's heartbeat acknowledged by the real api through the real
+mounter (`auth: service`) and the real authorization runtime in `legacy` mode; `GET /physics/status`
+listing `embodied-plant` online, owned, not stale; `POST /world/reset {backend:'node'}` onto it; a
+drone-first exploration drafted, rehearsed on a session cloned on the node, executed through the api's
+own timer to done, landed. The same sandbox on `enforce` refuses the node before package code (the
+mock user holds no grant: `403 authorization_app_admin_required`); on the box, where the caller is a
+machine and not a session, it is `401 authorization_identity_required`. The tile is at
+`http://127.0.0.1:35458/cockpit/?app=embodied` as the mock user while the sandbox runs. Remove it with
+`docker rm -f oshal-sandbox-api oshal-sandbox-engine oshal-sandbox-redis` and
+`drop database oshal_sandbox`; nothing in the live stack was changed.
+
 ## Flying a trained policy (the certification gate)
 
 1. **Explore first.** The gate replays the policy's recorded flight through *your* world's map; a

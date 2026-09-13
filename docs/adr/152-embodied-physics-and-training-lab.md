@@ -156,7 +156,9 @@ baseline, so a learned policy is always compared to something that already works
   cannot obtain) — the drone and camera node rails sit behind the same gate; the choice between
   admitting a mounter-verified `service` caller as its owner, exempting `auth: service` mounts, or
   minting delegations for enrolled nodes is a core decision the package's BACKLOG B20 records with the
-  evidence. The dialled bridge is unaffected.
+  evidence. The dialled bridge is unaffected. Proven anyway on the platform's own image in a sandbox
+  beside the stack (own database and redis, mock identity, `legacy` mode; the runbook has the recipe):
+  the container node acknowledged, a world reset onto it, an exploration to done through the api.
 - **Not built, recorded as BACKLOG with done-when:** a real node behind the same envelopes (B6: kind
   `drone`, refusing `load` and `clone`, its own link-loss failsafe — the node double is that shape),
   a training recipe that beats the controller on three seeds (B19), tasks D5.2–D5.4.
