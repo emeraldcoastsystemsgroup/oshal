@@ -80,8 +80,20 @@ source audit cannot establish whether the differences are timestamps, array
 ordering, membership or another field. Do not attribute them to ordinary startup
 or login activity, normalize the old receipt into a pass, or infer full
 preservation from the unchanged authorization counts. The separate source audit
-is `temp/profile-stl-control-table-source-audit.json`; attribution and final
-post-installation verification remain unresolved.
+is `temp/profile-stl-control-table-source-audit.json`; attribution remains
+unresolved.
+
+The later final comparison, `temp/profile-stl-preservation-final.json` (SHA-256
+`a3df65594c217a43e723149836a4f19c855fa35f8fee35c5266ac16de9bef4de`), also
+remains **FAIL**. It records the other engine's concurrent Embodied 0.5 package
+and registry update, a changed verified-principal hash, and creation of an empty
+CAD data directory. The latter is only `present: false` becoming `true`: CAD
+file count remains zero. Existing Scan files (12) and federal source files (797)
+retain their hashes, and CAD model/revision tables are empty after cleanup.
+The authorization-applications hash matches the original baseline in this later
+snapshot; that does not explain or erase its earlier difference. Exact Scan/CAD
+target files match their published source. No exception was added to turn these
+raw comparisons into passes.
 
 ### Native observations and remaining checks
 
@@ -93,21 +105,33 @@ box created through the ordinary UI showed revision 1, a blue solid and grid,
 revision and geometry. No feature was submitted in that draft-preservation check.
 
 The synthetic CAD part was deleted through the ordinary confirmation, and the
-portal palette was restored to Workspace at **05:48 UTC**. Final record/file
-cleanup verification is still pending. These observations concern installed
+portal palette was restored to Workspace at **05:48 UTC**. These observations concern installed
 CAD 0.1.1; the separately tested
 [CAD 0.1.2 lifecycle and report-briefing work](report-briefings-cad-lifecycle-2026-09-13.md)
 belongs to the next source checkpoint.
 
-At **05:49 UTC**, the live Scan page returned HTTP 502. That blocks complete
-native Scan preview and Scan-to-CAD handoff acceptance. It does not invalidate
-the isolated source regressions, and those regressions do not prove this live
-workflow passed. Installed core Lab readiness and package recipe runs also
-remain pending. Intermittent origin/startup behavior remains tracked in the
+At **05:49 UTC**, the live Scan page returned HTTP 502 and recovered by 05:52.
+Another API restart overlapped the first reconstruction/detail-refresh attempt.
+The precise interrupted operation was not established. After reloading and
+retrying, the three synthetic front/top/right photos produced a 60 × 40 × 30 mm
+model, 55,296 facets, an engineering drawing and the shared WebGL preview.
+**Open in CAD Studio** created a contour-derived revision 1 with the same
+dimensions and a 12-facet CAD preview. The normal Delete confirmations removed
+only these synthetic Scan/CAD records; the original two Scan jobs and six images
+remained. Cleanup was confirmed through the UI and the final read-only snapshot.
+
+The subsequent core `f4941d2b` checkpoint passed installed appearance,
+workspace-navigation, shared-STL and catalog readiness, plus the CAD 0.1.2
+engine-client recipe. Those later results are recorded in the
+[follow-up release](report-briefings-cad-lifecycle-2026-09-13.md); they do not
+retroactively execute the linked browser or Scan package suites here.
+Intermittent origin/startup behavior remains tracked in the
 [startup investigation](../backlog/cockpit-startup-resilience.md).
 
 The deployment console, `temp/profile-stl-copy-receipt.json` and
 `temp/component-native-acceptance.md` retain the local checkpoint evidence;
-later native observations include the Workspace restoration above. Add the
-remaining native/Lab results and a new final preservation receipt after those
-checks complete. Preserve all earlier failed and partial records.
+later native observations include the Workspace restoration and completed
+Scan-to-CAD handoff above. The two native geometry screenshots remain in the
+ignored `temp/workspace-polish-native-component-*` artifacts. Remaining linked
+Lab suites retain their declared prerequisites. Preserve all earlier failed and
+partial records.

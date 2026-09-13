@@ -1,11 +1,15 @@
 # Recorded-report briefings, CAD lifecycle and Settings — 2026-09-13
 
-The recorded-report, CAD lifecycle and Settings source slices below have passed local checks. This is the next
-source checkpoint, not part of the `59f9c52e` runtime undergoing acceptance for
-the [component integration release](component-integration-2026-09-13.md).
-Publication, installation, live report production and Jarvis delivery remain
-pending. Current CAD 0.1.1 from `c8010b41` and its shared renderer remain a separate
-installed acceptance checkpoint from the upcoming CAD 0.1.2 lifecycle correction.
+The recorded-report, CAD lifecycle and Settings changes are published and deployed.
+Core `f4941d2b` completed its standard preview rollout at 06:16:13 UTC with all
+35 app containers healthy and package parity clean. CAD Studio 0.1.2 and Daily
+Trade Recap 1.2.0 were then copied from exact published source `df348817`, retaining
+the package changes published in `a5f39b7d`, and activated by one API restart.
+Desktop Settings acceptance and the recorded-report source/schedule registration
+are verified. Native phone and CAD 0.1.2 lifecycle checks, live report production
+and Jarvis delivery remain pending. The earlier Scan-to-CAD handoff and cleanup
+on CAD 0.1.1 remain a separate
+[component integration checkpoint](component-integration-2026-09-13.md).
 
 ## Recorded reports in Jarvis
 
@@ -68,8 +72,9 @@ the recorded-report regression. The actual in-memory catalog accepts both.
 The regression declares `runner:node-test`,
 `framework-checkout:oshal-core-dir` and disposable fixture writes. It remains
 pending in an installed runner that cannot provide that framework checkout.
-Catalog registration is separate from execution; no native Lab run or live
-briefing delivery has been performed for this checkpoint.
+Catalog registration is separate from execution. Installed metadata readiness
+passes; the framework-dependent producer regression and live briefing delivery
+remain pending.
 
 The ignored source receipt is `temp/recap-briefing-release-receipt.json`, SHA-256
 `7538c262efa736d2f03b050bed42939a3b4f7348601cabbcefeba4e8830c5281`.
@@ -112,7 +117,9 @@ The source catalog now declares **six CAD Test Lab cases**, adding
 `surface-lifecycle` with `runner:playwright`,
 `framework-checkout:oshal-core-dir` and disposable fixture writes. Those
 prerequisites remain explicit; catalog declaration does not claim installed
-execution. Package publication and installation remain pending.
+execution. CAD 0.1.2 is installed. Its metadata readiness and isolated installed
+engine-client recipe pass; the native lifecycle and other prerequisite-dependent
+recipes remain pending.
 
 The ignored final receipt is `temp/cad-lifecycle-release-receipt.json`, SHA-256
 `1c1b9d66b188fd07665f8de21aa27aac1ff24d1901df5404f45b10b21a8fe28d`.
@@ -158,23 +165,92 @@ checks pass, and independent source/evidence review is clear.
 The ignored source receipt is `temp/settings-appearance-release-receipt.json`,
 SHA-256 `0c9ecdd135365883345abbf2d593580d98a1511aef3ce94b710336ee49c798e5`.
 It pins the three source/test files, final 20-case log, process and cleanup
-receipts, retained failures and desktop/phone screenshots. Publication and native
-installed Settings acceptance remain pending for this source checkpoint.
+receipts, retained failures and desktop/phone screenshots. On the installed
+desktop, Appearance was first, the saved Workspace palette and navigation stayed
+unchanged, and Config Ownership started closed. Mouse, Enter and Space toggled
+the disclosure; closing it retained visible keyboard focus. No settings save or
+provider change was performed. Native phone acceptance remains pending; the
+390-pixel browser proof above is local fixture evidence.
+
+## Deployment and activation
+
+The published core is `f4941d2bee48504f45ad2859f6565adb0d41aeca`, with image
+`sha256:2c71a6c74ef7b8cfa5740f3fe085de20e8c33d6d22db0f493e898da039dc9262`.
+The standard preview command exited 0; its retained evidence is
+`temp/report-settings-deploy-exit.json` and
+`temp/report-settings-deploy-console.log`.
+
+The package copy receipt, `temp/report-cad-next-copy-receipt.json`, passes all
+64 exact staged files: 47 for CAD Studio 0.1.2 and 17 for Daily Trade Recap 1.2.0,
+both at `df34881754eb169d9d388f3e3dd8584262a1e58e`. Both complete backups were
+verified before either package was copied. The API restart began at
+06:17:23.534 UTC and returned healthy; auto-load completed at 06:18:01 with
+79 loaded and zero failed.
+
+The read-only activation receipt, `temp/report-cad-next-activation.json`, passed
+at 06:18:16 UTC, SHA-256
+`70552f936f6c18aaa2f4775e04aed57455ebe989636086dee64874db7f1b698a`.
+It verifies the exact installed core/image, Daily Trade Recap manifest and
+registered source, plus the active indexed Redis schedule and enabled scheduler.
+The compiled completed-briefing export was inspected in a separate diagnostic
+process without invocation. No collector or task was fired. This establishes
+source and schedule registration, not queue processing, report production or
+browser delivery. The native Lab catalog loaded 131 scenarios from 75 live apps.
+The four selected core checks passed: installed test registration, Cockpit
+appearance, workspace navigation and shared STL availability. These are read-only
+readiness checks, not execution of their linked browser suites. Registration
+reported 47 installed smoke cases and 205 declared suites. The installed CAD
+0.1.2 and Recap 1.2.0 cards showed six and two cases respectively, and both
+metadata-readiness checks passed.
+
+CAD's installed `engine-client` retry passed seven tests with verified cleanup
+in 6,240 ms, on the exact deployed image and package source. Durable run
+`8d1e27cf-ff94-4d2f-a97c-e42e784be793` retains that result. The earlier run
+`a1f28012-3e74-4496-aa25-d0b4854f9227` remains interrupted after an overlapping
+API restart. Neither result implies execution against the real CAD kernel.
+The read-only metadata receipt is `temp/report-cad-native-lab-results.json`,
+SHA-256 `4eadd6597ab3cb0f6f78a2b856c079b4131c97670f5307bae72ebe2bf912da58`.
+
+Preservation is not a full pass. The core-only comparison at 06:16:59, before
+the two package copies, retained exactly two failures: full-row hashes for
+`oshal_authorization_applications` and `oshal_verified_principals`. All 61 package
+inventories, stable registry fields, business/private data and CAD engine checks
+matched; authorization remained revision 81 with 73 assignments and 81 audits.
+The raw registry and timestamp hashes differed; only top-level `updated_at` is
+excluded from its separately retained stable comparison. The earlier independent
+supplement also retains a principal-hash alignment failure between captures.
+Neither failure is attributed or converted to a pass. The immutable records are
+`temp/report-cad-next-core-only-preservation.json` and
+`temp/report-cad-next-supplement.json`.
+
+The final retry remains **FAIL**, retained in
+`temp/report-cad-next-preservation-retry.json`, SHA-256
+`9d870bb4da118bbed52e4da15810bb310e4c46f244ceb1e5b6900c8ec391d8dc`.
+Both target packages match all 64 published files. Business/private data,
+authorization assignments and audits, and Jarvis tasks/preferences/cursors remain
+unchanged. The separate Embodied package changed concurrently from 0.5.0 to 0.6.0
+at `ed9c5fb0`; its registry was inactive in that snapshot. Its authorization
+`tool_names` changed, the verified principal's `last_seen_at` changed, and the
+registered Recap briefing source was added. Baseline/final cross-capture alignment
+failures remain explicit; no allowance was added to manufacture a full pass.
+The first final-capture attempt failed before comparison during another restart.
+Docker observations establish orderly SIGTERM/restarts at 06:19 and 06:21,
+but do not identify the caller. Root's activation restart was at 06:17.
 
 ## Remaining acceptance
 
-Publish and install the matching core helper and Daily Trade Recap package before
-claiming this producer is active. Verify source registration and preferences,
-then observe an eligible owned recorded report reaching the normal Jarvis task
+The matching core helper and Daily Trade Recap package are installed, and source
+and schedule registration pass. Verify current recipient preferences, then
+observe an eligible owned recorded report reaching the normal Jarvis task
 and browser delivery lifecycle. Actual report production and external delivery
 remain separate acceptance boundaries; do not create trades or send messages
 merely to manufacture a briefing.
 
 [JDX-04](../backlog/jarvis-daily-dashboard.md#september-13-recorded-report-source-checkpoint)
-is partially implemented in source. Morning-report production/delivery,
+is partially implemented and deployed. Morning-report production/delivery,
 communications and other producer adoption remain open, alongside JDX-03 durable
-grouping/replay/snooze and JDX-05 selected-record context actions. Publish and
-install CAD 0.1.2 separately from the current 0.1.1 checkpoint, then record its
-native lifecycle acceptance and preservation evidence before closing that boundary.
-Publish the Settings change with cache v44 and record native desktop/phone
-appearance and keyboard-help acceptance before marking that layout deployed.
+grouping/replay/snooze and JDX-05 selected-record context actions. Record native
+CAD 0.1.2 lifecycle acceptance and the prerequisite-dependent Lab recipes
+without replacing the earlier CAD 0.1.1 evidence. Preserve the failed final
+comparison and concurrent deployment observations. Settings with cache v44 is
+deployed and accepted on the native desktop; native phone acceptance remains open.
