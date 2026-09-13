@@ -1,6 +1,9 @@
 # Jarvis and the daily dashboard
 
 Requested 2026-09-11. Status: **backlogged; implementation has not started**.
+Reconfirmed 2026-09-13: the Jarvis layout remains unsatisfactory. Treat the
+compact layout as P1, make Finance a named area, and place miscellaneous
+applications in the OSHAL menu instead of an `Other` dashboard section.
 This work continues the cockpit landing request and the existing briefing and surface-context
 work. It does not interrupt the current parallel implementation batch.
 
@@ -10,6 +13,14 @@ Provide one useful daily page with application updates and a compact Jarvis conv
 The user can scan what changed, open a specific item, and work on it with Jarvis while keeping
 the relevant details visible. Jarvis should not occupy the entire page by default. Keep the
 complete application directory available as a separate view of all applications.
+
+The default is a daily work page, not the complete application catalog. Keep a
+compact Jarvis composer beside the selected update/details on desktop and stack
+them accessibly on narrow screens. Use named areas such as Finance for relevant
+updates; leave miscellaneous tools and the searchable full directory in the
+OSHAL menu. `Other` must not become a large default dashboard bucket. This is
+the same navigation follow-up tracked in
+[Finance and the OSHAL menu](cockpit-workspace-navigation.md#requested-follow-up-finance-and-the-oshal-menu).
 
 The supplied screenshots show overlapping text around the eye, a long repetitive Kalshi
 queue, extensive empty space, a crowded row of assistant controls, and fixture/probe cards
@@ -23,7 +34,7 @@ that another application's lack of updates proves its producer ran successfully.
 | ID | Priority | Deliverable | Done when |
 |---|---|---|---|
 | JDX-01 | P1 | Repair text overlap and activity feedback; replace the dominant eye with a compact assistant presentation. | Idle, listening, thinking, speaking and stopped states are distinct. Only actual current work animates a destination, and completion/cancellation clears it. Long text, resizing, zoom, theme changes and open detail panels never cover controls or other copy. |
-| JDX-02 | P1 | One compact daily dashboard with Jarvis, attention items and recent updates. | The initial page shows a bounded, useful summary with progressive disclosure, useful empty/unavailable states and an accessible All applications view. Setup details and developer fixtures do not crowd the personal default. Pinned applications and per-user choices survive reload. |
+| JDX-02 | P1 | One compact daily dashboard with Jarvis, attention items and recent updates. | The initial page shows a bounded summary and adjacent detail area, with useful empty/unavailable states. Finance is a named area; miscellaneous tools and All applications remain reachable in the OSHAL menu without an `Other` dashboard bucket. Setup details and developer fixtures do not crowd the personal default. Pinned applications and per-user choices survive reload. |
 | JDX-03 | P1 | Group related alerts and retain a readable activity history. | Repeated updates are grouped by source and topic, with a count, latest meaningful change and expandable history. Replayed events do not inflate unread counts. Distinct executions or decisions remain distinguishable. Read, dismiss, snooze and resolve have explicit separate semantics and durable user state. |
 | JDX-04 | P1 | Adopt the briefing contract beyond Kalshi, beginning with morning trading reports and communications. | Each supported producer registers its source, queues an exact-owner result after actual completion and honors preferences. The dashboard identifies source, timestamp, freshness and whether attention is required. Missing connectors, disabled sources and failed collection remain visible as such. Actual production and delivery are tested separately. |
 | JDX-05 | P1 | Context-aware navigation and editable drafts beside an update. | From an update, the user can open its authorized application/record, ask Jarvis to navigate or fill supported fields, inspect the changes and continue editing. The surface acknowledges applied operations; unsupported or rejected operations never produce a false completion claim. |
@@ -74,6 +85,10 @@ registrations with each implementation slice; do not register placeholders as ru
 
 - Real browser layout checks at desktop and mobile widths, 200% zoom, both themes, long text,
   keyboard navigation, reduced motion and every listening/speaking/cancellation state.
+- Finance appears as a named authorized area, the default dashboard has no `Other`
+  catalog section, and the OSHAL menu retains every admitted miscellaneous destination.
+  Selecting Finance preserves the compact Jarvis/detail layout and current context;
+  navigation styling does not grant access to accounts, payments or trading actions.
 - Real current-task events prove destination indicators clear after success, failure, Stop,
   cancellation, reconnect and account/context changes. Idle never displays fabricated work.
 - Real database/HTTP grouping tests cover duplicate events, ordering, separate executions,
@@ -86,4 +101,3 @@ registrations with each implementation slice; do not register placeholders as ru
   remains a separate explicit action and is not part of routine fixture tests.
 - Installed acceptance records the actual serving versions, visible source coverage and native
   browser workflow. Fixture results alone do not establish that live source reporting works.
-

@@ -4,6 +4,8 @@ Requested 2026-09-11. **The optional navigation overlay and independent Workspac
 skin are implemented and deployed; focused native acceptance and preservation
 checks passed. The broader
 dashboard remains a backlogged design proposal.**
+The September 13 Finance/OSHAL-menu direction below is **P1 and backlogged**;
+it is not part of the deployed navigation checkpoint or the existing prototype.
 The [clickable HTML prototype](../mockups/cockpit-workspaces.html) is self-contained
 and opens locally without a server. It uses only synthetic content. No application,
 model, microphone, file, message or account is accessed. Its route references are
@@ -129,12 +131,61 @@ preference, browser and catalog regressions. The **Cockpit workspace navigation*
 Lab card reads the current caller's discovery endpoint and links those suites;
 its Run control does not execute the linked browser tests or open application records.
 
-## Broader design direction
+## Requested follow-up: Finance and the OSHAL menu
+
+Reconfirmed 2026-09-13 alongside the
+[Jarvis daily dashboard](jarvis-daily-dashboard.md): Finance is a named area,
+and miscellaneous applications belong in the OSHAL menu. The personal dashboard
+must not use a large `Other` shelf as a substitute for useful daily information.
+
+The current implementation has separate mechanisms: Finance falls into the top
+rail's **More** because it is not a curated tab; Home labels the `ai-finance`
+suite **AI Finance** and places unknown/missing suites under **Other**; the
+OSHAL brand is currently a Home link, not an application dropdown. Implement the
+requested change across those surfaces rather than only renaming one label.
+
+Done when:
+
+1. **Finance is a named workspace.** The top row includes admitted Finance
+   alongside Learning, Create, Intelligent Career and Federal CRM. Resolve the
+   existing `finance` profile (`/cockpit/?app=finance`, default `finance-home`)
+   through current discovery. It retains its owning pages and member permissions.
+   At narrow widths, named workspaces remain reachable through accessible overflow.
+2. **OSHAL owns the general menu.** A menu beside the OSHAL brand provides Home,
+   searchable All applications, remaining admitted applications and secondary
+   navigation controls. Preserve a clear Home action. Keep the menu anchored to
+   its trigger with keyboard, Escape, focus-return and mobile behavior; avoid a
+   second duplicate miscellaneous-app list in the top bar.
+3. **The daily dashboard has no `Other` catalog shelf.** Use compact named areas
+   and grouped updates, including Finance, beside Jarvis. Applications without
+   suite metadata remain discoverable in the OSHAL menu/directory. Retain saved
+   application/suite preferences and distinguish unavailable data from no activity.
+4. **Grouping does not hide tools or grant access.** The `ai-finance` category
+   includes applications beyond Finance's own toolbar. Category membership alone
+   cannot remove those sidebar entries or assert Finance contains their pages.
+   Only explicit workspace delegation removes a duplicate destination; every
+   remaining authorized tool stays reachable. Open pages, drafts and current
+   application context survive menu/theme changes and permission refreshes.
+5. **Prove the implemented change and register its tests.** Extend the existing
+   workspace-navigation and Home-grouping suites, including
+   `tests/unit/app-home-plan.spec.ts`, plus actual browser and authorization
+   coverage. Replace the current unknown-suite-to-Other expectation with lossless
+   menu/directory access. Cover Finance present/absent/revoked, retained unique
+   tools, no duplicate entries, 390 px width, 200% zoom and theme changes. Register
+   actual implementation coverage with AI Test Lab and verify the installed UI.
+
+This is presentation and navigation work. It does not complete Finance provider
+setup, initiate transactions, create an umbrella application or implement the
+compact Jarvis dashboard by itself.
+
+## Earlier broader design direction
 
 Put a small number of major workspaces across the top: **OSHAL Cockpit, Learning,
 Create and Intelligent Career**, with **More** for overflow. These are quick entry
 points to complete applications or established application groups. They are not
 one tab per installed application.
+This paragraph and the prototype describe the earlier proposal; the September 13
+follow-up adds Finance and places general application discovery in the OSHAL menu.
 
 **Learning opens Little Monsters itself.** It does not lead to an extra generic
 education directory before the application. Selecting Little Monsters from All
