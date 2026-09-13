@@ -52,10 +52,12 @@
  * 46 | maintainer@emeraldcoastsystemsgroup.com | Mount optional workspace navigation after the current profile resolves, retaining existing screens and student mode.
  * 47 | maintainer@emeraldcoastsystemsgroup.com | Apply profile colors only on explicit opt-in so the portal chooser remains authoritative across applications.
  * 48 | maintainer@emeraldcoastsystemsgroup.com | Bind relocated workspace options to the existing settings and action handlers.
+ * 49 | maintainer@emeraldcoastsystemsgroup.com | Route OSHAL directory intent through the normal Home lifecycle and keep the duplicate chat rail closed beside its embedded Jarvis.
  */
 
 import { ThemeManager } from './theme-manager.js';
 import { WorkspaceNavigation } from './workspace-navigation.js';
+import { bindApplicationsDirectory } from './applications-directory-navigation.js';
 import { initHeaderOptions } from './header-options.js';
 import { ApiClient } from './api-client.js';
 import { RibbonNav } from './components/RibbonNav.js';
@@ -170,6 +172,12 @@ class CockpitApp {
       toggleChatPanel: (show) => this.toggleChatPanel(show),
       isNativeChatWorkspaceEnabled: () => this.isNativeChatWorkspaceEnabled(),
       getRibbon: () => this.ribbon,
+      onHomeReady: view => this.directoryNavigation?.homeReady(view),
+    });
+    this.directoryNavigation = bindApplicationsDirectory({
+      getController: () => this.viewController,
+      navigateHome: () => this.switchView('home'),
+      onError: () => this.showToast('Could not open applications. Please try again.', 'error'),
     });
 
     this.init();
@@ -370,10 +378,10 @@ class CockpitApp {
     this.ribbon?.setActive?.(viewId, { notify: false });
     // Picking an item from the mobile drawer should close it.
     this.toggleMobileMenu(false);
-    // Jarvis IS the chat surface — hide the redundant right-rail chat panel whenever its view is
-    // active, even in the unified cockpit home (where profile.name isn't 'jarvis'). Restore it on
+    // Jarvis and daily Home contain the chat surface; hide the redundant right-rail panel while
+    // either is active, even when profile.name isn't 'jarvis'. Restore it on
     // other views, unless the whole profile is a chat-surface app.
-    const isJarvisView = typeof viewId === 'string' && viewId.toLowerCase().includes('jarvis');
+    const isJarvisView = viewId === 'home' || (typeof viewId === 'string' && viewId.toLowerCase().includes('jarvis'));
     const profile = this.ribbon?.profile;
     const profileIsChatSurface = profile?.hideChatPanel === true || profile?.name === 'jarvis';
     if (isJarvisView) {

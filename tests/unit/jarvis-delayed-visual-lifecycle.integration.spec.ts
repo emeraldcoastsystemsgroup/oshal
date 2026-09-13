@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Move owner-read acceptance traffic onto a verified user principal and assert the SEC-01 403 for a legacy service identity attempting another owner's visual.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep the SQL fixture aligned with current owner/issuer/source projections and empty preference reads without changing retained visual or ownership assertions.
  *
  * Delayed Jarvis result acceptance test.
  *
@@ -39,6 +40,8 @@ interface StoredTask {
   id: string;
   user_sub: string;
   session_id: string;
+  principal_issuer?: string | null;
+  briefing_source_id?: string | null;
   title: string;
   status: string;
   result: string | null;
@@ -46,6 +49,7 @@ interface StoredTask {
   kind: string;
   ticket_id: string | null;
   visual: Record<string, unknown> | null;
+  files?: Record<string, unknown>[] | null;
   delivered: boolean;
   created_at: string;
   finished_at: string | null;
@@ -82,20 +86,23 @@ class DelayedLifecyclePool {
   async query(sqlValue: string, values: unknown[] = []): Promise<{ rows: any[]; rowCount: number }> {
     const sql = String(sqlValue).replace(/\s+/g, ' ').trim();
 
-    if (sql.startsWith('SELECT DISTINCT provider FROM oshal_connections')) {
+    if (sql.startsWith('SELECT DISTINCT provider FROM oshal_connections')
+      || sql.startsWith('SELECT preferred_provider, preferred_model FROM oshal_user_llm_prefs WHERE user_sub = $1')) {
       return { rows: [], rowCount: 0 };
     }
-    if (sql.startsWith('SELECT id, title, status, kind, result FROM jarvis_tasks')) {
+    if (sql.startsWith('SELECT id, user_sub, session_id, ticket_id, briefing_source_id, principal_issuer, title, status, kind, result, created_at FROM jarvis_tasks WHERE user_sub = $1')) {
       const rows = [...this.tasks.values()]
         .filter((task) => task.user_sub === values[0])
-        .map(({ id, title, status, kind, result }) => ({ id, title, status, kind, result }));
+        .map(({ id, user_sub, session_id, ticket_id, briefing_source_id, principal_issuer, title, status, kind, result, created_at }) => (
+          { id, user_sub, session_id, ticket_id, briefing_source_id, principal_issuer, title, status, kind, result, created_at }));
       return { rows, rowCount: rows.length };
     }
     if (sql.startsWith('INSERT INTO jarvis_tasks')) {
-      const [id, userSub, sessionId, title, status, kind, ticketId] = values.map((value) => value == null ? null : String(value));
+      const [id, userSub, sessionId, title, status, kind, ticketId, issuer] = values.map((value) => value == null ? null : String(value));
       const previous = this.tasks.get(String(id));
       this.tasks.set(String(id), {
         id: String(id), user_sub: String(userSub), session_id: String(sessionId), title: String(title),
+        principal_issuer: issuer, briefing_source_id: null,
         status: String(status), result: null, error: null, kind: String(kind), ticket_id: ticketId,
         visual: null, files: null, delivered: previous?.delivered ?? false,
         created_at: previous?.created_at ?? '2026-07-10T15:00:00.000Z', finished_at: null,
@@ -103,7 +110,7 @@ class DelayedLifecyclePool {
       });
       return { rows: [], rowCount: 1 };
     }
-    if (sql.startsWith('SELECT id, title, status, result, error, kind, ticket_id, visual, files, delivered')) {
+    if (sql.startsWith('SELECT id, user_sub, session_id, briefing_source_id, principal_issuer, title, status, result, error, kind, ticket_id, visual, files, delivered')) {
       const rows = [...this.tasks.values()].filter((task) => task.user_sub === values[0]);
       return { rows, rowCount: rows.length };
     }

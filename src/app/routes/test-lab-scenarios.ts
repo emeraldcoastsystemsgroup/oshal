@@ -72,6 +72,7 @@
 import { ARTIFACT_SCENARIOS } from './test-lab-artifact-scenarios';
 import { INSTALLATION_SCENARIOS } from './test-lab-installation-scenarios';
 import { APPEARANCE_SCENARIOS } from './test-lab-appearance-scenarios';
+import { DASHBOARD_SCENARIOS } from './test-lab-dashboard-scenarios';
 import { CONNECTOR_OAUTH_SCENARIOS } from './test-lab-connector-scenarios';
 import { APP_REGISTRY_SCENARIOS } from './test-lab-app-registry-scenarios';
 import { AUTHORIZATION_SCENARIOS } from './test-lab-authorization-scenarios';
@@ -230,6 +231,7 @@ export const SCENARIOS: Scenario[] = [
   ...ARTIFACT_SCENARIOS,
   ...INSTALLATION_SCENARIOS,
   ...APPEARANCE_SCENARIOS,
+  ...DASHBOARD_SCENARIOS,
   ...CONNECTOR_OAUTH_SCENARIOS,
   ...APP_REGISTRY_SCENARIOS,
   ...AUTHORIZATION_SCENARIOS,

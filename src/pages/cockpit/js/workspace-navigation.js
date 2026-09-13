@@ -10,13 +10,14 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Place workspaces beside the header brand and expose the same admitted destinations through an accessible compact phone disclosure.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Deduplicate Home and current workspace labels, anchor More to its trigger, and share one utilities panel with the sidebar header.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Add admitted Federal CRM and delegate repeated default-sidebar pages only while their complete workspace is available on top.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Add admitted Finance and one searchable OSHAL menu beside the brand while preserving existing controls and application documents.
  */
 import { createUiLogger, serializeUiError } from '../../shared/ui-debug.js';
 
 const logger = createUiLogger('cockpit-workspace-navigation');
 const STORAGE_KEY = 'oshal-navigation-layout';
 const CHANGE_EVENT = 'oshal-navigation-layout-changed';
-const CURATED = [['little-monsters'], ['create'], ['intelligent-career', 'career-hunter'], ['capture-crm']];
+const CURATED = [['little-monsters'], ['create'], ['intelligent-career', 'career-hunter'], ['capture-crm'], ['finance']];
 /** Current top destinations, sent to sidebar presentation without changing view registrations. */
 export const WORKSPACE_DESTINATIONS_EVENT = 'oshal-workspace-destinations-changed';
 
@@ -167,6 +168,44 @@ export class WorkspaceNavigation {
     this.toggle = this.control.querySelector('button');
     this.options = this.control.querySelector('#workspaceNavigationOptions');
     this.resizeObserver = new ResizeObserver(() => this.positionMore());
+    this.mountMenu();
+  }
+
+  /** Keep the original utility nodes in one stable brand menu in either navigation layout. */
+  mountMenu() {
+    this.menu = document.createElement('details'); this.menu.id = 'workspaceNavigationMore';
+    this.menu.innerHTML = `<summary role="button" aria-label="OSHAL menu" title="OSHAL menu" aria-expanded="false" aria-controls="workspaceApplicationMenu">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
+      <div class="workspace-navigation-more" id="workspaceApplicationMenu">
+        <div class="workspace-menu-home"><a href="/cockpit/">Home</a><button type="button" data-workspace-all>All applications</button></div>
+        <label class="workspace-menu-search" for="workspaceApplicationSearch">Search applications
+          <input id="workspaceApplicationSearch" type="search" maxlength="160" placeholder="Find an application" autocomplete="off"></label>
+        <div class="workspace-navigation-more-links"></div>
+        <p class="workspace-menu-empty" hidden>No applications match.</p>
+      </div>`;
+    this.menuBody = this.menu.querySelector('.workspace-navigation-more');
+    this.menuLinks = this.menu.querySelector('.workspace-navigation-more-links');
+    this.search = this.menu.querySelector('input');
+    this.status = document.createElement('div'); this.status.className = 'workspace-navigation-status';
+    if (this.utilities) this.menuBody.append(this.utilities);
+    if (this.headerOptions) { this.headerOptions.open = false; this.headerOptions.hidden = true; }
+    document.querySelector('.header-left').append(this.menu);
+    this.on(this.menu, 'toggle', () => this.menuToggled());
+    this.on(this.search, 'input', () => this.renderMenu(currentWorkspace(), curatedWorkspaces(this.items)));
+    this.on(this.menu.querySelector('[data-workspace-all]'), 'click', () => {
+      this.menu.open = false;
+      window.dispatchEvent(new CustomEvent('oshal:open-applications'));
+    });
+  }
+
+  /** Sidebar mode discovers complete applications only while its menu is requested. */
+  menuToggled() {
+    this.menu.querySelector('summary').setAttribute('aria-expanded', String(this.menu.open));
+    if (this.menu.open) {
+      this.showCompact(false);
+      if (this.layout === 'sidebar') void this.refresh();
+    } else if (this.layout === 'sidebar') this.clearDiscovery();
+    this.renderNotice(); this.positionMore();
   }
 
   /** Own listeners explicitly so component teardown cannot retain a stale policy fetch. */
@@ -188,8 +227,7 @@ export class WorkspaceNavigation {
     });
     this.on(document, 'pointerdown', event => {
       if (!this.control.contains(event.target)) this.showOptions(false);
-      const more = this.rail.querySelector('details[open]');
-      if (more && !more.contains(event.target)) more.open = false;
+      if (this.menu.open && !this.menu.contains(event.target)) this.menu.open = false;
       if (!this.rail.contains(event.target)) this.showCompact(false);
     });
     this.on(document, 'keydown', event => this.handleKey(event));
@@ -199,6 +237,7 @@ export class WorkspaceNavigation {
     this.on(window, 'blur', () => {
       this.focusStayedInPage = document.hasFocus();
       this.showCompact(false);
+      setTimeout(() => { if (document.activeElement?.tagName === 'IFRAME') this.menu.open = false; }, 0);
     });
     this.on(window, 'focus', () => {
       const internal = this.focusStayedInPage;
@@ -216,7 +255,7 @@ export class WorkspaceNavigation {
   handleKey(event) {
     if (event.key !== 'Escape') return;
     if (!this.options.hidden) { this.showOptions(false); this.toggle.focus(); event.stopPropagation(); return; }
-    const more = this.rail.querySelector('details[open]');
+    const more = this.menu.open ? this.menu : null;
     if (more) { more.open = false; more.querySelector('summary').focus(); event.stopPropagation(); return; }
     if (this.compactOpen) { this.showCompact(false); this.compactToggle.focus(); event.stopPropagation(); }
   }
@@ -231,7 +270,7 @@ export class WorkspaceNavigation {
   /** Keep the compact disclosure independent from discovery and the active application's document. */
   showCompact(open) {
     this.compactOpen = open;
-    if (!open) { const more = this.rail.querySelector('details[open]'); if (more) more.open = false; }
+    if (open) this.menu.open = false;
     this.rail.toggleAttribute('data-compact-open', open);
     this.compactToggle.setAttribute('aria-expanded', String(open));
   }
@@ -239,6 +278,7 @@ export class WorkspaceNavigation {
   /** Update chrome only; no URL changes, theme changes or application rerender. */
   update(value) {
     this.layout = value === 'workspaces' ? 'workspaces' : 'sidebar';
+    this.menu.open = false;
     document.documentElement.dataset.navigationLayout = this.layout;
     this.control.querySelectorAll('input').forEach(input => { input.checked = input.value === this.layout; });
     const settings = document.getElementById('settingsNavigationLayout');
@@ -250,6 +290,7 @@ export class WorkspaceNavigation {
 
   syncVisibility() {
     this.rail.hidden = this.layout !== 'workspaces' || Boolean(document.fullscreenElement);
+    this.menu.hidden = Boolean(document.fullscreenElement);
     if (this.rail.hidden) this.showCompact(false);
   }
 
@@ -263,7 +304,7 @@ export class WorkspaceNavigation {
   }
 
   async refresh() {
-    if (this.layout !== 'workspaces' || document.visibilityState === 'hidden') return;
+    if ((this.layout !== 'workspaces' && !this.menu.open) || document.visibilityState === 'hidden') return;
     this.clearDiscovery();
     const generation = this.generation;
     const controller = new AbortController();
@@ -286,7 +327,7 @@ export class WorkspaceNavigation {
     if (generation === this.generation) this.render();
   }
 
-  /** Keep the curated rail compact; every other admitted complete workspace remains in More. */
+  /** Keep the curated rail compact; the OSHAL menu retains all other admitted destinations. */
   render() {
     if (!this.rail) return;
     const active = currentWorkspace();
@@ -297,18 +338,28 @@ export class WorkspaceNavigation {
       if (active === 'cockpit') home.setAttribute('aria-current', 'page');
       else home.removeAttribute('aria-current');
     } else links.append(workspaceLink({ name: 'cockpit', displayName: 'oshal Cockpit', href: '/cockpit/' }, active));
-    for (const item of curated) links.append(workspaceLink(item, active));
-    this.destinations.replaceChildren(links, this.moreMenu(active, curated));
+    if (this.layout === 'workspaces') for (const item of curated) links.append(workspaceLink(item, active));
+    this.destinations.replaceChildren(links);
+    this.renderMenu(active, curated);
     this.publishSidebarDestinations(curated);
     this.resizeObserver.disconnect();
     this.resizeObserver.observe(this.rail); this.resizeObserver.observe(links);
+    this.renderNotice(); this.positionMore();
+  }
+
+  /** Show one current status at the disclosure being used, never retain a stale destination on failure. */
+  renderNotice() {
+    this.status.replaceChildren();
+    const parent = this.menu.open || this.layout === 'sidebar' ? this.menuBody : this.destinations;
+    if (parent === this.menuBody) parent.insertBefore(this.status, this.utilities || null);
+    else parent.append(this.status);
     if (this.notice) {
       const status = document.createElement('span'); status.dataset.workspaceStatus = '';
       status.setAttribute('role', 'status'); status.textContent = this.notice;
-      this.destinations.append(status);
+      this.status.append(status);
       if (this.notice.startsWith('Workspaces unavailable')) {
         const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry';
-        retry.addEventListener('click', () => this.refresh()); this.destinations.append(retry);
+        retry.addEventListener('click', () => this.refresh()); this.status.append(retry);
       }
     }
   }
@@ -322,35 +373,24 @@ export class WorkspaceNavigation {
     window.dispatchEvent(new CustomEvent(WORKSPACE_DESTINATIONS_EVENT, { detail: names }));
   }
 
-  moreMenu(active, curated) {
-    const more = document.createElement('details'); more.id = 'workspaceNavigationMore';
-    more.addEventListener('toggle', () => this.positionMore());
-    const summary = document.createElement('summary');
-    const extras = this.items.filter(item => !curated.includes(item));
-    summary.textContent = 'More';
-    const body = document.createElement('div'); body.className = 'workspace-navigation-more';
-    const links = document.createElement('div'); links.className = 'workspace-navigation-more-links';
-    for (const item of extras) links.append(workspaceLink(item, active));
-    if (!document.getElementById('cockpitHomeLink')) {
-      const all = document.createElement('a'); all.href = '/cockpit/'; all.textContent = 'All applications';
-      all.dataset.workspaceAll = ''; links.append(all);
-    }
-    body.append(links);
-    if (this.utilities) {
-      const enabled = this.layout === 'workspaces';
-      (enabled ? body : this.utilitiesHome).append(this.utilities);
-      if (this.headerOptions) { this.headerOptions.open = false; this.headerOptions.hidden = enabled; }
-    }
-    more.append(summary, body); return more;
+  /** Search fresh admitted names and labels; an empty query keeps the top rail's destinations out of its menu. */
+  renderMenu(active, curated) {
+    const query = this.search.value.trim().toLocaleLowerCase();
+    const available = query || this.layout === 'sidebar' ? this.items : this.items.filter(item => !curated.includes(item));
+    const matches = available.filter(item => `${item.displayName} ${item.name}`.toLocaleLowerCase().includes(query));
+    this.menuLinks.replaceChildren(...matches.map(item => workspaceLink(item, active)));
+    const empty = this.menu.querySelector('.workspace-menu-empty');
+    empty.hidden = matches.length > 0 || Boolean(this.notice);
+    empty.textContent = query ? 'No applications match.' : 'No other applications available.';
   }
 
-  /** Align to the same trigger's right edge only when a left-aligned list would leave the viewport. */
+  /** Anchor below the brand trigger and clamp only when the viewport cannot fit the menu at that edge. */
   positionMore() {
-    const more = this.rail?.querySelector('details[open]');
-    if (!more) return;
-    const trigger = more.querySelector('summary').getBoundingClientRect();
-    const menu = more.querySelector('.workspace-navigation-more');
-    more.toggleAttribute('data-align-end', trigger.left + menu.offsetWidth > window.innerWidth - 12);
+    if (!this.menu?.open) return;
+    const trigger = this.menu.querySelector('summary').getBoundingClientRect();
+    const left = Math.max(8, Math.min(trigger.left, window.innerWidth - this.menuBody.offsetWidth - 8));
+    this.menuBody.style.left = `${left}px`;
+    this.menuBody.style.top = `${trigger.bottom + 8}px`;
   }
 
   /** Release only this overlay's resources; active app content belongs to the existing controller. */
@@ -361,6 +401,6 @@ export class WorkspaceNavigation {
     this.cleanups.forEach(remove => remove());
     if (this.utilitiesHome) this.utilitiesHome.append(this.utilities);
     if (this.headerOptions) this.headerOptions.hidden = false;
-    this.control?.remove(); this.rail?.remove();
+    this.control?.remove(); this.rail?.remove(); this.menu?.remove(); this.status?.remove();
   }
 }

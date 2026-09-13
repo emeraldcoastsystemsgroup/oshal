@@ -10,18 +10,22 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Measure the real top-header layout and unclipped compact menus with long labels, keyboard controls and retained iframe drafts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Reproduce duplicate destination labels and verify More stays attached to its own trigger through palette and viewport changes.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Compare rendered menu backdrops and retain accessible utilities and applications in full and short viewports.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Retain navigation, draft, timeout and menu regressions with the shared OSHAL menu beside the brand in both layouts.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Require bounded, verified cleanup of only the isolated browser process after every retained assertion completes.
  * =============================================================================
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
-import { mkdirSync } from 'node:fs';
+import type { Browser, BrowserContext, Page } from 'playwright';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import sharp from 'sharp';
 import { startWorkspaceNavigationFixture } from '../fixtures/workspace-navigation';
+import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
 
 let fixture: Awaited<ReturnType<typeof startWorkspaceNavigationFixture>>;
 let browser: Browser, context: BrowserContext, page: Page;
+let ownedBrowser: Awaited<ReturnType<typeof launchIsolatedBrowser>>;
 let errors: string[], external: string[];
 const editor = () => page.frameLocator('.tool-view-container iframe');
 
@@ -49,12 +53,8 @@ async function chooseLayout(value: 'sidebar' | 'workspaces') {
 async function headerControl(selector: string) {
   const control = page.locator(selector);
   if (await control.isVisible()) return control;
-  if (await page.locator('html').getAttribute('data-navigation-layout') === 'workspaces') {
-    const compact = page.locator('#workspaceNavigationCompactToggle');
-    if (await compact.isVisible() && await compact.getAttribute('aria-expanded') === 'false') await compact.click();
-    const more = page.locator('#workspaceNavigationMore');
-    if (await more.getAttribute('open') === null) await more.locator('summary').click();
-  } else await page.locator('#cockpitHeaderOptions > summary').click();
+  const more = page.locator('#workspaceNavigationMore');
+  if (await more.getAttribute('open') === null) await more.locator('summary').click();
   return control;
 }
 
@@ -120,8 +120,8 @@ async function expectMoreAnchored() {
   });
   await expect.poll(async () => {
     const geometry = await measure();
-    const edge = geometry.trigger.left + geometry.menu.width > geometry.width - 12 ? 'right' : 'left';
-    return Math.abs(geometry.menu[edge] - geometry.trigger[edge]);
+    const left = Math.max(8, Math.min(geometry.trigger.left, geometry.width - geometry.menu.width - 8));
+    return Math.abs(geometry.menu.left - left);
   }).toBeLessThanOrEqual(1);
   const geometry = await measure();
   expect(geometry.menu.top - geometry.trigger.bottom).toBeGreaterThanOrEqual(0);
@@ -150,8 +150,14 @@ async function headerThemeVariants(label: string) {
   expect(await editor().locator('html').getAttribute('data-document-id')).toBe(documentId);
 }
 
-beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 30000);
-afterAll(async () => { await browser?.close(); });
+beforeAll(async () => { ownedBrowser = await launchIsolatedBrowser(); browser = ownedBrowser.browser; }, 30000);
+afterAll(async () => {
+  const receipt = await ownedBrowser?.close(), directory = process.env.WORKSPACE_NAVIGATION_EVIDENCE_DIR;
+  if (receipt && directory) {
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(resolve(directory, `retained-cleanup-${Date.now()}.json`), JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' });
+  }
+});
 beforeEach(async () => {
   fixture = await startWorkspaceNavigationFixture();
   context = await browser.newContext({ viewport: { width: 1440, height: 960 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
@@ -160,31 +166,30 @@ beforeEach(async () => {
     if (new URL(route.request().url()).origin === fixture.origin) return route.continue();
     external.push(route.request().url()); return route.abort();
   });
-  page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
+  page = await context.newPage(); page.setDefaultTimeout(8000); page.on('pageerror', error => errors.push(error.message));
 });
 afterEach(async () => { await context?.close(); await fixture?.close(); });
-
-it.each(['create', 'fixture-studio', 'cockpit'])('shows one Home destination and one admitted current application with a stable More label for %s', async name => {
+it.each(['create', 'fixture-studio', 'cockpit'])('keeps the brand Home link, explicit menu Home and one current application for %s', async name => {
   await open(name === 'cockpit' ? '/cockpit/' : `/cockpit/?app=${name}`, 'workspaces'); await discovered();
   const home = page.locator('#cockpitHomeLink');
-  expect(await page.locator('.header-bar a[href="/cockpit/"]').count()).toBe(1);
+  await page.locator('#workspaceNavigationMore > summary').click();
+  expect(await page.locator('.header-bar a[href="/cockpit/"]').count()).toBe(2);
+  expect(await page.locator('#workspaceNavigationMore a[href="/cockpit/"]').innerText()).toBe('Home');
   expect(await home.count()).toBe(1);
   expect(await home.getAttribute('href')).toBe('/cockpit/');
   expect(await home.innerText()).toBe('OSHAL Cockpit');
   expect(await page.locator('.header-left .logo-text:not(.workspace-home-label)').isVisible()).toBe(false);
-  expect(await page.locator('#workspaceNavigationMore > summary').innerText()).toBe('More');
+  expect(await page.locator('#workspaceNavigationMore > summary').getAttribute('aria-label')).toBe('OSHAL menu');
   if (name !== 'cockpit') {
-    const current = page.locator(`#workspaceNavigation [data-workspace="${name}"]`);
+    const current = page.locator(`.header-bar [data-workspace="${name}"]`);
     expect(await current.count()).toBe(1);
     expect(await current.getAttribute('aria-current')).toBe('page');
-    if (name === 'fixture-studio') await page.locator('#workspaceNavigationMore > summary').click();
     expect(await current.isVisible()).toBe(true);
   } else expect(await home.getAttribute('aria-current')).toBe('page');
   await screenshot(`deduplicated-${name}`);
   expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
-
-it('moves one utilities panel between sidebar options and More while retaining its listeners and the active iframe', async () => {
+it('retains one OSHAL utilities panel and its listeners across both layouts without replacing the active iframe', async () => {
   page.setDefaultTimeout(5000);
   await open('/cockpit/?app=create', 'sidebar', 'workspace');
   await page.locator('#cockpitHeaderUtilities').evaluate(element => { (window as any).fixtureUtilities = element; });
@@ -196,7 +201,7 @@ it('moves one utilities panel between sidebar options and More while retaining i
     expect(await page.locator('#cockpitHeaderUtilities').count()).toBe(1);
     expect(await page.locator('#workspaceNavigationToggle').count()).toBe(1);
     expect(await page.locator('#cockpitHeaderUtilities').evaluate(element => element === (window as any).fixtureUtilities)).toBe(true);
-    expect(await page.locator('#cockpitHeaderUtilities').evaluate(element => Boolean(element.closest('#workspaceNavigationMore')))).toBe(layout === 'workspaces');
+    expect(await page.locator('#cockpitHeaderUtilities').evaluate(element => Boolean(element.closest('#workspaceNavigationMore')))).toBe(true);
     await page.keyboard.press('Escape');
     await (await headerControl('#themeToggle')).click();
   }
@@ -207,7 +212,6 @@ it('moves one utilities panel between sidebar options and More while retaining i
   expect(await editor().locator('#draft').inputValue()).toBe('Synthetic utility relocation draft');
   expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
-
 it('returns keyboard focus to More after changing the palette without navigating away from the draft', async () => {
   await open('/cockpit/?app=create', 'workspaces', 'workspace'); await discovered();
   await editor().locator('#draft').fill('Synthetic keyboard theme draft');
@@ -220,7 +224,6 @@ it('returns keyboard focus to More after changing the palette without navigating
   expect(await editor().locator('#draft').inputValue()).toBe('Synthetic keyboard theme draft');
   expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
-
 it.each([1440, 960, 768])('anchors More directly below its own button through resize and palette changes at %ipx', async width => {
   await page.setViewportSize({ width, height: 960 });
   await open('/cockpit/?app=fixture-studio', 'workspaces', 'workspace'); await discovered();
@@ -241,7 +244,6 @@ it.each([1440, 960, 768])('anchors More directly below its own button through re
   expect(await editor().locator('#draft').inputValue()).toBe('Synthetic anchored-menu draft');
   expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
-
 it('keeps a long More list reachable at a crowded viewport edge and dismisses it on iframe interaction', async () => {
   fixture.state.workspaces.find(item => item.name === 'create')!.displayName = 'Synthetic Create with a deliberately long heading';
   fixture.state.workspaces.find(item => item.name === 'intelligent-career')!.displayName = 'Synthetic Career with a deliberately long heading';
@@ -263,7 +265,6 @@ it('keeps a long More list reachable at a crowded viewport edge and dismisses it
   await expect.poll(() => page.locator('#workspaceNavigationMore').getAttribute('open')).toBeNull();
   expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
-
 it.each([1440, 960, 768])('places workspace links beside the brand in one unclipped header row at %ipx', async width => {
   fixture.state.profileDisplayName = 'Synthetic application with a deliberately long brand';
   fixture.state.workspaces.find(item => item.name === 'fixture-studio')!.displayName = 'Synthetic studio with a long workspace label';
@@ -275,15 +276,14 @@ it.each([1440, 960, 768])('places workspace links beside the brand in one unclip
   expect(await page.title()).toBe(fixture.state.profileDisplayName);
   await page.locator('#workspaceNavigationMore > summary').click(); await expectMenuReachable();
   await screenshot(`header-${width}-more`); await page.keyboard.press('Escape');
-  await page.keyboard.press('Shift+Tab');
-  const link = page.locator('#workspaceNavigation [data-workspace=intelligent-career]');
+  await page.keyboard.press('Tab');
+  const link = page.locator('#workspaceNavigation [data-workspace=little-monsters]');
   expect(await link.evaluate(element => document.activeElement === element)).toBe(true);
   expect(await link.evaluate(element => { const box = element.getBoundingClientRect();
     return element.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)); })).toBe(true);
   await expectHeaderRow(); await headerThemeVariants(String(width));
   expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
-
 it('opens an unclipped phone workspace menu beside the brand without replacing an iframe draft', async () => {
   page.setDefaultTimeout(5000);
   fixture.state.workspaces.find(item => item.name === 'fixture-studio')!.displayName = 'Synthetic studio ' + 'long label '.repeat(10);
@@ -301,7 +301,9 @@ it('opens an unclipped phone workspace menu beside the brand without replacing a
   await page.locator('#workspaceNavigationMore > summary').click(); await expectMenuReachable();
   await screenshot('header-phone-more'); await page.keyboard.press('Escape');
   expect(await page.locator('#workspaceNavigationMore').getAttribute('open')).toBeNull();
-  await page.keyboard.press('Escape'); expect(await toggle.getAttribute('aria-expanded')).toBe('false');
+  expect(await toggle.getAttribute('aria-expanded')).toBe('false');
+  expect(await page.locator('#workspaceNavigationMore > summary').evaluate(element => element === document.activeElement)).toBe(true);
+  await toggle.click(); await page.keyboard.press('Escape');
   expect(await page.evaluate(() => document.activeElement?.id)).toBe('workspaceNavigationCompactToggle');
   await toggle.click(); await page.setViewportSize({ width: 768, height: 960 });
   await expect.poll(() => page.locator('#workspaceNavigationCompactToggle').getAttribute('aria-expanded')).toBe('false'); await expectHeaderRow();
@@ -315,7 +317,6 @@ it('opens an unclipped phone workspace menu beside the brand without replacing a
   await headerThemeVariants('390');
   expect(page.url()).toBe(url); expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
-
 it('keeps phone discovery failure and Retry usable inside the compact header menu', async () => {
   fixture.state.workspaceStatus = 403;
   await page.setViewportSize({ width: 390, height: 844 });
@@ -331,7 +332,6 @@ it('keeps phone discovery failure and Retry usable inside the compact header men
   expect(await page.locator('[data-workspace=create]').isVisible()).toBe(true);
   await expectHeaderRow(); expect(errors).toEqual([]);
 }, 30000);
-
 it('defaults to the existing rail and changes only chrome around an unsaved custom screen', async () => {
   await open('/cockpit/?app=create&workspace=team-a#draft-17', undefined, 'ocean');
   expect(await page.locator('html').getAttribute('data-navigation-layout')).toBe('sidebar');
@@ -350,7 +350,6 @@ it('defaults to the existing rail and changes only chrome around an unsaved cust
   expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe('ocean');
   expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
-
 it('persists through the real Settings selector separately from the Workspace color choice', async () => {
   await open('/cockpit/', 'invalid-layout', 'workspace');
   expect(await page.locator('html').getAttribute('data-navigation-layout')).toBe('sidebar');
@@ -366,7 +365,6 @@ it('persists through the real Settings selector separately from the Workspace co
   expect(await page.locator('#settingsNavigationLayout').inputValue()).toBe('sidebar');
   expect(errors).toEqual([]);
 }, 30000);
-
 it('offers only admitted canonical destinations and keeps other applications in the real More menu', async () => {
   fixture.state.workspaces = fixture.state.workspaces.filter(item => item.name !== 'intelligent-career');
   fixture.state.workspaces.push({ name: 'foreign-target', displayName: 'Forbidden external link', kind: 'app', href: 'https://example.invalid/' });
@@ -379,12 +377,11 @@ it('offers only admitted canonical destinations and keeps other applications in 
   await page.locator('#workspaceNavigationMore > summary').click();
   expect(await page.locator('[data-workspace=fixture-studio]').getAttribute('aria-current')).toBe('page');
   expect(await page.locator('[data-workspace=fixture-studio]').getAttribute('href')).toBe('/cockpit/?app=fixture-studio');
-  expect(await page.locator('[data-workspace-all]').count()).toBe(0);
+  expect(await page.locator('[data-workspace-all]').count()).toBe(1);
   expect(await page.locator('#cockpitHomeLink').getAttribute('href')).toBe('/cockpit/');
   expect(fixture.state.requests.some(path => /foreign-target|not-installed/.test(path))).toBe(false);
   expect(external).toEqual([]);
 }, 30000);
-
 it('uses the admitted Career app as the top heading when its group is unavailable', async () => {
   fixture.state.workspaces = fixture.state.workspaces.filter(item => item.name !== 'intelligent-career');
   fixture.state.workspaces.push({ name: 'career-hunter', displayName: 'Intelligent Career', kind: 'app', href: '/cockpit/?app=career-hunter' });
@@ -409,7 +406,6 @@ it('uses the admitted Career app as the top heading when its group is unavailabl
   expect(await editor().locator('#draft').inputValue()).toBe('Synthetic Career draft');
   expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
-
 it('prefers the admitted Career group while keeping its admitted member in More', async () => {
   const group = fixture.state.workspaces.find(item => item.name === 'intelligent-career')!;
   group.kind = 'group'; group.displayName = 'Intelligent Career';
@@ -434,7 +430,6 @@ it('prefers the admitted Career group while keeping its admitted member in More'
   expect(await page.locator('[data-workspace=intelligent-career]').count()).toBe(0);
   expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
-
 it('retracts stale headings on failed or revoked discovery without replacing the active app', async () => {
   await open('/cockpit/?app=create', 'workspaces'); await discovered();
   const before = await editor().locator('html').getAttribute('data-document-id');
@@ -453,7 +448,6 @@ it('retracts stale headings on failed or revoked discovery without replacing the
   await expect.poll(() => editor().locator('#saved').innerText()).toBe('Refused');
   expect(fixture.state.saves).toBe(0); expect(errors).toEqual([]);
 }, 30000);
-
 it('cannot restore an old discovery response after the operator opts out', async () => {
   let release!: () => void;
   const held = new Promise<void>(done => { release = done; });
@@ -469,7 +463,6 @@ it('cannot restore an old discovery response after the operator opts out', async
     expect(await page.locator('#workspaceNavigation [data-workspace=create]').count()).toBe(1);
   } finally { release(); }
 }, 30000);
-
 it('uses native application links and restores the focused query and fragment through browser Back', async () => {
   const path = '/cockpit/?app=create&workspace=team-a&record=17#detail';
   await open(path, 'workspaces'); await discovered();
@@ -483,7 +476,6 @@ it('uses native application links and restores the focused query and fragment th
   expect(new URL(page.url()).search).toBe(''); expect(new URL(page.url()).hash).toBe('');
   expect(errors).toEqual([]);
 }, 30000);
-
 it('preserves the real iframe navigation bridge, selected surface query and artifact forwarding', async () => {
   await open('/cockpit/?app=create&artifact=art_fixture123#section', 'workspaces'); await discovered();
   await editor().locator('#openDetails').click();
@@ -501,7 +493,6 @@ it('preserves the real iframe navigation bridge, selected surface query and arti
   await editor().locator('body').evaluate(() => parent.postMessage({ type: 'app-navigate', view: 'tool-not-admitted' }, location.origin));
   expect(await editor().locator('h1').innerText()).toBe('Synthetic details'); expect(errors).toEqual([]);
 }, 30000);
-
 it('inherits explicitly enabled application CSS inside the unchanged custom iframe without persisting that theme', async () => {
   await context.addInitScript(() => localStorage.setItem('cockpit-application-colors', 'true'));
   await open('/cockpit/?app=fixture-studio', 'sidebar', 'workspace');
@@ -514,7 +505,6 @@ it('inherits explicitly enabled application CSS inside the unchanged custom ifra
   await page.waitForURL(fixture.origin + '/cockpit/'); await editor().locator('h1').waitFor();
   expect(await page.locator('html').getAttribute('data-theme')).toBe('workspace'); expect(errors).toEqual([]);
 }, 30000);
-
 it('uses an explicit initial profile and clears an obsolete remembered app on the Cockpit link', async () => {
   await context.addInitScript(() => {
     if (window !== window.top || sessionStorage.getItem('fixture-profile-seeded')) return;
@@ -533,7 +523,6 @@ it('uses an explicit initial profile and clears an obsolete remembered app on th
   expect(await page.evaluate(() => localStorage.getItem('oshal-ui-profile'))).toBeNull();
   expect(errors).toEqual([]);
 }, 30000);
-
 it('keeps a delayed or empty discovery usable without remounting the active custom screen', async () => {
   let release!: () => void;
   const held = new Promise<void>(done => { release = done; });
@@ -562,7 +551,6 @@ it('keeps a delayed or empty discovery usable without remounting the active cust
     expect(errors).toEqual([]);
   } finally { release(); }
 }, 30000);
-
 it('accepts a valid response after five seconds within the discovery deadline without replacing the draft', async () => {
   let release!: () => void, requested!: () => void;
   const held = new Promise<void>(done => { release = done; });
@@ -588,7 +576,6 @@ it('accepts a valid response after five seconds within the discovery deadline wi
     expect(errors).toEqual([]); expect(external).toEqual([]);
   } finally { release(); }
 }, 30000);
-
 it('fails a hung discovery deadline at thirty seconds and admits fresh links through Retry', async () => {
   let release!: () => void, requested!: () => void;
   const held = new Promise<void>(done => { release = done; });
@@ -616,7 +603,6 @@ it('fails a hung discovery deadline at thirty seconds and admits fresh links thr
     expect(errors).toEqual([]); expect(external).toEqual([]);
   } finally { release(); }
 }, 30000);
-
 it('links the navigation policy, preference and real browser regressions from the Test Lab catalog', () => {
   const scenario = SCENARIOS.find(item => item.id === 'cockpit-workspace-navigation');
   expect(scenario?.regressionTests).toEqual(expect.arrayContaining([
@@ -626,7 +612,6 @@ it('links the navigation policy, preference and real browser regressions from th
   ]));
   expect(scenario?.steps.map(step => step.id)).toContain('workspace-discovery');
 });
-
 it('keeps actual custom form, dialog, download and fullscreen actions working under the overlay', async () => {
   await open('/cockpit/?app=create', 'workspaces'); await discovered();
   await editor().locator('#draft').fill('Synthetic local edit');
@@ -643,7 +628,6 @@ it('keeps actual custom form, dialog, download and fullscreen actions working un
   await page.evaluate(() => document.exitFullscreen()); await discovered();
   await expect.poll(() => page.locator('#workspaceNavigation').isVisible()).toBe(true); expect(errors).toEqual([]);
 }, 30000);
-
 it('keeps mobile drawer taps and keyboard layout controls usable without horizontal overflow', async () => {
   fixture.state.workspaces.find(item => item.name === 'fixture-studio')!.displayName = 'Synthetic studio ' + 'long label '.repeat(12);
   await page.setViewportSize({ width: 390, height: 844 }); await open('/cockpit/?app=fixture-studio', 'workspaces'); await discovered();
@@ -663,7 +647,6 @@ it('keeps mobile drawer taps and keyboard layout controls usable without horizon
   await screenshot('mobile-custom-app');
   expect(errors).toEqual([]);
 }, 30000);
-
 it('respects immersive app policies, kiosk suppression and existing Zen escape controls', async () => {
   await open('/cockpit/?app=little-monsters', 'workspaces'); await discovered();
   expect(await page.locator('html').getAttribute('data-oshal-assistant-hidden')).toBe('true');
@@ -680,7 +663,6 @@ it('respects immersive app policies, kiosk suppression and existing Zen escape c
   }
   expect(errors).toEqual([]);
 }, 30000);
-
 it('precaches both navigation assets on first install and serves their real bytes offline without caching discovery', async () => {
   await context.close();
   context = await browser.newContext({ viewport: { width: 1024, height: 768 }, serviceWorkers: 'allow' });
@@ -724,7 +706,6 @@ async function menuBackdropPixels(selector: string, color: string) {
   const { width, height } = await pixels.metadata();
   return pixels.extract({ left: 12, top: 12, width: width! - 24, height: height! - 24 }).removeAlpha().raw().toBuffer();
 }
-
 it.each([
   ['daylight', 'workspaces', 1440], ['midnight', 'workspaces', 1440],
   ['daylight', 'workspaces', 390], ['midnight', 'workspaces', 390],
@@ -736,8 +717,7 @@ it.each([
   await editor().locator('#draft').fill('Synthetic opacity regression draft');
   const documentId = await editor().locator('html').getAttribute('data-document-id');
   await headerControl('#themeToggle');
-  const selector = layout === 'sidebar' ? '#cockpitHeaderUtilities'
-    : width === 390 ? '.workspace-navigation-destinations' : '.workspace-navigation-more';
+  const selector = '.workspace-navigation-more';
   const black = await menuBackdropPixels(selector, '#000000');
   const white = await menuBackdropPixels(selector, '#ffffff');
   expect(white.length).toBe(black.length);
@@ -759,7 +739,6 @@ async function menuControlReachable(selector: string) {
       && element.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2));
   });
 }
-
 it.each([[1440, 960], [960, 700], [390, 844]])('keeps utilities visible with thirty-three admitted apps and scrolls only their list at %ipx', async (width, height) => {
   for (let index = 0; index < 29; index++) fixture.state.workspaces.push({ name: `synthetic-extra-${index}`,
     displayName: `Synthetic extra application ${index}`, kind: 'app', href: `/cockpit/?app=synthetic-extra-${index}` });
@@ -783,7 +762,6 @@ it.each([[1440, 960], [960, 700], [390, 844]])('keeps utilities visible with thi
   expect(await editor().locator('#draft').inputValue()).toBe('Synthetic long-menu draft');
   expect(errors).toEqual([]); expect(external).toEqual([]);
 }, 30000);
-
 it.each([[1440, 360], [960, 500]])('keeps applications and expanded layout controls reachable in a short %ipx desktop', async (width, height) => {
   for (let index = 0; index < 29; index++) fixture.state.workspaces.push({ name: `synthetic-extra-${index}`,
     displayName: `Synthetic extra application ${index}`, kind: 'app', href: `/cockpit/?app=synthetic-extra-${index}` });

@@ -4,9 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-145 D9: the cross-app Home view. One card per installed group/app showing what happened (the app's own summary probe, or its jarvis_tasks when it declares none) and what still needs you (its readiness probes). Every probe is asked HERE, in the signed-in user's own session — core never impersonates the caller and never reads an app's tables.
- * Home customization | Codex | Add saved display choices, stable metric catalogs, and traceable suite/page highlights.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Add saved display choices, stable metric catalogs, and traceable suite/page highlights.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Keep a stable Jarvis conversation beside bounded daily areas and details; retain the full searchable authorized directory.
  */
 import { ordered, move, catalog, selected, highlights } from './app-home-model.js';
+import { dailyAreas, dailyRows, areaHtml, updatesHtml, directoryHtml } from './app-home-daily.js';
 import { contextFor, stageHandoff } from '../app-handoff.js';
 
 /** A source link is evidence navigation only; never an action or a credential-bearing URL. */
@@ -99,10 +101,10 @@ export function groupTasksByAppPrefix(rows) {
 }
 
 /**
- * @description Section plan entries onto the ADR-097 suite shelves, in the shared shelf order.
- * A suite with no installed app is omitted entirely; anything carrying an unknown or missing
- * suite lands in a trailing "Other" shelf rather than being dropped, so a package can never
- * disappear from the page by mis-declaring one field.
+ * @description Group the complete plan for saved ordering and the customization catalog.
+ * Unknown or missing suites remain in an internal "Other" catalog group so their choices and
+ * directory destinations are retained. dailyAreas excludes this group from the daily dashboard;
+ * it is not a default Home shelf. Empty known groups are omitted.
  * @param {Array<object>} entries - Plan entries from GET /api/swarm/apps/home-plan.
  * @returns {Array<{key: string, label: string, entries: Array<object>}>} Non-empty shelves, in order.
  */
@@ -158,10 +160,10 @@ async function askProbe(path) {
 /**
  * AppsHomeView — the cockpit's cross-app landing page (ADR-145 D9).
  *
- * @description Renders one card per installed group/app: its headline tiles and line items from
- * the app's own `summary:` probe (or its recent Jarvis tasks when it declares none), plus the
- * setup steps still outstanding from its `readiness:` probes. Each card degrades on its own — a
- * slow or broken app shows "can't check" and never blocks another card.
+ * @description Combines a stable Jarvis conversation with bounded named areas and one selected
+ * source's details. Facts still come from each owning app's summary/readiness probes or its
+ * recent Jarvis tasks. The full authorized plan stays searchable independently of display choices;
+ * a failed probe renders unavailable rather than a fabricated zero.
  */
 export class AppsHomeView {
   /**
@@ -182,13 +184,15 @@ export class AppsHomeView {
     if (this.container) {
       this.container.onclick = null;
       this.container.onchange = null;
+      this.container.oninput = null;
     }
     this.container = null;
   }
 
   /**
-   * @description Paint the shell, load the plan, then probe every app concurrently (bounded) and
-   * render each card as its answers land.
+   * @description Keep Jarvis mounted while loading the authorized plan and saved display choices,
+   * then settle the existing owner probes with bounded concurrency. Render named areas, a bounded
+   * update list and the selected source's details; retain every plan entry in the separate directory.
    * @param {HTMLElement} container - Host element; its innerHTML is replaced.
    * @returns {Promise<void>} Resolves once every card has settled.
    */
@@ -198,11 +202,12 @@ export class AppsHomeView {
     this.generation = generation;
     this.cards = new Map();
     this.editor = null;
-    container.innerHTML = '<div class="apps-home"><p role="status">Loading your applications...</p></div>';
+    this.mount(container);
     const [plan, prefs, tasks] = await Promise.all([
       askProbe('/api/swarm/apps/home-plan'), askProbe('/api/home/preferences'), askProbe('/api/jarvis/tasks'),
     ]);
     if (generation !== this.generation) return;
+    this.planReady = plan.ok;
     this.entries = plan.ok && Array.isArray(plan.body?.apps) ? plan.body.apps : [];
     this.preferences = prefs.ok ? prefs.body.preferences : { version: 1 };
     this.revision = prefs.ok ? prefs.body.revision : 0;
@@ -216,46 +221,114 @@ export class AppsHomeView {
     const responses = new Map();
     await pooled(paths.map(path => async () => { responses.set(path, await askProbe(path)); }), MAX_IN_FLIGHT);
     if (generation !== this.generation) return;
-    for (const entry of this.entries) await this.loadCard(entry, this.byPrefix, responses);
+    for (const entry of this.entries) {
+      await this.loadCard(entry, this.byPrefix, responses);
+      if (!tasks.ok && !this.cards.get(entry.name)?.anyChecked) this.cards.get(entry.name).recentUnavailable = true;
+    }
     this.draw();
   }
 
-  /** Render the saved layout without refetching or mutating any app's data. */
+  /** Mount once so summary and preference updates never discard the assistant's draft. */
+  mount(container) {
+    if (!container.querySelector?.('.apps-home-daily')) container.innerHTML = `<div class="apps-home apps-home-daily">
+      <header class="apps-home-head"><div><h2>Today</h2><p>Your applications, at a glance.</p></div>
+        <div class="apps-home-head-actions"><button data-action="directory" disabled>All applications</button>
+          <button data-action="refresh" disabled>Refresh</button><button data-action="customize" disabled>Customize</button></div></header>
+      <p class="apps-home-notice" data-home-notice role="status" hidden></p>
+      <div class="apps-home-workspace"><aside class="apps-home-assistant" aria-label="Jarvis assistant">
+        <iframe id="appsHomeJarvisFrame" title="Jarvis assistant" src="/api/jarvis/?layout=compact" allow="microphone; camera"></iframe>
+      </aside><main class="apps-home-summary" data-home-content><p role="status">Loading your applications...</p></main></div>
+      <div data-home-dialog></div></div>`;
+    container.onclick = ev => { void this.handleClick(ev); };
+    container.onchange = ev => { void this.handleChange(ev); };
+    container.oninput = ev => {
+      if (ev.target.id === 'appsHomeSearch') {
+        this.directoryQuery = ev.target.value;
+        container.querySelector('[data-home-directory-results]').innerHTML = this.directoryResultsHtml();
+      }
+    };
+  }
+
+  /** Render saved choices and source details while leaving the assistant document mounted. */
   draw() {
     if (!this.container) return;
-    const scroll = this.container.querySelector('dialog')?.scrollTop || 0;
-    const p = this.preferences;
+    const content = this.container.querySelector('[data-home-content]');
+    const active = this.container.ownerDocument.activeElement;
+    const attribute = ['data-home-area', 'data-home-detail', 'data-choice', 'data-action']
+      .find(key => content.contains(active) && active?.hasAttribute(key));
+    const focus = attribute ? `[${attribute}="${CSS.escape(active.getAttribute(attribute))}"]` : null;
+    const p = this.preferences || { version: 1 };
     const shelves = ordered(sectionBySuite(this.entries), p.suiteOrder, s => s.key);
-    const visible = shelves.filter(s => !(p.hiddenSuites || []).includes(s.key)).map(s => ({ ...s,
-      entries: ordered(s.entries, p.appOrder, e => e.name).filter(e => !(p.hiddenApps || []).includes(e.name)),
-    }));
-    const top = visible.flatMap(s => highlights(s.entries, this.cards, p).slice(0, 3))
-      .sort((a, b) => Number(b.tone === 'warn') - Number(a.tone === 'warn')).slice(0, 5);
-    this.container.innerHTML = `<div class="apps-home">
-      <header class="apps-home-head"><h2>Your world, at a glance.</h2><p>What matters. What moved. What you can do next.</p>
-        <div class="apps-home-head-actions"><button data-action="refresh">Refresh</button><button data-action="customize" ${!this.canSave ? 'disabled' : ''}>Customize</button></div></header>
-      ${this.notice ? `<p role="status" class="apps-home-notice">${esc(this.notice)}</p>` : ''}
-      ${top.length ? `<section class="apps-home-highlights"><h3>Highlights</h3>${this.highlightHtml(top)}</section>` : ''}
-      <div class="apps-home-grid">${visible.map(shelf => `<section class="apps-home-shelf" data-suite="${esc(shelf.key)}">
-        <header class="apps-home-shelf-head"><h3>${esc(shelf.label)}</h3><button data-action="collapse" data-id="${esc(shelf.key)}" aria-expanded="${!(p.collapsedSuites || []).includes(shelf.key)}" ${!this.canSave ? 'disabled' : ''}>${(p.collapsedSuites || []).includes(shelf.key) ? 'Expand' : 'Collapse'}</button></header>
-        <p class="apps-home-suite-overview">${shelf.entries.length} applications${highlights(shelf.entries, this.cards, p).filter(h => h.tone === 'warn').length ? ` · ${highlights(shelf.entries, this.cards, p).filter(h => h.tone === 'warn').length} with attention items` : ''}</p>
-        ${this.highlightHtml(highlights(shelf.entries, this.cards, p).filter(h => !top.some(t => t.app === h.app)).slice(0, 3))}
-        ${(p.collapsedSuites || []).includes(shelf.key) ? '' : `<div class="apps-home-tiles-grid">${shelf.entries.map(entry => {
-          const data = this.cards.get(entry.name), pref = p.cards?.[entry.name] || {};
-          const display = data ? selected(data, pref) : null;
-          const briefing = !pref.compact && display?.items?.filter(item => item.detail).length >= 2;
-          return `<section class="apps-home-card ${pref.compact ? 'is-compact' : ''} ${briefing ? 'is-briefing' : ''}" data-card="${esc(entry.name)}">${this.cardHead(entry)}${display ? this.body(display) : '<p class="apps-home-loading">Checking...</p>'}</section>`;
-        }).join('')}</div>`}</section>`).join('')}</div>
-      ${!visible.some(s => s.entries.length) ? '<p>No boxes are visible. Use Customize to show your applications.</p>' : ''}
-      ${this.editor ? this.editorHtml(shelves) : ''}</div>`;
-    this.container.onclick = ev => { void this.handleClick(ev); };
-    this.container.onchange = ev => { void this.handleChange(ev); };
-    const dialog = this.container.querySelector('dialog');
-    if (dialog) {
-      dialog.showModal(); dialog.scrollTop = scroll;
-      if (!this.saving && this.restoreFocus) { dialog.querySelector(this.restoreFocus)?.focus({ preventScroll: true }); this.restoreFocus = null; }
-      dialog.addEventListener('close', () => { this.editor = null; });
-    }
+    const areas = dailyAreas(shelves, p), entries = areas.flatMap(area => area.entries);
+    const first = dailyRows(entries, this.cards, p)[0]?.entry;
+    const area = areas.find(a => a.entries.some(e => e.name === this.selectedApp))
+      || areas.find(a => a.key === this.selectedArea) || areas.find(a => a.entries.includes(first)) || areas[0];
+    const entry = area?.entries.find(e => e.name === this.selectedApp) || dailyRows(area?.entries || [], this.cards, p)[0]?.entry;
+    this.container.querySelector('[data-home-content]').innerHTML = `
+      ${areaHtml(areas, this.cards, p, area?.key)}${updatesHtml(entries, this.cards, p)}
+      ${entry ? this.detailHtml(area, entry) : '<p class="apps-home-quiet">No daily areas are visible. All applications remains available, or use Customize to change your display.</p>'}`;
+    const notice = this.container.querySelector('[data-home-notice]');
+    notice.textContent = this.notice || ''; notice.hidden = !this.notice;
+    this.container.querySelector('[data-action="customize"]').disabled = !this.canSave;
+    this.container.querySelector('[data-action="directory"]').disabled = false;
+    this.container.querySelector('[data-action="refresh"]').disabled = Boolean(this.saving);
+    this.drawDialog(shelves);
+    if (focus && !this.editor) content.querySelector(focus)?.focus({ preventScroll: true });
+  }
+
+  /** Show one selected source, retaining all its traceable facts and connected actions. */
+  detailHtml(area, entry) {
+    const p = this.preferences, raw = this.cards.get(entry.name), pref = p.cards?.[entry.name] || {};
+    const data = raw ? selected(raw, pref) : null;
+    const collapsed = (p.collapsedSuites || []).includes(area.key);
+    return `<section class="apps-home-detail" aria-label="Application details">
+      <header class="apps-home-detail-head"><label>${esc(area.label)} <select data-choice="detail" aria-label="Application details">
+        ${area.entries.map(e => `<option value="${esc(e.name)}" ${e.name === entry.name ? 'selected' : ''}>${esc(e.displayName)}</option>`).join('')}</select></label>
+        <button data-action="collapse" data-id="${esc(area.key)}" aria-expanded="${!collapsed}" ${!this.canSave ? 'disabled' : ''}>${collapsed ? 'Show details' : 'Hide details'}</button></header>
+      ${collapsed ? '<p class="apps-home-quiet">Details are hidden by your saved display choice.</p>' : `<section class="apps-home-card ${pref.compact ? 'is-compact' : ''}" data-card="${esc(entry.name)}">
+        ${this.cardHead(entry)}${data ? this.body(data) : '<p class="apps-home-loading">Checking...</p>'}</section>`}</section>`;
+  }
+
+  /** Keep the directory separate from dashboard hiding and focus its search without a new read. */
+  openDirectory() {
+    if (!this.container) return;
+    this.dialogOrigin = '[data-action="directory"]';
+    this.editor = { type: 'directory' };
+    this.directoryQuery = '';
+    this.drawDialog(sectionBySuite(this.entries));
+    this.container.querySelector('#appsHomeSearch')?.focus();
+  }
+
+  /** Repaint only modal content; preserve search, dialog scroll and the existing assistant frame. */
+  drawDialog(shelves) {
+    const host = this.container.querySelector('[data-home-dialog]');
+    const active = this.container.ownerDocument.activeElement;
+    const focusId = host.contains(active) ? active.id : '';
+    const scroll = host.querySelector('dialog')?.scrollTop || 0;
+    const existing = host.querySelector('dialog');
+    if (existing?.open) existing.close();
+    host.innerHTML = this.editor?.type === 'directory' ? this.directoryDialogHtml() : this.editor ? this.editorHtml(shelves) : '';
+    const dialog = host.querySelector('dialog');
+    if (!dialog) return;
+    dialog.showModal(); dialog.scrollTop = scroll;
+    if (focusId) dialog.querySelector(`#${CSS.escape(focusId)}`)?.focus({ preventScroll: true });
+    if (!this.saving && this.restoreFocus) { dialog.querySelector(this.restoreFocus)?.focus({ preventScroll: true }); this.restoreFocus = null; }
+    dialog.addEventListener('cancel', () => { this.editor = null; });
+    dialog.addEventListener('close', () => { if (!this.editor) this.container?.querySelector(this.dialogOrigin || '[data-action="directory"]')?.focus(); });
+  }
+
+  /** The complete admitted catalog is reachable even for unknown suites and hidden cards. */
+  directoryDialogHtml() {
+    return `<dialog id="appsHomeDirectory" class="apps-home-editor apps-home-directory" aria-labelledby="appsHomeDirectoryTitle">
+      <header><h2 id="appsHomeDirectoryTitle">All applications</h2><button data-action="close">Done</button></header>
+      <label for="appsHomeSearch">Search applications</label><input id="appsHomeSearch" type="search" value="${esc(this.directoryQuery || '')}" autocomplete="off">
+      <div data-home-directory-results>${this.directoryResultsHtml()}</div></dialog>`;
+  }
+
+  /** A failed catalog read remains unavailable even when its search text changes. */
+  directoryResultsHtml() {
+    return this.planReady ? directoryHtml(this.entries, this.directoryQuery)
+      : '<p role="status">The application list is unavailable. Close this dialog and refresh to try again.</p>';
   }
 
   highlightHtml(rows) {
@@ -309,57 +382,69 @@ export class AppsHomeView {
   async handleClick(ev) {
     const button = ev.target.closest('button');
     if (!button || button.disabled) return;
-    if (button.dataset.integration) {
-      const entry = this.entries.find(e => e.name === button.dataset.card);
-      const item = this.cards.get(entry?.name)?.items[Number(button.dataset.item)];
-      const chosen = item?.actions?.find(a => a.integration === button.dataset.integration)
-        || (item?.integration === button.dataset.integration ? item : null);
-      if (!chosen) return;
-      button.disabled = true;
-      const generation = this.generation;
-      try {
-        const response = await askProbe('/api/swarm/apps/home-plan');
-        if (generation !== this.generation) return;
-        const probe = response.ok && response.body.apps?.find(e => e.name === entry.name)?.summary.find(p => p.app === item.sourceApp);
-        const offer = probe?.integrations?.find(o => o.id === chosen.integration);
-        if (!stageHandoff(offer, chosen.context)) throw new Error('This integration is no longer available. Refresh Home.');
-        this.navigateToView(`tool-${offer.surface}`, { name: offer.surface, url: offer.surfaceUrl });
-      } catch (error) { this.showToast?.(error.message, 'error'); button.disabled = false; }
-      return;
-    }
+    if (button.dataset.integration) { await this.handleIntegration(button); return; }
+    if (button.dataset.homeArea) { this.selectedArea = button.dataset.homeArea; this.selectedApp = null; this.draw(); return; }
+    if (button.dataset.homeDetail) { this.selectedApp = button.dataset.homeDetail; this.draw(); return; }
     if (button.dataset.open) {
       const entry = this.entries.find(e => e.firstSurface === button.dataset.open);
       this.navigateToView(`tool-${button.dataset.open}`, entry ? { name: entry.firstSurface, url: entry.firstSurfaceUrl } : undefined);
       return;
     }
     const { action, id, kind, delta } = button.dataset;
+    if (action === 'directory') { this.openDirectory(); return; }
     if (action === 'refresh') { if (!this.saving) await this.render(this.container); return; }
     if (action === 'close') { this.editor = null; this.draw(); return; }
-    if (action === 'customize' || action === 'edit') { this.editor = action === 'customize' ? { type: 'layout' } : { type: 'card', name: id }; this.draw(); return; }
+    if (action === 'customize' || action === 'edit') {
+      this.dialogOrigin = action === 'customize' ? '[data-action="customize"]' : `[data-action="edit"][data-id="${CSS.escape(id)}"]`;
+      this.editor = action === 'customize' ? { type: 'layout' } : { type: 'card', name: id }; this.draw(); return;
+    }
     const next = structuredClone(this.preferences);
     if (action === 'reset') {
       if (this.editor?.type === 'card') { if (next.cards) delete next.cards[this.editor.name]; await this.save(next); }
       else await this.save({ version: 1 });
     } else if (action === 'collapse') {
       next.collapsedSuites = toggle(next.collapsedSuites, id); await this.save(next);
-    } else if (action === 'move') {
-      if (kind === 'suite') next.suiteOrder = move(ordered(sectionBySuite(this.entries), next.suiteOrder, s => s.key).map(s => s.key), id, Number(delta));
-      else if (kind === 'app') {
-        const suite = this.entries.find(a => a.name === id)?.suite;
-        const group = ordered(this.entries.filter(a => a.suite === suite), next.appOrder, a => a.name).map(a => a.name);
-        next.appOrder = [...move(group, id, Number(delta)), ...(next.appOrder || []).filter(a => !group.includes(a))];
-      } else {
-        next.cards ||= {}; next.cards[this.editor.name] ||= {};
-        const card = next.cards[this.editor.name];
-        card.metricOrder = move(ordered(this.cards.get(this.editor.name).tiles.filter(t => t.id), card.metricOrder).map(t => t.id), id, Number(delta));
-      }
-      await this.save(next);
+    } else if (action === 'move') await this.moveChoice(next, kind, id, delta);
+  }
+
+  /** Revalidate existing context handoffs before leaving the current Home generation. */
+  async handleIntegration(button) {
+    const entry = this.entries.find(e => e.name === button.dataset.card);
+    const item = this.cards.get(entry?.name)?.items[Number(button.dataset.item)];
+    const chosen = item?.actions?.find(a => a.integration === button.dataset.integration)
+      || (item?.integration === button.dataset.integration ? item : null);
+    if (!chosen) return;
+    button.disabled = true;
+    const generation = this.generation;
+    try {
+      const response = await askProbe('/api/swarm/apps/home-plan');
+      if (generation !== this.generation) return;
+      const probe = response.ok && response.body.apps?.find(e => e.name === entry.name)?.summary.find(p => p.app === item.sourceApp);
+      const offer = probe?.integrations?.find(o => o.id === chosen.integration);
+      if (!stageHandoff(offer, chosen.context)) throw new Error('This integration is no longer available. Refresh Home.');
+      this.navigateToView(`tool-${offer.surface}`, { name: offer.surface, url: offer.surfaceUrl });
+    } catch (error) { this.showToast?.(error.message, 'error'); button.disabled = false; }
+  }
+
+  /** Keep saved app, area and metric ordering on the existing account preference contract. */
+  async moveChoice(next, kind, id, delta) {
+    if (kind === 'suite') next.suiteOrder = move(ordered(sectionBySuite(this.entries), next.suiteOrder, s => s.key).map(s => s.key), id, Number(delta));
+    else if (kind === 'app') {
+      const suite = this.entries.find(a => a.name === id)?.suite;
+      const group = ordered(this.entries.filter(a => a.suite === suite), next.appOrder, a => a.name).map(a => a.name);
+      next.appOrder = [...move(group, id, Number(delta)), ...(next.appOrder || []).filter(a => !group.includes(a))];
+    } else {
+      next.cards ||= {}; next.cards[this.editor.name] ||= {};
+      const card = next.cards[this.editor.name];
+      card.metricOrder = move(ordered(this.cards.get(this.editor.name).tiles.filter(t => t.id), card.metricOrder).map(t => t.id), id, Number(delta));
     }
+    await this.save(next);
   }
 
   async handleChange(ev) {
     const { choice, id } = ev.target.dataset;
     if (!choice || this.saving) return;
+    if (choice === 'detail') { this.selectedApp = ev.target.value; this.draw(); return; }
     const next = structuredClone(this.preferences), checked = ev.target.checked;
     if (choice === 'app' || choice === 'suite') {
       const key = choice === 'app' ? 'hiddenApps' : 'hiddenSuites';
@@ -498,8 +583,9 @@ export class AppsHomeView {
     return days === 1 ? ' · 1 day ago' : ` · ${days} days ago`;
   }
 
-  body({ tiles, items, open, done, total, uncheckable, fallback, anyChecked, summaryErrors = 0 }) {
+  body({ tiles, items, open, done, total, uncheckable, fallback, anyChecked, summaryErrors = 0, recentUnavailable = false }) {
     const parts = [];
+    if (recentUnavailable) parts.push('<p class="apps-home-notice">Recent activity could not be checked.</p>');
     if (summaryErrors) parts.push(`<p class="apps-home-notice">${summaryErrors} summary source(s) cannot be checked. Available facts are shown below.</p>`);
 
     if (tiles.length) {
@@ -519,7 +605,7 @@ export class AppsHomeView {
 
     if (total > 0) {
       const label = `${done} of ${total} set up`;
-      parts.push(`<div class="apps-home-todos">
+      parts.push(`<details class="apps-home-todos"><summary>Setup details</summary>
         <div class="apps-home-progress"><span style="width:${total ? Math.round((done / total) * 100) : 0}%"></span></div>
         <p class="apps-home-count">${label}${uncheckable ? ` · ${uncheckable} can't be checked` : ''}</p>
         ${open.slice(0, MAX_ITEMS).map((o) => `
@@ -527,7 +613,7 @@ export class AppsHomeView {
             <div><strong>${esc(o.label)}</strong>${o.detail ? `<span>${esc(o.detail)}</span>` : ''}</div>
             ${o.fix ? `<button type="button" class="apps-home-fix" data-open="${esc(o.fix)}">Fix</button>` : ''}
           </div>`).join('')}
-      </div>`);
+      </details>`);
     }
 
     if (!parts.length) {

@@ -12,16 +12,19 @@ never overwrite `cockpit-theme`. Selecting any portal palette disables applicati
 colors. The preference is browser-local, like the independent Navigation setting.
 The current profile continues to determine application identity, tools and layout.
 
-With top workspace navigation, **More → Settings** opens the full chooser and
-**More → Switch theme** cycles the same saved palettes. Navigation layout, focus,
-knowledge and assistant controls share this menu. In Sidebar layout they remain
-under **Workspace options** beside Profile. These are the original controls, so
+The chevron beside the OSHAL brand opens **OSHAL menu → Settings** for the full chooser;
+**Switch theme** cycles the same saved palettes. Navigation layout, focus,
+knowledge and assistant controls share this menu in both navigation layouts.
+These are the original controls, so
 switching navigation layouts preserves their state and the open application.
-Top workspaces include Federal CRM when the current user can open it. In the
+Top workspaces include Federal CRM and Finance when the current user can open them. In the
 default Home sidebar, explicit workspace metadata removes repeated Learning,
 Career and Create pages while those top destinations are available. A focused
 application keeps its own pages; Sidebar layout restores the full default rail.
-The OSHAL Cockpit brand returns to all applications; it is not repeated as a tab.
+The OSHAL Cockpit brand returns to daily Home; it is not repeated as a tab.
+**OSHAL menu → All applications** opens the complete searchable authorized directory.
+Home's embedded Jarvis follows the same live parent palette without replacing its
+document or unfinished message when dashboard summaries or preferences redraw.
 
 ## An application surface
 

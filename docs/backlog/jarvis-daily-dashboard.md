@@ -1,11 +1,38 @@
 # Jarvis and the daily dashboard
 
-Requested 2026-09-11. Status: **backlogged; implementation has not started**.
+Requested 2026-09-11. Status: **compact presentation implemented; installed acceptance pending**.
 Reconfirmed 2026-09-13: the Jarvis layout remains unsatisfactory. Treat the
 compact layout as P1, make Finance a named area, and place miscellaneous
 applications in the OSHAL menu instead of an `Other` dashboard section.
-This work continues the cockpit landing request and the existing briefing and surface-context
-work. It does not interrupt the current parallel implementation batch.
+This work continues the cockpit landing request and the existing briefing and surface-context work.
+
+## September 13 implementation checkpoint
+
+Home now composes the existing Jarvis page beside at most seven named areas, four
+application summaries and one selected source's details. Finance is named. The
+complete authorized directory, including hidden and unclassified applications,
+remains searchable through **OSHAL menu → All applications**. Dashboard redraws,
+summary refreshes, source selection and preference saves retain the mounted Jarvis
+document and unfinished composer. Leaving Home follows the existing view lifecycle.
+
+Jarvis uses explicit Ready, Listening, Thinking, Speaking and Stopped feedback,
+a visible text composer, Talk/Add/Stop and an Options disclosure. Existing task
+records are grouped by their source/topic prefix with expandable individual results
+and bounded scrolling. Opening and dismissing retain the existing owner-scoped
+handlers; grouping itself does not mark anything read. The ambient Engineering
+label came from the canvas category display; removing that background is not a
+claim that a server dispatch or task-lifecycle defect was repaired.
+
+This delivers the initial JDX-01/JDX-02 presentation and portions of JDX-03/JDX-06.
+Durable grouping/replay/snooze semantics, additional producer adoption (JDX-04),
+and selected-record editable-field context actions (JDX-05) remain open. The Home
+embed does not broaden the focused-application surface bridge. Sources still own
+their data and actions; an unavailable summary is not rendered as a zero count.
+
+`npm run test:daily-dashboard` runs the linked source regressions. AI Test Lab's
+**Jarvis and daily dashboard** scenario registers the browser, lifecycle and HTTP
+asset suites and separately provides three read-only installed-asset readiness
+steps. Running those readiness steps does not execute the linked source tests.
 
 ## Product direction
 
@@ -25,7 +52,8 @@ the same navigation follow-up tracked in
 The supplied screenshots show overlapping text around the eye, a long repetitive Kalshi
 queue, extensive empty space, a crowded row of assistant controls, and fixture/probe cards
 mixed into Home. The user also reports persistent Engineering activity and missing morning
-trade updates. These are reported symptoms; their runtime causes still need reproduction.
+trade updates. The checkpoint above diagnoses the decorative Engineering label and
+repairs presentation overlap; missing producer delivery still needs runtime reproduction.
 Do not infer that a displayed activity indicator proves a tool was actually dispatched, or
 that another application's lack of updates proves its producer ran successfully.
 
@@ -80,7 +108,7 @@ Navigation or a delayed model answer must not overwrite newer manual edits.
 
 ## Verification and Lab registration
 
-These are planned acceptance cases. Add actual executable suites and their existing AI Test Lab
+These are full-workstream acceptance cases; the checkpoint above covers only the delivered slice. Add actual executable suites and their existing AI Test Lab
 registrations with each implementation slice; do not register placeholders as runnable tests.
 
 - Real browser layout checks at desktop and mobile widths, 200% zoom, both themes, long text,

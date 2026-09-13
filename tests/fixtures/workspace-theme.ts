@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the actual Cockpit DOM, theme/settings/Home/ribbon modules and shared Budgets surface with synthetic read-only HTTP data.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise the real compact header disclosure and relocated theme control in the component fixture.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Include the real workspace navigation that owns the OSHAL menu and shared chooser controls.
  * =============================================================================
  */
 import express from 'express';
@@ -21,6 +22,7 @@ import { initHeaderOptions } from '/cockpit/js/header-options.js';
 import { SettingsGlobalTab } from '/cockpit/js/views/SettingsGlobalTab.js';
 import { AppsHomeView } from '/cockpit/js/views/AppsHomeView.js';
 import { RibbonNav } from '/cockpit/js/components/RibbonNav.js';
+import { WorkspaceNavigation } from '/cockpit/js/workspace-navigation.js';
 const theme = new ThemeManager(), main = document.getElementById('mainContent');
 initHeaderOptions();
 const home = new AppsHomeView();
@@ -43,6 +45,7 @@ const ribbon = new RibbonNav('ribbonContainer',id=>{
   if(id==='settings')showSettings(); else if(id==='tool-budgets')showSurface(); else void showHome();
 });
 await ribbon.ready;
+new WorkspaceNavigation({profile:ribbon.profile,studentMode:ribbon.studentMode});
 if(new URLSearchParams(location.search).get('app')==='fixture-studio') {
   theme.setApplicationTheme('fixture-studio','/fixture/packaged.css');
 }
@@ -72,6 +75,7 @@ function fixtureReads(app: express.Application) {
   const bodies: Record<string, unknown> = {
     '/api/ui/profile': { profile }, '/api/auth/user': { sub: 'theme-fixture', guestMode: false },
     '/api/cli-tokens/whoami': { operator: false }, '/api/tools': { tools: [] }, '/api/tools/dynamic': { tools: [] },
+    '/api/ui/workspaces': { workspaces: [] },
     '/api/swarm/apps/home-plan': homePlan(), '/api/home/preferences': { preferences: { version: 1 }, revision: 0 },
     '/api/jarvis/tasks': { tasks: [] }, '/api/budgets': { budgets: [] },
     '/fixture/summary': { tiles: [{ label: 'Sample items', value: '3', tone: 'neutral' }],

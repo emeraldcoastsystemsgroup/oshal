@@ -62,7 +62,7 @@ export const APPEARANCE_SCENARIOS: Scenario[] = [{
   steps: [{ id: 'workspace-stylesheet', app: 'cockpit', label: 'Workspace stylesheet', run: workspaceStylesheet }],
 }, {
   id: 'cockpit-workspace-navigation', title: 'Cockpit workspace navigation', group: 'tool',
-  description: 'Read current application workspace links. Linked tests cover contextual sidebars, Federal CRM, custom screens and current policy. The Career group integration recipe requires the public store checkout (OSHAL_PUBLIC_STORE_ROOT); this read-only check does not execute it.',
+  description: 'Read current application workspace links. Linked tests cover Finance, the OSHAL menu, contextual sidebars, Federal CRM, custom screens and current policy. The Career group integration recipe requires the public store checkout (OSHAL_PUBLIC_STORE_ROOT); this read-only check does not execute it.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/workspace-navigation-model.spec.ts' },
     { level: 'integration', path: 'tests/unit/workspace-navigation-routes.spec.ts' },

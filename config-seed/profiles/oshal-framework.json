@@ -389,6 +389,7 @@
       },
       {
         "id": "tool-finance-home",
+        "workspace": "finance",
         "icon": "codicon codicon-graph-line",
         "label": "Finance",
         "section": "top",

@@ -2,10 +2,10 @@
 
 Requested 2026-09-11. **The optional navigation overlay and independent Workspace
 skin are implemented and deployed; focused native acceptance and preservation
-checks passed. The broader
-dashboard remains a backlogged design proposal.**
-The September 13 Finance/OSHAL-menu direction below is **P1 and backlogged**;
-it is not part of the deployed navigation checkpoint or the existing prototype.
+checks passed. The September 13 compact Home/Jarvis and Finance/OSHAL-menu source
+checkpoint is implemented; installed acceptance is pending.** Additional briefing
+producers and editable-field context actions remain backlogged. The prototype
+below remains an illustrative design artifact, separate from the implementation.
 The [clickable HTML prototype](../mockups/cockpit-workspaces.html) is self-contained
 and opens locally without a server. It uses only synthetic content. No application,
 model, microphone, file, message or account is accessed. Its route references are
@@ -60,20 +60,20 @@ The separate **Navigation** setting offers **Sidebar (existing layout)** and
 **Top workspaces + sidebar**. Sidebar remains the default. The preference is local
 to this browser and does not change the saved color theme, current URL, active
 screen or unsaved iframe content. It is available in Global Settings and under
-**More → Navigation layout**, including inside focused applications. Sidebar
-layout keeps the same controls in **Workspace options** beside Profile.
+**OSHAL menu → Navigation layout**, including inside focused applications. The
+same brand-adjacent menu holds these controls in Sidebar layout.
 
 The September 12 refinement places the workspace navigation **inside the top
 header**, between the application brand and existing controls. It no longer
 consumes a separate desktop row. On phones, an accessible Workspaces disclosure
-opens the same destinations below the header; keyboard focus, More and Retry
+opens the same destinations below the header; keyboard focus, the OSHAL menu and Retry
 remain available. Navigation remains independent of the color palette.
 
 The subsequent header cleanup keeps one global **OSHAL Cockpit** home link and
-the major workspace tabs. **More** opens beneath its own button, aligns to that
-button's right edge when space is tight, and contains the remaining applications
-plus secondary workspace controls. It always retains the More label; the selected
-extra application is marked once inside the menu. Profile remains in the header.
+the major workspace tabs. The chevron beside the brand opens the **OSHAL menu**
+beneath its trigger, clamped to the viewport. It contains Home, All applications,
+searchable remaining workspaces and secondary controls. The selected extra
+application is marked once inside the menu. Profile remains in the header.
 Menu and layout changes retain the original action nodes and open application.
 
 The [appearance contract](../apps/appearance.md) documents shared page adoption,
@@ -85,11 +85,12 @@ recorded in the [September 12 release](../releases/workspace-facelift-2026-09-12
 
 The optional rail opens existing complete profiles using ordinary same-tab links:
 `/cockpit/`, `/cockpit/?app=little-monsters`, `/cockpit/?app=create` and
-`/cockpit/?app=intelligent-career` and `/cockpit/?app=capture-crm`. The Career slot prefers that admitted group,
+`/cockpit/?app=intelligent-career`, `/cockpit/?app=capture-crm` and
+`/cockpit/?app=finance`. The Career slot prefers that admitted group,
 or uses the admitted `/cockpit/?app=career-hunter` application when the group is
-unavailable. Only the selected entry is removed from More. Learning is a label
+unavailable. Only the selected entry is removed from the OSHAL menu. Learning is a label
 for Little Monsters, not a new application. Other eligible complete applications, including custom skinned
-profiles, appear in **More**. All applications remains reachable through the Home brand and existing
+profiles, appear in the **OSHAL menu**. All applications remains reachable there and existing
 sidebar tools remain reachable through their owning workspaces. People/HR is not invented.
 
 The contextual sidebar refinement removes the default Home sidebar's repeated
@@ -119,12 +120,12 @@ link starts at that app's canonical entry and does not forward another app's rec
 artifact or business-workspace parameters. Browser Back/Forward and the app's own
 unsaved-work handlers retain their normal behavior. Student/kiosk pages do not add
 workspace switching; zen and fullscreen hide the rail. On narrow screens the major
-links scroll within the bar while More and the existing mobile drawer remain usable.
+links scroll within the bar while the OSHAL menu and existing mobile drawer remain usable.
 
 Source, isolated test results and native deployment acceptance are recorded
-separately. This overlay does not implement the prototype dashboard, replace any
-application's landing page, or turn app discovery into permission to use every
-member action.
+separately. The compact daily Home checkpoint uses existing summary and Jarvis
+contracts; prototype-only editable drafts and producer adoption remain proposed.
+Workspace navigation does not replace application landing pages or grant member actions.
 
 `npm run test:workspace-navigation` runs the isolated profile, authorization,
 preference, browser and catalog regressions. The **Cockpit workspace navigation**
@@ -138,11 +139,13 @@ Reconfirmed 2026-09-13 alongside the
 and miscellaneous applications belong in the OSHAL menu. The personal dashboard
 must not use a large `Other` shelf as a substitute for useful daily information.
 
-The current implementation has separate mechanisms: Finance falls into the top
-rail's **More** because it is not a curated tab; Home labels the `ai-finance`
-suite **AI Finance** and places unknown/missing suites under **Other**; the
-OSHAL brand is currently a Home link, not an application dropdown. Implement the
-requested change across those surfaces rather than only renaming one label.
+Implemented source checkpoint: admitted Finance is a curated top workspace at
+`/cockpit/?app=finance`; Home labels its daily area Finance; unknown/missing suites
+remain in the searchable authorized directory without an Other daily shelf.
+The brand remains a Home link with an adjacent OSHAL menu disclosure. Only the
+existing Finance home sidebar entry gains explicit `workspace: finance`; unrelated
+Money tools remain reachable. Package permissions and business-data boundaries
+continue through the existing discovery and application endpoints.
 
 Done when:
 

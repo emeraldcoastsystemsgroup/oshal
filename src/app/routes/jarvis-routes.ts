@@ -25,6 +25,7 @@
  * delegation replaces it.
  *
  * CHANGE LOG
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Serve the compact dashboard assets through the existing authenticated fixed asset allowlist.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Load contextual YAML tool hints and caller-visible artifact targets; bind proposed browser handoffs to the selected owner handle.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
@@ -432,6 +433,8 @@ function ticketUpdatedAtMs(ticket: InternalTicket): number {
 }
 
 const JARVIS_CLIENT_ASSETS = new Map([
+  ['jarvis-dashboard.js', 'application/javascript; charset=utf-8'],
+  ['jarvis-dashboard.css', 'text/css; charset=utf-8'],
   ['jarvis-package-tools.js', 'application/javascript; charset=utf-8'],
   ['jarvis-stage.js', 'application/javascript; charset=utf-8'],
   ['jarvis-stage.css', 'text/css; charset=utf-8'],

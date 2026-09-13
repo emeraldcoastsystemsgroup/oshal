@@ -6,12 +6,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove selectable Workspace styling through real Cockpit components, persisted choices, shared iframes and transient package themes in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify the existing chooser through relocated header controls with keyboard and pointer dismissal.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Exercise the chooser inside the OSHAL menu alongside the compact daily Home composition.
  * =============================================================================
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
-import { readFileSync } from 'node:fs';
+import { type Browser, type BrowserContext, type Page } from 'playwright';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { startWorkspaceThemeFixture } from '../fixtures/workspace-theme';
+import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
 
 declare global {
@@ -23,6 +25,7 @@ declare global {
   }
 }
 let fixture: Awaited<ReturnType<typeof startWorkspaceThemeFixture>>;
+let isolated: Awaited<ReturnType<typeof launchIsolatedBrowser>>;
 let browser: Browser, context: BrowserContext, page: Page;
 let errors: string[];
 
@@ -41,7 +44,7 @@ async function token(name: string) {
 
 /** @description Exercise the actual sidebar options disclosure before the existing cycle control. */
 async function cycleTheme() {
-  await page.locator('#cockpitHeaderOptions > summary').click();
+  await page.locator('#workspaceNavigationMore > summary').click();
   await page.locator('#themeToggle').click();
 }
 
@@ -58,8 +61,17 @@ function contrast(foreground: string, background: string) {
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
-beforeAll(async () => { fixture = await startWorkspaceThemeFixture(); browser = await chromium.launch({ headless: true }); });
-afterAll(async () => { await browser?.close(); await fixture?.close(); });
+beforeAll(async () => {
+  fixture = await startWorkspaceThemeFixture(); isolated = await launchIsolatedBrowser(); browser = isolated.browser;
+});
+afterAll(async () => {
+  try {
+    if (isolated) {
+      const cleanup = await isolated.close(); mkdirSync('temp', { recursive: true });
+      writeFileSync(`temp/workspace-theme-browser-cleanup-${cleanup.pid}.json`, JSON.stringify(cleanup, null, 2) + '\n', { flag: 'wx' });
+    }
+  } finally { await fixture?.close(); }
+});
 beforeEach(async () => {
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
   await context.route('**/*', route => new URL(route.request().url()).origin === fixture.origin ? route.continue() : route.abort());
@@ -170,8 +182,8 @@ it('renders readable paper cards on the existing Home DOM at desktop and phone w
   }
   expect(contrast('#ffffff', await token('--accent-primary'))).toBeGreaterThanOrEqual(4.5);
   expect(await page.locator('.header-bar').evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgb(255, 255, 255)');
-  expect(await page.locator('.apps-home-card').count()).toBe(3);
-  expect(await page.locator('.apps-home-head').innerText()).toContain('Your world, at a glance.');
+  expect(await page.locator('.apps-home-card').count()).toBe(1);
+  expect(await page.locator('.apps-home-head').innerText()).toContain('Today');
   await page.keyboard.press('Tab');
   expect(await page.evaluate(() => getComputedStyle(document.activeElement!).outlineStyle)).toBe('solid');
   for (const width of [1024, 768, 390]) {
@@ -258,28 +270,28 @@ it('keeps secondary header actions tucked away and makes the real Settings choos
   expect(await page.locator('#themeToggle').isVisible()).toBe(false);
   expect(await page.locator('#zenModeBtn').isVisible()).toBe(false);
   expect(await page.locator('#profileBtn').isVisible()).toBe(true);
-  await page.locator('#cockpitHeaderOptions > summary').click();
+  await page.locator('#workspaceNavigationMore > summary').click();
   await page.locator('#portalSettingsBtn').click();
   expect(await page.locator('#settingsThemePicker').isVisible()).toBe(true);
-  expect(await page.locator('#cockpitHeaderOptions').getAttribute('open')).toBeNull();
+  expect(await page.locator('#workspaceNavigationMore').getAttribute('open')).toBeNull();
   expect(await page.locator('#cockpitHomeLink').getAttribute('href')).toBe('/cockpit/');
   expect(errors).toEqual([]);
 });
 
 it('returns keyboard focus to the options trigger after switching theme', async () => {
   await open('midnight');
-  const trigger = page.locator('#cockpitHeaderOptions > summary');
+  const trigger = page.locator('#workspaceNavigationMore > summary');
   await trigger.focus(); await page.keyboard.press('Enter');
   await page.locator('#themeToggle').focus(); await page.keyboard.press('Enter');
   expect(await page.locator('html').getAttribute('data-theme')).not.toBe('midnight');
-  expect(await page.locator('#cockpitHeaderOptions').getAttribute('open')).toBeNull();
+  expect(await page.locator('#workspaceNavigationMore').getAttribute('open')).toBeNull();
   expect(await trigger.evaluate(element => element === document.activeElement)).toBe(true);
   expect(errors).toEqual([]);
 });
 
 it('dismisses the options disclosure using Escape and outside pointer without activating a tool', async () => {
   await open('midnight');
-  const trigger = page.locator('#cockpitHeaderOptions > summary');
+  const trigger = page.locator('#workspaceNavigationMore > summary');
   await trigger.focus(); await page.keyboard.press('Enter');
   expect(await page.locator('#themeToggle').isVisible()).toBe(true);
   await page.keyboard.press('Escape');

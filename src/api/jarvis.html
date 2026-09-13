@@ -2,11 +2,10 @@
 <!--
   OSHAL Assistant ("Jarvis") surface — the unified front door over every OSHAL app (ADR-050).
 
-  VOICE-FIRST, THEME-NATIVE: leads with an audio-reactive orb + voice I/O, but it is a first-class
-  cockpit surface — it MIRRORS the active cockpit theme (midnight etc.) via the standard theme-sync
-  script every sibling surface uses, so the orb + glass cards take the live accent (purple in
-  midnight) and switch with the operator's theme. The orb voices the answer; the data lives on the
-  same focused, width-constrained column directly under it:
+  COMPACT, THEME-NATIVE: text and voice share a compact assistant surface. It is a first-class
+  cockpit surface — it follows the active cockpit theme through the standard shared bootstrap.
+  A small state indicator, visible composer and grouped task updates provide the default layout;
+  the existing full response stage and discussion remain available for detailed answers:
     • a live Command Center glance (GET /api/jarvis/overview) — swarm, comms, active work, calendar
     • a conversation log with markdown / GFM tables / Mermaid diagrams / "Open ↗" handoff chips
   Voice runs in the browser (Web Speech API). The brain is POST /api/jarvis/ask. The cockpit hides
@@ -17,6 +16,8 @@
   SEQ | AUTHOR | DESCRIPTION
   -----------------------------------------------------------------------------
   1 | maintainer@emeraldcoastsystemsgroup.com | Present live package tool proposals only on the primary transient result surface, outside conversation history.
+  2 | maintainer@emeraldcoastsystemsgroup.com | Compact the existing assistant controls and group task updates without changing conversation or delivery ownership.
+  3 | maintainer@emeraldcoastsystemsgroup.com | Stop the hidden dashboard node animation while retaining the assistant orb and voice rendering.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -370,8 +371,9 @@
   <link rel="stylesheet" href="/api/jarvis/assets/jarvis-stage.css" />
   <link rel="stylesheet" href="/api/jarvis/assets/jarvis-ambient.css" />
   <link rel="stylesheet" href="/api/jarvis/assets/jarvis-speakers.css" />
+  <link rel="stylesheet" href="/api/jarvis/assets/jarvis-dashboard.css" />
 </head>
-<body>
+<body class="jarvis-dashboard">
   <!-- Ambient swarm field: the live bot mesh, drawn behind Jarvis; online bots glow + pulse. -->
   <canvas id="nodes" class="nodefield" aria-hidden="true"></canvas>
   <div id="nodeTip" class="node-tip" aria-hidden="true"></div>
@@ -392,12 +394,11 @@
       <!-- ── MAIN: orb + conversation ──────────────────────────────────── -->
       <div class="main">
         <section class="hero">
-          <div class="eyebrow">OSHAL Assistant</div>
-          <div class="canvas-wrap">
-            <canvas id="orb" role="button" tabindex="0" aria-label="Talk to Jarvis" aria-describedby="status"></canvas>
-            <div class="ambient-mount" id="ambientMount"></div>
-          </div>
-          <div class="status" id="status">Tap the orb and start talking</div>
+          <header class="dashboard-heading">
+            <div class="canvas-wrap"><canvas id="orb" role="button" tabindex="0" aria-label="Talk to Jarvis" aria-describedby="status"></canvas></div>
+            <div class="dashboard-title"><div class="eyebrow">Jarvis Assistant</div><span id="assistantState" class="assistant-state" role="status" aria-live="polite" data-state="idle">Ready</span></div>
+          </header>
+          <div class="status" id="status" aria-live="polite">Ask a question, give me a task, or talk.</div>
 
           <!-- Haven (ADR-079): pull-based proactive suggestions — shown when you arrive, never pushed. -->
           <div id="havenNotices" style="display:none;max-width:640px;margin:10px auto 0;text-align:left;"></div>
@@ -445,6 +446,50 @@
             })();
           </script>
 
+          <form class="typer show" id="typer">
+            <label class="dashboard-sr-only" for="typein">Message Jarvis</label>
+            <input id="typein" type="text" placeholder="Ask or tell Jarvis what to do..." autocomplete="off" />
+            <button type="submit">Send</button>
+          </form>
+          <div class="controls">
+            <button class="mic" id="mic" type="button"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z"/><path d="M19 11a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-3.06A9 9 0 0 0 21 11h-2Z"/></svg><span id="miclabel">Tap to talk</span></button>
+            <button class="ctl" id="addMediaBtn" type="button" title="Add a photo or document" aria-haspopup="true" aria-expanded="false">+ Add</button>
+            <button class="ctl" id="mute" type="button" title="Stop voice and visual output">Stop</button>
+            <details class="dashboard-options" id="assistantOptions">
+              <summary class="ctl">Options</summary>
+              <div class="dashboard-options-body">
+                <div class="ctlrow" id="ctlrow">
+                  <button class="ctl" id="newThreadBtn" type="button" title="Start a new chat thread">New conversation</button>
+                  <button class="ctl" id="typeToggle" type="button">Type</button>
+                  <button class="ctl" id="orbBtn" type="button" title="Cycle orb style">Halo</button>
+                  <button class="ctl" id="voiceBtn" type="button" title="Cycle voice">Voice</button>
+                  <button class="ctl" id="discussionBtn" type="button" title="Open the durable discussion" aria-controls="discussionDrawer">Discussion</button>
+                  <button class="ctl" id="closeThreadBtn" type="button" title="Close this chat (marks its ticket complete)">Close conversation</button>
+                  <a class="ctl" href="/api/jarvis/briefings/settings">Briefing preferences</a>
+                </div>
+                <div class="ambient-mount" id="ambientMount"></div>
+              </div>
+            </details>
+          </div>
+
+          <div class="attach-strip" id="attachStrip" hidden aria-label="Attached media"></div>
+          <div class="attach-strip" aria-label="File for Jarvis">
+            <button type="button" class="attach-opt" id="chooseArtifact">Choose from OSHAL</button>
+            <span id="selectedArtifact" class="attach-chip" hidden><span id="selectedArtifactName" class="attach-name"></span><button type="button" class="attach-x" id="clearArtifact" aria-label="Remove selected file">×</button></span>
+          </div>
+
+          <!-- Media picker. Camera uses <input capture> (native camera app) not getUserMedia —
+               the cockpit iframe blocks getUserMedia, and capture works on phones regardless. -->
+          <div class="attach-menu" id="attachMenu" hidden role="menu" aria-label="Add media">
+            <button type="button" class="attach-opt" data-pick="cam" role="menuitem">📷 Take photo</button>
+            <button type="button" class="attach-opt" data-pick="img" role="menuitem">🖼️ Upload photo</button>
+            <button type="button" class="attach-opt" data-pick="doc" role="menuitem">📄 Add document</button>
+          </div>
+          <input id="camInput" type="file" accept="image/*" capture="environment" hidden />
+          <input id="imgInput" type="file" accept="image/*" multiple hidden />
+          <input id="docInput" type="file" accept=".txt,.md,.markdown,.csv,.json,.log,.text,.yml,.yaml,.tsv,.xml,.html,.rtf,.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*" multiple hidden />
+
+          <div class="chips" id="chips"><span class="spin"><span class="dot"></span> loading…</span></div>
           <div class="bubble">
             <div class="you" id="you"></div>
             <div class="ai" id="ai"></div>
@@ -459,44 +504,6 @@
               </span></div>
             <div class="bx" id="resultContent"></div>
           </section>
-
-          <div class="controls">
-            <button class="mic" id="mic"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z"/><path d="M19 11a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-3.06A9 9 0 0 0 21 11h-2Z"/></svg><span id="miclabel">Tap to talk</span></button>
-          </div>
-          <div class="ctlrow" id="ctlrow">
-            <button class="ctl" id="newThreadBtn" title="Start a new chat thread (opens a fresh chat-ticket)">✎ New</button>
-            <button class="ctl" id="typeToggle">⌨ Type</button>
-            <button class="ctl" id="addMediaBtn" title="Add a photo or document" aria-haspopup="true" aria-expanded="false">＋ Add</button>
-            <button class="ctl" id="mute" title="Stop / mute voice">■ Stop</button>
-            <button class="ctl" id="orbBtn" title="Cycle orb style">◎ Halo</button>
-            <button class="ctl" id="voiceBtn" title="Cycle voice">🔊 Voice</button>
-            <button class="ctl" id="discussionBtn" title="Open the durable discussion" aria-controls="discussionDrawer">☰ Discussion</button>
-            <button class="ctl" id="closeThreadBtn" title="Close this chat (marks its ticket complete)">✕ Close</button>
-          </div>
-
-          <div class="attach-strip" id="attachStrip" hidden aria-label="Attached media"></div>
-          <div class="attach-strip" aria-label="File for Jarvis">
-            <button type="button" class="attach-opt" id="chooseArtifact">Choose from OSHAL</button>
-            <span id="selectedArtifact" class="attach-chip" hidden><span id="selectedArtifactName" class="attach-name"></span><button type="button" class="attach-x" id="clearArtifact" aria-label="Remove selected file">×</button></span>
-          </div>
-
-          <form class="typer" id="typer">
-            <input id="typein" type="text" placeholder="Ask me anything…" autocomplete="off" />
-            <button type="submit">Ask</button>
-          </form>
-
-          <!-- Media picker. Camera uses <input capture> (native camera app) not getUserMedia —
-               the cockpit iframe blocks getUserMedia, and capture works on phones regardless. -->
-          <div class="attach-menu" id="attachMenu" hidden role="menu" aria-label="Add media">
-            <button type="button" class="attach-opt" data-pick="cam" role="menuitem">📷 Take photo</button>
-            <button type="button" class="attach-opt" data-pick="img" role="menuitem">🖼️ Upload photo</button>
-            <button type="button" class="attach-opt" data-pick="doc" role="menuitem">📄 Add document</button>
-          </div>
-          <input id="camInput" type="file" accept="image/*" capture="environment" hidden />
-          <input id="imgInput" type="file" accept="image/*" multiple hidden />
-          <input id="docInput" type="file" accept=".txt,.md,.markdown,.csv,.json,.log,.text,.yml,.yaml,.tsv,.xml,.html,.rtf,.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*" multiple hidden />
-
-          <div class="chips" id="chips"><span class="spin"><span class="dot"></span> loading…</span></div>
         </section>
 
       </div>
@@ -506,8 +513,7 @@
         <div class="sect" id="threadsSect" style="display:none"><span class="t">Conversations</span></div>
         <div id="threads" class="threads"></div>
 
-        <div class="sect" id="shelfSect" style="display:none"><span class="t">Work queue</span></div>
-        <a href="/api/jarvis/briefings/settings" style="color:var(--accent);font-size:12px">Briefing preferences</a>
+        <div class="sect" id="shelfSect" style="display:none"><span class="t">Updates</span></div>
         <div id="shelf" class="shelf"></div>
 
         <div class="sect"><span class="t">Status</span><button class="refresh" id="refresh" title="Refresh">↻</button></div>
@@ -538,6 +544,7 @@
     window.dispatchEvent(new Event('mermaid-ready'));
   } catch (e) { /* offline / blocked — diagrams stay as readable text */ }
 </script>
+<script src="/api/jarvis/assets/jarvis-dashboard.js"></script>
 <script src="/api/jarvis/briefings/client.js"></script>
 <script src="/api/jarvis/assets/jarvis-stage.js"></script>
 <script src="/api/jarvis/assets/jarvis-ambient-core.js"></script>
@@ -899,7 +906,10 @@ function drawNodes(){
   nctx.restore();   // end main-area clip
   // No random pop-ups: bot names appear only on hover (see the #nodeTip mousemove handler below).
 }
-function nodeTick(){ nt+=0.016; drawNodes(); requestAnimationFrame(nodeTick); }
+function nodeTick(){
+  if(document.body.classList.contains('jarvis-dashboard')) return;
+  nt+=0.016; drawNodes(); requestAnimationFrame(nodeTick);
+}
 nodeTick();
 /* Hover a swarm node → show its name + live status. Window-level hit-test (canvas stays
    pointer-events:none so it never blocks the UI). Hover the green/lit dot to see the bot working. */
@@ -935,7 +945,7 @@ async function loadActivity(){
 const scroll=$('scroll'), statusEl=$('status'), youEl=$('you'), aiEl=$('ai'), bubbleEl=document.querySelector('.bubble');
 const micBtn=$('mic'), micLabel=$('miclabel');
 function setStatus(s,err){ statusEl.textContent=s; statusEl.classList.toggle('err',!!err); }
-function setMode(m){ mode=m; }
+function setMode(m){ mode=m; window.JarvisDashboard?.setMode(m); }
 let centerCopyVersion=0;
 function showCenterUserCopy(text,interim){
   centerCopyVersion+=1;
@@ -1584,6 +1594,10 @@ function shelfSummaryHtml(m) {
 }
 
 function renderShelf(jobs) {
+  if (window.JarvisDashboard) {
+    window.JarvisDashboard.renderTasks(jobs, { isRead, source: catchupSource, open: focusTask, dismiss: dismissJob, report: taskReport, discussion: openDiscussion });
+    return;
+  }
   const el = $('shelf');
   if (!jobs.length) { $('shelfSect').style.display = 'none'; el.innerHTML = ''; return; }
   $('shelfSect').style.display = '';
@@ -2273,7 +2287,8 @@ function stopJarvisOutput(){
   stopTts(); activeVoicePreviewFinish?.(); activeSpeechFinish?.(); stopListening(false);
   clearCenterCopy(++centerCopyVersion);
   responseStageController?.reset(); setResponseActive(false); setMode('idle');
-  setStatus('Stopped. Tap the orb to talk');
+  setStatus('Stopped. You can type or talk when ready.');
+  window.JarvisDashboard?.setMode('stopped');
 }
 $('mute').addEventListener('click',stopJarvisOutput);
 $('responseStopBtn')?.addEventListener('click',stopJarvisOutput);
@@ -2439,7 +2454,7 @@ $('camInput').addEventListener('change', e=>{ addImageFiles([...e.target.files])
 $('imgInput').addEventListener('change', e=>{ addImageFiles([...e.target.files]); e.target.value=''; });
 $('docInput').addEventListener('change', e=>{ addDocFiles([...e.target.files]); e.target.value=''; });
 
-$('typeToggle').addEventListener('click',()=>{ $('typer').classList.toggle('show'); $('typein').focus(); });
+$('typeToggle').addEventListener('click',()=>{ $('typer').classList.add('show'); $('assistantOptions').open=false; $('typein').focus(); });
 $('newThreadBtn') && $('newThreadBtn').addEventListener('click',()=>{ startNewThread(true); });
 $('closeThreadBtn') && $('closeThreadBtn').addEventListener('click',()=>{ closeThread(); });
 $('typer').addEventListener('submit',e=>{ e.preventDefault(); const v=$('typein').value.trim(); if(v || pendingAttachments.length){ handleInput(v); $('typein').value=''; } });

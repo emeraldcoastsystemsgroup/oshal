@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep brand, workspaces and actions in one header row, with an unclipped compact disclosure on phones.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Position the More list relative to its own trigger instead of the entire workspace rail.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Use opaque menu surfaces and independent application scrolling, with outer scrolling for short windows and expanded controls.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Anchor the shared OSHAL menu beside the brand in both layouts, with bounded search and accessible phone controls.
  */
 
 #workspaceNavigation[hidden], .workspace-navigation-options[hidden] { display: none; }
@@ -15,10 +16,11 @@
   grid-template-columns: minmax(0, max-content) minmax(0, 1fr) max-content;
   gap: 12px;
 }
-[data-navigation-layout="workspaces"] .header-left { min-width: 0; max-width: min(22vw, 240px); }
+[data-navigation-layout] .header-left { min-width: 0; max-width: min(30vw, 280px); gap: 4px; }
+[data-navigation-layout] .header-left .logo { min-width: 0; }
 [data-navigation-layout="workspaces"] .header-left .logo { min-width: 0; gap: 8px; }
-[data-navigation-layout="workspaces"] .header-left .logo svg { flex-shrink: 0; }
-[data-navigation-layout="workspaces"] .logo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-navigation-layout] .header-left .logo svg { flex-shrink: 0; }
+[data-navigation-layout] .logo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 [data-navigation-layout="workspaces"] .header-right { margin-left: 0; }
 #workspaceNavigation {
   display: flex;
@@ -31,7 +33,7 @@
 }
 .workspace-navigation-destinations { display: flex; align-items: center; min-width: 0; width: 100%; gap: 4px; }
 .workspace-navigation-links { display: flex; align-items: center; min-width: 0; overflow-x: auto; gap: 2px; }
-#workspaceNavigation a, #workspaceNavigation summary, #workspaceNavigation button {
+:is(#workspaceNavigation, #workspaceNavigationMore) :is(a, summary, button) {
   display: block;
   padding: 9px 10px;
   border: 1px solid transparent;
@@ -43,22 +45,21 @@
   white-space: nowrap;
   cursor: pointer;
 }
-#workspaceNavigation a:hover, #workspaceNavigation summary:hover, #workspaceNavigation button:hover {
+:is(#workspaceNavigation, #workspaceNavigationMore) :is(a, summary, button):hover {
   background: var(--bg-tertiary);
   border-color: var(--border-color);
 }
-#workspaceNavigation a[aria-current="page"] {
+:is(#workspaceNavigation, #workspaceNavigationMore) a[aria-current="page"] {
   font-weight: 700;
   box-shadow: inset 0 -3px var(--accent-primary);
   background: var(--bg-tertiary);
 }
-#workspaceNavigation :focus-visible, .workspace-navigation-control :focus-visible {
+:is(#workspaceNavigation, #workspaceNavigationMore) :focus-visible, .workspace-navigation-control :focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: -2px;
 }
-#workspaceNavigationMore { position: relative; flex: 0 1 auto; min-width: 62px; max-width: 180px; }
-#workspaceNavigationMore summary { list-style: none; overflow: hidden; text-overflow: ellipsis; }
-#workspaceNavigationMore summary::after { content: ' ▾'; }
+#workspaceNavigationMore { position: relative; flex: 0 0 32px; color: var(--text-primary); font-size: 13px; }
+#workspaceNavigationMore > summary { display: flex; justify-content: center; align-items: center; list-style: none; width: 32px; height: 40px; padding: 0; }
 #workspaceNavigationMore summary::-webkit-details-marker { display: none; }
 .workspace-navigation-more, .workspace-navigation-options {
   position: absolute;
@@ -73,8 +74,14 @@
   overflow-wrap: anywhere;
   z-index: 110;
 }
-.workspace-navigation-more { display: flex; flex-direction: column; max-height: min(680px, calc(100dvh - 80px)); top: calc(100% + 8px); min-width: 200px; max-width: min(360px, calc(100vw - 24px)); left: 0; }
-#workspaceNavigationMore[data-align-end] > .workspace-navigation-more { left: auto; right: 0; }
+.workspace-navigation-more { display: flex; flex-direction: column; position: fixed; max-height: min(760px, calc(100dvh - 72px)); width: min(360px, calc(100vw - 16px)); left: 8px; top: 56px; }
+.workspace-menu-home { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.workspace-menu-home > :last-child { margin-left: auto; }
+.workspace-menu-search { display: grid; gap: 6px; margin: 8px 0; color: var(--text-secondary); font-size: 12px; flex: 0 0 auto; }
+.workspace-menu-search input { min-width: 0; width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; padding: 9px; color: var(--text-primary); background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md, 8px); }
+.workspace-menu-empty { font-size: 12px; color: var(--text-secondary); margin: 8px 0; }
+.workspace-menu-empty[hidden], .workspace-navigation-status:empty { display: none; }
+.workspace-navigation-status { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .workspace-navigation-more-links { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .workspace-navigation-more-links:not(:empty) { min-height: 80px; }
 .workspace-navigation-more a { white-space: normal !important; }
@@ -90,16 +97,15 @@
 .workspace-navigation-options label { display: flex; align-items: center; gap: 8px; padding: 10px 6px; cursor: pointer; }
 .workspace-navigation-options input { accent-color: var(--accent-primary); }
 .workspace-navigation-options p { color: var(--text-secondary); margin: 8px 6px 4px; font-size: 12px; line-height: 1.5; }
-#workspaceNavigation [data-workspace-status] { min-width: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.25; }
+:is(#workspaceNavigation, #workspaceNavigationMore) [data-workspace-status] { min-width: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.25; }
 #workspaceNavigation button { flex-shrink: 0; }
 #workspaceNavigation #workspaceNavigationCompactToggle { display: none; }
-body.zen-mode #workspaceNavigation { display: none; }
+body.zen-mode :is(#workspaceNavigation, #workspaceNavigationMore) { display: none; }
 @media (max-width: 960px) {
   [data-navigation-layout="workspaces"] .header-bar { padding: 0 12px; gap: 8px; }
-  [data-navigation-layout="workspaces"] .header-left { max-width: 150px; }
+  [data-navigation-layout] .header-left { max-width: 200px; }
   [data-navigation-layout="workspaces"] .logo-text { font-size: 14px; }
   #workspaceNavigation a, #workspaceNavigation summary { padding: 9px 8px; }
-  #workspaceNavigationMore { max-width: 130px; }
 }
 @media (max-width: 640px) {
   [data-navigation-layout="workspaces"] .header-bar { grid-template-columns: max-content minmax(40px, 1fr) max-content; padding: 0 8px; gap: 6px; }
@@ -115,10 +121,7 @@ body.zen-mode #workspaceNavigation { display: none; }
   #workspaceNavigation[data-compact-open] .workspace-navigation-destinations { display: flex; }
   .workspace-navigation-links { flex: 0 0 auto; flex-direction: column; align-items: stretch; overflow: visible; }
   #workspaceNavigation a, #workspaceNavigation summary { padding: 12px; white-space: normal; }
-  #workspaceNavigationMore { min-width: 0; max-width: none; flex: 0 0 auto; }
-  #workspaceNavigationMore summary { white-space: nowrap; }
   .workspace-navigation-more-links { max-height: min(35dvh, 280px); }
-  .workspace-navigation-more { position: static; min-width: 0; max-width: none; max-height: none; padding: 4px; box-shadow: none; }
   #workspaceNavigation [data-workspace-status] { padding: 8px 12px; }
   .workspace-navigation-options { position: fixed; top: 54px; right: 8px; }
 }

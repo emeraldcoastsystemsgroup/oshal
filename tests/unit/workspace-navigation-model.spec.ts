@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify canonical workspace descriptors and independent browser-local navigation preference boundaries.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep explicit sidebar delegation limited to selected admitted workspace families and the default framework profile.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Distinguish Finance's exact destination from unrelated financial categories and application tools.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { admittedWorkspaces, isWorkspaceDelegated, readNavigationLayout, setNavigationLayout, workspaceSidebarNames } from '@/pages/cockpit/js/workspace-navigation.js';
@@ -70,4 +71,13 @@ it('requires exact workspace metadata and the default profile instead of matchin
     expect(isWorkspaceDelegated(view, 'oshal-framework', [])).toBe(false);
     if (!('workspace' in view) || view.workspace !== 'create') expect(isWorkspaceDelegated(view, 'oshal-framework', names)).toBe(false);
   }
+});
+
+it('delegates only Finance metadata without granting coverage to the financial category', () => {
+  const names = workspaceSidebarNames([{ name: 'finance' }]);
+  expect(names).toEqual(['finance']);
+  expect(isWorkspaceDelegated({ workspace: 'finance' }, 'oshal-framework', names)).toBe(true);
+  for (const view of [{ workspace: 'payroll' }, { suite: 'ai-finance' }, { group: 'Money' }, { label: 'Finance' }])
+    expect(isWorkspaceDelegated(view, 'oshal-framework', names)).toBe(false);
+  expect(isWorkspaceDelegated({ workspace: 'finance' }, 'finance', names)).toBe(false);
 });
