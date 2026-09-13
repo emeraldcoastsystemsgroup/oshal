@@ -68,10 +68,21 @@ blade's measured curve (§7). Real hover time lands at 70–80 % of the figure b
 | Props | AUW | Battery | Disc loading | P electrical | Hover (theory) | Thrust per motor: hover / T:W 2 |
 |---|---|---|---|---|---|---|
 | 5 in | 750 g | 4S 1500 mAh, 175 g | 145 N/m² | 126 W | 8.5 min | 188 g / 375 g |
-| **6 in** | **750 g** | **4S 1500 mAh, 175 g** | **101 N/m²** | **105 W** | **10.2 min** | **188 g / 375 g** |
+| 5 in | 750 g | 4S 2200 mAh, 240 g | 145 N/m² | 126 W | 12.4 min | 188 g / 375 g |
+| 5 in | 850 g | 4S 1500 mAh, 175 g | 165 N/m² | 152 W | 7.0 min | 213 g / 425 g |
+| 5 in | 850 g | 4S 2200 mAh, 240 g | 165 N/m² | 152 W | 10.3 min | 213 g / 425 g |
+| 6 in | 750 g | 4S 1500 mAh, 175 g | 101 N/m² | 105 W | 10.2 min | 188 g / 375 g |
+| 6 in | 750 g | 4S 2200 mAh, 240 g | 101 N/m² | 105 W | 14.9 min | 188 g / 375 g |
+| 6 in | 850 g | 4S 1500 mAh, 175 g | 114 N/m² | 127 W | 8.4 min | 213 g / 425 g |
 | 6 in | 850 g | 4S 2200 mAh, 240 g | 114 N/m² | 127 W | 12.3 min | 213 g / 425 g |
 | 7 in | 750 g | 4S 1500 mAh, 175 g | 74 N/m² | 90 W | 11.9 min | 188 g / 375 g |
-| 7 in | 1300 g (recon-3D) | 6S 2200 mAh, 330 g | 128 N/m² | 205 W | ~9 min | 325 g / 650 g |
+| 7 in | 750 g | 4S 2200 mAh, 240 g | 74 N/m² | 90 W | 17.4 min | 188 g / 375 g |
+| 7 in | 850 g | 4S 1500 mAh, 175 g | 84 N/m² | 108 W | 9.8 min | 213 g / 425 g |
+| 7 in | 850 g | 4S 2200 mAh, 240 g | 84 N/m² | 108 W | 14.4 min | 213 g / 425 g |
+| **6 in (recon-mini)** | **746 g** | **4S 1500 mAh, 175 g** | **100 N/m²** | **104 W** | **10.2 min** | **187 g / 373 g** |
+| **7 in (recon-3d)** | **1193 g** | **6S 2200 mAh, 330 g** | **118 N/m²** | **180 W** | **13.0 min** | **298 g / 597 g** |
+
+*Generated from the `embodied` parts model (0.6.0): `GET /api/embodied/build/drone/design.md?fit=recon-mini`. Do not hand-edit; change the model.*
 
 Tip speed at a plausible hover rpm: 6 in at 9000 rpm is 72 m/s, 5 in at 14 000 rpm is 93 m/s. Keep it
 under ~75 m/s indoors: the 6-inch prop is quieter and more efficient at the same thrust, and the
@@ -86,16 +97,18 @@ T:W at full throttle is over 4 — plenty; the limit is noise and guards, not li
 other by 32 mm. The centre stack is 110 × 110 mm; arms are separate parts bolted with M3 so a broken
 arm is a 40-minute reprint, not a new frame.
 
-| Part | Qty | Size (approx.) | Material | Print notes |
-|---|---|---|---|---|
-| Centre plate, top and bottom | 2 | 110 × 110 × 4 mm, 30.5 mm and 20 mm stack patterns, arm sockets | PETG or PA-CF | flat, 6 walls, 40 % gyroid |
-| Arm with integral motor mount | 4 | 130 mm, 14 × 14 mm box section, 16 × 16 / 19 × 19 mm motor pattern | PA-CF (PETG acceptable) | flat, solid infill, 0.2 mm layers |
-| Prop guard segment | 4 | quarter ring, 170 mm inner Ø, 12 mm tall, 3 struts to the arm | TPU (95A) or PETG | mandatory indoors; guards sit *above* prop plane as well as around it |
-| Sensor mast | 1 | hollow, 40 mm (recon-mini) or 80 mm (recon-3D), LD19 plate on top | PETG | vertical, 4 walls |
-| ToF camera and flow mount | 1 | nadir bracket under the bottom plate, lens window 30 × 40 mm | PETG | |
-| Battery tray | 1 | 80 × 36 mm channel, two strap slots | PETG | |
-| Landing feet | 4 | 25 mm, on the arm underside | TPU | |
-| Landing pad | 1 | 200 × 200 × 20 mm plate, 100 mm AprilTag (36h11) recess, alignment ridge | PETG, tag printed on paper under a clear insert | the fiducial the pad fix reads |
+| Part | Qty | Base | Features | Material | Print notes | Mass each |
+|---|---|---|---|---|---|---|
+| Centre plate (top and bottom) | 2 | box 110 × 110 × 4 mm | 17 | PETG or PA-CF | flat, 6 walls, 40 % gyroid | 38 g |
+| Arm with integral motor mount | 4 | box 142 × 14 × 14 mm | 8 | PA-CF (PETG acceptable) | flat, solid infill, 0.2 mm layers | 15 g |
+| Prop guard quarter ring | 4 | sketch, 50 points, 12 mm | 4 | TPU 95A or PETG | mandatory indoors; sits above the prop plane as well as around it | 11.25 g |
+| Sensor mast | 1 | cylinder Ø24 × 40 mm | 6 | PETG | vertical, 4 walls; the seat at 0.12 mm layers | 22 g |
+| ToF camera and flow mount | 1 | box 50 × 60 × 8 mm | 5 | PETG | nadir bracket under the bottom plate | 12 g |
+| Battery tray | 1 | box 90 × 46 × 12 mm | 3 | PETG | two strap slots | 18 g |
+| Landing foot | 4 | cylinder Ø12 × 25 mm | 1 | TPU | on the arm underside | 3 g |
+| Landing pad | 1 | box 200 × 200 × 20 mm | 6 | PETG | the AprilTag printed on paper under a clear insert; not flown | 380 g |
+
+*Generated from the `embodied` parts model (0.6.0): `GET /api/embodied/build/drone/design.md?fit=recon-mini`. Do not hand-edit; change the model.*
 
 Print everything at 0.2 mm layers except the mast top (0.12 mm for the LiDAR seat). No PLA: it creeps
 under a strapped battery in a warm room and snaps at the arm root. Weigh every part as it comes off
@@ -105,41 +118,54 @@ the bed and write the figure on it; §5 is a budget, not a measurement.
 
 | Item | g |
 |---|---|
-| Centre plates, mast, tray, mounts, feet (printed) | 140 |
-| Arms ×4 (printed, solid) | 60 |
-| Prop guards ×4 | 45 |
-| Motors 2306 ×4 | 120 |
-| Props 6 in ×4 (printed ~7 g each; commercial ~5 g) | 28 |
-| 4-in-1 ESC | 15 |
-| Flight controller | 10 |
+| Centre plate (top and bottom) ×2 (printed) | 76 |
+| Arm with integral motor mount ×4 (printed) | 60 |
+| Prop guard quarter ring ×4 (printed) | 45 |
+| Sensor mast ×1 (printed) | 22 |
+| ToF camera and flow mount ×1 (printed) | 12 |
+| Battery tray ×1 (printed) | 18 |
+| Landing foot ×4 (printed) | 12 |
+| 2306 brushless, 1700–1900 KV ×4 | 120 |
+| 6 in two-blade props (printed ~7 g each; commercial ~5 g) ×4 | 28 |
+| 4-in-1 ESC, 35–45 A, BLHeli_32 / AM32 | 15 |
+| H7-class flight controller running ArduPilot Copter | 10 |
 | Raspberry Pi Zero 2 W | 11 |
-| LD19 LiDAR | 47 |
-| ToF depth camera | 20 |
-| Rangers ×2 (TFmini-S class) | 10 |
-| Optical flow, downward camera | 7 |
-| RC receiver, buzzer, LED | 8 |
-| Battery 4S 1500 mAh | 175 |
-| Wiring, straps, fasteners | 50 |
-| **All-up** | **~746** |
+| PMW3901 optical flow | 3 |
+| Pi Camera Module 3, pointed down | 4 |
+| ELRS receiver, buzzer, LED | 8 |
+| Wiring, straps, fasteners, power module with current sense | 50 |
+| LDRobot LD19 / D500 class 2-D LiDAR | 47 |
+| Arducam ToF class depth camera | 20 |
+| TFmini-S class rangers (zenith, nadir) ×2 | 10 |
+| 4S 1500 mAh LiPo | 175 |
+| **All-up** | **746** |
+
+*Generated from the `embodied` parts model (0.6.0): `GET /api/embodied/build/drone/design.md?fit=recon-mini`. Do not hand-edit; change the model.*
 
 ## 6. Electronics and the node
 
-| Role | Part class | Why this one |
-|---|---|---|
-| Flight controller | H7-class board running **ArduPilot Copter** (Matek H743 / Kakute H7 class) | rangefinders, optical flow, MAVLink companion, geofence and battery failsafes are stock; no kernel code written for flight control |
-| ESC | 4-in-1, 35–45 A, BLHeli_32 or AM32 | one board, bidirectional DShot for rpm telemetry |
-| Motors | 2306 1700–1900 KV ×4 | §3 |
-| Ring LiDAR | LDRobot LD19 / D500 class | 47 g, 12 m, 360°, UART, ~4500 points/s |
-| Depth camera | Arducam ToF class (0.15–4 m, 240 × 180) | light-independent; gives the height map from 1.9 m. Alternative: OAK-D Lite (61 g, stereo + compute) |
-| Rangers | TFmini-S class ×2 (zenith, nadir), 12 m | the climb column and the altitude fix |
-| Flow | PMW3901 | the dead-reckoning the drift budget models |
-| Pad camera | Pi Camera Module 3, pointed down | AprilTag on the pad → the pad fix |
-| Companion | **Raspberry Pi Zero 2 W** | runs the drone-node client only; the map, registration and plans run in the swarm |
-| Radio | ELRS receiver | the manual kill switch — the hardware e-stop this class needs |
-| Power | 4S 1500 mAh LiPo, XT30, power module with current sense | |
+| Part | Qty | Role | Approx. each (2026, USD) |
+|---|---|---|---|
+| 2306 brushless, 1700–1900 KV | 4 | ~1 kg peak thrust each on a 6-inch prop | 18 |
+| 6 in two-blade props (printed ~7 g each; commercial ~5 g) | 4 | aero-lab designs the printed blade | 3 |
+| 4-in-1 ESC, 35–45 A, BLHeli_32 / AM32 | 1 | one board, bidirectional DShot for rpm telemetry | 45 |
+| H7-class flight controller running ArduPilot Copter | 1 | rangefinders, optical flow, MAVLink companion, geofence and battery failsafes are stock | 75 |
+| Raspberry Pi Zero 2 W | 1 | the drone-node client only; the map, registration and plans run in the swarm | 18 |
+| PMW3901 optical flow | 1 | the dead reckoning the drift budget models | 20 |
+| Pi Camera Module 3, pointed down | 1 | AprilTag on the pad → the pad fix | 25 |
+| ELRS receiver, buzzer, LED | 1 | the manual kill switch — the hardware e-stop this class needs | 25 |
+| Wiring, straps, fasteners, power module with current sense | 1 |  | 30 |
+| LDRobot LD19 / D500 class 2-D LiDAR | 1 | 12 m, 360°, ~4500 points/s, UART | 90 |
+| Arducam ToF class depth camera | 1 | 0.15–4 m, 240 × 180; the height map from 1.9 m | 60 |
+| TFmini-S class rangers (zenith, nadir) | 2 | the climb column and the altitude hold | 40 |
+| 4S 1500 mAh LiPo | 1 |  | 30 |
+| **Total, approximate** | | | **582** |
 
-Indicative cost, 2026 street prices, approximate: **$350–450** for recon-mini excluding printer
-filament; the recon-3D fit adds ~$1 000 for the sensor and a bigger battery.
+*Generated from the `embodied` parts model (0.6.0): `GET /api/embodied/build/drone/design.md?fit=recon-mini`. Do not hand-edit; change the model.*
+
+Indicative cost, 2026 street prices, approximate and generated from the parts model: **about $580** in bought
+parts for recon-mini excluding printer filament; the recon-3D fit comes to **about $1 450**, the sensor
+being most of the difference.
 
 **Where the brain is.** The Pi streams LiDAR sweeps, ToF frames, rangers and flight-controller state
 to the swarm over the drone-node rail (ADR-098/099, the `drone` package's heartbeat and command
