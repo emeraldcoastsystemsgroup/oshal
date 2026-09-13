@@ -192,6 +192,44 @@ This is presentation and navigation work. It does not complete Finance provider
 setup, initiate transactions, create an umbrella application or implement the
 compact Jarvis dashboard by itself.
 
+## Follow-up: Profile and Access consistency
+
+**Open, reported during user testing on 2026-09-13.** After the header controls
+moved into the OSHAL menu, the Profile & Access dialog still says Cockpit settings
+and chat history stay on the ribbon. The screenshot also shows a plain settings
+button beside a differently styled Sign Out button, inside several nested panels.
+The current [profile renderer](../../src/pages/cockpit/js/cockpit-modals.js)
+confirms the stale copy and retains the existing settings and sign-in/out handlers.
+The settings button's `btn-secondary` class has no definition in the shell's
+loaded stylesheets, and its inner `modal-content` receives standalone modal styling
+inside the outer dialog. Its settings action already uses the same handler as
+**OSHAL menu → Settings**, opening the existing Global Settings view.
+This feedback is recorded separately from the accepted Home/navigation slice;
+the dialog has not yet received the corresponding consistency update.
+
+Done when:
+
+1. The dialog uses the selected portal palette, shared button styles and a compact
+   account layout, with consistent spacing and readable focus/hover states across
+   desktop, phone widths and zoom.
+2. Its wording and action labels describe the current destinations. Cockpit
+   settings are easy to find after the header cleanup, and the OSHAL menu remains
+   the documented location for global controls. Reuse existing settings routes.
+3. Account identity, personal preferences and administration have clear meanings.
+   Any administration shortcuts respect current permissions; opening Profile or
+   Settings does not change roles, sign the user out or discard an active draft.
+4. Extend the existing profile/header browser coverage using the real renderer and
+   shell styles. Verify signed-in/out states, keyboard close/focus return, settings
+   navigation and palette consistency, and register the executable coverage with
+   AI Test Lab. Capture installed acceptance when the user has finished testing.
+
+Coverage to reconcile: `content-studio-quality.spec.ts` copies profile HTML and
+checks geometry with only component styles; older header/modal tests retain
+local-token and removed-control assumptions. The current Workspace theme fixture
+checks Profile visibility without binding the real profile renderer. Exercise
+the actual hydrated dialog and register that regression under **Cockpit appearance**;
+the Lab's live stylesheet readiness check does not execute browser regressions.
+
 ## Earlier broader design direction
 
 Put a small number of major workspaces across the top: **OSHAL Cockpit, Learning,
