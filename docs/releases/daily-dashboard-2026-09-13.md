@@ -1,6 +1,7 @@
 # Compact daily dashboard and Finance navigation
 
-Source checkpoint: implemented; publication and installed acceptance pending.
+Source published and standard preview deployed on 2026-09-13. Native acceptance
+and final preservation remain pending.
 
 Home now keeps the existing Jarvis conversation beside a bounded daily view:
 seven named areas at most, four application summaries and one selected source's
@@ -41,6 +42,29 @@ HTTP-asset and registration suites. `npm run test:workspace-navigation` and
 Browser fixtures serve real current components with synthetic local responses;
 they do not call live models, providers or business actions.
 
+The independently reviewed source ledger contains **413 distinct passing cases**
+across scoped runs, not one combined command:
+
+| Scope | Distinct passing cases |
+| --- | ---: |
+| Integration and catalog | 47 |
+| Retained authorization, navigation and theme core | 122 |
+| Shared browser cleanup | 9 |
+| Finance and OSHAL navigation | 66 |
+| Home | 50 |
+| Compact Jarvis | 17 |
+| Retained Jarvis clients | 68 |
+| Corrected delayed-visual lifecycle fixture | 6 |
+| Retained package-tool browser | 11 |
+| Final Workspace theme | 17 |
+
+The earlier mixed Jarvis run's 71 passing cases included three delayed-lifecycle
+cases; its seven fully passing client files account for 68. The corrected six
+lifecycle cases are counted separately. Repeated layout/palette checks and
+overlapping registration/cleanup checks are not added again. The ledger is
+`temp/daily-dashboard-independent-review.json`; native readiness and preservation
+helper checks are excluded from this source total.
+
 An existing delayed-visual lifecycle fixture was reproduced failing on the
 previously published source because its SQL double did not recognize current
 owner/issuer/source projections and optional preference reads. The fixture now
@@ -57,9 +81,31 @@ suites. Its three Run steps check installed fixed-asset readiness in the caller'
 session. **Cockpit workspace navigation** checks current workspace discovery.
 Those readiness steps are separate from executing source browser regressions.
 
-Final source counts, commit/image provenance, native acceptance and preservation
-results will be recorded after deployment. Early attempts and any unresolved
-baseline failures remain identified separately from passing final runs.
+## Deployment checkpoint
+
+Published core source is `0c2872238626cccacc1e517421bee9cc9e054ec9`.
+The standard `scripts/oshal-deploy.sh --preview` build verified the committed
+source label and kernel-skills probe, then recreated the API and 34 bots.
+At **03:45:09 UTC on 2026-09-13**, the final census reported **35/35 healthy**
+with registry parity clean on image
+`sha256:e92d34689c30de82e5f492605a2cc102925840ca4eb58c1f434117adeaa2ed61`.
+The retained deployment log is `temp/daily-dashboard-deploy.log`.
+
+The rollout also encountered slow origin responses and a native HTTP 524 page;
+the existing [startup investigation](../backlog/cockpit-startup-resilience.md)
+records those observations without assigning a cause. A successful container
+census does not establish native UI acceptance or final preservation. Both
+remain pending for this checkpoint; early failed attempts remain retained.
+
+Native acceptance found that Cockpit's universal margin reset placed the Home
+directory dialog at the upper-left corner. The scoped correction explicitly
+centers Home's native dialogs and retains their viewport bounds and scrolling.
+Four existing registered Chromium cases now assert populated and unavailable
+dialog geometry at desktop and phone widths; all four pass. They are repeat
+checks within the 413-case ledger, not four additional cases. This focused run
+required the existing exact-owned browser cleanup fallback, with exit verified.
+The correction's installed acceptance remains pending. Its source receipt is
+`temp/app-home-modal-centering-release.json`.
 
 ## Remaining work
 

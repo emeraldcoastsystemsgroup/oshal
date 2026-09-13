@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove daily Home geometry, stable real Jarvis draft, authorized directory, saved choices and honest probe failures in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify exact canonical palette colors in the actual parent and Jarvis frame as well as layout geometry.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Assert real populated and unavailable directory centering with the full Cockpit reset at desktop and phone widths.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { type Browser, type BrowserContext, type Page } from 'playwright';
@@ -47,6 +48,27 @@ async function geometry() {
       overflow: document.documentElement.scrollWidth - innerWidth,
       frameOverflow: frame.contentDocument!.documentElement.scrollWidth - frame.contentWindow!.innerWidth };
   });
+}
+
+/** @description Check actual modal bounds and controls against the viewport with the full Cockpit CSS reset. */
+async function expectCenteredDirectory() {
+  const bounds = await page.locator('#appsHomeDirectory').evaluate(el => {
+    const rect = el.getBoundingClientRect();
+    const controls = [...el.querySelectorAll('input, button')].slice(0, 2).map(control => {
+      const box = control.getBoundingClientRect(); return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+    });
+    return { modal: el.matches(':modal'), x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+      viewportWidth: innerWidth, viewportHeight: innerHeight, controls };
+  });
+  expect(bounds.modal).toBe(true);
+  expect(Math.abs(bounds.x + bounds.width / 2 - bounds.viewportWidth / 2)).toBeLessThanOrEqual(1);
+  expect(Math.abs(bounds.y + bounds.height / 2 - bounds.viewportHeight / 2)).toBeLessThanOrEqual(1);
+  expect(bounds.width).toBeLessThanOrEqual(Math.min(640, bounds.viewportWidth - 32) + 1);
+  expect(bounds.height).toBeLessThanOrEqual(bounds.viewportHeight * .85 + 1);
+  for (const box of bounds.controls) {
+    expect(box.left).toBeGreaterThanOrEqual(bounds.x); expect(box.right).toBeLessThanOrEqual(bounds.x + bounds.width);
+    expect(box.top).toBeGreaterThanOrEqual(0); expect(box.bottom).toBeLessThanOrEqual(bounds.viewportHeight);
+  }
 }
 
 it('bounds a large catalog into named areas and one source detail while retaining every directory entry', async () => {
@@ -134,6 +156,7 @@ it('keeps an unavailable authorized catalog distinct from an empty search while 
   await page.getByRole('searchbox').fill('source');
   expect(await page.locator('#appsHomeDirectory').innerText()).toContain('application list is unavailable');
   expect(await page.locator('#appsHomeDirectory [data-open]').count()).toBe(0);
+  await expectCenteredDirectory();
   expect(fixture.home.calls.filter(call => call.startsWith('GET /fixture/probe/'))).toEqual([]);
   expect(fixture.home.writes).toEqual([]);
 }, 30000);
@@ -218,7 +241,10 @@ for (const [width, theme, primary, background] of [[1440, 'workspace', '#f5f6f9'
     const frame = page.frameLocator('#appsHomeJarvisFrame');
     await expect.poll(() => frame.locator('html').evaluate(el => getComputedStyle(el).getPropertyValue('--bg-primary').trim())).toBe(primary);
     expect(await frame.locator('body').evaluate(el => getComputedStyle(el).backgroundColor)).toBe(background);
-    mkdirSync('temp/app-home-daily-canonical-screenshots', { recursive: true });
-    await page.screenshot({ path: `temp/app-home-daily-canonical-screenshots/home-${width}-${theme}.png`, fullPage: true });
+    await page.getByRole('button', { name: 'All applications', exact: true }).click();
+    await expectCenteredDirectory();
+    expect(await page.getByRole('searchbox').evaluate(el => el === document.activeElement)).toBe(true);
+    mkdirSync('temp/app-home-modal-centering-screenshots', { recursive: true });
+    await page.screenshot({ path: `temp/app-home-modal-centering-screenshots/home-${width}-${theme}.png`, fullPage: true });
   }, 30000);
 }
