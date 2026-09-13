@@ -59,9 +59,52 @@ Local evidence: `temp/package-test-host-lifecycle-release.json`,
 
 ## Publication and installation
 
-Create source is committed at `21ea2f6`; publication, core rollout and Create
-installation are pending at this checkpoint. The previous installed core,
-CAD and report release remains documented in the
+Core `74f5c9e` and Create 1.7.0 at `21ea2f6` were published and installed.
+The standard preview finished at 06:59 UTC with 35 healthy application containers
+and clean parity. All 76 Create files matched the staged source; its previous
+71 files were backed up before copy. Package activation loaded 79 applications
+with no failures. The exact committed store archive passed 35 audit, catalog
+and security-contract checks without overlays.
+
+The first native **Run package suites** batch selected five installed Node
+recipes. Create-new passed seven checks and Create-routes passed five;
+Create-surface passed eight of nine. The surface failure was an outdated boot
+order assertion after the artifact handoff was added. Editor-model was then
+cancelled during fresh authorization/installed-source verification, and the
+remaining recipe was deferred. The batch correctly remains failed/cancelled;
+it is not a five-suite pass. Thirteen prerequisite-dependent recipes remained
+unavailable. No provider or business records were manufactured.
+
+Create 1.7.1 at `70536e2` corrects the surface assertion and checks that artifact
+opening follows access resolution and starter permissions. All five registered
+Node recipes now pass together locally: **58 checks**. Its complete 2,432-file
+committed archive also passes all 35 store checks unchanged. Installation of this
+patch and a new native batch are pending at this checkpoint.
+
+A separate core correction scopes selected-application history and scheduled
+batch authorization to that application. A real HTTP regression demonstrates
+that a held unrelated application's access lookup previously produced 503;
+selected-app history now completes while retaining fresh checks on both sides
+of persistence. Wildcard batches still check all visible applications. This
+reproduction does not establish the cause of the earlier installed cancellation.
+All 14 affected HTTP, scheduled-owner and watchdog checks pass, including absent
+and empty application filters and current-access revocation. Both TypeScript
+projects and scoped lint pass. Existing Lab registrations already link these
+specifications; `temp/test-lab-selected-app-release-receipt.json` records them.
+
+The first rollout's strict preservation comparison remains **FAIL**. All original
+15 infrastructure containers matched, but a concurrent local CI run added three
+containers. Verified-principal hashes also changed, with `last_seen_at` the only
+field difference between the supplemental and final captures; an earlier
+cross-capture mismatch remains separately unattributed. Other installed packages,
+business/private data, role assignments and audit records matched. These
+differences are retained rather than exempted from the comparison.
+
+Local receipts: `temp/create-batch-deploy-retry-exit.json`,
+`temp/create-batch-lab-terminal-first.json`,
+`temp/create-surface-access-order-release.json`,
+`temp/create171-committed-family.json`, and `temp/create-batch-final.json`.
+The previous CAD and report release remains documented in the
 [prior acceptance record](report-briefings-cad-lifecycle-2026-09-13.md).
 
 Regional AI regeneration, reviewed editing mutations, video timelines and full

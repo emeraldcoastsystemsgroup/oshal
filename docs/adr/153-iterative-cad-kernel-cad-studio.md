@@ -8,7 +8,7 @@ that cannot run in the api image is owned, driven and verified by a package.
 whose outlines become a B-rep base here), [ADR-036](036-bot-owned-application-architecture.md)
 (the bot owns the domain; here the bot edits a feature list and the kernel does the geometry),
 [ADR-085](085-remote-app-packages-and-registries.md) (store package posture),
-[ADR-090](090-skills-model.md) / [ADR-149](149-enterprise-application-authorization.md)
+[ADR-090](090-skills-as-first-class-packages.md) / [ADR-149](149-enterprise-application-authorization.md)
 (route-backed package tools executed under the caller's authority), the aero-lab package's
 engine container (store, 2026-09-11) whose shape this reuses.
 

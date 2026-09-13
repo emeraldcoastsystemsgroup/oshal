@@ -74,15 +74,18 @@ The published core `c1be9d5d` rollout produced these separate observations:
 The exact error is pg-pool's pending client-checkout deadline. The
 [main pool](../../src/app/composition/app-runtime-factory.ts) uses a ten-second
 checkout limit. [Workspace discovery](../../src/app/routes/workspace-navigation-routes.ts)
-performs authorization/profile reads serially and does not stop its remaining
-scan when the browser abandons the request. These source facts identify places
-to measure; they do not establish a connection leak, event-loop stall or the
-initial source of pool pressure.
+performed authorization/profile reads serially and continued its remaining
+scan when the browser abandoned the request. The deployed discovery-cancellation
+slice now stops subsequent reads after abandonment; it does not cancel an
+already running SQL operation. Thirteen disconnect checks and 28 retained
+authorization checks cover that correction in the
+[component release](../releases/component-integration-2026-09-13.md). These
+observations do not establish the initial source of pool pressure.
 
 **Remaining:** extend the existing [bot-recreate backlog](../BACKLOG.md#bot-recreate-thundering-herd)
 with measured pool wait/occupancy and request lifetimes during fleet startup.
-Evaluate stopping abandoned discovery scans, preserve current authorization and
-generation checks, and distinguish temporary policy unavailability from a valid
+Preserve the deployed cancellation, current authorization and generation checks,
+and distinguish temporary policy unavailability from a valid
 empty result. Do not increase the role limit or merely lengthen browser timeouts
 without identifying the bottleneck.
 

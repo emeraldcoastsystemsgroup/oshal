@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Define exact-owner catalog schedules and bounded batch evidence without credentials or executable request fields.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow current scheduled visibility to use an exact server-owned package selector.
  */
 import type { TestLabPrincipal, TestLabRunContext, TestLabRunSelection, TestLabRunState } from './test-lab-run-types';
 
@@ -39,7 +40,7 @@ export interface TestLabScheduleStore {
   history(actor: TestLabPrincipal, id: string): Promise<TestLabScheduleBatch[]>;
 }
 export type TestLabScheduleContext = () => Promise<TestLabRunContext>;
-export type TestLabScheduledContext = (actor: TestLabPrincipal) => Promise<TestLabRunContext>;
+export type TestLabScheduledContext = (actor: TestLabPrincipal, appName?: string) => Promise<TestLabRunContext>;
 export type TestLabScheduledSelection = Omit<TestLabRunSelection, 'requestId'> & { appName: string };
 
 /** @description Resolve only documented local cadences; no cron expressions or arbitrary dispatch payloads exist.

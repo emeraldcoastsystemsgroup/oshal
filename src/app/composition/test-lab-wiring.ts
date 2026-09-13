@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Wire isolated package runs to fresh exact-principal authority and durable versioned evidence.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Share the same current-principal runner with local catalog schedules.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Keep a verified operator session inside a request-bound local read-only service-smoke transport so application authorization sees the real caller.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Scope selected-package visibility work while retaining every fresh identity and access check.
  */
 import type { Request } from 'express';
 import type { AppContext } from './app-context';
@@ -57,12 +58,12 @@ Promise<AppSmokeVerificationOptions['serviceSmokeFetch']> {
 }
 
 /** @description Recompute installed package visibility from current app and authorization policy. */
-async function visibleCases(apps: SwarmAppService, access: AppAccessService, authorization: AuthorizationPorts, actor: AuthorizationActor) {
+async function visibleCases(apps: SwarmAppService, access: AppAccessService, authorization: AuthorizationPorts, actor: AuthorizationActor, appName?: string) {
   const result = new Map<string, string>();
   if (!actor.isActive) return result;
   const visible = new Set((await apps.listApps('active', { ownerSub: actor.sub, isOperator: actor.isSwarmAdmin })).map(record => record.name));
   for (const manifest of await apps.getActiveManifests()) {
-    if (!visible.has(manifest.name)) continue;
+    if (!visible.has(manifest.name) || (appName !== undefined && manifest.name !== appName)) continue;
     if (manifest.access && (await access.resolve(manifest.name, actor.sub, manifest.access)).tier === 'deny') continue;
     if (authorization.runtime.protectedApp(manifest.name) && !await authorization.runtime.canDiscover(manifest.name, actor)) continue;
     result.set(manifest.name, manifest.displayName || manifest.name);
@@ -77,10 +78,10 @@ export function createTestLabWiring(ctx: AppContext, apps: SwarmAppService, acce
   void ready.catch(() => undefined);
   const executionAuth = (req: Request) => ({ serviceSecret: isOperator(req) ? process.env.SWARM_SERVICE_SECRET : undefined,
     authorization: req.headers.authorization, canRunSuites: isOperator(req) });
-  const runContext = async (req: Request) => {
+  const runContext = async (req: Request, appName?: string) => {
     const actor = await authorization.resolveActor(req);
     if (!actor.isActive) throw Object.assign(new Error('An active verified identity is required.'), { status: 401 });
-    return { actor: { issuer: actor.issuer, sub: actor.sub }, visibleApps: await visibleCases(apps, access, authorization, actor),
+    return { actor: { issuer: actor.issuer, sub: actor.sub }, visibleApps: await visibleCases(apps, access, authorization, actor, appName),
       auth: { ...executionAuth(req), canRunSuites: actor.isSwarmAdmin } };
   };
   const runService = new TestLabRunService(new PostgresTestLabRunStore(ctx.pool, ready,
@@ -90,5 +91,5 @@ export function createTestLabWiring(ctx: AppContext, apps: SwarmAppService, acce
       `http://127.0.0.1:${process.env.PORT || '5000'}`, test.path),
     visibleApps: async req => (await runContext(req)).visibleApps,
     scheduleService: createTestLabScheduleWiring({ ctx, apps, runs: runService, ready, authorization,
-      visible: actor => visibleCases(apps, access, authorization, actor) }) };
+      visible: (actor, appName) => visibleCases(apps, access, authorization, actor, appName) }) };
 }

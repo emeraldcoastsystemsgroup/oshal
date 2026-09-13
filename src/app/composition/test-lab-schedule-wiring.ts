@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Resume administrator-owned local schedules through current exact-principal account and policy resolution.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Carry the saved package selector through fresh scheduled visibility resolution.
  */
 import type { AppContext } from './app-context';
 import type { AuthorizationActor } from '@/shared/application-authorization';
@@ -38,16 +39,16 @@ export async function resolveTestLabScheduledActor(ports: TestLabScheduledActorP
 /** @description Start catalog scheduling only after schema readiness and stop it through the existing shutdown lifecycle. */
 export function createTestLabScheduleWiring(options: {
   ctx: AppContext; apps: SwarmAppService; runs: TestLabRunService; ready: Promise<unknown>;
-  authorization: TestLabScheduledActorPorts; visible: (actor: AuthorizationActor) => Promise<Map<string, string>>;
+  authorization: TestLabScheduledActorPorts; visible: (actor: AuthorizationActor, appName?: string) => Promise<Map<string, string>>;
 }): TestLabScheduleService {
   let stopping = false;
   const ready = options.ready.then(() => runWithSystemIdentity(() => ensureTestLabScheduleSchema(options.ctx.pool)));
   const service = new TestLabScheduleService({ store: new PostgresTestLabScheduleStore(options.ctx.pool, ready),
     runs: options.runs, catalog: options.apps.testLabCatalog,
-    resolveScheduledContext: async principal => {
+    resolveScheduledContext: async (principal, appName) => {
       await ready;
       const actor = await resolveTestLabScheduledActor(options.authorization, principal);
-      return { actor: { issuer: actor.issuer, sub: actor.sub }, visibleApps: await options.visible(actor), auth: { canRunSuites: actor.isSwarmAdmin } };
+      return { actor: { issuer: actor.issuer, sub: actor.sub }, visibleApps: await options.visible(actor, appName), auth: { canRunSuites: actor.isSwarmAdmin } };
     } });
   void ready.then(() => { if (!stopping) service.startPolling(); }).catch(error => logger.error({ err: error }, 'Local Test Lab schedules unavailable'));
   registerShutdownHook('test-lab-schedules', () => { stopping = true; service.stop(); });

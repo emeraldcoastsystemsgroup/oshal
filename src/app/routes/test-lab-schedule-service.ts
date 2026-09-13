@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Re-discover current installed Node suites for exact-owner local schedules and reuse durable run authorization and evidence.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Include unavailable browser/framework recipes in batch reporting without changing selected executable levels.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Scope each fresh batch and runner authority check to its saved single-package selection.
  */
 import { createHash } from 'node:crypto';
 import type { InstalledAppTestCatalog, InstalledAppTestCase } from '@/features/swarm-apps';
@@ -151,7 +152,7 @@ export class TestLabScheduleService {
   private batchContext(claim: TestLabScheduleClaim, cancelled: () => boolean): TestLabScheduleContext {
     return () => context(async () => {
       if (this.stopped || cancelled() || !await this.options.store.heartbeat(claim.batch)) refusal('Schedule is no longer active.');
-      const current = await this.options.resolveScheduledContext(claim.batch.actor);
+      const current = await this.options.resolveScheduledContext(claim.batch.actor,claim.schedule.appName === '*' ? undefined : claim.schedule.appName);
       if (!same(current.actor,claim.batch.actor)) refusal('Scheduled owner changed.');
       this.selection(claim.schedule,current); return current;
     });

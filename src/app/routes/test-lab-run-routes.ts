@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Expose same-origin asynchronous package Run, Cancel and exact-owner history endpoints.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Limit selected-app history discovery without reusing authority across either persistence check.
  */
 import { Router, type Request, type Response } from 'express';
 import type { TestLabRunService } from './test-lab-run-service';
@@ -11,7 +12,7 @@ import type { TestLabRunContext } from './test-lab-run-types';
 
 export interface TestLabRunRouteOptions {
   runService?: TestLabRunService;
-  runContext?: (req: Request) => Promise<TestLabRunContext>;
+  runContext?: (req: Request, appName?: string) => Promise<TestLabRunContext>;
 }
 
 function mutation(req: Request): void {
@@ -27,13 +28,14 @@ function mutation(req: Request): void {
  */
 export function createTestLabRunRoutes(options: TestLabRunRouteOptions): Router {
   const router = Router();
-  const handler = (action: (req: Request, service: TestLabRunService, context: () => Promise<TestLabRunContext>) => Promise<unknown>, status = 200) =>
+  const handler = (action: (req: Request, service: TestLabRunService, context: () => Promise<TestLabRunContext>) => Promise<unknown>, status = 200,
+    appScope?: (req: Request) => string | undefined) =>
     async (req: Request, res: Response) => {
       res.set('Cache-Control','private, no-store');
       try {
         if (!options.runService || !options.runContext) { res.status(503).json({ error: 'Package execution history is unavailable.' }); return; }
         if (req.method !== 'GET') mutation(req);
-        const result = await action(req,options.runService,() => options.runContext!(req));
+        const result = await action(req,options.runService,() => options.runContext!(req,appScope?.(req)));
         res.status(status).json(result);
       } catch (error: any) {
         const code = Number(error?.status);
@@ -42,7 +44,8 @@ export function createTestLabRunRoutes(options: TestLabRunRouteOptions): Router 
       }
     };
   router.post('/runs',handler(async (req,service,context) => ({ run: await service.start(req.body,context) }),202));
-  router.get('/runs',handler(async (req,service,context) => ({ runs: await service.history(context,typeof req.query.app === 'string' ? req.query.app : undefined) })));
+  router.get('/runs',handler(async (req,service,context) => ({ runs: await service.history(context,typeof req.query.app === 'string' ? req.query.app : undefined) }),
+    200,req => typeof req.query.app === 'string' && req.query.app !== '' ? req.query.app : undefined));
   router.get('/runs/:id',handler(async (req,service,context) => ({ run: await service.read(String(req.params.id),context) })));
   router.post('/runs/:id/cancel',handler(async (req,service,context) => {
     if (!req.body || Object.keys(req.body).length) throw Object.assign(new Error('Cancellation accepts only the run identifier.'), { status: 400 });
