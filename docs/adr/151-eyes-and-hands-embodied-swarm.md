@@ -1,6 +1,13 @@
 # ADR-151: Eyes and hands, no body — drones perceive, detached arms act, every peripheral is a swarm node
 
-**Status:** Proposed (2026-09-12 — operator idea session; designed, nothing built)
+**Status:** Accepted — simulation environment BUILT (2026-09-12, operator: *"you are authorized
+to perform the full build… if we can make a simulation environment that would be great"*). Store
+package `embodied` (oshal-applications) implements D1 (capability manifests + validator), D2 (the
+sim `ManipulatorProvider` as guarded primitives on a sim-6 arm), D3 as a sim world model (objects
+with poses on surfaces; the Spaces object layer is still open), D4 (draft → rehearsal → confirmed
+execute → live re-validation → command log) and D5 (confirm rule by safety class) against a
+simulated kitchen, mini drone and rolling arm. No hardware, no core change. Open: Q1–Q5 below,
+and the real-node lane in the package's BACKLOG.
 **Extends:** [ADR-099](099-drones-as-remote-swarm-nodes.md) (each drone = a remote swarm node),
 [ADR-114](114-user-owned-remote-nodes.md) (device-bound enrollment, owner-scoped execution),
 [ADR-111](111-spatial-mapping-3d-reconstruction.md) (the Spaces world model), [ADR-150](150-deterministic-object-reconstruction-scan-to-print.md)
