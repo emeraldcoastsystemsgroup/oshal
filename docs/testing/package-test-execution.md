@@ -115,6 +115,42 @@ and individual results. Browser, framework and other unavailable recipes remain
 listed with their prerequisites. A completed batch can contain failures or
 pending work; it is not an assertion that all package tests passed.
 
+The **Package runs** history follows the admitted batch on its own. While a
+child run is active it refreshes every 1.5 s; between children, when no run is
+active yet, it checks the batch through `GET /schedules/:id/history` every 2 s
+and keeps going until the batch is terminal, then reads the runs once more and
+stops. A transient failure of the runs read while a batch is followed retries
+three times, bounded; a 4xx or exhausted retries release the follow and say so
+beside the batch status. **Refresh history** remains available but is not
+needed to see a batch finish. Clicking **History** on a running batch in the
+schedule section starts the same follow. This is proven in real Chromium by
+`tests/unit/test-lab-schedule-browser.spec.ts` (a three-child batch with real
+gaps, one injected 503, two selection changes, a stopped poll) and on the real
+server with the real Create package by
+`tests/unit/test-lab-installed-package-batch-follow.spec.ts`.
+
+That second proof is the local-host stand-in for native acceptance, because
+the live api admits only a signed-in session to the Lab data routes. It boots
+`src/app/server.ts` in `LOCAL_AUTH` mode with a seeded first administrator and
+a real cookie session, migrates a disposable pgvector Postgres with the
+server's own migration service before boot, exports Create from the store
+checkout through git alone, activates it through `POST /api/swarm/apps/load`,
+grants the operator through the authorization preview/apply flow, and runs the
+five Node suites in the same disposable Docker runners the live Lab uses. It
+needs Docker, the `oshal-local-api` container running (its image is what the
+runners use) and the store checkout beside the core checkout or named by
+`OSHAL_STORE_REPO`; it fails loudly when any of those is missing. Run it alone
+with:
+
+```sh
+OSHAL_LAB_FOLLOW_REPORT_DIR=temp/lab-follow npx vitest run tests/unit/test-lab-installed-package-batch-follow.spec.ts
+```
+
+The report directory receives the page samples, a screenshot, the batch record
+and the server log. The mock identity cannot drive this proof: under
+`MOCK_OIDC` no login provider is configured, so a server-owned batch cannot
+re-derive its operator and cancels itself.
+
 ## Batch local Node and UX suites
 
 From the core checkout, preview the package's registered recipes:

@@ -885,10 +885,21 @@ tests/session-crypto.test.mjs
   cases pass in real Chromium over the real routes, disposable PostgreSQL and
   Docker runners. The running api already serves the changed page through the
   read-only `any-bot/server` bind mount (checked inside `oshal-local-api`); no
-  deploy or restart was needed. Still open: the native observation. The Lab
-  data routes answer 401 "A verified user identity is required" to PAT and
-  service-secret principals, so the final-five-rows check waits for the
-  operator's next Create batch in a signed-in browser.
+  deploy or restart was needed. The Lab data routes answer 401 "A verified
+  user identity is required" to PAT and service-secret principals, so the
+  final-five-rows check was proven on the local host instead:
+  `tests/unit/test-lab-installed-package-batch-follow.spec.ts` boots the real
+  server in `LOCAL_AUTH` mode with a seeded administrator and a real cookie
+  session, loads the real Create package from the store checkout, and runs its
+  five Node suites in the same disposable Docker runners the live Lab uses.
+  Result 2026-09-13 21:03 UTC: batch completed, five rows all passed, thirteen
+  prerequisite-dependent recipes unavailable as in the native run, seventeen
+  self-driven history reads after the single admission click, polling stopped
+  after the terminal read, receipts under `temp/lab-follow-2026-09-13/`. The
+  mock identity cannot drive this: under `MOCK_OIDC` no login provider is
+  configured, so a server-owned batch cannot re-derive its operator. What
+  remains is only the courtesy observation in the operator's own signed-in
+  browser on the next Create batch; the page it loads is the one proven here.
 
 ## Completion gate
 

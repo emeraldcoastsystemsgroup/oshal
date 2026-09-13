@@ -93,7 +93,9 @@ existing disabled selector at revision 1; no automatic schedule was enabled.
 Thirteen prerequisite-dependent recipes remained unavailable, with zero deferred
 executable recipes. The history display required **Refresh history** to show the
 last three completed rows. That UI observation is separate from the durable
-completed batch and all five passing runs.
+completed batch and all five passing runs. The cause was the run-history poll
+stopping between batch children; it was fixed afterwards on the same branch
+(`a5021e36`, see [package test execution](../testing/package-test-execution.md#run-a-package-batch)).
 
 The read-only exact-batch receipt is `temp/create171-lab-first.json`, SHA-256
 `13f72595a89fece281429e30b2793c285679179698dd2b48d8cf5ae6b193344f`.

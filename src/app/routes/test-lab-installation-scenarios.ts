@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register actual Compose API pool-budget resolution and isolated override coverage after role-capacity saturation.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register installation report HTTP/CLI and actual browser case-link verification.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register catalog-driven local package and UX batch runner regression coverage.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Register the real-server batch-history follow proof over the exported Create package.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -72,6 +73,7 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/test-lab-schedule-wiring.spec.ts' },
     { level: 'integration', path: 'tests/unit/test-lab-schedules.spec.ts' },
     { level: 'browser', path: 'tests/unit/test-lab-schedule-browser.spec.ts' },
+    { level: 'browser', path: 'tests/unit/test-lab-installed-package-batch-follow.spec.ts' },
     { level: 'integration', path: 'tests/unit/deploy-preview-source.spec.ts' },
     { level: 'unit', path: 'tests/unit/deploy-rollback-outcome.spec.ts' },
     { level: 'integration', path: 'tests/unit/managed-postgres-pool-budget.spec.ts' },
