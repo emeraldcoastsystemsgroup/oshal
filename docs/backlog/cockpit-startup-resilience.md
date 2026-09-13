@@ -123,6 +123,21 @@ The immutable incident receipt is `temp/create-templates-native-loading-incident
 The standalone image editor subsequently completed template selection,
 edit/save/reopen and PNG/editable export. Keep the request-stall investigation open.
 
+Scan acceptance on 2026-09-13 adds two distinct observations. A native photo
+upload initially returned HTTP 502; a retry returned HTTP 404. The latter was
+reproduced with the actual framework identity context: the multipart callback
+lost that context before a fresh owner lookup, and the GUC pool correctly denied
+the identity-less query. Scan 0.2.2 preserves the callback context; this does not
+establish the cause of the earlier gateway failure or broader request delays.
+See the [Scan release record](../releases/scan-cad-2026-09-13.md).
+
+The Scan page also awaits an unbounded capabilities request before binding its
+New and other controls. Follow up with independent bounded capability loading,
+usable initial controls and explicit retry/error feedback. Do not replace an
+unavailable response with a false empty result. Native Lab's earlier depth suite
+was cancelled at 01:30:58 UTC with no output. Its generic authority/source
+wording does not prove a grant changed; that result is not a passing suite.
+
 Operator-local, ignored receipts: `temp/career-navigation-native-reload-diagnostic.json`
 and `temp/career-navigation-runtime-timeout-summary.json`. The latter retains only
 timestamps, durations, counts and error categories. Recovery was observed during
