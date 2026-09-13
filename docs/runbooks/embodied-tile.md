@@ -24,9 +24,12 @@ it running. Package reference: `oshal-applications/embodied/README.md`.
    kinetic step is re-validated against the map as it goes. **Abort** stops it; **E-STOP** latches
    (reset with **Reset e-stop**).
 4. **Take command.** Pauses any plan and enables the manual buttons: base LiDAR / wrist camera / drone
-   LiDAR scans, jog, lift, arm, gripper, drone take off / land. A refused command shows a toast with
+   LiDAR scans, jog, lift, arm, gripper, drone take off / land / **Recover** (one global-search sweep
+   for a drone that reports itself lost; a running plan recovers on its own — climb, search, the
+   registered trail back to the pad — and fails with "grounded" only when neither works). A refused command shows a toast with
    the reason and is a `refused` row in the log. **Release command** resumes the plan.
-5. **Reset world.** Header: choose **Drone sensors** (`3-D LiDAR` we would buy, or `2-D ring + ToF`
+5. **Reset world.** Header: choose the **Room** (`Kitchen`, or the `Studio` with a desk, a two-shelf
+   unit and a bench), **Drone sensors** (`3-D LiDAR` we would buy, or `2-D ring + ToF`
    we print) and the **truth model** (`kinematic truth`, or `physics (MuJoCo)`), then Reset world.
    The map is forgotten; the machine starts knowing nothing.
 6. **Build the drone.** The parts model for a fit; **Open in CAD Studio** on a part creates it as a
