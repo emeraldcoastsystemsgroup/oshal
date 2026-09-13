@@ -871,6 +871,25 @@ tests/session-crypto.test.mjs
   the final five rows without manual refresh. Reuse the existing batch service;
   do not restart suites or weaken current authorization checks.
 
+  Status 2026-09-13: the source fix is on `feat/store-compatibility-gate` at
+  `a5021e36`. The Lab page follows the admitted batch through the existing
+  schedule-history route, keeps polling while the batch is running, lands one
+  final read after it ends, then stops; a transient failure of the runs read
+  retries three times, bounded. The registered browser regression is the
+  `tests/unit/test-lab-schedule-browser.spec.ts` case "keeps run history
+  current across the gaps between batch children, a selection change and the
+  terminal read without a manual refresh": a three-child batch with real
+  four-second gaps between children, the frozen-rows moment observed while
+  the batch is still running, one injected 503 on the runs read, two selection
+  changes, three passed rows and a stopped poll with no refresh click. All 17
+  cases pass in real Chromium over the real routes, disposable PostgreSQL and
+  Docker runners. The running api already serves the changed page through the
+  read-only `any-bot/server` bind mount (checked inside `oshal-local-api`); no
+  deploy or restart was needed. Still open: the native observation. The Lab
+  data routes answer 401 "A verified user identity is required" to PAT and
+  service-secret principals, so the final-five-rows check waits for the
+  operator's next Create batch in a signed-in browser.
+
 ## Completion gate
 
 Close only when TLAB-01 through TLAB-09 and every applicable public/private row are resolved, installed catalogs
