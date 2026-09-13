@@ -23,6 +23,17 @@ The framework owns source IDs as `application-name:source-id`. Producer session 
 
 Trusted package producers use the existing `saveTaskPending(pool, id, userSub, sessionId, title)` task-store export and must honor its boolean result before calling `finishTask`. A `false` result means suppressed or unavailable delivery. The `jarvis-briefings` capability is the compatibility floor for this return contract. No request may supply an acting issuer, a source owner or a replacement user identity. Ordinary chat ingress rejects registered and retired producer session IDs.
 
+For an already completed result, use the core task store's
+`saveCompletedBriefing(id, userSub, sessionId, title, result)` export. It admits
+the registered source through the same current-owner, authorization and preference
+transaction and inserts the completed row atomically. A deterministic producer
+ID makes retries idempotent without resetting an existing row or its delivery
+markers. The helper returns true only after a new completed row commits; false
+covers suppression, duplicates and unavailable or failed admission. It never
+falls back to an ordinary task. An older core without this export must be reported
+as unavailable by the producer. Collection and report generation stay with the
+owning application; this helper does not run work or send outward messages.
+
 The legacy producer API supplies only a subject. Composition resolves it against current local accounts, enabled native login providers and explicit bridge links. Delivery proceeds only when exactly one active canonical issuer/subject is established. Ambiguous identities are refused. Newly queued source tasks persist that exact issuer and source. Old rows from known source sessions lack issuer proof and are quarantined from the shelf and prompt, including after source removal; the system never guesses their issuer.
 
 ## Persistence and lifecycle
@@ -42,3 +53,9 @@ Transactions that refresh authority are admitted one at a time per runtime pool 
 - `tests/unit/jarvis-briefing-identity.spec.ts`: enabled provider/bridge identity resolution and real protected-application policy.
 
 The AI Test Lab scenario `jarvis-briefing-preferences` performs a read-only authenticated catalog probe. It does not change preferences, claim notifications or run a provider. The suites use disposable databases and local HTTP fixtures; no live notification or application collection schedule is exercised.
+
+The Daily Trade Recap package registers its completed-report regression separately
+in its installed Test Lab catalog. It exercises the actual collector, completed
+task helper and briefing service with isolated transactional SQL/HTTP fixtures,
+including rollback/retry, duplicate fires and current-owner/preference refusal.
+This is separate from proving a live trading report was generated or delivered.

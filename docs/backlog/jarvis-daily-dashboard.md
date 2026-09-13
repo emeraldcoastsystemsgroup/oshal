@@ -1,6 +1,8 @@
 # Jarvis and the daily dashboard
 
 Requested 2026-09-11. Status: **compact presentation delivered; native acceptance passed**.
+Recorded-report producer adoption is **partially implemented and locally tested;
+publication and installed delivery acceptance are pending**.
 The September 13 follow-up addressed the unsatisfactory Jarvis layout as P1:
 make the assistant compact, make Finance a named area, and place miscellaneous
 applications in the OSHAL menu instead of an `Other` dashboard section.
@@ -52,6 +54,38 @@ At 04:06–04:07 UTC, the two actual native Run controls for this scenario and
 reported 33 admitted links. These core results are in-page observations, not
 durable package-run history or execution of the registered source suites.
 
+## September 13 recorded-report source checkpoint
+
+Daily Trade Recap 1.2.0 adds one producer beyond Kalshi using the existing
+registered briefing, exact-owner preferences and task rails. Its separate
+fifteen-minute service schedule reconciles existing `daily-report` journal
+entries. A reusable core `saveCompletedBriefing` helper commits the completed
+result atomically, retaining current source authorization and issuer resolution;
+failed transactions leave no pending row to block a later retry. Missing or
+ambiguous owners are deferred, never inferred from an email or default operator.
+
+The [next source release](../releases/report-briefings-cad-lifecycle-2026-09-13.md)
+records 22 passing local Node cases using the actual collector/helper/service
+with synthetic transactional SQL and HTTP ports. It is separate from current
+core `59f9c52e` acceptance. The package declares two Lab cases: metadata readiness
+and the producer regression. The latter requires a framework checkout and is
+not claimed to have run in the installed Lab.
+
+This is **recorded-report notification**, not a new morning report generator or
+proof of email/site delivery. Collection examines at most the newest 50 eligible
+rows from 72 hours and stops subsequent admissions after ten seconds; it does
+not cancel the operation already in flight or guarantee exhaustive backfill.
+Only confirmed admissions count as queued, and normal Jarvis browser claims
+still determine delivery. Unavailable sources/reads and deferred admissions
+remain distinct from a delivered update.
+
+JDX-04 remains open: publish/install this source and verify real eligible report
+admission and browser delivery, then adopt communications and other supported
+producers. The existing after-close workflow remains unchanged. Actual morning
+report production, at least three supported source types, and their source,
+freshness and attention presentation still need evidence. JDX-03 durable
+grouping/replay/snooze and JDX-05 context actions also remain open.
+
 ## Product direction
 
 Provide one useful daily page with application updates and a compact Jarvis conversation area.
@@ -82,7 +116,7 @@ that another application's lack of updates proves its producer ran successfully.
 | JDX-01 | P1 | Repair text overlap and activity feedback; replace the dominant eye with a compact assistant presentation. | Idle, listening, thinking, speaking and stopped states are distinct. Only actual current work animates a destination, and completion/cancellation clears it. Long text, resizing, zoom, theme changes and open detail panels never cover controls or other copy. |
 | JDX-02 | P1 | One compact daily dashboard with Jarvis, attention items and recent updates. | The initial page shows a bounded summary and adjacent detail area, with useful empty/unavailable states. Finance is a named area; miscellaneous tools and All applications remain reachable in the OSHAL menu without an `Other` dashboard bucket. Setup details and developer fixtures do not crowd the personal default. Pinned applications and per-user choices survive reload. |
 | JDX-03 | P1 | Group related alerts and retain a readable activity history. | Repeated updates are grouped by source and topic, with a count, latest meaningful change and expandable history. Replayed events do not inflate unread counts. Distinct executions or decisions remain distinguishable. Read, dismiss, snooze and resolve have explicit separate semantics and durable user state. |
-| JDX-04 | P1 | Adopt the briefing contract beyond Kalshi, beginning with morning trading reports and communications. | Each supported producer registers its source, queues an exact-owner result after actual completion and honors preferences. The dashboard identifies source, timestamp, freshness and whether attention is required. Missing connectors, disabled sources and failed collection remain visible as such. Actual production and delivery are tested separately. |
+| JDX-04 | P1 | Adopt the briefing contract beyond Kalshi, beginning with morning trading reports and communications. **Partial source checkpoint:** recorded-report collector/helper passes 22 local cases; publication and installed delivery remain pending. | Each supported producer registers its source, queues an exact-owner result after actual completion and honors preferences. The dashboard identifies source, timestamp, freshness and whether attention is required. Missing connectors, disabled sources and failed collection remain visible as such. Actual production and delivery are tested separately. |
 | JDX-05 | P1 | Context-aware navigation and editable drafts beside an update. | From an update, the user can open its authorized application/record, ask Jarvis to navigate or fill supported fields, inspect the changes and continue editing. The surface acknowledges applied operations; unsupported or rejected operations never produce a false completion claim. |
 | JDX-06 | P1 | Simplify the assistant controls and prove the complete daily workflow. | Text and voice share a clear composer, Add has an attachment purpose, Stop appears during active work, and New, history, language and appearance controls have predictable locations. Closing/minimizing retains the defined draft/history state. The end-to-end browser and installed-source acceptance below passes. |
 

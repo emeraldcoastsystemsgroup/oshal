@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Expose Workspace with a clear saved-choice, temporary-app-theme and visual-skin explanation.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Offer optional top workspace navigation as a separate browser-local preference from color themes.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Make the portal theme authoritative and expose optional application colors without changing content.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Put appearance first, separate approval preferences and collapse runtime ownership help while preserving settings actions.
  */
 
 import { createUiLogger, serializeUiError } from '../../../shared/ui-debug.js';
@@ -64,14 +65,15 @@ export class SettingsGlobalTab {
   // Build the full markup for the global settings tab from smaller section renderers.
   buildMarkup() {
     return [
-      renderConfigOwnershipSection(this.view.configOwnership),
+      this.renderOperatorPreferencesSection(),
       this.renderRuntimeIntroSection(),
       this.renderCostControlsSection(),
       this.renderProviderSection(),
       this.renderOpenAiCodexSection(),
       this.renderIntegrationsSection(),
       this.renderServiceRuntimesSection(),
-      this.renderOperatorPreferencesSection(),
+      renderConfigOwnershipSection(this.view.configOwnership),
+      this.renderApprovalPreferencesSection(),
       this.renderSaveRow(),
     ].join('');
   }
@@ -241,17 +243,16 @@ export class SettingsGlobalTab {
       </div>`;
   }
 
-  // Render cockpit-local operator preferences.
+  // Render browser-local appearance preferences before shared runtime configuration.
   renderOperatorPreferencesSection() {
-    const settings = this.view.settings;
     const themeButtons = COCKPIT_THEMES
       .map((theme) => renderThemeButton(theme, document.documentElement.dataset.theme === theme))
       .join('');
 
     return `
       <div class="setting-section">
-        <div class="setting-section-title">Operator Preferences</div>
-        <div class="setting-section-desc">Cockpit-local display and approval preferences for this operator session.</div>
+        <div class="setting-section-title">Appearance</div>
+        <div class="setting-section-desc">Choose how the portal looks and how you move between applications.</div>
         <div class="setting-section-title" style="font-size:14px;">Theme</div>
         <div class="setting-section-desc">Choose a theme for the portal and its applications. Your choice follows you between pages and open tabs in this browser. Workspace uses light paper surfaces and indigo accents.</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap" id="settingsThemePicker">${themeButtons}</div>
@@ -260,8 +261,15 @@ export class SettingsGlobalTab {
           <span class="field-hint">Use each application's own skin, such as Little Monsters or Create. Choosing a portal theme above returns every application to that palette.</span>
         </div>
         ${navigationSettingsMarkup()}
-        <div style="height:12px;"></div>
-        <div class="setting-section-title" style="font-size:14px;">Auto-Approve</div>
+      </div>`;
+  }
+
+  /** @description Render the existing approval controls separately from browser appearance preferences. */
+  renderApprovalPreferencesSection() {
+    const settings = this.view.settings;
+    return `
+      <div class="setting-section">
+        <div class="setting-section-title">Auto-Approve</div>
         <div class="setting-section-desc">Automatically approve tool execution</div>
         ${renderToggle('Safe commands (ls, cat, etc.)', 'settingsAutoSafe', settings.autoApproveSafe)}
         ${renderToggle('File reads', 'settingsAutoRead', settings.autoApproveRead)}
@@ -540,7 +548,7 @@ function flashButtonState(button, replacementMarkup) {
   }, 2000);
 }
 
-// Render the Session 70 ownership guidance from the backend contract.
+// Keep backend ownership guidance available through a native keyboard-accessible disclosure.
 function renderConfigOwnershipSection(ownership) {
   if (!ownership) {
     return '';
@@ -553,14 +561,14 @@ function renderConfigOwnershipSection(ownership) {
   ];
 
   return `
-    <div class="setting-section" data-testid="config-ownership-section">
-      <div class="setting-section-title">Config Ownership</div>
+    <details class="setting-section" data-testid="config-ownership-section">
+      <summary class="setting-section-title" style="cursor:pointer;">Config Ownership and runtime help</summary>
       <div class="setting-section-desc">OSHAL owns one shared config surface plus narrower per-agent contracts. Legacy per-port <code>/config</code> pages are compatibility only.</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">
         ${sections.map((section) => renderOwnershipCard(section)).join('')}
       </div>
       <div style="margin-top:12px;font-size:13px;opacity:0.82;">Guidance:${renderOwnershipGuidance(ownership.legacyCompatibility?.guidance || [])}</div>
-    </div>`;
+    </details>`;
 }
 
 // Normalize one ownership section for rendering.

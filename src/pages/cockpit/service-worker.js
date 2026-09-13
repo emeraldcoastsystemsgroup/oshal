@@ -41,12 +41,13 @@
  * 36 | maintainer@emeraldcoastsystemsgroup.com | Evict cached navigation for contextual sidebars and the admitted Federal CRM top workspace.
  * 37 | maintainer@emeraldcoastsystemsgroup.com | Precache locked local Markdown and regular icon assets and evict the CDN-dependent shell.
  * 38 | maintainer@emeraldcoastsystemsgroup.com | Refresh Profile controls and precache the shared STL renderer used by Scan and CAD.
+ * 39 | maintainer@emeraldcoastsystemsgroup.com | Refresh Global Settings with first-screen appearance controls and expandable runtime help.
  */
 
 /* global self, caches, fetch, Response */
 
 // Bump CACHE_VERSION on any change to the precached shell list so old caches are evicted.
-const CACHE_VERSION = 'oshal-cockpit-v43';
+const CACHE_VERSION = 'oshal-cockpit-v44';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 // The minimal app shell precached at install so the cockpit boots offline. Live data

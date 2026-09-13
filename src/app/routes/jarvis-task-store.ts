@@ -10,6 +10,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Atomically admit completed registered briefings without an ordinary-task fallback or stranded pending row.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Scope durable work rows to verified issuer and withhold protected source text from automatic prompts without derived lineage.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: ensureJarvisSchema / saveTaskPending / finishTask / findJarvisTaskSessionId / buildOpenWorkBlock / persistJarvisTurn / markJarvisSessionTaskStatus / mapJarvisTaskStatusFromTicketStatus / storedVisual (route decomposition, no behaviour change).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | jarvisFailureNoteForTicketStatus: an escalated/cancelled ticket left the shelf row's error column NULL, so a failed multi-app plan rendered as status 'error' with no message. Say the run stopped — never summarize an outcome that does not exist.
@@ -136,6 +137,35 @@ export async function saveTaskPending(
     );
     return result.rowCount !== 0;
   } catch (err) { logger.warn({ err }, 'jarvis: saveTaskPending failed'); return false; }
+}
+
+/**
+ * @description Atomically store one completed registered briefing under current exact-principal rights and preferences.
+ * @param id - Producer-owned deterministic completion identifier; an existing row is never replaced.
+ * @param sub - Recorded owner subject requiring unambiguous current issuer resolution.
+ * @param sessionId - Permanently registered producer session; ordinary sessions are refused.
+ * @param title - Human-readable description of the recorded completion.
+ * @param payload - Existing result, not a request to generate or execute work.
+ * @returns True only after the completed row commits; unavailable, suppressed and duplicate writes return false.
+ */
+export async function saveCompletedBriefing(
+  id: string, sub: string, sessionId: string, title: string, payload: string,
+): Promise<boolean> {
+  if (![id, sub, sessionId, title, payload].every(value => typeof value === 'string' && value.trim())) return false;
+  if (id.length > 200 || sub.length > 512 || sessionId.length > 180) return false;
+  const runtime = getJarvisBriefingDelivery();
+  if (!runtime) return false;
+  try {
+    const accepted = await runtime.service.publish(sub, sessionId, async (client, issuer, sourceId) => {
+      const result = await client.query(`INSERT INTO jarvis_tasks
+        (id,user_sub,session_id,title,status,kind,result,finished_at,briefing_source_id,principal_issuer)
+        VALUES($1,$2,$3,$4,'done','simple',$5,NOW(),$6,$7)
+        ON CONFLICT(id) DO NOTHING RETURNING id`,
+      [id, sub, sessionId, title.slice(0, 200), payload.slice(0, 20000), sourceId, issuer]);
+      return Boolean(result.rowCount);
+    });
+    return accepted === true;
+  } catch (err) { logger.warn({ err }, 'jarvis: completed briefing admission failed'); return false; }
 }
 
 /** @description Marks a work task done (with result) or errored — durable so it survives restarts.

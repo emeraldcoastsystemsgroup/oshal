@@ -1,8 +1,12 @@
 # Reusable components and integration — 2026-09-13
 
-Source checks below have passed. Publication, installation and native acceptance
-are recorded below only after completion. The earlier accepted daily dashboard is
-documented in its [separate release](daily-dashboard-2026-09-13.md).
+Source checks, core deployment and the two package installations are complete.
+Native acceptance is partial: Profile and a synthetic CAD preview were observed,
+but Scan returned HTTP 502 and installed Lab checks remain pending. The strict
+core-only preservation comparison failed on two control-table hashes whose
+changes are not attributable from the saved baseline. Final verification is
+pending. The earlier accepted daily dashboard is documented in its
+[separate release](daily-dashboard-2026-09-13.md).
 
 ## Delivered source
 
@@ -48,9 +52,62 @@ cleanup: `temp/cockpit-profile-release-receipt-v2.json`,
 
 ## Publication and installed acceptance
 
-Pending. Capture a fresh preservation baseline after the separately installed
-CAD engine and CAD authorization revision; the earlier daily-dashboard baseline
-does not describe this runtime. Preserve other applications, the active Embodied
-workstream and existing business records. Compare registry stable fields and its
-loader timestamp separately from the outset. No result from an older baseline
-may be rewritten into a current pass.
+Published core `59f9c52eabbc240ac3227468e69d3a76d8451612` completed the standard
+preview rollout with exit 0 at **05:35:06 UTC**. The final deployment census was
+35/35 healthy app containers on image
+`37b657896ce1cf7c8ac3dfa9d5c1d1d9148b487ab3db8f5fb4a6215a7862eabd`.
+Infrastructure and the separate CAD engine were outside that app-fleet rollout.
+
+At **05:36:34 UTC**, the package copy completed from published store commit
+`c8010b419d1c4f291a2a525040c918d75be76d2c`: Scan 0.3.1 contains 97 exact files
+and CAD 0.1.1 contains 45, **142 files total**. The prior package backup was
+verified before copying. A subsequent API restart reported 79 applications
+loaded and zero failed. The copy receipt itself does not perform the restart.
+
+### Preservation result
+
+The strict core-only comparison at 05:35:53 UTC is **FAIL**, retained in
+`temp/profile-stl-core-only-preservation.json`. It reports changed full-row hashes
+for `oshal_authorization_applications` and `oshal_verified_principals`.
+Authorization revision **81**, **73 assignments** and **81 audit rows** remain
+exact. The comparison also preserves the existing packages, private records and
+infrastructure within that core-only checkpoint, before the later two-package
+copy and native fixture work.
+
+Both control tables retain their row counts and policy/security hashes, but the
+baseline contains no per-field or row-identity hashes for these tables. The
+source audit cannot establish whether the differences are timestamps, array
+ordering, membership or another field. Do not attribute them to ordinary startup
+or login activity, normalize the old receipt into a pass, or infer full
+preservation from the unchanged authorization counts. The separate source audit
+is `temp/profile-stl-control-table-source-audit.json`; attribution and final
+post-installation verification remain unresolved.
+
+### Native observations and remaining checks
+
+Native Chrome acceptance observed the compact Profile panel in Workspace and
+Midnight, with the existing Settings link opening successfully. A synthetic CAD
+box created through the ordinary UI showed revision 1, a blue solid and grid,
+**12 facets and 60 × 40 × 30 mm** in the shared preview. Unsaved hole diameter
+`6` and a draft label survived opening and closing Profile with the same part,
+revision and geometry. No feature was submitted in that draft-preservation check.
+
+The synthetic CAD part was deleted through the ordinary confirmation, and the
+portal palette was restored to Workspace at **05:48 UTC**. Final record/file
+cleanup verification is still pending. These observations concern installed
+CAD 0.1.1; the separately tested
+[CAD 0.1.2 lifecycle and report-briefing work](report-briefings-cad-lifecycle-2026-09-13.md)
+belongs to the next source checkpoint.
+
+At **05:49 UTC**, the live Scan page returned HTTP 502. That blocks complete
+native Scan preview and Scan-to-CAD handoff acceptance. It does not invalidate
+the isolated source regressions, and those regressions do not prove this live
+workflow passed. Installed core Lab readiness and package recipe runs also
+remain pending. Intermittent origin/startup behavior remains tracked in the
+[startup investigation](../backlog/cockpit-startup-resilience.md).
+
+The deployment console, `temp/profile-stl-copy-receipt.json` and
+`temp/component-native-acceptance.md` retain the local checkpoint evidence;
+later native observations include the Workspace restoration above. Add the
+remaining native/Lab results and a new final preservation receipt after those
+checks complete. Preserve all earlier failed and partial records.

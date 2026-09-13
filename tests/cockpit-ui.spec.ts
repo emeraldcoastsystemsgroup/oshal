@@ -30,6 +30,7 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Updated engineering Redis assertions for native route and real telemetry messaging
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Updated cockpit tests for header audit: profileBtn replaces settingsBtn/loginBtn/historyBtn, operations replaces advanced ribbon, removed CM-4 workspace buttons
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Removed the retired Presentron header-button assertion and the "Presentron activates workspace focus" test (button removed)
+ * 28 | maintainer@emeraldcoastsystemsgroup.com | Expand native Settings runtime help before checking its retained ownership endpoint guidance.
  */
 
 import { test, expect } from '@playwright/test';
@@ -532,6 +533,7 @@ test.describe('Cockpit UI — Config Ownership', () => {
     await gotoCockpit(page);
     await page.click('.ribbon-btn[data-view="settings"]');
     await expect(page.locator('[data-testid="config-ownership-section"]')).toBeVisible();
+    await page.locator('[data-testid="config-ownership-section"] > summary').click();
     await expect(page.locator('text=Config Ownership')).toBeVisible();
     await expect(page.locator('code').filter({ hasText: '/api/config' })).toBeVisible();
     await expect(page.locator('code').filter({ hasText: '/api/agents/:agentId/profile' })).toBeVisible();

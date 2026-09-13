@@ -7,12 +7,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove selectable Workspace styling through real Cockpit components, persisted choices, shared iframes and transient package themes in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify the existing chooser through relocated header controls with keyboard and pointer dismissal.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Exercise the chooser inside the OSHAL menu alongside the compact daily Home composition.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove first-screen appearance controls and keyboard-expandable runtime help through the complete Settings view.
  * =============================================================================
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { type Browser, type BrowserContext, type Page } from 'playwright';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { startWorkspaceThemeFixture } from '../fixtures/workspace-theme';
+import { startWorkspaceNavigationFixture } from '../fixtures/workspace-navigation';
 import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
 
@@ -25,6 +27,7 @@ declare global {
   }
 }
 let fixture: Awaited<ReturnType<typeof startWorkspaceThemeFixture>>;
+let settingsFixture: Awaited<ReturnType<typeof startWorkspaceNavigationFixture>>;
 let isolated: Awaited<ReturnType<typeof launchIsolatedBrowser>>;
 let browser: Browser, context: BrowserContext, page: Page;
 let errors: string[];
@@ -62,7 +65,16 @@ function contrast(foreground: string, background: string) {
 }
 
 beforeAll(async () => {
-  fixture = await startWorkspaceThemeFixture(); isolated = await launchIsolatedBrowser(); browser = isolated.browser;
+  fixture = await startWorkspaceThemeFixture();
+  settingsFixture = await startWorkspaceNavigationFixture(app => {
+    app.get('/api/config/ownership', (_request, response) => response.json({ ownership: {
+      globalConfig: { routeBase: '/api/config', summary: 'Shared runtime configuration.', examples: ['Provider'] },
+      perAgentProfile: { routeBase: '/api/agents/:agentId/profile', summary: 'Agent profile.', examples: ['Role'] },
+      perAgentTools: { routeBase: '/api/agents/:agentId/tools', summary: 'Agent tools.', examples: ['Tools'] },
+      legacyCompatibility: { guidance: ['Use the mounted configuration APIs.'] },
+    } }));
+  });
+  isolated = await launchIsolatedBrowser(); browser = isolated.browser;
 });
 afterAll(async () => {
   try {
@@ -70,15 +82,84 @@ afterAll(async () => {
       const cleanup = await isolated.close(); mkdirSync('temp', { recursive: true });
       writeFileSync(`temp/workspace-theme-browser-cleanup-${cleanup.pid}.json`, JSON.stringify(cleanup, null, 2) + '\n', { flag: 'wx' });
     }
-  } finally { await fixture?.close(); }
-});
+  } finally { await settingsFixture?.close(); await fixture?.close(); }
+}, 20000);
 beforeEach(async () => {
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
-  await context.route('**/*', route => new URL(route.request().url()).origin === fixture.origin ? route.continue() : route.abort());
+  await context.route('**/*', route => [fixture.origin, settingsFixture.origin].includes(new URL(route.request().url()).origin)
+    ? route.continue() : route.abort());
   page = await context.newPage(); errors = [];
   page.on('pageerror', error => errors.push(error.message));
 });
 afterEach(async () => { await context?.close(); });
+
+/** @description Enter Global Settings through the actual shell action and its unchanged asynchronous data loading. */
+async function openFullSettings(reload = false) {
+  if (reload) await page.reload();
+  else await page.goto(settingsFixture.origin + '/cockpit/');
+  await page.locator('#workspaceNavigationMore > summary').click();
+  await page.locator('#portalSettingsBtn').click();
+  await page.locator('#settingsThemePicker').waitFor();
+}
+
+/** @description Check actual first-screen geometry before any control can scroll itself into view. */
+async function firstScreenControl(selector: string) {
+  const box = await page.locator(selector).boundingBox();
+  const content = await page.locator('#settingsBody').boundingBox();
+  expect(box).not.toBeNull(); expect(content).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0); expect(box!.y).toBeGreaterThanOrEqual(content!.y);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(Math.min(content!.y + content!.height, page.viewportSize()!.height));
+}
+
+it.each([{ width: 1280, height: 800 }, { width: 390, height: 844 }])(
+  'puts full Global Settings appearance controls on the first screen at $width pixels', async viewport => {
+    await page.setViewportSize(viewport); await openFullSettings();
+    await firstScreenControl('#settingsThemePicker [data-theme=workspace]');
+    await firstScreenControl('#settingsApplicationColors');
+    await firstScreenControl('#settingsNavigationLayout');
+    mkdirSync('temp/settings-appearance-screenshots', { recursive: true });
+    await page.screenshot({ path: `temp/settings-appearance-screenshots/settings-${viewport.width}.png` });
+    expect(await page.locator('#settingsBody').evaluate(element => element.scrollTop)).toBe(0);
+    expect(await page.locator('#settingsBody > .setting-section').first().locator('.setting-section-title').first().innerText()).toBe('Appearance');
+    const appearance = page.locator('#settingsThemePicker').locator('..');
+    expect(await appearance.locator('#settingsAutoSafe').count()).toBe(0);
+    for (const id of ['settingsAutoSafe', 'settingsAutoRead', 'settingsAutoWrite', 'settingsSaveBtn']) {
+      expect(await page.locator('#' + id).count()).toBe(1);
+    }
+    await page.locator('#settingsApplicationColors').check();
+    await page.locator('#settingsThemePicker [data-theme=midnight]').click();
+    expect(await page.locator('#settingsApplicationColors').isChecked()).toBe(false);
+    await page.locator('#settingsNavigationLayout').selectOption('workspaces');
+    expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe('midnight');
+    expect(await page.evaluate(() => localStorage.getItem('oshal-navigation-layout'))).toBe('workspaces');
+    await openFullSettings(true);
+    expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
+    expect(await page.locator('#settingsNavigationLayout').inputValue()).toBe('workspaces');
+    expect(await page.locator('#settingsThemePicker [data-theme=midnight]').getAttribute('aria-pressed')).toBe('true');
+    expect(errors).toEqual([]);
+  }, 30000,
+);
+
+it('keeps full Global Settings runtime help closed until keyboard expansion without changing configuration', async () => {
+  const writes: string[] = [];
+  page.on('request', request => { if (request.method() !== 'GET' && new URL(request.url()).pathname.startsWith('/api/')) writes.push(request.url()); });
+  await openFullSettings();
+  const help = page.locator('[data-testid=config-ownership-section]');
+  expect(await help.evaluate(element => element.tagName)).toBe('DETAILS');
+  expect(await help.getAttribute('open')).toBeNull();
+  expect(await help.locator('code').filter({ hasText: '/api/agents/:agentId/profile' }).isVisible()).toBe(false);
+  const summary = help.locator('summary');
+  await summary.scrollIntoViewIfNeeded(); await summary.focus(); await page.keyboard.press('Enter');
+  expect(await help.getAttribute('open')).not.toBeNull();
+  for (const route of ['/api/config', '/api/agents/:agentId/profile', '/api/agents/:agentId/tools']) {
+    expect(await help.locator('code').filter({ hasText: route }).last().isVisible()).toBe(true);
+  }
+  await page.keyboard.press('Space');
+  expect(await help.getAttribute('open')).toBeNull();
+  expect(await summary.evaluate(element => element === document.activeElement)).toBe(true);
+  expect(writes).toEqual([]); expect(errors).toEqual([]);
+}, 30000);
 
 it('selects through the real Settings picker, persists and stays in the existing theme cycle', async () => {
   await open(); expect(await page.locator('html').getAttribute('data-theme')).toBe('workspace');
