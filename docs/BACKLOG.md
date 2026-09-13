@@ -970,6 +970,11 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   schedule read produce visibly different copy, proven the same way; and the guide's failure table is
   updated to match, dropping the "those two are not yet told apart" caveat it carries today.
 
+### Circuit Lab (store package `circuit-lab`, ADR-154)
+- **Delivered:** a local electromechanical lab — ngspice in a package-owned engine container, a schematic canvas whose gears turn from the solved shaft speeds, DC motors and gear trains reflected into the same SPICE solve, ten route-backed tools for the inline concierge, four suites registered in the Test Lab. See [ADR-154](adr/154-local-electromechanical-lab-circuit-lab.md).
+- **Remaining (owned by the package):** firmware in the loop, a breadboard view, gears handed to CAD Studio, one parts model with the embodied lab (ADR-152 D1), non-rigid mechanics, more parts, a convergence retry, and the operator's list of external engineering tools to evaluate (Onshape, McMaster-Carr, WebPlotDigitizer, SimScale, EES, OpenRocket, ParaView, OpenFOAM, NASA GMAT, NASA CEA) — each with done-when criteria in the package's `BACKLOG.md`.
+- **Done when:** the package backlog's B1–B8 close with their stated criteria and every listed tool has a dated evaluation note with a cost / benefit table and either a backlog item or a recorded "no".
+
 ## Provisioning and operator experience
 
 ### First-run provisioning wizard
