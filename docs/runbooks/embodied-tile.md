@@ -64,6 +64,28 @@ bounded correction on the controller instead; `--rescore <policy.zip>` re-evalua
 `GET /api/embodied/physics/reports` lists them. Reports live in the container's tmpfs and are gone
 on recreate — copy out what you want to keep.
 
+## The plant as a node on the swarm rail
+
+Run from inside the api container, `install-engine.sh` also makes the engine container a **node on the
+swarm** (ADR-099, the way the drone and camera nodes join): it inherits `SWARM_SERVICE_SECRET` from the
+api's environment, passes it to the container (never to a file), and the container heartbeats into
+`POST /api/embodied/nodes/heartbeat` as `embodied-plant` every two seconds and takes command envelopes
+at `embodied-engine:7414`. The installer prints `node rail: on` and, after the self-test, waits for
+`node rail: the api acknowledged the plant's heartbeat`; run from a shell without the secret it prints
+`node rail: OFF` and the bridge alone serves.
+
+- The tile's header reads `rail: embodied-plant online`; the truth-model selector then offers
+  **rail node embodied-plant (mujoco 3.3.5)**. Reset world on it and the node panel reads
+  `physics on rail node embodied-plant`; the plant is now flown over the node's command channel, every
+  step an authenticated envelope, through the same guards, rehearsal and confirm.
+- A reset onto it that answers **503 `node_offline`** means no heartbeat for 15 s — the container is
+  down or cannot reach the api (`docker logs oshal-embodied-engine`: look for `heartbeat failed` or
+  `heartbeat rejected`). **404 `unknown_node`** means nothing of that id has ever heartbeat in.
+  **503 `node_unavailable`** names the reason (the node refused the secret, or its build is not this
+  package's engine tree — reinstall).
+- `GET /api/embodied/physics/status` lists the fleet (`nodes`: online, `stale`, telemetry, events).
+- A real drone node joins the same way (kind `drone`, refusing `load` and `clone`) — BACKLOG B6.
+
 ## Flying a trained policy (the certification gate)
 
 1. **Explore first.** The gate replays the policy's recorded flight through *your* world's map; a
@@ -98,3 +120,5 @@ The package is installed like every store package (LF-exact archive of the store
 | `tests/surface.core.spec.mjs` | the shipped tile in headless Chromium over the real routes: explore to done, manual command, reset, the CAD Studio hand-off byte for byte | a core checkout (Playwright) |
 | `engine/tests/test_worker.py` | the MuJoCo plant against the generated fixture | python + the pins |
 | `tests/engine-physics.live.test.js` | the simulation on the real plant behind a running bridge | `EMBODIED_ENGINE_ADDR` |
+| `node --test tests/engine-node.test.js` | the node rail without a container: the fleet, a node double on loopback flown by the sim, a body that refuses to be cloned | nothing |
+| `tests/engine-node.live.test.js` | the real plant started as a node against the real routes: heartbeat in, a world reset onto it, a fresh-world exploration to done on MuJoCo | `EMBODIED_PYTHON` + a core checkout |

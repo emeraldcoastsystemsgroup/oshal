@@ -41,6 +41,7 @@ kind of physical device.
 | Cameras as nodes (GoPro over USB, browser webcam) | store package `camera` | Same "device = node + cockpit surface" stack as drone. |
 | A physical prop driven **only through a manifest-declared, owner-resolved tool** | store package `pumpkin` (projector over a paired SSE room) | A bot cannot obtain the pairing token; the tool is the only door. |
 | A generic owned worker node that executes one claimed task at a time | `packages/oshal-chat` remote client, A2A `mcp.call-tool` | Owner-scoped dispatch since 2026-07-23. |
+| The **physics plant as a swarm node**: the embodied engine container heartbeats in and takes command envelopes exactly as a drone node does; the sim flies it through `RailDroneNode` beside the dialled `RemotePlant` | ADR-152, store package `embodied` 0.9.0 (`/api/embodied/nodes`, `auth: service`) | The seam a real drone node fills (embodied BACKLOG B6): same envelopes, kind `drone`, no `load`, no `clone`. |
 
 What does **not** exist: any manipulator provider, any notion of an object with a pose and an
 affordance inside a Spaces scan, any "physical task" ticket type, and any device-kind-agnostic

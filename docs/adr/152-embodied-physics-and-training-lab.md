@@ -134,9 +134,24 @@ baseline, so a learned policy is always compared to something that already works
   against the controller's 0.6 cm) — no policy has beaten the controller yet; the reports say so. A
   single-plane map certifies nothing off its scan plane: a path that dips centimetres under the
   mission altitude is refused until those layers are scanned — the gate working as meant.
-- **Not built, recorded as BACKLOG with done-when:** the node rail for the plant (B20 — today a
-  package-owned TCP bridge), a training recipe that beats the controller on three seeds (B19), tasks
-  D5.2–D5.4.
+- **The plant over the swarm node rail (B20, 0.9.0):** the engine container joins the swarm the way
+  the core drone and camera nodes do (ADR-099) — a heartbeat every two seconds into the package's
+  `auth: service` mount `/api/embodied/nodes/heartbeat` (the swarm service secret, a node identity,
+  never a browser) with its id, kind, the endpoint the api dials back, the bridge hello, telemetry and
+  events; command envelopes `{id, command, args}` at the node's `/api/drone-node/command` under the
+  same secret, over the same sessions the JSON-lines bridge serves. `DroneNode` is the seam
+  (`PhysicsPlant` plus nodeId, link, endpoint); `RemotePlant` (the container we dial) and
+  `RailDroneNode` (a node that dialled us by heartbeat) are its two implementations and the sim flies
+  either through the unchanged guards. The fleet mints nodes on heartbeat and refuses one quiet for
+  15 s before any command; a node that is one body refuses `clone` and the rehearsal runs on the
+  kinematic twin. Proven on a node double over a real socket (unit, routes, browser) and with the real
+  MuJoCo plant started as a node against the real routes. The suite found and the seam fixed a defect
+  both truth models share: a climb overshoot of 3.4 cm the plant called settled (5 cm tolerance) put
+  the first scan into the voxel layer above the mission altitude and the return leg was refused as
+  unknown; a hover now counts as reached only inside the commanded layer.
+- **Not built, recorded as BACKLOG with done-when:** a real node behind the same envelopes (B6: kind
+  `drone`, refusing `load` and `clone`, its own link-loss failsafe — the node double is that shape),
+  a training recipe that beats the controller on three seeds (B19), tasks D5.2–D5.4.
 
 ## Consequences
 
@@ -156,13 +171,15 @@ baseline, so a learned policy is always compared to something that already works
 1. Parts model + MJCF generator; the engine container with MuJoCo and Gymnasium; health and version
    surfaced — **done 0.7.0** for the kitchen and the recon drone; the sim-6 arm's MJCF is D5.3.
 2. The sensor bridge into the unchanged map and registration and the `PhysicsPlant` seam — **done
-   0.7.0** over a package-owned bridge; the swarm node rail is B20.
+   0.7.0** over a package-owned bridge; the swarm node rail — **done 0.9.0** (the container joins as a
+   drone node; the sim flies it through `RailDroneNode` beside `RemotePlant`).
 3. Task 1 with a PPO baseline and the deterministic autopilot as the reference — **done 0.7.0**; the
    certification gate and the policy as the plant's controller — **done 0.8.0**; no policy beats the
    reference yet (B19).
 4. Task 2 (exploration policy vs the frontier planner) — open.
 5. Arm MJCF and task 3; then task 4 — open.
-6. Policy-as-provider behind the confirm gate; hardware-in-the-loop — B19, B20, B6.
+6. Policy-as-provider behind the confirm gate; hardware-in-the-loop — B19 (the win), B6 (a real node
+   on the rail the plant already speaks).
 
 ## Related
 
