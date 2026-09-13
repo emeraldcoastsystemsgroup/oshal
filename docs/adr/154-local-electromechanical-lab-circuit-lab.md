@@ -105,9 +105,47 @@ run). Rigid gears only — backlash and compliance are not modelled. Two copies 
 must be kept in step (a spec enforces it). A hard-switching deck can still fail to converge and
 the lab says so rather than retrying.
 
-**Verification shipped with it.** The real-solver Python suite (17 cases in the engine image and
+**As built, 0.2.0 (2026-09-13, same day).** Eight more parts as real elements — zener, lamp, a
+behavioural linear regulator, a rail-limited op-amp with a dominant pole, a relay whose contacts
+follow the coil current with hysteresis, a sequenced pin (a repeating PWL source — the stand-in for
+a programmed pin until firmware is in the loop), an H-bridge driver as four switches with a dead
+band, and a 555 as a hysteresis latch on the real 1/3 and 2/3 Vcc thresholds (solved at the formula
+frequency of an astable). One lesson worth recording: a hard step inside a behavioural source
+stalls ngspice's timestep control; comparators are `tanh`, never a ternary. A refused deck is
+retried once with relaxed tolerances and the run says so. Restore any kept run (undo), and the
+gear-to-CAD-Studio hand-off: an involute outline posted as a `sketch` base with a bore, validated
+against CAD Studio's own contract by a cross-package spec. The canvas gained drag-from-palette,
+undo / redo, copy / paste, wheel zoom, shift-drag pan and live values at the timeline's time.
+
+**As built, 0.3.0 (2026-09-13, same day).** Servo and stepper as real elements on the same
+shaft-node analogy — a hobby servo whose pulse width is sampled in the deck by a ramp / hold pair
+at each falling edge and whose position loop drives a geared DC motor from the supply it is wired
+to (it goes to the angle its pulse names at its rated speed, droops under a torque, and does
+nothing without a supply); a bipolar stepper with sinusoidal torque and back-EMF against the
+rotor angle, detent torque and a capped damping term, behind a step/dir driver that counts edges
+with a charge packet and holds sine / cosine phase currents with a saturating regulator (one step
+per pulse exactly; a weight held at the textbook load angle `asin(τ / Km·I)`; steps lost above
+pull-out, reported). A load's constant torque (a lifted weight) reflects through the *signed*
+ratio — the test that first assumed the other sign found the mesh reversal. Any of motor, servo,
+stepper drives a train. B4's half that belongs to this package: a shaft-driver catalog whose
+nameplates validate against the contract, with a source line per number and a read-only
+cross-package test that fails when embodied's motor name, mass or price drifts; the embodied half
+(reading the rows by id) belongs to that package. B9 closed on the canvas — marquee multi-select
+with group move, wire re-routing saved on the wire, click-a-wire-to-plot — each with a browser
+case. The operator's external-tool list evaluated: ten dated notes under the package's
+`docs/evaluations/` (evidence fetched that day, cost / benefit, a BACKLOG item with done-when or
+a recorded no: Onshape and McMaster-Carr as connectors later, an equation lab in place of EES, a
+rocket lane for OpenRocket + CEA, ParaView once a field exists, OpenFOAM and GMAT as benchmarks
+in aero-lab and sat-ops, WebPlotDigitizer and SimScale no). Lesson recorded: a stepper's step
+counter must integrate a bounded charge, not a differentiated edge — the edge integral drifted
+1.5 % per step under timestep control; and a stepper's "final" numbers must be the last sample,
+because a step inside the 2 % averaging window blurs them.
+
+**Verification shipped with it.** The real-solver Python suite (17 cases at 0.1.0, 26 at 0.2.0, 32 at 0.3.0, in the engine image and
 the installer's self-test: LED, RC, switch mid-run, geared motor, stalled motor, PWM through a
 MOSFET, mechanism refusals, protocol), the contract suite (Node ≡ Python library and build hash)
-and the transport suite against a fake bridge (plain node, store-ci), and the framework-coupled
-HTTP suite with the real engine client (8 cases, registered in the Test Lab with its checkout
-prerequisite).
+and the transport suite against a fake bridge (plain node, store-ci), the gear-to-CAD suite
+(plain node, read-only cross-package), the driver-catalog suite (plain node, read-only cross-package against embodied's parts model),
+the framework-coupled HTTP suite with the real engine
+client (9 cases) and the actual-page Chromium suite (5 cases at 0.2.0, 8 at 0.3.0), all
+registered in the Test Lab with their prerequisites.
