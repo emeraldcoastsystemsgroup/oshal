@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise real Lab HTTP and PostgreSQL history with a controlled runner boundary and isolated callers.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Serve the shipped batch asset while preserving the independent single-suite runner fixture.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -53,6 +54,7 @@ export async function startTestLabRunFixture(options: { catalog?: InstalledAppTe
     visibleApps: new Map(state.visible ? [['fixture','Fixture package']] : []),auth: { canRunSuites: state.canRun },
   });
   app.get('/api/test-lab/app',(_req,res) => res.sendFile(resolve('any-bot/server/services/tools/test-lab/test-lab-app.html')));
+  app.get('/api/test-lab/package-batch.js',(_req,res) => res.sendFile(resolve('any-bot/server/services/tools/test-lab/test-lab-package-batch.js')));
   app.get('/api/test-lab/catalog',async (req,res) => {
     const current = await runContext(req);
     const tests = catalog.list(current.visibleApps,current.auth);

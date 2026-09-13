@@ -7,30 +7,44 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove automatic recovery from a temporary history failure without retrying execution or retaining stale evidence.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Synchronize schedule creation with actual mutation and refreshed history responses, proving delayed creation still preserves stale-revision refusal.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Exercise catalog refresh during an actual pending schedule creation and correlate refreshed rows with their created identifier.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Prove single-package batch admission, selector preservation and uncertain-response refusal with real services and exact-owned browser cleanup.
  */
 import { afterAll,afterEach,beforeAll,beforeEach,expect,it } from 'vitest';
-import { chromium,type Browser,type BrowserContext,type Page } from 'playwright';
-import { readFileSync } from 'node:fs';
+import { type Browser,type BrowserContext,type Page } from 'playwright';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Pool } from 'pg';
 import { DisposableAlertPostgres } from '../helpers/disposable-alert-postgres';
 import { startTestLabScheduleFixture } from '../fixtures/test-lab-schedules';
 import type { TestLabScheduleService } from '@/app/routes/test-lab-schedule-service';
+import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
+import yaml from 'js-yaml';
 
 const database = new DisposableAlertPostgres();
 let pool: Pool,browser: Browser,context: BrowserContext,page: Page;
 let fixture: Awaited<ReturnType<typeof startTestLabScheduleFixture>>;
+let packageSource: ReturnType<typeof fixture.addPackage>;
+let owned: Awaited<ReturnType<typeof launchIsolatedBrowser>>;
 beforeAll(async () => {
   pool = await database.start();
   for (const name of ['136-test-lab-runs.sql','137-test-lab-local-schedules.sql']) await pool.query(readFileSync(resolve('scripts/migrations',name),'utf8'));
-  browser = await chromium.launch({ headless: true });
+  owned = await launchIsolatedBrowser({ headless: true }); browser = owned.browser;
 },45000);
-afterAll(async () => { await browser?.close(); await database.stop(); },30000);
+afterAll(async () => {
+  try {
+    const cleanup = await owned?.close();
+    if (cleanup && process.env.OSHAL_BATCH_CLEANUP_DIR) writeFileSync(resolve(process.env.OSHAL_BATCH_CLEANUP_DIR,
+      `package-batch-browser-cleanup-${cleanup.pid}-${Date.now()}.json`),JSON.stringify(cleanup,null,2)+'\n',{ flag: 'wx' });
+  } finally { await database.stop(); }
+},30000);
 beforeEach(async () => {
   await pool.query('TRUNCATE oshal_test_lab_schedule_batches,oshal_test_lab_schedules,oshal_test_lab_runs');
-  fixture = await startTestLabScheduleFixture(pool); fixture.addPackage({ name: 'schedule-browser' });
+  fixture = await startTestLabScheduleFixture(pool); packageSource = fixture.addPackage({ name: 'schedule-browser' });
   context = await browser.newContext(); await context.route('**/*',route => new URL(route.request().url()).origin === fixture.base ? route.continue() : route.abort());
-  page = await context.newPage(); page.setDefaultTimeout(15000); await page.goto(fixture.base+'/api/test-lab/app');
+  page = await context.newPage(); page.setDefaultTimeout(15000);
+  if (process.env.OSHAL_BATCH_BASELINE_HTML) await page.route('**/api/test-lab/app',route => route.fulfill({
+    contentType: 'text/html',body: readFileSync(process.env.OSHAL_BATCH_BASELINE_HTML!,'utf8') }));
+  await page.goto(fixture.base+'/api/test-lab/app');
   await expect.poll(() => page.locator('#runStatus').textContent(),{ timeout: 10000 }).toContain('Ready.');
   await page.locator('#schedulePanel > summary').click();
   await expect.poll(() => page.locator('#scheduleStatus').textContent(),{ timeout: 10000 }).toContain('current catalog');
@@ -68,6 +82,118 @@ function historyErrors(service: TestLabScheduleService): string[] {
   };
   return errors;
 }
+
+async function selectPackage() {
+  await page.locator('#historyApp').selectOption('schedule-browser');
+  await expect.poll(() => page.locator('#packageBatchCounts').textContent()).toContain('ready /');
+}
+
+async function fullSelector(cadence = 'daily') {
+  const response = await fixture.call('/schedules','POST',{ appName: 'schedule-browser',levels: ['unit','integration'],cadence });
+  expect(response.status).toBe(201); return (await response.json()).schedule;
+}
+
+it('waits for the delayed batch asset before initializing catalog and schedule controls',async () => {
+  await page.route('**/api/test-lab/package-batch.js',async route => {
+    await new Promise<void>(done => setTimeout(done,300)); await route.continue();
+  });
+  await page.reload();
+  await expect.poll(() => page.locator('#runStatus').textContent(),{ timeout: 2000 }).toContain('Ready.');
+  await selectPackage(); expect(await page.locator('#runPackageBatch').isDisabled()).toBe(false);
+  expect(fixture.sandbox.calls).toBe(0);
+});
+
+it('runs one selected package once despite a double click and keeps automatic scheduling disabled',async () => {
+  const cases = [packageSource.test,
+    { ...packageSource.test,id: 'framework-pending',prerequisites: ['framework-checkout:oshal-core-dir'] },
+    { ...packageSource.test,id: 'browser-pending',level: 'browser',runner: { ...packageSource.test.runner,kind: 'playwright' },prerequisites: ['runner:playwright'] }];
+  writeFileSync(resolve(packageSource.dir,'tests/test-lab.yaml'),yaml.dump({ version: 1,cases })); fixture.catalog.register(packageSource.record);
+  expect(await page.locator('#runPackageBatch').count()).toBe(1);
+  expect(await page.locator('#runPackageBatch').isDisabled()).toBe(true); await selectPackage();
+  expect(await page.locator('#packageBatchCounts').textContent()).toContain('1 ready / 2 unavailable');
+  let release!: () => void, entered!: () => void, creates = 0, claims = 0;
+  const held = new Promise<void>(done => { release = done; }), arrived = new Promise<void>(done => { entered = done; });
+  await page.route('**/api/test-lab/schedules',async route => {
+    if (route.request().method() === 'POST') { creates++; entered(); await held; }
+    await route.continue();
+  });
+  page.on('request',request => { if (request.url().endsWith('/run-now')) claims++; });
+  try {
+    await page.locator('#runPackageBatch').evaluate((button: HTMLButtonElement) => { button.click(); button.click(); }); await arrived;
+    expect(await page.locator('#historyApp').isDisabled()).toBe(true);
+    expect(await page.locator('#runPackageBatch').isDisabled()).toBe(true);
+  } finally { release(); }
+  await expect.poll(() => page.locator('#packageBatchStatus').textContent()).toContain('admitted');
+  await expect.poll(() => page.locator('#scheduleHistory').textContent(),{ timeout: 45000 }).toContain('completed');
+  expect(await page.locator('#scheduleHistory').textContent()).toContain('browser-pending');
+  expect(await page.locator('#scheduleHistory').textContent()).toContain('framework-pending');
+  const schedules = (await (await fixture.call('/schedules')).json()).schedules;
+  expect(schedules).toEqual([expect.objectContaining({ enabled: false,levels: ['integration','unit'],cadence: 'daily' })]);
+  expect(creates).toBe(1); expect(claims).toBe(1); expect(fixture.sandbox.calls).toBe(1);
+},90000);
+
+it('reuses an exact disabled selector without changing cadence and reports a failed suite honestly',async () => {
+  writeFileSync(packageSource.helperPath,'exports.lineTotal = () => 1;\n'); fixture.catalog.register(packageSource.record);
+  const schedule = await fullSelector('weekly');
+  await selectPackage(); const mutations: string[] = [];
+  page.on('request',request => { if (request.method() !== 'GET') mutations.push(request.method()+' '+new URL(request.url()).pathname); });
+  await page.locator('#runPackageBatch').click();
+  await expect.poll(() => page.locator('#scheduleHistory').textContent(),{ timeout: 45000 }).toContain('failed');
+  expect(mutations).toEqual(['POST /api/test-lab/schedules/'+schedule.id+'/run-now']);
+  expect((await (await fixture.call('/schedules')).json()).schedules[0]).toMatchObject({ cadence: 'weekly',enabled: false,revision: 1 });
+  expect((await fixture.finished(schedule.id))!.summary.runs[0].state).toBe('failed');
+},90000);
+
+it.each(['different levels','enabled'])('does not change an existing selector with %s',async variant => {
+  const body = { appName: 'schedule-browser',levels: variant === 'different levels' ? ['unit'] : ['unit','integration'],cadence: 'weekly' };
+  const schedule = (await (await fixture.call('/schedules','POST',body)).json()).schedule;
+  if (variant === 'enabled') await fixture.call('/schedules/'+schedule.id,'PATCH',{ revision: 1,enabled: true });
+  const before = (await (await fixture.call('/schedules')).json()).schedules;
+  await selectPackage(); expect(await page.locator('#runPackageBatch').isDisabled()).toBe(true);
+  expect(await page.locator('#packageBatchCounts').textContent()).toContain('It was not changed');
+  expect((await (await fixture.call('/schedules')).json()).schedules).toEqual(before);
+  expect(fixture.sandbox.calls).toBe(0);
+});
+
+it('rechecks operator access before shortcut creation or admission',async () => {
+  await selectPackage(); fixture.state.admin = false; await page.locator('#runPackageBatch').click();
+  await expect.poll(() => page.locator('#packageBatchCounts').textContent()).toContain('operator access');
+  expect(await page.locator('#runPackageBatch').isDisabled()).toBe(true);
+  expect((await (await fixture.call('/schedules')).json()).schedules).toEqual([]); expect(fixture.sandbox.calls).toBe(0);
+});
+
+it('refuses a selector revision changed after its fresh read without starting a batch',async () => {
+  const schedule = await fullSelector(); await selectPackage(); let changed = false;
+  await page.route('**/api/test-lab/schedules',async route => {
+    const response = await route.fetch();
+    if (!changed && route.request().method() === 'GET') {
+      changed = true; expect((await fixture.call('/schedules/'+schedule.id,'PATCH',{ revision: 1,enabled: true })).status).toBe(200);
+    }
+    await route.fulfill({ response });
+  });
+  await page.locator('#runPackageBatch').click();
+  await expect.poll(() => page.locator('#packageBatchStatus').textContent()).toContain('changed');
+  expect((await pool.query('SELECT count(*)::int AS total FROM oshal_test_lab_schedule_batches')).rows[0].total).toBe(0);
+  expect(fixture.sandbox.calls).toBe(0);
+});
+
+it.each(['create','claim'])('never retries an uncertain %s response even when the server committed it',async phase => {
+  const existing = phase === 'claim' ? await fullSelector() : null; await selectPackage(); let posts = 0;
+  const endpoint = phase === 'create' ? '**/api/test-lab/schedules' : '**/schedules/'+existing.id+'/run-now';
+  await page.route(endpoint,async route => {
+    if (route.request().method() !== 'POST') { await route.continue(); return; }
+    posts++; const response = await route.fetch(); expect(response.ok()).toBe(true);
+    await route.fulfill({ status: 502,contentType: 'text/html',body: '<!doctype html><title>Synthetic gateway</title>' });
+  });
+  await page.locator('#runPackageBatch').click();
+  await expect.poll(() => page.locator('#packageBatchStatus').textContent()).toContain('No automatic retry');
+  expect(await page.locator('#packageBatchStatus').textContent()).not.toContain('admitted');
+  const rows = (await (await fixture.call('/schedules')).json()).schedules; expect(rows).toHaveLength(1);
+  if (existing) await fixture.finished(existing.id);
+  expect(posts).toBe(1);
+  expect((await pool.query('SELECT count(*)::int AS total FROM oshal_test_lab_schedule_batches')).rows[0].total).toBe(existing ? 1 : 0);
+  expect(fixture.sandbox.calls).toBe(existing ? 1 : 0);
+},90000);
 
 it('shows the single saved draft when catalog refresh completes during its pending creation',async () => {
   let release!: () => void, arrived!: () => void;

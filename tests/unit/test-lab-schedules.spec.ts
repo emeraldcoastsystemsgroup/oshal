@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Reproduce an independent watchdog refusal after real sandbox completion and require cancellation to discard output even when the final current check succeeds.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove disposable schedule PostgreSQL sessions survive idle time and are reused during concurrent lease reads without extending acquisition deadlines.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Prove bounded transient setup recovery and immediate refusal of unrelated connection failures before fixture startup.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Retain browser/framework prerequisites in batch results without mislabelling deliberately excluded test levels.
  */
 import { beforeAll, afterAll, beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -45,6 +46,23 @@ async function runNow(schedule: { id: string; revision: number }, requestId = ra
   const response = await f.call(`/schedules/${schedule.id}/run-now`,'POST',{ revision: schedule.revision,requestId });
   expect(response.status).toBe(202); return (await response.json()).batch;
 }
+
+it('reports browser and framework prerequisites without including deliberately excluded unit suites', async () => {
+  const source = f.addPackage({ name: 'mixed-recipes' });
+  const cases = [source.test,
+    { ...source.test,id: 'integration-ready',level: 'integration' },
+    { ...source.test,id: 'framework-pending',level: 'integration',prerequisites: ['framework-checkout:oshal-core-dir'] },
+    { ...source.test,id: 'browser-pending',level: 'browser',runner: { ...source.test.runner,kind: 'playwright' },prerequisites: ['runner:playwright'] }];
+  writeFileSync(join(source.dir,'tests/test-lab.yaml'),yaml.dump({ version: 1,cases })); f.catalog.register(source.record);
+  const response = await f.call('/schedules','POST',{ appName: source.record.name,levels: ['integration'],cadence: 'daily' });
+  expect(response.status).toBe(201); const saved = (await response.json()).schedule;
+  await runNow(saved); const completed = await f.finished(saved.id);
+  expect(completed!.summary.runs.map(run => run.caseId)).toEqual(['app:mixed-recipes:test:integration-ready']);
+  expect(completed!.summary.unavailable).toContainEqual(expect.objectContaining({ caseId: 'app:mixed-recipes:test:browser-pending',reason: expect.stringContaining('playwright') }));
+  expect(completed!.summary.unavailable).toContainEqual(expect.objectContaining({ caseId: 'app:mixed-recipes:test:framework-pending',reason: expect.stringContaining('framework-checkout') }));
+  expect(completed!.summary.unavailable.some(item => item.caseId === source.caseId)).toBe(false);
+  expect(f.sandbox.calls).toBe(1);
+},60000);
 
 it('reuses disposable PostgreSQL sessions after idle time without opening connections during lease bursts', async () => {
   expect(pool.options.connectionTimeoutMillis).toBe(500);

@@ -27,6 +27,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Corrected Test Lab visual
  *            | documentation from the original eight-kind baseline to the current 15-kind catalog.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Obtain request-bound caller transport only for declared service smokes, keeping session data out of Node execution and public catalog results.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Serve the fixed package-batch UI asset; execution remains on existing guarded schedule routes.
  * ---------------------------------------------------------------------------
  * @module test-lab-routes
  */
@@ -46,6 +47,7 @@ const TOOLS_DIR = 'any-bot/server/services/tools/test-lab';
 
 function serveFile(fileName: string): RequestHandler {
   return (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'private, no-store');
     const filePath = path.resolve(process.cwd(), TOOLS_DIR, fileName);
     res.sendFile(filePath, (err: unknown) => {
       if (err) { logger.error({ err, fileName }, `Failed to serve ${fileName}`); res.status(404).send(`Page not found: ${fileName}`); }
@@ -108,6 +110,7 @@ export function createTestLabRoutes(_ctx: AppContext, options: TestLabRouteOptio
     };
 
   router.get('/app', serveFile('test-lab-app.html'));
+  router.get('/package-batch.js', serveFile('test-lab-package-batch.js'));
 
   /**
    * The deterministic rich-visual proof: render one of the 15 visual kinds through the REAL renderer

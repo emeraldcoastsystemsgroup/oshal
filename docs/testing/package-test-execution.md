@@ -101,6 +101,58 @@ The registered installed-application suite also exercises service-smoke sessions
 through real local HTTP and application policy, including revoked rights, issuer
 collisions, redirect refusal and credential isolation.
 
+## Run a package batch
+
+In **Package runs**, select one application and choose **Run package suites**.
+The shortcut shows the current selection and ready/pending counts. It uses the
+existing disabled local schedule and **Run now** batch service. It never enables
+a recurring schedule or silently changes an existing selector's levels/cadence.
+All visible applications remains a history filter; select one package before
+starting this shortcut.
+
+Supported installed Node suites run sequentially with a durable batch receipt
+and individual results. Browser, framework and other unavailable recipes remain
+listed with their prerequisites. A completed batch can contain failures or
+pending work; it is not an assertion that all package tests passed.
+
+## Batch local Node and UX suites
+
+From the core checkout, preview the package's registered recipes:
+
+```sh
+npm run test:package -- --package ../oshal-applications/create --level browser
+```
+
+Execute them with one command and retain a single JSON report:
+
+```sh
+npm run test:package -- --package ../oshal-applications/create --level browser --run --report temp/create-ux-results.json
+```
+
+Repeat `--package` for several local packages, or use repeated `--case` selectors
+for a changed integration. Omit `--level browser` to include the other declared
+levels. The command reuses the same package catalog validator as installation;
+it accepts no shell-command fields and does not invent a test list from filenames.
+No `--run` means plan only. Choose a new report filename for each execution.
+
+The supported host adapters are Node test recipes, TypeScript Node recipes using
+the installed `tsx`, and registered browser recipes built on Node's test harness.
+Chromium suites run serially. Their existing fixtures own the actual pages,
+synthetic data and cleanup. The command never downloads dependencies or browsers.
+Vitest/Playwright configurations needing another adapter, external services and
+missing declared prerequisites remain **pending**, rather than being counted as
+readiness passes. Existing core commands such as `test:workspace-theme` continue
+to run their configured Vitest browser suites in bulk.
+
+Exit 0 means every selected executed recipe passed, exit 1 reports a failure,
+and exit 2 reports remaining prerequisites. Reports include each recipe's
+version/revision, result, TAP counts and transcript. These are local checkout
+results; they do not replace installed application acceptance. The host runner's
+Cancellation and timeouts stop later recipes and bound termination of the owned
+child process tree. The report retains failed cleanup and deferred work. Its
+own regression suite is `npm run test:package-runner`, registered on the
+**Installed application test registration** Lab card.
+
 ## Local recurring runs
 
 Use **Scheduled package checks** in the same Lab page. Choose all visible installed

@@ -10,6 +10,7 @@ SEQ | AUTHOR | DESCRIPTION
 4 | maintainer@emeraldcoastsystemsgroup.com | Serialize schedule refresh with mutations and retract closed-panel evidence so delayed catalog or owner responses cannot erase saved rows or restore stale access.
 5 | maintainer@emeraldcoastsystemsgroup.com | Focus caller-visible installation case links after catalog loading without executing tests or changing schedule refresh state.
 6 | maintainer@emeraldcoastsystemsgroup.com | Inherit live shared palettes and native control colors in standalone and embedded Lab views.
+7 | maintainer@emeraldcoastsystemsgroup.com | Expose a single-package batch through existing disabled schedules without changing selectors or retrying uncertain admission.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -212,9 +213,12 @@ SEQ | AUTHOR | DESCRIPTION
     <section id="runStatus" class="lab-status surface-card"><strong>Loading catalog.</strong><span>Fetching live scenario list...</span></section>
     <section class="history-panel" aria-label="Package run history">
       <h2>Package runs</h2>
-      <p>Run one ready package suite in an isolated runner. History follows your signed-in account; earlier package versions stay labelled as stale.</p>
+      <p>Run ready package suites together in isolated runners, or run an individual suite below. History follows your signed-in account; earlier package versions stay labelled as stale.</p>
       <div class="history-controls"><label for="historyApp">Application</label><select id="historyApp"><option value="">All applications</option></select>
+        <button id="runPackageBatch" type="button" disabled>Run package suites</button>
         <button id="refreshHistory" type="button">Refresh history</button></div>
+      <p id="packageBatchCounts" role="status">Select one application to run its package suites.</p>
+      <p id="packageBatchStatus" role="status"></p>
       <div id="runHistory" aria-live="polite">Loading your recent runs...</div>
       <div id="runEvidence" aria-live="polite"></div>
     </section>
@@ -489,6 +493,7 @@ function refreshHistoryApps() {
   $('historyApp').innerHTML = '<option value="">All applications</option>' + (catalog.installedApps || [])
     .map(app => '<option value="' + esc(app.name) + '">' + esc(app.displayName || app.name) + '</option>').join('');
   if ([...$('historyApp').options].some(option => option.value === previous)) $('historyApp').value = previous;
+  void loadPackageBatch();
 }
 
 function packageMutation(path, body) {
@@ -587,8 +592,8 @@ $('refreshHistory').addEventListener('click',loadHistory);
 $('historyApp').addEventListener('change',loadHistory);
 window.addEventListener('blur',clearEvidence);
 document.addEventListener('visibilitychange',() => { if (document.hidden) clearEvidence(); else void loadHistory(); });
-load();
 </script>
+<script src="/api/test-lab/package-batch.js"></script>
 <script>
 let scheduleGeneration = 0;
 let scheduleHistoryGeneration = 0;
@@ -598,6 +603,7 @@ let scheduleRefreshPending = false;
 let scheduleTimer;
 
 function scheduleControls() {
+  packageBatchControls();
   $('scheduleForm').querySelectorAll('input,select,button').forEach(control => {
     control.disabled = scheduleBusy || (!scheduleOptions.canSchedule && control.id !== 'refreshSchedules');
   });
@@ -647,14 +653,14 @@ async function loadSchedules() {
   }
 }
 
-async function scheduleMutation(path,body,method = 'POST') {
+async function withScheduleMutation(work) {
   if (scheduleBusy) return null;
   const generation = ++scheduleGeneration;
   let refresh = false;
   scheduleBusy = true; scheduleControls(); clearEvidence();
   clearTimeout(scheduleTimer); scheduleHistoryGeneration++; $('scheduleHistory').replaceChildren();
   try {
-    const result = await fetchJson(API + path,{ method,headers: { 'content-type': 'application/json','X-OSHAL-Test-Lab': '1' },body: JSON.stringify(body) });
+    const result = await work(() => generation === scheduleGeneration);
     refresh = true;
     if (generation !== scheduleGeneration) return null;
     return result;
@@ -666,7 +672,12 @@ async function scheduleMutation(path,body,method = 'POST') {
     scheduleBusy = false;
     if ($('schedulePanel').open && (refresh || scheduleRefreshPending)) await loadSchedules();
     scheduleControls();
+    if ($('historyApp').value) await loadPackageBatch();
   }
+}
+
+function scheduleMutation(path,body,method = 'POST') {
+  return withScheduleMutation(() => fetchJson(API + path,{ method,headers: { 'content-type': 'application/json','X-OSHAL-Test-Lab': '1' },body: JSON.stringify(body) }));
 }
 
 async function createSchedule(event) {
@@ -729,6 +740,9 @@ $('schedulePanel').addEventListener('toggle',() => {
 });
 $('scheduleForm').addEventListener('submit',createSchedule);
 $('refreshSchedules').addEventListener('click',loadSchedules);
+$('historyApp').addEventListener('change',loadPackageBatch);
+$('runPackageBatch').addEventListener('click',runSelectedPackage);
+load();
 </script>
 
 </body>

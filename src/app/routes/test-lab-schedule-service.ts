@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Re-discover current installed Node suites for exact-owner local schedules and reuse durable run authorization and evidence.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Include unavailable browser/framework recipes in batch reporting without changing selected executable levels.
  */
 import { createHash } from 'node:crypto';
 import type { InstalledAppTestCatalog, InstalledAppTestCase } from '@/features/swarm-apps';
@@ -157,7 +158,8 @@ export class TestLabScheduleService {
   }
   private discover(claim: TestLabScheduleClaim, current: TestLabRunContext, summary: TestLabBatchSummary): InstalledAppTestCase[] {
     const visible = this.selection(claim.schedule,current), tests = this.options.catalog.list(visible,current.auth)
-      .filter(test => claim.schedule.levels.includes(test.level as 'unit' | 'integration'));
+      .filter(test => claim.schedule.levels.includes(test.level as 'unit' | 'integration')
+        || (!['unit','integration'].includes(test.level) && !test.runnable));
     const eligible = tests.filter(test => test.runnable && test.runner.kind === 'node-test' && test.runner.scope === 'package');
     summary.unavailable = tests.filter(test => !eligible.includes(test)).slice(0,100)
       .map(test => ({ appName: test.appName,caseId: test.id,reason: test.pendingReason || 'This suite requires another supported runner.' }));

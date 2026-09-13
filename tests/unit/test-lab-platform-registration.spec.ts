@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the installed-case catalog scenario is registered and detects broken app/version associations over HTTP.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify fixed Lab document/helper routes preserve the authenticated mount and serve exact uncached source bytes.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
@@ -60,6 +61,17 @@ beforeAll(async () => {
 });
 
 beforeEach(() => { mode = 'normal'; reads = 0; });
+
+it.each([['/app','test-lab-app.html','text/html'],['/package-batch.js','test-lab-package-batch.js','javascript']])(
+  'serves exact uncached %s bytes behind the authenticated Lab mount',async (route,file,type) => {
+    const anonymous = await fetch(base+'/api/test-lab'+route); expect(anonymous.status).toBe(401);
+    const response = await fetch(base+'/api/test-lab'+route,{ headers: { cookie: ownerCookie } });
+    expect(response.status).toBe(200); expect(response.headers.get('content-type')).toContain(type);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(fs.readFileSync(path.resolve('any-bot/server/services/tools/test-lab',file)));
+    expect(reads).toBe(0);
+    expect(fs.readFileSync(path.resolve('src/app/server.ts'),'utf8')).toContain("app.use('/api/test-lab', requiresAuth, createTestLabRoutes(ctx,");
+  });
 afterAll(async () => {
   if (oldPort === undefined) delete process.env.PORT;
   else process.env.PORT = oldPort;

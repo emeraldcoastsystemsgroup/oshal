@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Compose actual local schedule HTTP, PostgreSQL, catalog and Docker execution over disposable fixture packages.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Retain four preconnected disposable PostgreSQL sessions so idle retirement cannot introduce connection handshakes into authority checks.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Retry only transient fixture startup handshakes within a fixed attempt bound before creating HTTP or runner resources.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Serve the actual package-batch browser asset alongside the real Lab document.
  */
 import express from 'express';
 import type { Pool, PoolClient } from 'pg';
@@ -70,6 +71,7 @@ async function httpFixture(service: () => TestLabScheduleService, runs: TestLabR
   const runContext = (req: express.Request) => actorContext({ ...SCHEDULE_ACTOR,
     ...(req.get('x-fixture-issuer') === 'other' || req.get('cookie') === 'actor=other' ? { issuer: 'https://other-fixture.test' } : {}) });
   app.get('/api/test-lab/app',(_req,res) => res.sendFile(resolve('any-bot/server/services/tools/test-lab/test-lab-app.html')));
+  app.get('/api/test-lab/package-batch.js',(_req,res) => res.sendFile(resolve('any-bot/server/services/tools/test-lab/test-lab-package-batch.js')));
   app.get('/api/test-lab/catalog',async (req,res) => {
     const current = await runContext(req), tests = catalog.list(current.visibleApps,current.auth);
     res.json({ scenarios: tests.map(test => ({ id: test.id,title: `${test.appName}: ${test.name}`,group: 'tool',

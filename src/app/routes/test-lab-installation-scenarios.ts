@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register published-preview source admission and rollback outcome regressions with installation coverage.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register actual Compose API pool-budget resolution and isolated override coverage after role-capacity saturation.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register installation report HTTP/CLI and actual browser case-link verification.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Register catalog-driven local package and UX batch runner regression coverage.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -62,6 +63,7 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/package-test-catalog-lifecycle.spec.ts' },
     { level: 'browser', path: 'tests/unit/package-test-catalog-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/package-test-snapshot.spec.ts' },
+    { level: 'unit', path: 'tests/unit/package-test-host.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-wiring.spec.ts' },
     { level: 'integration', path: 'tests/unit/package-test-sandbox.spec.ts' },
     { level: 'integration', path: 'tests/unit/package-test-runner.spec.ts' },
