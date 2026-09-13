@@ -117,9 +117,12 @@ baseline, so a learned policy is always compared to something that already works
   cell corner Bresenham skipped (flight legs now use a supercover line test); a climb overshoot of
   centimetres past the fence ceiling refused every next leg (the path is judged from the nearest
   in-fence point within 30 cm).
+- **One body radius (B18, 0.7.1):** every guard reads the hull from the parts model of the fit that
+  carries the sensor set — 0.178 m half-width for the printed drone plus a 5 cm margin laterally, the
+  hull's height plus the mast plus the margin vertically — the same hull the plant collides with. The
+  kitchen re-measured at that clearance: 92.7 % of tops in 12 goals, the same dishes found.
 - **Not built, recorded as BACKLOG with done-when:** the node rail for the plant (B20 — today a
-  package-owned TCP bridge), the policy as a provider and the certification gate (B19), one body
-  radius for both truth models (B18 — the physics hull is 0.178 m, the kinematic body 0.10 m), tasks
+  package-owned TCP bridge), the policy as a provider and the certification gate (B19), tasks
   D5.2–D5.4.
 
 ## Consequences

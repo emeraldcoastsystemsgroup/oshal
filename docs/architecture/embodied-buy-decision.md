@@ -17,7 +17,7 @@ has to be true before either is bought?
 
 | Claim | Evidence | Where |
 |---|---|---|
-| The printed drone's single scan plane maps the kitchen | drone-first exploration on the kinematic model: 93.1 % of column tops seen in 13 goals / 15 registrations; basin and three counters discovered; both plates within 2 cm, the mug within 1 cm; home anchored with zero error | `tests/engine-sensor-sets.test.js` (0.5.0) |
+| The printed drone's single scan plane maps the kitchen | drone-first exploration on the kinematic model: 93.1 % of column tops seen in 13 goals / 15 registrations (92.7 % in 12 goals / 14 registrations once every guard keeps the printed drone's real 0.178 m hull, 0.7.1); basin and three counters discovered; both plates within 2 cm, the mug within 1 cm; home anchored with zero error | `tests/engine-sensor-sets.test.js` (0.5.0) |
 | Scan-to-map registration recovers the pose from the map alone | point-to-plane ICP against the map's kept hit points: a 10 cm injected error returns under 1 mm (3-D set); planar registration in the ring's plane against walls at any height | `tests/engine-localization.test.js` (0.4.0) |
 | The planned airframe flies under physics | MuJoCo plant from the parts model (0.746 kg, four motors at 3.66 N max): rests on its 3 cm pad plate, holds the mission altitude within 8 cm under a gust model, tracks a 1 m/s leg with under 25 cm of lag, reports a real contact when flown into furniture | `engine/tests/test_worker.py`, `tests/engine-physics.live.test.js` (0.7.0) |
 | The same map and guards work on the physics truth | a drone-first exploration runs to done on MuJoCo with the unchanged map, registration and guards; the drone lands and re-anchors | `tests/engine-physics.live.test.js` (0.7.0) |
