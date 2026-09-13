@@ -860,6 +860,17 @@ tests/surface-parse.test.js
 tests/session-crypto.test.mjs
 ```
 
+## Follow-up: keep batch history current
+
+- [ ] Keep a selected package's history refreshed until its admitted batch is
+  terminal, including gaps between child runs. In the native 2026-09-13 Create
+  1.7.1 run, the display retained the first two passing rows after the batch had
+  completed all five; **Refresh history** displayed all five correctly.
+  Done when a registered browser regression exercises the gap between child
+  runs, selection changes and terminal cleanup, and native acceptance displays
+  the final five rows without manual refresh. Reuse the existing batch service;
+  do not restart suites or weaken current authorization checks.
+
 ## Completion gate
 
 Close only when TLAB-01 through TLAB-09 and every applicable public/private row are resolved, installed catalogs

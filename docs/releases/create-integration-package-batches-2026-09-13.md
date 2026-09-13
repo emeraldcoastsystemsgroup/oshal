@@ -78,8 +78,27 @@ unavailable. No provider or business records were manufactured.
 Create 1.7.1 at `70536e2` corrects the surface assertion and checks that artifact
 opening follows access resolution and starter permissions. All five registered
 Node recipes now pass together locally: **58 checks**. Its complete 2,432-file
-committed archive also passes all 35 store checks unchanged. Installation of this
-patch and a new native batch are pending at this checkpoint.
+committed archive also passes all 35 store checks unchanged.
+
+The follow-up core `1694a3ca` completed standard preview deployment at
+07:30:16 UTC: 35/35 healthy, parity clean, image
+`sha256:0026dfd27ed408771cdd65b63a3118b1bdb21eda650b11b5142af2e3428edd3e`.
+Create 1.7.1 was then copied with a verified full previous-package backup;
+all 76 target files matched. Activation loaded 79 applications with zero failures.
+
+Native batch `38af33d3-6fc3-423d-92f2-c57ee285a281` completed at 07:32:48 UTC.
+All five suites passed: New 7, Routes 5, Home 9, Editor model 24 and Templates 13
+— **58/58 checks**, exact source/image and verified cleanup. It reused the
+existing disabled selector at revision 1; no automatic schedule was enabled.
+Thirteen prerequisite-dependent recipes remained unavailable, with zero deferred
+executable recipes. The history display required **Refresh history** to show the
+last three completed rows. That UI observation is separate from the durable
+completed batch and all five passing runs.
+
+The read-only exact-batch receipt is `temp/create171-lab-first.json`, SHA-256
+`13f72595a89fece281429e30b2793c285679179698dd2b48d8cf5ae6b193344f`.
+Deployment and copy receipts are `temp/create171-deploy-exit.json` and
+`temp/create171-copy-receipt.json`. The earlier failed batch remains unchanged.
 
 A separate core correction scopes selected-application history and scheduled
 batch authorization to that application. A real HTTP regression demonstrates
@@ -106,6 +125,19 @@ Local receipts: `temp/create-batch-deploy-retry-exit.json`,
 `temp/create171-committed-family.json`, and `temp/create-batch-final.json`.
 The previous CAD and report release remains documented in the
 [prior acceptance record](report-briefings-cad-lifecycle-2026-09-13.md).
+
+The follow-up patch's final strict comparison also remains **FAIL**, receipt
+`temp/create171-final-preservation.json`, SHA-256
+`678f6b9e24392032076788a17f0cd6d803b363834d42aba6b9a30a4c421ccc98`.
+Only the CI PostgreSQL and Redis containers disappeared from the 17-container
+baseline; the remaining 15 infrastructure entries and stopped auxiliary entries
+matched. Between retained field projections, one existing verified-principal
+row changed only `last_seen_at`; the earlier aggregate-only baseline interval
+remains unattributed. All other 60 packages, business/private data, grants,
+audit records and four Jarvis projections matched. No discrepancy was exempted
+or converted to a pass. No synthetic business records required cleanup in this
+batch test. Core and package preview installation is complete; main promotion
+remains separate, with core PR 431 still requiring independent review.
 
 Regional AI regeneration, reviewed editing mutations, video timelines and full
 Canva-style feature coverage remain open in Create's application backlog.
