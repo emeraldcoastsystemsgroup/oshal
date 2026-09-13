@@ -4,6 +4,8 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
 
 ## Building app packages (the app store)
 
+- [reusable-components.md](./reusable-components.md) — existing tools, renderers,
+  themes and integration contracts to compose before writing another implementation.
 - [authoring-app-packages.md](./authoring-app-packages.md) — how to author, validate, and
   publish an installable, hot-loadable **app package** (ADR-085): the `oshal-app.yaml`
   definition file, the folder layout, the dependency model, and the `oshal-app` CLI helper

@@ -1,27 +1,10 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register compact Home/Jarvis asset readiness and the actual navigation, browser and lifecycle regression suites.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Reuse the shared fixed-asset readiness reader with Profile and Access.
  */
-import type { Scenario, StepResult } from './test-lab-scenarios';
-
-/** Read a fixed first-party asset in the caller's session; never execute it or start assistant work. */
-async function assetReadiness(cookie: string, route: string, mime: string, label: string): Promise<StepResult> {
-  const base = { app: 'cockpit', label };
-  try {
-    const response = await fetch(`http://127.0.0.1:${process.env.PORT || '5000'}${route}`, {
-      headers: cookie ? { cookie } : {}, redirect: 'manual', signal: AbortSignal.timeout(10000),
-    });
-    if (response.status !== 200) return { ...base, status: response.status,
-      state: [401, 403, 503].includes(response.status) ? 'degraded' : response.status === 404 ? 'gap' : 'fail',
-      detail: `Dashboard asset returned HTTP ${response.status}. No assistant, preference or application action was started.` };
-    const pass = (response.headers.get('content-type') || '').includes(mime) && (await response.text()).trim().length > 0;
-    return { ...base, status: response.status, state: pass ? 'pass' : 'fail', detail: pass
-      ? 'Dashboard asset is available. This readiness check does not execute the linked browser or integration suites.'
-      : 'The dashboard response is empty or has an unexpected content type.' };
-  } catch {
-    return { ...base, state: 'degraded', detail: 'Dashboard asset could not be checked. No assistant or application action was started.' };
-  }
-}
+import type { Scenario } from './test-lab-scenarios';
+import { assetReadiness } from './test-lab-asset-readiness';
 
 export const DASHBOARD_SCENARIOS: Scenario[] = [{
   id: 'cockpit-daily-dashboard', title: 'Jarvis and daily dashboard', group: 'tool',

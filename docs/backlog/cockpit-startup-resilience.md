@@ -162,7 +162,13 @@ subsequently passed. At 04:16:02 UTC, a bounded health request returned 200 in
 **Next measurement:** trace one correlated authenticated reload across middleware,
 pool checkout, SQL duration, main-process event-loop delay and work remaining
 after a client disconnect. Current source performs serial workspace authorization
-reads with repeated assignment snapshots and no request-abort stop. Protected
+reads with repeated assignment snapshots. The September 13 source correction now
+stops subsequent work after client abort or unfinished response close; an already
+awaited port may still finish. Thirteen actual HTTP lifecycle cases and twenty-eight
+retained authorization cases pass. Normal GET request close does not cancel a
+connected response. This bounded fix neither cancels SQL already running nor
+establishes the broader origin stall's cause. Deployment is tracked in the
+[integration record](../releases/component-integration-2026-09-13.md). Protected
 Jarvis assets also pass identity middleware, whereas successful Cockpit static
 responses terminate before the later global principal/actor layers. Measure
 these paths separately, retain current authorization checks, and record only

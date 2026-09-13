@@ -5,6 +5,11 @@ An **app package** is a self-contained folder that a swarm installs from git and
 core image**. This is the developer guide. The architecture is [ADR-085](../adr/085-remote-app-packages-and-registries.md);
 this page is how you actually build one.
 
+Start with the [reusable capabilities and components](reusable-components.md).
+An existing action should call its registered tool; a shared rendering need should
+use the established component. Keep new capability implementations versioned and
+tested so future applications can compose them without generating the same code again.
+
 ## Mental model: it's npm, for swarm apps
 
 If you know npm, you know this. The pieces map one-to-one:

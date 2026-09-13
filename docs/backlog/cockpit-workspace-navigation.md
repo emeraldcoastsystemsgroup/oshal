@@ -194,18 +194,21 @@ compact Jarvis dashboard by itself.
 
 ## Follow-up: Profile and Access consistency
 
-**Open, reported during user testing on 2026-09-13.** After the header controls
-moved into the OSHAL menu, the Profile & Access dialog still says Cockpit settings
-and chat history stay on the ribbon. The screenshot also shows a plain settings
-button beside a differently styled Sign Out button, inside several nested panels.
-The current [profile renderer](../../src/pages/cockpit/js/cockpit-modals.js)
-confirms the stale copy and retains the existing settings and sign-in/out handlers.
-The settings button's `btn-secondary` class has no definition in the shell's
-loaded stylesheets, and its inner `modal-content` receives standalone modal styling
-inside the outer dialog. Its settings action already uses the same handler as
-**OSHAL menu → Settings**, opening the existing Global Settings view.
-This feedback is recorded separately from the accepted Home/navigation slice;
-the dialog has not yet received the corresponding consistency update.
+**Implemented in source; installed acceptance pending.** The September 13
+[profile renderer](../../src/pages/cockpit/js/cockpit-modals.js) now uses a compact,
+opaque palette-driven panel with consistent Settings and account controls. It
+removes stale ribbon instructions and the nested standalone modal class. Loading
+is bounded; unavailable or malformed session responses show Retry rather than
+incorrectly claiming the person is signed out. Closing/reopening retires the old
+request and restores focus. Settings uses the existing Global Settings handler.
+
+The actual renderer passed nineteen new browser cases; seventeen retained
+appearance cases were also accepted across scoped runs. **Cockpit appearance**
+registers the new suite and checks the fixed Profile stylesheet independently.
+Opening/closing Profile and changing palette retain the open application and
+draft. Navigating to Settings still follows the existing view lifecycle; universal
+custom-application draft persistence on leaving a page remains a separate
+requirement. See the [integration record](../releases/component-integration-2026-09-13.md).
 
 Done when:
 
@@ -216,8 +219,9 @@ Done when:
    settings are easy to find after the header cleanup, and the OSHAL menu remains
    the documented location for global controls. Reuse existing settings routes.
 3. Account identity, personal preferences and administration have clear meanings.
-   Any administration shortcuts respect current permissions; opening Profile or
-   Settings does not change roles, sign the user out or discard an active draft.
+   Any administration shortcuts respect current permissions. Opening Profile does
+   not change roles, sign the user out or discard an active draft. Settings reuses
+   the existing view lifecycle; broader draft retention must be tested per surface.
 4. Extend the existing profile/header browser coverage using the real renderer and
    shell styles. Verify signed-in/out states, keyboard close/focus return, settings
    navigation and palette consistency, and register the executable coverage with

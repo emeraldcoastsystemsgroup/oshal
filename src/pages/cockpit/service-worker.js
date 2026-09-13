@@ -40,12 +40,13 @@
  * 35 | maintainer@emeraldcoastsystemsgroup.com | Refresh opaque workspace menus and keep options visible beside long application lists.
  * 36 | maintainer@emeraldcoastsystemsgroup.com | Evict cached navigation for contextual sidebars and the admitted Federal CRM top workspace.
  * 37 | maintainer@emeraldcoastsystemsgroup.com | Precache locked local Markdown and regular icon assets and evict the CDN-dependent shell.
+ * 38 | maintainer@emeraldcoastsystemsgroup.com | Refresh Profile controls and precache the shared STL renderer used by Scan and CAD.
  */
 
 /* global self, caches, fetch, Response */
 
 // Bump CACHE_VERSION on any change to the precached shell list so old caches are evicted.
-const CACHE_VERSION = 'oshal-cockpit-v42';
+const CACHE_VERSION = 'oshal-cockpit-v43';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 // The minimal app shell precached at install so the cockpit boots offline. Live data
@@ -64,11 +65,13 @@ const APP_SHELL = [
   '/cockpit/css/layout.css',
   '/cockpit/css/ribbon.css',
   '/cockpit/css/workspace-navigation.css',
+  '/cockpit/css/profile-modal.css',
   '/cockpit/css/connector-discover.css',
   '/shared/ui/css/surface-glass.css',
   '/cockpit/css/themes/midnight.css',
   '/cockpit/css/themes/workspace.css',
   '/shared/ui/js/surface-theme.js',
+  '/shared/ui/js/stl-viewer.js',
   '/cockpit/js/app.js',
   '/cockpit/js/theme-manager.js',
   '/cockpit/js/workspace-navigation.js',

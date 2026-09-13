@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Extended Quick Settings to own heavy-tool stage defaults and custom-width reset guidance
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Replaced duplicate header login/settings/history modals with a single profile-access modal and settings handoff
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Removed the retired Presentron modal case and its generation handler (hit the dead /api/presentron/generate endpoint); presentations now open the AI Office surface
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Align Profile with portal controls and preserve verified session, explicit retry, modal focus and cancellation across late responses.
  */
 
 // ═══ AUTH HELPERS ═══
@@ -86,56 +87,151 @@ export function renderModalContent(modalType, settings) {
  * @returns {{title: string, html: string, onRender: Function}}
  */
 function renderProfileModal() {
-  // Render a placeholder, then hydrate from the REAL OIDC session (/api/auth/user).
-  // The old localStorage-token check was disconnected from the actual login, which
-  // is why a signed-in user still saw "not signed in".
   return {
     title: 'Profile & Access',
-    html: `<div class="modal-content" id="profileModalBody">
-      <p id="profileStatusText" style="margin-bottom:12px;color:var(--text-muted);">Checking sign-in…</p>
-    </div>`,
-    onRender: (app) => { hydrateProfileModal(app); },
+    html: `<section class="profile-access" id="profileModalBody" aria-busy="true">
+      <p class="profile-status" id="profileStatusText" role="status" aria-live="polite">Checking sign-in...</p>
+      <div class="profile-identity" id="profileIdentity"></div>
+      <p class="profile-guidance">Appearance and preferences are in Settings, also available from the OSHAL menu.</p>
+      <div class="profile-actions">
+        <button type="button" class="profile-button profile-button-primary" id="profileSettingsAction">Settings</button>
+        <button type="button" class="profile-button" id="profileRetryAction" hidden>Retry</button>
+      </div>
+    </section>`,
+    onRender: (app) => { openProfile(app); },
   };
 }
 
-/**
- * @description Fill the profile modal from the live auth state.
- * @param {Object} app - CockpitApp instance
- * @returns {Promise<void>}
- */
-async function hydrateProfileModal(app) {
-  const body = document.getElementById('profileModalBody');
-  if (!body) return;
-  let auth = { authenticated: false, user: null };
-  try {
-    const r = await fetch(`${window.location.origin}/api/auth/user`, { credentials: 'include' });
-    if (r.ok) auth = await r.json();
-  } catch (e) { /* treat as signed out */ }
+let activeProfile = null;
 
-  if (auth && auth.authenticated && auth.user) {
-    const u = auth.user;
-    const who = u.name || u.email || u.preferred_username || 'You';
-    const sub = u.email && u.email !== who ? ` <span style="color:var(--text-muted)">(${escapeHtml(u.email)})</span>` : '';
-    body.innerHTML = `<div class="login-status logged-in">
-      <p>Signed in as <strong>${escapeHtml(who)}</strong>${sub}.</p>
-      <p style="margin-top:12px;color:var(--text-muted);">Global account access lives here. Cockpit settings and chat history stay on the ribbon.</p>
-      <div class="modal-actions">
-        <button class="btn-secondary" id="profileSettingsAction">Open Settings Page</button>
-        <button class="btn-primary" id="profileSignOutAction">Sign Out</button>
-      </div></div>`;
-    document.getElementById('profileSettingsAction')?.addEventListener('click', () => { app.openCockpitSettingsPage(); app.closeModal(); });
-    document.getElementById('profileSignOutAction')?.addEventListener('click', () => { window.location.href = `${window.location.origin}/logout`; });
-  } else {
-    body.innerHTML = `<div class="login-status logged-out">
-      <p style="margin-bottom:12px;">You are not signed in.</p>
-      <p style="margin-bottom:16px;color:var(--text-muted);">Sign in with your account to access your classes and data.</p>
-      <div class="modal-actions" style="display:flex;flex-direction:column;gap:12px;">
-        <button class="btn-secondary" id="profileSettingsAction">Open Settings Page</button>
-        <button class="btn-primary" id="profileSignInAction">Sign In</button>
-      </div></div>`;
-    document.getElementById('profileSettingsAction')?.addEventListener('click', () => { app.openCockpitSettingsPage(); app.closeModal(); });
-    document.getElementById('profileSignInAction')?.addEventListener('click', () => { window.location.href = `${window.location.origin}/login`; });
+/** @description Apply accessible semantics to this opening only; retain the shared modal's original attributes. */
+function profileSemantics(container, closeButton) {
+  const attributes = [[container, 'role', 'dialog'], [container, 'aria-modal', 'true'],
+    [container, 'aria-labelledby', 'modalTitle'], [closeButton, 'aria-label', 'Close Profile and Access']];
+  const previous = attributes.map(([element, name]) => [element, name, element.getAttribute(name)]);
+  for (const [element, name, value] of attributes) element.setAttribute(name, value);
+  return () => {
+    for (const [element, name, value] of previous) {
+      if (value === null) element.removeAttribute(name); else element.setAttribute(name, value);
+    }
+  };
+}
+
+/** @description Give one Profile opening its own request, event and focus lifecycle without replacing shell handlers. */
+function openProfile(app) {
+  activeProfile?.dispose(false);
+  const body = document.getElementById('profileModalBody'), overlay = document.getElementById('modalOverlay');
+  const container = document.getElementById('modalContainer'), close = document.getElementById('modalCloseBtn');
+  if (!body || !overlay || !container || !close) return;
+  const returnFocus = document.activeElement, events = new AbortController();
+  const restoreSemantics = profileSemantics(container, close);
+  const state = { app, body, overlay, container, request: null, disposed: false, accountAction: null,
+    current: () => activeProfile === state && body.isConnected && document.getElementById('profileModalBody') === body
+      && !overlay.classList.contains('hidden'),
+    dispose: (restoreFocus) => {
+      if (state.disposed) return;
+      state.disposed = true; state.request?.abort(); events.abort(); observer.disconnect();
+      container.classList.remove('profile-dialog'); restoreSemantics();
+      if (activeProfile === state) activeProfile = null;
+      if (restoreFocus && returnFocus?.isConnected) returnFocus.focus();
+    } };
+  const observer = new MutationObserver(() => {
+    if (!state.current()) state.dispose(overlay.classList.contains('hidden'));
+  });
+  activeProfile = state; container.classList.add('profile-dialog');
+  observer.observe(overlay, { attributes: true, attributeFilter: ['class'], childList: true, subtree: true });
+  body.addEventListener('click', event => profileAction(state, event), { signal: events.signal });
+  overlay.addEventListener('keydown', event => profileKey(state, event), { signal: events.signal });
+  close.focus(); void hydrateProfile(state);
+}
+
+/** @description Keep keyboard navigation inside the current Profile dialog and return Escape to its opener. */
+function profileKey(state, event) {
+  if (!state.current()) return;
+  if (event.key === 'Escape') {
+    event.preventDefault(); event.stopPropagation(); state.app.closeModal(); state.dispose(true); return;
   }
+  if (event.key !== 'Tab') return;
+  const controls = [...state.container.querySelectorAll('button:not(:disabled), [href], [tabindex="0"]')]
+    .filter(element => element.getClientRects().length > 0);
+  const first = controls[0], last = controls.at(-1);
+  if ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
+    event.preventDefault(); (event.shiftKey ? last : first)?.focus();
+  }
+}
+
+/** @description Delegate only the existing explicit account and Settings actions; Retry only repeats the session GET. */
+function profileAction(state, event) {
+  if (!state.current()) return;
+  const id = event.target.closest('button')?.id;
+  if (id === 'profileSettingsAction') {
+    state.dispose(false); state.app.openCockpitSettingsPage(); state.app.closeModal();
+  } else if (id === 'profileRetryAction') {
+    void hydrateProfile(state);
+  } else if ((id === 'profileSignInAction' && state.accountAction === 'login')
+    || (id === 'profileSignOutAction' && state.accountAction === 'logout')) {
+    window.location.href = `${window.location.origin}/${state.accountAction}`;
+  }
+}
+
+/** @description Accept only an explicit session result, never a transient failure as signed out. */
+async function readProfileSession(signal) {
+  const response = await fetch(`${window.location.origin}/api/auth/user`, { credentials: 'include', signal });
+  if (response.status === 401) return { authenticated: false };
+  if (!response.ok) throw new Error(`Profile session check returned HTTP ${response.status}`);
+  const auth = await response.json();
+  if (auth?.authenticated === false) return auth;
+  if (auth?.authenticated === true && auth.user && typeof auth.user === 'object' && !Array.isArray(auth.user)) return auth;
+  throw new Error('Profile session response was invalid');
+}
+
+/** @description Bound the current session read; closing, replacement or another attempt retires its result. */
+async function hydrateProfile(state) {
+  state.request?.abort();
+  const request = new AbortController(); state.request = request;
+  profilePending(state);
+  const timer = setTimeout(() => request.abort(new DOMException('Profile session check timed out', 'TimeoutError')), 10000);
+  try {
+    const auth = await readProfileSession(request.signal);
+    if (state.current() && state.request === request) profileReady(state, auth);
+  } catch {
+    if (state.current() && state.request === request) {
+      logCockpitModalError('profile-session-unavailable', new Error('Profile session check failed'));
+      state.body.querySelector('#profileStatusText').textContent = 'Could not check sign-in. Please try again.';
+      state.body.querySelector('#profileRetryAction').hidden = false;
+    }
+  } finally {
+    clearTimeout(timer);
+    if (state.current() && state.request === request) {
+      state.body.setAttribute('aria-busy', 'false'); state.body.querySelector('#profileRetryAction').disabled = false;
+    }
+  }
+}
+
+/** @description Clear previously verified identity/actions while a new session check is pending. */
+function profilePending(state) {
+  state.accountAction = null; state.body.setAttribute('aria-busy', 'true');
+  state.body.querySelector('#profileStatusText').textContent = 'Checking sign-in...';
+  state.body.querySelector('#profileIdentity').replaceChildren();
+  state.body.querySelector('[data-profile-account]')?.remove();
+  state.body.querySelector('#profileRetryAction').disabled = true;
+}
+
+/** @description Render escaped current-session identity and the corresponding existing account destination. */
+function profileReady(state, auth) {
+  const { body } = state, retry = body.querySelector('#profileRetryAction');
+  if (document.activeElement === retry) body.querySelector('#profileSettingsAction').focus();
+  retry.hidden = true;
+  body.querySelector('#profileStatusText').textContent = auth.authenticated ? 'Signed in' : 'You are not signed in.';
+  if (auth.authenticated) {
+    const user = auth.user, who = [user.name, user.email, user.preferred_username].find(value => typeof value === 'string' && value.trim()) || 'You';
+    const email = typeof user.email === 'string' && user.email !== who ? `<p>${escapeHtml(user.email)}</p>` : '';
+    body.querySelector('#profileIdentity').innerHTML = `<p class="profile-name">${escapeHtml(who)}</p>${email}`;
+  }
+  state.accountAction = auth.authenticated ? 'logout' : 'login';
+  const action = document.createElement('button'); action.type = 'button'; action.className = 'profile-button';
+  action.dataset.profileAccount = ''; action.id = auth.authenticated ? 'profileSignOutAction' : 'profileSignInAction';
+  action.textContent = auth.authenticated ? 'Sign Out' : 'Sign In'; body.querySelector('.profile-actions').append(action);
 }
 
 /**

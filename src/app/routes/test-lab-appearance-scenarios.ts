@@ -10,9 +10,11 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Register actual core-page palette, native control and live-inheritance browser coverage.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Link contextual sidebar, Federal CRM navigation and actual Career group integration checks with explicit store-fixture prerequisites.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Link full-head local asset startup, rendering and service-worker browser coverage without changing the read-only readiness check.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Register real Profile dialog and abandoned workspace HTTP coverage, with shared fixed-asset readiness.
  * =============================================================================
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
+import { assetReadiness } from './test-lab-asset-readiness';
 
 /** @description Read one fixed local stylesheet in the caller's session; this neither changes a theme nor runs a browser. */
 async function workspaceStylesheet(cookie: string): Promise<StepResult> {
@@ -51,25 +53,38 @@ async function workspaceDiscovery(cookie: string): Promise<StepResult> {
 
 export const APPEARANCE_SCENARIOS: Scenario[] = [{
   id: 'cockpit-appearance', title: 'Cockpit appearance', group: 'tool',
-  description: 'Read the fixed Workspace stylesheet. This does not execute the browser suite or change saved themes; linked fixtures cover local-asset startup, the portal chooser, application colors, open tabs, chat, administration and operations surfaces.',
+  description: 'Read the fixed Workspace and Profile stylesheets. This does not execute the browser suite or change saved themes; linked fixtures cover the actual Profile dialog, local-asset startup, the portal chooser, application colors, open tabs, chat, administration and operations surfaces.',
   regressionTests: [
     { level: 'browser', path: 'tests/unit/cockpit-startup-browser.spec.ts' },
+    { level: 'browser', path: 'tests/unit/cockpit-profile-browser.spec.ts' },
+    { level: 'unit', path: 'tests/unit/test-lab-appearance-registration.spec.ts' },
     { level: 'browser', path: 'tests/unit/workspace-theme-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/workspace-chat-theme-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/core-surface-theme-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/surface-theme-bundled-skin.spec.ts' },
   ],
-  steps: [{ id: 'workspace-stylesheet', app: 'cockpit', label: 'Workspace stylesheet', run: workspaceStylesheet }],
+  steps: [
+    { id: 'workspace-stylesheet', app: 'cockpit', label: 'Workspace stylesheet', run: workspaceStylesheet },
+    { id: 'profile-stylesheet', app: 'cockpit', label: 'Profile and Access stylesheet',
+      run: cookie => assetReadiness(cookie, '/cockpit/css/profile-modal.css', 'text/css', 'Profile and Access stylesheet') },
+  ],
 }, {
   id: 'cockpit-workspace-navigation', title: 'Cockpit workspace navigation', group: 'tool',
   description: 'Read current application workspace links. Linked tests cover Finance, the OSHAL menu, contextual sidebars, Federal CRM, custom screens and current policy. The Career group integration recipe requires the public store checkout (OSHAL_PUBLIC_STORE_ROOT); this read-only check does not execute it.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/workspace-navigation-model.spec.ts' },
     { level: 'integration', path: 'tests/unit/workspace-navigation-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/workspace-navigation-routes-cancellation.spec.ts' },
     { level: 'browser', path: 'tests/unit/workspace-navigation-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/workspace-navigation-contextual-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/career-group-navigation.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-app-groups.spec.ts' },
   ],
   steps: [{ id: 'workspace-discovery', app: 'cockpit', label: 'Current workspace navigation', run: workspaceDiscovery }],
+}, {
+  id: 'shared-stl-viewer', title: 'Shared 3D mesh viewer', group: 'tool',
+  description: 'Read the shared STL viewer asset without generating geometry. The linked real WebGL suite exercises Scan and CAD adapters and requires the public store checkout; readiness does not execute that suite or the CAD kernel.',
+  regressionTests: [{ level: 'browser', path: 'tests/unit/stl-viewer-browser.spec.ts' }],
+  steps: [{ id: 'stl-viewer-client', app: 'cockpit', label: 'Shared STL viewer',
+    run: cookie => assetReadiness(cookie, '/shared/ui/js/stl-viewer.js', 'javascript', 'Shared STL viewer') }],
 }];

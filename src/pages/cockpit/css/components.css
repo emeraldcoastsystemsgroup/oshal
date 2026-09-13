@@ -1,3 +1,6 @@
+/* Profile styles are isolated from the shared standalone-modal rules below. */
+@import url('./profile-modal.css');
+
 /* ============================================
    Shared Component Styles
    ============================================ */
