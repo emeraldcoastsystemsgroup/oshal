@@ -110,6 +110,19 @@ seconds; a bounded follow-up returned HTTP 200 with all 35 containers healthy.
 Both outcomes are retained in `temp/create-editor-activation-b92013b4-detail.json`.
 Successful editor and Lab acceptance does not close this intermittent-delay work.
 
+During Create 1.6.0 acceptance on 2026-09-13, the API again stalled after an
+otherwise successful startup. Retained internal health checks timed out at
+00:31:28 and 00:32:06 UTC; the tunnel recorded origin failures matching the
+browser's 00:32:16 gateway response. The API retained its container, PID/start
+time and zero restarts, with no reported OOM. It recovered without intervention:
+health and version returned 200 in 192/183 ms. All three optional PostgreSQL
+stores had initialized without fallback. This demonstrates a wider origin/API
+interruption, but does not establish its cause or prove a template-route defect.
+The immutable incident receipt is `temp/create-templates-native-loading-incident.json`
+(SHA256 `f3964679f5eaf87835a2849dda70cfa94516b3e93612a88f2422878e29068887`).
+The standalone image editor subsequently completed template selection,
+edit/save/reopen and PNG/editable export. Keep the request-stall investigation open.
+
 Operator-local, ignored receipts: `temp/career-navigation-native-reload-diagnostic.json`
 and `temp/career-navigation-runtime-timeout-summary.json`. The latter retains only
 timestamps, durations, counts and error categories. Recovery was observed during
