@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Synchronize schedule creation with actual mutation and refreshed history responses, proving delayed creation still preserves stale-revision refusal.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Exercise catalog refresh during an actual pending schedule creation and correlate refreshed rows with their created identifier.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Prove single-package batch admission, selector preservation and uncertain-response refusal with real services and exact-owned browser cleanup.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove run history stays current across the gaps between batch children, a selection change and the terminal read without a manual refresh.
  */
 import { afterAll,afterEach,beforeAll,beforeEach,expect,it } from 'vitest';
 import { type Browser,type BrowserContext,type Page } from 'playwright';
@@ -15,7 +16,7 @@ import { readFileSync,writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Pool } from 'pg';
 import { DisposableAlertPostgres } from '../helpers/disposable-alert-postgres';
-import { startTestLabScheduleFixture } from '../fixtures/test-lab-schedules';
+import { SCHEDULE_ACTOR,startTestLabScheduleFixture } from '../fixtures/test-lab-schedules';
 import type { TestLabScheduleService } from '@/app/routes/test-lab-schedule-service';
 import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
 import yaml from 'js-yaml';
@@ -49,7 +50,7 @@ beforeEach(async () => {
   await page.locator('#schedulePanel > summary').click();
   await expect.poll(() => page.locator('#scheduleStatus').textContent(),{ timeout: 10000 }).toContain('current catalog');
 },30000);
-afterEach(async () => { await context?.close(); await fixture?.close(); },60000);
+afterEach(async () => { await page?.unrouteAll({ behavior: 'ignoreErrors' }); await context?.close(); await fixture?.close(); },60000);
 
 async function createDraft() {
   await page.locator('#scheduleApp').selectOption('schedule-browser');
@@ -336,3 +337,40 @@ it('keeps another issuer out of same-sub schedule history and disables creation 
   await page.reload(); await page.locator('#schedulePanel > summary').click();
   await expect.poll(() => page.locator('#scheduleList').textContent()).toContain('No schedules');
 });
+
+it('keeps run history current across the gaps between batch children, a selection change and the terminal read without a manual refresh',async () => {
+  const cases = ['first','second','third'].map(suffix => ({ ...packageSource.test,id: packageSource.test.id+'-'+suffix }));
+  writeFileSync(resolve(packageSource.dir,'tests/test-lab.yaml'),yaml.dump({ version: 1,cases })); fixture.catalog.register(packageSource.record);
+  // A real gap: the second and third children are admitted four seconds after the previous one finished,
+  // longer than the 1.5 s run poll, so no run is active while the batch is still running.
+  const start = fixture.runs.start.bind(fixture.runs); let starts = 0;
+  fixture.runs.start = async (...args: Parameters<typeof start>) => {
+    if (++starts > 1) await new Promise<void>(done => setTimeout(done,4000));
+    return start(...args);
+  };
+  const historyReads: string[] = [];
+  page.on('request',request => { const url = new URL(request.url()); if (url.pathname === '/api/test-lab/runs') historyReads.push(url.search); });
+  await selectPackage(); await page.locator('#runPackageBatch').click();
+  await expect.poll(() => page.locator('#packageBatchStatus').textContent()).toContain('admitted');
+  const schedule = (await (await fixture.call('/schedules')).json()).schedules[0];
+  // The first child has finished and nothing is active while the batch still runs: where the rows used to freeze.
+  await expect.poll(async () => ({ rows: await page.locator('[data-history-id]').count(),active: await page.locator('[data-cancel-id]').count() }),
+    { timeout: 60000 }).toEqual({ rows: 1,active: 0 });
+  expect((await fixture.store.history(SCHEDULE_ACTOR,schedule.id))[0].state).toBe('running');
+  // One transient failure of the runs read while the batch is followed must not end the follow.
+  let failed = false;
+  await page.route((url: URL) => url.pathname === '/api/test-lab/runs',async route => {
+    if (failed) { await route.continue(); return; }
+    failed = true; await route.fulfill({ status: 503,contentType: 'application/json',body: JSON.stringify({ error: 'Temporary fixture run history failure.' }) });
+  });
+  await expect.poll(() => page.locator('#runHistory').textContent(),{ timeout: 10000 }).toContain('Retrying');
+  await page.locator('#historyApp').selectOption(''); await page.locator('#historyApp').selectOption('schedule-browser');
+  // No clicks from here on: the page must reach three passed rows by itself.
+  await expect.poll(() => page.locator('[data-history-id]').count(),{ timeout: 90000 }).toBe(3);
+  expect((await fixture.finished(schedule.id)).state).toBe('completed');
+  await expect.poll(async () => ((await page.locator('#runHistory').textContent()) ?? '').match(/ · passed/g)?.length ?? 0).toBe(3);
+  expect(await page.locator('[data-cancel-id]').count()).toBe(0);
+  await page.waitForTimeout(3000); const settled = historyReads.length;
+  await page.waitForTimeout(5000); expect(historyReads.length,'polling must stop once the batch is terminal').toBe(settled);
+  expect(failed).toBe(true); expect(fixture.sandbox.calls).toBe(3);
+},180000);

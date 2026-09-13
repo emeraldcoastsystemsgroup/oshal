@@ -11,6 +11,7 @@ SEQ | AUTHOR | DESCRIPTION
 5 | maintainer@emeraldcoastsystemsgroup.com | Focus caller-visible installation case links after catalog loading without executing tests or changing schedule refresh state.
 6 | maintainer@emeraldcoastsystemsgroup.com | Inherit live shared palettes and native control colors in standalone and embedded Lab views.
 7 | maintainer@emeraldcoastsystemsgroup.com | Expose a single-package batch through existing disabled schedules without changing selectors or retrying uncertain admission.
+8 | maintainer@emeraldcoastsystemsgroup.com | Keep package run history polling until an admitted batch is terminal, so the gaps between its child runs no longer freeze the rows.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -253,6 +254,8 @@ let catalogGeneration = 0;
 let historyGeneration = 0;
 let historyTimer;
 let recentRuns = [];
+let followedBatch = null;
+let historyRetries = 0;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -524,31 +527,73 @@ function renderHistoryRun(run) {
       + (run.state === 'cancelling' ? ' disabled' : '') + '>Cancel</button>' : '') + '</article>';
 }
 
+// A batch runs its children one after another. Between two children no run is active, so run
+// history would stop polling and freeze on the rows it had. Following the admitted batch keeps the
+// polling alive until the batch itself is terminal; the batch state comes from the existing history route.
+function followBatch(scheduleId, batch) {
+  if (batch && batch.state === 'running' && batch.id) followedBatch = { scheduleId, batchId: batch.id, failures: 0 };
+}
+
+async function followedBatchState() {
+  const current = followedBatch;
+  if (!current) return 'idle';
+  try {
+    const payload = await fetchJson(API + '/schedules/' + encodeURIComponent(current.scheduleId) + '/history');
+    if (followedBatch !== current) return followedBatch ? 'running' : 'idle';
+    const batch = (payload.batches || []).find(item => item.id === current.batchId);
+    current.failures = 0;
+    if (batch && batch.state === 'running') return 'running';
+    followedBatch = null; return 'ended';
+  } catch (error) {
+    if (followedBatch !== current) return followedBatch ? 'running' : 'idle';
+    if ((error.status && error.status < 500) || ++current.failures >= 3) {
+      followedBatch = null;
+      $('packageBatchStatus').textContent = 'Batch progress could not be checked: ' + error.message + ' Use Refresh history if rows look stale.';
+      return 'ended';
+    }
+    return 'running';
+  }
+}
+
+async function renderHistory(generation) {
+  const payload = await fetchJson(API + '/runs?app=' + encodeURIComponent($('historyApp').value));
+  if (generation !== historyGeneration) return undefined;
+  recentRuns = payload.runs || []; historyRetries = 0;
+  $('runHistory').innerHTML = recentRuns.map(renderHistoryRun).join('') || '<p>No package runs in this view.</p>';
+  $('runHistory').querySelectorAll('[data-evidence-id]').forEach(button => button.addEventListener('click',() => showEvidence(button.dataset.evidenceId)));
+  $('runHistory').querySelectorAll('[data-cancel-id]').forEach(button => button.addEventListener('click',() => cancelPackage(button.dataset.cancelId)));
+  const painted = new Set();
+  for (const run of recentRuns) {
+    if (run.stale) continue;
+    if (painted.has(run.test.id)) continue;
+    painted.add(run.test.id);
+    const state = ['queued','running','cancelling'].includes(run.state) ? 'run'
+      : run.state === 'passed' ? 'pass' : run.state === 'failed' ? 'fail' : 'degraded';
+    setScenarioState(run.test.id,state);
+  }
+  return recentRuns.some(run => ['queued','running','cancelling'].includes(run.state));
+}
+
 async function loadHistory() {
   const generation = ++historyGeneration;
   clearTimeout(historyTimer);
   clearEvidence();
   try {
-    const payload = await fetchJson(API + '/runs?app=' + encodeURIComponent($('historyApp').value));
+    const active = await renderHistory(generation);
+    if (active === undefined) return;
+    if (active) { historyTimer = setTimeout(loadHistory,1500); return; }
+    const batch = await followedBatchState();
     if (generation !== historyGeneration) return;
-    recentRuns = payload.runs || [];
-    $('runHistory').innerHTML = recentRuns.map(renderHistoryRun).join('') || '<p>No package runs in this view.</p>';
-    $('runHistory').querySelectorAll('[data-evidence-id]').forEach(button => button.addEventListener('click',() => showEvidence(button.dataset.evidenceId)));
-    $('runHistory').querySelectorAll('[data-cancel-id]').forEach(button => button.addEventListener('click',() => cancelPackage(button.dataset.cancelId)));
-    const painted = new Set();
-    for (const run of recentRuns) {
-      if (run.stale) continue;
-      if (painted.has(run.test.id)) continue;
-      painted.add(run.test.id);
-      const state = ['queued','running','cancelling'].includes(run.state) ? 'run'
-        : run.state === 'passed' ? 'pass' : run.state === 'failed' ? 'fail' : 'degraded';
-      setScenarioState(run.test.id,state);
-    }
-    if (recentRuns.some(run => ['queued','running','cancelling'].includes(run.state))) historyTimer = setTimeout(loadHistory,1500);
+    if (batch === 'running') historyTimer = setTimeout(loadHistory,2000);
+    else if (batch === 'ended' && await renderHistory(generation)) historyTimer = setTimeout(loadHistory,1500);
   } catch (error) {
     if (generation !== historyGeneration) return;
     recentRuns = []; clearEvidence();
     $('runHistory').textContent = error.message;
+    if (followedBatch && (!error.status || error.status >= 500) && ++historyRetries <= 3) {
+      $('runHistory').textContent = 'Run history is temporarily unavailable. Retrying...';
+      historyTimer = setTimeout(loadHistory,2000);
+    }
   }
 }
 
@@ -693,7 +738,7 @@ async function changeSchedule(schedule) {
 
 async function runSchedule(schedule) {
   const result = await scheduleMutation('/schedules/' + encodeURIComponent(schedule.id) + '/run-now',{ revision: schedule.revision,requestId: crypto.randomUUID() });
-  if (result) { await scheduleHistory(schedule.id); await loadHistory(); }
+  if (result) { followBatch(schedule.id,result.batch); await scheduleHistory(schedule.id); await loadHistory(); }
 }
 
 function renderScheduleBatch(batch) {
@@ -718,7 +763,11 @@ async function scheduleHistory(id,attempt = 0) {
     $('scheduleHistory').querySelectorAll('[data-schedule-evidence]').forEach(button => {
       button.onclick = () => showEvidence(button.dataset.scheduleEvidence);
     });
-    if (payload.batches.some(batch => batch.state === 'running')) scheduleTimer = setTimeout(() => scheduleHistory(id),2000);
+    const running = payload.batches.find(batch => batch.state === 'running');
+    if (running) {
+      scheduleTimer = setTimeout(() => scheduleHistory(id),2000);
+      if (!followedBatch) { followBatch(id,running); void loadHistory(); }
+    }
   } catch (error) {
     if (generation !== scheduleHistoryGeneration) return;
     clearEvidence(); $('scheduleHistory').textContent = error.message;

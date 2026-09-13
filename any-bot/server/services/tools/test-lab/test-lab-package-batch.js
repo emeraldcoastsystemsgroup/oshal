@@ -1,5 +1,6 @@
 /** CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Run one selected package through existing disabled schedules, preserving pending recipes and uncertain outcomes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Follow the admitted batch so run history keeps refreshing between its child runs until it is terminal.
  */
 let packageBatchGeneration = 0;
 let packageBatchState = null;
@@ -84,6 +85,7 @@ async function runSelectedPackage() {
   });
   if (result) {
     $('packageBatchStatus').textContent = 'Batch ' + result.batch.id + ' admitted. Results appear below; admission is not a passing result.';
+    followBatch(result.scheduleId, result.batch);
     await scheduleHistory(result.scheduleId); await loadHistory();
   } else if (/^(Checking|Creating|Requesting)/.test($('packageBatchStatus').textContent)) {
     $('packageBatchStatus').textContent = 'The operation was interrupted. Check schedules and batch history before trying again; no automatic retry was made.';
