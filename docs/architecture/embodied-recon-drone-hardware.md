@@ -35,27 +35,28 @@ Two sets fit the rules. The simulation was asked to map the kitchen drone-first 
 | Set | Mass of the sensing | Result in the 0.4.0 sim |
 |---|---|---|
 | **3-D spinning LiDAR**, 64 rings × 240 azimuths, 8 m (a Livox Mid-360 class sensor, ~265 g, 360° × 59°) | ~265 g + rangers | 90.9 % of the room known in 7 registrations, both plates and the mug found within 1 cm, the rover plans against the map |
-| **2-D ring + downward ToF depth camera** (an LDRobot LD19 class ring, ~47 g, 12 m, ~450 points/rev; an Arducam ToF class camera, 70° × 50°, 4 m; zenith + nadir rangers) | ~80 g | 8–26 % known, 0–1 registrations with 4–8 cm error, exploration stalls after one leg |
+| **2-D ring + downward ToF depth camera** (an LDRobot LD19 class ring, ~47 g, 12 m, ~450 points/rev; an Arducam ToF class camera, 70° × 50°, 4 m; zenith + nadir rangers) | ~80 g | *first attempt, 0.4.0 scratch harness:* 8–26 % known, 0–1 registrations, exploration stalls. *With the single-plane logic built (0.5.0, `recon-mini`):* 93.1 % of column tops seen in 13 goals and 15 registrations, the basin and three counters discovered, both plates within 2 cm and the mug within 1 cm, home anchored with zero error |
 
-The 2-D result is an honest "not yet", not a verdict on the sensor. It was run in a scratch harness on
-top of logic written for a 3-D sensor, and every failure had the same shape: a single scan plane
-only tells you about its own plane. Three things follow, and they are the first work item of the
-training lane ([BACKLOG B15](https://github.com/emeraldcoastsystemsgroup/oshal-apps/blob/main/embodied/BACKLOG.md)):
+The first 2-D result was an honest "not yet", not a verdict on the sensor: a single scan plane only
+tells you about its own plane, and every part of the exploration and registration logic assumed a
+sensor that sees above and below. The 0.5.0 build gave the printed set its own rules, and the sim
+now says it can do the job:
 
 1. **The scan plane is the flight plane.** The guards read the voxel layer at the drone's altitude;
-   with one ring, that layer must be the ring's. Mast height zero in flight; the mission is flown at
-   one altitude; altitude comes from the nadir ranger, not from the ring.
-2. **Registration is 3-DOF in the plane, z from the ranger.** A ring sees only walls; its normals are
-   horizontal and the 4×4 solve is singular in z by construction. The first sweep at a new altitude
-   has nothing to match and must be accepted on dead reckoning.
-3. **The height map comes from the depth camera**, not the LiDAR: the 2-D drone discovers surfaces
-   and objects with the camera it points at the floor, and sweeps the room with the ring.
+   the ring flies in that layer, at a voxel-centre altitude 20 cm under the ceiling so a fridge just
+   under the plane sits below the clearance band rather than inside it.
+2. **Altitude from the nadir ranger, every step**, read against the discovered top under the drone;
+   only a top with known free air above it counts, and only the reading that moves the belief least.
+3. **Registration is planar**: x, y and yaw against vertical-face anchors at any height, every ring
+   point used, 100 matches enough. A sweep with nothing to match is dead-reckoned, never "lost".
+4. **The height map comes from the depth camera**, and exploration chases the columns the camera has
+   not seen, choosing the goal by what it will learn over how far it flies, never scanning twice from
+   the same spot (a cabinet's shadow is unseen from above the cabinet).
 
-Decision for this design: **one parametric airframe, two fits.** *Recon-mini* carries the 2-D set
-and is the one we print first, because it is the one we can afford and because the simulation can
-grow the single-plane logic while the parts print. *Recon-3D* is the same frame with a 300 g payload
-bay and 7-inch props for the Mid-360 class sensor, printed only if the sim, with the single-plane
-logic built, still says the 2-D set cannot find a plate.
+Decision for this design stands: **one parametric airframe, two fits.** *Recon-mini* carries the 2-D
+set and is the one we print first; the simulation now backs it. *Recon-3D* is the same frame with a
+300 g payload bay and 7-inch props for the Mid-360 class sensor, held in reserve for a room the
+2-D set cannot map.
 
 ## 3. Propulsion sizing (computed, momentum theory)
 
