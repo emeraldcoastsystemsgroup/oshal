@@ -121,8 +121,21 @@ baseline, so a learned policy is always compared to something that already works
   carries the sensor set — 0.178 m half-width for the printed drone plus a 5 cm margin laterally, the
   hull's height plus the mast plus the margin vertically — the same hull the plant collides with. The
   kitchen re-measured at that clearance: 92.7 % of tops in 12 goals, the same dishes found.
+- **The certification gate and the policy as the plant's controller (B19, 0.8.0):** every evaluation
+  records the first episode's flight path; `POST /physics/certify` replays it point by point through
+  the owner's fence and map guards (unknown space refuses) and remembers a passing policy for that
+  owner; `POST /world/reset {controller:'policy:<file>'}` then loads the plant with the policy as its
+  flight controller, inference in the container (Q3 as decided), the setpoint ramp, belief, map
+  guards, `drone.goto`, rehearsal and confirm untouched. A hover-and-leg policy is a controller, so
+  it flies the legs the rails give it; proposing legs is the exploration policy's job (D5.2, open).
+  The verdict has three facets (mean error, endpoints, crashes) and needs all three. Residual training
+  (a bounded correction on the controller) exists. Measured: absolute PPO at 400 000 steps on two
+  seeds and residual PPO at 200 000 steps win the mean-error facet and lose the endpoints (0.8–4.1 cm
+  against the controller's 0.6 cm) — no policy has beaten the controller yet; the reports say so. A
+  single-plane map certifies nothing off its scan plane: a path that dips centimetres under the
+  mission altitude is refused until those layers are scanned — the gate working as meant.
 - **Not built, recorded as BACKLOG with done-when:** the node rail for the plant (B20 — today a
-  package-owned TCP bridge), the policy as a provider and the certification gate (B19), tasks
+  package-owned TCP bridge), a training recipe that beats the controller on three seeds (B19), tasks
   D5.2–D5.4.
 
 ## Consequences
@@ -145,7 +158,8 @@ baseline, so a learned policy is always compared to something that already works
 2. The sensor bridge into the unchanged map and registration and the `PhysicsPlant` seam — **done
    0.7.0** over a package-owned bridge; the swarm node rail is B20.
 3. Task 1 with a PPO baseline and the deterministic autopilot as the reference — **done 0.7.0**; the
-   policy does not beat the reference yet; the certification gate is B19.
+   certification gate and the policy as the plant's controller — **done 0.8.0**; no policy beats the
+   reference yet (B19).
 4. Task 2 (exploration policy vs the frontier planner) — open.
 5. Arm MJCF and task 3; then task 4 — open.
 6. Policy-as-provider behind the confirm gate; hardware-in-the-loop — B19, B20, B6.

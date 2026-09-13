@@ -58,9 +58,25 @@ project on the stack network (alias `embodied-engine:7413`, no host port), and r
 docker exec oshal-embodied-engine python /opt/embodied/engine/tasks/train_hover.py --timesteps 300000 --seed 0
 ```
 
-writes `/tmp/embodied-reports/hover-leg-seed0.json` (PPO vs the plant's own controller on the same
-seeded episodes); `GET /api/embodied/physics/reports` lists them. Reports live in the container's
-tmpfs and are gone on recreate — copy out what you want to keep.
+writes `/tmp/embodied-reports/hover-leg-absolute-seed0.json` and the policy zip beside it (PPO vs the
+plant's own controller on the same seeded episodes, a three-facet verdict); `--residual` learns a
+bounded correction on the controller instead; `--rescore <policy.zip>` re-evaluates a saved policy.
+`GET /api/embodied/physics/reports` lists them. Reports live in the container's tmpfs and are gone
+on recreate — copy out what you want to keep.
+
+## Flying a trained policy (the certification gate)
+
+1. **Explore first.** The gate replays the policy's recorded flight through *your* world's map; a
+   map that has seen nothing certifies nothing. With the printed drone's single scan plane the path
+   must also stay in scanned layers: if the verdict says `unknown space beside the path` a few
+   centimetres under the mission altitude, take command and scan a pass one layer down along the leg.
+2. **Policies panel → Certify** on a report. The toast says `Certified` or `Refused at N points` with
+   the first guard's reason and where. A refused verdict does not certify; scan more and retry.
+3. **Reset world** with the truth model on `physics (MuJoCo)` and the controller selector on
+   `flown by <policy>` (it lists only policies you certified). The plant is now flown by the policy;
+   the node panel says so. Every plan, guard, rehearsal and confirm is the same as before.
+4. A reset with an uncertified policy answers 409 `policy_not_certified`; a policy on the kinematic
+   truth model answers 400.
 
 ## Installing and updating the package
 
