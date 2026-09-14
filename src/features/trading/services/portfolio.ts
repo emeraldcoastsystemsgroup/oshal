@@ -22,6 +22,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | symbolBlocklist (TRADING_SYMBOL_BLOCKLIST): operator standing exclusions the engine can never buy — "drop MRNA" said repeatedly had no enforceable home; the engine re-bought whatever ranked. Exits deliberately unaffected.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | PolicyOverride param on riskPolicy (ADR-095 Strategy Library apply-to-profile): an applied lab strategy's posture beats both env postures, and its takeProfitPct (including an explicit null = posture default) beats TRADING_TAKE_PROFIT_PCT. No override → behavior unchanged.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SECTOR entries for the 19 regime-reweight names (universe 140 → 159): new 'materials' bucket (mining/chemicals/steel get their own cap headroom, not riding under 'consumer' industrials) and new 'storage' bucket for the memory/NAND pool — MU and SKHY MOVE into it from 'tech'/'other' so storage crowding is capped as one trade, not hidden under tech headroom.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Veto a stop-loss that exists only because the venue reports a wash-sale-adjusted basis (washSaleStopVetoed). On 2026-09-14 the live book stop-lossed 10 names and all 10 were within 5% of what the engine had paid - CRM read -5.07% while trading +3.24% above its own buy. The veto can only SUPPRESS a stop the venue basis already wanted; it never creates one, and take-profit, trailing and cap trims are unchanged.
  *
  * @module portfolio
  */
@@ -213,10 +214,40 @@ export function exitsToRun(positions: Position[], policy: RiskPolicy, stopMult =
     const pnlPct = (p.unrealizedPl / cost) * 100;
     // stopMult widens the hard stop in thin sessions (pre/post) so a low-liquidity wick doesn't
     // whipsaw us out at a bad print — the "lost in extended hours" failure mode.
-    if (pnlPct <= -policy.stopLossPct * stopMult) exits.push({ symbol: p.symbol, qty: p.qty, reason: 'stop_loss', pnlPct });
-    else if (pnlPct >= policy.takeProfitPct) exits.push({ symbol: p.symbol, qty: p.qty, reason: 'take_profit', pnlPct });
+    const stopLine = -policy.stopLossPct * stopMult;
+    if (pnlPct <= stopLine) {
+      if (!washSaleStopVetoed(p, stopLine)) exits.push({ symbol: p.symbol, qty: p.qty, reason: 'stop_loss', pnlPct });
+    } else if (pnlPct >= policy.takeProfitPct) exits.push({ symbol: p.symbol, qty: p.qty, reason: 'take_profit', pnlPct });
   }
   return exits;
+}
+
+/**
+ * @description Decide whether a venue-basis stop-loss is a tax artifact rather than a real loss.
+ *
+ * WHY: Schwab reports the wash-sale-ADJUSTED average. After a loss sale and a re-buy inside 30 days
+ * the disallowed loss is folded into the replacement shares, so the venue shows a loss the engine's
+ * money never took, and the engine sold it. On 2026-09-14 the live book stop-lossed 10 names and all
+ * 10 were this — CRM read -5.07% while trading +3.24% above what the engine paid for it.
+ *
+ * DIRECTION IS DELIBERATE: this can only SUPPRESS a stop the venue basis already wanted. It never
+ * creates one, even when the engine's own basis is higher than the venue average (a position with
+ * lots the engine did not buy) — there the true economic basis is unknowable and the venue decision
+ * stands. The caller only supplies `engineAvgCost` when the engine's ledger covers the whole
+ * position.
+ *
+ * @param p - The position, carrying the optional engine basis and a live price.
+ * @param stopLine - The (negative) stop threshold in percent, already widened by stopMult.
+ * @returns True when the engine's own cost shows the position is NOT past the stop, so the stop is
+ * a wash-sale artifact and must not fire.
+ */
+export function washSaleStopVetoed(p: Position, stopLine: number): boolean {
+  const basis = p.engineAvgCost;
+  const last = p.currentPrice;
+  if (typeof basis !== 'number' || !Number.isFinite(basis) || !(basis > 0)) return false;
+  if (typeof last !== 'number' || !Number.isFinite(last) || !(last > 0)) return false;
+  const enginePct = ((last - basis) / basis) * 100;
+  return enginePct > stopLine;
 }
 
 /**
