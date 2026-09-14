@@ -10,6 +10,7 @@ causes met on 2026-09-13 are below, with what was fixed, what was proven, and wh
 |---|---|---|
 | `POST /api/jarvis/ask` → **404** `{"error":"session_not_found"}` | The page keeps a thread id in `localStorage.jarvisSessionId` until "New chat". Under `OSHAL_APPLICATION_AUTHORIZATION_MODE=enforce` the server refuses a thread it cannot attribute to the current sign-in: every thread created before issuer provenance landed (2026-09-11, `c18f057a`) carries no `oshalOwnerPrincipalIssuer`, and so does a thread opened under another sign-in. That refusal is deliberate and guarded in `tests/unit/protected-jarvis-results.spec.ts`. | **Fixed in `7aae3ce5`** (page side, live on reload — `src/api/jarvis.html` is bind-mounted). |
 | `GET /api/jarvis/briefings/client.js` → **404** with `application/json` and "Refused to execute script … MIME type" | `jarvis-briefing-routes.ts` resolved its page assets through `__dirname/../../pages`. `src/pages/**` is excluded from `tsconfig.server.json`, so in the baked image that is `dist/pages/…`, which does not exist; the missing file fell through to the app-level error handler as a JSON 404. | **Fixed in `7aae3ce5`** (router side, needs the next core deploy). |
+| `POST /api/jarvis/ask` → **404** `{"error":"session_not_found"}` **on a brand-new thread too** | The ownership read behind the gate was raising a SQL type error. See "The 2026-09-14 cause" below. | **Fixed in the tree; NEEDS A CORE DEPLOY.** |
 | `POST /api/jarvis/ask` → 401 | No session / expired session. | Sign in again. |
 | `POST /api/jarvis/ask` → 503 `ai_disabled` | Deployment declared `OSHAL_NO_AI=true`. | Expected. |
 
@@ -100,6 +101,52 @@ docker exec oshal-local-db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c 
 The refusal protects a thread from being appended to by a same-`sub` principal from a different issuer.
 The 2026-09-11 change made it fail closed on purpose and tests it. The page-side roll is the correct
 recovery: the thread id was only ever a browser bookmark.
+
+## The 2026-09-14 cause: every ask 404'd, including fresh threads (root-caused, fix needs a deploy)
+
+**Symptom.** Every `POST /api/jarvis/ask` answered `404 session_not_found` — not just bookmarked
+threads. The page rolled to a fresh thread, the fresh thread was refused too, and the operator heard
+only the generic "Sorry — I couldn't do that just now."
+
+**Fingerprint in the database.** The refused threads sit at `chat_tasks.status = 'created'`.
+`ensureSessionTask` creates the row, and `markJarvisSessionTaskStatus(…, 'processing')` runs *after*
+the ownership gate — so `created` means the gate refused. Every thread that ever worked went to
+`active` or `processing`; on 2026-09-14 the only four `created` rows in the whole table were the
+three the operator produced at 06:10Z and one probe.
+
+**Chain.** `POST /ask` → `canReadJarvisSession` → `canReadProtectedResult` →
+`isProtectedAgent(JARVIS_AGENT_ID)` → `readApplicationExecutionOwnership(pool, {kind:'bots', …})`.
+That last call ran `$1=ANY(agent_ids)` with `$1` bound as **text**, while
+`swarm_applications.agent_ids` is **`UUID[]`** (migration 022). PostgreSQL has no `text = uuid`
+operator, so the query raised, the reader converted it to `ApplicationOwnershipUnavailableError`,
+and `canReadProtectedResult`'s bare `catch { return false; }` turned that into a plain refusal —
+**with nothing logged at any level**. `kind:'tools'` was unaffected because `tool_names` is `TEXT[]`
+in both tables, which is exactly the asymmetry the guard reproduces.
+
+Measured in the running container as the real `oshal_app` role:
+
+```
+readApplicationExecutionOwnership(pool,{kind:'bots',id:'a0000000-…-050',mode:'enforce'})
+  → ApplicationOwnershipUnavailableError  (11 ms)
+raw query as oshal_app → error: operator does not exist: text = uuid
+```
+
+**Since when.** `canReadJarvisSession` entered the ask path in `c18f057a` (2026-09-11). That matches
+the already-recorded fact that **zero** `jarvis-chat` rows had been created since 2026-09-11. It has
+nothing to do with any package installed on 2026-09-14 — that correlation is a red herring.
+
+**Fix.** `src/app/application-execution-ownership.ts` compares as text on both sides
+(`$1=ANY(<column>::text[])`), which is a no-op on the `TEXT[]` column and correct on the `UUID[]`
+one, and logs the previously silent failure at ERROR. Guard:
+`tests/unit/application-execution-ownership-postgres.spec.ts` — the real reader against a real
+PostgreSQL carrying migration 022's real `UUID[]` column; 5/5 green, and proven red on the pre-fix
+query (the three `bots` cases fail with `ApplicationOwnershipUnavailableError`, `tools` still passes).
+
+**This is `src/app/**`, which is baked into the image — Jarvis stays broken until
+`bash scripts/oshal-deploy.sh` runs.** There is no live workaround: the failure is a query/plan type
+mismatch, independent of data, so no row edit or restart changes it. Do **not** "fix" it by altering
+`swarm_applications.agent_ids` to `TEXT[]` — migration 022 declares `UUID[]` and
+`jarvis-orchestrator.ts` joins `agents.agent_id` (uuid) to `sa.agent_ids[1]`.
 
 ## Related
 
