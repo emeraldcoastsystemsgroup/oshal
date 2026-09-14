@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The Operations Stream operator API (/api/ops/alert-pipeline): live scrape + firing state traced through the pipeline, the funnel and its trend, incident read models, the autonomy ladder, and the operator-gated surfaces — transactional claim-rule reconcile with save-time validation, rule/identity preview, the topology mirror, the intake gap, the deadletter and a bounded replay. Reads are requiresAuth; anything that mutates state or exposes routing internals additionally chains requiresOperator ON THE ROUTE, so a re-mount cannot drop the gate.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-20: the replay claim stage consolidates through consolidateLanded, so an event whose claim rolled back after its incident and member writes committed is not counted a second time when it is drained again.
  */
 
 /**
@@ -587,12 +588,12 @@ async function claimOneEvent(
   await executor.query('UPDATE oshal_alert_event SET dedup_key = $2, identity_source = $3 WHERE event_id = $1', [
     event.eventId, dedupKey, identitySource,
   ]);
-  const outcome = await ctx.incidents.consolidate({ ...event, dedupKey, identitySource }, {
+  const outcome = await ctx.incidents.consolidateLanded({ ...event, dedupKey, identitySource }, {
     reopenWindowSeconds: claimedBy?.reopenWindowSeconds ?? consolidationTtlSeconds(),
     claimRuleId: claimedBy?.ruleId ?? null,
     intakeStatus: claimedBy?.intake === 'auto' ? 'auto' : 'backlog',
-  });
-  await ctx.incidents.upsertMember(outcome.incident.incidentId, {
+    eventId: event.eventId,
+  }, {
     memberKey: renderIdentitySource(event, DEFAULT_IDENTITY_FIELDS),
     alertname: event.alertname,
     target: event.target,
@@ -600,7 +601,6 @@ async function claimOneEvent(
     severityNum: event.severityNum,
     fingerprint: event.fingerprint || null,
     seenAt: event.receivedAt,
-    attachReason: outcome.wasCreated ? 'genesis' : 'same-key',
   });
   await ctx.envelopes.decideEvent(event.eventId, decisionFor(outcome), {
     claimedByRule: claimedBy?.ruleId ?? null,
@@ -611,7 +611,9 @@ async function claimOneEvent(
 /**
  * @description Drains pending events through the claim stage. Idempotent by construction: the
  * identity is derived from the event, and consolidation upserts on the live-incident unique index,
- * so replaying the same alert bubbles the same incident instead of opening a second one.
+ * so replaying the same alert bubbles the same incident instead of opening a second one; and a
+ * re-drain of the SAME event after a rolled-back claim replays its recorded effects instead of
+ * counting them twice (consolidateLanded, BUG-20).
  * @param ctx - The stores.
  * @param limit - Maximum events to claim in this pass.
  * @returns How many events were decided.

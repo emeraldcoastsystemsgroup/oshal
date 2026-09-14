@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Operations Stream landing stage: the verbatim envelope write, the pure per-alert normalizer (target ladder, severity ordinal, promoted labels, timestamp sanity floor), the SKIP LOCKED pending-event claim, and the decide/fail/deadletter transitions. One transaction per delivery so an envelope and its events are either both durable or neither is.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-20: the withPendingEvents contract states what actually holds - the handler's pool writes commit on their own and are made idempotent per event - replacing a deadlock rationale that could not occur.
  */
 
 import type { Pool, PoolClient } from 'pg';
@@ -254,7 +255,7 @@ const SELECT_PENDING_SQL = `
   SELECT * FROM oshal_alert_event
    WHERE claim_decision = 'pending'
    ORDER BY received_at
-     FOR UPDATE SKIP LOCKED
+     FOR NO KEY UPDATE SKIP LOCKED
    LIMIT $1`;
 
 const DECIDE_EVENT_SQL = `
@@ -601,13 +602,20 @@ export class EnvelopeStore {
 
   /**
    * @description Claims up to `limit` pending events and runs `handler` over them INSIDE the
-   * claiming transaction. `FOR UPDATE SKIP LOCKED` is what lets several pumps drain the same
+   * claiming transaction. `FOR NO KEY UPDATE SKIP LOCKED` is what lets several pumps drain the same
    * queue without ever handing the same row to two of them, and holding the transaction open
    * across the handler is what makes a crash safe: the rows revert to pending on rollback
    * rather than sitting claimed by a process that no longer exists.
    *
-   * The handler receives the transaction client and MUST use it for its own writes — a write
-   * issued on the pool would wait on locks this transaction holds and deadlock the pump.
+   * The handler gets the transaction client for the event's own decision. Its other writes -
+   * incident, member, dispatch, ticket - go through the pool and commit on their own, so a claim
+   * that rolls back returns the event to pending with those writes already made. The handler is
+   * therefore an idempotent consumer: each such write is recorded once per event in
+   * oshal_alert_event_effect, and re-draining the event replays what it recorded instead of
+   * applying it twice (BUG-20). The claim takes FOR NO KEY UPDATE, not FOR UPDATE: it never changes
+   * an event's key, and a pool write that references the event - the effect record's foreign key
+   * takes KEY SHARE on the event row - would otherwise wait on this transaction while this
+   * transaction waits on it. Two claims still exclude each other, so no event is worked twice at once.
    * @param limit - Maximum events to claim; clamped to a sane batch.
    * @param handler - Work to run over the claimed events, on the claiming connection.
    * @returns How many events were claimed and handed to the handler.

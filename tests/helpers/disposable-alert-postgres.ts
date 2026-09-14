@@ -12,7 +12,7 @@ import { resolve } from 'node:path';
 import { Pool } from 'pg';
 
 const MIGRATIONS = ['104-alert-pipeline-core.sql', '105-alert-incident.sql', '106-alert-evidence.sql',
-  '107-alert-config-topology.sql', '108-alert-metering.sql', '109-topology-transit.sql'];
+  '107-alert-config-topology.sql', '108-alert-metering.sql', '109-topology-transit.sql', '141-alert-event-effects.sql'];
 
 /** Docker arguments are fixed except generated fixture credentials; inherited DSNs are never read. */
 function docker(args: string[]): string {
