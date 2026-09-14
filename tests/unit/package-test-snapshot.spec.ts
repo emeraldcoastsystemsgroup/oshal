@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise source growth races and bounded snapshot reads with real temporary files.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Seal packaged route sources and tool surfaces while excluding their runtime and credential files.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove Playwright recipe admission follows verified browser capabilities and the harness check.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | A package's catalog/ data is staged into the sealed snapshot and changes its revision; credentials, runtime output and directories outside the allowlist stay out.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -85,6 +86,21 @@ it('includes packaged tool and route sources in revisions without admitting thei
     expect(snapshotPackageTests(root).revision).not.toBe(first.revision);
     writeFileSync(path.join(root, name), 'original');
   }
+});
+
+it('stages the catalog/ data that package routes read at runtime, and still nothing outside the allowlist', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'lab-package-catalog-')); roots.push(root);
+  const included = ['catalog/servos.json', 'catalog/drivers.json', 'routes/driver-catalog.js'];
+  const excluded = ['catalog/credentials.json', 'catalog/output/run.json', 'catalog/data/customer.json',
+    'docs/ARCHITECTURE.md', 'firmware/controller.ino'];
+  for (const name of [...included, ...excluded]) {
+    mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
+    writeFileSync(path.join(root, name), '{}');
+  }
+  const first = snapshotPackageTests(root);
+  expect(first.files.map(file => file.path).sort()).toEqual(included.sort());
+  writeFileSync(path.join(root, 'catalog/servos.json'), '{"changed":true}');
+  expect(snapshotPackageTests(root).revision).not.toBe(first.revision);
 });
 
 it('admits a Node-harness Playwright recipe only once the browser prerequisites are verified, and nothing else', () => {
