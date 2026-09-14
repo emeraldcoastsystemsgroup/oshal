@@ -77,12 +77,14 @@ beforeAll(async () => {
   browser = await chromium.launch({ headless: true });
 }, 30000);
 
+// Chromium's close plus the HTTP teardown can exceed vitest's 10s hook default on a loaded box —
+// an explicit budget keeps a passing suite from reporting red in its teardown.
 afterAll(async () => {
   await browser?.close(); server?.closeAllConnections();
   await new Promise<void>(done => server?.close(() => done()));
   vi.restoreAllMocks(); vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
-});
+}, 60000);
 
 describe('the install preview resolves both tiers the way the installer does', () => {
   it('lists required and optional apps with their state and allows the install', async () => {
