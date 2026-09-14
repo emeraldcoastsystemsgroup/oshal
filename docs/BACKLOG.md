@@ -869,6 +869,47 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** make the [`payroll` README](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/payroll/README.md) the canonical queue for additional cited state/local tables, workweek overtime, protected identifiers, employee isolation, repayment/garnishment/deposit rules, benefits/payment traces, verified EFW2 2026, and enrolled filing/payment rails.
 - **Done when:** each commissioned package item has primary-source citations where legally material, a focused calculation/isolation guard, and clean-tenant output evidence; core retains only shared framework dependencies. See [ADR-123](adr/123-payroll-app.md).
 
+### Ambient Recall (ADR-100) — live acceptance on real transcripts
+- **Delivered (2026-09-12, `018607e6` + `8a88d33e` on `feat/store-compatibility-gate`, PR #431, preview-deployed):** Phases 2-4 as recorded in [ADR-100](adr/100-ambient-person-model.md) and the [release record](releases/ambient-recall-phases-2-4-2026-09-12.md) — Jarvis front door for asks/trends/connections, semantic recall with database-enforced deletion parity (migration 138), profile pages, the consent-trigger convergence, the parity gate, the in-container gate and live-proof scripts, and the Test Lab scenario `ambient-recall`.
+- **Remaining:** merge PR #431 and release from `main`; a mic session with speaker recognition on and one named voice (the box holds zero transcripts and the analyst has never run — no `chat_tasks` row under `a0000000-0000-0000-0000-000000000055`); run the `ambient-recall` Lab scenario; allow modeling for that voice and let one enrichment sweep produce asks and topics.
+- **Done when:** the Lab scenario passes all five steps on a `main` deploy; one `ambient_person_asks` row exists that the analyst produced with a cost row under its agent id; the People tab shows that voice's topics and presence from real lines; a paraphrase recall returns a related hit from real speech.
+
+### Ambient Recall — attributed ingest fixture for the Test Lab
+- **Remaining:** `POST /api/jarvis/ambient/segments` refuses speaker ids by design, so the Lab can only prove the unattributed path (recall by "anyone"); asks, profiles and consent need attributed lines, which today exist only through the audio path.
+- **Done when:** a service-secret-gated fixture (or a diarization fixture) lets the Lab seed an attributed line for a fixture voice, the scenario proves an ask and a profile for it, and a normal session cannot reach the fixture.
+
+### Ambient Recall — relevance floor on "possibly related" hits
+- **Remaining:** the semantic leg returns the engine's nearest neighbours with no floor; the live proof returned "Can we order pizza tonight" as related to "volleyball" with the same flat RRF score as the true paraphrases. The count is unaffected, but the list reads as noise when few lines exist.
+- **Done when:** a similarity floor (or a rule that a hit must score on the vector leg, not only rank) drops the pizza line from the live-proof fixture while keeping the two volleyball paraphrases, and the exact count is unchanged.
+
+### Ambient Recall — Manage Voices bridge to profile pages
+- **Remaining:** profile pages live on the extension surface; the Jarvis Manage Voices panel (`jarvis-speakers.js`, over the file cap) has no link into them. A sibling script needs the four registration points (`JARVIS_CLIENT_ASSETS`, `jarvis.html` script + mount, the compose bind mount) and the wiring spec.
+- **Done when:** each voice row in Manage Voices opens `/api/jarvis/ambient/person/?tab=people&profile=<id>` and `tests/unit/jarvis-speaker-wiring.spec.ts` pins the four points.
+
+### Lazy-DDL trigger and function guards must converge, not create-once
+- **Remaining:** the consent-ledger trigger drift (a by-name `IF NOT EXISTS (SELECT 1 FROM pg_trigger …)` guard froze the July `BEFORE DELETE OR UPDATE` shape on the dev box; fixed for that trigger in `8a88d33e`) is a pattern, not a one-off. Every lazy-DDL guard on a trigger or function that keys on the name alone will keep its first definition forever.
+- **Done when:** a unit spec enumerates every such guard under `src/`, and each either converges on a property of the live object (as `person-model-schema.ts` now does on the tgtype DELETE bit) or is covered by an assertion that its definition has not changed since first ship; `pg_get_triggerdef` on the dev box matches the code for every one.
+
+### Person-model maintenance never runs on a box that restarts daily
+- **Remaining:** `startPersonModelMaintenanceRuntime` schedules its pass with a 24-hour `setInterval` and no initial tick, so the retention purge of rollups and the orphan-chunk backstop never run on a container that is recreated more often than daily (this box redeploys most days).
+- **Done when:** the first pass runs a bounded delay after boot, a unit spec pins that, and the api log of a fresh boot shows one `person-model maintenance pass complete` line.
+
+### Real-Postgres specs cannot run from this host while Docker port publishing is wedged
+- **Remaining:** the database container's published port is configured but not live, and a new bind reports "port is already allocated" for a free port, so every real-database spec (this one and the trading/authorization ones) fails loudly from the host. `scripts/person-model-gate-in-container.js` is the hand-kept twin of `tests/unit/person-model-parity-postgres.spec.ts`.
+- **Done when:** either the engine is repaired and `npx vitest run tests/unit/person-model-parity-postgres.spec.ts` is green from the host, or `ci-local.sh --head` runs the gate inside the api container when the host port is dead; and the twin shares its assertion list with the spec so they cannot drift.
+
+### `jarvis-routes.ts` is over the decomposition threshold
+- **Remaining:** the file counts 802 code lines (the Phase 2 change was net −2). CLAUDE.md requires a decomposition plan before any addition; the person-model hook was routed through the slice for that reason.
+- **Done when:** the file is below 800 code lines with the existing jarvis specs green, and the recall hook is unchanged.
+
+### Surface-glass spec is red on four page surfaces
+- **Remaining:** `tests/unit/surface-glass-assets.spec.ts` lists `src/pages/access`, `src/pages/app-loader`, `src/pages/jarvis-briefings` and `src/pages/users` as lacking the shared glass stylesheet (observed 2026-09-12 on `feat/store-compatibility-gate`; not introduced by the person-model work).
+- **Done when:** each page links the stylesheet or carries a justified exemption, and the spec is green in `ci-local.sh --head`.
+
+### Ambient Recall — prosody tone via a sidecar model (optional, ADR-100 Phase 4)
+- **Remaining:** tone today is text-level (analyst inference). The ADR allows an acoustic sidecar writing the same tone column with a different `model` string.
+- **Done when:** a sidecar writes tone with its own `model` and confidence for at least one owner, renders as OSHAL's read beside the quote, and is purged by the same triggers and consent decline.
+
 ### World Intelligence licensed outlet ratings
 - **Remaining:** license Ad Fontes and/or AllSides, map the data with provenance, and replace placeholder bias/reliability seeds; this requires operator budget and license approval.
 - **Done when:** every rating displayed in the World package is sourced to the licensed dataset/version and unknown outlets are represented as unknown rather than guessed. See [ADR-061](adr/061-world-intelligence-layer.md).
