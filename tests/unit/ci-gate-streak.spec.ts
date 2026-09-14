@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - guard for BUG-22's prevention. The defect was not a crash; it was an alert whose wording never changed, so these pin the two claims the alert now makes and that a wrong parse would silently corrupt: the streak count, and which gates are red for the first time tonight.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cases for the duplicate-gate line (verbatim from the corrupted 2026-09-09 run) and for the skipped-is-not-fixed rule, including the inverse: a run that measured the gate still reports FIXED.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cases for the skipped-baseline rule using the verbatim nights 48-50 log: only the genuinely new gate is NEW, the baseline is named when skipped runs were stepped over, a green run is a valid baseline, and nothing is claimed new when every prior run skipped. The de-duplication fixture lost its `trivy-skipped` marker - it was accidentally exercising baseline selection instead of de-duplication.
  */
 
 /**
@@ -156,16 +157,80 @@ describe('what is newly red — the signal BUG-22 lost', () => {
   it('does not double-count a duplicated gate when diffing against the previous run', () => {
     // The doubled line must diff as though it were clean: `image-build` is genuinely new,
     // and the repeated `unpushed-commits` must appear once in already-known, never in both.
+    // The baseline deliberately carries NO skip marker — otherwise this would be exercising
+    // baseline selection rather than de-duplication.
     const log = [
-      '[2026-09-08T00:00:00] === LOCAL CI: FAILED gates: unpushed-commits trivy-skipped ===',
+      '[2026-09-08T00:00:00] === LOCAL CI: FAILED gates: unpushed-commits trivy ===',
       '[2026-09-09T02:22:02] === LOCAL CI: FAILED gates: unpushed-commits image-build'
-      + ' trivy-skipped unpushed-commits trivy-skipped ===',
+      + ' trivy unpushed-commits trivy ===',
     ].join('\n');
     const summary = summarizeGateStreak(log);
     expect(summary.newlyRed).toEqual(['image-build']);
-    expect(summary.alreadyKnown).toEqual(['unpushed-commits', 'trivy-skipped']);
-    expect(summary.current).toEqual(['unpushed-commits', 'image-build', 'trivy-skipped']);
+    expect(summary.alreadyKnown).toEqual(['unpushed-commits', 'trivy']);
+    expect(summary.current).toEqual(['unpushed-commits', 'image-build', 'trivy']);
     expect(summary.headline).toBe('NEW: image-build (night 2)');
+  });
+
+  it('never calls a long-standing failure NEW because the previous run SKIPPED it', () => {
+    // Verbatim from ci-local.log, nights 48-50. 09-12 died at head-src and skipped the node
+    // gates, so unit/lint/e2e-green/trivy silently left its failing set. Diffed against that,
+    // 09-13 announced "NEW: store-compatibility unit lint security-policy e2e-green trivy" —
+    // but those four had been red since July. Only security-policy was actually new.
+    const log = [
+      '[2026-09-11T01:05:34] === LOCAL CI: FAILED gates: store-compatibility unit lint e2e-green trivy ===',
+      '[2026-09-12T00:47:19] === LOCAL CI: FAILED gates: head-src node-gates-skipped'
+      + ' unpushed-commits image-build kernel-skills-image-skipped image-smoke-skipped trivy-skipped ===',
+      '[2026-09-13T02:25:02] === LOCAL CI: FAILED gates: store-compatibility unit lint'
+      + ' security-policy e2e-green trivy ===',
+    ].join('\n');
+    const summary = summarizeGateStreak(log);
+    expect(summary.newlyRed).toEqual(['security-policy']);
+    expect(summary.alreadyKnown).toEqual(['store-compatibility', 'unit', 'lint', 'e2e-green', 'trivy']);
+    expect(summary.headline).toBe('NEW: security-policy (night 3)');
+  });
+
+  it('names the baseline it compared against when it stepped over skipped runs', () => {
+    const log = [
+      '[2026-09-11T01:05:34] === LOCAL CI: FAILED gates: unit trivy ===',
+      '[2026-09-12T00:47:19] === LOCAL CI: FAILED gates: head-src node-gates-skipped ===',
+      '[2026-09-13T02:25:02] === LOCAL CI: FAILED gates: unit trivy security-policy ===',
+    ].join('\n');
+    const summary = summarizeGateStreak(log);
+    expect(summary.baselineAt).toBe('2026-09-11T01:05:34');
+    expect(summary.baselineSkippedRuns).toBe(1);
+    expect(renderAlertBody(summary)).toContain(
+      'Compared against 2026-09-11T01:05:34 — the last run that measured every gate;'
+      + ' 1 intervening run skipped gates and cannot say what is new.',
+    );
+  });
+
+  it('compares against the immediately previous run when it skipped nothing', () => {
+    const summary = summarizeGateStreak(REAL_LOG);
+    expect(summary.baselineAt).toBe('2026-09-07T00:21:59');
+    expect(summary.baselineSkippedRuns).toBe(0);
+    expect(renderAlertBody(summary)).not.toContain('Compared against');
+  });
+
+  it('claims nothing is new when every prior run skipped gates — there is no honest baseline', () => {
+    const log = [
+      '[2026-09-12T00:00:00] === LOCAL CI: FAILED gates: head-src node-gates-skipped ===',
+      '[2026-09-13T00:00:00] === LOCAL CI: FAILED gates: unit trivy ===',
+    ].join('\n');
+    const summary = summarizeGateStreak(log);
+    expect(summary.previous).toBeNull();
+    expect(summary.newlyRed).toEqual([]);
+    expect(summary.alreadyKnown).toEqual(['unit', 'trivy']);
+  });
+
+  it('accepts a GREEN run as a baseline — it measured everything and nothing failed', () => {
+    const log = [
+      '[2026-09-11T00:00:00] === LOCAL CI: ALL GATES GREEN ===',
+      '[2026-09-12T00:00:00] === LOCAL CI: FAILED gates: head-src node-gates-skipped ===',
+      '[2026-09-13T00:00:00] === LOCAL CI: FAILED gates: unit ===',
+    ].join('\n');
+    const summary = summarizeGateStreak(log);
+    expect(summary.baselineAt).toBe('2026-09-11T00:00:00');
+    expect(summary.newlyRed).toEqual(['unit']);
   });
 
   it('claims nothing is new when there is no previous run to compare against', () => {

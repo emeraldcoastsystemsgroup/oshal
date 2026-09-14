@@ -79,6 +79,78 @@ schtasks /create /tn "OSHAL Local CI" /sc daily /st 23:30 /f ^
 Logs: `%LOCALAPPDATA%\oshal\ci-local.log` (one line per gate) and
 `%LOCALAPPDATA%\oshal\ci-local-last-run.log` (full output of the latest run).
 
+## Reading the failure alert
+
+The gate has been red continuously since **2026-07-27**, so "it failed again" carries no
+information. The alert exists to answer one question: **did anything change tonight?** Read the
+subject, not the fact of the email.
+
+| Subject after `OSHAL LOCAL CI FAILED -` | What it means |
+|---|---|
+| `NEW: <gates> (night N)` | Those gates were **not** failing in the last run that measured everything. This is the line worth acting on. |
+| `no change from last run (night N)` | Identical failing set. Nothing to do. |
+| `no new failures; FIXED: <gates> (night N)` | Those gates left the failing set **and this run actually ran them**. |
+| `no new failures; N gate(s) DID NOT RUN (night N)` | Gates left the failing set but the run skipped them. **Not proof they pass.** |
+| `all gates green` | The streak is broken. |
+
+Three rules decide that wording, and each exists because its absence produced a false alert:
+
+- **"New" is measured against one baseline run — the most recent prior run that skipped
+  nothing.** A green run qualifies. When a run fails early it appends skip markers
+  (`node-gates-skipped`, `<gate>-skipped`) and every downstream gate silently leaves its failing
+  set; diffing against that manufactures false NEWs. On 2026-09-13 the alert announced
+  `NEW: store-compatibility unit lint security-policy e2e-green trivy` when only
+  `security-policy` was new — the rest had been red since July. When the baseline is not the
+  immediately preceding run, the **body names it** and says how many runs were stepped over.
+- **A skipped gate is never reported as fixed.** It was not measured, and a green nobody
+  measured is worse than no claim at all.
+- **The streak counts consecutive failed runs**, and the body dates the first one. A long streak
+  is context, not news.
+
+The headline is also written into `ci-local.log` next to the outcome line, so the "is anything
+new?" answer survives an api container that is down and cannot send mail.
+
+Implementation: [`scripts/ci/ci-gate-streak.mjs`](../../scripts/ci/ci-gate-streak.mjs), invoked by
+`ci-local.sh` after it writes the outcome line. Guard:
+[`tests/unit/ci-gate-streak.spec.ts`](../../tests/unit/ci-gate-streak.spec.ts) — its fixtures are
+verbatim lines from the real log, because parsing that real shape is the boundary a wrong summary
+would corrupt silently. To see what the current log would produce without waiting for a run:
+
+```bash
+node scripts/ci/ci-gate-streak.mjs "$LOCALAPPDATA/oshal/ci-local.log"
+```
+
+## BUG-22 — what is done, and how to continue
+
+[BUG-22](../operations/bug-log.md) is the entry for the standing red streak. **Do not treat a red
+night as evidence about the code until the work below is finished.**
+
+Done:
+
+- The alert says what changed (above), so a new failure inside the standing failure is visible.
+- `secret-scan` — a secret-shaped test fixture was the single finding; removed.
+- `local-secret-hygiene` — two plaintext `.env` backups in the repo root; moved to
+  `%LOCALAPPDATA%\oshal\env-backups\`. Gitignored files are exactly what a source-only scan
+  cannot see, which is why that gate exists.
+
+Open, each a `BACKLOG` entry with done-when criteria:
+
+1. **`trivy`** — a CVE-budget decision, not a code fix. The last report on disk is from
+   2026-07-09, so the current finding set is not actually known. Capture a fresh report first.
+2. **`unit` + `e2e-green`** — never triaged. No run log preserves *which* specs fail:
+   `ci-local.log` keeps only per-gate PASS/FAIL and `ci-local-last-run.log` is overwritten each
+   night. Start with one `bash scripts/ci-local.sh --head` on an idle box, keeping the output.
+3. **Host contention** — the gate partly measures the host. A run that starts while the full
+   swarm, Docker Desktop and an editor are up can find **0.4 GB free of 15.7 GB**: `head-src`
+   took 2144 s and failed, skipping seven gates; `secret-scan` logged `cannot allocate memory`
+   against files it could not read; `image-build` ran 55+ minutes against 68 s earlier the same
+   day. Until resource exhaustion is reported distinctly from gate failure, a red night is not
+   evidence about the code.
+4. **The purge hang** — `prepare_head_src` can wedge for hours deleting its own previous export.
+
+The suggested order is 2, then 1 — triage is blind without spec-level output, and the trivy
+decision needs a current report. 3 gates the trustworthiness of both.
+
 ## Known constraints
 
 - Port **3456** must be free during the e2e gate (several green-set specs hardcode it);
@@ -87,3 +159,20 @@ Logs: `%LOCALAPPDATA%\oshal\ci-local.log` (one line per gate) and
   (`agent-profile-persistence` and `firetv-tv-pairing` are commented out with evidence —
   see BACKLOG "CI Playwright e2e suite normalization").
 - Docker Desktop must be running (secret-scan, e2e datastores, image build, trivy).
+- **Never edit `scripts/ci-local.sh` while a run holds the lock.** Bash reads a script by byte
+  offset; an edit mid-run makes the running shell seek into the wrong place and re-execute a
+  block. On 2026-09-09 this caused `image-build` and `unpushed-commits` to run twice and four
+  gate names to be logged twice. Check first: `ls -d "$LOCALAPPDATA/oshal/ci-local.lock"`. The
+  lock protects the *run*; nothing protects the *script*.
+- **`prepare_head_src` can wedge for hours on its own cleanup.** Its first line,
+  `rm -rf "$GATE_SRC"`, deletes the previous run's `node_modules` export and is **not**
+  timeout-bounded (only `npm ci` is). On 2026-09-10 it consumed 9 hours and 16 CPU-seconds with
+  zero progress, holding the lock all night, and the run produced no outcome line and no alert.
+  It was not a file lock. `robocopy /MIR` from an empty directory cleared the same tree in 39
+  seconds. If the nightly looks stuck in `head-src`, look for a long-lived `rm.exe` on `ci-src`.
+- **`gitleaks` exits 0 even when it could not read files.** Under memory pressure the
+  `secret-scan` gate can pass having skipped files — 5 of 5077 on 2026-09-10. A PASS on a starved
+  box is not proof the tree is clean.
+- **Running a gate by hand: use a `cygpath -u` path and assert the export is non-empty.** MSYS
+  `tar` reads a Windows `C:\...` path as a remote host, silently producing an empty export; the
+  scanner then reports on nothing.
