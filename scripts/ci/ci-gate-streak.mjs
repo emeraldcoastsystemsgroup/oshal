@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - BUG-22 prevention. The nightly gate failed 38 consecutive nights and emailed the same sentence every time, so a NEW failure inside the standing failure was indistinguishable from the standing failure itself. A daily alert that never changes its wording is wallpaper, not a signal. This derives the streak and the newly-red set from the run log so the alert can say what CHANGED.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two corrections found by running this against the real log. (1) De-duplicate gate names: lines already written are never rewritten, and one corrupted run doubled four of them. (2) A SKIPPED gate is NOT a fixed gate - when an early gate fails, every downstream gate leaves the failing set and read as "FIXED", which would have reported unit/lint/e2e-green/trivy as fixed on a night none of them executed. Claiming a green that was never measured is worse than the flat wording this replaced.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The mirror of entry 2, found in three real alerts: a SKIPPED gate also must not make a long-standing failure look NEW. When a run skips gates they leave its failing set, so the next run diffs against a baseline that never measured them - on 2026-09-13 the alert announced "NEW: store-compatibility unit lint security-policy e2e-green trivy" when only security-policy was new and the rest had been red since July. A false NEW is worse than the flat wording BUG-22 replaced: it trains you to ignore the word. The baseline is now the most recent prior run with NO skip markers (a green run qualifies), and the body names it when intervening runs were stepped over.
  */
 
 /**
@@ -26,6 +27,19 @@ import { resolve } from 'node:path';
 
 const FAILED_LINE = /^\[([^\]]+)\]\s+=== LOCAL CI: FAILED gates:\s*(.*?)\s*===\s*$/;
 const GREEN_LINE = /^\[([^\]]+)\]\s+=== LOCAL CI: ALL GATES GREEN ===\s*$/;
+
+/**
+ * @description A gate name that records a gate which DID NOT RUN, rather than one that failed.
+ * `ci-local.sh` appends these when an earlier gate fails: `node-gates-skipped` for the whole
+ * typecheck/unit/lint/connectors/manifests/kernel-skills/e2e block, and `<gate>-skipped` for the
+ * image chain. They are the only signal in a run-outcome line that the run did not measure
+ * everything, which is what makes them load-bearing for both "fixed" and "new".
+ * @param {string} gate - one gate name from a run-outcome line.
+ * @returns {boolean} true when the name marks an unrun gate.
+ */
+function isSkipMarker(gate) {
+  return gate.endsWith('-skipped') || gate === 'node-gates-skipped';
+}
 
 /**
  * @description Extract every recorded run outcome, oldest first. Lines that are not run
@@ -61,9 +75,13 @@ export function parseRunOutcomes(logText) {
  * @description Summarize the current (last) run against the run before it: how many nights
  * the gate has been red without a green, and which gates are red for the FIRST time tonight.
  *
- * "Newly red" is deliberately measured against the immediately preceding run only. Measuring
- * it against the whole streak would mark a gate that flaps on and off as new every other
- * night, which reintroduces exactly the noise this exists to remove.
+ * "Newly red" is measured against ONE baseline run, never against the whole streak — measuring
+ * across the streak would mark a gate that flaps on and off as new every other night, which
+ * reintroduces exactly the noise this exists to remove.
+ *
+ * That baseline is the most recent prior run that SKIPPED NOTHING, which is usually but not
+ * always the immediately preceding run. A run that skipped gates never measured them, so it
+ * cannot answer "was this failing before?" — diffing against it manufactures false NEWs.
  *
  * @param {string} logText - full contents of ci-local.log, including the current run's outcome line.
  * @returns {{
@@ -75,13 +93,17 @@ export function parseRunOutcomes(logText) {
  *   alreadyKnown: string[],
  *   newlyGreen: string[],
  *   skipped: string[],
+ *   baselineAt: string | null,
+ *   baselineSkippedRuns: number,
  *   hasHistory: boolean,
  *   headline: string,
  * }} `streak` counts consecutive failed runs ending at the current one (0 when the last run
- * was green or there are no runs). `previous` is null when the current run is the first ever
- * recorded, in which case nothing is claimed to be "new". `skipped` holds the run's skip
- * markers; when it is non-empty a gate leaving the failing set is reported as UNRUN, never
- * as fixed — it was not measured.
+ * was green or there are no runs). `previous` is the last run that MEASURED everything — not
+ * necessarily the immediately preceding one — and is null when no such run exists, in which
+ * case nothing is claimed to be "new". `baselineAt` timestamps that run and
+ * `baselineSkippedRuns` counts how many skip-bearing runs were stepped over to reach it.
+ * `skipped` holds the CURRENT run's skip markers; when it is non-empty a gate leaving the
+ * failing set is reported as UNRUN, never as fixed — it was not measured.
  */
 export function summarizeGateStreak(logText) {
   const outcomes = parseRunOutcomes(logText);
@@ -97,6 +119,8 @@ export function summarizeGateStreak(logText) {
       alreadyKnown: [],
       newlyGreen: [],
       skipped: [],
+      baselineAt: null,
+      baselineSkippedRuns: 0,
       hasHistory: outcomes.length > 1,
       headline: last ? 'all gates green' : 'no runs recorded',
     };
@@ -110,8 +134,24 @@ export function summarizeGateStreak(logText) {
     firstFailureAt = outcomes[i].at;
   }
 
-  const prevOutcome = outcomes.length >= 2 ? outcomes[outcomes.length - 2] : null;
+  // The baseline for "new" must be a run that actually MEASURED the gates. When a run skips
+  // gates, they silently leave its failing set, so the next run diffs against a set that never
+  // contained them and every long-standing failure reads as brand new. Real example: 2026-09-12
+  // failed at head-src and skipped the node gates; on 2026-09-13 the alert announced
+  // "NEW: store-compatibility unit lint security-policy e2e-green trivy" when only
+  // security-policy was new — unit/lint/e2e-green/trivy had been red since July. A false NEW is
+  // worse than the flat wording BUG-22 replaced: it trains you to ignore the word NEW.
+  //
+  // So walk back to the most recent prior run with NO skip markers. A green run qualifies (it
+  // measured everything and nothing failed). If no such run exists there is no honest baseline,
+  // and nothing is claimed to be new.
+  const priorOutcomes = outcomes.slice(0, -1);
+  const prevOutcome = [...priorOutcomes].reverse().find((run) => !run.failed.some(isSkipMarker)) ?? null;
   const previous = prevOutcome ? prevOutcome.failed : null;
+  const baselineAt = prevOutcome ? prevOutcome.at : null;
+  const baselineSkippedRuns = prevOutcome
+    ? priorOutcomes.length - 1 - priorOutcomes.lastIndexOf(prevOutcome)
+    : priorOutcomes.length;
   const current = last.failed;
 
   // With no prior run there is no baseline, so nothing may be called new. Claiming every
@@ -127,7 +167,7 @@ export function summarizeGateStreak(logText) {
   // as "FIXED" against the previous run. On 2026-09-09 that would have reported `unit lint
   // e2e-green trivy` as fixed on a night none of them executed. Claiming a green that was never
   // measured is worse than the flat wording this replaced, so the skip markers suppress the claim.
-  const skipped = current.filter((gate) => gate.endsWith('-skipped') || gate === 'node-gates-skipped');
+  const skipped = current.filter(isSkipMarker);
   const nights = streak === 1 ? '1st night' : `night ${streak}`;
   let headline;
   if (newlyRed.length) headline = `NEW: ${newlyRed.join(' ')} (${nights})`;
@@ -145,6 +185,8 @@ export function summarizeGateStreak(logText) {
     alreadyKnown,
     newlyGreen,
     skipped,
+    baselineAt,
+    baselineSkippedRuns,
     hasHistory: previous !== null,
     headline,
   };
@@ -168,6 +210,13 @@ export function renderAlertBody(summary, ctx = {}) {
       : `FIXED SINCE LAST RUN: ${summary.newlyGreen.join(' ')}.`);
   }
   parts.push(`Already known: ${summary.alreadyKnown.join(' ') || 'none'}.`);
+  // Say what "new" was measured against. Silently comparing to an older run would make the
+  // NEW/already-known split unauditable from the alert alone.
+  if (summary.baselineSkippedRuns > 0) {
+    const runs = summary.baselineSkippedRuns === 1 ? 'run' : 'runs';
+    parts.push(`Compared against ${summary.baselineAt} — the last run that measured every gate;`
+      + ` ${summary.baselineSkippedRuns} intervening ${runs} skipped gates and cannot say what is new.`);
+  }
   if (summary.streak > 1) {
     parts.push(`Red for ${summary.streak} consecutive runs (first ${summary.firstFailureAt}).`);
   }
