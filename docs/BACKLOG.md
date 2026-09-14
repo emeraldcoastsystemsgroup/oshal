@@ -975,6 +975,11 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining (owned by the package):** firmware in the loop, a breadboard view, gears handed to CAD Studio, one parts model with the embodied lab (ADR-152 D1), non-rigid mechanics, more parts, a convergence retry, and the operator's list of external engineering tools to evaluate (Onshape, McMaster-Carr, WebPlotDigitizer, SimScale, EES, OpenRocket, ParaView, OpenFOAM, NASA GMAT, NASA CEA) — each with done-when criteria in the package's `BACKLOG.md`.
 - **Done when:** the package backlog's B1–B8 close with their stated criteria and every listed tool has a dated evaluation note with a cost / benefit table and either a backlog item or a recorded "no".
 
+### Drone relay chains (store package `drone-relay`, ADR-155)
+- **Delivered (0.1.0, 2026-09-14):** relay chains designed and rehearsed before a radio is soldered — a transport catalog with sources, the link budget, the chain planner (hop, slots, spares, the relays a battery rotation needs), the on-board and controller rules, a source-routed signed envelope, a deterministic simulation with failure scenarios, a generated write-up, the relay-designer concierge and a tile. See [ADR-155](adr/155-drone-relay-chains.md) and [the link hardware](architecture/drone-relay-link-hardware.md).
+- **Remaining:** the relay role on the drone node (`drone-node-server.ts`, a core PR — package B1); the ESP-NOW transport adapter and the bench range test that replaces the catalog rows (B2); frame loss below the modelled edge (B3); corridors from the drone package's map (B4); two tips on one chain (B5); the formation handed to Drone Ops as a draft fleet mission (B6) — each with done-when criteria in the package's `BACKLOG.md`.
+- **Done when:** a command reaches a drone beyond the base radio's reach through a relay node on the swarm rail, authenticated end to end, first against ArduPilot SITL and then in a three-drone chain inside direct-link range behind the fleet confirm; killing the relay produces the outage the simulation predicted on the measured catalog rows, within a stated tolerance.
+
 ## Provisioning and operator experience
 
 ### First-run provisioning wizard

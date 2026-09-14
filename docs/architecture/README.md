@@ -185,6 +185,11 @@ The guiding model is:
     theory propulsion sizing (6 in, 750 g, 4S 1500 mAh), every structural part printable on a 220 mm
     bed, mass budget, electronics with ArduPilot + Pi Zero node, what aero-lab's propeller work must
     deliver, S1–S9 bring-up
+- [drone-relay-link-hardware.md](./drone-relay-link-hardware.md)
+  - ADR-155 companion (design, nothing built): the drone-to-drone radio for relay chains — an ESP32-C6
+    on the flight controller's spare UART (relay-only drones) or as the Pi's radio bridge, the vendor
+    facts that constrain it, ArduPilot left stock with the companion as its ground station, two layers of
+    protection per hop, the range test that replaces the catalog rows, R1–R5 bring-up
 - [kernel-vs-app-packages.md](./kernel-vs-app-packages.md)
   - what is Tier-0 kernel (always-on: 4 DBs + Redis + Vault + code-server + diarization + the
     controller/API + 19 default bots) vs. what a Tier-2 app package declares; the cross-app
