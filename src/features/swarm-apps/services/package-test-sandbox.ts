@@ -7,8 +7,10 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Correlate durable runs with disposable containers and a controller-independent deadline for safe crash recovery.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Mark only trusted pre-container validation failures as requiring no cleanup.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Add the browser container profile (more processes, descriptors and tmp for Chromium; still no network, no mounts, no daemon socket) and a real in-profile capability probe that verifies which runner prerequisites the image satisfies.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Read the probe report out of the TAP reporter's diagnostic framing (it re-emits a test's stdout as a comment, so the marker is never at column zero) and log which condition denied a capability set instead of silently returning nothing.
  */
 import { randomUUID } from 'node:crypto';
+import { createChildLogger } from '@/shared/logger';
 import { PACKAGE_TEST_LAUNCHER, sandboxPayload, type PackageTestSandboxFile, type PackageTestSandboxProfile } from './package-test-sandbox-launcher';
 import { dockerControl, removeSandbox, runAttachedSandbox, sandboxName } from './package-test-sandbox-process';
 
@@ -43,11 +45,68 @@ test('runner probe', async () => {
 });
 `;
 const PROBE_MARKER = 'OSHAL_RUNNER_PROBE ';
+const logger = createChildLogger({ module: 'package-test-sandbox' });
 
 /** @description Actual process outcome and verified cleanup; output is bounded and remains caller-scoped. */
 export interface PackageTestSandboxResult {
   exitCode: number | null; output: string; timedOut: boolean; cancelled: boolean;
   image: string; cleanupVerified: boolean;
+}
+
+/**
+ * @description Recover the fixed probe report from harness output. The Node test runner's TAP
+ * reporter re-emits a test's own stdout as a diagnostic comment, so the controller-owned marker
+ * arrives as `# OSHAL_RUNNER_PROBE {...}` and never at column zero; only comment or blank framing
+ * is accepted ahead of it so an assertion message quoting the marker cannot be mistaken for it.
+ * @param output Bounded sandbox output from the probe run.
+ * @returns The JSON payload that follows the marker, or undefined when no report line was emitted.
+ */
+export function probeReportPayload(output: string): string | undefined {
+  for (const line of output.split('\n')) {
+    const at = line.indexOf(PROBE_MARKER);
+    if (at >= 0 && /^[#\s]*$/.test(line.slice(0, at))) return line.slice(at + PROBE_MARKER.length).trim();
+  }
+  return undefined;
+}
+
+/**
+ * @description Name the first condition that denied the probe a capability set, so an operator can
+ * tell a missing report from a failed container, an unreaped container or an image that answered
+ * honestly that it carries nothing.
+ * @param result Bounded sandbox outcome for the probe run.
+ * @param marker Whether the fixed report line was recovered from the output.
+ * @param parsed Whether that recovered line parsed as a report object.
+ * @returns Stable reason identifier for logs and guards.
+ */
+export function probeFailureReason(result: PackageTestSandboxResult, marker: boolean, parsed: boolean): string {
+  if (!marker) return 'probe_marker_absent';
+  if (result.exitCode !== 0) return 'probe_exit_nonzero';
+  if (!result.cleanupVerified) return 'probe_cleanup_unverified';
+  if (!parsed) return 'probe_report_unparseable';
+  return 'probe_reported_no_capability';
+}
+
+/**
+ * @description Record why a probe verified nothing. The empty set stays the contract callers depend
+ * on; only the reason becomes observable, with bounded evidence and no package-supplied secrets.
+ * @param image Requested runner image reference, when one was configured.
+ * @param result Bounded sandbox outcome for the probe run.
+ * @param marker Whether the fixed report line was recovered from the output.
+ * @param report Parsed probe report, when the recovered line parsed.
+ * @param parseError JSON failure, when the recovered line did not parse.
+ * @returns Nothing; this is a diagnostic side effect only.
+ */
+function logProbeFailure(image: string | undefined, result: PackageTestSandboxResult,
+  marker: boolean, report?: Record<string, unknown>, parseError?: unknown): void {
+  const reported = report?.error;
+  logger.warn({
+    reason: probeFailureReason(result, marker, parseError === undefined),
+    image: image ?? 'current-container', markerSeen: marker, exitCode: result.exitCode,
+    cleanupVerified: result.cleanupVerified, timedOut: result.timedOut, cancelled: result.cancelled,
+    probeError: typeof reported === 'string' ? reported.slice(0, 200) : undefined,
+    parseError: parseError instanceof Error ? parseError.message.slice(0, 200) : undefined,
+    output: result.output.slice(0, 200),
+  }, 'Package test runner probe verified no capability');
 }
 
 /** @description Certify absence only for validation work that cannot create a Docker container. */
@@ -113,16 +172,22 @@ export class PackageTestSandbox {
     if (known) return known;
     const result = await this.run({ files: [{ path: 'tests/runner-probe.test.cjs', content: Buffer.from(RUNNER_PROBE_SUITE) }],
       suiteFiles: ['tests/runner-probe.test.cjs'], timeoutMs: 90000, maxMemoryMb: 512, image, profile: 'browser', executionId: randomUUID() });
-    const line = result.output.split('\n').find(value => value.startsWith(PROBE_MARKER));
+    const payload = probeReportPayload(result.output);
     const verified = new Set<string>();
-    if (!line || result.exitCode !== 0 || !result.cleanupVerified) return verified;
-    let report: Record<string, unknown> = {};
-    try { report = JSON.parse(line.slice(PROBE_MARKER.length)) as Record<string, unknown>; } catch { return verified; }
+    if (payload === undefined || result.exitCode !== 0 || !result.cleanupVerified) {
+      logProbeFailure(image, result, payload !== undefined);
+      return verified;
+    }
+    let report: Record<string, unknown>;
+    try { report = JSON.parse(payload) as Record<string, unknown>; }
+    catch (error) { logProbeFailure(image, result, true, undefined, error); return verified; }
     if (report.chromium === true) { verified.add('runner:playwright'); verified.add('browser:chromium'); }
     if (report.theme === true) verified.add('core:shared-theme-assets');
     if (report.bridge === true) verified.add('core:surface-bridge');
     if (report.dependencies === true) { verified.add('core:dependencies'); verified.add('harness:oshal-core-root'); }
-    if (verified.size) this.verified.set(image ?? '', verified);
+    if (!verified.size) { logProbeFailure(image, result, true, report); return verified; }
+    this.verified.set(image ?? '', verified);
+    logger.info({ image: image ?? 'current-container', verified: [...verified] }, 'Package test runner probe verified image capabilities');
     return verified;
   }
 
