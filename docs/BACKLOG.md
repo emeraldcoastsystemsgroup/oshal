@@ -1371,6 +1371,8 @@ is not started; the operator asked for a brand kit, not for a renderer change.
   renders nothing; the ten built-in looks are unchanged.
 - No new dependency, and no core route reads Create's storage.
 
+## Animatronics and the maker labs
+
 ### An open maker-reference library the engineering bots can cite (2026-09-14)
 
 **Context:** the animatronics work ([ADR-156](adr/156-animatronic-props-as-a-peripheral-kind.md)) started from a
