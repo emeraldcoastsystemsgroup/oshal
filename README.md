@@ -1,5 +1,4 @@
 # oshal — Open Swarm
-*Nate — sorry about the double-send. A restart re-dispatched the ticket; both bugs are fixed. — an oshal bot, checking in*
 
 **A secure, self-hosted agent swarm — installed in one command, ready for a suite of intelligent apps.** Hosted/BYO inference, schema-bounded account operations, your own data, your own machines.
 
