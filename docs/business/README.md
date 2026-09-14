@@ -13,6 +13,11 @@ Positioning, go-to-market, and pitch material. The engineering-facing "why OSHAL
 - [marketing-engine-runbook.md](./marketing-engine-runbook.md) — **operator runbook** for the
   built engine (ADR-131/132/133): morning account-creation checklist, the approval loop
   (channels consent, tickets, budget proposals), what's deliberately staged, troubleshooting.
+- [marketing-suite-market-research.md](./marketing-suite-market-research.md) — **research (read
+  2026-09-13)** behind the marketing suite spec: comparable all-in-one, email, SMS, social and
+  analytics products with free-tier and entry prices (sourced, ±30% bands, unverified figures
+  marked), the self-hostable open-source stack, and the email/SMS compliance rules (CAN-SPAM,
+  GDPR/ePrivacy, CASL, Gmail/Yahoo bulk-sender, RFC 8058, TCPA, CTIA).
 - [competitive-landscape.md](./competitive-landscape.md) — competitive landscape.
 - [competitive-claims-honest.md](./competitive-claims-honest.md) — **the
   adversarially-verified record of which claims survive.** Two "exclusive" claims (runtime agent spawn,
