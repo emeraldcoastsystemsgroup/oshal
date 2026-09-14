@@ -913,6 +913,15 @@ one request against `/-/healthy` plus an `up` query — and warn loudly otherwis
 cannot be closure evidence for the scraper **running**; per the integration-boundary rule those are
 different boundaries needing different guards.
 
+**2026-09-14 — the tail reproduced twice in one night, the second time on a third container.** Two
+ungraceful engine stops (containers finished 00:19:02Z and ~03:54Z) each left `oshal-local-prometheus`
+and `oshal-local-alertmanager` Exited (255) and not restarted despite `restart: unless-stopped`, while
+every container that recorded exit 0 came back on its own; on the second, `oshal-local-api` recorded
+exit 255 too and also did not come back. Both times a human running `scripts/oshal-up.sh` is what
+restored the overlay. Timestamps, what was read before the bring-up, and the two still-open unknowns
+are in [BACKLOG.md](../BACKLOG.md) under "Monitoring overlay does not survive an ungraceful engine
+stop (BUG-21 tail)". The mechanism — why exit 255 is treated as final — remains undiagnosed.
+
 ## BUG-22 — The nightly gate has failed 46 consecutive runs, emailed every time, and nothing changed
 - **Type:** Bug (process / ignored signal) · **Priority:** High · **Status:** OPEN — prevention SHIPPED
   and two of five gates fixed 2026-09-09; `unit`, `e2e-green` and `trivy` are BACKLOG-quarantined.

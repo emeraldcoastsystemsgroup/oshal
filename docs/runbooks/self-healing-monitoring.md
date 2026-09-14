@@ -140,6 +140,30 @@ labels:
 **Status = Backlog**, **Type = Incident**. The webhook response reports the split:
 `{ created, backlogged, autoFlowed, skipped, resolved }`.
 
+## The overlay is gone after an engine restart
+
+Symptom: the swarm is up and `docker ps` looks correct, but Prometheus and
+Alertmanager are not in it. After an **ungraceful** engine stop — the Docker VM
+killed rather than a clean `compose down` — `oshal-local-prometheus` and
+`oshal-local-alertmanager` have been observed recording **exit 255** and *not*
+restarting, despite `restart: unless-stopped`, while every container that recorded
+exit 0 came back on its own. `docker ps` shows what is running, not what is
+missing, so the fleet can auto-restart monitored by nothing until a human looks.
+Observed 2026-09-14 twice in one night; the api showed the same exit-255 symptom on
+the second. Why exit 255 is treated as final is undiagnosed — see BUG-21 in
+[../operations/bug-log.md](../operations/bug-log.md) and the BUG-21 tail entry in
+[../BACKLOG.md](../BACKLOG.md).
+
+Do not infer the answer from `docker ps`; assert it:
+
+```bash
+bash scripts/monitoring-liveness-check.sh --strict
+```
+
+It fails loudly when Prometheus is unreachable, has discovered no targets, or any
+discovered target is down, and names the ones that are. `bash scripts/oshal-up.sh`
+brings the overlay back as part of the ordered bring-up.
+
 ## The bootstrap caveat (important)
 
 If **`oshal-local-api` itself** is the thing that's down, the ticket-based heal

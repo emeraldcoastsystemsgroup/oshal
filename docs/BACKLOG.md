@@ -167,6 +167,30 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
   missing is anything that RUNS it when nobody is watching. A regression guard must cross the
   restart boundary (stop the engine for real, restart, assert without the bring-up script) — a
   compose-config or mocked-docker test is not closure evidence for this failure.
+- **Observed again 2026-09-14 — a second occurrence the same night, and on a third container.** The
+  Docker engine went down under host memory starvation and was relaunched at ~03:52Z (session
+  ddb0aed5 recorded the engine pipe absent at 03:51Z). Every container auto-started out of order and
+  nobody ran `oshal-up.sh`. Read at 04:05Z, BEFORE any bring-up: `oshal-local-prometheus`
+  Exited (255), `oshal-local-alertmanager` Exited (255), and `oshal-local-api` Exited (255) finished
+  2026-09-14T03:54:35Z with `RestartCount` 0 — all three carrying `restart: unless-stopped`, while
+  every container that recorded exit 0 was already running again without help. `docker ps` looked
+  correct for the running set throughout and nothing reported that the observers were gone;
+  `scripts/monitoring-liveness-check.sh` passed (35 targets, all up) only after this session chose to
+  run `scripts/oshal-up.sh` at 04:05Z. That sequence — stack up, engine stopped ungracefully, engine
+  started, and the two containers checked WITHOUT the bring-up script — is the reproduction the
+  done-when asks for, arrived at by accident: the first was at 2026-09-14T00:19:02Z (recorded above,
+  PR #440, commit 8c0d34ec), this is the second the same night, and both times they did not come
+  back. Two things this does NOT establish. (1) Why exit 255 defeats `unless-stopped` while exit 0
+  does not is still undiagnosed; this is a second dated observation of the symptom, not an
+  explanation of the mechanism. (2) `oshal-local-api` recorded exit 255 and also did not come back,
+  which is the same symptom on a third container — the first occurrence above lists the api among
+  the exit-0 containers that recovered, so the pattern is wider than the two monitoring containers
+  and is not specific to the overlay. Open for the operator and deliberately not decided here: the
+  stack watchdog that could run the liveness check unattended is PAUSED by operator decision since
+  2026-08-07 (`scripts/oshal-stack-watchdog.ps1`, pause file under `%LOCALAPPDATA%\oshal\`) because
+  Docker must not start by itself, so anything that closes this has to observe without starting the
+  engine.
+
 ### DB-backed alert specs borrow the operator's database
 - **Remaining:** `tests/unit/alert-incident-cutover.spec.ts` stands a live alert *consumer* on the
   operator's production queue and `tests/unit/alert-incident-reopen.spec.ts` leaks incident rows into
