@@ -13,6 +13,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — decomposition of trading-schedule-dispatch.ts (890 code lines) along its section seams: MAX_ORDERS_PER_RUN, computeExits, popCatcherConfig and placeEntries move here unchanged; the runAutopilot 2a-pop block becomes placePopCatches (same statements, same order, `book.enabled` read through `book`). Env names unchanged: TRADING_MAX_ORDERS_PER_RUN, TRADING_EXT_DIP_SELL_PCT, TRADING_EXT_SIZE_MULT, TRADING_POP_CATCHER, TRADING_POP_TRANCHE_PCT, TRADING_POP_MAX, TRADING_POP_THRESHOLD. Golden-plan guard: tests/unit/trading-dispatch-golden-plan.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attach the engine's own cost basis (withEngineCostBasis, book-scoped) before the hard stop/take-profit rule, so a wash-sale artifact cannot trigger a stop-loss. Trailing and cap trims still read the positions exactly as before.
  *
  * @module trading-dispatch-exits-entries
  */
@@ -24,6 +25,7 @@ import {
 } from '@/features/trading';
 import { legacyBook } from './trading-books-store';
 import { ensurePeaksTable, loadPeaks, savePeaks } from './trading-peaks-store';
+import { withEngineCostBasis } from './trading-engine-cost-basis';
 import { recordGateBlocks } from './trading-gate-block-store';
 import type { WorldIntelligenceService } from '@/features/world-data';
 import { readWorldSignalsBatch, worldRankEnabled } from './trading-world-signals';
@@ -89,9 +91,13 @@ export async function computeExits(ctx: AppContext, sub: string, bookOrMode: Tra
   }
   const stopMult = 1;
   const bySym = new Map<string, ExitOrder>();
+  // The engine's own cost, where its ledger covers the whole position, lets exitsToRun veto a stop
+  // that exists only because the venue reports a wash-sale-adjusted basis. It can suppress a stop,
+  // never create one; trailing and cap trims read the positions exactly as before.
+  const costed = await withEngineCostBasis(ctx, sub, book, positions);
   // Order = priority: a full stop/TP wins over trailing, and any full exit wins over a partial cap trim
   // (no point trimming a name we're about to flatten this fire).
-  for (const e of [...exitsToRun(positions, policy, stopMult), ...trailingExits(positions, peaks, policy, stopMult), ...rebalanceTrims(positions, equity, policy)]) {
+  for (const e of [...exitsToRun(costed, policy, stopMult), ...trailingExits(positions, peaks, policy, stopMult), ...rebalanceTrims(positions, equity, policy)]) {
     const k = e.symbol.toUpperCase();
     if (!bySym.has(k)) bySym.set(k, e);
   }
