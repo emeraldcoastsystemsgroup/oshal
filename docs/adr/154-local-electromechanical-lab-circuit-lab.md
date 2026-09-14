@@ -141,6 +141,16 @@ counter must integrate a bounded charge, not a differentiated edge — the edge 
 1.5 % per step under timestep control; and a stepper's "final" numbers must be the last sample,
 because a step inside the 2 % averaging window blurs them.
 
+**As built, 0.4.0 (2026-09-14).** The breadboard view (B2): a design may carry a `board` — every
+electrical part on a full-size breadboard with its footprint (DIP-8s across the gap on their real
+pinouts), jumpers between holes — beside the schematic, and the two are held to one invariant:
+they imply the same net partition, hence the same deck. The model is one plain-JS file loaded by
+the browser and the routes alike; the routes lay a board out from the schematic, derive the
+schematic's electrical wires from an edited board (a wire that still joins one net keeps its id),
+and reconcile a saved board after every schematic edit (placements kept, jumpers regenerated). The
+proof is the partition equality on every starter example both ways in plain node, the route suite,
+and the actual page in Chromium (a layout, a move, a jumper). Migration 002 adds the column.
+
 **Verification shipped with it.** The real-solver Python suite (17 cases at 0.1.0, 26 at 0.2.0, 32 at 0.3.0, in the engine image and
 the installer's self-test: LED, RC, switch mid-run, geared motor, stalled motor, PWM through a
 MOSFET, mechanism refusals, protocol), the contract suite (Node ≡ Python library and build hash)
