@@ -19,3 +19,8 @@ retained as historical artifacts, not the active intake path.
   claimed by more than one application, so the ADR-149 ownership reader raises
   `Ambiguous package ownership` and the caller refuses. Census, classification with evidence,
   measured blast radius, and a proposed resolution for the operator to decide.
+- [installed-package-verification-2026-09-14.md](./installed-package-verification-2026-09-14.md) —
+  post-install verification of the five store packages upgraded on 2026-09-14 (embodied, circuit-lab,
+  drone-relay, scan-to-print, animatronics): version served, routes mounted against what each
+  manifest declares, Test Lab catalogs run through the real loader, and the error log compared to
+  the known ADR-149 class. States explicitly which suites were not executed, and why.
