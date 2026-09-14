@@ -867,17 +867,24 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   run with no schema change produces no alert.
 
 ### Data-model explorer: export the view you are looking at
-- **Current state:** the committed pages are regenerated repo-wide by
-  `scripts/generate-schema-docs.js`, and the explorer draws any scope live, but there is no way to
-  take the thing on screen — one app's tables, or one table's neighbourhood — into an ADR, a PR
-  comment or a message. Today that means a screenshot.
-- **Remaining:** add an export to the page for the current scope: Mermaid `erDiagram` text matching
-  the committed pages' shape, the rendered SVG, and the scoped JSON. Client-side only, so nothing
-  new reaches the server, and the Mermaid must parse (the docs pipeline already validates with
-  mermaid@11).
-- **Done when:** an operator can copy a Mermaid block for the current view that renders unchanged in
-  a GitHub markdown file, download the same view as SVG and JSON, and a spec asserts the exported
-  Mermaid parses and names exactly the relations the view drew.
+- **Built 2026-09-14.** **Export** in the explorer's header copies the current view as Mermaid and
+  downloads it as SVG or scoped JSON, entirely client-side from the snapshot already in the page —
+  `src/pages/data-model/js/export-view.js`, no new route. The Tables view exports an `erDiagram`;
+  the owner views export a `flowchart`; an empty or diagram-less scope refuses by name.
+  `tests/unit/data-model-export.spec.ts` (13) pins the erDiagram **byte-identical** to
+  `scripts/schema-docs/render.js`'s `mermaidDiagram()`, asserts it names exactly the relations the
+  view drew, and covers every refusal; three cases in `data-model-explorer-browser.spec.ts` prove
+  the clipboard copy and the two real downloads in Chromium, and that a non-operator — who never
+  received a snapshot — is told there is nothing to export. `npm run test:data-model` is 67/67.
+- **Remaining:** `src/pages` is bind-mounted, so the export is live wherever `/data-model` already
+  serves, but two things are open. **(a)** The Mermaid is asserted structurally and by parity with
+  the generator whose output the committed pages already render on GitHub; nothing runs an actual
+  mermaid@11 parse, because mermaid is not a dependency of this repo — the earlier note that "the
+  docs pipeline already validates with mermaid@11" did not hold. **(b)** `toErDiagram()` is a
+  second copy of the generator's renderer; it belongs to the same collapse as the catalog SQL, the
+  RLS classifier and the DDL parser, one entry above.
+- **Done when:** mermaid@11 (or an equivalent parser) parses an exported block in CI, and the
+  renderer has one implementation behind both the docs and the surface.
 
 ### Drone physical payloads and peer coordination
 - **Remaining:** prove a real approved MAVLink airframe/adaptor, authenticated drone-to-drone coordination, physical camera/video, ESC telemetry, and LED payload through the remote-node envelope; the Drone package carve is already complete.

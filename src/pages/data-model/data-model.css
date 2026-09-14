@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Data-model explorer layout and graph styling on the shared portal theme variables (surface-themes.css), with per-link-kind edge colours matched by the legend swatches.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export menu styling: the dropdown reuses the search results panel, with a selectable preview block for the Mermaid text when the clipboard is unavailable.
  */
 
 :root {
@@ -48,6 +49,10 @@ select, input[type="search"] { background: var(--dm-panel-2); border: 1px solid 
 .results { position: absolute; top: 36px; right: 0; width: 420px; max-height: 60vh; overflow: auto; background: var(--dm-panel); border: 1px solid var(--dm-line); border-radius: 8px; z-index: 5; padding: 4px; }
 .result { display: block; width: 100%; text-align: left; border: none; background: none; padding: 6px 8px; border-radius: 6px; }
 .result:hover { background: var(--dm-panel-2); }
+.export-wrap { position: relative; }
+.export-menu { width: 460px; }
+.export-preview { margin: 4px 8px 8px; padding: 8px; max-height: 40vh; overflow: auto; background: var(--dm-panel-2); border: 1px solid var(--dm-line); border-radius: 6px; font-size: 11px; white-space: pre; user-select: all; }
+#exportNote { margin: 4px 8px; font-size: 12px; }
 .status-banner { margin: 0; padding: 8px 12px; border-radius: 8px; background: var(--dm-panel); border: 1px solid var(--dm-line); }
 .status-banner[data-tone="error"] { border-color: var(--dm-danger); }
 

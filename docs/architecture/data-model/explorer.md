@@ -22,6 +22,26 @@ committed snapshot of one reference database; the explorer reads whatever deploy
 
 Every view is a URL: `?view=apps|tables|shared|stores&app=&table=&focus=&depth=&q=`.
 
+## Exporting the view on screen
+
+**Export** in the header takes the current scope somewhere else. It is entirely client-side - the
+snapshot is already in the page, so nothing new is asked of the server and no scope can escape the
+operator gate that fetched it.
+
+| Format | Tables view | Apps / Shared views | Other stores |
+|---|---|---|---|
+| Copy Mermaid | `erDiagram` of the relations drawn, in the shape `scripts/schema-docs/render.js` writes into the committed pages - key columns only, FK cardinality from real nullability, `"owner"` from the snapshot's own RLS summary | `flowchart LR` of the owners drawn and their labelled links | refuses: nothing is drawn |
+| Download SVG | the drawn graph as a standalone document: fitted viewBox, opaque ground, graph CSS inlined | same | refuses |
+| Download JSON | the drawn relations with their full records, their foreign keys, and the state that drew them | the drawn apps and integration edges | the store inventory cards |
+
+The Mermaid block is copied to the clipboard **and** shown in the menu, so a browser that blocks
+clipboard access still leaves it selectable. An empty or diagram-less scope refuses by name rather
+than writing a file that will not parse.
+
+`toErDiagram()` is pinned byte-for-byte against the generator's `mermaidDiagram()` by
+`tests/unit/data-model-export.spec.ts`; that duplication is part of the same backlog item that
+collapses the catalog SQL, the RLS classifier and the DDL parser.
+
 ## How a snapshot is built
 
 ```mermaid
@@ -67,7 +87,7 @@ flowchart LR
 | `src/app/data-model-ports.ts` | the adapters: pool, TSDB, ArangoDB, ChromaDB, Redis, app records |
 | `src/app/routes/data-model-routes.ts` | the two read routes |
 | `src/app/routes/test-lab-data-model-scenarios.ts` | the Test Lab card |
-| `src/pages/data-model/` | the page: `model-index.js` (pure), `layout.js`, `graph-view.js`, `detail-panel.js`, `lists-view.js`, `app.js` |
+| `src/pages/data-model/` | the page: `model-index.js` (pure), `layout.js`, `graph-view.js`, `detail-panel.js`, `lists-view.js`, `export-view.js` (pure + download mechanics), `app.js` |
 
 The slice imports **no other feature**: everything arrives through `DataModelPorts`, which the app
 layer fills in. That is what makes every store doubleable in tests.
@@ -89,7 +109,7 @@ layer fills in. That is what makes every store doubleable in tests.
 ## Tests
 
 ```bash
-npm run test:data-model     # 51 tests; needs Docker (disposable Postgres) and Playwright Chromium
+npm run test:data-model     # 67 tests; needs Docker (disposable Postgres) and Playwright Chromium
 ```
 
 | Spec | Proves |
@@ -99,9 +119,10 @@ npm run test:data-model     # 51 tests; needs Docker (disposable Postgres) and P
 | `data-model-integration-map.spec.ts` | MIME overlap, every edge kind, aggregation |
 | `data-model-service.spec.ts` | cache/TTL/in-flight sharing, degraded stores, key masking |
 | `data-model-page-model.spec.ts` | graphs, neighbourhood, search, URL state, deterministic layout |
+| `data-model-export.spec.ts` | the Mermaid block byte-identical to the generator, naming exactly the relations drawn; the owner flowchart; scoped JSON; the standalone SVG document; filenames; every refusal |
 | `data-model-catalog-postgres.spec.ts` | a real catalog read from a disposable PostgreSQL 16 container |
 | `data-model-routes.spec.ts` | the real operator gate over real HTTP (401 / 403 / 200 / 503 / 500) |
-| `data-model-explorer-browser.spec.ts` | the page in real Chromium, including the non-operator path |
+| `data-model-explorer-browser.spec.ts` | the page in real Chromium, including the non-operator path and the three real exports (clipboard, two downloads) |
 | `data-model-test-lab-registration.spec.ts` | the Lab card, its suites, and its live step |
 
 ## Deploying it

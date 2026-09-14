@@ -4,16 +4,17 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Browser guard for the data-model explorer: real Chromium against the real page files, the real route + operator gate and the real service over fixture ports (a temp source tree with a core migration and one store package). Proves the graph renders, the tabs and URL deep links drive it, the detail panel navigates FKs, search opens a table, the stores view shows every card, and a non-operator gets the operator-only explanation instead of data. Browser console errors fail the suite.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Export guards at the real boundary: the Mermaid block copied for the view on screen names exactly the tables Chromium drew and reaches the clipboard, the SVG and JSON downloads are real files with the drawn scope inside them, and a non-operator - who never got a snapshot - is told there is nothing to export instead of being handed an empty one.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import express, { type RequestHandler } from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { chromium, type Browser, type Page } from 'playwright';
+import { chromium, type Browser, type Download, type Page } from 'playwright';
 import { requiresOperator } from '@/shared/middleware/authz';
 import { createDataModelRoutes } from '@/app/routes/data-model-routes';
 import { createDataModelService, type CatalogSnapshot, type RelationInfo } from '@/features/data-model';
@@ -76,13 +77,21 @@ afterAll(async () => {
 
 /** Open the explorer as `user` at `query`, collecting console errors. */
 async function open(user: string, query = ''): Promise<Page> {
-  const context = await browser.newContext({ viewport: { width: 1500, height: 950 } });
+  const context = await browser.newContext({ viewport: { width: 1500, height: 950 }, acceptDownloads: true, permissions: ['clipboard-read', 'clipboard-write'] });
   await context.addCookies([{ name: 'test-user', value: user, url: base }]);
   const page = await context.newPage();
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
   page.on('pageerror', (e) => consoleErrors.push(e.message));
   await page.goto(`${base}/data-model/${query}`);
   return page;
+}
+
+/** Read a download's bytes as text, then drop the temporary file. */
+async function readDownload(download: Download): Promise<string> {
+  const path = await download.path();
+  const text = readFileSync(path, 'utf8');
+  await download.delete();
+  return text;
 }
 
 // Real Chromium page loads on a loaded host need more than vitest's 5 s default.
@@ -132,6 +141,58 @@ describe('data-model explorer in the browser', { timeout: 60_000 }, () => {
     await page.waitForFunction(() => !document.getElementById('banner')?.hidden);
     expect(await page.locator('#banner').textContent()).toContain('operator-only');
     expect(await page.locator('#graph g.node').count()).toBe(0);
+    await page.context().close();
+  });
+
+  it('copies the view on screen as a Mermaid erDiagram naming exactly its tables', async () => {
+    const page = await open('the-operator', '?view=tables&app=%40core');
+    await page.waitForSelector('#graph g.node');
+    const drawn = (await page.locator('#graph g.node').evaluateAll((gs) => gs.map((g) => (g as HTMLElement).dataset.id))).sort();
+    await page.click('#exportBtn');
+    await page.click('[data-export="mermaid"]');
+    await page.waitForSelector('#exportPreview:not([hidden])');
+    const block = await page.locator('#exportPreview').textContent() || '';
+    expect(block.split('\n')[0]).toBe('```mermaid');
+    expect(block.split('\n')[1]).toBe('erDiagram');
+    expect([...block.matchAll(/^ {2}(\S+) \{$/gm)].map((m) => m[1]).sort()).toEqual(drawn);
+    expect(block).toContain('tickets |o--o{ work_items : "ticket_id"');
+    // Windows Chromium hands clipboard text back with CRLF; the block itself is LF either way.
+    expect((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, '\n')).toBe(block);
+    await page.context().close();
+  });
+
+  it('downloads the same view as a standalone SVG and as scoped JSON', async () => {
+    const page = await open('the-operator', '?view=tables&app=%40core');
+    await page.waitForSelector('#graph g.node');
+    await page.click('#exportBtn');
+    const svgWait = page.waitForEvent('download');
+    await page.click('[data-export="svg"]');
+    const svgFile = await svgWait;
+    expect(svgFile.suggestedFilename()).toMatch(/^data-model-tables-core-\d{4}-\d{2}-\d{2}\.svg$/);
+    const svg = await readDownload(svgFile);
+    expect(svg.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true);
+    expect(svg).toContain('.edge--foreign-key');
+    expect(svg).toContain('work_items');
+    expect(svg).not.toContain('graph-root" transform');
+    const jsonWait = page.waitForEvent('download');
+    await page.click('[data-export="json"]');
+    const jsonFile = await jsonWait;
+    expect(jsonFile.suggestedFilename()).toMatch(/\.json$/);
+    const scope = JSON.parse(await readDownload(jsonFile));
+    expect(scope.view).toBe('tables');
+    expect(scope.relations.map((r: { name: string }) => r.name).sort()).toEqual(['tickets', 'work_items']);
+    expect(scope.relations[0].columns.length).toBeGreaterThan(0);
+    await page.context().close();
+  });
+
+  it('gives a non-operator nothing to export and says why', async () => {
+    const page = await open('someone-else');
+    await page.waitForFunction(() => !document.getElementById('banner')?.hidden);
+    await page.click('#exportBtn');
+    await page.click('[data-export="json"]');
+    await page.waitForSelector('#exportNote:not([hidden])');
+    expect(await page.locator('#exportNote').textContent()).toContain('has not loaded');
+    expect(await page.locator('#exportPreview').isHidden()).toBe(true);
     await page.context().close();
   });
 

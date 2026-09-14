@@ -4,9 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Data-model explorer page orchestration: loads the operator-only snapshot, drives the four views (apps & integrations, tables, shared objects, other stores), search, filters and the detail panel, and keeps the URL (?view=&app=&table=&focus=&depth=&q=) authoritative so any view is bookmarkable. Re-lays out the graph only when its scope changes; a selection change is a highlight, not a redraw.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export the view on screen - Mermaid, SVG or scoped JSON - from the snapshot already in the page, so a scope can reach an ADR or a PR without a screenshot and without a second server call. A refusal names its reason instead of writing an unusable file.
  */
 
 import { indexSnapshot, appGraph, tableGraph, parseViewState, serializeViewState, searchModel, ownerLabel, CORE_OWNER } from './model-index.js';
+import { toMermaid, toScopedJson, serializeGraphSvg, exportFilename, downloadText } from './export-view.js';
 import { layoutGraph } from './layout.js';
 import { createGraphView } from './graph-view.js';
 import { renderDetail, h } from './detail-panel.js';
@@ -21,6 +23,8 @@ const els = {
   detail: $('detail'), sideList: $('sideList'), stats: $('stats'), search: $('search'), results: $('results'),
   refresh: $('refresh'), fit: $('fit'), owner: $('ownerSelect'), depth: $('depthSelect'), isolated: $('showIsolated'),
   kinds: [...document.querySelectorAll('[data-kind]')], appsControls: $('appsControls'), tablesControls: $('tablesControls'),
+  exportBtn: $('exportBtn'), exportMenu: $('exportMenu'), exportNote: $('exportNote'), exportPreview: $('exportPreview'),
+  exportItems: [...document.querySelectorAll('[data-export]')],
 };
 const app = { state: parseViewState(window.location.search), model: null, stores: null, drawnKey: '' };
 
@@ -202,6 +206,86 @@ async function load(refresh) {
 }
 
 /**
+ * @description Report what an export did, or why it did nothing, inside the export menu.
+ * @param {string} text - message
+ * @param {string} [tone] - info | error
+ * @returns {void}
+ */
+function setExportNote(text, tone = 'info') {
+  els.exportNote.textContent = text;
+  els.exportNote.dataset.tone = tone;
+  els.exportNote.hidden = !text;
+}
+
+/**
+ * @description The graph behind the current view, or null on a view that draws none.
+ * @returns {object|null} graph
+ */
+function exportGraph() {
+  return app.state.view === 'stores' ? null : currentGraph().graph;
+}
+
+/**
+ * @description Copy the Mermaid block for the current view, and show it too: a browser that
+ * refuses clipboard access still leaves the text selectable rather than failing silently.
+ * @returns {Promise<void>}
+ */
+async function exportMermaid() {
+  const text = toMermaid(app.model, app.state, exportGraph());
+  els.exportPreview.textContent = text;
+  els.exportPreview.hidden = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    setExportNote(`Copied ${text.split('\n').length} lines of Mermaid to the clipboard.`);
+  } catch (err) {
+    logger.warn('data-model mermaid clipboard copy refused', { error: serializeUiError(err) });
+    setExportNote('The clipboard is blocked in this browser - select the block below and copy it.');
+  }
+}
+
+/**
+ * @description Export the current view in one format, entirely from the snapshot already loaded.
+ * @param {string} format - mermaid | svg | json
+ * @returns {Promise<void>}
+ */
+async function runExport(format) {
+  if (!app.model) { setExportNote('The data model has not loaded, so there is nothing to export.', 'error'); return; }
+  try {
+    if (format === 'mermaid') { await exportMermaid(); return; }
+    if (format === 'svg') {
+      downloadText(exportFilename(app.state, 'svg'), 'image/svg+xml', serializeGraphSvg(els.svg, `oshal data model - ${app.state.view}`));
+    } else {
+      downloadText(exportFilename(app.state, 'json'), 'application/json', JSON.stringify(toScopedJson(app.model, app.state, exportGraph(), app.stores), null, 2));
+    }
+    setExportNote(`Downloaded ${exportFilename(app.state, format === 'svg' ? 'svg' : 'json')}.`);
+  } catch (err) {
+    logger.error('data-model export failed', { format, view: app.state.view, error: serializeUiError(err) });
+    setExportNote(err.message, 'error');
+  }
+}
+
+/**
+ * @description Wire the export menu: open/close, and one handler per format.
+ * @returns {void}
+ */
+function wireExport() {
+  const close = () => { els.exportMenu.hidden = true; els.exportBtn.setAttribute('aria-expanded', 'false'); };
+  els.exportBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const open = els.exportMenu.hidden;
+    els.exportMenu.hidden = !open;
+    els.exportBtn.setAttribute('aria-expanded', String(open));
+    if (open) { setExportNote(''); els.exportPreview.hidden = true; }
+  });
+  els.exportMenu.addEventListener('click', (ev) => ev.stopPropagation());
+  document.addEventListener('click', close);
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') close(); });
+  els.exportItems.forEach((b) => b.addEventListener('click', () => {
+    runExport(b.dataset.export).catch((err) => logger.error('data-model export handler failed', { error: serializeUiError(err) }));
+  }));
+}
+
+/**
  * @description Wire tabs, controls and search.
  * @returns {void}
  */
@@ -221,4 +305,5 @@ function wireControls() {
 
 app.view = createGraphView(els.svg, graphHandlers);
 wireControls();
+wireExport();
 load(false).catch((err) => { logger.error('data-model bootstrap failed', { error: serializeUiError(err) }); setBanner(`The data model could not be read: ${err.message}`, 'error'); });

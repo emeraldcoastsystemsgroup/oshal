@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for the data-model explorer. The live step reads GET /api/admin/data-model with the initiating operator's cookie and checks the snapshot's shape (core node present, every relation carries owners and a row-access state, integration edges name known owners). Read-only: it never rebuilds the cache or touches a store.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Carry the view-export guard in the card's regression set, so the Mermaid/SVG/JSON export is covered by the same suite the card names.
  */
 
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -51,6 +52,7 @@ export const DATA_MODEL_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/data-model-integration-map.spec.ts' },
     { level: 'unit', path: 'tests/unit/data-model-service.spec.ts' },
     { level: 'unit', path: 'tests/unit/data-model-page-model.spec.ts' },
+    { level: 'unit', path: 'tests/unit/data-model-export.spec.ts' },
     { level: 'unit', path: 'tests/unit/data-model-test-lab-registration.spec.ts' },
     { level: 'integration', path: 'tests/unit/data-model-catalog-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/data-model-routes.spec.ts' },
