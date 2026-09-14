@@ -103,6 +103,12 @@ collisions, redirect refusal and credential isolation.
 
 ## Browser recipes in the isolated runner
 
+Status 2026-09-14: in source on `feat/store-compatibility-gate` (08440e77). The
+installed api runs an older image and keeps every browser recipe pending until
+the next core deploy. Batches still select Node suites only; admitting the
+`browser` level into schedules is a separate, unbuilt slice (see the Test Lab
+backlog).
+
 Node-harness Playwright recipes (`runner.kind: playwright`, `level: browser`, a
 `node:test` suite that launches Chromium itself, exactly the shape the host
 `test:package` command already runs) can run in the same disposable container

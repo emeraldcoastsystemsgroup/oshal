@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register installation report HTTP/CLI and actual browser case-link verification.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register catalog-driven local package and UX batch runner regression coverage.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Register the real-server batch-history follow proof over the exported Create package.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Classify the sandbox suite at the browser level: it now drives the image Chromium inside the disposable container.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -66,7 +67,7 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/package-test-snapshot.spec.ts' },
     { level: 'unit', path: 'tests/unit/package-test-host.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-wiring.spec.ts' },
-    { level: 'integration', path: 'tests/unit/package-test-sandbox.spec.ts' },
+    { level: 'browser', path: 'tests/unit/package-test-sandbox.spec.ts' },
     { level: 'integration', path: 'tests/unit/package-test-runner.spec.ts' },
     { level: 'integration', path: 'tests/unit/test-lab-run-history.spec.ts' },
     { level: 'browser', path: 'tests/unit/test-lab-run-browser.spec.ts' },
