@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | App-layer adapters for the data-model explorer's ports: the platform pool, a lazily-created one-connection TimescaleDB pool (TSDB_URL), installed app records (unredacted, server-internal - the route that serves them is operator-only), and read-only inventories of ArangoDB (databases, collections, counts), ChromaDB (collections, counts) and Redis (key families + value types, never values). Every external call is bounded by a timeout and every client is closed after use.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two drift ports: the platform pool again for the schema-digest history table (migration 139), and the applied-migration count read from app_migrations - the signal that separates a migrated schema change from an unexplained one. A missing app_migrations answers null rather than throwing, so drift falls back to the quiet window instead of failing.
  */
 
 import { Pool } from 'pg';
@@ -160,6 +161,24 @@ async function appRecords(source: ExplorerAppSource): Promise<AppRecordLite[]> {
 }
 
 /**
+ * @description How many migration files this database has applied. A change in this number
+ * between two digests EXPLAINS a schema change, which is the difference between an alarm and a
+ * normal deploy. An unreadable ledger answers null: the differ then falls back to the quiet
+ * window rather than calling a migrated change unexplained.
+ * @param db - the platform pool
+ * @returns the count, or null when app_migrations cannot be read
+ */
+async function migrationCount(db: CatalogQueryable): Promise<number | null> {
+  try {
+    const res = await withTimeout('migration count', db.query('SELECT COUNT(*)::int AS n FROM app_migrations'));
+    return Number(res.rows[0]?.n ?? 0);
+  } catch (err) {
+    logger.error({ err }, 'data-model: app_migrations count unreadable; drift falls back to the quiet window');
+    return null;
+  }
+}
+
+/**
  * @description Wire the explorer's ports to this deployment.
  * @param deps - the platform pool (null in pool-less runs), the app source, and the image/repo root
  * @returns the ports
@@ -173,6 +192,8 @@ export function createDataModelPorts(deps: { pool: CatalogQueryable | null; apps
     },
     listApps: () => appRecords(deps.apps()),
     readTimeseriesCatalog: timeseriesCatalog,
+    digestQueryable: async () => deps.pool,
+    migrationCount: async () => (deps.pool ? migrationCount(deps.pool) : null),
     graphInventory,
     vectorInventory,
     cacheInventory,

@@ -851,20 +851,52 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   stays green, and the parity spec either covers the new seam or is removed with its reason recorded.
 
 ### Data-model explorer: schema drift as an alarm, not a page someone remembers to open
-- **Current state:** every snapshot is current-state only, cached for five minutes and thrown away.
-  The explorer can already see the things that matter — a live table no source declares, a table
-  whose RLS went from forced to off, a foreign key that newly crosses an app boundary — but only
-  while a human is looking at it. Nothing records yesterday's shape, so nothing can say what changed.
-- **Remaining:** persist a periodic digest of the snapshot (owners, RLS state and key columns per
-  relation), diff each run against the previous one, and raise the difference through the Operations
-  Stream so the self-healing path treats it like any other signal
-  ([ADR-119](adr/119-autonomous-health-ticket-processing.md),
-  [ADR-125](adr/125-operations-stream-event-to-action-pipeline.md)); surface the same diff in the
-  explorer as "what changed since". Keep it fail-quiet: a schema change is normal, an *unexplained*
-  one is the alarm.
+- **Built 2026-09-14 (the snapshot+diff half; nothing is emitted yet).** The explorer now has a
+  durable memory. `buildDigest()` reduces a snapshot to a **structure-only** digest - per relation:
+  owners, RLS state, policy NAMES, key columns (primary key plus every foreign-key column) and
+  foreign-key targets - plus the applied-migration count and a sha256 fingerprint. It deliberately
+  carries no column defaults, no non-key columns and no policy expressions, because a digest is
+  persisted and inherits the explorer's operator sensitivity; a spec asserts none of those strings
+  survive into the stored JSON. `diffDigests()` compares against the stored baseline and
+  **classifies** rather than just reporting: `first-run` (nothing to compare), `unchanged`
+  (identical fingerprint), `explained` (the `app_migrations` count moved between the two readings,
+  so the change was migrated), `settling` (the baseline is inside a 15-minute quiet window, so a
+  mid-deploy reading waits for the shape to hold) and `drift` - the only state that sets
+  `alarm: true`. A reading that lost more than half its relations is **refused**
+  (`SCHEMA_DIGEST_PARTIAL`, HTTP 409) rather than reported as a dropped schema, and so is a digest
+  written by another `digestVersion`. Files: `src/features/data-model/services/schema-digest.ts`
+  (pure), `.../drift-store.ts`, `drift()` on `data-model-service.ts`, the two new ports in
+  `types.ts` / `src/app/data-model-ports.ts`, and `GET /api/admin/data-model/drift` under the same
+  `requiresAuth` + `requiresOperator` mount. A read never advances the baseline - opening the page
+  must not silently acknowledge a change - so `?capture=1` is the only thing that records one.
+  `scripts/migrations/139-schema-digest-history.sql` creates `oshal_schema_digest` (one row per
+  distinct shape per database, unique on `(database, fingerprint)`, forced RLS, operator-only) and
+  follows the runner-owned-transaction pattern, so it does **not** join the 127-137 self-managing
+  group. `tests/unit/data-model-drift.spec.ts` (22) covers the digest, all five states, the four
+  refusals and the store's degrade-by-name when the migration is absent; three cases in
+  `data-model-routes.spec.ts` cover the mount's refusals **by response body**.
+  `npm run test:data-model` is 92/92.
+- **Remaining, and it is the alarm half.** Nothing is raised into the Operations Stream, on
+  purpose. The ladder's only producer today is the authenticated Alertmanager webhook
+  (`POST /api/alerts/alertmanager` -> `EnvelopeStore.landEnvelope`, which takes a
+  `RawAlertmanagerEnvelope`); there is no internal, non-HTTP producer API, and the claim stage that
+  turns a landed event into a ticket is driven by `oshal_alert_claim_rule` rows that no migration
+  seeds. Emitting today would mean forging an Alertmanager delivery that no Alertmanager sent,
+  landing it `signatureVerified: false` on a lane with no claim rule - a durable row nobody reads,
+  which is exactly the half-wired notification this entry warns against. What the ladder needs,
+  concretely: (a) a producer entry point on `EnvelopeStore` that accepts an already-normalized
+  event with its own `source` lane, so a first-party detector does not have to impersonate a
+  webhook; (b) a `schema-drift` source lane registered the way the Echo lane entry below describes;
+  (c) a claim rule for that lane so a landed drift event becomes one ticket. The same three are
+  what the Echo funnel entry needs, so they are one piece of work, not two.
+  Also still open: the explorer shows no "what changed since" panel. `src/pages` is bind-mounted
+  and goes live immediately, while `/api/admin/data-model/drift` needs a core deploy - shipping the
+  panel before the route would put a broken card on the live cockpit, so the page half waits for
+  the deploy.
 - **Done when:** dropping a policy on a scratch table in a disposable database produces exactly one
-  alert naming that table and its previous state, the explorer shows the same change as a diff, and a
-  run with no schema change produces no alert.
+  alert naming that table and its previous state, the explorer shows the same change as a diff, and
+  a run with no schema change produces no alert. (The classifier half of this is proven in
+  `data-model-drift.spec.ts`; the *alert* and the *explorer diff* are what remain.)
 
 ### Data-model explorer: export the view you are looking at
 - **Built 2026-09-14.** **Export** in the explorer's header copies the current view as Mermaid and

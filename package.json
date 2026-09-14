@@ -40,7 +40,7 @@
     "test": "npx playwright test",
     "test:e2e:green": "node scripts/e2e-green.mjs",
     "test:unit": "vitest run",
-    "test:data-model": "vitest run --no-file-parallelism --hookTimeout 180000 --testTimeout 60000 tests/unit/data-model-catalog.spec.ts tests/unit/data-model-ownership.spec.ts tests/unit/data-model-integration-map.spec.ts tests/unit/data-model-service.spec.ts tests/unit/data-model-page-model.spec.ts tests/unit/data-model-export.spec.ts tests/unit/data-model-test-lab-registration.spec.ts tests/unit/data-model-catalog-postgres.spec.ts tests/unit/data-model-routes.spec.ts tests/unit/data-model-explorer-browser.spec.ts",
+    "test:data-model": "vitest run --no-file-parallelism --hookTimeout 180000 --testTimeout 60000 tests/unit/data-model-catalog.spec.ts tests/unit/data-model-ownership.spec.ts tests/unit/data-model-integration-map.spec.ts tests/unit/data-model-service.spec.ts tests/unit/data-model-page-model.spec.ts tests/unit/data-model-export.spec.ts tests/unit/data-model-drift.spec.ts tests/unit/data-model-test-lab-registration.spec.ts tests/unit/data-model-catalog-postgres.spec.ts tests/unit/data-model-routes.spec.ts tests/unit/data-model-explorer-browser.spec.ts",
     "test:package": "node scripts/run-package-tests.mjs",
     "test:package-runner": "vitest run tests/unit/package-test-host.spec.ts",
     "test:cockpit-startup": "vitest run --no-file-parallelism --hookTimeout 30000 tests/unit/cockpit-startup-browser.spec.ts tests/unit/cockpit-tool-surfaces.spec.ts tests/unit/asset-cache-headers.spec.ts tests/unit/test-lab-scenarios.spec.ts",

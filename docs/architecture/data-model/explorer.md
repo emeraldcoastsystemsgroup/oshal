@@ -4,7 +4,8 @@ The explorer is the live counterpart to the generated pages in this folder. The 
 committed snapshot of one reference database; the explorer reads whatever deployment it runs in.
 
 - **Page:** `/data-model` (Admin console → Data model). Signed-in users only.
-- **API:** `GET /api/admin/data-model` and `GET /api/admin/data-model/stores`, both
+- **API:** `GET /api/admin/data-model`, `GET /api/admin/data-model/stores` and
+  `GET /api/admin/data-model/drift`, all
   **operator-only** (`requiresAuth` + `requiresOperator` on the mount in `src/app/server.ts`).
   Read-only: catalog `SELECT`s, a source scan, and read calls to the other stores.
 - **Landed:** PR #431 (`feat/store-compatibility-gate`), commit `18edcbf4`.
@@ -41,6 +42,37 @@ than writing a file that will not parse.
 `toErDiagram()` is pinned byte-for-byte against the generator's `mermaidDiagram()` by
 `tests/unit/data-model-export.spec.ts`; that duplication is part of the same backlog item that
 collapses the catalog SQL, the RLS classifier and the DDL parser.
+
+## What changed since: schema drift
+
+Every snapshot is current-state, so on its own it can only be *looked at*. `GET /drift` gives it a
+memory:
+
+1. **Digest** - `buildDigest()` reduces the snapshot to structure only: per relation the owners,
+   the RLS state, the policy **names**, the key columns (primary key plus every foreign-key
+   column) and the foreign-key targets, plus the `app_migrations` count and a sha256 fingerprint.
+   No column defaults, no non-key columns, no policy expressions - a digest is persisted and
+   inherits the explorer's operator sensitivity.
+2. **Compare** - `diffDigests()` reads the stored baseline for the same database and classifies
+   the result. Only one state is an alarm:
+
+   | state | means | `alarm` |
+   |---|---|---|
+   | `first-run` | no digest recorded yet; this reading becomes the baseline | no |
+   | `unchanged` | identical fingerprint | no |
+   | `explained` | the migration ledger advanced between the two readings, so the change was migrated | no |
+   | `settling` | the baseline is inside the 15-minute quiet window; the shape is still moving | no |
+   | `drift` | an **unexplained** difference against a settled baseline | **yes** |
+
+3. **Refuse rather than cry wolf** - a reading holding less than half the baseline's relations is
+   a failed catalog read, not a dropped schema: it answers **409** with `SCHEMA_DIGEST_PARTIAL`.
+   A digest written by another `digestVersion`, or with no fingerprint, is refused the same way.
+4. **Record** - `?capture=1` writes the digest to `oshal_schema_digest` (migration 139: one row
+   per distinct shape per database, forced RLS, operator-only). A plain read **never** advances
+   the baseline, so opening the page does not silently acknowledge a change.
+
+A deployment that has not applied migration 139 gets `{ available: false }` with a reason naming
+the migration, not a 500 - the explorer keeps rendering.
 
 ## How a snapshot is built
 
@@ -85,7 +117,9 @@ flowchart LR
 | `src/features/data-model/services/key-families.ts` | Redis key families with identifier masking |
 | `src/features/data-model/services/data-model-service.ts` | snapshot assembly, TTL cache, store cards |
 | `src/app/data-model-ports.ts` | the adapters: pool, TSDB, ArangoDB, ChromaDB, Redis, app records |
-| `src/app/routes/data-model-routes.ts` | the two read routes |
+| `src/features/data-model/services/schema-digest.ts` | the structure-only digest and the classifying differ (pure) |
+| `src/features/data-model/services/drift-store.ts` | `oshal_schema_digest` reads/writes, degrading by name when migration 139 is absent |
+| `src/app/routes/data-model-routes.ts` | the three read routes |
 | `src/app/routes/test-lab-data-model-scenarios.ts` | the Test Lab card |
 | `src/pages/data-model/` | the page: `model-index.js` (pure), `layout.js`, `graph-view.js`, `detail-panel.js`, `lists-view.js`, `export-view.js` (pure + download mechanics), `app.js` |
 
@@ -109,7 +143,7 @@ layer fills in. That is what makes every store doubleable in tests.
 ## Tests
 
 ```bash
-npm run test:data-model     # 67 tests; needs Docker (disposable Postgres) and Playwright Chromium
+npm run test:data-model     # 92 tests; needs Docker (disposable Postgres) and Playwright Chromium
 ```
 
 | Spec | Proves |
@@ -119,6 +153,7 @@ npm run test:data-model     # 67 tests; needs Docker (disposable Postgres) and P
 | `data-model-integration-map.spec.ts` | MIME overlap, every edge kind, aggregation |
 | `data-model-service.spec.ts` | cache/TTL/in-flight sharing, degraded stores, key masking |
 | `data-model-page-model.spec.ts` | graphs, neighbourhood, search, URL state, deterministic layout |
+| `data-model-drift.spec.ts` | the digest carries structure and no data; all five drift states; the four refusals; the store's degrade-by-name; a read never captures |
 | `data-model-export.spec.ts` | the Mermaid block byte-identical to the generator, naming exactly the relations drawn; the owner flowchart; scoped JSON; the standalone SVG document; filenames; every refusal |
 | `data-model-catalog-postgres.spec.ts` | a real catalog read from a disposable PostgreSQL 16 container |
 | `data-model-routes.spec.ts` | the real operator gate over real HTTP (401 / 403 / 200 / 503 / 500) |
@@ -147,7 +182,12 @@ The page files are bind-mounted, but the route is not: **a core deploy is requir
   contributes nothing, and its tables (if present) show as unowned.
 - **Redis shows key families and value types, never values**; families mask segments that look like
   an email, id or long number.
-- **No history.** Each snapshot is current-state; nothing is stored or diffed (see the backlog).
+- **Drift is detected, not announced.** `GET /drift` classifies and the explorer can render it,
+  but nothing is raised into the Operations Stream yet - see the backlog entry for the three
+  things the ladder needs first. There is also no scheduler: a digest is recorded only when a
+  caller asks for `?capture=1`.
+- **The page has no "what changed since" panel yet.** `src/pages` is bind-mounted and `/drift` is
+  not, so the panel waits for the core deploy that ships the route.
 
 ## Troubleshooting
 

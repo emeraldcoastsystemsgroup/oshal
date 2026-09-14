@@ -4,7 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Data-model explorer types: catalog relations (tables/views with columns, keys, RLS policies), declaration sites that attribute a relation to its owner (core or an installed app), the assembled explorer snapshot (owned tables, shared objects, app integration edges) and the non-Postgres store inventories.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two ports for schema-drift history (ADR-119/125 backlog item): a queryable for the digest table and the app_migrations count that tells a migrated change from an unexplained one. Both optional, so a deployment without the migration keeps rendering.
  */
+
+import type { DigestQueryable } from './services/drift-store';
 
 /** Owner id for the platform itself. Package names are kebab-case, so `@core` can never collide. */
 export const CORE_OWNER = '@core';
@@ -188,6 +191,13 @@ export interface DataModelPorts {
   readPlatformCatalog(): Promise<CatalogSnapshot>;
   listApps(): Promise<AppRecordLite[]>;
   readTimeseriesCatalog?(): Promise<CatalogSnapshot | null>;
+  /**
+   * The platform database again, for the schema-digest history table. Absent on a deployment
+   * with no durable store, which is why the drift route degrades instead of failing.
+   */
+  digestQueryable?(): Promise<DigestQueryable | null>;
+  /** Rows in app_migrations, or null when unreadable. A change here EXPLAINS a schema change. */
+  migrationCount?(): Promise<number | null>;
   graphInventory?(): Promise<StoreInventory>;
   vectorInventory?(): Promise<StoreInventory>;
   cacheInventory?(): Promise<StoreInventory>;

@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The /drift mount under the SAME chain: anonymous and non-operator refusals discriminate on the RESPONSE BODY (every unauthenticated /api path on this deployment answers an identical 401, so a status code alone proves the global guard and not this mount), ?capture=1 is forwarded and a bare read is not, and a refused reading answers 409 with its code rather than 500.
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Data-model explorer route guards over REAL HTTP with the REAL operator gate (requiresOperator + the operator allowlist): anonymous 401, non-operator 403 without the service ever being called, operator 200 for the snapshot and the store inventories, ?refresh=1 forwarded, a missing platform database answered 503 and any other failure 500 without leaking its message. Mirrors the server.ts mount: requiresAuth, then requiresOperator, then the router.
  */
 
@@ -26,6 +27,11 @@ const service: DataModelService = {
     return { generatedAt: 'now', database: 'oshal', tables: [{ name: 'tickets' }], views: [], apps: [], integrations: [], unowned: [], declaredAbsent: [], sqlite: [] } as never;
   }),
   stores: vi.fn(async () => { calls.push('stores'); return [{ store: 'cache', engine: 'Redis', status: 'ok', detail: '0 keys' }] as never; }),
+  drift: vi.fn(async (opts?: { capture?: boolean; refresh?: boolean }) => {
+    calls.push(`drift:capture=${Boolean(opts?.capture)}:refresh=${Boolean(opts?.refresh)}`);
+    if (failure) throw failure;
+    return { available: true, report: { state: 'unchanged', alarm: false, from: 'then', to: 'now', reason: 'identical', changes: [] }, digest: null, unavailableReason: '', captured: Boolean(opts?.capture) } as never;
+  }),
 };
 
 /** Test stand-in for OIDC: `x-test-user` is the signed-in subject; no header = not signed in. */
@@ -95,5 +101,38 @@ describe('data-model explorer routes', () => {
     failure = null;
     expect(res.status).toBe(500);
     expect(JSON.stringify(res.body)).not.toContain('zq7f3a');
+  });
+
+  it('mounts /drift behind the same chain: the refusals name the gate, not a generic 401', async () => {
+    calls.length = 0;
+    const anon = await get('/api/admin/data-model/drift');
+    expect(anon.status).toBe(401);
+    expect(anon.body.error).toBe('Authentication required');
+
+    const nonOperator = await get('/api/admin/data-model/drift', 'someone-else');
+    expect(nonOperator.status).toBe(403);
+    expect(JSON.stringify(nonOperator.body)).toMatch(/operator/i);
+    expect(calls).toEqual([]);
+  });
+
+  it('serves the drift report to an operator and forwards capture only when asked', async () => {
+    calls.length = 0;
+    const read = await get('/api/admin/data-model/drift', 'the-operator');
+    expect(read.status).toBe(200);
+    expect(read.body.report.state).toBe('unchanged');
+    expect(read.body.captured).toBe(false);
+
+    const captured = await get('/api/admin/data-model/drift?capture=1', 'the-operator');
+    expect(captured.body.captured).toBe(true);
+    expect(calls).toEqual(['drift:capture=false:refresh=false', 'drift:capture=true:refresh=false']);
+  });
+
+  it('answers 409 with the code when the reading is refused, never 500', async () => {
+    failure = Object.assign(new Error('that is a failed catalog read, not a dropped schema'), { code: 'SCHEMA_DIGEST_PARTIAL' });
+    const res = await get('/api/admin/data-model/drift', 'the-operator');
+    failure = null;
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('SCHEMA_DIGEST_PARTIAL');
+    expect(res.body.error).toContain('failed catalog read');
   });
 });
