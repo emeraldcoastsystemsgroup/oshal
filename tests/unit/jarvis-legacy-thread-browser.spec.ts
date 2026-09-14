@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove in real Chromium, against the real Jarvis router and an isolated PostgreSQL, that a persisted thread the server cannot attribute to the current sign-in is refused, the page rolls to a fresh thread and resends the turn once, the answer renders, and the new thread carries the caller's issuer.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Search the recorded bot call through plain objects only. The first execution threw "Converting circular structure to JSON": the AppContext argument carries the pg pool's timers, and its in-memory task store also holds the planted legacy row, so stringifying the whole call could never prove the turn ran clean of it. The assertion now names the missing thread id when it fails.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import type { Browser } from 'playwright';
@@ -60,6 +61,25 @@ async function openJarvis(bookmarkedThread: string) {
   return { page, context, asks, errors };
 }
 
+/**
+ * @description Every string reachable from the recorded bot call through plain objects and arrays.
+ * The first argument is the live AppContext: its pg pool carries timers that cycle (JSON.stringify
+ * threw on it) and its in-memory task store holds the planted legacy row, so only the turn's own
+ * values may be inspected. Class instances and functions are skipped; shared references and
+ * cycles terminate through `seen`.
+ * @param value - The value to walk; starts at the recorded call arguments.
+ * @param seen - Objects already visited.
+ * @returns The strings found, in traversal order.
+ */
+function plainStrings(value: unknown, seen = new Set<object>()): string[] {
+  if (typeof value === 'string') return [value];
+  if (!value || typeof value !== 'object' || seen.has(value)) return [];
+  const prototype = Object.getPrototypeOf(value) as object | null;
+  if (prototype !== null && prototype !== Object.prototype && prototype !== Array.prototype) return [];
+  seen.add(value);
+  return Object.values(value as Record<string, unknown>).flatMap(inner => plainStrings(inner, seen));
+}
+
 it('refuses the bookmarked legacy thread, rolls to a fresh one, answers on it, and stamps the caller issuer', async () => {
   // Every Jarvis thread created before issuer provenance existed looks like this row: owner known, issuer absent.
   await fixture.tasks.create({ taskId: 'legacy-conversation', title: 'How did I do last month?', processingMode: 'agentic',
@@ -82,9 +102,9 @@ it('refuses the bookmarked legacy thread, rolls to a fresh one, answers on it, a
     expect(created?.ownerSub).toBe('alice');
     expect(readOwnerPrincipalIssuer(created?.metadata)).toBe(fixture.actors.alice.issuer);
     expect(bot).toHaveBeenCalledTimes(1);
-    expect(bot.mock.calls[0].some(argument => typeof argument === 'string' && argument === fresh)
-      || JSON.stringify(bot.mock.calls[0]).includes(fresh)).toBe(true);
-    expect(JSON.stringify(bot.mock.calls[0])).not.toContain('legacy-conversation');
+    const passed = plainStrings(bot.mock.calls[0]);
+    expect(passed, `the model turn ran without the fresh thread ${fresh}; strings passed: ${JSON.stringify(passed)}`).toContain(fresh);
+    expect(passed.join(' ')).not.toContain('legacy-conversation');
     expect(errors).toEqual([]);
   } finally { await context.close(); }
 });
