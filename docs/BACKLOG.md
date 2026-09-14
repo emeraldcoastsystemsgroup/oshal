@@ -1520,6 +1520,29 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   installed Lab after a core deploy, and the batch path admits the `browser` level — schedule
   levels, the selector's exact-match rule and the page's counts are a separate slice, and changing
   the selector rule must not strand the existing `integration,unit` selector the operator uses.
+- **`harness:core-test-fixtures` (2026-09-14, `feat/test-lab-core-fixture-harness`):** three store
+  browser cases (cad-studio `surface-lifecycle`, embodied `surface-browser`, scan-to-print
+  `surface-freshness`) stayed pending on this name because they require the core's
+  `tests/fixtures/isolated-browser.ts` and `tests/fixtures/stl-viewer.ts` from `OSHAL_CORE_ROOT`
+  through `tsx/cjs`, and the image shipped no `tests/` at all (`ls /app/tests` in `oshal-local-api`:
+  no such directory). Measured closure: those two files, 13,278 bytes, no relative imports, bare
+  imports `playwright` and `express` (runtime dependencies) plus Node builtins; `tsx` 4.22.4 is a
+  runtime dependency present at `/app/node_modules/tsx` in the running image. *Done:*
+  `Dockerfile.oshal` copies exactly that closure to `/app/tests/fixtures/` with the matching
+  `.dockerignore` allowlist; the runner probe loads each file through tsx from the core root and
+  `harness:core-test-fixtures` is advertised only on a positive report;
+  `tests/unit/package-test-core-fixtures.spec.ts` holds the staged set, the COPY, the allowlist and
+  the advertisement together (its COPY, allowlist, probe-content and advertisement cases were red
+  before the change, 4 failed / 5 passed, and green after). *Not done:* the Docker case
+  `advertises harness:core-test-fixtures exactly when the image carries the staged fixture closure`
+  in `tests/unit/package-test-sandbox.spec.ts` has not run (Docker VM one-minute load 8.9 when this
+  landed), and the image on the box (`9ec04dc84c75`, built 2026-09-14 17:30 before this change) does
+  not carry the files, so the three cases stay pending until a core deploy rebuilds the image.
+  **Done when:** that Docker case passes on a rebuilt image (run it with
+  `npx vitest run tests/unit/package-test-sandbox.spec.ts -t "core-test-fixtures"` under the same
+  load rule as above) and one Lab run of each of the three cases passes on the box — a real run of
+  seconds, not a sub-second decline. The store side needs no change for admission: the cases already
+  declare this exact name.
 
 ### AI Office: draw a deck, document or workbook in a brand kit's exact colors and fonts (2026-09-14)
 
