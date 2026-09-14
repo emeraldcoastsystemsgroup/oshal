@@ -872,7 +872,8 @@ tests/session-crypto.test.mjs
   do not restart suites or weaken current authorization checks.
 
   Status 2026-09-13: the source fix is on `feat/store-compatibility-gate` at
-  `a5021e36`. The Lab page follows the admitted batch through the existing
+  `a5021e36` (on `main` since PR 431 merged as `b8de2099` on 2026-09-14,
+  and in the image deployed from that commit). The Lab page follows the admitted batch through the existing
   schedule-history route, keeps polling while the batch is running, lands one
   final read after it ends, then stops; a transient failure of the runs read
   retries three times, bounded. The registered browser regression is the
@@ -907,7 +908,8 @@ tests/session-crypto.test.mjs
   browser rows every batch reports as "The playwright runner is unavailable."
   (eight of Create's eighteen) execute like Node suites.
   Built 2026-09-14 on `feat/store-compatibility-gate` (`08440e77`, docs
-  `d07aba01`, merged at `ed2a4f95`): the sandbox gained a browser profile
+  `d07aba01`, merged at `ed2a4f95`; all three on `main` through PR 431,
+  `b8de2099`, and in the image deployed from it on 2026-09-14): the sandbox gained a browser profile
   (Chromium's process, descriptor and tmp budgets; network still off) and a
   real in-profile capability probe; the launcher points Playwright at the
   image's system Chromium through a registry shim; admission follows only
@@ -926,8 +928,10 @@ tests/session-crypto.test.mjs
 
 ## Continuing the Test Lab runner work (handover, 2026-09-14)
 
-Everything below is on `feat/store-compatibility-gate` (PR 431) and pushed. None of it is deployed:
-the `src/` half needs a core deploy, while the Lab page half is already live because
+Everything below was built on `feat/store-compatibility-gate` (PR 431). PR 431 merged to `main` as
+`b8de2099` on 2026-09-14 and `scripts/oshal-deploy.sh` deployed that commit the same day (image
+`1fe73566ae87`), so the `src/` half is in the running image too — checked 2026-09-14: every commit in
+the table below is an ancestor of `b8de2099`. The Lab page half was live before that, because
 `any-bot/server` is bind-mounted read-only into `oshal-local-api`.
 
 ### What shipped, and where it lives

@@ -188,14 +188,15 @@ has flown; the package is not installed on the box.
 
 | What | Where | Branch |
 |---|---|---|
-| The package: engine (`src-routes/engine/*.ts` → compiled `routes/engine/*.js`), routes, tile, persona, manifest, tests, Test Lab catalog | `drone-relay/` in the store repo | `feat/package-test-catalog-pilots` (store PR #185) |
+| The package: engine (`src-routes/engine/*.ts` → compiled `routes/engine/*.js`), routes, tile, persona, manifest, tests, Test Lab catalog | `drone-relay/` in the store repo | store `main` — landed through store PR #185 (merged 2026-09-14 as `4e15108`); store `main` now carries `drone-relay` 0.3.0 |
 | The package's contract (what the engine computes, exactly) and its backlog B1–B11 | `drone-relay/docs/ARCHITECTURE.md`, `drone-relay/BACKLOG.md` | same |
-| The decisions (D1–D11), the open questions (Q1–Q6), what the simulation proved | [ADR-155](../adr/155-drone-relay-chains.md) | `feat/store-compatibility-gate` (core PR #431) |
+| The decisions (D1–D11), the open questions (Q1–Q6), what the simulation proved | [ADR-155](../adr/155-drone-relay-chains.md) | core `main` — landed through core PR #431 (merged 2026-09-14 as `b8de2099`) |
 | The radio module, what not to fork in ArduPilot, the range test, R1–R5 bring-up | [drone-relay-link-hardware](./drone-relay-link-hardware.md) | same |
 | This document; the core backlog pointer | here; `docs/BACKLOG.md` § *Drone relay chains* | same |
 
-Both branches are the single active development branch of their repo: join them, do not mint
-another (CLAUDE.md Rule 0).
+When this was written, both halves of the work lived on the PR branches `feat/package-test-catalog-pilots` (store)
+and `feat/store-compatibility-gate` (core). Both PRs are merged, so continue from `main` on a new
+branch in each repo — checking first for an open development branch to join (CLAUDE.md Rule 0).
 
 ### Build and test the package
 

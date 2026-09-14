@@ -140,6 +140,8 @@ audit records and four Jarvis projections matched. No discrepancy was exempted
 or converted to a pass. No synthetic business records required cleanup in this
 batch test. Core and package preview installation is complete; main promotion
 remains separate, with core PR 431 still requiring independent review.
+(Status update 2026-09-14: core PR 431 merged to `main` as `b8de2099` and was
+deployed from that commit; store PR 185 merged as `4e15108`.)
 
 Regional AI regeneration, reviewed editing mutations, video timelines and full
 Canva-style feature coverage remain open in Create's application backlog.

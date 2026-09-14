@@ -36,6 +36,11 @@ Implementation commit `c875a5085f4084178301446d448fa841d58ce8d5` is pushed on
 HEAD both passed. [PR 431](https://github.com/emeraldcoastsystemsgroup/oshal/pull/431) remains open
 with required independent review; this record does not claim a merge or deployed canary.
 
+> **Status update (2026-09-14):** PR 431 has since merged to `main` as `b8de2099` and was deployed
+> from that commit with `scripts/oshal-deploy.sh`; store PR 185 merged as `4e15108`. The
+> implementation commit above was rewritten before the merge — it is `c18f057a` on `main` (same
+> `git patch-id`). No deployed canary is claimed by this update.
+
 Pinned compatibility passed for that core commit and unchanged public store commit
 `571838aff8a2d874c1edc77b661aba78fb4d6291`: 388 sources across 52 packages. The real compiler also
 rejected the deliberately invented ambient export with TS2305. The command was:
