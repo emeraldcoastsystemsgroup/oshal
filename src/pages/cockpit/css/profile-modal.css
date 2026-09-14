@@ -1,0 +1,75 @@
+/*
+ * =============================================================================
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Keep Profile and Access compact, opaque and readable in the current portal palette without restyling other dialogs.
+ * =============================================================================
+ */
+.modal-container.profile-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 24px;
+  overflow-y: auto;
+  /* Override the shared glass stylesheet's important translucent modal rule. */
+  background: var(--bg-primary) !important;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  animation: none;
+  transform: none;
+}
+.profile-dialog.glass-card::before { display: none; }
+.profile-dialog .modal-header { align-items: flex-start; gap: 16px; margin-bottom: 20px; }
+.profile-dialog .modal-title { padding-top: 9px; line-height: 1.4; }
+.profile-dialog .modal-close {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.profile-access { display: grid; gap: 12px; min-width: 0; }
+.profile-status { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.profile-identity { min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.profile-identity:empty { display: none; }
+.profile-name { color: var(--text-primary); font-size: var(--font-size-lg); font-weight: 650; line-height: 1.4; }
+.profile-guidance { margin: 4px 0 0; color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.6; }
+.profile-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.profile-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--border-color-hover, var(--border-color));
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.profile-button-primary {
+  background: var(--accent-primary);
+  color: var(--text-on-accent, #fff);
+  border-color: var(--accent-primary);
+}
+.profile-button:hover { border-color: var(--accent-primary); background: var(--bg-tertiary); }
+.profile-button-primary:hover { background: var(--accent-primary-hover, var(--accent-primary)); color: var(--text-on-accent, #fff); }
+.profile-dialog :is(button, a):focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 3px; }
+.profile-button:disabled { opacity: 0.65; cursor: wait; }
+.profile-button[hidden] { display: none; }
+@media (max-width: 480px) {
+  .modal-container.profile-dialog { padding: 20px; }
+  .profile-actions { flex-direction: column; }
+  .profile-button { width: 100%; }
+}

@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export the APP-02 fail-closed package-audit mode resolver.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export the manifest Takeout slice declaration and lifecycle registrar port.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-141 application-group types, validators and resolvers.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Export registered installation verification reports and the shared portable formatter.
  */
 
 export type {
@@ -41,6 +42,7 @@ export type {
   ManifestScheduleRegistrar,
   ManifestScheduleDeregistrar,
   ManifestRouteMounter,
+  ManifestAuthorizationRegistrar,
   ManifestBotRegistrar,
   ManifestTakeoutRegistrar,
   RagCollectionTeardown,
@@ -107,3 +109,10 @@ export type {
 export type { PackageAuditMode } from './services';
 export type { WorkflowPublishSpec, WorkflowPublishStageInput, WorkflowPublishBotInput } from './services';
 export type { ToolDependent } from './services';
+export { InstalledAppTestCatalog } from './services/installed-app-test-catalog';
+export { PackageTestSandbox } from './services/package-test-sandbox';
+export type { InstalledTestAuth, InstalledAppTestCase, InstalledTestRunOptions, InstalledAppTestResult } from './services/installed-app-test-catalog';
+export { verifyInstalledApplications } from './services/app-installation-verification';
+export { formatInstallationVerification, installationCaseUrl } from './services/app-installation-report';
+export type { InstallationVerificationOptions } from './services/app-installation-verification';
+export type { InstallationVerificationReport, ApplicationInstallationReport, InstallationCaseReport } from './services/app-installation-report';

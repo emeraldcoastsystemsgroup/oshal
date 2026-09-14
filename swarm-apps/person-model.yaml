@@ -22,8 +22,10 @@ displayName: Ambient Recall
 description: >-
   Ask what someone said. Turns your Jarvis ambient transcripts into recall with
   receipts — an exact count, the verbatim quoted lines, and play-it-back that
-  re-speaks them in the assistant voice. Opt-in, owner-private, no audio stored.
-version: 1.0.1
+  re-speaks them in the assistant voice — plus open asks, per-person profiles
+  (topics, presence, consent) and weekly trends, all shown as OSHAL's read
+  beside the words. Opt-in, owner-private, no audio stored.
+version: 1.1.0
 status: active
 
 # ADR-118: Ambient Recall uses POST for some read-style queries, so editor preserves its current

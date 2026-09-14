@@ -298,6 +298,17 @@ app/ → pages/ → features/ → entities/ → shared/
 - One primary entity per file (one class, one component, one service).
 - No cross-imports between slices at the same layer.
 
+## Tests accompany new functionality (operator, 2026-09-10)
+
+Every new feature ships with behavior tests; every bug fix ships with a regression test for its
+failure shape. Include the successful outcome and applicable refusal, ownership, cancellation and
+confirmation cases. Use isolated data and identify model/provider fixtures explicitly.
+
+Register runnable product scenarios in the existing AI Test Lab (`test-lab-scenarios.ts`, including
+feature modules), and attach `regressionTests` file references with unit/integration/browser levels.
+Update the feature's local test command and coverage notes. A test file on disk alone is not Test
+Lab registration. Keep locally tested and live-proven status distinct. See [tests/README.md](tests/README.md).
+
 ## Hard file/function limits
 
 - **1000-line hard cap** on any file — no exceptions. Measured in **lines of code**:
@@ -441,6 +452,13 @@ bash scripts/oshal-deploy.sh            # commit + push first — it deploys com
 ```
 
 Don't hand-roll `docker build` + `compose up --force-recreate` sequences — a hand-typed recreate filter took down the infra tier on 2026-07-19; the script exists so that class of mistake can't recur. Bind-mounted directories (cockpit JS, persona YAML) update without rebuild. (`oshal-up.sh` stays the bring-up/recovery path after an engine restart; `oshal-deploy.sh` is for shipping new code.)
+
+For an operator-authorized local feature preview before PR merge, use
+`bash scripts/oshal-deploy.sh --preview`. This requires the feature branch to track
+the same branch on origin and match its freshly fetched tip; unpublished work,
+detached HEAD and `--allow-unpushed` are refused. The archive and image are pinned
+to that verified commit. Default releases still require `main`; preview deployment
+does not approve or merge the PR. See [the runbook](docs/runbooks/deploy-parity.md).
 
 If you do recreate something manually, run `bash scripts/deploy-parity-check.sh` after — it flags the api and bot-node containers drifting onto different image builds (the split-image bug where a two-half feature ships broken). `oshal-up.sh` runs it automatically. Runbook: [docs/runbooks/deploy-parity.md](docs/runbooks/deploy-parity.md).
 

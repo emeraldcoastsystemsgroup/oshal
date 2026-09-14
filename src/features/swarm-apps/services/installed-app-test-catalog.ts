@@ -1,0 +1,327 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Register installed package smokes in the AI Test Lab and reuse the installation verifier with caller-scoped execution authority.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Derive clearable verified-user prerequisites, exclude user probes from unattended installation eligibility, and fail malformed supplied tokens.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Execute sealed offline Node suites in a disposable sandbox with current authority and source checks.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Carry an optional request-bound service-smoke transport without adding caller sessions to reusable execution authority.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Verify browser-runner capabilities on the image, re-seal registrations when they change, require the Node harness for Playwright recipes and run them under the browser profile.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps, read through @/shared/app-dependencies (dependencies.required.apps or the legacy dependencies.apps).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Verify the runner image lazily and only when a browser recipe is actually registered, so no installation pays a container it never needs.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Drive admission, sealing and profile choice from the sealed-profile runner table, so a new runner kind is a table row rather than another hardcoded pair of kinds.
+ */
+
+import { createHash } from 'crypto';
+import path from 'node:path';
+import { createChildLogger } from '@/shared/logger';
+import { requiredAppDependencies } from '@/shared/app-dependencies';
+import type { SwarmApplicationRecord, SwarmAppSmokeDeclaration } from '../types';
+import { userSmokePrerequisite, verifyAppSmokes, type AppSmokeVerificationOptions } from './app-smoke-verifier';
+import { loadPackageTestCatalog, packageTestSource, type LoadedPackageTestCatalog, type PackageTestCase, type PackageTestLevel, type PackageTestRunner } from '@/shared/package-testing';
+import { NODE_RUNNER_CAPABILITIES, packageTestRecipePending, runnerHarnessFailure, RUNNER_PROFILES, snapshotPackageTests } from './package-test-snapshot';
+import { PackageTestSandbox } from './package-test-sandbox';
+import { executePackageTest, type InstalledAppTestResult } from './package-test-execution';
+import { inventoryPackageTests, type PackageTestInventory } from './package-test-inventory';
+export type { InstalledAppTestResult } from './package-test-execution';
+
+const logger = createChildLogger({ module: 'installed-app-test-catalog' });
+
+export type InstalledTestAuth = Pick<AppSmokeVerificationOptions, 'serviceSecret' | 'authorization'> & { canRunSuites?: boolean };
+export interface InstalledTestRunOptions extends Pick<AppSmokeVerificationOptions, 'apiBaseUrl' | 'timeoutMs' | 'serviceSmokeFetch'>, InstalledTestAuth {
+  signal?: AbortSignal;
+  executionId?: string;
+  revalidate?: () => Promise<boolean>;
+}
+
+/** Public metadata includes suite/fixture references, never their bytes, owners or credentials. */
+export interface InstalledAppTestCase {
+  id: string;
+  appName: string;
+  appVersion: string;
+  source: string;
+  caseId: string;
+  revision: string;
+  executionRevision?: string;
+  sourceCommit?: string;
+  name: string;
+  purpose: string;
+  level: PackageTestLevel;
+  runner: PackageTestRunner;
+  expected: string[];
+  sideEffects: PackageTestCase['sideEffects'];
+  isolation: PackageTestCase['isolation'];
+  limits: PackageTestCase['limits'];
+  installationEligible: boolean;
+  method: string;
+  path: string;
+  auth: SwarmAppSmokeDeclaration['auth'] | 'none';
+  prerequisites: string[];
+  runnable: boolean;
+  pendingReason?: string;
+}
+
+interface Registration {
+  record: SwarmApplicationRecord;
+  source: string;
+  cases: Map<string, { metadata: InstalledAppTestCase; smoke?: SwarmAppSmokeDeclaration; declaration?: PackageTestCase; executionError?: string }>;
+}
+
+/** @description Explain unavailable execution without attempting an AI call or a mutation. */
+function pendingReason(entry: Registration['cases'] extends Map<string, infer E> ? E : never, auth: InstalledTestAuth,
+  capabilities: ReadonlySet<string> = NODE_RUNNER_CAPABILITIES): string | undefined {
+  const smoke = entry.smoke;
+  if (!smoke) {
+    const recipe = entry.declaration ? packageTestRecipePending(entry.declaration, capabilities) : 'Test declaration is unavailable.';
+    if (recipe) return recipe;
+    if (entry.executionError || !entry.metadata.executionRevision) return entry.executionError || 'Sealed package source is unavailable.';
+    return auth.canRunSuites === true ? undefined : 'A swarm administrator must start isolated package tests.';
+  }
+  const userPrerequisite = userSmokePrerequisite(smoke, auth.authorization);
+  if (userPrerequisite) return userPrerequisite.error;
+  if (entry.declaration?.sideEffects !== undefined && entry.declaration.sideEffects !== 'none') return 'Declared side effects require a separately approved test runner.';
+  if (entry.declaration?.prerequisites.length) return `Additional prerequisites require verification: ${entry.declaration.prerequisites.join(', ')}.`;
+  if (!['GET', 'HEAD'].includes(smoke.method)) return 'Mutation requires a separately approved test runner.';
+  if (smoke.requiresAi) return 'AI execution requires a separately approved test runner.';
+  if (smoke.auth === 'service' && !auth.serviceSecret) return 'Operator service authentication is unavailable.';
+  if (smoke.auth === 'pat' && !/^Bearer\s+oshal_pat_[a-f0-9]{48}$/.test(auth.authorization ?? '')) {
+    return 'A caller-owned PAT is required.';
+  }
+  return undefined;
+}
+
+/** @description Bind executable cases to the complete staged source inventory, including imported helpers. */
+function sealExecutableCases(packageDir: string, cases: Registration['cases'], capabilities: ReadonlySet<string>): void {
+  const executable = [...cases.values()].filter(entry => entry.declaration && !packageTestRecipePending(entry.declaration, capabilities));
+  if (!executable.length) return;
+  try {
+    const snapshot = snapshotPackageTests(packageDir);
+    const staged = new Map(snapshot.files.map(file => [file.path, file.content]));
+    for (const entry of executable) {
+      const runner = entry.metadata.runner;
+      if (runner.kind !== 'smoke' && runner.files.some(file => !staged.has(file))) {
+        entry.executionError = 'A suite file is excluded from isolated source staging.'; continue;
+      }
+      // Every runner kind declares the harness its suites must carry; without it a suite runs as a bare
+      // script and reports nothing, which would publish as a pass.
+      const harness = runner.kind === 'smoke' ? undefined
+        : runner.files.map(file => runnerHarnessFailure(runner.kind, staged.get(file)!)).find(Boolean);
+      if (harness) { entry.executionError = harness; continue; }
+      entry.metadata.executionRevision = snapshot.revision;
+      entry.metadata.sourceCommit = snapshot.sourceCommit;
+      entry.metadata.revision = createHash('sha256').update(JSON.stringify({ catalog: entry.metadata.revision, execution: snapshot.revision })).digest('hex');
+    }
+  } catch { for (const entry of executable) entry.executionError = 'Package source cannot be sealed for isolated execution.'; }
+}
+
+/** @description Retain the established smoke catalog and prerequisites while sealing local suites separately. */
+function registerSmokes(snapshot: SwarmApplicationRecord, source: string, loaded: LoadedPackageTestCatalog | null, cases: Registration['cases']): void {
+  const declarations = new Map(loaded?.catalog.cases.map(test => [test.id, test]) ?? []);
+  for (const smoke of snapshot.manifest.smoke ?? []) {
+    const id = `app:${encodeURIComponent(snapshot.name)}:smoke:${encodeURIComponent(smoke.name)}`;
+    if (cases.has(id)) throw new Error(`Duplicate installed test case: ${id}`);
+    const declaration = declarations.get(smoke.name);
+    const prerequisites = [
+      ...(!['GET', 'HEAD'].includes(smoke.method) ? ['approved-mutation-runner'] : []),
+      ...(smoke.requiresAi ? ['approved-ai-runner'] : []),
+      ...(smoke.requiresUser ? ['verified-user-context'] : []),
+      ...(smoke.auth !== 'public' ? [smoke.auth === 'service' ? 'operator-service-auth' : 'caller-pat'] : []),
+    ];
+    cases.set(id, { smoke, declaration, metadata: {
+      id, appName: snapshot.name, appVersion: snapshot.version, source, caseId: smoke.name,
+      revision: createHash('sha256').update(JSON.stringify({ source, version: snapshot.version, smoke, catalog: loaded?.revisions[smoke.name] })).digest('hex'),
+      name: declaration?.name ?? smoke.name, purpose: declaration?.purpose ?? 'Verify the existing package installation smoke assertions.',
+      level: 'integration', runner: { kind: 'smoke', smoke: smoke.name },
+      expected: declaration?.expected ?? [JSON.stringify(smoke.expect)],
+      sideEffects: declaration?.sideEffects ?? (['GET', 'HEAD'].includes(smoke.method) ? 'none' : 'external-write'),
+      isolation: declaration?.isolation ?? { mode: ['GET', 'HEAD'].includes(smoke.method) ? 'none' : 'live' },
+      limits: declaration?.limits ?? { timeoutMs: 15000 },
+      installationEligible: !smoke.requiresUser && (declaration ? declaration.installation === 'safe-smoke' : ['GET', 'HEAD'].includes(smoke.method) && !smoke.requiresAi),
+      method: smoke.method, path: smoke.path,
+      auth: smoke.auth, prerequisites: [...new Set([...prerequisites, ...(declaration?.prerequisites ?? [])])], runnable: false,
+    } });
+  }
+}
+
+/**
+ * One registry per SwarmAppService. Activation replaces a package atomically; teardown removes
+ * its executors. The caller supplies the current visibility set for each catalog/read/run.
+ */
+export class InstalledAppTestCatalog {
+  private readonly registrations = new Map<string, Registration>();
+  private readonly sandbox: PackageTestSandbox;
+  private readonly runnerImage?: string;
+  private verifiedCapabilities: ReadonlySet<string> = NODE_RUNNER_CAPABILITIES;
+  private verifyOnDemand = false;
+  private probing?: Promise<void>;
+  private probedAt = 0;
+
+  /** @description Use a server-owned runner recipe and optional immutable image selection. */
+  constructor(options: { sandbox?: PackageTestSandbox; runnerImage?: string } = {}) {
+    this.sandbox = options.sandbox ?? new PackageTestSandbox();
+    this.runnerImage = options.runnerImage;
+  }
+
+  /** @description Allow the composed server to verify the runner image the first time a browser recipe is
+   * actually registered and read. Off by default, so a catalog built in a test never starts a container.
+   * @returns Nothing. */
+  enableRunnerVerification(): void { this.verifyOnDemand = true; }
+
+  /** @description Verify once, lazily, and only when an unverified browser recipe is visible: the probe costs
+   * a disposable container, so an installation without browser recipes never pays for one. A failed probe is
+   * retried no sooner than ten minutes later, so a loaded or broken box cannot be flooded with containers.
+   * @param cases Cases about to be returned to a caller. @returns Nothing. */
+  private verifyLazily(cases: InstalledAppTestCase[]): void {
+    if (!this.verifyOnDemand || this.probing) return;
+    if (Date.now() - this.probedAt < 600000) return;
+    const unverified = cases.filter(test => (RUNNER_PROFILES[test.runner.kind]?.capabilities ?? [])
+      .some(name => !this.verifiedCapabilities.has(name)));
+    if (!unverified.length) return;
+    this.probedAt = Date.now();
+    this.probing = this.verifyRunners().then(() => undefined).catch(() => undefined).finally(() => { this.probing = undefined; });
+  }
+
+  /** @description Probe the runner image inside the closed browser profile and adopt whatever it verifies.
+   * A failed or empty probe leaves the Node-only floor in place; nothing is assumed from the image name.
+   * @returns The verified prerequisite names now admitted. */
+  async verifyRunners(): Promise<ReadonlySet<string>> {
+    const verified = await this.sandbox.probe(this.runnerImage);
+    logger.info({ image: this.runnerImage ?? 'current', verified: [...verified] }, 'Package test runner capabilities verified');
+    if (verified.size) this.refreshCapabilities(verified);
+    return this.verifiedCapabilities;
+  }
+
+  /** @description Reject missing or malformed catalogs before a toggle can activate package resources. */
+  validate(record: SwarmApplicationRecord): void {
+    const packageDir = path.dirname(path.resolve(record.manifestPath));
+    loadPackageTestCatalog(packageDir, record.manifest);
+    packageTestSource(packageDir);
+  }
+
+  /** @description Publish a completed activation, taking a snapshot so later manifest edits cannot change a live case. */
+  register(record: SwarmApplicationRecord): void {
+    if (record.status !== 'active') { this.unregister(record.name); return; }
+    const snapshot = structuredClone(record);
+    const packageDir = path.dirname(path.resolve(snapshot.manifestPath));
+    const loaded = loadPackageTestCatalog(packageDir, snapshot.manifest);
+    const source = packageTestSource(packageDir);
+    const declarations = new Map(loaded?.catalog.cases.map(test => [test.id, test]) ?? []);
+    const cases: Registration['cases'] = new Map();
+    registerSmokes(snapshot, source, loaded, cases);
+    for (const declaration of declarations.values()) {
+      if (declaration.runner.kind === 'smoke') continue;
+      const id = `app:${encodeURIComponent(snapshot.name)}:test:${encodeURIComponent(declaration.id)}`;
+      cases.set(id, { declaration, metadata: {
+        id, caseId: declaration.id, appName: snapshot.name, appVersion: snapshot.version, source,
+        revision: createHash('sha256').update(JSON.stringify({ source, version: snapshot.version, catalog: loaded!.revisions[declaration.id] })).digest('hex'),
+        name: declaration.name, purpose: declaration.purpose, level: declaration.level, runner: declaration.runner,
+        expected: declaration.expected, prerequisites: [...new Set([`runner:${declaration.runner.kind}`, ...declaration.prerequisites])],
+        sideEffects: declaration.sideEffects, isolation: declaration.isolation, limits: declaration.limits,
+        installationEligible: false, method: 'LOCAL', path: declaration.runner.files.join(', '), auth: 'none', runnable: false,
+      } });
+    }
+    sealExecutableCases(packageDir, cases, this.verifiedCapabilities);
+    this.registrations.set(snapshot.name, { record: snapshot, source, cases });
+  }
+
+  /** @description Remove executable registrations before asynchronous deactivation begins. */
+  unregister(appName: string): void { this.registrations.delete(appName); }
+
+  /** @description Prerequisites the runner image has been verified to satisfy, beyond the closed Node profile. */
+  get capabilities(): ReadonlySet<string> { return this.verifiedCapabilities; }
+
+  /** @description Adopt a verified capability set and re-seal every registration so admission and sealing agree.
+   * @param values Verified prerequisite names from the sandbox probe. @returns Nothing. */
+  refreshCapabilities(values: Iterable<string>): void {
+    this.verifiedCapabilities = new Set([...NODE_RUNNER_CAPABILITIES, ...values]);
+    for (const entry of [...this.registrations.values()]) this.register(entry.record);
+  }
+
+  /** @description Report registration drift only for currently visible installed applications. */
+  inventory(visibleApps: ReadonlyMap<string, string>): PackageTestInventory[] {
+    return [...this.registrations].filter(([name]) => visibleApps.has(name)).map(([name, entry]) => {
+      const registered = new Set([...entry.cases.values()].flatMap(item => {
+        const runner = item.metadata.runner;
+        return runner.kind !== 'smoke' && runner.scope === 'package' ? runner.files : [];
+      }));
+      return inventoryPackageTests(name, path.dirname(path.resolve(entry.record.manifestPath)), registered);
+    });
+  }
+
+  /** @description Return only active, caller-visible package cases and current prerequisites. */
+  list(visibleApps: ReadonlyMap<string, string>, auth: InstalledTestAuth = {}): InstalledAppTestCase[] {
+    const cases: InstalledAppTestCase[] = [];
+    for (const [name, registration] of this.registrations) {
+      if (!visibleApps.has(name)) continue;
+      for (const entry of registration.cases.values()) {
+        const reason = pendingReason(entry, auth, this.verifiedCapabilities);
+        cases.push({ ...structuredClone(entry.metadata), runnable: !reason,
+          ...(reason ? { pendingReason: reason } : {}) });
+      }
+    }
+    this.verifyLazily(cases);
+    return cases.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /** @description Surface smoke-only, undeclared and group coverage without duplicating member cases. */
+  apps(visibleApps: ReadonlyMap<string, string>): Array<{
+    name: string; displayName: string; version: string; source: string; coverage: 'catalog' | 'smoke-only' | 'not-declared' | 'members'; caseIds: string[];
+  }> {
+    return [...this.registrations].filter(([name]) => visibleApps.has(name)).map(([name, entry]) => {
+      const group = entry.record.manifest.kind === 'group';
+      const caseIds = [...new Set([...entry.cases.keys(), ...(group
+        ? requiredAppDependencies(entry.record.manifest).filter(member => visibleApps.has(member))
+          .flatMap(member => [...(this.registrations.get(member)?.cases.keys() ?? [])]) : [])])];
+      return { name, displayName: visibleApps.get(name) || name, version: entry.record.version, source: entry.source,
+        coverage: entry.record.manifest.testing ? 'catalog' : group ? 'members' : caseIds.length ? 'smoke-only' : 'not-declared', caseIds };
+    });
+  }
+
+  /**
+   * @description Re-resolve the active registration immediately before execution and use the
+   * existing verifier for its exact one smoke. Missing/changed cases never run a cached executor.
+   */
+  async run(
+    expected: InstalledAppTestCase,
+    visibleApps: ReadonlyMap<string, string>,
+    options: InstalledTestRunOptions,
+  ): Promise<InstalledAppTestResult> {
+    const registration = this.registrations.get(expected.appName);
+    const entry = registration?.cases.get(expected.id);
+    const pending = (error: string): InstalledAppTestResult => ({ name: expected.name, path: expected.path,
+      status: 'pending', durationMs: 0, cleanupVerified: true, error });
+    if (!visibleApps.has(expected.appName) || !entry || !registration) return pending('Case is no longer available. Refresh the catalog.');
+    if (entry.metadata.source !== expected.source || entry.metadata.appVersion !== expected.appVersion || entry.metadata.revision !== expected.revision) {
+      return pending('Case changed after selection. Refresh the catalog.');
+    }
+    const userPrerequisite = entry.smoke && userSmokePrerequisite(entry.smoke, options.authorization);
+    if (userPrerequisite?.status === 'failed') return { name: expected.name, path: expected.path, durationMs: 0, ...userPrerequisite };
+    const reason = pendingReason(entry, options, this.verifiedCapabilities);
+    if (reason) return pending(reason);
+    if (!entry.smoke) return this.runSuite(entry.metadata, registration, options);
+    const result = await verifyAppSmokes([{ requestedName: expected.appName, record: {
+      ...registration.record, manifest: { ...registration.record.manifest, smoke: [entry.smoke] },
+    } }], { ...options, timeoutMs: Math.min(options.timeoutMs ?? 15000, entry.metadata.limits.timeoutMs) });
+    if (this.registrations.get(expected.appName) !== registration) return pending('Application changed during execution. Run the current case again.');
+    return result.apps[0].smokes[0];
+  }
+
+  /** @description Stage current matching bytes without inheriting API credentials or writable mounts. */
+  private async runSuite(expected: InstalledAppTestCase, registration: Registration, options: InstalledTestRunOptions): Promise<InstalledAppTestResult> {
+    const pending = (error: string): InstalledAppTestResult => ({ name: expected.name, path: expected.path, status: 'pending', durationMs: 0, cleanupVerified: true, error });
+    const runner = expected.runner;
+    const recipe = runner.kind === 'smoke' ? undefined : RUNNER_PROFILES[runner.kind];
+    if (!options.revalidate || !recipe || runner.kind === 'smoke' || runner.scope !== 'package') return pending('Current execution authority is required.');
+    const packageDir = path.dirname(path.resolve(registration.record.manifestPath));
+    try {
+      const snapshot = snapshotPackageTests(packageDir);
+      if (snapshot.revision !== expected.executionRevision) return pending('Package source changed after selection. Refresh the catalog.');
+      return await executePackageTest({ name: expected.name, path: expected.path, suiteFiles: runner.files,
+        profile: recipe.profile,
+        timeoutMs: Math.min(options.timeoutMs ?? expected.limits.timeoutMs, expected.limits.timeoutMs), maxMemoryMb: expected.limits.maxMemoryMb,
+        snapshot, snapshotNow: () => snapshotPackageTests(packageDir), image: this.runnerImage, sandbox: this.sandbox, signal: options.signal, executionId: options.executionId,
+        current: async () => this.registrations.get(expected.appName) === registration && await options.revalidate!() });
+    } catch { return pending('Current package source is unavailable.'); }
+  }
+}

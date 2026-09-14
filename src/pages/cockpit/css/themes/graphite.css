@@ -1,5 +1,7 @@
 /* ═══ Graphite — Neutral Steel Glass ═══ */
 [data-theme="graphite"] {
+  /* Shared controls use the palette's readable accent ink and native color scheme. */
+  --text-on-accent: #111827;
   --bg-primary: #0c0d10;
   --bg-secondary: rgba(19, 21, 26, 0.88);
   --bg-tertiary: rgba(31, 35, 42, 0.74);
@@ -30,3 +32,6 @@
   --card-shadow: 0 3px 10px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255,255,255,0.04);
   --depth-shadow: 0 26px 80px rgba(0, 0, 0, 0.56);
 }
+
+/* Native controls follow this palette even when a page declares a root default. */
+html[data-theme="graphite"] { color-scheme: dark; }

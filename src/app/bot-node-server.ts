@@ -28,6 +28,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: Token Chase replay remains tool-free and now explicitly disables auto-approval so future tool additions cannot silently inherit approval authority.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Forward the signed providerConfigRequired authority marker into swarm execution so missing provider records are distinguishable from intentional legacy dispatches and fail closed before task creation.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Forward the validated app/capability/pattern prompt carrier from /api/swarm-execute into the execution envelope; malformed trusted configuration now fails closed at the HTTP boundary.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com | Capture protected execution authority after signed replay verification and refuse unbound Token Chase replay for protected bots.
  */
 
 /**
@@ -86,6 +87,8 @@ import {
   prohibitUnsignedMeshExecution,
 } from './bot-node-delegation';
 import { runBotNodeExecutionWithSystemIdentity } from './bot-node-request-identity';
+import { createProtectedBotDispatchContext } from './bot-node-protected-context';
+import { assertBotNodeApplicationTransport } from './bot-node-application-authorization';
 
 const logger = createChildLogger({ module: 'bot-node-server' });
 
@@ -305,6 +308,7 @@ async function start(): Promise<void> {
     '/api/swarm-execute',
     authorizeBotNodeExecutionCall,
     delegationRuntime.authorize,
+    createProtectedBotDispatchContext(),
     executeEntitlementGate,
     async (req, res) => {
     const startedAt = Date.now();
@@ -404,10 +408,9 @@ async function start(): Promise<void> {
       messageType: 'request' as const,
     };
     try {
-      // Bot-node HTTP execute is background work (no request identity middleware on this
-      // process). Run under the SYSTEM sentinel so recordCost's chat_tasks write (FORCE-RLS)
-      // keeps operator visibility once OSHAL_DB_GUC_STRICT denies the identity-less case —
-      // matching the SwarmAgentWorker path, which already runs SYSTEM.
+      // Legacy background execution retains explicit system context. The shared runtime
+      // boundary overrides it with the exact nonoperator caller for protected work;
+      // cost bookkeeping independently establishes its narrow system context.
       const result = await runBotNodeExecutionWithSystemIdentity(() => executionHandler(envelope));
       const durationMs = Date.now() - startedAt;
       res.json(buildBotNodeHttpResponse(result, {
@@ -441,6 +444,8 @@ async function start(): Promise<void> {
   // tools. Cost is recorded under a `::replay` task id so it is attributable
   // without polluting the baseline task's chat_tasks rollup.
   app.post('/api/token-chase/replay-call', authorizeBotNodeCall, async (req, res) => {
+    try { await assertBotNodeApplicationTransport(pool, agentId, agentId); }
+    catch { res.status(403).json({ success: false, error: 'authorization_replay_unavailable' }); return; }
     const body = req.body as { history?: unknown[]; systemPrompt?: string | null; taskId?: string; seq?: number; byoLlmConnection?: { baseUrl?: string; apiKey?: string; model?: string }; variantLabel?: string };
     // Live attribution defaults, pinned once per request so a mid-request provider
     // switch cannot mix two configs inside one response.

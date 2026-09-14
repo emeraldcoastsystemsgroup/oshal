@@ -4,6 +4,8 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
 
 ## Building app packages (the app store)
 
+- [reusable-components.md](./reusable-components.md) — existing tools, renderers,
+  themes and integration contracts to compose before writing another implementation.
 - [authoring-app-packages.md](./authoring-app-packages.md) — how to author, validate, and
   publish an installable, hot-loadable **app package** (ADR-085): the `oshal-app.yaml`
   definition file, the folder layout, the dependency model, and the `oshal-app` CLI helper
@@ -68,6 +70,12 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
   — LinkedIn content assistant requirements (the full orchestrated flow behind `?app=social`).
 - [unreal-mcp-worker-next-steps.md](./unreal-mcp-worker-next-steps.md) — Unreal Engine MCP
   worker (ADR-051) next steps.
+- [marketing-suite-spec.md](./marketing-suite-spec.md) — **SPEC (partly built):** the marketing
+  suite end to end — position, plan, a budget held as a finance project, produce, publish across
+  social, email and SMS, capture, nurture, measure, reallocate. As-built table checked against code,
+  capability map, architecture (store packages plus an ADR-141 group), the send gate chain, flows, a
+  phased roadmap with done-when, free and paid options, compliance guards, core dependencies and the
+  operator decisions. Work items: `marketing-engine/BACKLOG.md` in the store repo.
 
 ## Native-migration plans (legacy standalone apps → native OSHAL)
 

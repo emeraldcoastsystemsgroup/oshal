@@ -48,7 +48,61 @@ fell back to demo/local, or async) / **gap** (capability missing — a finding) 
 
 API: `GET /api/test-lab/catalog`, `POST /api/test-lab/run` (both `requiresAuth`).
 
+### Artifact exchange and Jarvis registrations
+
+The existing catalog includes **Artifact picker and tool metadata** (`artifact-discovery`, Tools)
+and **Jarvis artifact target and confirmation** (`jarvis-artifact-handoff`, Jarvis). Each card's
+**Regression suites** section identifies its unit, integration and browser test files. The paths
+remain in the existing Vitest tree so the normal local test run continues to discover them.
+
+The discovery scenario reads the active source/destination catalogs and validates the real YAML
+tool load. The Jarvis scenario mints a short-lived handle over a Test Lab sample visual, checks the
+actual model's named email target and ambiguous request in separate Lab chat sessions, and checks
+that an unconfirmed email request returns 428. It never dispatches the proposed destination.
+It creates Lab chat turns and consumes model usage when run; unavailable prerequisites remain
+visible as degraded/gap rather than passing. Browser selection and replay behavior are covered by
+the linked browser suites, not claimed by these server-side probes.
+
+Run the associated isolated regression suites locally with `npm run test:artifacts`. Registration,
+HTTP assertions and negative cases are themselves covered by
+`tests/unit/test-lab-artifact-registration.spec.ts`. Registration in source does not claim that the
+updated catalog or its live-model scenarios have already run on the deployed instance.
+
 ---
+
+## Application-installed smoke cases
+
+Active applications register their manifest `smoke:` declarations and optional
+[versioned suite catalog](testing/package-test-catalog.md) through the application
+loader. Reload and update replace that app's cases; deactivation and uninstall retract them. A fresh
+controller rebuilds the inventory through normal app loading. Each case carries its owning app,
+installed version, source/content revision, level and execution prerequisites. The catalog also identifies
+apps without declarations and groups whose coverage belongs to their members.
+
+The Lab displays only apps available to the caller and checks access again before each execution.
+Eligible GET/HEAD cases run through the existing installation smoke verifier. Service-authenticated
+checks require an operator; PAT checks require the caller's PAT. AI and mutating cases remain
+registered but pending a suitable approved runner. Registration itself does not execute tests.
+
+The **Installed application test registration** card (`installed-app-tests`) checks catalog identity
+and prerequisites without running application smokes. **Connector sign-in callback boundary**
+(`connector-oauth-boundary`) probes anonymous refusal paths without connecting a provider.
+**Multi-store discovery** (`multi-store-discovery`) reads registry status and qualified package
+identities without installing packages or changing trust. Their linked local suites run using
+`npm run test:platform-readiness`.
+
+Eligible offline package Node suites now use a disposable runner with Run/Cancel controls and
+durable versioned history. See [package test execution](testing/package-test-execution.md) for
+supported prerequisites, current-user authorization, isolation and local regression commands.
+Unsupported runners remain pending; further runner fixtures and remaining package adoption are in
+the [application registration backlog](backlog/app-test-lab-registration.md).
+Source registration and fixture tests do not establish deployed provider or production results.
+
+The autonomous-run cards also register isolated nightly regressions, manifest bot initialization,
+first-run setup, specialist facts and Jarvis briefing preferences. Access administration includes
+principal inventory, Users, root protection and scoped audit history. Each card's linked source suites
+have a matching command in [tests/README.md](../tests/README.md); browser probes only perform their
+documented read steps and never execute arbitrary host commands.
 
 ## Part 2 — Nightly golden loop
 

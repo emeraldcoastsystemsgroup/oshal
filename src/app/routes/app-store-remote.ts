@@ -27,9 +27,12 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Default the store to the PUBLIC repo. This route defaulted to the private trunk while scripts/oshal-install.sh downloaded the public snapshot — one product, two stores, and the one the cockpit asked for is unreadable without a token, so every signed-in user without OSHAL_STORE_TOKEN saw an empty Discover shelf and an honest-but-useless "not anonymously readable". The private trunk is now the OVERRIDE (set OSHAL_STORE_REPO on a box that should read it), not the default.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: isolate the catalog-pinned installer child from controller/database/session/provider credentials; forward only OS/runtime, proxy/TLS settings, non-interactive Git controls, and the exact resolved store token.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: retain only canonical audit pointers in the registry, refuse installable rows without one, and pass the fail-closed audit mode into the isolated installer.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Hot-load the required dependencies the installer pulled from the store before the package (shared loadInstalledPackage), so an install-remote is live without the next boot; a required dependency that fails to load keeps the package unloaded.
  */
 import path from 'path';
 import { execFile } from 'child_process';
+import { replacementFor, SOURCE_CONFLICT_EXIT, type SourceReplacement } from './app-install-source';
+import { loadInstalledPackage } from './app-install-dependencies';
 import type { Router, Request, Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getCaller, requiresOperator } from '@/shared/middleware/authz';
@@ -213,11 +216,12 @@ export async function fetchStoreCatalog(refresh = false): Promise<StoreCatalog> 
 /** What install-remote needs from the app layer — SwarmAppService.loadApp, injected. */
 export interface InstallRemoteDeps {
   loadApp: (manifestPath: string, scopeMeta?: { ownerSub?: string | null }) => Promise<unknown>;
+  deployedAppsDir?: string;
 }
 
 type InstallResult =
   | { ok: true; name: string; log: string }
-  | { ok: false; status: number; error: string; log?: string };
+  | { ok: false; status: number; error: string; log?: string; replacement?: SourceReplacement };
 
 /**
  * @description One-call install from the store catalog: resolve the package IN the catalog
@@ -250,13 +254,16 @@ export async function installRemoteApp(name: string, ownerSub: string | null, de
   if (!entry.source || !/^https:\/\/github\.com\//.test(entry.source.url)) {
     return { ok: false, status: 409, error: `"${name}" has no resolvable GitHub source in the catalog` };
   }
+  const deployedDir = deps.deployedAppsDir || DEPLOYED_APPS_DIR;
+  const replacement = replacementFor(deployedDir, name, { repo: entry.source.url });
+  if (replacement) return { ok: false, status: 409, error: 'Source replacement requires review in App Loader.', replacement };
   logger.info({ name, repo: entry.source.url, ref: entry.source.ref }, 'install-remote: installing from store');
   const token = resolveStoreToken();
   const auditMode = resolvePackageAuditMode();
   const run = await new Promise<{ code: number; output: string }>((resolve) => {
     execFile(
       process.execPath,
-      [path.join(process.cwd(), 'scripts', 'oshal-app.js'), 'install', name, '--repo', entry.source!.url, '--ref', entry.source!.ref, '--dest', DEPLOYED_APPS_DIR],
+      [path.join(process.cwd(), 'scripts', 'oshal-app.js'), 'install', name, '--repo', entry.source!.url, '--ref', entry.source!.ref, '--dest', deployedDir],
       {
         cwd: process.cwd(),
         timeout: 180_000,
@@ -276,20 +283,14 @@ export async function installRemoteApp(name: string, ownerSub: string | null, de
   const log = installerLogTail(run.output, token);
   if (run.code !== 0) {
     logger.error({ name, code: run.code, log }, 'install-remote: installer failed');
-    return { ok: false, status: 502, error: 'install failed — see log', log };
+    return { ok: false, status: run.code === SOURCE_CONFLICT_EXIT ? 409 : 502, error: 'install failed — see log', log };
   }
-  try {
-    await deps.loadApp(path.join(DEPLOYED_APPS_DIR, name, 'oshal-app.yaml'), { ownerSub });
-  } catch (err) {
-    logger.error({ err, name }, 'install-remote: installed on disk but hot-load failed');
-    return {
-      ok: false,
-      status: 500,
-      error: `installed on disk but hot-load failed: ${err instanceof Error ? err.message : String(err)}`,
-      log,
-    };
+  const loaded = await loadInstalledPackage(deployedDir, name, (manifestPath) => deps.loadApp(manifestPath, { ownerSub }));
+  if (!loaded.ok) {
+    logger.error({ name, error: loaded.error }, 'install-remote: installed on disk but not loaded');
+    return { ok: false, status: 500, error: loaded.error, log };
   }
-  logger.info({ name }, 'install-remote: installed + hot-loaded');
+  logger.info({ name, dependencies: loaded.dependencies.loaded }, 'install-remote: installed + hot-loaded');
   return { ok: true, name, log };
 }
 
@@ -320,7 +321,7 @@ export function registerAppStoreRemoteRoutes(router: Router, deps: InstallRemote
     try {
       const result = await installRemoteApp(name, getCaller(req).sub ?? null, deps);
       if (!result.ok) {
-        res.status(result.status).json({ error: result.error, log: result.log });
+        res.status(result.status).json({ error: result.error, log: result.log, replacement: result.replacement });
         return;
       }
       res.status(201).json({ installed: true, name: result.name, log: result.log });

@@ -4,10 +4,12 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 2: per-heard-person consent gate. Modeling is default-OFF: only the owner's own voice (implicit) and profiles whose LATEST transcript consent is 'granted' (and not a minor) are enriched. Recording a 'declined' stops future accretion AND purges the already-derived dossier for that profile.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 3: a decline also purges that person's ambient-recall vector chunks so the semantic leg honors consent like every other derived store.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { purgeChunksForProfile } from './projection-ledger';
 
 const logger = createChildLogger({ module: 'person-model-consent' });
 
@@ -138,4 +140,6 @@ export async function purgeDerivedForProfile(pool: Pool, ownerSub: string, profi
       WHERE owner_sub = $1 AND (profile_from_id = $2 OR profile_to_id = $2 OR from_ref = $3 OR to_ref = $3)`,
     [ownerSub, profileId, `person:${profileId}`],
   );
+  const chunks = await purgeChunksForProfile(pool, ownerSub, profileId);
+  logger.info({ operation: 'purgeDerivedForProfile', chunks }, 'derived person-model rows purged for profile');
 }

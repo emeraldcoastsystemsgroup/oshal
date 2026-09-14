@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Production guard for the CRM DigitalOcean PostgreSQL 18 lifecycle: URL/CA/topology validation, guarded launcher environment isolation, and the real pinned PG18 one-shot bootstrap/redeploy/retry proof (gated by OSHAL_RUN_PG18_INTEGRATION=1).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Align the writable-CA fixture with the launcher's path-component walker (0666 trips the component guard first) and add a 0640 case so the specific 0600-or-0644 mode guard stays covered.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Permit explicit ADMIN convergence only inside the superuser branch; preserve managed creator membership guards.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -157,7 +158,11 @@ describe('PostgreSQL 18 role and ownership contract', () => {
   it('sets PG18 membership options before ownership and skips linked/extension sequences', () => {
     expect(sql).toContain('GRANT oshal_app TO CURRENT_USER WITH SET TRUE, INHERIT TRUE');
     expect(sql).toContain('GRANT oshal_bot TO CURRENT_USER WITH SET FALSE, INHERIT FALSE');
-    expect(sql).not.toMatch(/GRANT\s+oshal_(?:app|bot).*WITH ADMIN TRUE/);
+    const membershipBlock = sql.match(/DO \$runtime_membership\$([\s\S]*?)\$runtime_membership\$;/)?.[1];
+    expect(membershipBlock).toContain('IF (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) THEN');
+    expect(membershipBlock).toContain('GRANT oshal_app TO CURRENT_USER WITH ADMIN TRUE');
+    expect(membershipBlock).toContain('GRANT oshal_bot TO CURRENT_USER WITH ADMIN TRUE');
+    expect(sql.replace(/DO \$runtime_membership\$[\s\S]*?\$runtime_membership\$;/, '')).not.toMatch(/GRANT\s+oshal_(?:app|bot).*WITH ADMIN TRUE/);
     expect(sql.indexOf('WITH SET TRUE, INHERIT TRUE')).toBeLessThan(sql.indexOf("ALTER TABLE public.%I OWNER TO oshal_app"));
     expect(sql.indexOf("ALTER TABLE public.%I OWNER TO oshal_app")).toBeLessThan(sql.indexOf("ALTER SEQUENCE public.%I OWNER TO oshal_app"));
     expect(sql).toContain("d.deptype IN ('a', 'i', 'e')");

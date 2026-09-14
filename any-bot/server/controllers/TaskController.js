@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 audit: capture and revalidate direct hosted-provider capabilities at request and provider boundaries.
  * 14 | maintainer@emeraldcoastsystemsgroup.com  | SEC-05 closure: expose owner-filtered task pagination for authenticated object routes.
  * 15 | maintainer@emeraldcoastsystemsgroup.com  | Bind the explicit tool-less path to an empty tool allowlist so bypassing the agentic loop cannot advertise or invoke registry tools.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com  | Revalidate protected remote reasoning before hosted inference and before releasing its response through a trusted function port.
  */
 
 /**
@@ -404,11 +405,12 @@ class TaskController {
 
       let systemPrompt = `You are an OSHAL agent, a helpful AI coding assistant with full Cline capabilities. You have access to ${availableTools.length} tools including file operations and DevOps CLI tools. The current task is: ${task.text}`;
 
-      if (global.PLANE_CONTEXT) {
+      if (global.PLANE_CONTEXT && typeof options.assertCurrentAuthorization !== 'function') {
         systemPrompt += global.PLANE_CONTEXT;
       }
 
       assertDispatchCapabilitiesCurrent(this.toolRegistry, dispatchCapabilities);
+      if (typeof options.assertCurrentAuthorization === 'function') await options.assertCurrentAuthorization();
       const response = await activeLlm.generateResponse(formattedMessages, {
         systemPrompt: systemPrompt,
         maxTokens: 4096,
@@ -418,6 +420,7 @@ class TaskController {
         enforceToolBoundary: true,
         authorizedScopes: options.authorizedScopes,
       });
+      if (typeof options.assertCurrentAuthorization === 'function') await options.assertCurrentAuthorization();
       const finalText = typeof (response.content || response.text) === 'string'
         ? String(response.content || response.text).trim() : '';
       if (!finalText) {

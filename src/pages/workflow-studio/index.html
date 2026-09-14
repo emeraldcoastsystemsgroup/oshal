@@ -6,10 +6,14 @@
   1 | maintainer@emeraldcoastsystemsgroup.com   | Added workflow-studio WYSIWYG page for design-time swarm authoring
   2 | maintainer@emeraldcoastsystemsgroup.com   | True n8n IA: full-bleed canvas, slim left icon rail with palette/files flyouts, the inspector is a right overlay that appears on node select (no permanent boxes), zoom controls bottom-left, floating chat assistant.
   3 | maintainer@emeraldcoastsystemsgroup.com   | Runs panel: rail button + left flyout listing past graph runs (GET /api/workflow-studio/runs) with a click-through per-step run inspector (status, timing, agent, redacted input/output). Own module workflow-studio-runs.js.
+  4 | maintainer@emeraldcoastsystemsgroup.com | Follow the shared portal theme live without replacing page content.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
 <head>
+  <!-- Shared portal palette: resolve before paint and follow the parent or saved choice live. -->
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+  <script src="/shared/ui/js/surface-theme.js"></script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Workflow Studio</title>
@@ -19,35 +23,12 @@
     changes — the parent ribbon's <html data-theme> when embedded, and the cockpit-theme
     storage key when it changes in another tab. We never write these token files; we only read them.
   -->
-  <script>
-    (() => {
-      const THEMES = ['midnight','daylight','ocean','sakura','forest','gray','black','light-blue','aurora','graphite','amber'];
-      const apply = (t) => { if (t && THEMES.includes(t)) document.documentElement.setAttribute('data-theme', t); };
-      const mirror = () => {
-        try { const p = window.parent; if (p && p !== window) { const pt = p.document.documentElement.getAttribute('data-theme'); if (pt) { apply(pt); return; } } } catch (_) {}
-        try { apply(localStorage.getItem('cockpit-theme')); } catch (_) {}
-      };
-      mirror();
-      window.addEventListener('storage', (e) => { if (e.key === 'cockpit-theme') setTimeout(mirror, 30); });
-      try { const p = window.parent; if (p && p !== window) new MutationObserver(mirror).observe(p.document.documentElement, { attributes: true, attributeFilter: ['data-theme'] }); } catch (_) {}
-    })();
-  </script>
+
   <!--
     Framework theme token sets — each file defines --bg-primary / --accent-primary / --text-primary / …
     under its [data-theme="…"] selector. workflow-studio.css consumes these via var(); loading them here
     is what makes the studio adopt the operator's chosen theme instead of hardcoded fallbacks.
   -->
-  <link rel="stylesheet" href="/cockpit/css/themes/midnight.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/daylight.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/ocean.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/sakura.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/forest.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/gray.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/black.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/light-blue.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/aurora.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/graphite.css">
-  <link rel="stylesheet" href="/cockpit/css/themes/amber.css">
   <!-- Studio-owned styles last so local overrides win over the inherited theme tokens. -->
   <link rel="stylesheet" href="/workflow-studio/workflow-studio.css">
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />

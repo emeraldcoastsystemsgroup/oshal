@@ -1,3 +1,9 @@
+-- CHANGE LOG
+-- -----------------------------------------------------------------------------
+-- SEQ                 | AUTHOR                      | DESCRIPTION
+-- -----------------------------------------------------------------------------
+-- 1 | maintainer@emeraldcoastsystemsgroup.com | Converge superuser-created runtime role ADMIN membership without regranting it from managed non-superuser creators.
+-- 2 | maintainer@emeraldcoastsystemsgroup.com | Reset legacy app table and sequence default grants before establishing the exact runtime privilege allowlist.
 -- ===========================================================================
 -- app-role-provisioning.sql  (ADR-076)
 --
@@ -69,10 +75,19 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC, oshal_bot;
 GRANT USAGE ON SCHEMA public TO oshal_app, oshal_bot;
 GRANT CREATE ON SCHEMA public TO oshal_app;
 
--- PostgreSQL 18 records ADMIN, SET, and INHERIT independently. CREATE ROLE
--- gives its CREATEROLE creator ADMIN TRUE; PG18 rejects re-granting ADMIN TRUE
--- to that same grantor, so these statements preserve ADMIN while explicitly
--- converging SET/INHERIT. The wrapper proves all three options exactly.
+-- Only non-superuser CREATEROLE creators receive ADMIN TRUE automatically.
+-- Local superuser-created roles need that option established explicitly.
+-- Managed creators must preserve their existing ADMIN grant: PostgreSQL rejects
+-- granting ADMIN back to their own grantor. The wrapper proves all options.
+DO $runtime_membership$
+BEGIN
+  IF (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) THEN
+    GRANT oshal_app TO CURRENT_USER WITH ADMIN TRUE;
+    GRANT oshal_bot TO CURRENT_USER WITH ADMIN TRUE;
+  END IF;
+END
+$runtime_membership$;
+
 -- doadmin must inherit app-owner privileges because migrations and the RLS
 -- applier run without SET ROLE; bot privileges must never be inherited.
 GRANT oshal_app TO CURRENT_USER WITH SET TRUE, INHERIT TRUE;
@@ -163,9 +178,9 @@ $$;
 -- Future migration-owned objects. Without FOR ROLE this correctly targets
 -- the connected bootstrap role on local Postgres and DigitalOcean alike.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC, oshal_bot;
+  REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC, oshal_bot, oshal_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC, oshal_bot;
+  REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC, oshal_bot, oshal_app;
 ALTER DEFAULT PRIVILEGES
   REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public

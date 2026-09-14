@@ -1,0 +1,98 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Keep Jarvis compact, readable and reachable in full pages and embedded Home panels.
+ */
+
+.jarvis-dashboard { background: var(--bg-primary); }
+.jarvis-dashboard .nodefield,
+.jarvis-dashboard .node-tip,
+.jarvis-dashboard .canvas-wrap::after { display: none; }
+.jarvis-dashboard .response-stage[data-state="idle"] { visibility: hidden; }
+.jarvis-dashboard .discussion-drawer:not(.open) { visibility: hidden; box-shadow: none; }
+.jarvis-dashboard .layout { max-width: 1140px; gap: 24px; padding: 24px; }
+.jarvis-dashboard .main { padding-top: 0; }
+.jarvis-dashboard .hero { align-items: stretch; text-align: left; gap: 12px; }
+.dashboard-heading { display: flex; gap: 12px; align-items: center; }
+.jarvis-dashboard .canvas-wrap { width: 44px; height: 44px; margin: 0; flex: none; }
+.dashboard-title { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; }
+.jarvis-dashboard .eyebrow { color: var(--text-primary); font-size: 18px; letter-spacing: -.02em; text-transform: none; text-shadow: none; }
+.assistant-state { font-size: 12px; font-weight: 600; color: var(--text-secondary); border: 1px solid var(--border-color); padding: 4px 9px; border-radius: 999px; }
+.assistant-state[data-state="listening"],
+.assistant-state[data-state="speaking"],
+.assistant-state[data-state="thinking"] { color: var(--accent-primary); background: var(--accent-bg); }
+.jarvis-dashboard .status { font-size: 13px; line-height: 1.5; min-height: 0; overflow-wrap: anywhere; }
+.jarvis-dashboard .typer { display: flex; width: 100%; max-width: none; margin: 2px 0 0; gap: 8px; }
+.jarvis-dashboard .typer input { min-height: 48px; border-radius: 12px; background: var(--bg-secondary); font-size: 15px; padding: 12px; }
+.jarvis-dashboard .typer button { min-height: 44px; padding: 0 18px; border-radius: 12px; color: var(--text-on-accent, #fff); }
+.jarvis-dashboard .controls { display: flex; justify-content: flex-start; flex-wrap: wrap; gap: 8px; margin: 0; align-items: flex-start; }
+.jarvis-dashboard .mic { min-height: 40px; padding: 8px 12px; font-size: 13px; box-shadow: none; color: var(--text-on-accent, #fff); }
+.jarvis-dashboard .ctl { min-height: 36px; font-size: 12px; padding: 7px 11px; border-radius: 9px; background: var(--bg-secondary); color: var(--text-primary); text-decoration: none; }
+.dashboard-options { flex: 1; min-width: 82px; }
+.dashboard-options > summary { width: max-content; cursor: pointer; list-style: revert; }
+.dashboard-options[open] { flex-basis: 100%; }
+.dashboard-options-body { margin-top: 8px; padding: 12px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-secondary); }
+.jarvis-dashboard .ctlrow { justify-content: flex-start; margin: 0; }
+.jarvis-dashboard .attach-strip,
+.jarvis-dashboard .attach-menu { justify-content: flex-start; margin: 0; max-width: none; }
+.jarvis-dashboard .attach-strip:empty { display: none; }
+.jarvis-dashboard .attach-opt { padding: 7px 10px; min-height: 36px; border-radius: 9px; background: var(--bg-secondary); font-size: 12px; }
+.jarvis-dashboard .chips { justify-content: flex-start; margin: 0; }
+.jarvis-dashboard .chip { font-size: 12px; padding: 7px 10px; background: var(--bg-secondary); }
+.jarvis-dashboard .bubble { margin: 0; max-width: none; height: auto; min-height: 0; }
+.jarvis-dashboard .bubble:not(.has-copy) { display: none; }
+.jarvis-dashboard .bubble .you { white-space: normal; }
+.jarvis-dashboard .result-panel { width: 100%; margin: 4px 0 0; padding: 16px; background: var(--bg-secondary); box-shadow: none; border-radius: 12px; }
+.jarvis-dashboard .result-panel-head { font-size: 11px; }
+.jarvis-dashboard .rail { width: 320px; padding-top: 0; gap: 8px; top: 18px; }
+.jarvis-dashboard .rail .sect { margin: 8px 0 0; }
+.jarvis-dashboard .sect .t { color: var(--text-secondary); }
+.jarvis-dashboard .threads { max-height: 156px; overflow-y: auto; margin: 0; }
+.jarvis-dashboard .thread-item,
+.jarvis-dashboard .cc-row { background: var(--bg-secondary); box-shadow: none; }
+.jarvis-dashboard .shelf { max-height: 410px; overflow-y: auto; padding: 1px 2px 3px 0; gap: 8px; }
+.jarvis-dashboard .shelf-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dashboard-report { margin-left: auto; }
+.dashboard-task-group { border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); }
+.dashboard-group-summary { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 12px; cursor: pointer; list-style: none; }
+.dashboard-group-summary::before { content: '›'; font-size: 18px; line-height: 16px; }
+.dashboard-task-group[open] > summary::before { transform: rotate(90deg); }
+.dashboard-group-name { font-weight: 650; font-size: 13px; overflow-wrap: anywhere; }
+.dashboard-group-count { margin-left: auto; font-size: 12px; color: var(--text-secondary); }
+.dashboard-group-meta { flex-basis: 100%; padding-left: 14px; font-size: 11px; color: var(--text-secondary); }
+.dashboard-group-items { display: grid; gap: 4px; padding: 0 6px 6px; }
+.jarvis-dashboard .shelf-item { display: flex; padding: 0 4px 0 0; margin: 0; background: var(--bg-primary); box-shadow: none; }
+.jarvis-dashboard .shelf-item.read { opacity: 1; }
+.dashboard-task-open { display: flex; flex: 1; gap: 8px; align-items: center; min-width: 0; min-height: 44px; padding: 10px 8px; border: 0; color: var(--text-primary); background: transparent; text-align: left; font: inherit; cursor: pointer; }
+.jarvis-dashboard .si-label { white-space: normal; overflow-wrap: anywhere; font-size: 12px; }
+.jarvis-dashboard .si-when { font-size: 10px; }
+.jarvis-dashboard .si-x { min-width: 32px; min-height: 36px; font-size: 18px; border: 0; background: transparent; cursor: pointer; color: var(--text-secondary); opacity: 1; }
+.jarvis-dashboard :is(button,a,summary,input,[tabindex]):focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 3px; }
+.dashboard-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+
+/* Existing ambient controls remain functional in Options; dialogs keep their fixed viewport plane. */
+.jarvis-dashboard .ambient-mount,
+.jarvis-dashboard .jarvis-ambient,
+.jarvis-dashboard .jarvis-ambient__bar { position: static; inset: auto; }
+.jarvis-dashboard .jarvis-ambient__bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.jarvis-dashboard .jarvis-ambient__bar::before,
+.jarvis-dashboard .jarvis-ambient__bar::after { display: none; }
+.jarvis-dashboard .jarvis-ambient__state,
+.jarvis-dashboard .jarvis-ambient__settings-button { position: static; inset: auto; transform: none; }
+.jarvis-dashboard .jarvis-ambient__state { min-width: 0; max-width: 100%; }
+.jarvis-dashboard .jarvis-ambient__state strong { white-space: normal; }
+
+@media (max-width: 880px) {
+  .jarvis-dashboard .layout { flex-direction: column; padding: 16px; gap: 20px; }
+  .jarvis-dashboard .main, .jarvis-dashboard .rail { width: 100%; }
+  .jarvis-dashboard .rail { position: static; }
+  .jarvis-dashboard .shelf { max-height: 320px; }
+  .jarvis-dashboard .result-panel { padding: 12px; }
+}
+@media (max-width: 360px) {
+  .jarvis-dashboard .layout { padding: 12px; }
+  .jarvis-dashboard .controls { gap: 6px; }
+  .jarvis-dashboard .typer button { padding: 0 12px; }
+}

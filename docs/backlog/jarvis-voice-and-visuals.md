@@ -5,6 +5,7 @@
 - As-built reference: [Jarvis architecture and flow](../architecture/jarvis-architecture-and-flow.md)
 - Native background reference: [Jarvis native background wake word](../architecture/jarvis-native-background-wake.md)
 - Voice/privacy decision: [ADR-084](../adr/084-deterministic-speaker-diarization-and-voice-profiles.md)
+- Daily-page direction (2026-09-11): [compact Jarvis dashboard, grouped updates and context actions](jarvis-daily-dashboard.md). Its visual repair and layout work reuse this response/voice foundation.
 
 ## Shipped baseline
 

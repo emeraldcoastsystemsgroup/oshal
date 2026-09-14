@@ -73,6 +73,7 @@ highest-frequency fixes: stack half-up after a Docker engine restart → `bash s
 | [little-monsters](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/little-monsters) | Little Monsters K-12 study app — carved out to the oshal-applications store (ADR-085): install, user guide, runbook, support, school deployment live in the package. |
 | [operations/](./operations/README.md) | Support / SLA / incident posture. |
 | release/ | *Not in this repo* — the go-public SOP (publish, rotation, scrub, prune list) is internal-only and lives in the private archive. |
+| [releases/](./releases/README.md) | Dated implementation checkpoints, verification results and promotion status. |
 | [research/](./research/README.md) | Research notes (A2A vs mesh, node pools, product architecture). |
 | [runbooks/](./runbooks/README.md) | Operator runbooks — recovery procedures and feature bring-up. |
 | [saas/](./saas/README.md) | Public self-serve foundation. |

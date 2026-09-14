@@ -129,3 +129,40 @@ roadmap.
   live pose feedback (v3) is roadmap.
 - **Sim drone scan:** built, guarded (sim flight covered by `tests/unit/spatial-capture-plan.spec.ts`),
   sim-only. Real MAVLink media ingest is deferred.
+
+## Fly it: a scan as the drone simulation's world (spaces 0.8.0)
+
+A ready scan can leave Spaces as an **embodied hidden scene** — the shape the `embodied` package's
+`WorldSim` starts a world from (ADR-151 D3). It is plain data: a room box, axis-aligned obstacle boxes
+carved from the splat (metres, z-up, floor at 0), no surfaces or objects (the drone discovers the room
+with its own LiDAR sweeps), and a drone home on the clearest open floor.
+
+```bash
+# the scene as JSON (owner-scoped; the caller's own session or PAT)
+GET /api/spaces/scans/<id>/scene
+# query: up=auto|y|-y|z   scaleM=<n>   ceilingM=<n>   maxBoxes=<n>   minPoints=<n>   download=1
+# -> { scene: { name, room, obstacles, surfaces: [], objects: [], zones: [], appliances: [], basePark, droneHome },
+#      stats: { gaussians, up, upDetected, scale, unit, resolutionM, occupiedVoxels, boxes, floorClearanceM, clippedGaussians },
+#      scanId, title }
+GET /api/spaces/scenes        # the caller's ready scans as send-to artifacts (ADR-139 provides)
+```
+
+What the converter decides, and how to steer it:
+
+| Decision | Default | When to override |
+|---|---|---|
+| Up axis | `auto` — the denser 10 % Y-slab is the floor | A capture that comes out on its head: `up=-y` (3DGS/COLMAP exports) or `up=z` |
+| Scale | 1:1 for a LiDAR/photogrammetry import (`sourceKind: model`); otherwise fitted so the vertical extent is `ceilingM` (2.4 m) | Outdoor or object captures: pass `scaleM` — the ceiling fit is for rooms |
+| Extent | the 1st–99th percentile box; gaussians beyond it plus 5 % slack are dropped and counted | Nothing usually; `stats.clippedGaussians` says how many floaters went |
+| Covering | 5 cm voxels with ≥ 2 gaussians each, coarsened 10 → 15 → 20 → 30 cm until ≤ `maxBoxes` (1500) | A small scan that deserves finer boxes: raise `maxBoxes`; a noisy one: raise `minPoints` |
+
+Two facts about scanned geometry: a splat is a **surface**, so a scanned box is a hollow shell with
+solid faces (a drone cannot enter it, which is what a keep-out needs), and a scene never contains
+surfaces or objects to manipulate — those are the ADR-151 object layer, still open.
+
+In the tile, every ready scan carries a "Scene for drones" download and the shared 📤 chip. The chip
+offers the scene to any app whose manifest accepts
+`application/vnd.oshal.embodied-scene+json`; the embodied accept endpoint is the open half of the
+contract (see the [backlog entry](../BACKLOG.md#spaces--embodied-the-drone-simulation-starts-a-world-from-a-real-scan-2026-09-14)).
+Until it lands, a `WorldSim` built with `opts.scene` from the downloaded JSON is how to fly a scan in
+a test.

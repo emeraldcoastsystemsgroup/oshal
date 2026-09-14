@@ -28,38 +28,55 @@ The decisions below are the design. This section is the truth about the code.
   built-in row is seeded from `OSHAL_STORE_REPO` and cannot be deleted.
 - **D2** — the three host adapters, with credentials on `git --config-env`; `scripts/oshal-app.js`
   `buildStoreGitAuth` now attaches credentials for any https host, scoped to the repository origin.
-- **D3** — probe before save, typed-host confirmation, trust recorded. Revocation exists in the API
-  (`PATCH … { trustState: "revoked" }`); the page offers disable and remove, not a revoke button.
+- **D3** — probe before save, typed-host confirmation, trust recorded. App Loader offers explicit
+  **Revoke trust** and **Restore trust** controls. Restore requires typing the registry host;
+  revoked packages disappear from discovery and further installs are refused. Existing installed
+  applications remain available.
 - **D4** — `GET /api/swarm/registries/:slug/preview/:name`, reading the manifest at the pinned ref.
 - **D5** — audit posture is a tri-state (`audited | pending | none`) derived from the catalog
   binding's SHA; the all-zeros placeholder is `pending`, never audited. One function
   (`decideInstallAudit`) decides every install for both the preview and the install route. The
   built-in registry defers to `OSHAL_PACKAGE_AUDIT_MODE` exactly as `/api/swarm/apps/install-remote`
   does; a third-party registry refuses unaudited packages unless its `allow_unsigned` is on.
+- **D6** — cross-source replacement returns `409` with the observed previous repository, registry
+  (when known), commit, and incoming source. The preview requires a separate replacement checkbox;
+  its token binds those source identities and the exact previous provenance bytes. The installer
+  checks it again under a per-package filesystem lock immediately before replacement, so changed
+  provenance invalidates approval. Same-source upgrades continue normally. Historical stamps
+  without a registry use the repository identity; missing or corrupt stamps require explicit
+  unknown-source approval. Both the legacy API and CLI use the same guard. The CLI can repeat an
+  explicitly reviewed install with `--replace-source <token>`; parent approvals do not flow into
+  dependency installs, and existing dependencies are retained.
 - **D8** — `/app-loader`, `requiresAuth` at the page, `requiresOperator` on every API route, no
   guest mat. Reachable from the cockpit rail as an **operator-only** platform-tray entry (the same
   gate as Dead Letters), and by URL.
+- **P3 discovery** — operator `/applications` Discover reads the aggregate, labels every row with
+  its registry, preserves same-name alternatives even when a package is installed, and opens the
+  selected registry/package preview in App Loader. Member and guest catalog browsing retains the
+  public-store view. A broken source is reported alongside the available sources.
 - **D9** — keys Vault-first with an encrypted-column fallback (`secret_backend` records which);
   never returned by any read.
 - **D10** — https only, no embedded credentials, no redirect following, literal private/loopback/
   link-local/CGNAT addresses refused unless the registry opts in, per-registry catalog cache,
   per-registry fenced aggregation.
-- The single-store rail (`/api/swarm/apps/catalog`, `/install-remote`) is byte-identical to before
-  this work and its spec passes unchanged, so no feature flag was needed to preserve it; the
-  `APP_REGISTRIES_ENABLED` flag in the P0 row was not built.
+- The single-store catalog remains available. `/install-remote` preserves ordinary installs and
+  same-source upgrades; a source collision now returns `409` and directs the operator to the
+  App Loader preview. The `APP_REGISTRIES_ENABLED` flag in the P0 row was not built.
+- **Guards 1, 5, 7** — real HTTP requests exercise operator refusal, collision `409`, stale
+  confirmation and per-source catalog failure. Local Git installs prove successful explicit
+  replacement, normal upgrades and dependency preservation. Chromium drives actual Discover,
+  preview, replacement and revoke/restore controls against fixture-backed routes. Registered in
+  AI Test Lab as `multi-store-discovery`; its live step only reads metadata, while the linked
+  regression suites use disposable local stores.
 
 **Not built**
 
-- **D6** — a cross-registry name collision is shown in the UI but **not refused by the API**:
-  installing a name already installed from a different registry replaces it. Unreachable until a
-  second registry publishes a clashing name.
 - **D7** — dependencies resolve only within the origin registry (and fail closed when absent there);
   cross-registry resolution and its preview line are not built.
 - **D10** — hostnames are not resolved, so a public name that resolves to a private address is not
   refused. The code documents why validate-then-fetch DNS is a TOCTOU and names the durable fix.
-- **P3** — `/applications` Discover still reads the single built-in store, not the aggregate.
-- **Guards 1, 5, 6, 7** — the route-chain 403, collision 409, two-registry dependency, and
-  unreachable-registry aggregate specs.
+- **P3 provisioning** — first-run wizard trusted-store selection remains separate work.
+- **Guard 6** — the two-registry dependency-resolution spec belongs with D7.
 
 ---
 
@@ -276,8 +293,8 @@ drift check, and `deploy-store-package.sh` — the loader keeps bare names and t
 makes collisions explicit:
 
 - catalog rows are addressed as `<registry-slug>/<package-name>`; `install-remote` takes both.
-- the aggregated list groups duplicates into one row showing every registry that offers it, with a
-  source picker. It never picks for the admin.
+- the aggregated list shows a separate registry-labelled row for each source that offers the
+  package, with a duplicate-source badge. It never picks a registry for the admin.
 - installing a name already installed **from a different registry** is a `409` from the API and, in
   the UI, an explicit "replace *X* from *A* with *X* from *B*?" confirm. `.oshal-install.json`
   already records the source repo, so "which one is installed" is answerable, not guessed.
@@ -308,9 +325,9 @@ supply-chain substitution attack this whole design exists to prevent.
   the same flag, so a non-admin never sees it; also reachable by direct URL. *(Amended at build
   time: the original design kept it off the rail and linked it from `/applications`; the operator
   asked for it on the default cockpit.)*
-- `/applications` is **left alone**: it keeps installed-app admin and its Discover shelf. Pointing
-  Discover at the aggregated catalog is P3 and is not built — Discover still calls
-  `/api/swarm/apps/catalog`, the single built-in store.
+- `/applications` keeps installed-app administration and its Discover shelf. Operators browse
+  the aggregate and open a registry-qualified App Loader preview; non-operators retain the public
+  catalog without exposing the swarm's trusted private sources.
 
 **Page shape** — two stacked sections, one job each:
 

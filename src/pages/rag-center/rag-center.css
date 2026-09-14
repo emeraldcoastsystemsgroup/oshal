@@ -7,20 +7,20 @@
 2 | maintainer@emeraldcoastsystemsgroup.com   | Added status tones and monospace styling for live RAG Center inventory rendering
 3 | maintainer@emeraldcoastsystemsgroup.com   | Added operator-detail layouts, active states, and richer visual styling for result/document inspection
 4 | maintainer@emeraldcoastsystemsgroup.com   | Added vector-ops styling polish, runtime signal emphasis, and document triage controls
+5 | maintainer@emeraldcoastsystemsgroup.com | Use shared panel, hero, preview and text tokens without recursively redefining the framework palette.
 */
 
 :root {
   --bg-page: var(--bg-secondary);
-  --bg-panel: rgba(20, 26, 44, 0.86);
-  --bg-panel-strong: rgba(26, 33, 54, 0.96);
-  --border: rgba(148, 163, 184, 0.18);
-  --text-primary: var(--text-primary);
-  --text-muted: var(--text-secondary);
+  --bg-panel: var(--bg-card);
+  --bg-panel-strong: var(--bg-secondary);
+  --border: var(--border-color);
+  --rag-muted: var(--text-secondary);
   --accent: var(--status-success);
   --accent-strong: var(--status-success);
   --accent-blue: var(--accent-primary);
   --danger: var(--status-error);
-  --shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+  --shadow: var(--panel-shadow);
 }
 
 * {
@@ -59,9 +59,7 @@ body {
   align-items: flex-start;
   padding: 24px;
   border-radius: 28px;
-  background:
-    linear-gradient(145deg, rgba(20, 26, 44, 0.92), rgba(15, 20, 34, 0.94)),
-    radial-gradient(circle at top right, rgba(115, 224, 169, 0.12), transparent 38%);
+  background: var(--bg-panel);
 }
 
 .eyebrow,
@@ -71,7 +69,7 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--rag-muted);
 }
 
 .hero h1 {
@@ -83,7 +81,7 @@ body {
   max-width: 760px;
   margin: 0;
   line-height: 1.6;
-  color: var(--text-muted);
+  color: var(--rag-muted);
 }
 
 .hero-actions {
@@ -125,7 +123,7 @@ button:hover,
   border-radius: 18px;
   border: 1px solid var(--border);
   background: var(--bg-panel-strong);
-  color: var(--text-muted);
+  color: var(--rag-muted);
 }
 
 .status-banner[data-tone="success"] {
@@ -272,7 +270,7 @@ button:hover,
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 8px;
-  color: var(--text-muted);
+  color: var(--rag-muted);
   font-size: 12px;
 }
 
@@ -299,7 +297,7 @@ button:hover,
   padding: 18px;
   border-radius: 18px;
   border: 1px dashed var(--border);
-  color: var(--text-muted);
+  color: var(--rag-muted);
 }
 
 .detail-card,
@@ -320,7 +318,7 @@ button:hover,
 
 .detail-card p {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--rag-muted);
   line-height: 1.6;
 }
 
@@ -345,7 +343,7 @@ button:hover,
 }
 
 .detail-meta-row span:first-child {
-  color: var(--text-muted);
+  color: var(--rag-muted);
   text-transform: uppercase;
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -368,8 +366,8 @@ button:hover,
   margin-top: 14px;
   padding: 14px;
   border-radius: 16px;
-  background: rgba(8, 12, 24, 0.62);
-  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: var(--bg-panel-strong);
+  border: 1px solid var(--border);
   color: var(--text-primary);
   line-height: 1.65;
   white-space: pre-wrap;
@@ -399,7 +397,7 @@ button:hover,
 }
 
 .signal-card span {
-  color: var(--text-muted);
+  color: var(--rag-muted);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -422,7 +420,7 @@ td {
 }
 
 th {
-  color: var(--text-muted);
+  color: var(--rag-muted);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -443,13 +441,13 @@ td {
 }
 
 .muted {
-  color: var(--text-muted);
+  color: var(--rag-muted);
 }
 
 .note-list {
   margin: 0;
   padding-left: 18px;
-  color: var(--text-muted);
+  color: var(--rag-muted);
   line-height: 1.7;
 }
 

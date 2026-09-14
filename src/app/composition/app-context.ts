@@ -18,6 +18,8 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Exposed a fixed privacy-bounded Outlook reader so packages can project actor-owned message metadata without receiving OAuth tokens or arbitrary Graph access.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exposed the fixed owner-scoped RingCentral call-log reader (screen-pop v2 call history) — the same token-safe seam shape as outlookMail.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Exposed the fixed recent-mail sync reader (CR-22 auto email logging) — core matches the mailbox page against the package's authorized address set so unmatched mail never crosses the boundary.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Expose an activation-scoped package specialist reader port without the global registry or arbitrary caller inputs.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | Expose only the activation-scoped fixed-name package tool registration port.
  */
 
 import type { Pool } from 'pg';
@@ -45,6 +47,8 @@ import type { ConnectorMarketplaceService } from '@/app/connectors/runtime/marke
 import type { BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
 import type { OutlookMailReader, OutlookMailSyncReader } from '@/app/routes/outlook-mail-reader';
 import type { RingcentralCallLogReader } from '@/app/routes/ringcentral-call-log';
+import type { ApplicationAuthorizationRuntime, PackageAuthorizationContext } from './application-authorization-runtime';
+import type { AuthorizationToolRuntime } from './authorization-tool';
 
 /**
  * @description Package-safe bot execution seam. The composition root binds the application
@@ -60,6 +64,10 @@ export type AppBotExecutor = (
  * Created by the composition root and passed to route handlers.
  */
 export interface AppContext {
+  /** Core-owned authority; package factories receive only the bound authorization adapter below. */
+  applicationAuthorization?: ApplicationAuthorizationRuntime;
+  authorizationTool?: AuthorizationToolRuntime;
+  authorization?: PackageAuthorizationContext;
   taskStore: InMemoryTaskStore;
   messageStore: InMemoryMessageStore;
   streamManager: StreamManager;
@@ -119,4 +127,7 @@ export interface AppContext {
    * channel and points at whichever package was required LAST.
    */
   appPackageDir?: string;
+  /** Activation-scoped package-owned numeric reads; never the global registry or management authority. */
+  specialistContext?: import('@/shared/specialist-context').PackageSpecialistContext;
+  tools?: import('@/shared/package-tools').PackageToolContext;
 }

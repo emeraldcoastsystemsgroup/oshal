@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial UIProfile schema — app-packaging overlay on top of the framework ribbon
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Declare optional workspace delegation for default sidebar presentation without changing registered views or permissions.
  */
 
 /**
@@ -24,6 +25,9 @@ export type UIProfileRibbonItem =
       /** Optional group label for a `top` item. Consecutive items sharing a group
        *  render under one header in the scrollable middle of the ribbon. */
       group?: string;
+      /** Complete workspace that also exposes this page. The default sidebar may
+       *  omit this duplicate while its workspace has an admitted top tab. */
+      workspace?: string;
       /** If set, clicking the ribbon button navigates the window here instead of switching cockpit views. */
       href?: string;
       /** If set (and the id is `tool-`-prefixed), the cockpit embeds this URL as an iframe tool view
@@ -42,6 +46,8 @@ export interface UIProfileDynamicTools {
   /** Group label applied to every admitted `top`-section dynamic tool, so e.g. the
    *  Little Monsters per-class icons render under the Little Monsters group header. */
   group?: string;
+  /** Complete workspace that exposes these dynamic pages; presentation only. */
+  workspace?: string;
 }
 
 /**

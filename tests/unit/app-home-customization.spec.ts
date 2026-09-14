@@ -1,7 +1,8 @@
 /**
  * CHANGE LOG
  * SEQ | AUTHOR | DESCRIPTION
- * 1 | Codex | Exercise default-on display choices, source identity, safe highlights, and preference route ownership.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise default-on display choices, source identity, safe highlights, and preference route ownership.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove daily summaries retain explicit classifications, account choices and unavailable states without hiding directory destinations.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import express from 'express';
@@ -72,6 +73,53 @@ describe('Home source contract and display preferences', () => {
     for (const bad of [{ version: 1, userSub: 'victim' }, { version: 1, cards: { a: { compact: 'yes' } } }, { version: 1, hiddenApps: Array(257).fill('a') }, JSON.parse('{"version":1,"cards":{"__proto__":{}}}')]) {
       expect(() => parseHomePreferences(bad)).toThrow();
     }
+  });
+});
+
+describe('bounded daily Home presentation', () => {
+  const daily = () => import('@/pages/cockpit/js/views/app-home-daily.js' as any);
+  const entry = (name: string) => ({ name, displayName: name, firstSurface: `${name}-home` });
+  const data = (patch = {}) => ({ tiles: [], items: [], open: [], total: 0, anyChecked: false, ...patch });
+
+  it('uses only explicit suite keys while keeping unknown and developer-named apps in the full directory', async () => {
+    const { dailyAreas, directoryHtml } = await daily();
+    const entries = [entry('fixture-probe'), entry('finance-by-name')];
+    const shelves = [{ key: 'ai-finance', entries: [entries[0]] }, { key: 'other', entries: [entries[1]] }];
+    expect(dailyAreas(shelves, {}).map((s: any) => [s.label, s.entries[0].name])).toEqual([['Finance', 'fixture-probe']]);
+    expect(directoryHtml(entries)).toContain('finance-by-name-home');
+    expect(directoryHtml(entries, 'FINANCE')).toContain('finance-by-name-home');
+    expect(directoryHtml(entries, 'FINANCE')).not.toContain('fixture-probe-home');
+  });
+
+  it('preserves saved area/app order and hiding without changing the original entries', async () => {
+    const { dailyAreas } = await daily();
+    const shelves = [{ key: 'ai-finance', entries: [entry('a'), entry('b'), entry('c')] }, { key: 'ai-creative', entries: [entry('d')] }];
+    const before = structuredClone(shelves);
+    const areas = dailyAreas(shelves, { suiteOrder: ['ai-creative'], appOrder: ['b'], hiddenApps: ['c'] });
+    expect(areas.map((s: any) => s.key)).toEqual(['ai-creative', 'ai-finance']);
+    expect(areas[1].entries.map((e: any) => e.name)).toEqual(['b', 'a']);
+    expect(dailyAreas(shelves, { hiddenSuites: ['ai-finance'] })).toHaveLength(1);
+    expect(shelves).toEqual(before);
+  });
+
+  it('distinguishes loading, no declared summary, confirmed empty and unavailable without zero metrics', async () => {
+    const { dailyFact } = await daily(), e = entry('source'), cards = new Map();
+    expect(dailyFact(e, cards, {}).state).toBe('loading');
+    cards.set('source', data()); expect(dailyFact(e, cards, {}).text).toBe('No summary connected');
+    cards.set('source', data({ anyChecked: true })); expect(dailyFact(e, cards, {}).text).toBe('No updates reported');
+    cards.set('source', data({ summaryErrors: 1 })); expect(dailyFact(e, cards, {}).text).toBe('Updates unavailable');
+    cards.set('source', data({ recentUnavailable: true })); expect(dailyFact(e, cards, {}).state).toBe('unavailable');
+  });
+
+  it('does not promote setup or hidden facts as updates and limits the initial list to four sources', async () => {
+    const { dailyFact, updatesHtml } = await daily(), e = entry('a');
+    const card = data({ tiles: [{ id: 'a/metric', label: 'Items', value: '2', tone: 'warn' }], open: [{ label: 'Configure connector' }] });
+    const cards = new Map([['a', card]]), prefs = { cards: { a: { hiddenMetrics: ['a/metric'] } } };
+    expect(dailyFact(e, cards, prefs).state).toBe('empty');
+    expect(updatesHtml([e], cards, prefs)).not.toContain('Configure connector');
+    const entries = Array.from({ length: 20 }, (_, i) => entry(String(i)));
+    const reported = new Map(entries.map(item => [item.name, data({ items: [{ text: 'Reported update' }] })]));
+    expect(updatesHtml(entries, reported, {}).match(/data-home-detail=/g)).toHaveLength(4);
   });
 });
 

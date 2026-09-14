@@ -25,10 +25,15 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | SwarmAppRibbonPolicy.hideStatusBar — the third per-app chrome flag beside hideChatPanel/hideAssistant: hide the cockpit's bottom bots/tickets/cost/queue status bar while the app is focused (operator 2026-09-04: that bar only means something to a swarm admin; a CRM or trading surface should be able to drop it). Optional and additive — absent = shown, an older core ignores it.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups: manifest.kind ('app' default | 'group'), the group-only `toolbar[]` (surfaces BORROWED from member apps by app + surface name — a reference the loader resolves, never a copied URL) and `setup[]` (the steps the kernel setup dashboard renders), and the per-user `readiness[]` block any package may declare — the session-authenticated sibling of `smoke:` (a route below the package's own mount + RFC 6901 pointers for done/detail). All optional and additive; an older core ignores them.
  * Home customization | Codex | Add stable metric catalogs and related-item identities for configurable Home.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com | Declare read-only user-context installation smokes with a clearable caller PAT prerequisite.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com | manifest.dependencies gains the required/optional tiers (SwarmAppDependencyLists); the legacy flat apps/tools/connectors form stays valid and reads as all-required. Consumers read it through @/shared/app-dependencies, never the raw keys.
  */
 
+import type { BriefingDeclaration } from '@/shared/briefings';
 import type { SwarmAppRouteAuthMode } from '@/shared/route-auth';
 import type { SwarmAccessRole } from '@/shared/types/access-roles';
+import type { ApplicationAuthorizationDeclaration } from '@/shared/application-authorization';
+import type { PackageTestDeclaration } from '@/shared/package-testing';
 import type { GuestTier } from '@/shared/middleware/guest-capability-matrix';
 import type { SkillCapabilityId, SkillProfile } from '@/shared/skill-profiles';
 import type { SurfaceBridgeOpName } from '@/shared/surface-bridge-ops';
@@ -318,6 +323,8 @@ export interface SwarmAppSmokeDeclaration {
   expect: SwarmAppSmokeExpectation;
   /** The probe spends an AI inference when AI is enabled. */
   requiresAi?: boolean;
+  /** A read-only PAT probe requiring the caller's verified user context; pending without a PAT. */
+  requiresUser?: boolean;
 }
 
 /** One stage of a `pipeline: 'staged'` workflow — an existing bot pinned to a step,
@@ -545,6 +552,14 @@ export interface ManifestRouteMounter {
   unmount(appName: string): void;
 }
 
+/** Application policy publication follows the same activation lifecycle as routes and executors. */
+export interface ManifestAuthorizationRegistrar {
+  prepare(manifest: SwarmAppManifest, manifestPath: string): Promise<void>;
+  start(record: SwarmApplicationRecord): Promise<void>;
+  complete(record: SwarmApplicationRecord): void;
+  unregister(appName: string): void;
+}
+
 /**
  * Port for contributing an installed app's bots to the ACTIVE bot registry at
  * activation time (ADR-085) — the mechanism that makes packaged bots dispatchable
@@ -702,6 +717,13 @@ export interface SwarmAppGuestSeedDeclaration {
   path: string;
 }
 
+/** One dependency group: the legacy flat block, or one tier (`required` / `optional`). */
+export interface SwarmAppDependencyLists {
+  apps?: string[];
+  tools?: string[];
+  connectors?: string[];
+}
+
 /** The YAML manifest shape, as parsed from swarm-apps/*.yaml. */
 export interface SwarmAppManifest {
   name: string;
@@ -737,6 +759,7 @@ export interface SwarmAppManifest {
   suite?: SwarmAppSuite;
   /** Optional: a deterministic / UI-only app (e.g. payments) declares no bots. */
   bots?: SwarmAppBotDeclaration[];
+  briefings?: BriefingDeclaration[];
   foundation?: { persona: string };
   toolsDir?: string;
   tools?: SwarmAppToolDeclaration[];
@@ -758,6 +781,8 @@ export interface SwarmAppManifest {
   takeout?: SwarmAppTakeoutSliceDeclaration[];
   /** Executable installation proofs run by `oshal-verify --apps ...`. */
   smoke?: SwarmAppSmokeDeclaration[];
+  /** Versioned package-local Test Lab catalog. Declaring it requires uses: [test-catalog]. */
+  testing?: PackageTestDeclaration;
   migrations?: string[];
   /** ADR-085 §5 + ADR-091: glob prefixes of the RAG collections this app owns
    *  (e.g. ["lm-class-*", "lm-cls-*"]). Expanded against live collection names in
@@ -774,22 +799,27 @@ export interface SwarmAppManifest {
   theme?: string;
   sharedCss?: string;
   ribbon?: SwarmAppRibbonPolicy;
-  /** ADR-085: apps/tools/connectors this app needs. Resolved at install (the CLI/installer
-   *  pulls missing apps from the store, fail-closed); consulted at UNINSTALL for the
-   *  reverse-dependency guard — removing an app that another installed app depends on is
-   *  blocked unless forced, and nothing ever auto-cascades.
+  /** ADR-085: apps/tools/connectors this app needs, in two tiers.
    *
-   *  `connectors` is ALSO the app's connector allow-list at runtime: when the key is
-   *  PRESENT it is the complete set of connector provider ids this app's surfaces may
-   *  offer (`[]` = offer none — the kids' app never asks for Facebook); when ABSENT
-   *  (legacy manifests) nothing is filtered. synthesiseProfile forwards it to the
-   *  cockpit/welcome surfaces. NOTE: the store CLI scaffold emits `connectors: []`,
-   *  so every new store app hides the connector catalog until it declares needs —
-   *  that is the intended declare-what-you-need default. */
-  dependencies?: {
-    apps?: string[];
-    tools?: string[];
-    connectors?: string[];
+   *  - `required` — the installer pulls missing apps from the same store (fail-closed), the
+   *    loader refuses a required tool nothing provides, and removing an app another active app
+   *    REQUIRES is blocked unless forced. A group's members are its required apps.
+   *  - `optional` — offered at install (the App Loader's checkboxes, `--with` on the CLI), never
+   *    installed unasked, never blocking an install or an uninstall; the app works without them.
+   *
+   *  The legacy flat form (`dependencies: {apps, tools, connectors}`) stays valid and reads as all
+   *  required. The tiered form needs `uses: [app-dependencies]` so an older core refuses the
+   *  package instead of silently installing it without its required dependencies. Read it through
+   *  `@/shared/app-dependencies` — never the raw keys, which differ between the two forms.
+   *
+   *  `connectors` is ALSO the app's connector allow-list at runtime: when either tier declares
+   *  the key, the union of both is the complete set of provider ids this app's surfaces may offer
+   *  (`[]` = offer none — the kids' app never asks for Facebook); when no tier declares it (legacy
+   *  manifests) nothing is filtered. NOTE: the store CLI scaffold emits `connectors: []`, so every
+   *  new store app hides the connector catalog until it declares needs — the intended default. */
+  dependencies?: SwarmAppDependencyLists & {
+    required?: SwarmAppDependencyLists;
+    optional?: SwarmAppDependencyLists;
   };
   /** ADR-085 D4: the guest tier this app REQUESTS — `full` | `readonly` | `blocked`.
    *
@@ -808,6 +838,8 @@ export interface SwarmAppManifest {
   guestTier?: GuestTier;
   /** ADR-118: opt-in per-user app doorway policy. Omission preserves current behavior. */
   access?: SwarmAppAccessDeclaration;
+  /** ADR-149 package-local function permission catalog. */
+  authorization?: ApplicationAuthorizationDeclaration;
   /** ADR-090 D8: the KERNEL SKILLS this app calls (`@/shared/kernel-skills` ids — e.g.
    *  `deck-generation`, `rag`, `voice`). A skill is a shared capability the kernel always
    *  provides; it is NOT an app, so it never installs, never ref-counts, and can never be

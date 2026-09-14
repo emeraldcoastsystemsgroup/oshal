@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com     | Centralize verified principal issuer constants and extraction so non-OIDC session rails preserve the identity namespace that authenticated the user
+ * 2   | maintainer@emeraldcoastsystemsgroup.com     | Read verified protocol claims before the filtered OIDC presentation user; a present invalid protocol issuer fails closed.
  * -----------------------------------------------------------------------------
  */
 
@@ -20,6 +21,7 @@ type OidcRequestShape = {
   oidc?: {
     isAuthenticated?: () => boolean;
     user?: { iss?: unknown };
+    idTokenClaims?: { iss?: unknown };
   };
 };
 
@@ -49,5 +51,6 @@ export function normalizePrincipalIssuer(value: unknown): string | null {
 export function getAuthenticatedPrincipalIssuer(req: Request): string | null {
   const oidc = (req as Request & OidcRequestShape).oidc;
   if (!oidc?.isAuthenticated?.()) return null;
+  if (oidc.idTokenClaims !== undefined) return normalizePrincipalIssuer(oidc.idTokenClaims?.iss);
   return normalizePrincipalIssuer(oidc.user?.iss);
 }

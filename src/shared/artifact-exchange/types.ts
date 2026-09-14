@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: the artifact-exchange declaration types, the fail-closed manifest validator the swarm-app loader calls (a malformed artifacts: block fails the app load, never half-registers), and the MIME-glob matcher the menu uses. Pure module — no I/O — so the vitest guards cover every reject shape.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2 (Amendment B): `overlay` — a KERNEL-RESERVED dispatch shape (send-to.js opens the page in an in-place iframe overlay with the ref; the email compose built-in is the first user). Manifests may NOT declare it — the validator refuses it, so an app cannot point the overlay at an arbitrary page; kernel boot registrations bypass the manifest validator by construction.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Stage 4a source labels and the shared picker listing contract.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Stage 4b bounded destination keywords and usage context for Jarvis.
  */
 
 /** The two dispatch modes an accepting app may declare (ADR-139 D4/D4a). */
@@ -24,6 +26,10 @@ export interface ArtifactAcceptDeclaration {
   id: string;
   /** Menu label, e.g. "Restyle in Portrait Studio". */
   label: string;
+  /** Semantic routing hints; never execution authority or a substitute for MIME compatibility. */
+  keywords?: string[];
+  /** When to choose this destination, as data for the assistant's contextual routing. */
+  useWhen?: string;
   /** Optional menu icon (an emoji or short glyph). */
   icon?: string;
   /** MIME globs this action takes: exact (`application/pdf`), family (`image/*`), or `*\/*`. */
@@ -37,8 +43,10 @@ export interface ArtifactAcceptDeclaration {
   overlay?: string;
 }
 
-/** @description A source declaration (phase 3 — parsed and validated now, consumed later). */
+/** @description A source declaration consumed by the shared artifact picker. */
 export interface ArtifactProvideDeclaration {
+  /** Optional human-readable source label; otherwise the app display name is used. */
+  label?: string;
   /** MIME globs this app can enumerate for a picker. */
   types: string[];
   /** Optional root-relative listing endpoint for the generic picker. */
@@ -128,6 +136,8 @@ export function validateArtifactActionsDeclaration(decl: unknown): string | null
       if (seen.has(a.id)) return acceptError(i, `duplicate id "${a.id}"`);
       seen.add(a.id);
       if (typeof a.label !== 'string' || !a.label.trim() || a.label.length > MAX_LABEL) return acceptError(i, `label must be a non-empty string ≤${MAX_LABEL} chars`);
+      if (a.keywords !== undefined && (!Array.isArray(a.keywords) || a.keywords.length > 16 || a.keywords.some(k => typeof k !== 'string' || !k.trim() || k.length > 60 || /[\r\n\x00-\x1f]/.test(k)))) return acceptError(i, 'keywords must contain at most 16 non-empty single-line strings ≤60 chars');
+      if (a.useWhen !== undefined && (typeof a.useWhen !== 'string' || !a.useWhen.trim() || a.useWhen.length > 300 || /[\r\n\x00-\x1f]/.test(a.useWhen))) return acceptError(i, 'useWhen must be a non-empty single-line string ≤300 chars');
       if (a.icon !== undefined && (typeof a.icon !== 'string' || a.icon.length > MAX_ICON)) return acceptError(i, `icon must be a short string ≤${MAX_ICON} chars`);
       if (!Array.isArray(a.types) || a.types.length === 0) return acceptError(i, 'types must be a non-empty list of MIME globs');
       for (const t of a.types) {
@@ -145,6 +155,7 @@ export function validateArtifactActionsDeclaration(decl: unknown): string | null
     for (let i = 0; i < provides.length; i++) {
       const p = provides[i] as Record<string, unknown>;
       if (!p || typeof p !== 'object' || Array.isArray(p)) return `artifacts.provides[${i}]: must be a map`;
+      if (p.label !== undefined && (typeof p.label !== 'string' || !p.label.trim() || p.label.length > MAX_LABEL)) return `artifacts.provides[${i}]: label must be a non-empty string ≤${MAX_LABEL} chars`;
       if (!Array.isArray(p.types) || p.types.length === 0) return `artifacts.provides[${i}]: types must be a non-empty list of MIME globs`;
       for (const t of p.types) {
         if (!isValidArtifactTypeGlob(t)) return `artifacts.provides[${i}]: "${String(t)}" is not a valid MIME glob`;

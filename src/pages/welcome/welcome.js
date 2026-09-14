@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | First-run fix — the Configuration Status step was a dead end that ended walkthroughs. It sat BEFORE the steps that fix anything, showed a demoralizing score built from optional integrations, and its "Fix" links opened /cockpit#… in a new tab that 302'd right back to /welcome (guarded surface) at a hash the cockpit never routed on. Now: required and optional are split (meter reads required-only), an unmet item the wizard can fix jumps IN-wizard via gotoStep() instead of opening a bouncing tab, items with nothing useful to click render no button at all, and all interpolation goes through escHtml. Renamed to "Setup status" — "Configuration" read like a wall rather than a checklist.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Dropped the percentage from the onboarding step entirely (operator: "20% completed doesn't sound good"). Scoring required-only fixed the ARITHMETIC but not the framing — and made the worst case read worse, since a short required list only yields 0% / 50% / 100%, so a user whose bots were still booting now saw 0%. This screen is the first thing a stranger sees, before they have been offered any chance to act: any score is a grade for work never asked of them. Replaced with a forward-looking checklist ("What your swarm needs" / "Just N things") whose lead line branches on whether the wizard can actually FIX the gap (next step) or it self-clears (bots still booting) — the old single message promised a walkthrough the next step could not deliver for the bot case. The meter stays on the cockpit dashboard, where 100% on an operating swarm is a health signal rather than a verdict on a newcomer.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | New 'notify' step (operator ask 2026-07-31): a per-user text/call/email opt-in that walks through the setup — pick a channel, save a phone number, fire a real confirm-gated test — writing the 'default' topic row via POST /api/notify/prefs (the DEFAULT_TOPIC fallback in the NotificationRouter makes that one answer govern every topic the user hasn't customized). Explicitly declining writes channel 'none'; just clicking Next writes nothing. Saves are best-effort and the step never gates navigation (outward-acting channels are per-user opt-in, default OFF).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Resume trusted-source installation and account setup, preserve progress and surface package failures before finishing.
  */
 
 /**
@@ -16,12 +17,24 @@
  * Steps: Welcome → Features Tour → Config Check → Quick Setup → Done
  */
 
+import { ProvisioningController } from './provisioning.js';
+
+let onboardingData = {};
+let progressAvailable = false;
+let progressWrite = Promise.resolve();
+const provisioning = new ProvisioningController(async state => {
+  onboardingData = { ...onboardingData, provisioning: state };
+  await saveProgress();
+});
+
 let STEPS = [
   { id: 'welcome',  title: 'Welcome to OSHAL',  render: renderWelcome },
   { id: 'features', title: 'Platform Features',     render: renderFeatures },
   { id: 'config',   title: 'What your swarm needs', render: renderConfigCheck },
   { id: 'setup',    title: 'Connect an AI model',   render: renderQuickSetup },
-  { id: 'capabilities', title: 'Choose what it does', render: renderCapabilities },
+  { id: 'sources', title: 'Choose a trusted source', render: container => provisioning.renderSources(container) },
+  { id: 'capabilities', title: 'Install applications', render: container => provisioning.renderApps(container) },
+  { id: 'people', title: 'People and access', render: container => provisioning.renderUsers(container) },
   { id: 'connect',  title: 'Connect your accounts', render: renderConnectAccounts },
   { id: 'notify',   title: 'Stay in the loop',      render: renderNotifyStep },
   { id: 'done',     title: "You're All Set!",       render: renderDone },
@@ -37,11 +50,6 @@ let currentStep = 0;
 let configHealth = null;
 // Where Finish sends the user — the clean starter cockpit.
 let chosenLanding = '/cockpit';
-// Capabilities the user ticked in "Choose what it does". On Finish we hot-load
-// each one's swarm app(s) so the cockpit comes up already set up for them.
-let selectedCapabilities = new Set();
-let availableAppPaths = {};      // app name -> manifest path (from /api/swarm/apps/pending)
-let activeAppNames = new Set();  // apps already loaded (skip on install)
 // A working LLM is mandatory — bots can't run without one. This flag gates the
 // nav so a user cannot leave the setup step (or finish) until a model is connected.
 let llmActive = false;
@@ -77,22 +85,27 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (d && d.source === 'swarm-app' && d.profile) {
         appFocus = { name: focusedApp, displayName: d.profile.displayName || focusedApp, connectors: d.profile.connectors };
         chosenLanding = '/cockpit/?app=' + encodeURIComponent(focusedApp);
-        STEPS = STEPS.filter((s) => s.id !== 'capabilities');
+        STEPS = STEPS.filter((s) => !['sources', 'capabilities', 'people'].includes(s.id));
         if (Array.isArray(appFocus.connectors) && appFocus.connectors.length === 0) {
           STEPS = STEPS.filter((s) => s.id !== 'connect');
         }
       }
     } catch { /* unknown app or profile fetch failed — run the generic wizard */ }
   }
-  // Restore ticked capabilities so Back/refresh keeps the selection.
-  try { const s = JSON.parse(localStorage.getItem('oshal-onboard-caps') || '[]'); if (Array.isArray(s)) selectedCapabilities = new Set(s); } catch { /* no storage */ }
   try {
     const res = await fetch('/api/user/onboarding');
+    if (!res.ok) throw new Error('Saved progress is unavailable');
     const state = await res.json();
-    if (state.completed && llmActive) { window.location.href = chosenLanding; return; }
+    progressAvailable = true;
+    onboardingData = state.data || {};
+    provisioning.restore(onboardingData.provisioning);
+    if (state.completed && llmActive && !new URLSearchParams(location.search).has('resume')) {
+      window.location.href = chosenLanding; return;
+    }
     // Clamp: a saved index from the full wizard may exceed a spliced STEPS list.
-    currentStep = Math.min(state.currentStep || 0, STEPS.length - 1);
-  } catch { /* first visit */ }
+    const savedStep = STEPS.findIndex(step => step.id === onboardingData.stepId);
+    currentStep = savedStep >= 0 ? savedStep : Math.min(state.currentStep || 0, STEPS.length - 1);
+  } catch { showWizardStatus('Saved setup progress is unavailable. Reload to retry; existing choices have not been replaced.'); }
   // No model yet → jump straight to the step that fixes it.
   if (!llmActive) {
     const setupIdx = STEPS.findIndex((s) => s.id === 'setup');
@@ -102,36 +115,49 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindNav();
 });
 
+function showWizardStatus(message) {
+  document.getElementById('wizardStatus').textContent = message;
+}
+
 function bindNav() {
   document.getElementById('btnBack').addEventListener('click', () => {
     if (currentStep > 0) { currentStep--; renderCurrentStep(); }
   });
   document.getElementById('btnNext').addEventListener('click', async () => {
-    if (currentStep < STEPS.length - 1) {
-      currentStep++;
-      await saveProgress();
-      renderCurrentStep();
-    }
+    if (currentStep >= STEPS.length - 1) return;
+    const previous = currentStep;
+    currentStep++;
+    try { await saveProgress(); showWizardStatus(''); renderCurrentStep(); }
+    catch { currentStep = previous; showWizardStatus('Could not save your progress. Try again.'); }
   });
-  document.getElementById('btnFinish').addEventListener('click', async () => {
-    const btn = document.getElementById('btnFinish');
-    btn.disabled = true; btn.textContent = 'Setting up…';
-    await installSelectedApps(); // hot-load the capabilities the user ticked
-    await fetch('/api/user/onboarding', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ completed: true, currentStep: STEPS.length }),
-    });
-    window.location.href = chosenLanding; // starter cockpit by default
-  });
+  document.getElementById('btnFinish').addEventListener('click', finishOnboarding);
 }
 
-async function saveProgress() {
-  await fetch('/api/user/onboarding', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ completed: false, currentStep }),
-  }).catch(() => {});
+async function finishOnboarding() {
+  const btn = document.getElementById('btnFinish');
+  btn.disabled = true; btn.textContent = 'Checking setup…';
+  try {
+    if (!appFocus && provisioning.state.selected.length) await provisioning.reconcile();
+    if (!appFocus && !provisioning.ready()) {
+      showWizardStatus('Some selected applications are still pending. Return to Install applications to retry or deselect them.');
+      return;
+    }
+    await saveProgress(true);
+    window.location.href = chosenLanding;
+  } catch (error) { showWizardStatus('Setup was not completed: ' + error.message); }
+  finally { btn.disabled = false; btn.textContent = 'Go to Dashboard'; }
+}
+
+async function saveProgress(completed = false) {
+  if (!progressAvailable) throw new Error('Saved progress must be loaded before it can be updated.');
+  const body = JSON.stringify({ completed, currentStep, data: { ...onboardingData,
+    stepId: STEPS[currentStep]?.id, provisioning: provisioning.snapshot() } });
+  progressWrite = progressWrite.catch(() => undefined).then(async () => {
+    const response = await fetch('/api/user/onboarding', { method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' }, body });
+    if (!response.ok) throw new Error('Could not save onboarding progress.');
+  });
+  return progressWrite;
 }
 
 function renderCurrentStep() {
@@ -151,8 +177,8 @@ function renderCurrentStep() {
 
   // Hard requirement: cannot advance past setup, or finish, without a connected model.
   const blockForLlm = (step.id === 'setup' || step.id === 'done') && !llmActive;
-  document.getElementById('btnNext').disabled = blockForLlm;
-  document.getElementById('btnFinish').disabled = blockForLlm;
+  document.getElementById('btnNext').disabled = blockForLlm || !progressAvailable;
+  document.getElementById('btnFinish').disabled = blockForLlm || !progressAvailable;
 }
 
 function renderWelcome(container) {
@@ -204,7 +230,7 @@ function gotoStep(id) {
   const idx = STEPS.findIndex((s) => s.id === id);
   if (idx < 0) return;
   currentStep = idx;
-  saveProgress();
+  saveProgress().catch(() => showWizardStatus('Could not save your progress.'));
   renderCurrentStep();
 }
 
@@ -697,114 +723,12 @@ function renderMarketplaceOnboarding(entries) {
   </div>`;
 }
 
-// Each capability maps to one or more swarm apps (manifests in swarm-apps/).
-// Ticking a capability hot-loads its app(s) on Finish so the cockpit arrives
-// already set up. "build" has no app to load — the Bot Forge is core.
-const CAPABILITIES = [
-  { key: 'home',  icon: '🏠', title: 'Smart Home & IoT',          desc: 'Check and control your connected devices.',                    apps: ['home'] },
-  { key: 'money', icon: '💰', title: 'Money & Finance',            desc: 'Net worth, holdings, spend, payments, and trading.',           apps: ['trading'] },
-  { key: 'media', icon: '🎬', title: 'Media & Going Out',          desc: 'Movies, music, food, rides, and travel.',                      apps: ['travel'] },
-  { key: 'comms', icon: '📣', title: 'Email, Social & Feeds',      desc: 'Triage your inbox, post and watch social, news feeds.',        apps: ['email-summarizer', 'social', 'feeds'] },
-  { key: 'jobs',  icon: '💼', title: 'Job Opportunities',          desc: 'Surface roles you fit and strengthen your resume.',            apps: ['career-hunter'] },
-  { key: 'office', icon: '📊', title: 'Documents & Presentations',  desc: 'Draft decks, documents, and spreadsheets — edit in Office, Docs, or LibreOffice.', apps: ['presentations'] },
-  { key: 'build', icon: '🛠️', title: 'Build My Own Bots',          desc: 'Describe a bot in plain language; it goes live in the swarm.',  apps: [] },
-];
-
-/**
- * @description "Choose what it does" step — multi-select capability checkboxes.
- * Each ticked capability's swarm app(s) are hot-loaded on Finish via the existing
- * POST /api/swarm/apps/load, so the new user lands in a cockpit already set up for
- * what they care about. Reads the live pending/active app lists so we only offer
- * to install apps that exist and aren't already loaded.
- */
-async function renderCapabilities(container) {
-  container.innerHTML = `<div class="step-content step-features"><h2>Choose what it does</h2><div class="config-loading">Loading…</div></div>`;
-  try {
-    const [pend, act] = await Promise.all([
-      fetch('/api/swarm/apps/pending', { credentials: 'include' }).then((r) => r.json()).catch(() => ({ pending: [] })),
-      fetch('/api/swarm/apps', { credentials: 'include' }).then((r) => r.json()).catch(() => ({ apps: [] })),
-    ]);
-    availableAppPaths = {};
-    (pend.pending || []).forEach((p) => { availableAppPaths[p.name] = p.path; });
-    activeAppNames = new Set((act.apps || []).map((a) => a.name));
-  } catch { /* offer everything; install is best-effort */ }
-
-  const toggle = (key) => {
-    if (selectedCapabilities.has(key)) selectedCapabilities.delete(key); else selectedCapabilities.add(key);
-    try { localStorage.setItem('oshal-onboard-caps', JSON.stringify([...selectedCapabilities])); } catch { /* no storage */ }
-    container.querySelectorAll('[data-cap]').forEach((el) => {
-      const on = selectedCapabilities.has(el.getAttribute('data-cap'));
-      el.classList.toggle('cap-card--on', on);
-      const chk = el.querySelector('.cap-check'); if (chk) chk.textContent = on ? '✓' : '+';
-    });
-  };
-  const statusFor = (cap) => {
-    if (cap.apps.length && cap.apps.every((n) => activeAppNames.has(n))) return '<span class="cap-note">already installed</span>';
-    return '';
-  };
-
-  container.innerHTML = `
-    <style>
-      .cap-card { border: 1px solid transparent; cursor: pointer; text-align: left; position: relative; transition: border-color .15s ease, background .15s ease; }
-      .cap-card--on { border-color: var(--wiz-accent, #58a6ff) !important; background: rgba(88,166,255,.12); }
-      .cap-check { position: absolute; top: 10px; right: 12px; opacity: .35; font-weight: 700; }
-      .cap-card--on .cap-check { opacity: 1; color: var(--wiz-accent, #58a6ff); }
-      .cap-note { display: inline-block; margin-top: 6px; font-size: 11px; opacity: .7; }
-      .cap-foot { margin-top: 16px; font-size: 12px; opacity: .75; line-height: 1.5; }
-    </style>
-    <div class="step-content step-features">
-      <h2>Choose what it does</h2>
-      <p>Tick what you want and we'll set those apps up now. Add or remove any of it later from Explore Apps — nothing is locked in.</p>
-      <div class="feature-grid">
-        ${CAPABILITIES.map((c) => `
-          <button type="button" class="feature-card cap-card${selectedCapabilities.has(c.key) ? ' cap-card--on' : ''}" data-cap="${c.key}" style="cursor:pointer;text-align:left;">
-            <span class="cap-check">${selectedCapabilities.has(c.key) ? '✓' : '+'}</span>
-            <span class="feature-icon">${c.icon}</span>
-            <strong>${escHtml(c.title)}</strong>
-            <span class="feature-desc">${escHtml(c.desc)}</span>
-            ${statusFor(c)}
-          </button>`).join('')}
-      </div>
-      <p class="cap-foot">↻ Apps you turn on keep themselves up to date on a schedule once their account is connected — you're always in control; pause any of it later in Settings.</p>
-    </div>`;
-
-  container.querySelectorAll('[data-cap]').forEach((el) => {
-    el.addEventListener('click', () => toggle(el.getAttribute('data-cap')));
-  });
-}
-
-/**
- * @description Hot-loads the swarm app(s) for every ticked capability via the
- * existing POST /api/swarm/apps/load {path}. Best-effort and idempotent: skips
- * apps already active or without a known manifest path, and a failed install
- * never blocks finishing onboarding. Called on Finish.
- */
-async function installSelectedApps() {
-  const paths = new Set();
-  for (const key of selectedCapabilities) {
-    const cap = CAPABILITIES.find((c) => c.key === key);
-    if (!cap) continue;
-    for (const name of cap.apps) {
-      if (!activeAppNames.has(name) && availableAppPaths[name]) paths.add(availableAppPaths[name]);
-    }
-  }
-  for (const path of paths) {
-    try {
-      await fetch('/api/swarm/apps/load', {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
-      });
-    } catch { /* best-effort */ }
-  }
-}
-
 function renderDone(container) {
   container.innerHTML = `
     <div class="step-content step-done">
       <div class="done-icon">🚀</div>
-      <h2>You're All Set!</h2>
-      <p>Your OSHAL control plane is ready. Click below to go to your dashboard.</p>
+      <h2>Review your setup</h2>
+      <p>Finish checks selected applications and saves your progress. Return any time at /welcome?resume=1.</p>
       <div class="done-tips">
         <h3>Quick Tips</h3>
         <ul>

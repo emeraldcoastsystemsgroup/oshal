@@ -1,3 +1,10 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify manifest selector metadata survives runtime helper extraction and package persona resolution.
+ */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -12,7 +19,7 @@ describe('swarm app selector seeding', () => {
   });
 
   it('seeds app bot selector fields into the agents table', () => {
-    const src = readFileSync(join(repoRoot, 'src/features/swarm-apps/services/swarm-app-service.ts'), 'utf8');
+    const src = readFileSync(join(repoRoot, 'src/features/swarm-apps/services/manifest-bot-runtime.ts'), 'utf8');
     expect(src).toContain('readBotSelectorSeed');
     expect(src).toContain('selector_descriptor');
     expect(src).toContain('routing_keywords');

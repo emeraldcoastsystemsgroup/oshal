@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | CORE-05 manifest and real-loopback HTTP proof for package smoke validation/execution, rejected sentinel values, and no-AI behavior.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove CLI/runtime requiresUser validation parity and pending, malformed, revoked and authorized user smoke execution.
  */
 
 import express from 'express';
@@ -11,6 +12,8 @@ import { createServer, type Server } from 'node:http';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import yaml from 'js-yaml';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -25,6 +28,26 @@ let packageDir: string;
 let manifestPath: string;
 let server: Server;
 let baseUrl: string;
+const USER_PAT = `Bearer oshal_pat_${'a'.repeat(48)}`;
+let userHits: Array<{ authorization?: string; serviceSecret?: string }> = [];
+
+/** Construct a read-only probe whose route requires a current user identity. */
+function userManifest(): SwarmAppManifest {
+  return {
+    name: 'user-smoke', displayName: 'User Smoke', version: '1.0.0', suite: 'ai-home',
+    routes: [{ module: 'routes.js', factory: 'createRoutes', mountPath: '/api/user', auth: 'oidc' }],
+    smoke: [{ name: 'user-readiness', method: 'GET', path: '/api/user/_smoke', auth: 'pat',
+      requiresUser: true, expect: { status: 200, jsonPointer: '/ready', rejectValues: [false] } }],
+  };
+}
+
+/** Validate through the actual standalone CLI in a separate process. */
+function cliValidation(manifest: SwarmAppManifest) {
+  writeFileSync(manifestPath, yaml.dump(manifest));
+  return spawnSync(process.execPath, ['scripts/oshal-app.js', 'validate', packageDir], {
+    cwd: process.cwd(), encoding: 'utf8', timeout: 15000,
+  });
+}
 
 /** Build the persisted record shape consumed by the verifier. */
 function record(manifest: SwarmAppManifest): SwarmApplicationRecord {
@@ -58,6 +81,11 @@ beforeAll(async () => {
 
   const app = express();
   app.use(express.json());
+  app.get('/api/user/_smoke', (req, res) => {
+    userHits.push({ authorization: req.headers.authorization, serviceSecret: req.headers['x-service-secret'] as string | undefined });
+    if (req.headers.authorization !== USER_PAT) { res.status(403).json({ error: 'no_current_access' }); return; }
+    res.json({ ready: true });
+  });
   app.post('/api/example/_smoke', (req, res) => {
     if (req.headers['x-service-secret'] !== 'smoke-secret') {
       res.status(401).json({ error: 'bad service identity' });
@@ -77,6 +105,80 @@ beforeAll(async () => {
 afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   rmSync(root, { recursive: true, force: true });
+});
+
+it.each(['oidc', 'service-or-oidc'] as const)('accepts user smoke on %s in runtime and standalone CLI', auth => {
+  const manifest = userManifest();
+  manifest.routes![0].auth = auth;
+  const cli = cliValidation(manifest);
+  expect(cli.status, cli.stdout + cli.stderr).toBe(0);
+  expect(readManifest(manifestPath).smoke![0].requiresUser).toBe(true);
+  manifest.smoke![0].method = 'HEAD';
+  delete manifest.smoke![0].expect.jsonPointer;
+  delete manifest.smoke![0].expect.rejectValues;
+  expect(cliValidation(manifest).status).toBe(0);
+  expect(readManifest(manifestPath).smoke![0].method).toBe('HEAD');
+});
+
+it.each([
+  { field: 'requiresUser', value: 'true' }, { field: 'requiresUser', value: null },
+  { field: 'method', value: 'POST' }, { field: 'method', value: 'DELETE' },
+  { field: 'auth', value: 'service' }, { field: 'auth', value: 'public' },
+])('rejects invalid user smoke $field=$value in CLI and runtime', ({ field, value }) => {
+  const manifest = userManifest();
+  (manifest.smoke![0] as unknown as Record<string, unknown>)[field] = value;
+  const cli = cliValidation(manifest);
+  expect(cli.status).not.toBe(0);
+  expect(cli.stdout + cli.stderr).toMatch(/requiresUser/);
+  expect(() => readManifest(manifestPath)).toThrow(/requiresUser/);
+});
+
+it.each(['service', 'public'] as const)('rejects a closer %s route even below a user-authenticated parent', auth => {
+  const manifest = userManifest();
+  manifest.routes!.push({ ...manifest.routes![0], mountPath: '/api/user/_smoke', auth });
+  const cli = cliValidation(manifest);
+  expect(cli.status).not.toBe(0);
+  expect(cli.stdout + cli.stderr).toMatch(/requiresUser/);
+  expect(() => readManifest(manifestPath)).toThrow(/requiresUser/);
+});
+
+it('leaves a user smoke pending with no caller PAT even when the service secret is present', async () => {
+  userHits = [];
+  const manifest = userManifest();
+  const result = await verifyAppSmokes([{ requestedName: manifest.name, record: record(manifest) }], {
+    apiBaseUrl: baseUrl, serviceSecret: 'must-not-be-lent',
+  });
+  expect(result).toMatchObject({ success: true, failedApps: [], pendingApps: [manifest.name] });
+  expect(result.apps[0].smokes[0]).toMatchObject({ status: 'pending', error: expect.stringContaining('Verified user context') });
+  expect(userHits).toEqual([]);
+});
+
+it.each(['', 'Bearer arbitrary', `Bearer\noshal_pat_${'a'.repeat(48)}`, `${USER_PAT}\n`, `${USER_PAT} `, `Bearer oshal_pat_${'A'.repeat(48)}`])(
+  'fails a supplied malformed PAT %j without sending it or hiding it behind AI prerequisites', async authorization => {
+    userHits = [];
+    const manifest = userManifest();
+    manifest.smoke![0].requiresAi = true;
+    const result = await verifyAppSmokes([{ requestedName: manifest.name, record: record(manifest) }], {
+      apiBaseUrl: baseUrl, authorization, preOnboarding: true,
+    });
+    expect(result).toMatchObject({ success: false, failedApps: [manifest.name], pendingApps: [] });
+    expect(result.apps[0].smokes[0]).toMatchObject({ status: 'failed', error: expect.stringContaining('bearer token') });
+    expect(userHits).toEqual([]);
+  },
+);
+
+it('checks validly shaped PATs over HTTP, preserving a revoked denial and carrying only caller authority', async () => {
+  userHits = [];
+  const manifest = userManifest();
+  const records = [{ requestedName: manifest.name, record: record(manifest) }];
+  const revoked = `Bearer oshal_pat_${'b'.repeat(48)}`;
+  const denied = await verifyAppSmokes(records, { apiBaseUrl: baseUrl, authorization: revoked });
+  expect(denied.apps[0].smokes[0]).toMatchObject({ status: 'failed', error: 'HTTP 403, expected 200' });
+  const passed = await verifyAppSmokes(records, { apiBaseUrl: baseUrl, authorization: USER_PAT, serviceSecret: 'must-not-be-lent' });
+  expect(passed.apps[0].smokes[0]).toMatchObject({ status: 'passed', httpStatus: 200 });
+  expect(userHits).toEqual([
+    { authorization: revoked, serviceSecret: undefined }, { authorization: USER_PAT, serviceSecret: undefined },
+  ]);
 });
 
 describe('CORE-05 app smoke contract', () => {

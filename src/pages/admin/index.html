@@ -1,32 +1,20 @@
+<!--
+CHANGE LOG
+-----------------------------------------------------------------------------
+SEQ | AUTHOR | DESCRIPTION
+-----------------------------------------------------------------------------
+1 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
+2 | maintainer@emeraldcoastsystemsgroup.com | Admin tools link to the data-model explorer (/data-model).
+-->
 <!doctype html>
 <html lang="en" data-theme="midnight">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OSHAL Admin Console</title>
-  <script>
-    (() => {
-      const supported = ['midnight','daylight','ocean','sakura','forest','gray','black','light-blue','aurora','graphite','amber'];
-      try {
-        const saved = localStorage.getItem('cockpit-theme');
-        if (saved && supported.includes(saved)) {
-          document.documentElement.setAttribute('data-theme', saved);
-        }
-      } catch (_) {}
-    })();
-  </script>
+  <script src="/shared/ui/js/surface-theme.js"></script>
   <link rel="stylesheet" href="/fonts/codicon.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/midnight.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/daylight.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/ocean.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/sakura.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/forest.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/gray.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/black.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/light-blue.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/aurora.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/graphite.css" />
-  <link rel="stylesheet" href="/cockpit/css/themes/amber.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
   <link rel="stylesheet" href="/admin/admin.css" />
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
 </head>
@@ -70,6 +58,50 @@
           </div>
         </div>
         <div class="chip-wrap" id="operatorPermissions"></div>
+        <p class="role-source" id="operatorSource"></p>
+      </section>
+
+      <!-- ADR-147/148: the admin console is where an administrator lands, so it has to REACH the
+           admin surfaces. Before this it linked only to /cockpit/ and /utilities, and the tools
+           built since (App Loader, Users, per-app Access) were URL-only. Each route self-gates;
+           these are navigation, not permission. -->
+      <section class="panel panel-wide" data-admin-section="admin-tools">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Tools</p>
+            <h2>Admin tools</h2>
+          </div>
+        </div>
+        <div class="tool-grid">
+          <a class="tool-link" href="/app-loader">
+            <span class="codicon codicon-cloud-download"></span>
+            <span><b>App Loader</b><small>Install applications from any git source</small></span>
+          </a>
+          <a class="tool-link" href="/users">
+            <span class="codicon codicon-organization"></span>
+            <span><b>Users &amp; roles</b><small>Swarm root, admins, local accounts</small></span>
+          </a>
+          <a class="tool-link" href="/access">
+            <span class="codicon codicon-shield"></span>
+            <span><b>Application access</b><small>Who may use each installed app</small></span>
+          </a>
+          <a class="tool-link" href="/applications">
+            <span class="codicon codicon-extensions"></span>
+            <span><b>Applications</b><small>Installed apps, versions and updates</small></span>
+          </a>
+          <a class="tool-link" href="/config">
+            <span class="codicon codicon-settings-gear"></span>
+            <span><b>Configuration</b><small>Platform settings and secrets</small></span>
+          </a>
+          <a class="tool-link" href="/data-model">
+            <span class="codicon codicon-database"></span>
+            <span><b>Data model</b><small>Tables, relationships and app integrations</small></span>
+          </a>
+          <a class="tool-link" href="/cockpit/tools/dlq.html">
+            <span class="codicon codicon-warning"></span>
+            <span><b>Dead letters</b><small>Quarantined queue items</small></span>
+          </a>
+        </div>
       </section>
 
       <section class="panel" data-admin-section="security-posture">

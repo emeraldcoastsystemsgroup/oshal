@@ -4,8 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D11: derive tool ownership from the ACTIVE MANIFESTS, at query time. Closes a live bug — purchasing.yaml and travel.yaml both declared `explain-pick` with different executors, the runtime upsert is ON CONFLICT (tool_name) DO UPDATE (last writer wins), readdirSync loaded travel last, and the SHOPPING concierge's explain-pick was routing to POST /api/travel/chat in production.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | A tool dependency is REQUIRED tools only (dependencies.required.tools, or the legacy dependencies.tools): an optional tool never fails a load and never blocks its provider's uninstall.
  */
 
+import { requiredToolDependencies } from '@/shared/app-dependencies';
 import type { SwarmAppManifest, SwarmApplicationRecord } from '../types';
 
 /**
@@ -23,12 +25,14 @@ export function providedToolNames(manifest: SwarmAppManifest): string[] {
 }
 
 /**
- * @description The tool names a manifest DEPENDS on (declares but does not provide).
+ * @description The tool names a manifest REQUIRES (declares but does not provide). Optional tools
+ * are deliberately excluded: the app works without them, so they neither fail its load nor pin
+ * their provider in place.
  * @param manifest - The app manifest.
- * @returns Depended-on tool names.
+ * @returns Required tool names.
  */
 export function dependedToolNames(manifest: SwarmAppManifest): string[] {
-  return manifest.dependencies?.tools ?? [];
+  return requiredToolDependencies(manifest);
 }
 
 /** @description An app that depends on tools another app provides. */
@@ -132,7 +136,7 @@ export function assertToolNamesUnique(
 }
 
 /**
- * @description Fail closed when `dependencies.tools` names a tool nothing provides.
+ * @description Fail closed when a REQUIRED tool dependency names a tool nothing provides.
  *
  * A missing dependency means the app's bots are authorized to call a tool that will never resolve —
  * better to refuse the load than to fail at the first invocation, inside a bot, at runtime.
@@ -148,8 +152,8 @@ export function assertToolDependenciesResolvable(
   const missing = dependedToolNames(manifest).filter((t) => !universe.has(t));
   if (missing.length) {
     throw new Error(
-      `Manifest ${manifest.name}: dependencies.tools names unknown tool(s): ${missing.join(', ')}. ` +
-        `Declare the providing app, or remove the dependency.`,
+      `Manifest ${manifest.name}: required tool dependency names unknown tool(s): ${missing.join(', ')}. ` +
+        `Declare the providing app, move it to dependencies.optional.tools if the app runs without it, or remove it.`,
     );
   }
 }

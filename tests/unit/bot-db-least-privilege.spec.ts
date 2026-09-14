@@ -4,14 +4,64 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | K5 guard (BACKLOG kernel audit 2026-07-29): worker bots inherited the SUPERUSER database URL while the api ran least-privilege oshal_app — and Postgres exempts superuser/BYPASSRLS roles from row-level security, so every bot node was an RLS bypass around the per-user isolation the platform is sold on. This spec pins the whole fix: (1) no compose DATABASE_URL defaults to the superuser `oshal` role; (2) bots read their OWN interpolation var (BOT_DATABASE_URL) so a legacy .env pointing DATABASE_URL at the superuser can never leak back into bot containers — exactly ONE `${DATABASE_URL:-…}` remains, the api's oshal_app runtime DSN; (3) migration 099 creates oshal_bot NOSUPERUSER+NOBYPASSRLS+NOCREATEROLE, grants DML only, and never grants ownership — the attributes that make RLS actually enforce on a bot-path connection. The remaining live leg (two-user RLS test with bots up) is a deploy-time step recorded in the BACKLOG.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Verify parsed controller/worker DSN parity against the real provisioner and preserve managed initializer credential isolation.
  */
 
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { load } from 'js-yaml';
+import { runtimeCredentials } from '../../scripts/governance/provision-app-role.mjs';
 
 const compose = fs.readFileSync(path.resolve(process.cwd(), 'docker-compose.oshal-local.yml'), 'utf8');
 const migration = fs.readFileSync(path.resolve(process.cwd(), 'scripts/migrations/099-bot-db-role.sql'), 'utf8');
+const deployment = load(compose) as { services: Record<string, { environment?: Record<string, string> }> };
+const apiEnvironment = deployment.services['oshal-api'].environment!;
+
+/** @description Resolve only the closed default-value expressions used by this database fixture.
+ * @param overrides Explicit fixture configuration; never reads the host environment.
+ * @returns Three independent database URLs accepted by the provisioning validator.
+ */
+function provisioningInput(overrides: Record<string, string> = {}) {
+  const resolve = (name: string) => apiEnvironment[name]?.replace(/\$\{(\w+):-([^}]*)\}/g,
+    (_expression, variable: string, fallback: string) => overrides[variable] || fallback);
+  return { bootstrapUrl: resolve('BOOTSTRAP_DATABASE_URL'), appUrl: resolve('DATABASE_URL'), botUrl: resolve('BOT_DATABASE_URL') };
+}
+
+describe('controller bootstrap receives the intended worker credentials', () => {
+  it('uses the same parsed default and override expression as every worker runtime', () => {
+    const workers = Object.values(deployment.services).filter(service => service.environment?.BOT_RUNTIME === 'bot-node');
+    expect(workers.length).toBeGreaterThan(0);
+    for (const worker of workers) expect(worker.environment?.DATABASE_URL).toBe(apiEnvironment.BOT_DATABASE_URL);
+    const credentials = runtimeCredentials(provisioningInput());
+    expect(credentials.app.username).toBe('oshal_app');
+    expect(credentials.bot.username).toBe('oshal_bot');
+    expect(credentials.bootstrap.username).toBe('oshal');
+  });
+
+  it('passes custom independent role URLs through the real provisioner validation', () => {
+    const overrides = {
+      BOOTSTRAP_DATABASE_URL: `postgresql://owner:${'c'.repeat(48)}@database.invalid:5432/fixture`,
+      DATABASE_URL: `postgresql://oshal_app:${'a'.repeat(48)}@database.invalid:5432/fixture`,
+      BOT_DATABASE_URL: `postgresql://oshal_bot:${'b'.repeat(48)}@database.invalid:5432/fixture`,
+    };
+    const credentials = runtimeCredentials(provisioningInput(overrides));
+    expect(credentials.bot.href).toBe(overrides.BOT_DATABASE_URL);
+    expect(credentials.app.href).toBe(overrides.DATABASE_URL);
+    expect(credentials.bootstrap.href).toBe(overrides.BOOTSTRAP_DATABASE_URL);
+    expect(() => runtimeCredentials({ ...provisioningInput(overrides), botUrl: undefined })).toThrow(/BOT_DATABASE_URL/);
+    expect(() => runtimeCredentials(provisioningInput({ ...overrides, BOT_DATABASE_URL: overrides.DATABASE_URL })))
+      .toThrow(/exactly as oshal_bot/);
+  });
+
+  it('keeps managed database bot credentials confined to the finite initializer', () => {
+    const managed = fs.readFileSync(path.resolve(process.cwd(), 'docker-compose.managed-postgres.yml'), 'utf8');
+    const apiBlock = managed.split('\n  oshal-api:')[1].split('\n  jarvis-bot:')[0];
+    expect(apiBlock).toMatch(/^\s+BOT_DATABASE_URL: !reset null$/m);
+    expect(apiBlock).toMatch(/^\s+BOOTSTRAP_DATABASE_URL: !reset null$/m);
+    expect(managed.split('\n  oshal-db:')[0]).toContain('BOT_DATABASE_URL: ${BOT_DATABASE_URL:?');
+  });
+});
 
 describe('K5: bot containers never get a superuser DSN (RLS bypass)', () => {
   it('no runtime DATABASE_URL in the deployment compose defaults to the superuser role', () => {

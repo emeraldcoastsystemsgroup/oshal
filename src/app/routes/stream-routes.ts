@@ -6,12 +6,15 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — SSE streaming routes
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added dedicated /api/stream/debug SSE channel with real runtime summaries for the debug window
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Normalized Change Log attribution for governance compliance during engineering-screen retrofit work
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Authorize current task ownership and protected result policy before subscription, debug summaries and every task event.
  */
 
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '../composition-root';
 import { randomUUID } from 'node:crypto';
+import { getCaller } from '@/shared/middleware/authz';
+import { callerCanReadStoredTaskResult, callerCanReadTaskResult } from './protected-result-access';
 
 const logger = createChildLogger({ module: 'stream-routes' });
 
@@ -49,7 +52,7 @@ function handleDebugStream(ctx: AppContext) {
       streamClients: ctx.streamManager.getStats().clientCount,
     });
 
-    await emitDebugSummary(ctx, res);
+    await emitDebugSummary(ctx, req, res);
 
     if (!keepAlive) {
       res.end();
@@ -63,7 +66,7 @@ function handleDebugStream(ctx: AppContext) {
     }, 30000);
 
     const summaryTimer = setInterval(() => {
-      void emitDebugSummary(ctx, res);
+      void emitDebugSummary(ctx, req, res);
     }, 5000);
 
     req.on('close', () => {
@@ -80,13 +83,16 @@ function handleDebugStream(ctx: AppContext) {
  * @returns Express request handler
  */
 function handleStreamConnect(ctx: AppContext) {
-  return (req: Request, res: Response): void => {
+  return async (req: Request, res: Response): Promise<void> => {
     const taskId = req.params.taskId as string;
     const clientId = randomUUID();
 
     logger.info({ clientId, taskId }, 'GET /api/stream/:taskId — SSE connect');
 
-    ctx.streamManager.registerClient(clientId, taskId, res);
+    if (!await callerCanReadStoredTaskResult(ctx, req, taskId)) {
+      res.status(404).json({ error: 'Task not found' }); return;
+    }
+    ctx.streamManager.registerClient(clientId, taskId, res, id => callerCanReadStoredTaskResult(ctx, req, id));
   };
 }
 
@@ -99,16 +105,19 @@ function handleStreamConnect(ctx: AppContext) {
 function handleSessionStream(ctx: AppContext) {
   return (req: Request, res: Response): void => {
     const clientId = randomUUID();
+    if (!getCaller(req).sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
 
     logger.info({ clientId }, 'GET /api/stream — session SSE connect');
 
-    ctx.streamManager.registerClient(clientId, 'all', res);
+    ctx.streamManager.registerClient(clientId, 'all', res, id => callerCanReadStoredTaskResult(ctx, req, id));
   };
 }
 
-async function emitDebugSummary(ctx: AppContext, res: Response): Promise<void> {
+async function emitDebugSummary(ctx: AppContext, req: Request, res: Response): Promise<void> {
   try {
-    const tasks = await ctx.taskStore.list({ limit: 50 });
+    const candidates = await ctx.taskStore.list({ limit: 50 });
+    const visibility = await Promise.all(candidates.map(task => callerCanReadTaskResult(ctx, req, task)));
+    const tasks = candidates.filter((_task, index) => visibility[index]);
     const stats = ctx.streamManager.getStats();
     const active = tasks.filter((task) => task.status === 'active' || task.status === 'processing').length;
     const waiting = tasks.filter((task) => task.status === 'waiting_for_input').length;
@@ -133,7 +142,7 @@ async function emitDebugSummary(ctx: AppContext, res: Response): Promise<void> {
       completedTasks: completed,
       failedTasks: failed,
       streamClients: stats.clientCount,
-      streamTaskIds: stats.taskIds,
+      streamTaskIds: stats.taskIds.filter(id => tasks.some(task => task.taskId === id)),
       latestTaskId: latestTask?.taskId ?? null,
     });
   } catch (error) {

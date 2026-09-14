@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Capture immutable queued initiators and preserve owner and reserved authority fields during ticket edits.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial TicketService with state transitions, linking, and business logic orchestration
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Defaulted new internal tickets onto canonical project metadata so root tickets always land in the Default project unless explicitly assigned
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added paused and cancelled transition rules so rebuilt runtimes can expose operator lifecycle controls without TypeScript build failures
@@ -30,6 +31,9 @@ import {
 import { createChildLogger } from '@/shared/logger';
 import { ticketEvents } from '@/shared/ticket-events';
 import { bindOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
+import { captureQueuedApplicationPrincipal } from '@/shared/queued-application-principal';
+import { protectTicketAuthorityUpdate } from './ticket-authority-update';
+import { stripProtectedResultMetadata } from '@/shared/protected-results';
 
 const logger = createChildLogger({ module: 'TicketService' });
 
@@ -125,7 +129,7 @@ export class TicketService {
       ticketType: input.ticketType,
       metadata: input.metadata ?? {},
     });
-    const metadata = bindOwnerPrincipalIssuer(derivedMetadata, input.ownerSub);
+    const metadata = bindOwnerPrincipalIssuer(stripProtectedResultMetadata(derivedMetadata), input.ownerSub);
     logger.info(
       { title: input.title, ticketType: input.ticketType, status: resolvedStatus, queueId: metadata.queueId },
       'Creating ticket',
@@ -135,6 +139,7 @@ export class TicketService {
       status: resolvedStatus,
       metadata,
     });
+    await captureQueuedApplicationPrincipal(ticket.ticketId, ticket.ownerSub);
     logger.info({ ticketId: ticket.ticketId }, 'Ticket created');
     // Sanitized lifecycle broadcast (ADR-045 swarm operational graph, SSE-style consumers).
     // Ids/title/status only — the description deliberately never rides the bus.
@@ -341,7 +346,9 @@ export class TicketService {
    */
   async updateTicket(ticketId: string, updates: Partial<Omit<InternalTicket, 'ticketId' | 'createdAt' | 'status'>>): Promise<void> {
     logger.info({ ticketId }, 'Updating ticket fields');
-    await this.ticketStore.update(ticketId, updates);
+    const current = await this.ticketStore.get(ticketId);
+    if (!current) throw new Error('Ticket not found');
+    await this.ticketStore.update(ticketId, protectTicketAuthorityUpdate(current, updates));
   }
 
   /**

@@ -6,11 +6,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of dedicated cockpit/static asset route registration to reduce server.ts size before engineering-screen retrofit work
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Hardened cockpit sendFile error handling so retrofit validation typechecks cleanly
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added /css and /js static aliases so legacy ui-enhanced engineering pages resolve absolute asset references
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Mount a fixed authenticated allowlist for locked local startup dependencies.
  */
 
 import express from 'express';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { registerCockpitVendorAssets } from './cockpit-vendor-assets';
 
 const logger = createChildLogger({ module: 'cockpit-static-routes' });
 
@@ -65,6 +67,7 @@ export function registerCockpitStaticRoutes(options: CockpitStaticRoutesOptions)
     next();
   };
 
+  registerCockpitVendorAssets(options.app, options.requiresAuth, noCache);
   options.app.use('/cockpit', options.requiresAuth, noCache, express.static(options.cockpitDir));
   options.app.get('/cockpit/', options.requiresAuth, noCache, (_req, res) => {
     logger.info('GET /cockpit/ (authenticated)');

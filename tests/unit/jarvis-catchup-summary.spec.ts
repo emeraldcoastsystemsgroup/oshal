@@ -11,7 +11,7 @@ import { resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 
-const html = readFileSync(resolve(process.cwd(), 'src/api/jarvis.html'), 'utf8');
+const html = readFileSync(resolve(process.cwd(), 'src/api/jarvis.html'), 'utf8').replace(/\r\n/g, '\n');
 
 interface Group { source: string; done: number; failed: number }
 interface Summary { total: number; failed: number; groups: Group[]; text: string }
@@ -28,7 +28,7 @@ function catchupBlock(): string {
 
 /** deliverFresh as written in the surface (the branch between name-announce and summary). */
 function deliverFreshSource(): string {
-  const m = html.match(/function deliverFresh\(fresh, away\) \{[\s\S]*?\n\}\n/);
+  const m = html.match(/function deliverFresh\(fresh, away, withVoice = true\) \{[\s\S]*?\n\}\n/);
   expect(m, 'deliverFresh missing from jarvis.html').not.toBeNull();
   return m![0];
 }
@@ -152,7 +152,7 @@ describe('the poll loop delivers through deliverFresh and primes after the first
 
   it('collects finished tasks and hands the batch to deliverFresh with the away flag', () => {
     expect(start).toBeGreaterThanOrEqual(0);
-    expect(poll).toContain('deliverFresh(fresh, !shelfPrimed)');
+    expect(poll).toContain('window.OshalBriefings.deliver(fresh, !shelfPrimed, deliverFresh)');
     expect(poll).toContain('shelfPrimed = true');
   });
 
@@ -164,6 +164,6 @@ describe('the poll loop delivers through deliverFresh and primes after the first
   it('a "yes" right after the summary reads the backlog, mirroring the single-result offer', () => {
     expect(html).toContain('let pendingCatchupOffer = false;');
     expect(html).toContain('offeredCatchupForTurn && !offeredResultIdForTurn && saidYes');
-    expect(html).toMatch(/pendingCatchupOffer = true;\s*\n\s*speak\(/);
+    expect(html).toMatch(/pendingCatchupOffer = true;\s*\n\s*if \(withVoice\) speak\(/);
   });
 });

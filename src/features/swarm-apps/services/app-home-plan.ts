@@ -7,6 +7,7 @@
  *
  * @module app-home-plan
  * Home customization | Codex | Carry selectable metric pointers and allowed same-app destinations to Home.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps, read through @/shared/app-dependencies (dependencies.required.apps or the legacy dependencies.apps).
  */
 
 import type {
@@ -16,6 +17,7 @@ import type {
   SwarmAppSummaryTile,
   SwarmAppSummaryTone,
 } from '../types';
+import { requiredAppDependencies } from '@/shared/app-dependencies';
 import { isGroupManifest } from './swarm-app-group';
 import { resolveAppIntegrations, type ResolvedAppIntegration } from './app-integrations';
 
@@ -148,7 +150,7 @@ export function buildHomePlan(manifests: readonly SwarmAppManifest[]): HomePlanE
     for (const step of group.setup ?? []) {
       labels.set(`${step.app}/${step.readiness}`, { label: step.label, fix: step.fix });
     }
-    const members = (group.dependencies?.apps ?? []).filter((name) => byName.has(name));
+    const members = requiredAppDependencies(group).filter((name) => byName.has(name));
     const summary: HomePlanSummaryProbe[] = [];
     const todos: HomePlanTodo[] = [];
     for (const name of members) {

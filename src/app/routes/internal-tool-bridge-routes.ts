@@ -20,6 +20,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Narrow service-secret requests to their trusted user sub before grant lookup, execution, and explicit access-audit writes; a machine call without X-OSHAL-User-Sub now fails closed instead of inheriting operator-level database access.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Exclude ASK grants from unattended MCP listing and execution; only exact AUTO grants are executable without a fresh approval decision.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: require immutable request-start executor identity, deny system/unknown descriptors and missing caller context, and revalidate immediately before bridged execution.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Expose caller-scoped authorization reads through the typed handler; keep changes on the interactive rail.
  */
 
 /**
@@ -45,6 +46,9 @@ import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-s
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { emitAuditEvent } from '@/features/governance';
+import type { AuthorizationActor } from '@/shared/application-authorization';
+import { AUTHORIZATION_READ_TOOL, isAuthorizationTool } from '@/shared/security/authorization-tool-contract';
+import type { AuthorizationToolRuntime } from '@/app/composition/authorization-tool';
 
 const logger = createChildLogger({ module: 'internal-tool-bridge' });
 
@@ -100,7 +104,13 @@ function normalizeSchema(schema: unknown): Record<string, unknown> {
   return { type: 'object', properties: {} };
 }
 
-export function createInternalToolBridgeRoutes(ctx: AppContext): Router {
+/** Verified identity is injected by server composition; shared-secret subjects alone have no issuer authority. */
+export interface InternalToolAuthorizationOptions {
+  authorizationTool: AuthorizationToolRuntime;
+  resolveActor: (req: Request) => Promise<AuthorizationActor>;
+}
+
+export function createInternalToolBridgeRoutes(ctx: AppContext, authorization?: InternalToolAuthorizationOptions): Router {
   const router = Router();
   // Tool execution is always on behalf of a user. The shared secret authenticates the harness;
   // this middleware supplies the separate, least-privilege owner identity for every DB call.
@@ -111,6 +121,7 @@ export function createInternalToolBridgeRoutes(ctx: AppContext): Router {
     workspaceService: ctx.workspaceService,
     dynamicToolExecutorRegistry: ctx.dynamicToolExecutorRegistry,
     connectorToolExecutor: ctx.connectorSpecToolService,
+    authorizationToolExecutor: authorization?.authorizationTool,
   });
 
   /** GET /api/tools/for-agent/:agentId — enabled (auth_mode != off) registry tools for the MCP tools/list. */
@@ -122,7 +133,11 @@ export function createInternalToolBridgeRoutes(ctx: AppContext): Router {
       // execute_command, …) are Claude Code natives or live in the base MCP config;
       // exposing them here would shadow the real ones and the server-side executor
       // can't run them ("Tool 'bash' is not supported by the server-side executor").
-      const appTools = tools.filter((t) => t.registeredBy && t.registeredBy !== 'system');
+      const discovery = authorization
+        ? await authorization.authorizationTool.discover(await authorization.resolveActor(req)) : [];
+      const appTools = tools.filter((t) => t.registeredBy && t.registeredBy !== 'system'
+        && (!isAuthorizationTool(t.name) || (t.name === AUTHORIZATION_READ_TOOL
+          && discovery.some((entry) => entry.name === t.name))));
       res.json({
         tools: appTools.map((t) => ({
           name: t.name,
@@ -157,6 +172,10 @@ export function createInternalToolBridgeRoutes(ctx: AppContext): Router {
     const userSub = resolveActingSub(req);
     if (!userSub) {
       res.status(403).json({ error: 'tool execution requires an exact caller identity' });
+      return;
+    }
+    if (isAuthorizationTool(String(toolName)) && (toolName !== AUTHORIZATION_READ_TOOL || !authorization)) {
+      res.status(403).json({ error: 'Authorization changes require the interactive preview and approval flow' });
       return;
     }
     const descriptorRegistry = ctx.dynamicToolExecutorRegistry;
@@ -202,6 +221,14 @@ export function createInternalToolBridgeRoutes(ctx: AppContext): Router {
         input && typeof input === 'object' && !Array.isArray(input) ? input : {},
         String(agentId),
         userSub,
+        isAuthorizationTool(String(toolName)) && authorization ? {
+          resolveActor: async () => {
+            const actor = await authorization.resolveActor(req);
+            if (actor.sub !== userSub) throw new Error('Authorization caller identity mismatch');
+            return actor;
+          },
+          allowChanges: false,
+        } : undefined,
       );
       void emitToolAudit(ctx.pool, userSub, String(toolName), String(agentId), 'ok');
       res.json({ output });

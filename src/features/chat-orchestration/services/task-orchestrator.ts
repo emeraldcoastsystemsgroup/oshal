@@ -22,7 +22,9 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: stop threading connector credentials through model-provider calls; server-side connector operations resolve their own credentials at the operation boundary.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: fail closed when the tool authorization registry/interceptor is unavailable instead of exposing the raw executor.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: both agentic and direct turns now honor options.byoLlmConnection — a caller-resolved hosted OpenAI-compatible endpoint runs the turn (governed, same GovernedProvider wrap the composition root applies) instead of deps.getProvider's registry harness, which for CLI-harness bots is refused unattended on the controller. Callers (executeBotOrInline, jarvis runInline) were already threading the option; nothing here read it.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  */
+import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 
 import { createChildLogger } from '@/shared/logger';
 import type {
@@ -107,6 +109,7 @@ export class TaskOrchestrator {
     text: string,
     options: ProcessMessageOptions = { agenticMode: true, autoApprove: false, source: 'dashboard' },
   ): Promise<ProcessResult> {
+    return runWithApplicationExecution({ kind: 'bots', operation: options.agentId ?? '', userSub: options.userSub }, async () => {
     const startTime = Date.now();
     logger.info({ taskId, source: options.source, agenticMode: options.agenticMode }, 'Processing message');
 
@@ -128,6 +131,7 @@ export class TaskOrchestrator {
     } catch (error) {
       return this.handleError(taskId, error, startTime);
     }
+    });
   }
 
   /**

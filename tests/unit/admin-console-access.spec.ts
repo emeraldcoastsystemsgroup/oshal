@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard admin-console fallback behavior and exact privileged subject matching without changing case-insensitive operator email semantics.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148 alignment guard: resolveRole must recognise a swarm_roles grant with an EMPTY env allowlist, so the admin console stops disagreeing with the Users page and the cockpit rail. Drives the real policy function against the real privileged-identity snapshot; the env-allowlist and fail-closed cases are asserted alongside so break-glass cannot regress.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -11,7 +12,13 @@ import type { Request, Response } from 'express';
 import {
   isOperatorAllowlistConfigured,
   requireAdminConsoleAccess,
+  resolveRole,
 } from '@/features/governance/rbac/policy';
+import { Role } from '@/features/governance/rbac/roles';
+import {
+  setPrivilegedIdentities,
+  clearPrivilegedIdentities,
+} from '@/shared/middleware/privileged-identities';
 
 const OPERATOR_ENV = ['OSHAL_OPERATOR_SUBS', 'OSHAL_OPERATOR_EMAILS', 'OSHAL_RBAC_OPERATOR_SUBS', 'OSHAL_RBAC_OPERATOR_EMAILS'];
 const saved: Record<string, string | undefined> = {};
@@ -91,5 +98,64 @@ describe('requireAdminConsoleAccess', () => {
       expect(next.mock.calls.length, sub).toBe(admitted ? 1 : 0);
       expect(res.statusCode, sub).toBe(admitted ? undefined : 403);
     }
+  });
+});
+
+describe('the governance role honours swarm_roles, not just the environment (ADR-148)', () => {
+  afterEach(clearPrivilegedIdentities);
+
+  /** No env allowlist at all — so anything that passes can ONLY have come from the role snapshot. */
+  function withNoAllowlist(): void {
+    for (const key of OPERATOR_ENV) delete process.env[key];
+  }
+
+  it('resolves an admin granted on the Users page as Admin with an EMPTY env allowlist', () => {
+    withNoAllowlist();
+    setPrivilegedIdentities([{ sub: 'granted-admin', email: 'a@example.com', role: 'admin' }]);
+    expect(resolveRole({ sub: 'granted-admin', email: null })).toBe(Role.Admin);
+  });
+
+  it('resolves swarm root as Admin — root administers the swarm', () => {
+    withNoAllowlist();
+    setPrivilegedIdentities([{ sub: 'the-root', email: null, role: 'root' }]);
+    expect(resolveRole({ sub: 'the-root', email: null })).toBe(Role.Admin);
+  });
+
+  it('matches a granted identity by email case-insensitively, and the subject exactly', () => {
+    withNoAllowlist();
+    setPrivilegedIdentities([{ sub: 'granted-admin', email: 'Mixed@Example.com', role: 'admin' }]);
+    expect(resolveRole({ sub: null, email: 'mixed@example.com' })).toBe(Role.Admin);
+    // Subject comparison stays exact — the case-sensitivity rule this module already follows.
+    expect(resolveRole({ sub: 'GRANTED-ADMIN', email: null })).toBe(Role.Viewer);
+  });
+
+  it('leaves everyone else a Viewer, so this is a grant and not a blanket raise', () => {
+    withNoAllowlist();
+    setPrivilegedIdentities([{ sub: 'granted-admin', email: null, role: 'admin' }]);
+    expect(resolveRole({ sub: 'somebody-else', email: 'other@example.com' })).toBe(Role.Viewer);
+  });
+
+  it('is Viewer with no roles loaded AND no allowlist — fail-closed, unchanged', () => {
+    withNoAllowlist();
+    clearPrivilegedIdentities();
+    expect(resolveRole({ sub: 'nobody', email: 'nobody@example.com' })).toBe(Role.Viewer);
+  });
+
+  it('keeps the env allowlist working when no roles are loaded (break-glass preserved)', () => {
+    withNoAllowlist();
+    clearPrivilegedIdentities();
+    process.env.OSHAL_OPERATOR_SUBS = 'env-operator';
+    expect(resolveRole({ sub: 'env-operator', email: null })).toBe(Role.Admin);
+  });
+
+  it('admits a role-granted admin through the admin-console gate with an allowlist that excludes them', () => {
+    withNoAllowlist();
+    process.env.OSHAL_OPERATOR_SUBS = 'someone-else';
+    setPrivilegedIdentities([{ sub: 'granted-admin', email: null, role: 'admin' }]);
+    const next = vi.fn();
+    const res = fakeRes();
+    requireAdminConsoleAccess()(reqFor('granted-admin'), res, next);
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.status).not.toHaveBeenCalled();
   });
 });

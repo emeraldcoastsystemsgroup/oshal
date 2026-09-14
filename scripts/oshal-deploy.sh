@@ -9,13 +9,18 @@
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Initial — THE one verified deploy command, born from the 2026-07-19 deploy incident. Encodes every lesson: build from COMMITTED HEAD (git archive) and stamp the image with the commit; classify app services by their compose-declared image (oshal-bot:latest) so infra can never be swept into a recreate (the incident: a hand-typed name filter missed the oshal- prefix and force-recreated the DB); NEVER pipe `docker compose up` (SIGPIPE killed a recreate mid-flight); --remove-orphans (stale name conflict); api first + FULLY up (healthy + auto-load, the oshal-up.sh contract) then bots; deploy-parity-check is a HARD gate here (advisory in oshal-up); auto-rollback to the pre-deploy image on any post-recreate failure.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | The rollback path never checked ITSELF. `docker tag`, the api recreate and `recreate_bots` inside rollback() were fire-and-forget, and wait_api's failure was only LOGGED — so a rollback that left no serving api exited 1, the SAME code as a deploy that failed safely. That is not hypothetical: on 2026-07-29 the docker engine answered 500 on the network step, the forward deploy rolled back, the rollback's own api never came up, and the run ended `ROLLED BACK with parity drift — investigate` + exit 1 while the box sat with no api container — the operator found out from `docker ps`, not from the tool. Every rollback step is now checked and any failure yields a distinct **exit 3** with a named recovery order (oshal-up.sh, then api-bounce.sh, then parity). Exit 1 now MEANS "the previous image is serving". Guard: tests/unit/deploy-rollback-outcome.spec.ts. (Note for the record: the script was never the source of an exit-0 false green — it does exit non-zero; a piped invocation masks it, which is why CLAUDE.md says never pipe these.)
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | npm publish parity is REPORTED in preflight (scripts/npm-parity-check.sh). The client packages ship to the world on a different rail than this stack, so npm staleness must never block a container deploy - but it went unnoticed for three weeks: @oshal/chat sat at 0.2.0 on npm while #300 (node print service) and #302 (satellite login push) landed IN that package and package.json was never bumped, so the version numbers MATCHED while the code differed and nothing could notice. The deploy is where that now gets said out loud. Publishing stays an explicit, irreversible act: bash scripts/npm-publish.sh --publish.
+# 6 | maintainer@emeraldcoastsystemsgroup.com | Add explicit authorized feature-branch previews with fresh published-tip checks and strict image labels even when skipping build; archive the captured commit rather than mutable HEAD.
+# 7 | maintainer@emeraldcoastsystemsgroup.com | Drain startup logs when matching auto-load readiness so an early grep exit cannot turn a found marker into a Docker pipe failure; retain refusal on actual log-read errors.
 # =============================================================================
 #
-# Usage:  bash scripts/oshal-deploy.sh [--skip-build] [--no-rollback] [--allow-unpushed] [--dry-run]
+# Usage:  bash scripts/oshal-deploy.sh [--preview] [--skip-build] [--no-rollback] [--allow-unpushed] [--dry-run]
+#   --preview         authorized feature preview: requires the same tracked origin
+#                     branch at freshly fetched HEAD; never --allow-unpushed
 #   --dry-run         preflight + image verify (with --skip-build: no build) + print
 #                     the exact recreate plan, touch nothing
 #   --skip-build      deploy the existing oshal-bot:latest (skips archive+build; the
-#                     commit-label check downgrades to a report line)
+#                     commit-label check downgrades to a report line ONLY in default
+#                     release mode; --preview always requires the pinned SHA)
 #   --no-rollback     on failure, stop and report instead of auto-rolling back
 #   --allow-unpushed  deploy a HEAD that origin/main doesn't have (Rule 0 says push
 #                     first — this flag exists for emergency hotfix order only)
@@ -45,8 +50,9 @@ STATE_DIR="${OSHAL_DEPLOY_STATE:-$HOME/.oshal-deploy}"
 mkdir -p "$STATE_DIR"
 RUN_LOG="$STATE_DIR/deploy-$(date +%Y%m%d-%H%M%S).log"
 
-SKIP_BUILD=0; NO_ROLLBACK=0; ALLOW_UNPUSHED=0; DRY_RUN=0
+SKIP_BUILD=0; NO_ROLLBACK=0; ALLOW_UNPUSHED=0; DRY_RUN=0; PREVIEW=0
 for a in "$@"; do case "$a" in
+  --preview) PREVIEW=1 ;;
   --skip-build) SKIP_BUILD=1 ;;
   --no-rollback) NO_ROLLBACK=1 ;;
   --allow-unpushed) ALLOW_UNPUSHED=1 ;;
@@ -73,14 +79,11 @@ trap 'rm -rf "$LOCK"' EXIT
 trap 'rm -rf "$LOCK"; exit 130' INT TERM
 
 # ── Preflight ────────────────────────────────────────────────────────────────
+SOURCE_HELPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/deploy-source.sh"
+source "$SOURCE_HELPER" || fail2 "deployment source helper unavailable"
+oshal_deploy_source_preflight "$PREVIEW" "$ALLOW_UNPUSHED" || fail2 "$DEPLOY_SOURCE_ERROR"
+[ "$PREVIEW" -eq 1 ] && log "authorized preview source: ${HEAD_SHA:0:12} (fresh origin branch tip)"
 docker info >/dev/null 2>&1 || fail2 "docker daemon not reachable"
-git rev-parse --git-dir >/dev/null 2>&1 || fail2 "not a git repo"
-[ "$(git rev-parse --abbrev-ref HEAD)" = "main" ] || fail2 "not on main (Rule 0)"
-HEAD_SHA=$(git rev-parse HEAD)
-git fetch --quiet origin main 2>/dev/null || log "warn: fetch failed — comparing against last-known origin/main"
-if [ "$HEAD_SHA" != "$(git rev-parse origin/main)" ] && [ "$ALLOW_UNPUSHED" -ne 1 ]; then
-  fail2 "HEAD != origin/main — push first (or --allow-unpushed for an emergency)"
-fi
 
 # npm publish parity - a REPORT, never a gate. The client packages ship to the world on a
 # different rail than this stack, so npm staleness must not block a container deploy; but it
@@ -109,7 +112,7 @@ fi
 # ── Build from COMMITTED HEAD, stamped with the commit ──────────────────────
 if [ "$SKIP_BUILD" -ne 1 ]; then
   log "building $IMAGE from committed HEAD ${HEAD_SHA:0:12} (log: $RUN_LOG)"
-  if ! git archive HEAD | timeout 3600 docker build \
+  if ! oshal_deploy_archive | timeout 3600 docker build \
       --label "oshal.git.commit=$HEAD_SHA" --build-arg "GIT_SHA=$HEAD_SHA" \
       -t "$IMAGE" -f Dockerfile.oshal - >>"$RUN_LOG" 2>&1; then
     log "BUILD FAILED — nothing was recreated, stack untouched. See $RUN_LOG"; exit 1
@@ -119,7 +122,7 @@ fi
 # ── Verify the IMAGE before touching any container ──────────────────────────
 NEW_ID=$(docker image inspect --format '{{.Id}}' "$IMAGE")
 LABEL=$(docker image inspect --format '{{index .Config.Labels "oshal.git.commit"}}' "$IMAGE" 2>/dev/null || true)
-if [ "$SKIP_BUILD" -ne 1 ] && [ "$LABEL" != "$HEAD_SHA" ]; then
+if ! oshal_deploy_image_label_matches "$PREVIEW" "$SKIP_BUILD" "$LABEL"; then
   log "IMAGE VERIFY FAILED: commit label '$LABEL' != HEAD $HEAD_SHA — stack untouched"; exit 1
 fi
 [ "$SKIP_BUILD" -eq 1 ] && log "skip-build: deploying image ${NEW_ID:7:12} (label: ${LABEL:-none})"
@@ -224,7 +227,7 @@ wait_api() {
   done
   [ "$s" = healthy ] || { log "api never went healthy (last: $s)"; return 1; }
   for i in $(seq 1 50); do
-    docker logs "$API_CONTAINER" 2>&1 | grep -q "Swarm app auto-load complete" && { log "api fully up (healthy + auto-load)"; return 0; }
+    docker logs "$API_CONTAINER" 2>&1 | grep -F "Swarm app auto-load complete" >/dev/null && { log "api fully up (healthy + auto-load)"; return 0; }
     sleep 3
   done
   log "api healthy but auto-load never completed"; return 1

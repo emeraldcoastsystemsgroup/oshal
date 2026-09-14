@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Preserve authoritative provider-config source, reconciliation action, and version in the controller-facing bot-node response.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Return verified protected execution lineage only after successful current-policy completion.
  */
 
 import type { EnvelopeExecutionResult } from '@/features/swarm-orchestration';
@@ -58,6 +59,7 @@ export function buildBotNodeHttpResponse(
     durationMs: options.durationMs,
     taskId: options.taskId,
     error: result.error,
+    ...(result.success && typeof output.applicationExecutionId === 'string' ? { applicationExecutionId: output.applicationExecutionId } : {}),
     ...(providerConfigSource ? { providerConfigSource } : {}),
     ...(providerConfigAction ? { providerConfigAction } : {}),
     ...(hasConfigVersion ? { providerConfigVersion: rawConfigVersion } : {}),

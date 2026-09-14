@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Expose queued-principal authority storage through the feature boundary.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial barrel export for ticketing feature
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added PlaneSyncService export
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added ticket project assignment service export for root-ticket project moves
@@ -19,5 +20,8 @@ export {
   ResilientWorkspaceStore,
   TicketProjectAssignmentService,
   TicketService,
+  PostgresQueuedApplicationPrincipalStore,
+  ensureQueuedApplicationPrincipalSchema,
+  QUEUED_APPLICATION_PRINCIPAL_SCHEMA,
   WorkspaceService,
 } from './services';

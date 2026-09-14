@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Swarm root (ADR-148): the /api/swarm/roles surface behind the Users page. Every mutating route is operator-gated, and the ONE deliberately un-gated-by-requiresOperator route is the root claim — it has to be reachable by a signed-in caller while root is unclaimed, or a fresh LOCAL_AUTH box where OSHAL_OPERATOR_SUBS was never set could never establish an operator at all (the exact bootstrap deadlock this feature exists to end). That claim carries its own fail-closed conditions instead: authenticated caller, root genuinely unclaimed, and either the store is empty of roles or the caller already passes break-glass.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Remove empty-table public root election; retain authenticated existing-operator recovery.
  */
 
 import type { Router, Request, Response, RequestHandler } from 'express';
@@ -64,8 +65,8 @@ function fail(res: Response, err: unknown, context: string): void {
  *                      page that looks broken.
  *  - `GET /status`   — any authenticated caller. Reports whether root is claimed and whether the
  *                      caller's privilege is break-glass only. No identities are disclosed.
- *  - `POST /claim-root` — authenticated + the claim conditions below. NOT requiresOperator, by
- *                      design: on a fresh box nobody passes that gate yet.
+ *  - `POST /claim-root` — authenticated existing operator recovery. Fresh local installation
+ *                      uses the separately proof-bound account/root ceremony.
  *  - everything else — requiresOperator (root or admin).
  *
  * @param pool - Postgres pool.
@@ -115,25 +116,17 @@ export function createSwarmRolesRoutes(pool: Pool, requiresAuth: RequestHandler)
   });
 
   /**
-   * Claiming root. Reachable without requiresOperator ON PURPOSE — see the router JSDoc — so the
-   * conditions here ARE the gate:
-   *   1. the caller is authenticated (requiresAuth), and
-   *   2. root is genuinely unclaimed, and
-   *   3. either no roles exist at all (a virgin swarm — the first-run case), or the caller
-   *      already passes the env break-glass allowlist (an existing box adopting roles).
-   * Condition 3 is what stops a later invited user on an established swarm from walking up and
-   * claiming root because the incumbent never got around to it.
+   * Recovery requires an authenticated existing operator and genuinely unclaimed root.
+   * An empty role table is not installer authority and never elects the first public caller.
    */
   router.post('/claim-root', requiresAuth, async (req: Request, res: Response) => {
     const { sub, email } = getCaller(req);
     if (!sub) { res.status(401).json({ error: 'sign in to claim swarm root' }); return; }
     try {
-      const existingRoles = await listRoles(pool);
-      const virginSwarm = existingRoles.length === 0;
-      if (!virginSwarm && !isOperatorIdentity(sub, email)) {
-        logger.warn({ sub }, 'root claim REFUSED — swarm already has roles and caller is not privileged');
+      if (!isOperatorIdentity(sub, email)) {
+        logger.warn({ sub }, 'root claim REFUSED — installer proof or existing operator is required');
         res.status(403).json({
-          error: 'swarm root can only be claimed on a swarm with no roles yet, or by an existing operator',
+          error: 'root claim requires an existing operator; use the local installer setup for a fresh installation',
         });
         return;
       }
@@ -141,9 +134,9 @@ export function createSwarmRolesRoutes(pool: Pool, requiresAuth: RequestHandler)
         userSub: sub,
         email,
         displayName: typeof req.body?.displayName === 'string' ? req.body.displayName : null,
-        note: virginSwarm ? 'claimed at first run' : 'claimed by break-glass operator',
+        note: 'claimed by existing operator recovery',
       });
-      logger.warn({ sub, virginSwarm }, 'swarm root claimed');
+      logger.warn({ sub }, 'swarm root claimed by existing operator');
       res.status(201).json({ root: row });
     } catch (err) { fail(res, err, 'POST /claim-root'); }
   });

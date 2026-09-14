@@ -279,7 +279,7 @@ messages are from [P] (the gate itself printed titles only). Verbatim:
 ## lint — what the gate asserts (1 warning; warnings block)
 
 ```
-C:\Users\roger\AppData\Local\oshal\ci-src\src\app\server.ts
+%LOCALAPPDATA%\oshal\ci-src\src\app\server.ts
   2011:1  warning  File has too many lines (1003). Maximum allowed is 1000  max-lines
 
 ✖ 1 problem (0 errors, 1 warning)

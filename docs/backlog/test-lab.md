@@ -2,6 +2,13 @@
 
 > The feature guide is [../test-lab.md](../test-lab.md).
 
+## Application-owned cases and installation registration
+
+The operator-requested [application Test Lab registration backlog](app-test-lab-registration.md)
+tracks the package inventory, existing suites, automatic install/upgrade/uninstall registration,
+runner prerequisites and acceptance cases. This is the current worklist for bringing application
+testing into the Lab. The historical build-pipeline items below remain separate.
+
 Open items from the swarm-build-pipeline work (ADR-063). The two root-cause swarm fixes are done and
 on `main` (routing-failure timeout; claude-code root write-permission; verifier folder-resolution;
 recursive grader). These are the things left to take to a finished state.

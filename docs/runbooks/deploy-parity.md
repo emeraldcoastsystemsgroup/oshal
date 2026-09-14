@@ -4,7 +4,7 @@
 
 ## Why this exists
 
-The api and every bot-node run the **same** image (`any-bot:latest`); which process starts is decided
+The api and every bot-node run the **same** image (`oshal-bot:latest`); which process starts is decided
 at container boot by `BOT_RUNTIME` ([CLAUDE.md](../../CLAUDE.md) "Two runtimes, one image"). When
 concurrent sessions retag `:latest` at different times and recreate **only some** containers, the api
 and bots drift onto **different builds**. A two-half feature — the writer half in a bot, the reader
@@ -29,6 +29,26 @@ bash scripts/deploy-parity-check.sh
 `oshal-up` surfaces drift immediately.
 
 ## Fixing drift
+
+For an operator-authorized local preview of a feature awaiting PR review, use the
+same verified deployment command with `--preview`:
+
+```bash
+bash scripts/oshal-deploy.sh --preview
+```
+
+Commit and push first. The branch must track its same-named branch on `origin` and
+match a fresh fetch exactly. Detached, unpublished, remote-diverged and fetch-failed
+previews are refused. `--allow-unpushed` cannot be combined with preview mode.
+The build archives the captured commit even if the shared checkout advances, and
+the image label must match it even with `--skip-build` or `--dry-run`. API-first
+recreation, worker batching, kernel-skill verification, rollback and parity gates
+remain in force. Default releases use `main`; previews confer no merge approval.
+
+The source-admission regressions use temporary local Git repositories and invoke
+no Docker commands. Readiness regressions drain synthetic startup logs and retain
+failure on missing startup markers or failed log reads. These and the rollback outcome checks are registered in the
+Installed application test registration card and `npm run test:platform-readiness`.
 
 Recreate the stale containers from the **same** build the api runs:
 

@@ -1,5 +1,7 @@
 /* ═══ Ocean — Deep Sea Teal Dark ═══ */
 [data-theme="ocean"] {
+  /* Shared controls use the palette's readable accent ink and native color scheme. */
+  --text-on-accent: #111827;
   --bg-primary: #080e1a;
   --bg-secondary: rgba(12, 20, 38, 0.85);
   --bg-tertiary: rgba(20, 32, 56, 0.7);
@@ -30,3 +32,6 @@
   --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(14,165,233,0.06);
   --depth-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
+
+/* Native controls follow this palette even when a page declares a root default. */
+html[data-theme="ocean"] { color-scheme: dark; }

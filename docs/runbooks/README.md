@@ -5,6 +5,10 @@ OSHAL pipelines and surfaces. One file per procedure.
 
 ## Recovery / incident
 
+- [embodied-tile.md](./embodied-tile.md) — the Embodied Swarm tile: explore, draft, execute, take
+  command, reset with a sensor set and a truth model, the CAD Studio hand-off; installing the MuJoCo
+  physics engine container and running the first training task; the two install landmines; what each
+  test suite proves
 - [claude-auth-and-token-keepalive.md](./claude-auth-and-token-keepalive.md) — how Claude Code
   auth flows from the host into every ro-mounted container, the 401-escalation failure signature,
   the 2-hourly "OSHAL Claude token keepalive" scheduled task (the CLI won't rotate a still-valid
@@ -101,6 +105,9 @@ OSHAL pipelines and surfaces. One file per procedure.
   trade-recap pipeline (finance → deck → video → social).
 - [jarvis-provider-and-cockpit-walkthrough.md](./jarvis-provider-and-cockpit-walkthrough.md) —
   Jarvis provider health, failover, and a cockpit walkthrough.
+- [jarvis-couldnt-do-that-just-now.md](./jarvis-couldnt-do-that-just-now.md) — triage for the
+  Jarvis catch-all error: the refused bookmarked thread (page self-heals since `7aae3ce5`), the
+  briefings asset JSON 404 in the image, what is proven, and how to finish the live proof.
 - [business-domain-email-dns.md](./business-domain-email-dns.md) — DMARC/DKIM/SPF state for
   the `emeraldcoastsystemsgroup.com` business domain: verify commands, the DMARC-tighten
   follow-up, and the don't-rotate-DKIM gotcha.

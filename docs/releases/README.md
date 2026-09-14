@@ -1,0 +1,12 @@
+# Release verification records
+
+Dated source checkpoints, local checks and promotion status.
+
+- [Ambient Recall (ADR-100) Phases 2-4 — 2026-09-12](ambient-recall-phases-2-4-2026-09-12.md): asks/trends front door, semantic recall with database-enforced deletion parity, profile pages, the consent-trigger live finding, proofs, and how to continue.
+- [Recorded-report briefings and CAD editor lifecycle — 2026-09-13](report-briefings-cad-lifecycle-2026-09-13.md): atomic completed results, bounded owner-qualified collection and current editor state.
+
+- [Reusable components and integration — 2026-09-13](component-integration-2026-09-13.md): Profile consistency, abandoned discovery, shared Scan/CAD preview and retained integration guards.
+
+- [Autonomous backlog — 2026-09-11](autonomous-backlog-2026-09-11.md): ten application/platform outcomes and their registered tests.
+- [Protected remote authorization — 2026-09-11](remote-authorization-2026-09-11.md): current user rights across controller, worker and result delivery.
+- [Localhost Users and Access — 2026-09-11](localhost-uam-2026-09-11.md): installed-build acceptance, database provisioning and real operator browser checks.

@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 D8: lock the kernel-skill contract. The kernel's skills are its package-facing API — every declared module must exist AND be re-exported by the build anchor (the re-export is the only thing that carries a feature into dist/, since tsconfig.server.json excludes src/features/**). Also proves the manifest `uses:` validator fails CLOSED on an unknown skill id, so a typo dies at load instead of crashing an installed app at mount.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #5 (finance): the contract grows to eleven — 'payments' is pinned as a declared skill because the finance rip removed its last core importer and BOTH the finance and payments store packages resolve @/features/payments from dist. The spec list is the guard that a future "cleanup" of the anchor can't silently unpin it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin authenticated-artifacts and package-tools in the exact declared capability contract.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin app-dependencies: the floor a manifest names when it uses dependencies.required/optional, so an older core refuses the package instead of installing it without its required dependencies.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -52,14 +54,20 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
   const anchorSrc = readFileSync(join(REPO_ROOT, ANCHOR), 'utf8');
   const allModules = KERNEL_SKILLS.flatMap((s) => s.modules.map((m) => ({ ...m, skill: s.id })));
 
-  it('declares the twelve contracted skills (ten signed off + two carve pins), with no duplicate ids', () => {
-    expect(KERNEL_SKILLS.length).toBe(12);
+  it('declares the contracted skills and authorization floor, with no duplicate ids', () => {
     expect(KERNEL_SKILL_IDS.size).toBe(KERNEL_SKILLS.length);
     // The signed-off Tier-0b list (swarm-store-migration-plan §2) + 'payments', pinned at the
     // finance carve (ADR-085 Wave 1 #5): both its importers live in the store, so only this
     // contract keeps @/features/payments in dist.
     expect([...KERNEL_SKILL_IDS].sort()).toEqual(
       [
+        'app-dependencies',
+        'application-authorization',
+        'authenticated-artifacts',
+        'package-tools',
+        'specialist-context',
+        'test-catalog',
+        'jarvis-briefings',
         'deck-generation',
         'graph',
         'media-generation',

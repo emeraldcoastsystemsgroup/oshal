@@ -10,6 +10,8 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-117 deferred item: unauthenticated self-service password reset. POST /api/local-auth/forgot (public front door, like /login) asks the store for a reset token (createPasswordReset - active accounts only, never creates/resurrects/stomps) and emails the /invite link over the SAME two rails as invitations. Enumeration-safe by construction: ONE response body/status for known, unknown, invited and disabled addresses; one identical store round trip either way; delivery is fire-and-forget so response timing cannot become the oracle; and delivery outcomes are logged, never returned. Per-IP fixed-window limit answers 429; the per-EMAIL cap is enforced SILENTLY (same 200) because a distinct answer would itself leak, and it caps mailbombing a victim address. A reset never clears TOTP (acceptInvite leaves the factor columns alone - guarded). Guard: tests/unit/local-auth-forgot-password.spec.ts.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Stamp locally authenticated sessions with a stable issuer namespace so derived PAT/TV credentials and issuer-bound applications preserve the same account identity.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148 swarm root: the bootstrap route now CLAIMS SWARM ROOT for the first account. This is the fix for "default passwords are confusing" — the first account and the operator allowlist were two unconnected systems, so whoever set the very first password got no privilege from it and every operator-gated page 403d at them. Safe here specifically because bootstrapFirstAdmin is race-guarded to an empty user store. Non-fatal: a swarm whose root is already held by a break-glass operator still creates and signs in the account.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Require installer proof and commit first account/root together before creating a session.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Respect established external identities in setup and serialize root status and credential recovery guards with role changes.
  */
 
 import { Router, type Request, type RequestHandler, type Response } from 'express';
@@ -24,9 +26,11 @@ import {
   type OidcMiddlewareSet,
 } from '@/shared/middleware/oidc';
 import QRCode from 'qrcode';
-import { hasValidServiceSecret, isOperator } from '@/shared/middleware/authz';
-import { LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
-import { claimRoot } from '@/features/swarm-roles';
+import { getCaller, hasValidServiceSecret, isOperator } from '@/shared/middleware/authz';
+import { getAuthenticatedPrincipalIssuer, LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
+import { completeInstallerRootSetup } from '@/app/composition/installer-root-bootstrap';
+import { hasEstablishedInstallation } from '@/app/composition/installation-account-state';
+import { changeLocalAccountStatus, withLocalAccountRecovery } from '@/app/composition/local-account-administration';
 import {
   LOCAL_SESSION_COOKIE,
   localAuthSigningSecret,
@@ -35,7 +39,6 @@ import {
   verifyLocalSession,
   type LocalSessionIdentity,
   acceptInvite,
-  bootstrapFirstAdmin,
   ensureLocalUserSchema,
   // Second factor (TOTP, RFC 6238) — same feature slice, separate module.
   beginTotpEnrolment,
@@ -52,9 +55,7 @@ import {
   normalizeEmail,
   getSessionSnapshot,
   getUserById,
-  isStoreEmpty,
   listUsers,
-  setUserStatus,
   upsertInvite,
   verifyLogin,
   type LocalUser,
@@ -498,7 +499,7 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
   /** GET /api/local-auth/state — tells the login page whether first-run bootstrap is needed. */
   router.get('/api/local-auth/state', async (_req, res) => {
     try {
-      const bootstrapRequired = knownNonEmpty ? false : await isStoreEmpty(pool);
+      const bootstrapRequired = knownNonEmpty ? false : !await hasEstablishedInstallation(pool);
       knownNonEmpty = knownNonEmpty || !bootstrapRequired;
       res.json({
         localAuth: true,
@@ -511,40 +512,20 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
     }
   });
 
-  /** POST /api/local-auth/bootstrap — creates the FIRST admin (the installer). Refused once any account exists. */
+  /** POST /api/local-auth/bootstrap — installer proof, account and root commit before any session is issued. */
   router.post('/api/local-auth/bootstrap', async (req, res) => {
-    const { email, name, password } = (req.body ?? {}) as { email?: string; name?: string; password?: string };
+    const { email, name, password, setupToken } = (req.body ?? {}) as { email?: string; name?: string; password?: string; setupToken?: string };
+    const origin = req.get('origin');
+    if (!origin || origin !== `${req.protocol}://${req.get('host')}` || req.get('sec-fetch-site') === 'cross-site') {
+      res.status(403).json({ error: 'installer setup requires the original browser origin' }); return;
+    }
     try {
-      const user = await bootstrapFirstAdmin(pool, { email: String(email ?? ''), displayName: name ?? null, password: String(password ?? '') });
-      if (!user) {
-        res.status(409).json({ error: 'an account already exists — sign in instead' });
-        return;
-      }
+      const user = await completeInstallerRootSetup(pool, { token: String(setupToken ?? ''), origin,
+        email: String(email ?? ''), displayName: typeof name === 'string' ? name : null, password: String(password ?? '') });
       knownNonEmpty = true;
       setLocalSessionCookie(req, res, sessionIdentityFor(user));
-      // ADR-148: the first account BECOMES swarm root. Before this, bootstrapFirstAdmin created
-      // an account that code called "the first admin" while the operator gate read a separate
-      // hand-typed env allowlist — so the person who set the very first password received no
-      // privilege from it and every operator-gated page 403'd at them. Claiming root here is
-      // safe precisely because bootstrapFirstAdmin is race-guarded to an EMPTY user store: this
-      // is the one identity on the swarm, not an arbitrary caller asking for power.
-      let rootClaimed = false;
-      try {
-        await claimRoot(pool, {
-          userSub: user.userSub,
-          email: user.email,
-          displayName: user.displayName ?? null,
-          note: 'first account on this swarm (local-auth bootstrap)',
-        });
-        rootClaimed = true;
-      } catch (err) {
-        // Root already held (a break-glass operator claimed it first) is EXPECTED and fine —
-        // the account is still created and signed in. Anything else is logged, never fatal:
-        // failing the bootstrap would leave a swarm with no account at all.
-        logger.warn({ err, sub: user.userSub }, 'first admin created but swarm root was not claimed');
-      }
-      logger.info({ email: user.email, sub: user.userSub, rootClaimed }, 'local-auth first admin bootstrapped');
-      res.status(201).json({ ok: true, email: user.email, sub: user.userSub, rootClaimed });
+      logger.info({ sub: user.userSub }, 'installer local root bootstrapped');
+      res.status(201).json({ ok: true, email: user.email, sub: user.userSub, rootClaimed: true });
     } catch (err) {
       logger.error({ err }, 'local-auth bootstrap failed');
       res.status(errStatus(err)).json({ error: (err as Error).message });
@@ -808,12 +789,16 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
         res.status(404).json({ error: 'no such account' });
         return;
       }
-      if (body.reset === true) await disableTotp(pool, user.userSub);
-      if (typeof body.required === 'boolean') await setTotpRequired(pool, user.userSub, body.required);
-      res.json({ ok: true, state: await getTotpState(pool, user.userSub) });
+      const state = await withLocalAccountRecovery(pool,{ id: user.id,callerSub: getCaller(req).sub,
+        callerIssuer: getAuthenticatedPrincipalIssuer(req) },async client => {
+        if (body.reset === true) await disableTotp(client, user.userSub);
+        if (typeof body.required === 'boolean') await setTotpRequired(client, user.userSub, body.required);
+        return getTotpState(client,user.userSub);
+      });
+      res.json({ ok: true, state });
     } catch (err) {
       logger.error({ err }, 'second-factor administration failed');
-      res.status(500).json({ error: 'could not change the second-factor setting' });
+      res.status(errStatus(err)).json({ error: errStatus(err) === 403 ? (err as Error).message : 'could not change the second-factor setting' });
     }
   });
 
@@ -835,7 +820,8 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
     try {
       const invitedBySub = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub
         ?? (typeof body.invitedBySub === 'string' ? body.invitedBySub : null);
-      const invite = await upsertInvite(pool, { email: String(body.email ?? ''), displayName: body.name ?? null, invitedBySub });
+      const invite = await withLocalAccountRecovery(pool,{ email: String(body.email ?? ''),callerSub: getCaller(req).sub,
+        callerIssuer: getAuthenticatedPrincipalIssuer(req) },client => upsertInvite(client, { email: String(body.email ?? ''), displayName: body.name ?? null, invitedBySub }));
       const delivery = await deliverInvite(pool, invite.user, invite.token, invite.expiresAt);
       bustLocalUserSnapshot(invite.user.userSub);
       logger.info({ email: invite.user.email, emailSent: delivery.emailSent }, 'local-auth invite created');
@@ -855,7 +841,8 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
         res.status(404).json({ error: 'no such user' });
         return;
       }
-      const invite = await upsertInvite(pool, { email: existing.email });
+      const invite = await withLocalAccountRecovery(pool,{ id: existing.id,callerSub: getCaller(req).sub,
+        callerIssuer: getAuthenticatedPrincipalIssuer(req) },client => upsertInvite(client, { email: existing.email }));
       const delivery = await deliverInvite(pool, invite.user, invite.token, invite.expiresAt);
       res.json({ user: invite.user, invitePath: invitePath(invite.token), inviteExpiresAt: invite.expiresAt, ...delivery });
     } catch (err) {
@@ -868,7 +855,7 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
   const statusHandler = (status: 'active' | 'disabled') => async (req: Request, res: Response) => {
     if (!requireUserAdmin(req, res)) return;
     try {
-      const user = await setUserStatus(pool, String(req.params.id), status);
+      const user = await changeLocalAccountStatus(pool, String(req.params.id), status);
       if (!user) {
         res.status(404).json({ error: 'no such user' });
         return;
@@ -878,7 +865,7 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
       res.json({ ok: true, user });
     } catch (err) {
       logger.error({ err }, 'local-auth status change failed');
-      res.status(500).json({ error: (err as Error).message });
+      res.status(errStatus(err)).json({ error: (err as Error).message });
     }
   };
   router.post('/api/local-auth/users/:id/disable', statusHandler('disabled'));

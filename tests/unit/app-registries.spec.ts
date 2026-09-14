@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147 guards. Two halves with different boundaries on purpose. The pure half (fence, host adapters, git auth, impact description) is exercised directly because the defect class is a WRONG STRING — a raw URL that points at the wrong host, an auth header on the wrong origin, a fence that lets a private address through. The clone half runs a REAL local git server over the filesystem, because the claim "generic-git works with no raw-file API" is a claim about git, and a mocked exec would prove only that the code calls execFile.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the sentinel-SHA "signed" defect found verifying the live deploy: all 49 store entries bind the all-zeros UNAUDITED sha, which parseCatalog ACCEPTS as a well-formed binding — so the guard drives the real parser on a live-shaped entry and asserts the result is `pending`, not `audited`. Plus the shared install decision: the third-party allow_unsigned bypass is closed, and the built-in registry keeps today's compatible-mode behaviour so the fix cannot break installs from the default store.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | The preview describes dependency tiers: required and optional apps each carry the state the installer would resolve them to, and withDependencyGate refuses an install whose required app cannot resolve or whose block is invalid, while optional apps never change the decision.
  */
 
 import fs from 'fs';
@@ -17,8 +18,8 @@ import {
   buildRegistryGitAuth, fetchRegistryCatalog, type RegistrySource,
 } from '@/features/app-registries';
 import {
-  describeManifestImpact, catalogAuditState, decideInstallAudit, UNAUDITED_SOURCE_SHA,
-  type AggregatedApp,
+  describeManifestImpact, catalogAuditState, decideInstallAudit, withDependencyGate, UNAUDITED_SOURCE_SHA,
+  type AggregatedApp, type DependencyAppState,
 } from '@/app/routes/app-registry-routes';
 import { parseCatalog } from '@/app/routes/app-store-remote';
 
@@ -209,6 +210,9 @@ describe('generic-git reads a catalog from a plain git repository with no raw-fi
   });
 });
 
+/** A resolver standing in for the deploy-dir + catalog lookup: named states, else unavailable. */
+const states = (known: Record<string, DependencyAppState>) => (name: string): DependencyAppState => known[name] ?? 'unavailable';
+
 describe('the install preview enumerates the real blast radius', () => {
   const entry = (signed: boolean): AggregatedApp => ({
     name: 'acme-crm', displayName: 'Acme CRM', description: '', suite: null, version: '1.0.0',
@@ -224,8 +228,8 @@ describe('the install preview enumerates the real blast radius', () => {
       bots: [{ name: 'acme-bot', requiresOwnNode: true }, { name: 'acme-helper' }],
       schedules: [{ cron: '*/15 * * * *' }],
       uses: { connectors: ['gmail'] },
-      dependencies: { apps: ['world@^1.2'], connectors: ['slack'] },
-    }, entry(true));
+      dependencies: { apps: ['world'], connectors: ['slack'] },
+    }, entry(true), states({ world: 'available' }));
 
     expect(impact.routes.count).toBe(2);
     expect(impact.routes.mounts).toEqual(['/api/acme', '/api/acme/admin']);
@@ -234,18 +238,19 @@ describe('the install preview enumerates the real blast radius', () => {
     expect(impact.bots.dedicatedNodes).toBe(1);
     expect(impact.schedules.cadences).toEqual(['*/15 * * * *']);
     expect(impact.connectors.sort()).toEqual(['gmail', 'slack']);
-    expect(impact.dependencies).toEqual(['world@^1.2']);
+    expect(impact.dependencies.required).toEqual({ apps: [{ name: 'world', state: 'available' }], tools: [], connectors: ['slack'] });
+    expect(impact.dependencies.optional).toEqual({ apps: [], tools: [], connectors: [] });
     expect(impact.signed).toBe(true);
   });
 
   it('reports an unsigned package as unsigned, with a reason the screen can show', () => {
-    const impact = describeManifestImpact({}, entry(false));
+    const impact = describeManifestImpact({}, entry(false), states({}));
     expect(impact.signed).toBe(false);
     expect(impact.auditReason).toMatch(/no audit record/i);
   });
 
   it('describes an empty manifest as harmless rather than throwing', () => {
-    const impact = describeManifestImpact({}, entry(true));
+    const impact = describeManifestImpact({}, entry(true), states({}));
     expect(impact.routes.count).toBe(0);
     expect(impact.migrations.count).toBe(0);
     expect(impact.bots.count).toBe(0);
@@ -254,7 +259,7 @@ describe('the install preview enumerates the real blast radius', () => {
   it('does not choke on a manifest whose fields are the wrong shape', () => {
     const impact = describeManifestImpact({
       routes: 'not-an-array', migrations: 42, bots: null, schedules: undefined,
-    } as unknown as Record<string, unknown>, entry(true));
+    } as unknown as Record<string, unknown>, entry(true), states({}));
     expect(impact.routes.count).toBe(0);
     expect(impact.bots.count).toBe(0);
   });
@@ -289,7 +294,7 @@ describe('an unaudited placeholder binding is never reported as audited (live-de
       signed: false, auditState: 'pending',
       audit: { record: 'audits/hello-oshal.json', sourceSha: UNAUDITED_SOURCE_SHA },
     };
-    const impact = describeManifestImpact({}, pending);
+    const impact = describeManifestImpact({}, pending, states({}));
     expect(impact.signed).toBe(false);
     expect(impact.auditReason).toMatch(/pending/i);
     expect(impact.auditReason).not.toMatch(/\baudited\b|signed/i);
@@ -327,5 +332,41 @@ describe('one install decision, shared by the preview and the install route', ()
 
   it('still refuses a pending built-in package on an enforce box — the built-in posture is not weakened', () => {
     expect(decideInstallAudit('pending', builtin, 'enforce').allowed).toBe(false);
+  });
+});
+
+describe('the dependency tiers gate the install decision the preview shows', () => {
+  const entry: AggregatedApp = {
+    name: 'scanner', displayName: 'Scanner', description: '', suite: null, version: '1.0.0', status: 'ready', source: null,
+    registry: 'acme', registryLabel: 'Acme', signed: false, auditState: 'pending', audit: null,
+  };
+  const allowed = { allowed: true, auditMode: 'compatible' as const, note: 'ok' };
+  const tiered = (dependencies: unknown) => ({ name: 'scanner', uses: ['app-dependencies'], dependencies });
+
+  it('lists optional apps with their state and leaves the decision alone', () => {
+    const impact = describeManifestImpact(tiered({ required: { apps: ['engine'] }, optional: { apps: ['cad-kit', 'slicer'], connectors: ['dropbox'] } }),
+      entry, states({ engine: 'installed', 'cad-kit': 'available' }));
+    expect(impact.dependencies.optional.apps).toEqual([{ name: 'cad-kit', state: 'available' }, { name: 'slicer', state: 'unavailable' }]);
+    expect(impact.connectors).toEqual(['dropbox']);
+    expect(withDependencyGate(allowed, impact.dependencies, 'Acme')).toBe(allowed);
+  });
+
+  it('refuses when a REQUIRED app is neither installed, built in, nor published by the source', () => {
+    const impact = describeManifestImpact(tiered({ required: { apps: ['engine', 'ghost'] } }), entry, states({ engine: 'core' }));
+    const decision = withDependencyGate(allowed, impact.dependencies, 'Acme');
+    expect(decision.allowed).toBe(false);
+    expect(decision.note).toMatch(/requires ghost, which is not installed and not published by Acme/);
+  });
+
+  it('refuses an invalid dependencies block instead of describing it as harmless', () => {
+    const impact = describeManifestImpact({ name: 'scanner', dependencies: { optional: { apps: ['cad-kit'] } } }, entry, states({}));
+    expect(impact.dependencies.problems[0]).toMatch(/needs uses: \[app-dependencies\]/);
+    expect(withDependencyGate(allowed, impact.dependencies, 'Acme')).toMatchObject({ allowed: false });
+  });
+
+  it('never loosens a decision the audit gate already refused', () => {
+    const refused = { allowed: false, auditMode: 'enforce' as const, note: 'not audited' };
+    const impact = describeManifestImpact({}, entry, states({}));
+    expect(withDependencyGate(refused, impact.dependencies, 'Acme')).toBe(refused);
   });
 });

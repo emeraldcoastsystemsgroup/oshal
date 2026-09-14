@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard CORE-05 parity: both installers invoke the same shipped verifier, pass their exact app set, and keep live PATs out of argv.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Require the closed installation report format and explicit pending outcome after Lab linkage.
  */
 
 import fs from 'node:fs';
@@ -40,7 +41,11 @@ describe('CORE-05 installer/verifier contract', () => {
   it('routes --apps through the canonical API and fails by named package', () => {
     const verifier = read('scripts/oshal-verify.sh');
     expect(verifier).toContain('/api/install-verification/apps');
-    expect(verifier).toContain('failing app is named in response');
+    expect(verifier).toContain('accept: text/plain');
+    expect(verifier).toContain('OSHAL_APP_VERIFICATION passed');
+    expect(verifier).toContain('OSHAL_APP_VERIFICATION pending');
+    expect(verifier).toContain('RESULT: PENDING');
+    expect(verifier).toContain('package verification failed or returned an unsupported report');
     expect(verifier).toContain('SWARM_SERVICE_SECRET is required');
   });
 

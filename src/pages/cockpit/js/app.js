@@ -49,9 +49,16 @@
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | Honor `?ticket=<id>` on load: seed CockpitViewController.pendingTicketSelection and open the Tickets view so a global-search ticket hit lands on the RECORD. Every ticket hit previously linked to bare /cockpit/ - the right screen, the wrong (or no) row - and that is the half of the deep-link contract the API cannot fix by itself. Seeded before the first render rather than via focusTicket after it, because the post-render call races TicketView's list fetch and selects nothing.
  * 44 | maintainer@emeraldcoastsystemsgroup.com   | Keep the full-screen mobile chat sheet collapsed on cold start so a background-created chat task cannot cover the phone's primary surface controls
  * 45 | maintainer@emeraldcoastsystemsgroup.com   | applyStatusBarPolicy(profile?.hideStatusBar === true) on the same durable root-attribute contract as the assistant orb (data-oshal-status-bar-hidden). It runs on every load, so a plain cockpit restores the bar; layout.css hides .status-bar on the attribute and the flex column reclaims the height for the app surface.
+ * 46 | maintainer@emeraldcoastsystemsgroup.com | Mount optional workspace navigation after the current profile resolves, retaining existing screens and student mode.
+ * 47 | maintainer@emeraldcoastsystemsgroup.com | Apply profile colors only on explicit opt-in so the portal chooser remains authoritative across applications.
+ * 48 | maintainer@emeraldcoastsystemsgroup.com | Bind relocated workspace options to the existing settings and action handlers.
+ * 49 | maintainer@emeraldcoastsystemsgroup.com | Route OSHAL directory intent through the normal Home lifecycle and keep the duplicate chat rail closed beside its embedded Jarvis.
  */
 
 import { ThemeManager } from './theme-manager.js';
+import { WorkspaceNavigation } from './workspace-navigation.js';
+import { bindApplicationsDirectory } from './applications-directory-navigation.js';
+import { initHeaderOptions } from './header-options.js';
 import { ApiClient } from './api-client.js';
 import { RibbonNav } from './components/RibbonNav.js';
 import { renderModalContent, getAuthToken } from './cockpit-modals.js';
@@ -165,6 +172,12 @@ class CockpitApp {
       toggleChatPanel: (show) => this.toggleChatPanel(show),
       isNativeChatWorkspaceEnabled: () => this.isNativeChatWorkspaceEnabled(),
       getRibbon: () => this.ribbon,
+      onHomeReady: view => this.directoryNavigation?.homeReady(view),
+    });
+    this.directoryNavigation = bindApplicationsDirectory({
+      getController: () => this.viewController,
+      navigateHome: () => this.switchView('home'),
+      onError: () => this.showToast('Could not open applications. Please try again.', 'error'),
     });
 
     this.init();
@@ -175,6 +188,7 @@ class CockpitApp {
    * @returns {Promise<void>}
    */
   async init() {
+    initHeaderOptions();
     this.initRibbon();
     this.bindChatEvents();
     this.initModals();
@@ -217,13 +231,9 @@ class CockpitApp {
       applyStatusBarPolicy(profile?.hideStatusBar === true);
       if (!profile) return;
 
-      // Per-app skin: apply the focused app's theme for this page-load only, so each
-      // app looks distinct without overwriting the operator's saved global theme.
-      // themeCssUrl = an ADR-085 package-bundled skin (a store-installed app brings
-      // its own stylesheet; core doesn't register it).
-      if (profile.theme) {
-        this.theme.applyTransient(profile.theme, profile.themeCssUrl);
-      }
+      // The portal palette follows the user across applications. App defaults remain
+      // available through Application colors, without replacing the saved palette.
+      this.theme.setApplicationTheme(profile.theme, profile.themeCssUrl);
 
       // Apps that are themselves the chat surface (e.g. Jarvis) ask us to drop the
       // generic right-rail chat panel. Set the flag before init()'s own
@@ -346,6 +356,7 @@ class CockpitApp {
   initRibbon() {
     this.ribbon = new RibbonNav('ribbonContainer', (viewId) => this.switchView(viewId));
     void this.ribbon.ready.then(() => {
+      this.workspaceNavigation = new WorkspaceNavigation({ profile: this.ribbon.profile, studentMode: this.ribbon.studentMode });
       if (this.pendingView || this.viewController.currentView) return;
       const requestedTicketId = readRequestedTicketId();
       const initialView = requestedTicketId ? 'tickets' : (this.ribbon?.getActive?.() || 'home');
@@ -367,10 +378,10 @@ class CockpitApp {
     this.ribbon?.setActive?.(viewId, { notify: false });
     // Picking an item from the mobile drawer should close it.
     this.toggleMobileMenu(false);
-    // Jarvis IS the chat surface — hide the redundant right-rail chat panel whenever its view is
-    // active, even in the unified cockpit home (where profile.name isn't 'jarvis'). Restore it on
+    // Jarvis and daily Home contain the chat surface; hide the redundant right-rail panel while
+    // either is active, even when profile.name isn't 'jarvis'. Restore it on
     // other views, unless the whole profile is a chat-surface app.
-    const isJarvisView = typeof viewId === 'string' && viewId.toLowerCase().includes('jarvis');
+    const isJarvisView = viewId === 'home' || (typeof viewId === 'string' && viewId.toLowerCase().includes('jarvis'));
     const profile = this.ribbon?.profile;
     const profileIsChatSurface = profile?.hideChatPanel === true || profile?.name === 'jarvis';
     if (isJarvisView) {
@@ -466,6 +477,7 @@ class CockpitApp {
     // permission-aware visibility). The old path bounced a workspace action into the embedded chat
     // iframe and clicked a tool-gated, often-hidden button there — so it silently did nothing.
     document.getElementById('ragBtn')?.addEventListener('click', () => this.openCockpitSettingsPage('knowledge'));
+    document.getElementById('portalSettingsBtn')?.addEventListener('click', () => this.openCockpitSettingsPage());
     document.getElementById('profileBtn')?.addEventListener('click', () => this.openModal('profile'));
     // (The Swarm Apps grid icon was removed — apps launch from the left ribbon; the operator
     //  app-admin console lives at /applications, reached via the Settings "Manage swarm apps" link.)

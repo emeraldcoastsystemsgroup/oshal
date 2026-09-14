@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the four new cockpit tool surfaces (budgets/notify/dlq/my-data). Pins the two properties the whole deploy-free approach rests on: (1) the cockpit's own express.static mount serves src/pages/cockpit/tools/*.html at /cockpit/tools/<name>.html AND it is behind requiresAuth, so no Express route and no image rebuild are needed and the pages are never anonymously readable; (2) each page consumes framework theme tokens read-only via the shared bootstrap (data-theme default on <html>, surface-themes.css, surface-theme.js) with surface-glass.css loaded AFTER its own styles, and composites any element that covers scrolling content over an opaque colour instead of using the deliberately-translucent --bg-card directly. Also pins that each ribbon entry's iframeUrl resolves to a file that exists — a typo there is a blank tool nobody notices.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add devices.html (Get oshal on your devices) to the guarded set, plus its own rules: the one-click installer is FETCHED and saved only on a 200 (a plain <a download> would save the route's 409 JSON under the installer's name), the credential notice precedes the fetch, the phone QR comes from the same-origin pairing route, and the computers list is the caller-scoped /api/remote-clients.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147/148 guard: App Loader and Users are on the rail for operators only, proven by running the real _appendPlatformToolsInner with the operator flag on and off rather than by string position in the source.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147/148 navigation guards: every admin-tool link on /admin must resolve to a REGISTERED surface (a typo'd href is a dead admin tool, which is how these pages became URL-only in the first place), and Get oshal's App Loader link must live inside the operator-gated block that ships hidden — not beside the browse link every signed-in user sees.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -217,3 +218,57 @@ function ribbonSource(): string {
   return readFileSync(RIBBON_NAV, 'utf8');
 }
 
+describe('ADR-147/148 — the admin console reaches the admin tools, and Get oshal reaches the apps', () => {
+  const ADMIN_PAGE = path.join(process.cwd(), 'src/pages/admin/index.html');
+  const DEVICES_PAGE = path.join(process.cwd(), 'src/pages/cockpit/tools/devices.html');
+
+  /**
+   * Every page path the server actually serves. TWO registration mechanisms exist and both are
+   * legitimate: the standalone-surface list in server-ui-assets.ts, and a direct `app.use('/x', …)`
+   * page router in server.ts (which is how /access is mounted). A guard that knew only the first
+   * would call a working admin link broken.
+   */
+  function registeredRoutes(): string[] {
+    const surfaces = readFileSync(path.join(process.cwd(), 'src/app/server-ui-assets.ts'), 'utf8');
+    const server = readFileSync(path.join(process.cwd(), 'src/app/server.ts'), 'utf8');
+    return [
+      ...[...surfaces.matchAll(/\{ routePath: '([^']+)'/g)].map((m) => m[1]),
+      ...[...server.matchAll(/app\.use\('(\/[a-z0-9-]+)'/g)].map((m) => m[1]),
+    ];
+  }
+
+  it('every admin-tool link points at a surface the server registers, or a real tool file', () => {
+    const html = readFileSync(ADMIN_PAGE, 'utf8');
+    const links = [...html.matchAll(/class="tool-link" href="([^"]+)"/g)].map((m) => m[1]);
+    expect(links.length).toBeGreaterThan(0);
+    const routes = registeredRoutes();
+    for (const href of links) {
+      if (href.startsWith('/cockpit/tools/')) {
+        const onDisk = path.join(process.cwd(), 'src/pages', href.replace(/^\/cockpit\//, 'cockpit/'));
+        expect(existsSync(onDisk), `${href} -> ${onDisk}`).toBe(true);
+      } else {
+        expect(routes, `${href} is not a registered surface`).toContain(href);
+      }
+    }
+  });
+
+  it('the admin console reaches the App Loader and Users specifically', () => {
+    const html = readFileSync(ADMIN_PAGE, 'utf8');
+    expect(html).toContain('href="/app-loader"');
+    expect(html).toContain('href="/users"');
+  });
+
+  it('Get oshal offers Applications to everyone and the App Loader only behind the operator check', () => {
+    const html = readFileSync(DEVICES_PAGE, 'utf8');
+    expect(html).toContain('href="/applications"');
+    // The admin half must ship HIDDEN and be revealed only on an explicit operator answer.
+    expect(html).toMatch(/<div id="appsAdmin" hidden>/);
+    expect(html).toContain('/api/cli-tokens/whoami');
+    expect(html).toMatch(/me\.operator === true/);
+    // The App Loader link lives INSIDE the gated block, never outside it.
+    const gated = html.slice(html.indexOf('<div id="appsAdmin"'), html.indexOf('</section>', html.indexOf('<div id="appsAdmin"')));
+    expect(gated).toContain('href="/app-loader"');
+    const ungated = html.replace(gated, '');
+    expect(ungated).not.toContain('href="/app-loader"');
+  });
+});

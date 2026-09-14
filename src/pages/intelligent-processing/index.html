@@ -11,16 +11,13 @@
 -->
 <html lang="en" data-theme="midnight">
 <head>
+  <!-- Shared portal palette: resolve before paint and follow the parent or saved choice live. -->
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+  <script src="/shared/ui/js/surface-theme.js"></script>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Intelligent Processing — Self-Healing Queue</title>
-  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
-  <script>
-    // Inherit the cockpit's active theme (same-origin localStorage). Without this the surface
-    // renders its default theme inside whatever theme the operator actually chose — the BUG-12
-    // mismatch. data-theme on <html> is required: theme tokens are scoped to it, never to :root.
-    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
-  </script>
+
   <style>
     /* Every colour derives from the framework theme tokens, so this surface follows whichever
        theme the operator picked instead of painting its own dark palette (BUG-12). The alias

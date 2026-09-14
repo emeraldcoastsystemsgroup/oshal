@@ -1,5 +1,7 @@
 /* ═══ Daylight — Apple Liquid Glass Light ═══ */
 [data-theme="daylight"] {
+  /* Shared controls use the palette's readable accent ink and native color scheme. */
+  --text-on-accent: #ffffff;
   --bg-primary: #f0f2f8;
   --bg-secondary: rgba(255, 255, 255, 0.8);
   --bg-tertiary: rgba(240, 242, 248, 0.7);
@@ -30,3 +32,6 @@
   --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255,255,255,0.8);
   --depth-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
 }
+
+/* Native controls follow this palette even when a page declares a root default. */
+html[data-theme="daylight"] { color-scheme: light; }

@@ -2,6 +2,9 @@
 
 Security posture, hardening guidance, and control evidence for OSHAL.
 
+- [application-authorization.md](./application-authorization.md) — dynamic application permission catalogs, central administration, registered tools, and current enforcement limits.
+- [remote-application-execution.md](./remote-application-execution.md) — signed current-rights checks for hosted remote reasoning, immutable queued initiators and protected result delivery.
+
 - [SECURITY-POSTURE.md](./SECURITY-POSTURE.md) — current security posture; honest about what is
   on-by-default vs opt-in. Start here.
 - [SECURITY-HARDENING.md](./SECURITY-HARDENING.md) — hardening guide for the swarm.

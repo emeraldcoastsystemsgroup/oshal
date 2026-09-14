@@ -16,9 +16,11 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Platform tools: add 'tool-devices' (Get oshal) — the desktop / phone / TV onboarding page, a static file under src/pages/cockpit/tools/ like the others. The one-click worker-node installer (GET /api/join/node-installer) shipped with no cockpit link at all — its only button lived on career-hunter's Job Board, and only while the user had zero nodes — and the phone PWA and the TV apps were promoted nowhere.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | ADR-147/148: App Loader and Users join Dead Letters as operator-only platform-tray entries (iframe tool views over /app-loader and /users). Operator asked why the store was not reachable from the default /cockpit/ page — it was reachable only by typing the URL. Gated by the same _loadOperatorState flag, which reads whoami -> isOperator(), so a role granted on the Users page surfaces them without an env-file edit; the routes self-gate with requiresOperator regardless.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | app-navigate may carry a `query` (sanitizeToolQuery: k=v&k=v, URL-safe, bounded) that the view controller appends to that tool's OWN iframeUrl — so the Create front door can open AI Office on a purpose (kind/starter/theme). A query onto the already-active tile re-renders it. Nothing here can point a frame anywhere but the tile's own URL.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Delegate explicitly marked default-sidebar pages to admitted top workspaces while keeping active pages, focused app navigation and registered iframe targets available.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
+import { WORKSPACE_DESTINATIONS_EVENT, isWorkspaceDelegated } from '../workspace-navigation.js';
 
 const logger = createUiLogger('cockpit-ribbon-nav');
 
@@ -163,6 +165,7 @@ export class RibbonNav {
     this.profile = null;
     this.views = [];
     this.activeView = null;
+    this._watchWorkspaceDestinations();
     // Pin preference: pinned = the rail stays expanded; unpinned = hover-expand. A UI
     // preference, so localStorage is the right store (the ?app= URL contract forbids caching
     // the PROFILE there, not this). try/catch: storage can be unavailable in a sandboxed frame.
@@ -179,9 +182,13 @@ export class RibbonNav {
     //   {type:'app-navigate', tool:'<toolName>'}   → activate ribbon item tool-<toolName>
     //   {type:'app-tools-changed', prefix:'<p>'}   → drop views with id prefix tool-<p>, re-resolve
     // The legacy Little Monsters literals its installed surfaces still send map onto the
-    // same paths. Navigation only lands on a button the caller's profile actually
-    // rendered — nothing here grants a surface that wasn't already admitted.
-    window.addEventListener('message', (e) => {
+    // same paths. Navigation only lands on a rendered button or an explicitly
+    // delegated registered page — nothing here grants a surface that wasn't already admitted.
+    window.addEventListener('message', event => this._handleSurfaceMessage(event));
+  }
+
+  /** Resolve surface requests against registered views while retaining kiosk and non-workspace visibility gates. */
+  _handleSurfaceMessage(e) {
       const d = e && e.data;
       if (d === 'lm-classes-changed') { this._reloadDynamicTools('tool-lm-class-'); return; }
       if (!d || typeof d !== 'object') return;
@@ -226,7 +233,8 @@ export class RibbonNav {
       }
       else if (d.type === 'lm-open-class' && d.classId) id = 'tool-lm-class-' + String(d.classId).substring(0, 8);
       if (!id) return;
-      if (this.container && this.container.querySelector(`.ribbon-btn[data-view="${CSS.escape(id)}"]`)) {
+      if (this.container && (this.container.querySelector(`.ribbon-btn[data-view="${CSS.escape(id)}"]`)
+        || this._workspaceDelegates(this.views.find(view => view.id === id)))) {
         this._pendingToolQuery = toolQuery ? { id, query: toolQuery } : null;
         // A query onto the tile already showing must still re-render it — setActive is a no-op
         // for the active view, so notify the shell directly.
@@ -237,7 +245,20 @@ export class RibbonNav {
         // surface the miss so the sending page (or a missing ribbon tool) gets fixed.
         logger.warn('Bridge navigation target not in ribbon — ignored', { target: id, messageType: d.type });
       }
+  }
+
+  /** Keep sidebar presentation synchronized with current discovery without replacing an application view. */
+  _watchWorkspaceDestinations() {
+    this.workspaceNames = [];
+    window.addEventListener(WORKSPACE_DESTINATIONS_EVENT, event => {
+      this.workspaceNames = Array.isArray(event.detail) ? event.detail.filter(name => typeof name === 'string') : [];
+      this.render();
     });
+  }
+
+  /** Resolve explicit default-profile delegation; focused app pages and other hidden controls stay unchanged. */
+  _workspaceDelegates(view) {
+    return isWorkspaceDelegated(view, this.profile?.name, this.workspaceNames);
   }
 
   /**
@@ -633,6 +654,7 @@ export class RibbonNav {
           label: item.label || item.id,
           section,
           group: section === 'top' ? (item.group || '') : '',
+          workspace: item.workspace,
           toolUi: item.toolUi || null,
         });
       }
@@ -693,6 +715,7 @@ export class RibbonNav {
           // Group dynamic tools (e.g. Little Monsters per-class icons) under the
           // profile's declared group header instead of the ungrouped lead band.
           group: section === 'top' ? (groupOverride || tool.ui.sidebarGroup || '') : '',
+          workspace: this.profile?.ribbon?.dynamicTools?.workspace,
           toolUi: tool.ui,
         });
       }
@@ -711,6 +734,7 @@ export class RibbonNav {
    */
   render() {
     if (!this.container) return;
+    const focusedView = this.container.querySelector('.ribbon-btn:focus')?.dataset.view;
     logger.debug('Rendering cockpit ribbon navigation', { activeView: this.activeView, profile: this.profile?.name });
     // Three trays: `home` pinned at the top (the front-door surface, e.g. Jarvis),
     // `top` flows into the scrollable middle (grouped), `bottom` pinned at the base
@@ -718,8 +742,9 @@ export class RibbonNav {
     // In student/kiosk mode the entire bottom tray is hidden — Settings, the
     // pinned platform tools, and any `section: bottom` app tools (Teacher, Voice
     // Settings) — leaving only the app's own top-rail student screens.
-    const homeViews = this.views.filter(v => v.section === 'home');
-    const topViews = this.views.filter(v => v.section !== 'home' && v.section !== 'bottom');
+    const visible = this.views.filter(view => view.id === this.activeView || !this._workspaceDelegates(view));
+    const homeViews = visible.filter(v => v.section === 'home');
+    const topViews = visible.filter(v => v.section !== 'home' && v.section !== 'bottom');
     // A FOCUSED app (?app=<name>) shows the app's own screens plus ONE door to everything else.
     // Previously the platform appended its whole tool set to every cockpit — Optimizer, Workflow
     // Studio, Run Trace, Dead Letters, Budgets — on top of whatever the app declared, and a
@@ -732,7 +757,7 @@ export class RibbonNav {
     const bottomViews = computeBottomTray(this.views, {
       studentMode: this.studentMode,
       hidePlatformChrome: this.hidePlatformChrome,
-    });
+    }).filter(view => visible.includes(view));
 
     this.container.innerHTML = `
       <nav class="ribbon-nav${this.pinned ? ' ribbon-pinned' : ''}" id="ribbonNavInner">
@@ -770,6 +795,7 @@ export class RibbonNav {
         pinBtn.setAttribute('title', this.pinned ? 'Unpin — collapse to icons' : 'Pin the rail open');
       });
     }
+    if (focusedView) this.container.querySelector(`.ribbon-btn[data-view="${CSS.escape(focusedView)}"]`)?.focus();
   }
 
   /**
@@ -818,6 +844,7 @@ export class RibbonNav {
     if (this.activeView === viewId) return;
     logger.info('Switching cockpit ribbon view', { from: this.activeView, to: viewId });
     this.activeView = viewId;
+    if (this.workspaceNames.length && this.profile?.name === 'oshal-framework') this.render();
     this.container.querySelectorAll('.ribbon-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.view === viewId);
     });

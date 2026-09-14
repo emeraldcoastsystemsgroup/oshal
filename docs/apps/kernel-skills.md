@@ -8,7 +8,7 @@ domain of its own, existing so a vendor stays swappable. An **app** is a domain 
 > If ≥2 apps would need it, or it wraps swappable vendors → **kernel skill**. Apps declare `uses:`
 > and *call* it. They never bundle it, and they can never uninstall it out from under each other.
 
-The twelve skills below are the **stable API an installed app may import** — treat removing one
+The skills below are the **stable API an installed app may import** — treat removing one
 like removing a public method. The first ten were signed off by the operator on 2026-07-13
 (migration plan §2); `payments` and `spatial-mapping` were pinned later at the finance and spaces
 carves respectively — engines that stay kernel per ADR-093 while only their *surface* carves, so
@@ -27,6 +27,13 @@ the carve doesn't prune them out of `dist/` (the google-calendar/notifications b
 | `scheduling` | `@/features/scheduling` | Manifest `schedules:` register and tear down through it. |
 | `memory` | `@/features/memory`, `@/features/user-model`, `@/features/personal-data` | Cross-app user state. |
 | `tool-registry` | `@/features/tool-registry`, `@/features/llm-provider` | Tool + model access — the aggregation thesis (ADR-049). |
+| `app-dependencies` | `@/shared/app-dependencies` | Compatibility floor for `dependencies.required` / `dependencies.optional`. A manifest using the tiered form declares it, so an older core refuses the package instead of installing it without its required dependencies. See [dependencies](authoring-app-packages.md#dependencies--lifecycle). |
+| `test-catalog` | `@/shared/package-testing` | Versioned package test declarations registered on activation. See [the catalog contract](../testing/package-test-catalog.md); local runners remain explicit prerequisites. |
+| `application-authorization` | `@/shared/application-authorization` | Imported application roles and permissions evaluated for the current exact user and selected business tenant. |
+| `package-tools` | `@/shared/package-tools` | Activation-scoped `ctx.tools.register` handlers run under current caller authorization and the tool approval policy. |
+| `authenticated-artifacts` | `@/app/routes/artifact-authenticated-relay` | Authenticated local artifact reads preserve the original caller and recheck source permission and registration before returning bytes. |
+| `specialist-context` | `@/shared/specialist-context` | Package-owned scalar facts for caller-authorized specialist dispatch; bounded reads, lifecycle and permission rechecks. |
+| `jarvis-briefings` | `@/shared/briefings` | Registered briefing sources and per-user enable, frequency and voice/bubble/screen delivery preferences. |
 | `media-generation` | `@/features/video-generation`, `@/features/visual-response` | Vendor-abstracted image/video generation. |
 | `payments` | `@/features/payments` | Provider-agnostic money rails: the Stripe `PaymentAdapter` half (finance package) + the Square/PayPal merchant half (payments package). Pinned at the finance carve (ADR-085 Wave 1 #5) — until then it survived in dist only through finance-routes' import. |
 
@@ -39,14 +46,17 @@ Source of truth: [`src/shared/kernel-skills/registry.ts`](../../src/shared/kerne
 uses:
   - deck-generation
   - rag
+  - app-dependencies   # the floor for the required/optional form below
 dependencies:
-  apps: []        # a SKILL never goes here — it isn't an installable app
+  required:
+    apps: []      # a SKILL never goes here — it isn't an installable app
 ```
 
 Validation is **fail-closed**: an unknown skill id fails at manifest load, not at mount.
 
-**A skill is not an app dependency.** `dependencies.apps` is for real apps — it drives install
-resolution and the reverse-dependency guard. A skill is always present, so it needs neither.
+**A skill is not an app dependency.** `dependencies.required.apps` / `dependencies.optional.apps`
+are for real apps — they drive install resolution and the reverse-dependency guard. A skill is
+always present, so it needs neither.
 Little Monsters used to declare `dependencies.apps: [presentations]`; what it actually needed was
 the always-present `deck-generation` engine. When the presentations app carves to the store, only
 its **surface** carves — the engine stays kernel ("skills with a surface", migration plan §2).

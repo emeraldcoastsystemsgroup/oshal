@@ -81,6 +81,8 @@ export {
   type StrictCspOptions,
 } from './hardening/strict-csp';
 
+export { getVerifiedWorkloadDelegation } from './workload-delegation-middleware';
+
 export const ALL_KINDS: ScanKind[] = ['posture', 'runtime', 'ledger', 'audit', 'image'];
 
 /**

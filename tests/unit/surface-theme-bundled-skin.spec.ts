@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the embedded-surface theme follow in surface-theme.js: a surface inside a cockpit wears the cockpit's data-theme (a per-app core theme by id; an ADR-085 package-bundled skin by copying #app-package-theme-css and applying only once it loads), keeps following it live through a MutationObserver, and falls back to the SAVED theme on every failure shape — standalone, cross-origin parent, parent without a theme, stylesheet error, storage unavailable. Runs the real bootstrap under a minimal fake DOM (no jsdom in this repo); the fake exposes only what a browser would, so a new DOM dependency in the script fails here first.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin the absent-choice Workspace default while preserving saved, invalid and unavailable-storage behavior.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
@@ -124,10 +125,10 @@ function cockpit(id: string | null, href?: string) {
 }
 
 describe('surface-theme.js — standalone (the pre-existing contract)', () => {
-  it('applies the saved theme at load and falls back to midnight for an unknown or absent value', () => {
+  it('keeps saved themes, uses Workspace when absent and retains midnight for an invalid value', () => {
     expect(boot({ saved: 'daylight' }).theme()).toBe('daylight');
     expect(boot({ saved: 'not-a-theme' }).theme()).toBe('midnight');
-    expect(boot({ saved: null }).theme()).toBe('midnight');
+    expect(boot({ saved: null }).theme()).toBe('workspace');
   });
 
   it('renders even when storage throws, and registers storage + focus live-follow listeners', () => {

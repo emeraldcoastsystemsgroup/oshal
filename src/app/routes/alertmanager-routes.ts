@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | LIVE FIX (container-kill drill, 2026-08-01): the intake could not create a ticket AT ALL — "new row violates row-level security policy for table tickets". Alertmanager is a machine caller with no user identity, so the global request-identity middleware stamped anonymous non-operator and the owner-RLS WITH CHECK refused every INSERT; every P1–P4 guard passed because they all stub the ticket gateway. The authenticated intake now runs under runWithRequestIdentity({ sub: ALERT_INTAKE_OWNER_SUB, isOperator: false }) — the A2A gateway's synthetic-machine-sub rail (ownerSubForA2aAgent), NOT the operator sentinel — and the consolidation service stamps the same sub as owner_sub. Least-privilege on purpose: a non-operator intake scopes Stage D's bundle scan to alert-born tickets instead of every tenant's. Applied AFTER the bearer + HMAC guards so an unauthenticated caller never reaches the machine identity
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Durable landing (Operations Stream): with a Pool wired, an authenticated delivery is written verbatim to oshal_alert_envelope and expanded into oshal_alert_event BEFORE anything canonicalizes, claims, or cuts a ticket, and the receiver answers 202 with the envelope id and the expanded event count. The response now states only what is DURABLE: a landing failure answers 503 so Alertmanager redelivers, and a body that is not an envelope is parked as an ingest deadletter and answered 400. Consolidation runs off the landed rows — the request drains them in-process so alert-to-ticket latency is the request itself, and a 5-second sweep claims any straggler through EnvelopeStore.withPendingEvents (SKIP LOCKED, so a sweep and a request never take the same row), stamping every event's durable claim decision. Pool-less runs keep the in-memory intake shape end to end
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Close the Alertmanager HMAC raw-body gap: the receiver now owns a bounded JSON parser whose verify hook captures the exact bytes before signature verification, while the global parser reserves only /api/alerts/alertmanager. Whitespace/key-order differences no longer depend on JSON reserialization, and a configured HMAC secret remains fail-closed.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Allow independently owned receivers to omit the background sweep while preserving the controller default and request drains.
  */
 
 /**
@@ -139,6 +140,8 @@ export interface AlertmanagerRouteOptions {
    * memory and answers with the per-request counts.
    */
   pool?: Pool | null;
+  /** Independent receivers may own request drains only; the controller starts the sweep by default. */
+  startPendingSweep?: boolean;
 }
 
 /**
@@ -873,7 +876,7 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
   // a drain already running skips rather than stacking, so a slow batch cannot pile up behind
   // itself. Unref'd so it never holds the process open, and cleared on shutdown so a stopping
   // controller stops claiming rows it will not finish.
-  if (envelopes) {
+  if (envelopes && options.startPendingSweep !== false) {
     let sweeping = false;
     const sweepTimer = setInterval(() => {
       if (sweeping) {

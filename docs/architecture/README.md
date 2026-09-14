@@ -16,7 +16,9 @@ The guiding model is:
 - [data-model/](./data-model/README.md)
   - generated schema diagrams for every database: core Postgres tables by domain, the TimescaleDB
     and SQLite stores, the ownership + RLS contract every table follows, and how each application
-    package's `SCHEMA.md` is produced (`scripts/generate-schema-docs.js`)
+    package's `SCHEMA.md` is produced (`scripts/generate-schema-docs.js`), plus
+    [data-model/explorer.md](./data-model/explorer.md) — the live operator surface at
+    `/data-model` (tables, relationships, shared objects, app integrations, store inventories)
 - [global-search-deep-link-contract.md](./global-search-deep-link-contract.md)
   - the per-source deep-link contract for `/api/search` (which URL each result kind opens, which kinds
     declare no surface and why), the adapter-owned isolation rules, and the measured before/after
@@ -170,6 +172,32 @@ The guiding model is:
 - [spatial-capture-playbook.md](./spatial-capture-playbook.md)
   - make a 3D map with the gear you have: the import lane (iPhone/iPad LiDAR, depth cameras, drone →
     `.ply`/`.splat`, no GPU) vs the reconstruct lane (video→3DGS), per-device steps + honest caveats
+- [embodied-mobile-manipulator-hardware.md](./embodied-mobile-manipulator-hardware.md)
+  - ADR-151 companion (design, nothing built): the rolling six-foot arm — statically stable base with
+    the battery as ballast, 8.5–10 in hub motors + corner casters (why not 5 in), move-low/rise-to-work
+    lift, the stability budget the sim and the capability manifest share, real parts, staged assembly
+- [embodied-buy-decision.md](./embodied-buy-decision.md)
+  - what the `embodied` simulation proves before any drone is bought (measured, with the test that
+    proves each claim), what it cannot prove, what must be true first (S4 hand-carried mapping, the
+    propeller curve, the safety class), and the recommendation: recon-mini after S4
+- [embodied-recon-drone-hardware.md](./embodied-recon-drone-hardware.md)
+  - ADR-151/152 companion (design, nothing built): the recon drone we print ourselves — the sensor
+    requirements the 0.4.0 sim wrote (upward and nadir rangers, 12 m ring, pad fiducial, registration
+    every 2 m), the 3-D vs 2-D sensor-set decision with the sim's measured verdict on each, momentum-
+    theory propulsion sizing (6 in, 750 g, 4S 1500 mAh), every structural part printable on a 220 mm
+    bed, mass budget, electronics with ArduPilot + Pi Zero node, what aero-lab's propeller work must
+    deliver, S1–S9 bring-up
+- [drone-relay-link-hardware.md](./drone-relay-link-hardware.md)
+  - ADR-155 companion (design, nothing built): the drone-to-drone radio for relay chains — an ESP32-C6
+    on the flight controller's spare UART (relay-only drones) or as the Pi's radio bridge, the vendor
+    facts that constrain it, ArduPilot left stock with the companion as its ground station, two layers of
+    protection per hop, the range test that replaces the catalog rows, R1–R5 bring-up
+- [drone-relay-expansion.md](./drone-relay-expansion.md)
+  - ADR-155 companion (design; the sized parts built in `drone-relay` 0.2.0): relay postures — hover or
+    perch, what a perch saves (about 15 relays in rotation → about 5) and costs (Fresnel height or the
+    ground exponent); the control plane out of band (LoRa direct: reach, heartbeat air time, what the
+    controller gains); proxy replies, queued commands and store-and-forward; couriers for bulk data;
+    trees, lattices, two bases, two radios per relay; where computing lives in the chain
 - [kernel-vs-app-packages.md](./kernel-vs-app-packages.md)
   - what is Tier-0 kernel (always-on: 4 DBs + Redis + Vault + code-server + diarization + the
     controller/API + 19 default bots) vs. what a Tier-2 app package declares; the cross-app
@@ -218,3 +246,4 @@ The guiding model is:
 
 The reading order is the core-runtime spine only; the sectioned index above is the complete
 inventory (feature/data-plane and plan-era docs are deliberately not in the spine).
+- [swarm-administration.md](swarm-administration.md) — who may administer a swarm and how applications get into one: swarm root and the single synchronous operator-gate chokepoint, the multi-registry App Loader, the three authorization axes and why they stay separate, the constraints that are expensive to rediscover, how to verify it on a box, and the open threads.

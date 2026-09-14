@@ -1,6 +1,8 @@
 /* ===== Home — the ADR-145 cross-app landing view =====
    Every colour is a framework theme token so the view is native to all cockpit themes;
    tone-* carries the closed neutral|good|warn enum and never invents a fourth state. */
+/* CHANGE LOG: 1 | maintainer@emeraldcoastsystemsgroup.com | Compact daily areas and source details beside a stable Jarvis frame; retain searchable catalog access. */
+/* 2 | maintainer@emeraldcoastsystemsgroup.com | Restore explicit centered native Home dialogs after the global margin reset. */
 
 .apps-home {
   display: flex;
@@ -309,7 +311,7 @@
 .apps-home-card.is-compact { padding: 12px; gap: 8px; }
 .apps-home-card.is-compact .apps-home-tiles { gap: 4px; }
 .apps-home-card.is-compact .apps-home-tile { padding: 8px; }
-.apps-home-editor { width: min(640px, calc(100vw - 32px)); max-height: 85vh; box-sizing: border-box; overflow-y: auto; padding: 20px; border: 1px solid var(--border-color, #435067); border-radius: 12px; background: var(--bg-primary, #111827); color: var(--text-primary, #e5e7eb); }
+.apps-home-editor { position: fixed; inset: 0; margin: auto; width: min(640px, calc(100vw - 32px)); max-height: 85vh; box-sizing: border-box; overflow-y: auto; padding: 20px; border: 1px solid var(--border-color, #435067); border-radius: 12px; background: var(--bg-primary, #111827); color: var(--text-primary, #e5e7eb); }
 .apps-home-editor::backdrop { background: #0009; }
 .apps-home-editor h2 { margin: 0; font-size: 20px; }
 .apps-home-editor fieldset { border: 0; padding: 0; min-width: 0; }
@@ -324,3 +326,61 @@
 .apps-home-tiles { grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); }
 .apps-home-tile-label { white-space: normal; overflow-wrap: anywhere; }
 @media (max-width: 520px) { .apps-home-head { grid-template-columns: 1fr; } .apps-home-head-actions { grid-row: 3; grid-column: 1; } }
+
+/* Daily Home has bounded summaries; catalog and setup remain available on request. */
+.apps-home-daily { box-sizing: border-box; padding: 16px 20px; gap: 14px; min-height: 0; color: var(--text-primary); }
+.apps-home-daily .apps-home-head { padding: 0; gap: 12px; }
+.apps-home-daily .apps-home-head h2 { font-size: 26px; }
+.apps-home-daily .apps-home-head p { margin-top: 4px; font-size: 13px; }
+.apps-home-daily .apps-home-head-actions { grid-row: 1; align-self: center; }
+.apps-home-workspace { display: grid; grid-template-columns: minmax(290px, .85fr) minmax(0, 1.65fr); gap: 16px; align-items: start; }
+.apps-home-assistant { position: sticky; top: 0; height: 560px; max-height: 78vh; min-height: 420px; overflow: hidden; border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-primary); }
+.apps-home-assistant iframe { display: block; border: 0; width: 100%; height: 100%; }
+.apps-home-summary { display: flex; flex-direction: column; min-width: 0; gap: 12px; }
+.apps-home-areas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.apps-home-areas button { text-align: left; min-width: 0; padding: 9px 10px; }
+.apps-home-areas strong { display: block; font-size: 13px; }
+.apps-home-areas span { display: block; margin-top: 4px; color: var(--text-secondary); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.apps-home-areas button[aria-pressed="true"] { border-color: var(--accent-primary); background: color-mix(in srgb, var(--accent-primary) 10%, var(--bg-primary)); }
+.apps-home-updates h3 { margin: 0 0 6px; font-size: 13px; color: var(--text-secondary); }
+.apps-home-updates ul { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.apps-home-updates button { display: flex; flex-direction: column; gap: 4px; width: 100%; height: 100%; text-align: left; min-width: 0; }
+.apps-home-updates strong { font-size: 12px; }
+.apps-home-updates span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; color: var(--text-secondary); }
+.apps-home-detail { min-width: 0; }
+.apps-home-detail-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 0 0 8px; }
+.apps-home-detail-head label { display: flex; align-items: center; flex: 1; min-width: 0; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+.apps-home-detail select { min-width: 0; max-width: 100%; flex: 1; padding: 7px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary); border-radius: 6px; }
+.apps-home-daily .apps-home-card { border-radius: 12px; padding: 14px; gap: 12px; max-height: 440px; overflow: auto; overscroll-behavior: contain; }
+.apps-home-daily .apps-home-purpose { font-size: 12px; line-height: 1.4; }
+.apps-home-daily .apps-home-card .apps-home-items { gap: 8px; }
+.apps-home-daily .apps-home-card .apps-home-items li { gap: 6px; padding-bottom: 8px; }
+.apps-home-daily .apps-home-card .apps-home-items li > span { font-size: 13px; overflow-wrap: anywhere; }
+.apps-home-daily .apps-home-card .apps-home-tiles { padding-top: 8px; }
+.apps-home-daily .apps-home-tile strong { font-size: 20px; }
+.apps-home-daily .apps-home-todos { display: block; }
+.apps-home-daily .apps-home-todos summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; }
+.apps-home-daily .apps-home-todos[open] > :not(summary) { margin-top: 10px; }
+.apps-home-directory > label { display: block; margin: 18px 0 6px; }
+.apps-home-directory input[type="search"] { box-sizing: border-box; width: 100%; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 10px; border-radius: 6px; font: inherit; }
+.apps-home-directory ul { list-style: none; padding: 0; margin: 12px 0 0; }
+.apps-home-directory li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border-color); }
+.apps-home-directory li > span { min-width: 0; overflow-wrap: anywhere; }
+.apps-home-directory strong, .apps-home-directory small { display: block; }
+.apps-home-directory small { margin-top: 4px; color: var(--text-secondary); line-height: 1.4; }
+.apps-home-daily select:focus-visible, .apps-home-daily summary:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 3px; }
+@media (max-width: 800px) {
+  .apps-home-workspace { grid-template-columns: minmax(0, 1fr); }
+  .apps-home-assistant { position: static; height: 440px; min-height: 360px; max-height: none; }
+  .apps-home-daily .apps-home-card { max-height: none; }
+}
+@media (max-width: 520px) {
+  .apps-home-daily { padding: 12px; }
+  .apps-home-daily .apps-home-head { grid-template-columns: minmax(0, 1fr); }
+  .apps-home-daily .apps-home-head-actions { grid-row: 2; grid-column: 1; gap: 6px; }
+  .apps-home-daily .apps-home-head button { padding: 7px 10px; }
+  .apps-home-areas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .apps-home-updates ul { grid-template-columns: minmax(0, 1fr); }
+  .apps-home-detail-head { flex-wrap: wrap; }
+  .apps-home-detail-head label { flex-basis: 100%; }
+}

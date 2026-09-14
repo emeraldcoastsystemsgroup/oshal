@@ -109,10 +109,41 @@ function renderIdentity() {
   const permissions = Array.isArray(me.permissions) ? me.permissions : [];
   const tokenRoles = Array.isArray(me.tokenRoles) ? me.tokenRoles : [];
   $('operatorPermissions').innerHTML = [
+    me.isRoot ? pill('swarm root', 'ok') : '',
     ...permissions.map((item) => pill(item, 'ok')),
     ...tokenRoles.map((item) => pill(`claim:${item}`, '')),
     permissions.length === 0 && tokenRoles.length === 0 ? pill('no role claims', 'warn') : '',
   ].join('');
+  renderRoleSource(me);
+}
+
+/**
+ * Say WHERE the role comes from. A role held only through the operator-local .env survives no
+ * audit and cannot be changed from a browser, which is the state ADR-148 exists to end — so it is
+ * named here rather than rendering identically to a granted role. `source` is reported by the API;
+ * this page cannot see swarm_roles or the environment and never guesses.
+ */
+function renderRoleSource(me) {
+  const el = $('operatorSource');
+  if (!el) return;
+  if (me.source === 'swarm-role') {
+    el.className = 'role-source ok';
+    el.textContent = me.isRoot
+      ? 'You hold swarm root. This is a role on this swarm, manageable from Users.'
+      : 'Granted as a swarm role — manageable from Users, and it survives a change to the environment file.';
+    return;
+  }
+  if (me.source === 'break-glass') {
+    el.className = 'role-source warn';
+    el.innerHTML = 'Your access comes from the <strong>break-glass allowlist</strong> in this deployment\u2019s environment file, not from a role on this swarm. '
+      + (me.rootClaimed
+        ? 'Ask the current swarm root to grant you <code>admin</code> so it survives a change to that file.'
+        : 'Nobody holds swarm root yet \u2014 claim it on the Users page to make administration a managed role.')
+      + ' <a href="/users">Open Users</a>';
+    return;
+  }
+  el.className = 'role-source';
+  el.textContent = '';
 }
 
 function renderControls() {

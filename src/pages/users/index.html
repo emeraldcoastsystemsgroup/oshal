@@ -2,19 +2,25 @@
   Users — swarm access management (ADR-148). The page that makes "swarm root" a thing you can
   see and hand over, instead of an env var somebody typed once.
 
-  Two independent halves, and the split is deliberate:
-   - ROLES (always present, every auth mode) — root / admin / user from /api/swarm/roles. This is
-     what the operator gate reads, so it is the authority on who can administer the swarm.
-   - ACCOUNTS (LOCAL_AUTH only) — the invited-user list from /api/local-auth/users. In OIDC and
-     mock modes accounts live elsewhere, so that half honestly reports itself absent rather than
-     rendering an empty table that looks broken.
+  The roster joins exact known identities for navigation without inventing login or ownership.
+  Local invitations, provider sign-in, platform administration, business membership and application
+  permissions remain separate authorities. Roster imports change labels only; all membership and
+  permission changes require the current administrator to preview and apply the exact change.
 
   Root is claimable in exactly one situation the UI offers: root is unclaimed AND the caller may
-  claim it (a virgin swarm, or an existing break-glass operator). The API enforces that regardless
+  claim it as an existing operator. Fresh installations use proof-bound setup. The API enforces that regardless
   — the button is a convenience, not the gate.
 
-  Every value is HTML-escaped on render; the page never displays a credential and the roles API
-  never returns one.
+  Every value is HTML-escaped. A newly created one-time invitation is shown only to its administrator; no existing passwords or factor secrets are returned.
+-->
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | Separate current administrator access from root ownership and honor shared theme contrast.
+  2 | maintainer@emeraldcoastsystemsgroup.com | Show the complete known roster, exact application-access links and reviewed metadata imports.
+  3 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -23,21 +29,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Swarm Users — OSHAL</title>
   <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
-  <script>
-    // Inherit the cockpit's active theme (same-origin localStorage). Theme tokens are scoped to
-    // the data-theme attribute, never to :root, so the default above is required too (BUG-12).
-    try { var t = localStorage.getItem('cockpit-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
-  </script>
+  <script src="/shared/ui/js/surface-theme.js"></script>
   <link rel="stylesheet" href="/fonts/codicon.css" />
   <style>
     :root {
       --bg: var(--bg-primary);
       --panel: var(--bg-secondary);
-      --card: #ffffff;
-      --ink: var(--bg-primary);
+      --card: var(--bg-card);
+      --ink: var(--text-primary);
       --ink-muted: var(--text-secondary);
-      --line: rgba(21, 27, 34, 0.10);
-      --line-dark: rgba(21, 27, 34, 0.15);
+      --line: var(--border-color);
+      --line-dark: var(--border-color-hover);
       --teal: var(--accent-primary);
       --amber: var(--status-warning);
       --green: var(--status-success);
@@ -56,6 +58,7 @@
     .section-kicker { color: var(--amber); font-weight: 850; text-transform: uppercase; letter-spacing: .09em; font-size: .68rem; margin-bottom: 6px; }
     h1 { font-size: 1.6rem; margin: 0 0 8px; letter-spacing: -0.01em; }
     h2 { font-size: 1.05rem; margin: 0; }
+    a { color: var(--accent-primary); }
     .sub { color: var(--ink-muted); line-height: 1.55; margin: 0; }
 
     .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 18px; }
@@ -74,20 +77,20 @@
     .table-scroll { overflow-x: auto; }
 
     .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
-    .pill.root { background: var(--teal); color: #fff; }
+    .pill.root { background: var(--teal); color: var(--text-on-accent, #fff); }
     .pill.admin { background: color-mix(in srgb, var(--teal) 18%, transparent); color: var(--teal); }
-    .pill.user { background: rgba(21,27,34,.08); color: var(--ink-muted); }
-    .pill.warn { background: color-mix(in srgb, var(--amber) 22%, transparent); color: #7a5200; }
+    .pill.user { background: var(--bg-tertiary); color: var(--ink-muted); }
+    .pill.warn { background: color-mix(in srgb, var(--amber) 22%, transparent); color: var(--ink); }
 
-    button { font: inherit; font-weight: 650; padding: 6px 13px; border-radius: 7px; border: 1px solid var(--line-dark); background: #fff; color: var(--ink); cursor: pointer; }
+    button { font: inherit; font-weight: 650; padding: 6px 13px; border-radius: 7px; border: 1px solid var(--line-dark); background: var(--bg-tertiary); color: var(--ink); cursor: pointer; }
     button:hover:not(:disabled) { border-color: var(--teal); color: var(--teal); }
     button:disabled { opacity: .45; cursor: not-allowed; }
-    button.primary { background: var(--teal); border-color: var(--teal); color: #fff; }
-    button.primary:hover:not(:disabled) { filter: brightness(1.08); color: #fff; }
+    button.primary { background: var(--teal); border-color: var(--teal); color: var(--text-on-accent, #fff); }
+    button.primary:hover:not(:disabled) { filter: brightness(1.08); color: var(--text-on-accent, #fff); }
     button.danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
     .row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 
-    input, select { font: inherit; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line-dark); background: #fff; color: var(--ink); }
+    input, select { font: inherit; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line-dark); background: var(--bg-primary); color: var(--ink); }
     input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--teal) 40%, transparent); outline-offset: 1px; }
     .grant-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .grant-form input { flex: 1 1 200px; min-width: 0; }
@@ -99,20 +102,66 @@
     .hint { font-size: .82rem; color: var(--ink-muted); margin-top: 10px; line-height: 1.5; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .84em; background: rgba(21,27,34,.06); padding: 1px 5px; border-radius: 4px; }
   </style>
+<!-- Shared semantic cards follow the selected portal finish without changing page layout. -->
+<link rel="stylesheet" href="/shared/ui/css/surface-glass.css">
 </head>
 <body>
   <div class="wrap">
     <div class="section-header">
       <div class="section-kicker">Access</div>
       <h1>Swarm users &amp; roles</h1>
+      <p><a href="/access">Application access administration</a></p>
       <p class="sub">Who may administer this swarm. <strong>Swarm root</strong> is one identity that
-        owns the swarm; <strong>admins</strong> may administer it; everyone else is a user. Roles are
-        what the platform&rsquo;s operator gate actually reads.</p>
+        owns the swarm. Administrator access can come from saved roles or the deployment&rsquo;s
+        configured operator allowlist. Application permissions are managed separately.</p>
     </div>
 
     <div id="msg" class="msg"></div>
 
+    <div class="card" id="currentAccessCard">
+      <div class="card-head"><h2>Your access</h2><span id="currentAccessPill"></span></div>
+      <div id="currentAccessBody"><p class="sub">Loading&hellip;</p></div>
+    </div>
+
     <!-- Root — status, claim, transfer -->
+    <div class="card" id="providerAccountsCard" hidden>
+      <div class="card-head"><h2>Users in this swarm</h2><span id="rosterCount" class="pill user"></span></div>
+      <p class="sub">Select a user to review application roles, individual permissions and restrictions. Root ownership is not required to manage this list.</p>
+      <p class="hint">External account sign-in and suspension remain with their identity provider.</p>
+      <p id="loginProviders" class="hint"></p>
+      <label for="rosterSearch">Find a user</label> <input id="rosterSearch" type="search" placeholder="Name, issuer or subject" />
+      <div id="providerAccounts" class="table-scroll"></div>
+      <details id="rosterImport"><summary>Register identities or import a directory snapshot</summary>
+        <p class="hint">Paste up to 250 exact issuer and subject records as a JSON array. Use identifiers supplied by the identity provider; an email address is not a subject. This registers labels only. It does not enable a login provider, verify a sign-in, link existing records or grant access.</p>
+        <form id="rosterImportForm">
+          <label for="rosterEntries">Identity records</label>
+          <textarea id="rosterEntries" rows="7" required style="width:100%;color:var(--ink);background:var(--bg-primary)" aria-label="Identity records" placeholder='[{"issuer":"https://identity.example.test","sub":"exact-subject","displayName":"Example User","email":"user@example.test"}]'></textarea>
+          <label for="rosterSource">Source</label><select id="rosterSource"><option value="manual">Manual registration</option><option value="directory-snapshot">Directory snapshot</option></select>
+          <label for="rosterReason">Reason</label><input id="rosterReason" required maxlength="2000" />
+          <button type="submit" id="rosterPreviewButton">Preview registration</button>
+        </form>
+        <div id="rosterReview" hidden><pre id="rosterReviewText" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+          <button type="button" id="rosterApply">Apply reviewed registration</button><button type="button" id="rosterCancel">Cancel</button></div>
+      </details>
+      <details id="historicalAccounts"><summary>Historical references needing identity verification</summary>
+        <p class="hint">Older connection and preference records store subjects without an issuer. They are not verified login accounts. Review the provider identity before mapping or migrating any ownership.</p>
+        <div id="historicalReferences"></div>
+      </details>
+      <details id="businessMemberships"><summary>Business-tenant memberships for external users</summary>
+        <p class="hint">Membership selects which organization workspace a verified external user may enter. Application roles are still required. A Microsoft directory tenant or email domain does not automatically grant business membership. Local accounts use their existing tenant memberships.</p>
+        <button id="membershipRefresh" type="button">Load business memberships</button>
+        <p id="membershipStatus" class="hint" role="status"></p><div id="membershipRows" class="table-scroll"></div>
+        <form id="membershipForm" hidden>
+          <label for="membershipUser">External user</label><select id="membershipUser"></select>
+          <label for="membershipTenant">Existing business tenant</label><select id="membershipTenant"></select>
+          <label for="membershipAction">Change</label><select id="membershipAction"><option value="grant">Grant membership</option><option value="revoke">Revoke membership</option></select>
+          <label for="membershipReason">Reason</label><input id="membershipReason" maxlength="1000" required />
+          <button type="submit" id="membershipPreviewButton">Preview membership change</button>
+        </form>
+        <div id="membershipReview" hidden><pre id="membershipReviewText" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+          <button id="membershipApply" type="button">Apply reviewed membership</button><button id="membershipCancel" type="button">Cancel</button></div>
+      </details>
+    </div>
     <div class="card root-banner" id="rootBanner">
       <div class="card-head">
         <h2>Swarm root</h2>
@@ -158,6 +207,16 @@
           <tbody id="accountsBody"></tbody>
         </table>
       </div>
+      <form class="grant-form" id="inviteForm" style="margin-top:16px">
+        <input id="inviteEmail" type="email" placeholder="Email address" aria-label="Invitation email" required />
+        <input id="inviteName" type="text" placeholder="Name (optional)" aria-label="Invitation name" />
+        <button type="submit" class="primary">Invite user</button>
+      </form>
+      <div id="inviteResult" hidden>
+        <p id="inviteDelivery" class="hint"></p>
+        <label for="inviteLink">One-time invitation link</label>
+        <input id="inviteLink" type="text" readonly style="width:100%" />
+      </div>
       <p class="hint">Accounts and roles are separate: an account is how somebody signs in, a role is
         what they may administer. Granting a role to an account&rsquo;s subject is what makes them an admin.</p>
     </div>
@@ -190,91 +249,91 @@
       var res = await fetch(url, init);
       var payload = null;
       try { payload = await res.json(); } catch (e) { /* empty body is fine for some 2xx */ }
-      if (!res.ok) throw new Error((payload && payload.error) || ('HTTP ' + res.status));
+      if (!res.ok) { var error = new Error((payload && payload.error) || ('HTTP ' + res.status)); error.status = res.status; throw error; }
       return payload;
     }
 
     var state = { me: null, status: null, roles: [] };
 
+    function renderCurrentAccess() {
+      var st = state.status || {}, me = state.me || {};
+      var operator = st.callerIsOperator === true;
+      document.getElementById('currentAccessPill').innerHTML = operator
+        ? '<span class="pill admin">administrator</span>' : '<span class="pill user">standard user</span>';
+      var message = operator ? 'You have swarm administrator access.' : 'You have standard user access.';
+      var source = 'A swarm administrator manages swarm roles. Application permissions are managed separately.';
+      if (operator && st.callerBreakGlassOnly) {
+        source = 'Your access comes from this deployment&rsquo;s configured operator allowlist (environment settings). ' +
+          'A saved role is not required for your current administrator access.';
+      } else if (operator) {
+        source = me.role === 'root' || me.role === 'admin'
+          ? 'Your access comes from your saved <strong>' + esc(me.role) + '</strong> role.'
+          : 'Your current identity matches the swarm&rsquo;s saved administrator roles.';
+      }
+      document.getElementById('currentAccessBody').innerHTML = '<p><strong>' + message + '</strong></p>' +
+        '<p class="sub">' + source + '</p>';
+    }
+
+    function bindRootClaim() {
+      document.getElementById('claimBtn').addEventListener('click', async function () {
+        if (!confirm('Claim swarm root for your account?\n\nYou become the one identity that owns this swarm. You can transfer it later, but it cannot be revoked.')) return;
+        this.disabled = true;
+        try {
+          await call('POST', '/api/swarm/roles/claim-root', {});
+          show('ok', 'You now hold swarm root.');
+          await load();
+        } catch (e) { show('err', e.message); this.disabled = false; }
+      });
+    }
+
+    function bindRootTransfer() {
+      document.getElementById('transferForm').addEventListener('submit', async function (ev) {
+        ev.preventDefault();
+        var to = document.getElementById('transferSub').value.trim();
+        if (!to) return;
+        if (!confirm('Transfer swarm root to:\n\n' + to + '\n\nYou will be demoted to admin. This cannot be undone from your side.')) return;
+        try {
+          await call('POST', '/api/swarm/roles/transfer-root', { toSub: to });
+          show('ok', 'Swarm root transferred.');
+          await load();
+        } catch (e) { show('err', e.message); }
+      });
+    }
+
     function renderRoot() {
-      var banner = document.getElementById('rootBanner');
-      var pill = document.getElementById('rootPill');
-      var body = document.getElementById('rootBody');
-      var st = state.status || {};
-      var me = state.me || {};
-
+      var banner = document.getElementById('rootBanner'), pill = document.getElementById('rootPill');
+      var body = document.getElementById('rootBody'), st = state.status || {}, me = state.me || {};
       banner.className = 'card root-banner';
-
       if (!st.rootClaimed) {
         banner.classList.add('unclaimed');
         pill.innerHTML = '<span class="pill warn">unclaimed</span>';
-        // Claimable when the swarm has no roles at all, or the caller is already an operator via
-        // the break-glass allowlist. The API re-checks both — this only decides what to offer.
-        var claimable = st.callerIsOperator || (st.rolesLoaded && st.privilegedCount === 0);
-        body.innerHTML =
-          '<p class="sub">No identity holds swarm root. Administration currently depends on the ' +
-          '<code>OSHAL_OPERATOR_SUBS</code> / <code>OSHAL_OPERATOR_EMAILS</code> break-glass allowlist ' +
-          'in this deployment&rsquo;s environment file &mdash; which nobody can change from a browser.</p>' +
-          (claimable
+        var claimable = st.callerIsOperator === true;
+        body.innerHTML = '<p class="sub">No identity has been assigned the swarm root ownership role. ' +
+          'This is separate from your current access shown above.</p>' + (claimable
             ? '<p style="margin:14px 0 0"><button class="primary" id="claimBtn" type="button">Claim swarm root</button></p>'
-            : '<p class="hint">You cannot claim root: this swarm already has roles and you are not an ' +
-              'operator. Ask a current admin, or add yourself to the break-glass allowlist and restart.</p>');
-        if (claimable) {
-          document.getElementById('claimBtn').addEventListener('click', async function () {
-            if (!confirm('Claim swarm root for your account?\n\nYou become the one identity that owns this swarm. You can transfer it later, but it cannot be revoked.')) return;
-            this.disabled = true;
-            try {
-              await call('POST', '/api/swarm/roles/claim-root', {});
-              show('ok', 'You now hold swarm root.');
-              await load();
-            } catch (e) { show('err', e.message); this.disabled = false; }
-          });
-        }
+            : '<p class="hint">An existing operator can complete root recovery. Contact a swarm administrator.</p>');
+        if (claimable) bindRootClaim();
         return;
       }
-
       if (st.callerIsRoot) {
         pill.innerHTML = '<span class="pill root">you are root</span>';
-        body.innerHTML =
-          '<p class="sub">You hold swarm root. <span class="root-id">' + esc(me.sub || '') + '</span></p>' +
+        body.innerHTML = '<p class="sub">You hold swarm root. <span class="root-id">' + esc(me.sub || '') + '</span></p>' +
           '<form class="grant-form" id="transferForm" style="margin-top:14px">' +
           '<input id="transferSub" type="text" placeholder="Transfer root to subject (sub)" aria-label="Transfer root to subject" required />' +
           '<button class="danger" type="submit">Transfer root</button></form>' +
           '<p class="hint">Transferring hands the swarm to another identity. You are demoted to ' +
           '<strong>admin</strong>, not removed &mdash; you keep administrative access to the machine you still run.</p>';
-        document.getElementById('transferForm').addEventListener('submit', async function (ev) {
-          ev.preventDefault();
-          var to = document.getElementById('transferSub').value.trim();
-          if (!to) return;
-          if (!confirm('Transfer swarm root to:\n\n' + to + '\n\nYou will be demoted to admin. This cannot be undone from your side.')) return;
-          try {
-            await call('POST', '/api/swarm/roles/transfer-root', { toSub: to });
-            show('ok', 'Swarm root transferred.');
-            await load();
-          } catch (e) { show('err', e.message); }
-        });
+        bindRootTransfer();
         return;
       }
-
       pill.innerHTML = '<span class="pill admin">claimed</span>';
-      body.innerHTML = '<p class="sub">Swarm root is held by another identity. ' +
-        (me.role === 'admin' ? 'You are an <strong>admin</strong> and may manage roles and applications.'
-                             : 'You are not an administrator of this swarm.') + '</p>';
-
-      // A break-glass-only operator is privileged by env var and has no role row. Say so — it is
-      // the exact state ADR-148 exists to end, and nothing else would ever surface it.
-      if (st.callerBreakGlassOnly) {
-        banner.classList.add('breakglass');
-        body.innerHTML += '<p class="hint"><strong>Your access is break-glass only.</strong> It comes ' +
-          'from the environment allowlist, not from a role on this swarm. Ask the current root to grant ' +
-          'you <code>admin</code> so your access survives a change to that file.</p>';
-      }
+      body.innerHTML = '<p class="sub">Swarm root is held by another identity. Your current access is shown above.</p>';
     }
 
     function renderRoles() {
       var tbody = document.getElementById('rolesBody');
       if (!state.roles.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty">No roles assigned yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">No saved roles assigned yet. Configured operator access is shown above.</td></tr>';
         return;
       }
       var meSub = (state.me && state.me.sub) || '';
@@ -317,47 +376,167 @@
       });
     }
 
+    function accountActions(user, role) {
+      if (role === 'root') return '<span class="hint">Transfer root before disabling.</span>';
+      var id = esc(user.id);
+      var action = user.status === 'disabled' ? 'enable' : 'disable';
+      return '<button data-account-action="' + action + '" data-id="' + id + '">' +
+        (action === 'enable' ? 'Enable' : 'Disable') + '</button>' +
+        (user.status === 'disabled' ? '' : '<button data-account-action="reinvite" data-id="' + id + '">Reinvite</button>');
+    }
+
+    function renderAccounts(users) {
+      var known = {};
+      state.roles.forEach(function (role) { known[role.userSub] = role.role; });
+      document.getElementById('accountsCount').textContent = users.length + ' account' + (users.length === 1 ? '' : 's');
+      document.getElementById('accountsBody').innerHTML = users.map(function (user) {
+        var role = known[user.userSub] || 'user';
+        return '<tr><td>' + esc(user.email) + '</td><td><span class="pill user">' + esc(user.status) +
+          '</span></td><td class="mono">' + esc(user.userSub) + '</td><td><div class="row-actions">' +
+          '<span class="pill ' + esc(role) + '">' + esc(role) + '</span>' + accountActions(user, role) + '</div></td></tr>';
+      }).join('');
+      document.querySelectorAll('[data-account-action]').forEach(function (button) {
+        button.addEventListener('click', function () { changeAccount(button); });
+      });
+    }
+
+    function showInvitation(result) {
+      document.getElementById('inviteResult').hidden = false;
+      document.getElementById('inviteLink').value = result.invitePath || '';
+      document.getElementById('inviteDelivery').textContent = result.emailSent ? 'Invitation sent. This link can also be shared with the invitee.' :
+        'Share this one-time link with the invitee. ' + (result.emailDetail || 'Email delivery is unavailable.');
+    }
+
+    async function changeAccount(button) {
+      var action = button.dataset.accountAction;
+      if (!confirm(action === 'reinvite' ? 'Create a new invitation or password reset link for this account?' :
+        (action === 'disable' ? 'Disable this account and end its sessions?' : 'Enable this account?'))) return;
+      button.disabled = true;
+      try {
+        var result = await call('POST', '/api/local-auth/users/' + encodeURIComponent(button.dataset.id) + '/' + action, {});
+        if (action === 'reinvite') showInvitation(result);
+        show('ok', 'Account updated.');
+        await loadAccounts();
+      } catch (error) { show('err', error.message); button.disabled = false; }
+    }
+
     async function loadAccounts() {
       var card = document.getElementById('accountsCard');
       try {
         var data = await call('GET', '/api/local-auth/users');
-        var users = (data && data.users) || [];
         card.style.display = '';
-        document.getElementById('accountsCount').textContent = users.length + ' account' + (users.length === 1 ? '' : 's');
-        var known = {};
-        state.roles.forEach(function (r) { known[r.userSub] = r.role; });
-        document.getElementById('accountsBody').innerHTML = users.map(function (u) {
-          var role = known[u.userSub] || 'user';
-          return '<tr>' +
-            '<td>' + esc(u.email) + '</td>' +
-            '<td><span class="pill user">' + esc(u.status) + '</span></td>' +
-            '<td class="mono">' + esc(u.userSub) + '</td>' +
-            '<td><div class="row-actions">' +
-              (role === 'user'
-                ? '<button data-make-admin="' + esc(u.userSub) + '" data-email="' + esc(u.email) + '">Make admin</button>'
-                : '<span class="pill ' + esc(role) + '">' + esc(role) + '</span>') +
-            '</div></td></tr>';
-        }).join('');
-        document.getElementById('accountsBody').querySelectorAll('button[data-make-admin]').forEach(function (btn) {
-          btn.addEventListener('click', async function () {
-            try {
-              btn.disabled = true;
-              await call('POST', '/api/swarm/roles', {
-                userSub: btn.dataset.makeAdmin, email: btn.dataset.email, role: 'admin',
-              });
-              show('ok', 'Admin granted.');
-              await load();
-            } catch (e) { show('err', e.message); btn.disabled = false; }
-          });
-        });
-      } catch (e) {
-        // Not LOCAL_AUTH, or not permitted — accounts live elsewhere. Stay hidden rather than
-        // rendering an empty table that reads as breakage.
+        renderAccounts((data && data.users) || []);
+      } catch (error) {
         card.style.display = 'none';
+        if (error.status !== 404 && error.status !== 401 && error.status !== 403) show('err', 'Local accounts unavailable: ' + error.message);
       }
     }
 
+    var roster = null;
+    var rosterPreview = null;
+    var rosterPreviewGeneration = 0;
+    function renderRoster() {
+      var query = document.getElementById('rosterSearch').value.toLowerCase();
+      var users = (roster?.users || []).filter(function (user) { return [user.label, user.issuer, user.sub].join(' ').toLowerCase().includes(query); });
+      document.getElementById('rosterCount').textContent = users.length + ' / ' + (roster?.users.length || 0);
+      document.getElementById('providerAccounts').innerHTML = '<table><thead><tr><th>User</th><th>Identity</th><th>Sign-in / source</th><th>Application access</th></tr></thead><tbody>' + users.map(function (user) {
+        var link = '/access?' + new URLSearchParams({ issuer: user.issuer, sub: user.sub }).toString();
+        return '<tr><td>' + esc(user.label || user.sub) + '</td><td class="mono">' + esc(user.issuer) + '<br>' + esc(user.sub) + '</td><td>' + esc(user.signIn) + '<br>' + esc(user.source) + '</td><td><a href="' + esc(link) + '">Manage application access</a></td></tr>';
+      }).join('') + '</tbody></table>';
+    }
+    async function loadProviderAccounts() {
+      var card = document.getElementById('providerAccountsCard');
+      try {
+        roster = await call('GET', '/api/user-directory'); card.hidden = false; renderRoster();
+        document.getElementById('loginProviders').textContent = 'Enabled login providers: ' + (roster.providers.map(function (provider) { return provider.name; }).join(', ') || 'Local account configuration only') + '. Directory snapshots are not live directory synchronization.';
+        document.getElementById('historicalReferences').innerHTML = (roster.historical.entries || []).map(function (entry) {
+          return '<p><code>' + esc(entry.sub) + '</code> — ' + esc(entry.sources.join(', ')) + '</p>';
+        }).join('') || '<p class="hint">No issuerless references found in the inspected account stores.</p>';
+        if (roster.historical.truncated) document.getElementById('historicalReferences').insertAdjacentHTML('beforeend', '<p>Showing the first 250 references per source. Additional references require review.</p>');
+      } catch (error) { card.hidden = false; document.getElementById('providerAccounts').textContent = 'User roster unavailable: ' + error.message; }
+    }
+    function discardRosterPreview() { rosterPreviewGeneration++; rosterPreview = null; document.getElementById('rosterReview').hidden = true; }
+    async function rosterRequest(path, body) {
+      var response = await fetch('/api/user-directory/' + path, { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-OSHAL-ACCESS-REQUEST': '1' }, body: JSON.stringify(body) });
+      var result = await response.json(); if (!response.ok) throw new Error(result.error || 'Roster request failed'); return result;
+    }
+    document.getElementById('rosterSearch').addEventListener('input', renderRoster);
+    document.getElementById('rosterImportForm').addEventListener('input', discardRosterPreview);
+    document.getElementById('rosterCancel').addEventListener('click', discardRosterPreview);
+    document.getElementById('rosterImportForm').addEventListener('submit', async function (event) {
+      event.preventDefault(); discardRosterPreview(); var button = document.getElementById('rosterPreviewButton'); button.disabled = true;
+      var generation = rosterPreviewGeneration;
+      try {
+        var preview = await rosterRequest('preview', { entries: JSON.parse(document.getElementById('rosterEntries').value),
+          source: document.getElementById('rosterSource').value, reason: document.getElementById('rosterReason').value, expectedRevision: roster.revision });
+        if (generation !== rosterPreviewGeneration) return; rosterPreview = preview;
+        document.getElementById('rosterReviewText').textContent = rosterPreview.consequence + '\n' + JSON.stringify(rosterPreview.entries, null, 2);
+        document.getElementById('rosterReview').hidden = false;
+      } catch (error) { show('err', error.message); } finally { button.disabled = false; }
+    });
+    document.getElementById('rosterApply').addEventListener('click', async function () {
+      if (!rosterPreview) return; this.disabled = true;
+      try { var result = await rosterRequest('apply', { previewId: rosterPreview.previewId }); discardRosterPreview(); await loadProviderAccounts(); show('ok', result.count + ' identity labels registered. Application access has not changed.'); }
+      catch (error) { show('err', error.message); } finally { this.disabled = false; }
+    });
+    var memberships = null;
+    var membershipPreview = null;
+    var membershipPreviewGeneration = 0;
+    function discardMembershipPreview() { membershipPreviewGeneration++; membershipPreview = null; document.getElementById('membershipReview').hidden = true; }
+    async function membershipRequest(path, body) {
+      var response = await fetch('/api/authorization/tenant-memberships/' + path, { credentials: 'same-origin', cache: 'no-store',
+        ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-OSHAL-ACCESS-REQUEST': '1' }, body: JSON.stringify(body) }) });
+      var result = await response.json(); if (!response.ok) throw new Error(result.error || 'Membership request failed'); return result;
+    }
+    function membershipOptions(id, values) {
+      document.getElementById(id).replaceChildren(...values.map(function (entry) {
+        var option = document.createElement('option'); option.value = entry.value; option.textContent = entry.label; return option;
+      }));
+    }
+    async function loadMemberships() {
+      discardMembershipPreview(); document.getElementById('membershipForm').hidden = true;
+      try {
+        memberships = await membershipRequest('catalog');
+        var identities = new Map((roster?.users || []).filter(function (user) { return user.issuer !== 'urn:oshal:local-auth'; }).map(function (user) {
+          return [JSON.stringify([user.issuer, user.sub]), { value: JSON.stringify([user.issuer, user.sub]), label: user.label + ' — ' + user.issuer }];
+        }));
+        memberships.memberships.forEach(function (entry) { var key = JSON.stringify([entry.targetIssuer, entry.targetSub]);
+          if (!identities.has(key)) identities.set(key, { value: key, label: entry.targetIssuer + ' / ' + entry.targetSub }); });
+        membershipOptions('membershipUser', [...identities.values()]);
+        membershipOptions('membershipTenant', memberships.tenants.map(function (tenant) { return { value: tenant.tenantId, label: (tenant.name || 'Business tenant') + ' — ' + tenant.tenantId }; }));
+        document.getElementById('membershipRows').innerHTML = '<table><thead><tr><th>Issuer / subject</th><th>Business tenant</th></tr></thead><tbody>' + memberships.memberships.map(function (entry) {
+          return '<tr><td class="mono">' + esc(entry.targetIssuer) + '<br>' + esc(entry.targetSub) + '</td><td class="mono">' + esc(entry.tenantId) + '</td></tr>';
+        }).join('') + '</tbody></table>';
+        document.getElementById('membershipForm').hidden = !memberships.tenants.length || !identities.size;
+        document.getElementById('membershipStatus').textContent = memberships.tenants.length ? memberships.memberships.length + ' saved memberships. Grants require a verified active external user.' : 'No business tenants are configured. Create a tenant through organization administration first.';
+      } catch (error) { document.getElementById('membershipStatus').textContent = error.message; }
+    }
+    document.getElementById('membershipRefresh').addEventListener('click', loadMemberships);
+    document.getElementById('membershipForm').addEventListener('input', discardMembershipPreview);
+    document.getElementById('membershipCancel').addEventListener('click', discardMembershipPreview);
+    document.getElementById('membershipForm').addEventListener('submit', async function (event) {
+      event.preventDefault(); discardMembershipPreview(); var button = document.getElementById('membershipPreviewButton'); button.disabled = true;
+      var generation = membershipPreviewGeneration;
+      try {
+        var identity = JSON.parse(document.getElementById('membershipUser').value);
+        var preview = await membershipRequest('preview', { action: document.getElementById('membershipAction').value,
+          targetIssuer: identity[0], targetSub: identity[1], tenantId: document.getElementById('membershipTenant').value,
+          reason: document.getElementById('membershipReason').value, expectedRevision: memberships.revision });
+        if (generation !== membershipPreviewGeneration) return;
+        membershipPreview = { previewId: preview.previewId, idempotencyKey: crypto.randomUUID() };
+        document.getElementById('membershipReviewText').textContent = JSON.stringify(preview.change, null, 2) + '\nApplication permissions do not change.';
+        document.getElementById('membershipReview').hidden = false;
+      } catch (error) { document.getElementById('membershipStatus').textContent = error.message; } finally { button.disabled = false; }
+    });
+    document.getElementById('membershipApply').addEventListener('click', async function () {
+      if (!membershipPreview) return; this.disabled = true;
+      try { await membershipRequest('apply', membershipPreview); await loadMemberships(); show('ok', 'Business membership updated. Application permissions have not changed.'); }
+      catch (error) { document.getElementById('membershipStatus').textContent = error.message; } finally { this.disabled = false; }
+    });
     async function load() {
+      discardRosterPreview();
+      discardMembershipPreview();
       try {
         state.me = await call('GET', '/api/swarm/roles/me');
         state.status = await call('GET', '/api/swarm/roles/status');
@@ -365,23 +544,45 @@
         show('err', 'Could not read your access: ' + e.message);
         return;
       }
+      renderCurrentAccess();
       renderRoot();
 
       if (!state.status.callerIsOperator) {
+        state.roles = [];
+        document.getElementById('accountsCard').style.display = 'none';
+        document.getElementById('providerAccountsCard').hidden = true;
+        document.getElementById('inviteResult').hidden = true;
+        document.getElementById('inviteLink').value = '';
         document.getElementById('rolesBody').innerHTML =
           '<tr><td colspan="5" class="empty">Only swarm administrators can see the role list.</td></tr>';
         document.getElementById('grantForm').style.display = 'none';
         return;
       }
       try {
+        document.getElementById('grantForm').style.display = '';
         var data = await call('GET', '/api/swarm/roles');
         state.roles = (data && data.roles) || [];
         renderRoles();
-        await loadAccounts();
+        await Promise.all([loadAccounts(), loadProviderAccounts()]);
       } catch (e) { show('err', e.message); }
     }
 
     document.getElementById('refreshBtn').addEventListener('click', load);
+    document.getElementById('inviteForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var button = this.querySelector('button');
+      button.disabled = true;
+      document.getElementById('inviteResult').hidden = true;
+      document.getElementById('inviteLink').value = '';
+      try {
+        var result = await call('POST', '/api/local-auth/users', { email: document.getElementById('inviteEmail').value.trim(),
+          name: document.getElementById('inviteName').value.trim() || undefined });
+        showInvitation(result);
+        this.reset();
+        await loadAccounts();
+      } catch (error) { show('err', error.message); }
+      finally { button.disabled = false; }
+    });
     document.getElementById('grantForm').addEventListener('submit', async function (ev) {
       ev.preventDefault();
       var sub = document.getElementById('grantSub').value.trim();

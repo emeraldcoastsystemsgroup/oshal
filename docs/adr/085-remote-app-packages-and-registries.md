@@ -121,7 +121,7 @@ little-monsters/                 # its own repo / subdir — this IS the app
 | `settings` | App-scoped settings schema + defaults, surfaced in a per-app settings panel. |
 | `provides.tools[]` | **New** tools this app contributes to the Tool Registry. |
 | `uses.tools[]` | **Existing** tools it depends on, by registry id. |
-| `dependencies` | `{ apps:[name@range], tools:[id], connectors:[id] }` — drives resolution (§3) and reverse-dep uninstall (§5). |
+| `dependencies` | `{ required:{apps,tools,connectors}, optional:{...} }` — drives resolution (§3) and reverse-dep uninstall (§5). See the tier addendum below; version ranges were never built, and a dependency is named by package name. |
 | `routes[]`, `migrations[]` | **Now honored by the loader** (§2), pointing at the package's own `routes/*.js` and `migrations/*.sql`. |
 | `bots`, `workflow`, `ticketType`, `schedules` | As today — a package brings its own bots, workflow, ticket type. |
 
@@ -371,3 +371,63 @@ and install-remote is **operator-only** and **catalog-pinned** — the repo/ref/
 come from the store's own entry, never the caller, so the endpoint can only install what the
 store publishes. Fetch/validate/stage runs through the same `scripts/oshal-app.js install`
 rail as CLI installs; registration through the same `SwarmAppService.loadApp`.
+
+
+## Addendum — dependency tiers: `required` vs `optional` (built 2026-09-14)
+
+### What the single list could not say
+
+`dependencies: {apps, tools, connectors}` had exactly one meaning: *the installer must resolve
+this, fail-closed, and its removal is blocked while I am installed.* Every real "nice to have"
+therefore had to be either declared as hard as a hard dependency or left out of the manifest
+entirely. Both were wrong in the store: the launcher packages (`create`, `life`, `games`,
+`system`) listed up to eight apps they merely route to, so installing one pulled its whole shelf;
+and apps that hand work to another app (Scan to Print → CAD Studio) declared nothing at all, so
+nothing offered the partner at install and nothing recorded the relationship.
+
+### Decision
+
+`dependencies` carries two tiers, each holding the same three kinds:
+
+```yaml
+uses: [app-dependencies]
+dependencies:
+  required: { apps: [spaces], tools: [slice_model], connectors: [google-drive] }
+  optional: { apps: [cad-studio], tools: [], connectors: [dropbox] }
+```
+
+- **required** keeps every semantic the flat list had: resolved at install fail-closed (installed
+  from the same source when missing), a required tool nothing provides fails the load, its removal
+  is blocked while a dependent is active, and a group's members are its required apps.
+- **optional** is offered, never imposed: `--with <app>` / `--with-optional` on the CLI and
+  checkboxes on the App Loader's confirm screen install them; nothing installs unasked, an
+  unresolvable optional app never blocks an install, and an optional dependent never blocks an
+  uninstall (it is reported as losing that integration). A dependency the operator *did* select
+  and that cannot install still fails closed — they asked for it.
+- **The connector allow-list is the union of both tiers** (present in either tier = the complete
+  set the app's surfaces may offer; absent from both = unfiltered, as before).
+
+**The legacy flat form stays valid and reads as all-required**, so every published package keeps
+working unchanged — on the day this landed, all 74 tracked manifests and all 62 installed on the
+dev box validated without an edit.
+
+### Why a compatibility floor, not a silent upgrade
+
+An older core reading a tiered manifest finds no `dependencies.apps`: it would install the package
+with none of its required dependencies and with its connector allow-list silently gone (the kids'
+app would offer Facebook again). So the tiered form must declare `uses: [app-dependencies]`, the
+same fail-closed trick `test-catalog` uses — an older core refuses the whole package instead of
+loading a half-configured one. Groups are exempt because ADR-141 forbids `uses:` on a group and an
+older core already refuses a group whose members are not under `dependencies.apps`.
+
+### Install is the only place that changes behaviour
+
+One shared contract (`scripts/oshal-app-dependencies.js`) is read by the CLI's `validate`,
+`install` and `uninstall`, by the runtime loader, and by the App Loader — so a package the
+installer accepts is one the loader accepts. The App Loader's preview now resolves each dependency
+app the way the installer resolves it (installed → framework → published by this source) and
+refuses the install when a required one resolves to none of those, rather than offering a button
+the installer would reject. After a successful install, the dependencies the installer pulled from
+the store are hot-loaded **before** the package (deepest first); if a required one fails to load
+the package stays unloaded, because activating an app without an app it cannot run without is the
+broken-in-production state this ADR's ref-counting exists to avoid.

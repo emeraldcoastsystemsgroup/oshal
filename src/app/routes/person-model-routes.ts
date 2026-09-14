@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 1: authenticated ambient person-model recall route — GET /recall answers "how many times has <person> mentioned <topic> today" with a literal count + quoted receipts. Auth-gated (exposes personal transcript data); handlers fail closed without an OIDC subject.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 3/4: recall carries "possibly related" semantic receipts (never counted); new reads — /people, /profile/:profileId, /projection, /trends, /connections — all pure SQL behind the same fail-closed wrapper.
  */
 
 import { Router, type Request, type RequestHandler } from 'express';
@@ -17,6 +18,14 @@ import {
   updateAskStatus,
   listPersonConsentStatus,
   recordConsent,
+  relatedRecall,
+  weeklyTopicTrends,
+  topicsConnecting,
+  listHeardPeople,
+  personProfileSummary,
+  readProjectionLedger,
+  semanticLegAvailable,
+  clampWeeks,
   type RecallIntent,
 } from '@/features/person-model';
 import { createChildLogger } from '@/shared/logger';
@@ -48,6 +57,7 @@ export function createPersonModelRoutes(ctx: Pick<AppContext, 'pool'>): Router {
       return;
     }
     const result = await recallQuery(ctx.pool, sub, intent);
+    const related = await relatedRecall(ctx.pool, sub, intent, new Set(result.receipts.map((r) => r.segmentId)));
     res.json({
       intent,
       resolved: result.personResolved,
@@ -56,6 +66,7 @@ export function createPersonModelRoutes(ctx: Pick<AppContext, 'pool'>): Router {
       range: result.range,
       terms: result.terms,
       receipts: result.receipts,
+      related,
       factsBlock: buildRecallReceiptsBlock(intent, result),
     });
   }));
@@ -98,7 +109,58 @@ export function createPersonModelRoutes(ctx: Pick<AppContext, 'pool'>): Router {
     res.json({ recorded: true });
   }));
 
+  registerProfileRoutes(router, ctx);
+  registerTrendRoutes(router, ctx);
   return router;
+}
+
+/**
+ * @description Phase 4 reads for the profile surface: the heard-people list, one person's profile
+ * (facts + inferences + consent), and the semantic-leg drift ledger.
+ * @param router - The person-model router.
+ * @param ctx - App context carrying the caller-scoped pool.
+ */
+function registerProfileRoutes(router: Router, ctx: Pick<AppContext, 'pool'>): void {
+  // GET /people — every heard voice with its label and presence span.
+  router.get('/people', personRoute('people', async (_req, res, sub) => {
+    res.json({ people: await listHeardPeople(ctx.pool, sub) });
+  }));
+
+  // GET /profile/:profileId — topics (inference), presence (fact), open asks beside quotes, consent.
+  router.get('/profile/:profileId', personRoute('profile', async (req, res, sub) => {
+    const profile = await personProfileSummary(ctx.pool, sub, String(req.params.profileId));
+    if (!profile) { res.status(404).json({ error: 'profile_not_found' }); return; }
+    res.json({ profile });
+  }));
+
+  // GET /projection — whether the semantic leg runs here and how far the owner's projection lags canon.
+  router.get('/projection', personRoute('projection', async (_req, res, sub) => {
+    const [available, ledger] = await Promise.all([semanticLegAvailable(ctx.pool), readProjectionLedger(ctx.pool, sub)]);
+    res.json({ semanticAvailable: available, ledger });
+  }));
+}
+
+/**
+ * @description Phase 3 trend reads: weekly topics per person and the topics two people share —
+ * both plain SQL over the rollups, never a model summary.
+ * @param router - The person-model router.
+ * @param ctx - App context carrying the caller-scoped pool.
+ */
+function registerTrendRoutes(router: Router, ctx: Pick<AppContext, 'pool'>): void {
+  // GET /trends?person=Ella&weeks=4
+  router.get('/trends', personRoute('trends', async (req, res, sub) => {
+    const personName = typeof req.query.person === 'string' ? req.query.person : undefined;
+    const weeks = clampWeeks(typeof req.query.weeks === 'string' ? Number(req.query.weeks) : undefined);
+    res.json(await weeklyTopicTrends(ctx.pool, sub, { personName, weeks }));
+  }));
+
+  // GET /connections?a=Ella&b=Sam
+  router.get('/connections', personRoute('connections', async (req, res, sub) => {
+    const a = typeof req.query.a === 'string' ? req.query.a.trim() : '';
+    const b = typeof req.query.b === 'string' ? req.query.b.trim() : '';
+    if (!a || !b) { res.status(400).json({ error: 'two_people_required', message: 'Provide ?a=<name>&b=<name>.' }); return; }
+    res.json(await topicsConnecting(ctx.pool, sub, a, b));
+  }));
 }
 
 /** Builds a RecallIntent from either a free-text `q` or explicit person/terms/range params. */

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Define the kernel-owned RAG namespace guard shared by generic API, tool, and package teardown boundaries.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Reserve 'ambient-recall' (ADR-100 Phase 3) so no tool or package can write into or tear down the transcript projection.
  */
 
 /** Collections whose lifecycle is owned by kernel services, never arbitrary tools/packages. */
@@ -12,6 +13,8 @@ export const KERNEL_RESERVED_RAG_COLLECTIONS = Object.freeze([
   'swarm-tickets',
   'swarm-messages',
   'swarm-knowledge',
+  // ADR-100 Phase 3: the ambient person-model's semantic leg — owner-private transcript chunks.
+  'ambient-recall',
 ] as const);
 
 const RESERVED_COLLECTION_SET = new Set<string>(KERNEL_RESERVED_RAG_COLLECTIONS);

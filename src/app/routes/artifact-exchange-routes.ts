@@ -1,5 +1,7 @@
 /**
  * CHANGE LOG
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Preserve authenticated caller credentials and exact principal/source authorization across local artifact relay.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Share caller-visible destination discovery with Jarvis and register kernel keyword/context hints.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -7,6 +9,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: the first kernel built-ins, registered at boot through the SAME registry interface apps use. kernel-storage → POST /builtin/save (redeem the handle, uploadBytes to the caller's oshal-local store under artifacts/). kernel-email → the compose overlay (GET /email-compose page; POST /builtin/email sends the artifact as an attachment over the caller's OWN mailbox — sendGmail else the Graph sibling else 409 — behind the standard confirm:true 428 gate). Factory now takes ctx (uploadBytes + connector-token lookups need the pool).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Amendment D (mint-with-bytes): POST /handles/upload — a multipart sibling of the locator mint, for a source that has no byte-serving URL to point at (a client-generated export; a route that answers a JSON preview envelope rather than the file). Authorization runs BEFORE multer buffers attacker-controlled bytes, the per-request limit is the shared inline cap, and the per-sub byte budget is enforced in the handle store. Redeem is unchanged for every caller and every destination: readArtifactBytes serves a carried payload directly and otherwise relays as before, so the built-ins and the package-side redeemArtifactViaRelay needed no change at all.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 3: kernel-rag "Ingest to RAG" (overlay — pick a collection, then the page drives the EXISTING caller-ACL'd /api/rag/upload from the user's own session; no new ingest surface, the doc-extract fix already guards it) and kernel-jarvis "Summarize with Jarvis" (overlay — text via POST /builtin/extract-text, the doc-extract rail, then the surface's own /api/jarvis/ask + result poll). extract-text is read-only and owner-bound like every redeem.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-139 shared artifact picker: source discovery, owner-scoped storage and app visibility.
  */
 
 import * as path from 'node:path';
@@ -15,9 +18,9 @@ import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { visibleArtifactActions } from './artifact-action-visibility';
 import { confirmationRequiredPayload, hasExplicitWriteConfirmation } from '@/shared/security/explicit-write-confirmation';
 import {
-  artifactActionsForType,
   mintArtifactHandle,
   mintInlineArtifactHandle,
   registerAppArtifactActions,
@@ -29,6 +32,8 @@ import { extractDocText } from '@/features/doc-extract';
 import { uploadBytes } from './storage-browse';
 import { sendGmail, sendOutlookMail } from './email-routes';
 import { getValidAccessToken } from './connectors-routes';
+import { bindArtifactPrincipal, assertArtifactPrincipal, relayAuthenticatedArtifact } from './artifact-authenticated-relay';
+import { createArtifactPickerRoutes, type PickerVisibleApps } from './artifact-picker-routes';
 
 const logger = createChildLogger({ module: 'artifact-exchange-routes' });
 
@@ -59,41 +64,6 @@ function callerSub(req: Request): string | null {
 }
 
 /**
- * @description Fetch the handle's source object from THIS server instance over the loopback,
- * authenticated as the minting caller (service secret + x-oshal-user-sub) — the headless
- * identity rail the platform already trusts internally. The secret never leaves this function.
- * @param req - The redeeming request (its socket tells us our own port).
- * @param sourcePath - The validated root-relative source path.
- * @param ownerSub - The minting caller the fetch acts as.
- * @returns Status, content type, and bytes of the source response.
- */
-async function fetchSourceAsOwner(
-  req: Request,
-  sourcePath: string,
-  ownerSub: string,
-): Promise<{ ok: boolean; status: number; contentType: string; body: Buffer | null }> {
-  const secret = (process.env.SWARM_SERVICE_SECRET || '').trim();
-  if (!secret) return { ok: false, status: 503, contentType: '', body: null };
-  const port = req.socket.localPort;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SOURCE_FETCH_TIMEOUT_MS);
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}${sourcePath}`, {
-      headers: { 'x-service-secret': secret, 'x-oshal-user-sub': ownerSub },
-      signal: controller.signal,
-    });
-    if (!r.ok) return { ok: false, status: r.status, contentType: '', body: null };
-    const declared = Number(r.headers.get('content-length') || 0);
-    if (declared > MAX_CONTENT_BYTES) return { ok: false, status: 413, contentType: '', body: null };
-    const body = Buffer.from(await r.arrayBuffer());
-    if (body.length > MAX_CONTENT_BYTES) return { ok: false, status: 413, contentType: '', body: null };
-    return { ok: true, status: r.status, contentType: r.headers.get('content-type') || 'application/octet-stream', body };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
  * @description The artifact's bytes for a resolved handle, whichever kind it is: a mint-with-bytes
  * handle carries them, a locator handle is relayed as its minting owner. Every consumer of a handle
  * goes through here, which is why Amendment D needed no change in any destination.
@@ -102,12 +72,11 @@ async function fetchSourceAsOwner(
  * @returns Status, content type, and bytes.
  */
 async function readArtifactBytes(
+  ctx: AppContext,
   req: Request,
   rec: ArtifactHandleRecord,
 ): Promise<{ ok: boolean; status: number; contentType: string; body: Buffer | null }> {
-  if (rec.bytes) return { ok: true, status: 200, contentType: rec.type, body: rec.bytes };
-  if (!rec.sourcePath) return { ok: false, status: 502, contentType: '', body: null };
-  return fetchSourceAsOwner(req, rec.sourcePath, rec.ownerSub);
+  return relayAuthenticatedArtifact(ctx, req, rec, { maxBytes: MAX_CONTENT_BYTES, timeoutMs: SOURCE_FETCH_TIMEOUT_MS });
 }
 
 /** @description The valid-recipient shape shared with the sibling app senders (one address, no CRLF). */
@@ -124,6 +93,7 @@ function isValidRecipient(raw: unknown): boolean {
  * @returns The record + bytes, or null after an error response has been written.
  */
 async function redeemForBuiltin(
+  ctx: AppContext,
   req: Request,
   res: Response,
   sub: string,
@@ -131,7 +101,7 @@ async function redeemForBuiltin(
   const ref = String((req.body as { ref?: unknown } | undefined)?.ref ?? '');
   const rec = resolveArtifactHandle(ref, sub);
   if (!rec) { res.status(404).json({ error: 'artifact handle not found' }); return null; }
-  const fetched = await readArtifactBytes(req, rec);
+  const fetched = await readArtifactBytes(ctx, req, rec);
   if (!fetched.ok || !fetched.body) {
     const status = fetched.status === 503 ? 503 : fetched.status === 413 ? 413 : 502;
     res.status(status).json({ error: status === 503 ? 'artifact relay unconfigured' : status === 413 ? 'artifact too large' : 'artifact source unavailable' });
@@ -151,16 +121,17 @@ const DOC_TYPES = [
 /** Register the kernel built-in destinations — through the SAME interface apps use (ADR-139 D1). */
 function registerBuiltins(): void {
   registerAppArtifactActions('kernel-email', {
-    accepts: [{ id: 'compose', label: 'Email it…', icon: '✉️', types: ['*/*'], mode: 'open', overlay: '/api/artifacts/email-compose' }],
+    accepts: [{ id: 'compose', keywords: ['email', 'mail', 'attach'], useWhen: 'Draft an email with this file attached; the user chooses recipients and confirms sending.', label: 'Email it…', icon: '✉️', types: ['*/*'], mode: 'open', overlay: '/api/artifacts/email-compose' }],
   });
   registerAppArtifactActions('kernel-storage', {
-    accepts: [{ id: 'save', label: 'Save to OSHAL Storage', icon: '🗄️', types: ['*/*'], mode: 'post', endpoint: '/api/artifacts/builtin/save' }],
+    accepts: [{ id: 'save', keywords: ['save', 'store', 'keep', 'files'], useWhen: 'Save a copy of the selected file in the user own OSHAL storage.', label: 'Save to OSHAL Storage', icon: '🗄️', types: ['*/*'], mode: 'post', endpoint: '/api/artifacts/builtin/save' }],
+    provides: [{ label: 'Connected files', types: ['*/*'], list: '/api/artifacts/storage' }],
   });
   registerAppArtifactActions('kernel-rag', {
-    accepts: [{ id: 'ingest', label: 'Ingest to RAG', icon: '📚', types: DOC_TYPES, mode: 'open', overlay: '/api/artifacts/rag-ingest' }],
+    accepts: [{ id: 'ingest', keywords: ['knowledge', 'rag', 'index', 'library'], useWhen: 'Open knowledge ingestion for a selected document.', label: 'Ingest to RAG', icon: '📚', types: DOC_TYPES, mode: 'open', overlay: '/api/artifacts/rag-ingest' }],
   });
   registerAppArtifactActions('kernel-jarvis', {
-    accepts: [{ id: 'summarize', label: 'Summarize with Jarvis', icon: '🤖', types: DOC_TYPES, mode: 'open', overlay: '/api/artifacts/jarvis-summarize' }],
+    accepts: [{ id: 'summarize', keywords: ['summarize', 'summary', 'explain'], useWhen: 'Open the document summarization screen.', label: 'Summarize with Jarvis', icon: '🤖', types: DOC_TYPES, mode: 'open', overlay: '/api/artifacts/jarvis-summarize' }],
   });
 }
 
@@ -180,23 +151,28 @@ function serveOverlayPage(res: Response, file: string): void {
  * @param ctx - App context (pool — the built-ins' storage/connector lookups ride it).
  * @returns Configured Express router.
  */
-export function createArtifactExchangeRoutes(ctx: AppContext): Router {
+export function createArtifactExchangeRoutes(ctx: AppContext, visibleApps?: PickerVisibleApps): Router {
   const router = Router();
   registerBuiltins();
+  router.use(createArtifactPickerRoutes(ctx, visibleApps));
 
   /** GET /actions?type=<mime> — the "Send to…" menu for one artifact type. Entries the caller
-   *  may not ultimately use still fail closed at the destination's own gate on dispatch. */
-  router.get('/actions', (req, res) => {
+   *  can read are offered; the destination still enforces its own write gate on dispatch. */
+  router.get('/actions', async (req, res) => {
     const mime = String(req.query.type || '').trim();
     if (!mime || !mime.includes('/') || mime.length > 100) {
       res.status(400).json({ error: 'type must be a MIME type, e.g. image/png' });
       return;
     }
-    res.json({ actions: artifactActionsForType(mime) });
+    try {
+      res.set('Cache-Control', 'private, no-store').json({ actions: await visibleArtifactActions(req, mime, visibleApps) });
+    } catch {
+      res.status(503).json({ error: 'Artifact destinations are temporarily unavailable.' });
+    }
   });
 
   /** POST /handles — mint a claim ticket over a serve URL the caller can already read. */
-  router.post('/handles', (req, res) => {
+  router.post('/handles', async (req, res) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'unauthenticated' }); return; }
     const body = (req.body ?? {}) as { source?: unknown; type?: unknown; name?: unknown };
@@ -207,6 +183,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext): Router {
         type: String(body.type ?? ''),
         name: typeof body.name === 'string' ? body.name : undefined,
       });
+      await bindArtifactPrincipal(ctx, req, record);
       res.status(201).json({ ref: record.ref, type: record.type, name: record.name, expiresAt: new Date(record.expiresAt).toISOString() });
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : 'handle mint failed' });
@@ -233,7 +210,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext): Router {
         });
       });
     },
-    (req: Request, res: Response) => {
+    async (req: Request, res: Response) => {
       const sub = callerSub(req) as string;
       const file = (req as Request & { file?: { buffer: Buffer; originalname?: string; mimetype?: string } }).file;
       if (!file?.buffer) { res.status(400).json({ error: 'a single "file" part is required' }); return; }
@@ -245,6 +222,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext): Router {
           type: String(body.type || file.mimetype || ''),
           name: typeof body.name === 'string' && body.name ? body.name : file.originalname,
         });
+        await bindArtifactPrincipal(ctx, req, record);
         res.status(201).json({ ref: record.ref, type: record.type, name: record.name, bytes: file.buffer.length, expiresAt: new Date(record.expiresAt).toISOString() });
       } catch (err) {
         res.status(400).json({ error: err instanceof Error ? err.message : 'handle mint failed' });
@@ -253,11 +231,13 @@ export function createArtifactExchangeRoutes(ctx: AppContext): Router {
   );
 
   /** GET /handles/:ref — metadata (owner only; foreign/expired/missing are one 404). */
-  router.get('/handles/:ref', (req, res) => {
+  router.get('/handles/:ref', async (req, res) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'unauthenticated' }); return; }
     const rec = resolveArtifactHandle(String(req.params.ref || ''), sub);
     if (!rec) { res.status(404).json({ error: 'artifact handle not found' }); return; }
+    try { await assertArtifactPrincipal(ctx, req, rec); }
+    catch { res.status(404).json({ error: 'handle not found or expired' }); return; }
     res.json({ ref: rec.ref, type: rec.type, name: rec.name, expiresAt: new Date(rec.expiresAt).toISOString() });
   });
 
@@ -270,7 +250,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext): Router {
     const rec = resolveArtifactHandle(String(req.params.ref || ''), sub);
     if (!rec) { res.status(404).json({ error: 'artifact handle not found' }); return; }
     try {
-      const fetched = await readArtifactBytes(req, rec);
+      const fetched = await readArtifactBytes(ctx, req, rec);
       if (!fetched.ok || !fetched.body) {
         const status = fetched.status === 503 ? 503 : fetched.status === 413 ? 413 : 502;
         logger.warn({ ref: rec.ref, sourceStatus: fetched.status }, 'artifact source fetch failed');
@@ -293,7 +273,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext): Router {
   router.post('/builtin/save', async (req, res) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'unauthenticated' }); return; }
-    const redeemed = await redeemForBuiltin(req, res, sub);
+    const redeemed = await redeemForBuiltin(ctx, req, res, sub);
     if (!redeemed) return;
     try {
       const saved = await uploadBytes(ctx, sub, 'oshal-local', 'artifacts', redeemed.rec.name, redeemed.body, redeemed.rec.type);
@@ -319,7 +299,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext): Router {
     const body = (req.body ?? {}) as { to?: unknown; subject?: unknown; note?: unknown };
     const to = typeof body.to === 'string' ? body.to.trim() : '';
     if (!isValidRecipient(to)) { res.status(400).json({ error: 'a valid "to" address is required' }); return; }
-    const redeemed = await redeemForBuiltin(req, res, sub);
+    const redeemed = await redeemForBuiltin(ctx, req, res, sub);
     if (!redeemed) return;
     try {
       const note = typeof body.note === 'string' ? body.note.slice(0, 2000).trim() : '';
@@ -356,7 +336,7 @@ export function createArtifactExchangeRoutes(ctx: AppContext): Router {
   router.post('/builtin/extract-text', async (req, res) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'unauthenticated' }); return; }
-    const redeemed = await redeemForBuiltin(req, res, sub);
+    const redeemed = await redeemForBuiltin(ctx, req, res, sub);
     if (!redeemed) return;
     try {
       const result = await extractDocText({ name: redeemed.rec.name, buffer: redeemed.body, mime: redeemed.rec.type });

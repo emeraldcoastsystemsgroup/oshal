@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Diagnosability: every declined retry in retryHostedBrainTurn now logs its reason (not-a-wall / ladder-empty / same-lane). The same-lane branch declining SILENTLY in 7ms is what hid the probe-passes-on-a-quota-trickle trap (fixed in free-tier-rotation seq 10) behind a mystery.
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | ADR-127 REMOTE brain (stampRemoteBrain): a dedicated-node dispatch for a CLI-harness bot now carries the caller's resolved brain — the FULL ladder including the demo-CLI carve, so the operator's turns ride the mounted login stamped as the ADR-034 authoritative provider and guests ride a hosted lane as byoLlmConnection. Before this, only jarvis-orchestrator stamped its own dispatches; every other node route dispatched brainless and the node's static default governed regardless of who was calling.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | One harness resolution for guard AND executor (live 2026-08-13, career.oshal.ai swarmbot popup): agentRequiresHostedBrain matched the registry by agentId ONLY, but provider-runtime's resolveHarnessForAgent ALSO falls back to the entry named by process BOT_NAME. The controller runs BOT_NAME=project-manager (harness codex-cli), so every agent absent from the registry — 84 of 116 active rows on the operator box — was EXECUTED through a CLI harness while this guard answered "not a CLI bot", skipped the ladder, and let assertAuditedAutonomousHarness hand the user its raw SEC-05 text (reproduced on email-bot a695dd5f-…). resolveGoverningEntry now mirrors the executor's two-step lookup, so both entry points resolve a brain for exactly the agents that will need one. The refusal itself, demoOperatorCliUnlock, and the node path are untouched — this closes a guard gap, it does not widen what may execute.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com  | Refuse inline specialist dispatch until that transport can carry the required bounded package context.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
@@ -27,6 +28,7 @@ import { assertExecuteEntitlement } from '@/app/bot-node-execute-entitlement';
 import { reportResolvedLlmFailure, resolveUserLlmConnection, type ResolvedUserLlmConnection } from './free-tier-rotation';
 import { resolveUserBrain, type ResolvedBrain } from './user-brain-resolution';
 import type { ByoLlmConnection } from './byo-llm-routes';
+import { getSpecialistContextRegistry, SpecialistContextError } from '@/shared/specialist-context';
 
 const logger = createChildLogger({ module: 'inline-bot-execution' });
 
@@ -393,6 +395,9 @@ export async function executeBotOrInline(
 
   const carriesCreds = Boolean(request.creds && Object.keys(request.creds).length > 0);
   const hasDedicatedEndpoint = botClient.hasEndpoint(agentId);
+  if (!hasDedicatedEndpoint && getSpecialistContextRegistry()?.requires(agentId)) {
+    throw new SpecialistContextError('specialist_context_requires_bot_node');
+  }
   if (carriesCreds && !request.providerIntent) {
     const error = new Error('Connector credentials require a validated deterministic provider intent') as Error & { code: string };
     error.code = 'UNSCOPED_CREDENTIAL_CARRIER';

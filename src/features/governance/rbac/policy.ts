@@ -7,8 +7,9 @@
  * is strictly opt-in.
  *
  * Role derivation matches the existing authorization model in src/shared/middleware/authz.ts:
- *   - admin    = a hit on the operator allowlist (OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS),
- *                so today's operators stay fully privileged.
+ *   - admin    = a swarm_roles `root`/`admin` row (ADR-148), OR a hit on the operator allowlist
+ *                (OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS), so today's operators stay fully
+ *                privileged and an admin granted from the Users page is recognised here too.
  *   - operator = a caller on a separate OSHAL_RBAC_OPERATOR_SUBS / _EMAILS allowlist (optional).
  *   - viewer   = any other authenticated caller (the safe default role).
  *
@@ -19,6 +20,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact, case-sensitive OIDC subjects in privileged admin/operator allowlist checks; configuration delimiters are still trimmed and email matching remains case-insensitive.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148 alignment: resolveRole now reads the swarm_roles snapshot FIRST, via the same synchronous privileged-identity cache isOperatorIdentity uses. This module's own header already promised it 'matches the existing authorization model in authz.ts', and that stopped being true the day roles became rows: an admin granted on the Users page passed requiresOperator and appeared in the cockpit rail, while /admin's Current Operator panel resolved them from .env alone and could still call them a viewer with no role claims. Enforcement default (OFF) is untouched, so this changes a DISPLAY today and closes a latent gap for any deployment that turns OSHAL_RBAC_ENFORCE on. The env allowlists stay exactly as they are — break-glass is permanent (ADR-148 D4).
  *
  * @module features/governance/rbac/policy
  */
@@ -26,6 +28,7 @@
 import type { Request, RequestHandler } from 'express';
 import { Role, type Permission, ROLE_PERMISSIONS } from './roles';
 import { rolesFromClaims, mapClaimRolesToRole } from './claims';
+import { isPrivilegedIdentity } from '@/shared/middleware/privileged-identities';
 
 /** Minimal caller shape — same fields getCaller() in authz.ts produces, plus optional IdP roles. */
 export interface RbacCaller {
@@ -93,8 +96,16 @@ function onAllowlist(caller: RbacCaller, subsEnv: string | undefined, emailsEnv:
 export function resolveRole(caller: RbacCaller | null | undefined): Role {
   const c: RbacCaller = caller ?? { sub: null, email: null };
 
-  // Start from the claim-derived role (if any), then let the allowlists raise it.
+  // Start from the claim-derived role (if any), then let roles and the allowlists raise it.
   let role: Role = mapClaimRolesToRole(c.roles ?? []) ?? Role.Viewer;
+
+  // swarm_roles first (ADR-148). root and admin are both swarm administrators, so both map to
+  // Admin here — this engine's ranks are about governance permissions, not about who owns the
+  // swarm, and it has no rank above Admin to distinguish them with. Reads the same synchronous
+  // snapshot as isOperatorIdentity, so a grant or revoke is effective on the next request.
+  if (isPrivilegedIdentity(c.sub, c.email)) {
+    role = higher(role, Role.Admin);
+  }
 
   if (onAllowlist(c, process.env.OSHAL_OPERATOR_SUBS, process.env.OSHAL_OPERATOR_EMAILS)) {
     role = higher(role, Role.Admin);

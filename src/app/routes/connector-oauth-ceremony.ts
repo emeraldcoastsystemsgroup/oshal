@@ -1,7 +1,7 @@
 /**
  * Connector OAuth ceremony primitives.
  *
- * Owns redirect construction, signed state, encrypted PKCE cookies, provider-aware
+ * Owns redirect construction, signed state, legacy encrypted PKCE-cookie helpers, provider-aware
  * authorization-code exchange, and Facebook signed-request verification. User token
  * persistence and account selection remain in connector-account-operations.ts.
  *
@@ -10,13 +10,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted OAuth state/PKCE, redirect, code-exchange, and signed-request helpers from connectors-routes.ts without changing provider requests or credential sources.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exact callback-only auth exemption and strict constant-time signed-state validation for the browser-bound cross-origin relay.
  * -----------------------------------------------------------------------------
  *
  * @module connector-oauth-ceremony
  */
 
 import * as crypto from 'crypto';
-import type { Request } from 'express';
+import type { Request, RequestHandler } from 'express';
 import {
   PROVIDERS, SQUARE_VERSION, providerCreds, type ProviderDef,
 } from './connector-provider-registry';
@@ -98,7 +99,7 @@ export function readPkceVerifier(req: Request, provider: string): string | undef
 }
 
 /**
- * @description Sign a time-boxed CSRF state payload without a server-side state store.
+ * @description Sign a time-boxed state payload. The ceremony store supplies one-time use and browser binding.
  * @param payload - connector flow identity and optional tenant/label fields
  * @returns the base64url payload and HMAC signature
  */
@@ -114,15 +115,34 @@ export function signState(payload: Record<string, unknown>): string {
  */
 export function verifyState(state: string): Record<string, any> | null {
   try {
-    const [body, sig] = state.split('.');
-    const expect = crypto.createHmac('sha256', secretKey()).update(body).digest('base64url');
-    if (sig !== expect) return null;
+    if (state.length > 4096) return null;
+    const parts = state.split('.');
+    if (parts.length !== 2) return null;
+    const [body, sig] = parts;
+    const expected = crypto.createHmac('sha256', secretKey()).update(body).digest('base64url');
+    const actual = Buffer.from(sig);
+    const wanted = Buffer.from(expected);
+    if (actual.length !== wanted.length || !crypto.timingSafeEqual(actual, wanted)) return null;
     const data = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
-    if (typeof data.ts !== 'number' || Date.now() - data.ts > 10 * 60 * 1000) return null; // 10-min window
+    if (typeof data.ts !== 'number' || !Number.isFinite(data.ts) || data.ts > Date.now() || Date.now() - data.ts >= 10 * 60 * 1000) return null;
     return data;
   } catch {
     return null;
   }
+}
+
+/**
+ * @description Only a known OAuth provider's exact GET callback may arrive without a session.
+ * Its handler relays a one-time ceremony back to the original browser; it cannot store tokens.
+ * All other connector routes, including completion and non-GET callbacks, retain normal auth.
+ */
+export function connectorCallbackAuth(requiresAuth: RequestHandler): RequestHandler {
+  return (req, res, next) => {
+    const match = /^\/([a-z][a-z0-9-]*)\/callback\/?$/.exec(req.path);
+    const def = match && Object.prototype.hasOwnProperty.call(PROVIDERS, match[1]) ? PROVIDERS[match[1]] : undefined;
+    if (req.method === 'GET' && def && (def.auth || 'oauth') === 'oauth') { next(); return; }
+    requiresAuth(req, res, next);
+  };
 }
 
 /**
@@ -210,5 +230,3 @@ export function parseSignedRequest(signed: string, appSecret: string): { user_id
     return null;
   }
 }
-
-

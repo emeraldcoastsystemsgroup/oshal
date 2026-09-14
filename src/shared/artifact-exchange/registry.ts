@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: the shared in-memory "Send to…" registry — apps write it on activate and clear it on deactivate (modeled on skill-profiles/registry.ts), the menu route reads it. Lives in shared/ so the WRITER (features/swarm-apps) and the READER (app/routes) both reach it top-down. Keyed by appName: re-activate REPLACES, deactivate drops the whole entry — full teardown, no per-action bookkeeping.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: menu entries carry the kernel-reserved `overlay` through to send-to.js (manifests can never set it — the loader validator refuses it before registration).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Carry validated semantic routing metadata to the shared menu and Jarvis.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -33,6 +34,8 @@ export interface ArtifactMenuAction {
   app: string;
   id: string;
   label: string;
+  keywords?: string[];
+  useWhen?: string;
   icon?: string;
   mode: 'open' | 'post';
   endpoint?: string;
@@ -90,6 +93,8 @@ export function artifactActionsForType(mime: string): ArtifactMenuAction[] {
           app: entry.appName,
           id: a.id,
           label: a.label,
+          ...(a.keywords ? { keywords: a.keywords } : {}),
+          ...(a.useWhen ? { useWhen: a.useWhen } : {}),
           ...(a.icon ? { icon: a.icon } : {}),
           mode: a.mode,
           ...(a.mode === 'post' && a.endpoint ? { endpoint: a.endpoint } : {}),

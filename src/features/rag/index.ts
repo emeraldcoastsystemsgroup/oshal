@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Barrel export for RAG feature module
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export the common kernel-reserved collection policy for generic write/delete boundaries.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the pgvector engine singleton and the local embedder for the ADR-100 semantic projection (barrel, not deep import).
  */
 
 export { RagService, type RagSearchResult, type RagIngestResult } from './services/rag-service';
@@ -42,3 +43,8 @@ export {
   type GithubRepoAcl,
   type SourceAclProvider,
 } from './services/source-acl-mapper';
+
+// ADR-100 Phase 3: the person-model slice writes deterministic `pm:<segment_id>` chunks and embeds them
+// with the shared MiniLM — exported here so it never deep-imports the engine.
+export { PgvectorRagEngine, pgvectorRagEngine } from './services/pgvector-rag-engine';
+export { localEmbeddings } from './services/local-embedding-service';

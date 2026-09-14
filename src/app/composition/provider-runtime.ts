@@ -18,6 +18,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Least-privilege harnesses for CONTROLLER-INLINE bots (BACKLOG "Harden inline controller bots"). resolveHarnessForAgent now reads the registry entry's `container` and, when it is the api itself, folds resolveControllerInlineScope into the factory config: a shell-free allowedTools list (overriding the deployment-wide CLAUDE_ALLOWED_TOOLS, which grants Bash to every bot) and the platform-plane env keys the adapter must scrub from the child process. The claude-code and codex-cli factories forward both. Bot-node bots pass no container-derived scope, so their harnesses are built byte-identically. Guard: tests/unit/inline-bot-no-shell.spec.ts.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Switched the seven deep harness-adapter imports to the new sanctioned '@/features/llm-provider/harness' entry point (barrel split, TODO-BOUNDARY-FINDING 2026-07-19) — behavior unchanged; this file stays the harness stack's sole composition root.
  * 14 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. resolveRuntimeProviderName's env fallback is openai-codex (was claude-code) and the generic DEFAULT_MODEL is gpt-5.5 (was claude-sonnet-4-6) — both only reachable with no persisted config and no LLM_PROVIDER/LLM_MODEL, i.e. exactly the self-install shape. The claude-code harness factory, its apiType check, and the recursion guards are untouched.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Share the current model resolver with manifest bot initialization.
  */
 
 import fs from 'fs';
@@ -703,7 +704,7 @@ export function createRuntimeProvider(
  * @description Resolves the model name from persisted config for a given provider.
  * @returns Model name or default.
  */
-function resolveRuntimeModelName(): string {
+export function resolveRuntimeModelName(): string {
   // Hard override: bypass global-config.json entirely when set.
   // Use FORCE_LLM_MODEL in compose/K8s to switch models without modifying persistent volumes.
   const forceModel = process.env.FORCE_LLM_MODEL?.trim();

@@ -5,6 +5,11 @@ An **app package** is a self-contained folder that a swarm installs from git and
 core image**. This is the developer guide. The architecture is [ADR-085](../adr/085-remote-app-packages-and-registries.md);
 this page is how you actually build one.
 
+Start with the [reusable capabilities and components](reusable-components.md).
+An existing action should call its registered tool; a shared rendering need should
+use the established component. Keep new capability implementations versioned and
+tested so future applications can compose them without generating the same code again.
+
 ## Mental model: it's npm, for swarm apps
 
 If you know npm, you know this. The pieces map one-to-one:
@@ -52,7 +57,7 @@ enforces this.
 | `source` | ✱ | provenance: `{type: git-subdir, url, path, ref}` — installer pins `sha` |
 | `scope` | | `person` (default owner = installer) / `public` / `tenant` |
 | `access` | | platform doorway: `{supported: [deny, viewer, editor, admin], defaultTier, mappings?}` — see below |
-| `dependencies` | | `{apps: [], tools: [], connectors: []}` — resolved + ref-counted on install |
+| `dependencies` | | two tiers — `required: {apps, tools, connectors}` (installed with the app, fail-closed) and `optional: {...}` (offered, never installed unasked). The tiered form needs `uses: [app-dependencies]`. The legacy flat `{apps, tools, connectors}` still loads and means all-required. See below |
 | `settings` | | `{schema: {...}}` typed per-app settings |
 | `bots` | | `[{agentId, name, persona, role, capabilities}]` — agentIds unique, **not** owned by another app |
 | `foundation` | | `{persona}` layered under every bot |
@@ -198,7 +203,16 @@ Smoke declarations are validated by both the package CLI and the server loader:
 - `path` must be a canonical `/api/...` path below a route declared by the same package. Prefer a
   dedicated read-only or otherwise idempotent `_smoke` handler.
 - `auth` is exactly `service`, `pat`, or `public`; the verifier sends only that declared credential.
-  Installer-driven probes normally use `service`. A `pat` probe requires the calling operator's PAT.
+  Installer-driven probes normally use `service`. A `pat` probe uses the caller's own PAT.
+- Set `requiresUser: true` for a protected read-only probe that needs an authenticated user.
+  It is valid only with `method: GET` or `HEAD`, `auth: pat`, and a closest owning route whose
+  `auth` is `oidc` or `service-or-oidc`. Without a caller PAT the result is **pending**, including
+  during installation with a service secret. A malformed supplied token fails; a correctly shaped
+  `Bearer oshal_pat_<48 lowercase hexadecimal characters>` is sent to the actual route, which
+  checks the user's current permissions. HTTP 401/403 remains a failure. Service credentials
+  cannot satisfy this prerequisite or substitute for application access.
+  Use a PAT minted from the verified signed-in account. Legacy subject-only bootstrap tokens
+  have no verified issuer and cannot satisfy protected application access.
 - `bodyFixture`, when present, is package-relative JSON, at most 64 KiB, and cannot escape through
   traversal or symlinks. Fixtures are static data: secret or environment interpolation is rejected.
 - `expect.status` is exact. `jsonPointer` uses RFC 6901, and `rejectValues` prevents a placeholder
@@ -209,7 +223,8 @@ Smoke declarations are validated by both the package CLI and the server loader:
 
 ## Per-user readiness (`readiness:`)
 
-`smoke:` proves a package is operational at install time, with the service secret. `readiness:` is
+`smoke:` verifies the package's declared route and assertions; a `requiresUser` smoke waits for a
+caller PAT when installation has no user context. `readiness:` is
 its per-user sibling: it answers "what does this *person* still have to set up" — "your resume is
 indexed", "your Facebook is connected" — and a group's setup dashboard (below) asks it **in the
 signed-in user's own session**, never with the service secret and never with a PAT.
@@ -383,7 +398,8 @@ suite: ai-knowledge
 displayName: Intelligent Career
 theme: daylight
 dependencies:
-  apps: [career-hunter, portrait-studio, social, print-ingest]   # the members — all must be active
+  required:
+    apps: [career-hunter, portrait-studio, social, print-ingest]   # the members — all must be active
 toolbar:                                   # BORROWED by app + surface name; never a copied URL
   - { app: career-hunter, surface: career-board }
   - { app: career-hunter, surface: career-resume-studio, group: Resume }
@@ -399,8 +415,12 @@ What the loader enforces, fail-closed:
 - **No code.** `bots`, `tools`, `routes`, `migrations`, `schedules`, `workflow`, `ticketType`,
   `takeout`, `smoke`, `readiness`, `ui`, `uses`, `artifacts`, `surface` all fail the load. A group
   may bundle one thing of its own — a `ui/<theme>.css` skin.
-- **Members are `dependencies.apps`** (non-empty). The installer resolves them npm-style; the
-  reverse-dependency guard blocks a member's uninstall while the group is active.
+- **Members are the group's REQUIRED apps** (`dependencies.required.apps`, or the legacy
+  `dependencies.apps`; non-empty). The installer resolves them npm-style; the reverse-dependency
+  guard blocks a member's uninstall while the group is active. A group declares no `uses:`
+  (ADR-141 forbids it), so it needs no compatibility floor — an older core refuses a tiered
+  group already, because it finds no members under `dependencies.apps`. An app listed under
+  `optional` is not a member and cannot be borrowed from.
 - **Toolbar tiles are references.** Each entry names a member and one of its `ui.static[].toolName`s;
   the loader copies the member's label, icon and `iframeUrl` at activation and again at every
   profile synthesis, so a member that moves a surface is followed. A tile whose member is not
@@ -464,15 +484,54 @@ not write the assignment store. Deploy migration 121 before a declared app, obse
 
 ## Dependencies + lifecycle
 
-- **Install is automatic.** The installer clones the pinned `source`, runs the audit gate,
-  resolves `dependencies` (installs/enables missing apps, ref-counts them), then hot-loads.
-- **Uninstall is manual + dependency-aware.** A reverse-dependency check runs first: removing
-  an app that another installed app depends on is blocked; you get an impact list and only
-  true orphans (ref-count → 0) are offered. Nothing auto-cascades.
+An app declares what it needs in two tiers. The difference is what the installer does when the
+thing is missing, and what the uninstall guard does when someone removes it:
 
-Example: **little-monsters** surfaces a Presentations tab, so it declares
-`dependencies.apps: [presentations]`. Installing it pulls presentations; presentations is
-protected from removal while little-monsters remains.
+```yaml
+uses: [app-dependencies]        # the compatibility floor for the tiered form (see below)
+dependencies:
+  required:                     # comes with this app
+    apps: [spaces]              # installed from the same source, fail-closed
+    tools: [slice_model]        # must exist at load, or the app does not load
+    connectors: [google-drive]  # the app cannot do its job without this connection
+  optional:                     # this app works without these
+    apps: [cad-studio]          # offered at install; installed only when chosen
+    tools: []
+    connectors: [dropbox]
+```
+
+| | `required` | `optional` |
+|---|---|---|
+| install (`oshal-app install`, App Loader) | missing apps are installed from the same source; anything unresolvable **fails the install**, nothing partially enabled | never installed unasked — `--with cad-studio`, `--with-optional`, or the App Loader's checkboxes. A selected one that cannot install also fails closed |
+| load | a required tool nothing provides **fails the load** | not checked |
+| uninstall of the dependency | **blocked** while this app is active (`--force` overrides) | never blocks; the dependent is listed as losing that integration |
+| uninstall of this app | its required apps that nothing else requires are offered as orphans | never offered |
+| `connectors` | part of the app's connector allow-list, and what its setup screens ask for | also part of the allow-list, as an extra |
+
+**The connector allow-list is the union of both tiers.** When either tier declares `connectors`,
+that union is the complete set of providers the app's surfaces may offer (`[]` = offer none — the
+kids' app never asks for Facebook). When no tier declares the key, nothing is filtered.
+
+**The tiered form declares `uses: [app-dependencies]`.** An older core does not understand
+`required:` / `optional:` and would install the package with neither its required dependencies nor
+its connector allow-list; naming the floor makes that core refuse the package instead (the same
+fail-closed trick `test-catalog` uses). The legacy flat form — `dependencies: {apps, tools,
+connectors}` — is still valid, needs no floor, and means **all required**.
+
+- **Install is automatic.** The installer clones the pinned `source`, runs the audit gate, resolves
+  the required tier plus whatever optional apps were chosen, then hot-loads the dependencies it
+  pulled in **before** the package itself. A required dependency that fails to load leaves the
+  package unloaded rather than live-but-broken; a failed optional one is reported and the package
+  still loads.
+- **Uninstall is manual + dependency-aware.** A reverse-dependency check runs first: removing an
+  app that another installed app REQUIRES is blocked; you get an impact list, and only true orphans
+  (nothing else requires them) are offered. Nothing auto-cascades.
+
+Example: **little-monsters** surfaces a Presentations tab, so it requires the presentations app.
+Installing it pulls presentations; presentations is protected from removal while little-monsters
+remains. **scan-to-print** can hand an outline to CAD Studio but slices fine without it, so
+cad-studio is optional: the App Loader offers it as a checkbox, and removing cad-studio later is
+never blocked by scan-to-print.
 
 ## Package audit gate (APP-02)
 

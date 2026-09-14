@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Delegate full-screen permission to first-party packaged surfaces so games can hide cockpit chrome on request.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 D4a: renderToolView forwards a shape-checked one-shot `artifact=` ref from the cockpit URL to the surface iframe URL, so an open-mode "Send to…" dispatch lands in the destination surface pre-loaded.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | renderToolView appends the ribbon's consumed one-shot tool query (sanitized k=v&k=v) to the tile's own iframeUrl — the Create front door's deep link into AI Office.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Notify the directory bridge only when the current Home has finished rendering.
  */
 
 import {
@@ -46,6 +47,7 @@ export class CockpitViewController {
    *   toggleChatPanel: (show: boolean) => void,
    *   isNativeChatWorkspaceEnabled: () => boolean,
    *   getRibbon: () => { setActive: (viewId: string) => void } | null,
+   *   onHomeReady?: (view: object) => void,
    * }} options - View-controller collaborators.
    * @returns {void}
    */
@@ -58,6 +60,7 @@ export class CockpitViewController {
     this.toggleChatPanel = options.toggleChatPanel;
     this.isNativeChatWorkspaceEnabled = options.isNativeChatWorkspaceEnabled;
     this.getRibbon = options.getRibbon;
+    this.onHomeReady = options.onHomeReady;
     this.currentView = '';
     this.activeViewInstance = null;
     this.pendingTicketSelection = '';
@@ -223,7 +226,7 @@ export class CockpitViewController {
     await view.render();
   }
 
-  // Render the ADR-145 cross-app Home: one card per installed group/app.
+  // Render the daily Home while preserving the full authorized application directory.
   async renderAppsHomeView(container) {
     const view = new AppsHomeView({
       navigateToView: (viewId, destination) => {
@@ -241,6 +244,7 @@ export class CockpitViewController {
     });
     this.activeViewInstance = view;
     await view.render(container);
+    if (this.currentView === 'home' && this.activeViewInstance === view) this.onHomeReady?.(view);
   }
 
   // Render the cockpit Dashboard workbench with homepage summary.

@@ -9,8 +9,8 @@
  * — this is a distinct consent flow, not the login flow.
  *
  * Security: refresh/access tokens are encrypted at rest (AES-256-GCM, key derived
- * from SESSION_SECRET). The CSRF `state` is an HMAC-signed, time-boxed token, so no
- * server-side state store is needed.
+ * from SESSION_SECRET). Signed, one-time state returns the provider code to the
+ * original browser; its session and host-only cookie are checked before exchange.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
@@ -48,6 +48,7 @@
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Reconnect-in-place: /start?reconnect=<connectionId> re-runs consent for ONE existing accessible connection instead of adding another. login_hint is pinned to the STORED account_email (the provider re-auths that login, not whichever account the browser holds), the ADR-113 account-chooser override is skipped (the def's own authParams stand, so Google keeps prompt=consent and re-issues the refresh token a dead grant is missing), the stored label rides the signed state (the upsert's label refresh would otherwise rename the account to its email mid-repair), and an unknown/inaccessible id 404s. No callback change: the (scope, provider, account_key) conflict already updates the same row, so id/default/label survive. Pairs with the per-account "reconnect" action on /utilities; guard tests/unit/connector-reconnect.spec.ts.
  * -----------------------------------------------------------------------------
  *
+ * 30 | maintainer@emeraldcoastsystemsgroup.com | Relay fixed provider callbacks to a one-time completion on the configured initiating origin; require its session and browser cookie before code exchange or persistence.
  * @module connectors-routes
  */
 
@@ -68,9 +69,9 @@ import {
   PROVIDERS, additionalAccountAuthParams, providerCreds,
 } from './connector-provider-registry';
 import {
-  appUrl, encrypt, exchangeCode, parseSignedRequest, pkcePair, readPkceVerifier,
-  redirectUri, signState, verifyState,
+  appUrl, exchangeCode, parseSignedRequest, pkcePair, redirectUri,
 } from './connector-oauth-ceremony';
+import { CONNECTOR_CEREMONY_TTL, ConnectorOAuthCeremonies, connectorOrigin } from './connector-oauth-state';
 import {
   ensureConnectionsSchema, getValidAccessToken, revokeRefreshToken,
 } from './connector-account-operations';
@@ -79,14 +80,16 @@ import { buildConnectorListResponse, caller } from './connector-response-helpers
 const logger = createChildLogger({ module: 'connectors-routes' });
 
 export { additionalAccountAuthParams, ensureConnectionsSchema, getValidAccessToken };
+export { connectorCallbackAuth } from './connector-oauth-ceremony';
 
 /**
- * @description Connectors hub sub-router (mounted at /api/connect, requiresAuth).
+ * @description Connectors hub sub-router (mounted at /api/connect with connectorCallbackAuth).
  * @param ctx - app context (db pool)
  * @returns an Express router
  */
 export function createConnectorsRoutes(ctx: AppContext): Router {
   const router = Router();
+  const ceremonies = new ConnectorOAuthCeremonies();
   ensureConnectionsSchema(ctx.pool).catch((err) => logger.error({ err }, 'Failed to ensure oshal_connections schema'));
 
   // Plaid Link (auth:'link') — its own connect ceremony (POST /plaid/link-token + /plaid/exchange),
@@ -118,6 +121,9 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
     const me = caller(req);
     if (!def) { res.status(404).json({ error: 'unknown provider' }); return; }
     if (!me) { res.status(401).json({ error: 'not authenticated' }); return; }
+    if ((def.auth || 'oauth') !== 'oauth') { res.status(404).json({ error: 'not an OAuth connector' }); return; }
+    const origin = connectorOrigin(req);
+    if (!origin) { res.status(400).json({ error: 'connector origin is not configured' }); return; }
     const creds = providerCreds(provider);
     if (!creds.clientId || !creds.clientSecret) {
       res.status(503).json({ error: `${provider} connector is not configured (missing OAuth client)` });
@@ -161,11 +167,11 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
       ...((reconnectRow?.account_email || me.email) && provider !== 'twitter' && provider !== 'schwab'
         ? { login_hint: reconnectRow?.account_email || me.email } : {}),
     });
-    // PKCE (Twitter): send the S256 challenge; carry the verifier in a short-lived
-    // cookie (NOT the state) so `state` stays small — X 400s on an over-long state.
+    // Keep PKCE server-side so fixed callbacks on another domain do not need its cookie.
+    let codeVerifier: string | undefined;
     if (def.pkce) {
       const { verifier, challenge } = pkcePair();
-      res.cookie(`oshalpkce_${provider}`, encrypt(verifier), { httpOnly: true, secure: true, sameSite: 'lax', maxAge: 10 * 60 * 1000, path: '/' });
+      codeVerifier = verifier;
       params.set('code_challenge', challenge);
       params.set('code_challenge_method', 'S256');
     }
@@ -185,7 +191,20 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
     if (reconnectRow) {
       logger.info({ provider, sub: me.sub, connectionId: reconnectRow.connection_id }, 'Connector consent: reconnect-in-place for an existing account');
     }
-    params.set('state', signState({ provider, sub: me.sub, tenant: tenant && tenant !== 'personal' ? tenant : undefined, label: label || undefined }));
+    try {
+      const ceremony = ceremonies.issue({
+        provider, caller: me, origin, redirect: redirectUri(provider), verifier: codeVerifier,
+        tenant: tenant && tenant !== 'personal' ? tenant : undefined, label: label || undefined,
+      });
+      res.cookie(ceremony.cookieName, ceremony.cookieSecret, {
+        httpOnly: true, secure: origin.startsWith('https:'), sameSite: 'lax',
+        maxAge: CONNECTOR_CEREMONY_TTL, path: '/api/connect',
+      });
+      params.set('state', ceremony.state);
+    } catch {
+      res.status(503).json({ error: 'too many pending connector sign-ins; try again later' });
+      return;
+    }
     // Facebook / Meta "Login for Business" apps define permissions in a Login Configuration
     // (a config_id), NOT a scope list — sending raw scopes (e.g. pages_read_engagement)
     // yields "Invalid Scopes". When a per-provider CONFIG_ID is set, drop scope + send it.
@@ -207,24 +226,46 @@ export function createConnectorsRoutes(ctx: AppContext): Router {
     res.redirect(302, `${def.authUrl}?${params.toString()}`);
   });
 
-  /** GET /api/connect/:provider/callback — exchange the code, store the token. */
-  router.get('/:provider/callback', async (req: Request, res: Response) => {
+  /** GET /api/connect/:provider/callback — public relay only; never exchange or persist here. */
+  router.get('/:provider/callback', (req: Request, res: Response) => {
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
     const provider = String(req.params.provider);
     const def = PROVIDERS[provider];
     const me = caller(req);
-    try {
-      if (!def || !me) { res.redirect(302, '/utilities?error=auth'); return; }
-      const data = verifyState(String(req.query.state || ''));
-      if (!data || data.provider !== provider || data.sub !== me.sub) {
-        res.redirect(302, '/utilities?error=state');
-        return;
-      }
-      const code = String(req.query.code || '');
-      if (!code) { res.redirect(302, `/utilities?error=${encodeURIComponent(String(req.query.error || 'no_code'))}`); return; }
+    const query = (name: string) => typeof req.query[name] === 'string' ? req.query[name] as string : '';
+    const state = query('state');
+    const code = query('code');
+    const error = query('error');
+    if (!def || (def.auth || 'oauth') !== 'oauth' || !state || state.length > 4096
+        || code.length > 8192 || error.length > 200 || (!code && !error) || (code && error)) {
+      res.status(400).json({ error: 'invalid connector callback' }); return;
+    }
+    const relay = ceremonies.relay(state, provider, me?.sub, code, error);
+    if (!relay) { res.status(400).json({ error: 'invalid or expired connector state' }); return; }
+    res.redirect(302, relay.location);
+  });
 
-      const codeVerifier = readPkceVerifier(req, provider); // PKCE verifier (from the /start cookie)
-      if (def.pkce) res.clearCookie(`oshalpkce_${provider}`, { path: '/' });
-      const tok = await exchangeCode(provider, def, code, codeVerifier);
+  /** GET /api/connect/:provider/complete — prove the original browser and owner, then store. */
+  router.get('/:provider/complete', async (req: Request, res: Response) => {
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    const provider = String(req.params.provider);
+    const def = PROVIDERS[provider];
+    const me = caller(req);
+    if (!me) { res.status(401).json({ error: 'not authenticated' }); return; }
+    const ticket = typeof req.query.ticket === 'string' ? req.query.ticket : '';
+    const data = def && ticket.length <= 100 ? ceremonies.complete(ticket, provider, req, me) : null;
+    if (!data) { res.status(400).json({ error: 'invalid or expired connector completion' }); return; }
+    res.clearCookie(data.cookieName, { path: '/api/connect', secure: data.origin.startsWith('https:'), httpOnly: true, sameSite: 'lax' });
+    try {
+      if (data.error) { res.redirect(302, `/utilities?error=${encodeURIComponent(data.error)}`); return; }
+      // An environment change midway through consent cannot redirect a code exchange elsewhere.
+      if (data.redirect !== redirectUri(provider) || (def.pkce && !data.verifier) || !data.code) {
+        res.redirect(302, '/utilities?error=state'); return;
+      }
+      if (data.tenant && !(await isTenantMember(ctx.pool, data.tenant, me.sub))) {
+        res.status(403).json({ error: 'not a member of that household' }); return;
+      }
+      const tok = await exchangeCode(provider, def, data.code, data.verifier);
       const acct = await fetchAccount(provider, tok).catch(() => ({ email: me.email, id: null as string | null }));
 
       // Per-user envelope encryption (flag-gated; legacy KEK when off — same blob format).

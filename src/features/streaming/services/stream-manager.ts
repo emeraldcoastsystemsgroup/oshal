@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — ported from any-bot StreamController.js
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added task update broadcast helper for chat runtime status transitions
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Revalidate scoped SSE events in order with bounded queues and stop protected delivery when current access is revoked.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -21,6 +22,9 @@ interface SSEClientState {
   connectedAt: number;
   knownTaskIds: Set<string>;
   heartbeatTimer?: ReturnType<typeof setInterval>;
+  authorize?: (taskId: string) => Promise<boolean>;
+  delivery: Promise<void>;
+  pendingEvents: number;
 }
 
 /**
@@ -62,8 +66,9 @@ export class StreamManager {
    * @param clientId - Unique client identifier
    * @param taskId - Task to subscribe to, or 'all' for session-wide
    * @param res - Writable response object
+   * @param authorize - Optional trusted current-access check used for every task event.
    */
-  registerClient(clientId: string, taskId: string, res: SSEWritable): void {
+  registerClient(clientId: string, taskId: string, res: SSEWritable, authorize?: (taskId: string) => Promise<boolean>): void {
     this.setupSSEHeaders(res);
     this.sendEvent(res, 'connection', { clientId, taskId, message: 'Connected to streaming' });
 
@@ -75,6 +80,9 @@ export class StreamManager {
       connectedAt: Date.now(),
       knownTaskIds: new Set(),
       heartbeatTimer,
+      authorize,
+      delivery: Promise.resolve(),
+      pendingEvents: 0,
     });
 
     this.setupCleanup(clientId, res);
@@ -171,12 +179,39 @@ export class StreamManager {
    * @param data - Event payload
    */
   broadcast(taskId: string, eventType: StreamEventType, data: Record<string, unknown>): void {
-    this.sseClients.forEach((client) => {
+    this.sseClients.forEach((client, clientId) => {
       if (this.shouldReceiveEvent(client, taskId)) {
-        this.sendEvent(client.response, eventType, { ...data, taskId });
+        if (client.authorize) this.queueAuthorizedEvent(clientId, client, taskId, eventType, data);
+        else this.sendEvent(client.response, eventType, { ...data, taskId });
       }
     });
     logger.debug({ taskId, eventType }, 'Event broadcast');
+  }
+
+  private queueAuthorizedEvent(clientId: string, client: SSEClientState, taskId: string,
+    eventType: StreamEventType, data: Record<string, unknown>): void {
+    if (++client.pendingEvents > 128) { this.unregisterClient(clientId); return; }
+    client.delivery = client.delivery.then(async () => {
+      if (this.sseClients.get(clientId) !== client) return;
+      const allowed = await this.authorizeEvent(client, taskId);
+      if (this.sseClients.get(clientId) !== client) return;
+      if (!allowed) {
+        client.knownTaskIds.delete(taskId);
+        if (client.taskId === taskId) this.unregisterClient(clientId);
+        return;
+      }
+      this.sendEvent(client.response, eventType, { ...data, taskId });
+    }).catch(() => this.unregisterClient(clientId)).finally(() => { client.pendingEvents -= 1; });
+  }
+
+  private async authorizeEvent(client: SSEClientState, taskId: string): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([client.authorize!(taskId), new Promise<boolean>(done => {
+        timer = setTimeout(() => done(false), 2_000);
+      })]);
+    } catch { return false; }
+    finally { clearTimeout(timer); }
   }
 
   /**

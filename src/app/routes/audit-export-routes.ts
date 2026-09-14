@@ -14,6 +14,7 @@
  *                     |                             | remains a blocker exactly as before.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Replace obsolete posture flags with the runtime's actual control resolution: CSP mode follows cspMode (report-only by default), connector crypto follows SESSION_SECRET plus default-on envelope mode, the always-mounted external limiter is distinguished from opt-in internal/expensive rails, and Alertmanager HMAC configuration is surfaced explicitly.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Surface the connector DEK failure policy so governance cannot present an explicit shared-HKDF break-glass as the normal deny posture.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148: /whoami reports `source` (swarm-role | break-glass | none) plus root status, so the admin console can distinguish a role that lives in swarm_roles from one that exists only in the operator-local .env. The page cannot see either store, so it must be told; without this an admin granted on the Users page and an operator hard-coded into a file render identically.
  */
 
 /**
@@ -57,9 +58,11 @@ import {
   requireAdminConsoleAccess,
   Permission,
   ROLE_PERMISSIONS,
+  Role,
 } from '@/features/governance';
 import { cspMode } from '@/features/security';
 import { envelopeDekFailureMode } from '@/app/routes/connector-token-crypto';
+import { isPrivilegedIdentity, getRootSub } from '@/shared/middleware/privileged-identities';
 
 const logger = createChildLogger({ module: 'audit-export-routes' });
 
@@ -510,11 +513,19 @@ export function createAuditExportRouter(ctx: AppContext, requiresAuth?: RequestH
   /**
    * GET /whoami — the CALLER's resolved RBAC role + effective permissions. Available to any
    * authenticated caller (no AuditExport gate) so the admin console can show "you are <role>" and
-   * hide controls the caller can't use. Reflects IdP token roles + the env allowlists.
+   * hide controls the caller can't use. Reflects swarm_roles (ADR-148), IdP token roles and the
+   * env allowlists.
+   *
+   * `source` is the reason the caller holds the role, and it exists because the two are not
+   * interchangeable: `swarm-role` survives an edit to the environment file and can be changed from
+   * the Users page, while `break-glass` is an entry in the operator-local .env that nobody can see
+   * or alter from a browser. An operator running on break-glass alone is the exact state ADR-148
+   * exists to end, so the console has to be able to say so rather than showing an unexplained role.
    */
   router.get('/whoami', ...guards, (req: Request, res: Response) => {
     const caller = callerFromRequest(req);
     const role = resolveRole(caller);
+    const bySwarmRole = isPrivilegedIdentity(caller.sub, caller.email);
     res.json({
       sub: caller.sub,
       email: caller.email,
@@ -522,6 +533,10 @@ export function createAuditExportRouter(ctx: AppContext, requiresAuth?: RequestH
       role,
       permissions: ROLE_PERMISSIONS[role] ?? [],
       enforcement: isEnforcementEnabled(),
+      // Reported, never inferred by the page: the page cannot see swarm_roles or the environment.
+      source: bySwarmRole ? 'swarm-role' : (role === Role.Viewer ? 'none' : 'break-glass'),
+      isRoot: Boolean(caller.sub) && getRootSub() === caller.sub,
+      rootClaimed: getRootSub() !== null,
     });
   });
 
