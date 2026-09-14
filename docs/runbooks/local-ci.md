@@ -151,6 +151,73 @@ Open, each a `BACKLOG` entry with done-when criteria:
 The suggested order is 2, then 1 — triage is blind without spec-level output, and the trivy
 decision needs a current report. 3 gates the trustworthiness of both.
 
+### First kept run — 2026-09-14 (reduced gate, loaded host)
+
+Item 2 above has its first data point. The full classified lists are in
+[local-ci-bug22-run-2026-09-14.md](./local-ci-bug22-run-2026-09-14.md); this subsection is the
+summary. Evidence only — nothing here names a cause.
+
+- **Command:** `bash scripts/ci-local.sh --head --skip-image` (interactive head mode; HEAD
+  `231b76f4` of `feat/store-compatibility-gate`; image build, image-smoke and trivy skipped).
+  2026-09-13 23:58:40 → 2026-09-14 00:20:03 local (04:58–05:20 UTC).
+- **Conditions — the box was NOT idle:** 22 idle Claude Code sessions (~0.1–0.2 GB each) and
+  VS Code open; host free RAM 0.4–1.3 GB of 16 GB; the Docker VM with all 45 stack containers up
+  at load1 2–5 on 8 CPUs; e2e ran with `--workers=4 --retries=2`. Item 3 applies to every number
+  below.
+- **Kept output:** `%LOCALAPPDATA%\oshal\ci-runs\ci-head-skipimage-20260913-2358.out.log`
+  (70,156 lines); per-gate lines in `%LOCALAPPDATA%\oshal\ci-local.log`.
+- **Outcome lines:** `=== LOCAL CI: FAILED gates: unit lint security-policy e2e-green ===` and
+  `no new failures; FIXED: store-compatibility trivy (night 51)`. `store-compatibility` passed.
+  `trivy` did not run (no `GATE trivy` line in this run); its `FIXED` is the streak comparison's
+  reading of a gate absent from this run against the previous night's failing set.
+
+| Gate | Result | Duration |
+|---|---|---|
+| head-src / typecheck / store-compatibility | PASS | 43 s / 34 s / 43 s |
+| connectors / manifests / kernel-skills / workflow-triggers | PASS | 2 s / 5 s / 18 s / 0 s |
+| repo-separation / worktree-strays / secret-scan | PASS | 0 s / 1 s / 74 s |
+| local-secret-hygiene / unpushed-commits | PASS | 0 s / 7 s |
+| unit | **FAIL** | 496 s |
+| lint | **FAIL** | 35 s |
+| security-policy | **FAIL** | 10 s |
+| e2e-green | **FAIL** | 514 s |
+| image-build / image-smoke / trivy | not run (`--skip-image`) | — |
+
+- **unit:** `Test Files 45 failed | 846 passed | 2 skipped (893)` · `Tests 49 failed | 8785 passed |
+  47 skipped (8881)` · `Errors 1 error`. The gate's reporter printed per-file `❯` lines and `×`
+  title+duration lines only — no assertion messages, and no detail for the `1 error`. Of the 45
+  `❯` lines, 27 carry a failed-test count (the 49 tests); the other 18 are failed files with no
+  failed-test count and nothing else in the log (14 `*-browser.spec.ts`, two `(0 test)`, two
+  all-skipped). Top files by failed tests: `app-store-remote` 9, `site-product-pages` 4,
+  `publish-gate` 4, `artifact-dispatch-browser` 3, `invite-reconnect-message` 3,
+  `machine-write-identity` 3, `static-surface-glass` 2, `schema-lock-privilege-tolerance` 2,
+  nineteen files 1 each. Buckets by first error line (error lines recovered by re-running the 15
+  Docker/browser/DB-free files from the same `ci-src` export, one at a time, plus a detail re-run
+  of the three security-policy files): assertion 27, environment 3 (`git ls-files` in the
+  `.git`-less export ×2, missing `oshal_trading_accounts` table ×1), runtime `TypeError` 2,
+  passed on re-run 2 (`any-bot-runtime-containment`, `trading-schwab-account-binding`), detail not
+  in the log and not re-run 15 (browser / image / database files). No recovered error line says
+  timeout or load-gate.
+- **lint:** one warning, and warnings block: `src/app/server.ts 2011:1 File has too many lines
+  (1003). Maximum allowed is 1000 max-lines`.
+- **security-policy:** `Tests 5 failed | 154 passed (159)` in 3 files — three `/api` mounts at
+  `src/app/server.ts:1190-1192` (`/api/authorization/tenant-memberships`, `/api/authorization`,
+  `/api/user-directory`) mounted without `requiresAuth / serviceSecretOr / requiresOperator` and
+  not on `UNGUARDED_ALLOWLIST`; migrations `127`, `129`–`137` (ten files) self-manage
+  `BEGIN;/COMMIT;` without the `-- oshal:no-transaction` pragma; and three machine-write-identity
+  cases (a stale `artifact-exchange-core` inventory entry, a `jarvis-service-callers` driver with
+  0 observations, a `local-auth` probe answered `403 {"error":"installer setup requires the
+  original browser origin"}`). Verbatim assertion text in the companion file.
+- **e2e-green:** `59 failed`, `2 skipped`, `3 did not run`, `468 passed (8.2m)` over 532 tests in
+  71 curated spec files. Top files: `tool-approval-workflow` 10, `agent-memory-and-swarm-memory`
+  8, `orchestration-workstreams-api` 6, `llm-execution-handler` 3, `rls-core-table-coverage-live`
+  3, eight files 2 each, thirteen files 1 each. By first error line of the final failure block:
+  `expect(...)` assertions 40, spec-authored `Error` messages 8, `Test timeout of 30000ms
+  exceeded` 5, `TimeoutError: page.waitForFunction` 4, runtime `TypeError` 2. The string
+  `Test timeout of 30000ms exceeded` appears 27 times in the section, all inside those five
+  blocks (with their retries): `tool-approval-workflow` ×2 blocks, `ticket-activity-rollup`,
+  `agent-profile-persistence`, `optimizer-native-routing`.
+
 ## Known constraints
 
 - Port **3456** must be free during the e2e gate (several green-set specs hardcode it);
