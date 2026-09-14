@@ -1759,3 +1759,33 @@ by a person trying to say hi.
 - A written decision records which tables the bot is deliberately DENIED, so the next missing grant
   is distinguishable from a deliberate boundary — the ambiguity that made BUG-25 take a live outage
   to notice.
+### Dependency tiers: four gaps the design surfaced (2026-09-14)
+
+**Context:** building `required` / `optional` app dependencies (ADR-085 addendum) exposed four
+independent holes. None blocks the store migration above; each is small and separately shippable.
+Detail and evidence: [backlog/store-dependency-tier-migration.md](backlog/store-dependency-tier-migration.md).
+
+**Done when**, per gap:
+
+- **"One of these connectors" cannot be expressed.** `home` needs SmartThings *or* Nest,
+  `email-summarizer` Gmail *or* Outlook, `payments` Square *or* PayPal. The schema says all-of
+  (`required`) or none-of (`optional`), so every such app must pick `optional` and loses the
+  "connect at least one" signal. *Done when* an app can declare a choice-of set that the install
+  preview and the setup screens render as "connect one of...", without it becoming a hard
+  install-time requirement, and a guard proves an app with none of them connected is reported
+  unready rather than broken.
+- **An app cannot ask whether its optional partner is installed.** Optional dependencies are an
+  install-time concept only, so a package that tiles a partner app's surface either 404s or
+  hand-rolls a probe. *Done when* a package can ask the kernel whether a named app is installed and
+  active (read-only, no new route per package) so its surface hides the tile instead of rendering a
+  dead one, with a guard proving the answer follows an uninstall.
+- **`marketplace.json`'s dependency mirror drifts unguarded.** The catalog entry for
+  `creative-studio` lists one app where its manifest lists four; `scripts/check-catalog.mjs` mirrors
+  identity/version/suite/displayName/source but not dependencies. *Done when* the catalog's
+  dependency block is generated from the manifest (tiered shape included) and the catalog gate fails
+  on drift, proven red by a mutation.
+- **The one-click installer hard-codes bundle dependencies.** `scripts/oshal-install.sh` carries
+  `BUNDLE_PACKAGES=([little-monsters]="little-monsters presentations" ...)` - "dependencies BOUND"
+  by hand - and `--apps` has no way to pull a package's optional extras. *Done when* bundles name
+  only their top package (the installer resolves the rest from the manifest), `--apps` accepts a
+  `--with-optional` passthrough, and `tests/unit/installer-scripts-parse.spec.ts` covers both.
