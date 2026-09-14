@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added authenticated memory-only audio diarization, owner-private speaker profile management, private-org member context, deterministic self-enrollment, and trusted transcript persistence.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added receipt state transitions, failed-claim release, concurrent retry signaling, and completed lost-response acknowledgement.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | POST /audio re-enters the caller's RLS request identity after multer (preserveRequestIdentity around the audio parser). When the last audio bytes reached multer on a later socket chunk, the settings read, the receipt claim and the speaker-store writes after the upload ran with no AsyncLocalStorage identity, so the GUC pool stamped them anonymous non-operator and owner RLS scoped them to nothing (the receipt claim is refused: 500 speaker_service_unavailable). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
  */
 
 import express, { Router, type Request, type RequestHandler } from 'express';
@@ -39,6 +40,7 @@ import { VoiceService } from '@/features/voice';
 import { GOOGLE_CLOUD_STT_MAX_INLINE_AUDIO_BYTES } from '@/features/voice-providers';
 import { createChildLogger } from '@/shared/logger';
 import { isGuestRequest } from '@/shared/middleware/guest-session';
+import { preserveRequestIdentity } from '@/shared/middleware/multipart-identity';
 import {
   acquireAmbientOwnerLock,
   AmbientOwnerLockBusyError,
@@ -464,13 +466,13 @@ function speakerSttTimeoutMs(): number {
 }
 
 function audioUpload(): RequestHandler {
-  const upload = multer({
+  const upload = preserveRequestIdentity(multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_AUDIO_BYTES, files: 1, fields: 6 },
     fileFilter: (_req, file, callback) => callback(
       null, file.mimetype.startsWith('audio/') || file.mimetype === 'application/octet-stream',
     ),
-  }).single('audio');
+  }).single('audio'));
   return (req, res, next) => upload(req, res, (error) => {
     if (!error) { next(); return; }
     logger.error({ err: error, operation: 'audioUpload' }, 'Ambient speaker upload rejected');

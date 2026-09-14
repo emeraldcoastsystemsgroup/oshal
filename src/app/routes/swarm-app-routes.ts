@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | ADR-141: GET /:name/setup (the group setup-dashboard plan — manifest data only, probes are fetched by the page in the viewer's own session) and GET /:name/setup-dashboard (the ONE kernel-served setup / connection-status page every group gets, src/pages/cockpit/tools/app-group-setup.html). 404 for anything that is not an active group.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Require protected application assignments to use authorization preview/apply instead of the legacy tier mutation API.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | GET /:name/uninstall-impact reports optionalDependents (apps that list this one as an OPTIONAL dependency); only required dependents block.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | POST /import re-enters the caller's RLS request identity after multer (preserveRequestIdentity). When the manifest's last bytes reached multer on a later socket chunk, loadApp ran with no AsyncLocalStorage identity and the owner-stamped swarm_applications write was refused by RLS (400). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
@@ -37,6 +38,7 @@ import {
   type SwarmApplicationRecord,
 } from '@/features/swarm-apps';
 import { getCaller, isOperator } from '@/shared/middleware/authz';
+import { preserveRequestIdentity } from '@/shared/middleware/multipart-identity';
 import { GUEST_TIERS, isGuestTier } from '@/shared/middleware/guest-capability-matrix';
 import { registerAppStoreRemoteRoutes } from './app-store-remote';
 
@@ -687,7 +689,7 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAc
     }
   });
 
-  router.post('/import', upload.single('manifest'), async (req: Request, res: Response) => {
+  router.post('/import', preserveRequestIdentity(upload.single('manifest')), async (req: Request, res: Response) => {
     try {
       const file = (req as any).file as { buffer: Buffer; originalname: string } | undefined;
       if (!file) {

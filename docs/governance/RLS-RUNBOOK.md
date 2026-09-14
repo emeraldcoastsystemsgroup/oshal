@@ -76,6 +76,47 @@ background caller in a listed seam fails CI).
 4. **Break-glass:** on an outage that looks like starved background reads, set
    `OSHAL_DB_GUC_STRICT=off` (immediate) and root-cause the missed seam.
 
+## Async-Context Boundary: Multipart Upload Bodies
+
+The request identity lives in `AsyncLocalStorage`. It follows every `await` and promise inside the
+request, but **not** events the socket emits. `multer` (busboy) reads a multipart body from socket
+`data` events, so when the last body bytes reach the parser after it has started reading, its
+completion callback — and therefore the route handler after it — runs on the connection's async
+context with **no request identity**. The GUC pool then stamps every query anonymous non-operator
+(`OSHAL_DB_GUC_STRICT=deny`): owner-scoped writes are refused with
+`new row violates row-level security policy for table ...` and owner-scoped reads return nothing.
+A body that is already fully buffered when the parser starts (for example behind an `await` that
+runs before the parser) completes inside the identity, which is why the failure looks intermittent
+and size-dependent.
+
+**Rule:** wrap every multipart parser whose handler touches the database under the caller's
+identity with `preserveRequestIdentity` from `src/shared/middleware/multipart-identity.ts`. It
+captures the identity before the body streams and re-enters it around the parser's continuation;
+parser errors pass through unchanged.
+
+```ts
+router.post('/upload', preserveRequestIdentity(upload.single('file')), handler);
+// a route that handles multer errors itself wraps the parser the same way:
+const parse = preserveRequestIdentity(upload.single('audio'));
+return (req, res, next) => parse(req, res, (err) => (err ? reject(res, err) : next()));
+```
+
+Core multipart routes as of 2026-09-14:
+
+| Route | After the upload | Wrapped |
+|---|---|---|
+| `POST /api/rag/upload` | knowledge-memory record, owner-scoped | yes |
+| `POST /api/swarm/apps/import` | `swarm_applications` upsert, owner-stamped | yes |
+| `POST /api/jarvis/ambient/audio` | ambient settings, receipt claim, speaker store | yes |
+| `POST /api/agents/:agentId/profile/avatar` | `agents` update (no RLS policy on `agents`) | yes |
+| `POST /api/voice/transcribe` | no database access | no |
+| `POST /api/artifacts/handles/upload` | in-memory handle; authorization reads run under `runWithSystemIdentity` | no |
+
+Diagnosis: the api log shows `DB access with NO request identity DENIED` naming the post-upload
+call site. Guard: `tests/unit/multipart-request-identity-postgres.spec.ts` streams chunked bodies
+through the real routers into a FORCE-RLS table as the NOBYPASSRLS `oshal_app` role — add a case
+there when a new multipart route writes under the caller's identity.
+
 ## Rollout
 
 1. Verify the wrapper is active.

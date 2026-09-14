@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added dedicated agent-profile routes under /api/agents/:agentId/profile
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Restricted global profile bulk writes, mutations, and avatar uploads to exact operators
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | POST /:agentId/profile/avatar re-enters the caller's RLS request identity after multer (preserveRequestIdentity). When the image's last bytes reached multer on a later socket chunk, the avatar write ran with no AsyncLocalStorage identity and was stamped anonymous non-operator instead of the operator who uploaded it. Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
  */
 
 import { Router } from 'express';
@@ -12,6 +13,7 @@ import multer from 'multer';
 import { AgentProfileController } from '@/features/agent-profile';
 import { createChildLogger } from '@/shared/logger';
 import { requiresOperator } from '@/shared/middleware/authz';
+import { preserveRequestIdentity } from '@/shared/middleware/multipart-identity';
 
 const logger = createChildLogger({ module: 'agent-profile-routes' });
 
@@ -37,7 +39,7 @@ export function createAgentProfileRoutes(controller: AgentProfileController): Ro
   router.get('/:agentId/profile', controller.getAgentProfile);
   router.put('/:agentId/profile', requiresOperator, controller.updateAgentProfile);
   // Authorize before multer buffers attacker-controlled bytes in memory.
-  router.post('/:agentId/profile/avatar', requiresOperator, avatarUpload.single('avatar'), controller.uploadAgentAvatar);
+  router.post('/:agentId/profile/avatar', requiresOperator, preserveRequestIdentity(avatarUpload.single('avatar')), controller.uploadAgentAvatar);
 
   logger.info('Agent profile routes registered');
   return router;
