@@ -765,6 +765,66 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** decide whether Headscale joins the default bring-up (operator call — it is an outward-facing network service, so default-on deserves the same opt-in scrutiny as any other outward behaviour), or stays opt-in but **fails loudly**: `-OffLan` should refuse with "Headscale is not running, start it with scripts/headscale-setup.sh" instead of quietly emitting a LAN-only code. Whichever is chosen, `oshal-up.sh` should report Headscale's state alongside the rest of the tier so "why can't my laptop join" is answerable without reading four files.
 - **Done when:** a machine on a different network completes the documented path end to end — join the overlay, enrol as an edge node, reach the API — and a deliberately stopped Headscale produces a message naming the cause instead of a join code that cannot work. Relevant to [ADR-135](adr/135-print-to-swarm-and-print-to-rag.md) P2: an edge printer off the LAN needs exactly this reachability before its device-bound credential is worth anything.
 
+### Data-model explorer: deploy it and prove it on the box
+- **Current state:** the explorer is built, reviewed and pushed to PR #431 at `18edcbf4` — the
+  `src/features/data-model` slice, `/api/admin/data-model` (operator-only), the `/data-model` page,
+  the Admin-console tool link and the **Data model explorer** Test Lab card. `npm run test:data-model`
+  is 51/51 on that commit (including a disposable-PostgreSQL catalog read and the page in Chromium),
+  the publish gate is clean and the typecheck adds no errors. It has NEVER run on the deployed stack:
+  `src/app` is not bind-mounted, so the route needs a core deploy, and on 2026-09-14 the box was
+  running the older preview image `1694a3ca` under a starved Docker VM while other sessions held
+  their own rebuilds.
+- **Remaining:** deploy #431 (merge, or `scripts/oshal-deploy.sh --preview`) once the box is quiet,
+  then walk all four views against real data as an operator and run the Lab card. Record the live
+  counts — tables, apps, integration links and, in particular, the unowned relations the snapshot
+  reports — so the first real reading is on the record rather than inferred from the fixtures.
+- **Done when:** an operator loads `/data-model` on the deployed stack, each view renders from the
+  live databases, the Lab card reports `pass` with its counts, and those counts are posted in
+  `COLLABORATE.md` or the deploy runbook. See [the explorer guide](architecture/data-model/explorer.md).
+
+### Data-model explorer: one implementation behind both the docs and the surface
+- **Current state:** the catalog SQL, the RLS row-scope classifier and the static DDL parser exist
+  twice — once as CommonJS in `scripts/schema-docs/` (the committed-docs generator, core #424/#425)
+  and once as TypeScript in `src/features/data-model/` (the live surface). They are pinned together
+  by `tests/unit/data-model-catalog.spec.ts`, which fails the moment the two disagree, so the risk
+  today is duplicated maintenance rather than silent drift.
+- **Remaining:** collapse them to one implementation — either run the generator through `tsx` so it
+  imports the feature slice (the repo already runs `scripts/*.ts` that way), or extract the three
+  pure pieces into a module both can load — then delete the copy and retarget the parity spec at
+  whatever boundary remains.
+- **Done when:** one copy of each piece ships, `node scripts/generate-schema-docs.js` (or its
+  replacement) regenerates `docs/architecture/data-model/` to a zero diff, `npm run test:data-model`
+  stays green, and the parity spec either covers the new seam or is removed with its reason recorded.
+
+### Data-model explorer: schema drift as an alarm, not a page someone remembers to open
+- **Current state:** every snapshot is current-state only, cached for five minutes and thrown away.
+  The explorer can already see the things that matter — a live table no source declares, a table
+  whose RLS went from forced to off, a foreign key that newly crosses an app boundary — but only
+  while a human is looking at it. Nothing records yesterday's shape, so nothing can say what changed.
+- **Remaining:** persist a periodic digest of the snapshot (owners, RLS state and key columns per
+  relation), diff each run against the previous one, and raise the difference through the Operations
+  Stream so the self-healing path treats it like any other signal
+  ([ADR-119](adr/119-autonomous-health-ticket-processing.md),
+  [ADR-125](adr/125-operations-stream-event-to-action-pipeline.md)); surface the same diff in the
+  explorer as "what changed since". Keep it fail-quiet: a schema change is normal, an *unexplained*
+  one is the alarm.
+- **Done when:** dropping a policy on a scratch table in a disposable database produces exactly one
+  alert naming that table and its previous state, the explorer shows the same change as a diff, and a
+  run with no schema change produces no alert.
+
+### Data-model explorer: export the view you are looking at
+- **Current state:** the committed pages are regenerated repo-wide by
+  `scripts/generate-schema-docs.js`, and the explorer draws any scope live, but there is no way to
+  take the thing on screen — one app's tables, or one table's neighbourhood — into an ADR, a PR
+  comment or a message. Today that means a screenshot.
+- **Remaining:** add an export to the page for the current scope: Mermaid `erDiagram` text matching
+  the committed pages' shape, the rendered SVG, and the scoped JSON. Client-side only, so nothing
+  new reaches the server, and the Mermaid must parse (the docs pipeline already validates with
+  mermaid@11).
+- **Done when:** an operator can copy a Mermaid block for the current view that renders unchanged in
+  a GitHub markdown file, download the same view as SVG and JSON, and a spec asserts the exported
+  Mermaid parses and names exactly the relations the view drew.
+
 ### Drone physical payloads and peer coordination
 - **Remaining:** prove a real approved MAVLink airframe/adaptor, authenticated drone-to-drone coordination, physical camera/video, ESC telemetry, and LED payload through the remote-node envelope; the Drone package carve is already complete.
 - **Done when:** [`drone`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/drone) drives auditable capture/telemetry on a physical node and a multi-node mission self-realigns without bypassing geofence, approval, abort, or ownership gates. See [ADR-099](adr/099-drones-as-remote-swarm-nodes.md).

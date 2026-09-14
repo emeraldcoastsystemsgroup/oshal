@@ -153,7 +153,9 @@ these pages.
 ## Explorer
 
 Operators can navigate the same model live at **`/data-model`** (Admin console → Data model). It
-reads the running deployment rather than a committed snapshot:
+reads the running deployment rather than a committed snapshot. [explorer.md](explorer.md) is the
+as-built guide: how a snapshot is assembled, every file's role, how to extend it, its tests, how
+to deploy it and what it deliberately does not do.
 
 - **Apps & integrations** - one node per installed app plus core, joined by what manifests declare
   (context offers, artifact Send-to flows matched by MIME type, dependencies, group members) and by
