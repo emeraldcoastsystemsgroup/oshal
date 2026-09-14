@@ -396,6 +396,28 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** when unpaused, recreate platform-owned services under `maintainer@emeraldcoastsystemsgroup.com`, re-mint/re-consent credentials, and record the YouTube relinking flow; personal brokerage accounts remain out of scope.
 - **Done when:** every platform credential traces to an ECSG-owned or explicitly demo-only account, old accounts are drained/closed as appropriate, the relinking video is published, and Twilio A2P is completed on the ECSG account.
 
+### Every deterministic service-route schedule on this box is refused under ADR-149 enforce (2026-09-14)
+- **Observed (api log from the 22:31Z recreate to 23:25Z):** seven `ApplicationExecutionDeniedError` /
+  `authorization_execution_identity_required` refusals across `app-route_intelligent-sales-email-auto-log`
+  (4), `app-route_daily-trade-recap-daily-trade-recap-recorded-reports` (2) and
+  `app-route_venture-plan-rebaseline-policy-tick` (1), each logged as `Manifest service-route schedule
+  failed`. The runner (`src/app/manifest-service-route-schedule.ts:172`, added in `0cfe4d9b` on 2026-09-10)
+  wraps every handler in `runWithApplicationExecution({ app, kind: 'jobs' })`, which throws that code when
+  the app is protected and no actor is active (`src/shared/application-authorization-execution/index.ts:53`);
+  a cron tick has no request, so it never has one. All five service-route schedules registered at boot —
+  the three above plus `marketing-engine-daily-metrics-ingest` and `marketing-engine-weekly-campaign-review`,
+  which had not come due in that window — belong to apps with `oshal_authorization_applications.protected = t`,
+  so none of them can run on this box. The log does not reach back before the recreate; the start date is
+  inferred from the commit, not observed. Trading's own schedules (`trading-events`, `trading-fast`,
+  `trading-autopilot`) take the queue path and dispatched normally in the same window.
+- **Who decides:** the operator — which principal a protected app's declared schedule runs as (the
+  installing owner, a per-app automation assignment, or the app's own service identity admitted for
+  `kind: 'jobs'` only). It extends the authorization core, so nothing was changed.
+- **Done when:** a protected app's manifest schedule executes under a recorded principal that
+  `authorize()` accepts for `kind: 'jobs'`, an app that principal is not assigned to is still refused, a unit
+  guard proves both against the real policy, and each of the five schedules above logs `Manifest
+  service-route schedule completed` on the box.
+
 ## Workflow, agent, and model runtime
 
 ### Jarvis must fail honestly when the operator has no hosted brain
@@ -1087,6 +1109,22 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   [ADR-114](adr/114-user-owned-remote-nodes.md) and
   [runbooks/remote-swarm-node-enrollment.md](runbooks/remote-swarm-node-enrollment.md).
 
+### World Intelligence: the market-hours pulse saturates the series store (2026-09-14)
+- **Observed at 23:20Z:** `docker stats` showed `oshal-local-tsdb` at 282 % CPU and 1.9 GB;
+  `pg_stat_activity` on `oshal_ts` held 19 active sessions, every one the per-source sentiment aggregate
+  from `perSourceSentimentHours` in `src/features/world-data/world-intelligence-service.ts`
+  (`… FROM world_metrics WHERE entity=$1 AND metric='sentiment' AND ts >= now() - ($2 || ' hours')::interval
+  GROUP BY source`), each 35 s old. The statement is indexed (`world_metrics_entity_metric_ts_idx`; EXPLAIN
+  gives an index scan), the newest `world_metrics` chunk holds 3.1 M rows / 681 MB and `world_items`
+  1.76 M rows / 2.3 GB, the Docker VM one-minute load was 29 on 8 CPUs, and `app_world-ticker-pulse` logged
+  `Schedule dispatch timed out — abandoning to unblock the runner` six times in ten minutes. The 18:10Z
+  watchdog note in the coordination thread recorded the same timeouts under a different load spike. Not
+  measured: whether the 19 sessions are one pulse's fan-out or overlapping pulses.
+- **Done when:** the pulse's per-entity reads run under a bounded concurrency, or through a rollup read
+  that does not scan per entity; the ticker pulse completes inside its window on this box with the full
+  name set; and the pulse log records the entity count and wall time, so a regression is visible without
+  `pg_stat_activity`.
+
 ## Application-package follow-ups
 
 ### Editable CAD Studio and scan-to-design workflow
@@ -1410,8 +1448,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** `docs/guides/printing.md` exists and is linked from the guides README, and a product page renders for print-ingest — which requires deciding whether the manifest `status` should flip to `active` or whether the generator should stop treating install-state as publish-state.
 
 ### Session cleanup left on the operator's box (2026-09-06)
-- **Remaining:** two deliberate changes were left in place after proving the printer, both stated to the operator at the time. (1) An operator PAT minted this session, **id `f17a2172-9345-4770-aab9-2e1dd3f84a1f`**, is now orphaned — it was held by a manually started print-drop on port 632 which was stopped, and the node's printer uses the node's own credential instead. It is unbound, operator-scoped and expires 2026-10-05. (2) `printServiceEnabled` was left **true** (port 633) on this machine's node, which is an outward-facing service advertising on the LAN. Revoke **by that exact id** — never by label, which cost five other sessions' tokens once.
-- **Done when:** the PAT is revoked by id and confirmed via its `revoked` field (not a guessed field name), and the operator has decided whether the node's printer stays enabled on this machine.
+- **Done 2026-09-14:** the orphaned operator PAT `f17a2172-9345-4770-aab9-2e1dd3f84a1f` was revoked by its
+  owner through `DELETE /api/cli-tokens/:id` (`{ ok: true, revoked: true }`), and the owner's token list
+  then reported `revoked: true` for that id.
+- **Remaining:** `printServiceEnabled` was left **true** (port 633) on this machine's node, an
+  outward-facing service advertising on the LAN.
+- **Done when:** the operator has decided whether the node's printer stays enabled on this machine.
 
 ### App status contract (ADR-145) — build the `status:` declaration and the highlights section
 - **Remaining:** add `status?:` to `SwarmAppManifest` with a `validateStatusDeclaration` beside the readiness validator (own mount, canonical path, session-admitting route, valid RFC 6901 pointers); the pure D2 coercion (≤4 tiles / ≤5 items truncate rather than reject, unknown tone degrades to `neutral` and never escalates, wrong-typed pointer yields "can't check"); `getAppStatusPlan(name)` resolving a group OR an app; the generalised dashboard route plus the `jarvis_tasks` fallback read; and the highlights section in `app-group-setup.html`. Then kalshi as the first store adopter — it already computes every number the contract asks for.
