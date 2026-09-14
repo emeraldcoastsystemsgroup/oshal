@@ -20,6 +20,10 @@ Security posture, hardening guidance, and control evidence for OSHAL.
   shared replay protection, role-separated key rollout, and rotation/recovery operations.
 - [workload-delegation.md](./workload-delegation.md) — SEC-01 workload-to-API user delegation,
   durable authorization, exact route scopes, migration stages, rotation, and rollback.
+- [unguarded-api-mounts-2026-09-14.md](./unguarded-api-mounts-2026-09-14.md) — read-only audit of the
+  three `/api` mounts registered without `requiresAuth` (`/api/authorization`,
+  `/api/authorization/tenant-memberships`, `/api/user-directory`): per-route exposure, the internal
+  guard each one carries, and why both route-auth classifiers report them red.
 
 Related:
 
