@@ -1718,3 +1718,34 @@ cannot run without, `marketplace.json` mirroring the new shape, and the Test Lab
 - **Remaining:** `swarm_applications.agent_ids` is an *association* column (the loader fills it so Jarvis's catalog, mesh fan-out, selector composition and competency ranking can find an app's bot), but the ADR-149 reader `readApplicationExecutionOwnership` reads it as an *ownership* column and raises `Ambiguous package ownership` when an id resolves to more than one app. Twelve ids do; the full census, the evidence for each, and the measured blast radius are in [operations/agent-id-ownership-collisions.md](operations/agent-id-ownership-collisions.md). The refusal is **not new** — before `086832cf` (2026-09-14) the reader failed a type comparison and refused *every* id silently; that commit made unique ids work and these twelve loud. Since the 06:46:14Z boot, 682 refusals, all from `GET /api/tickets`, across 6 of the 12 ids; `career-hunter`/`job-apply` is the largest (204 refusals, 4 operator-owned tickets silently dropped from the operator's own list). Three different problems, and only one of them is "delete the squatter": (1) seven ids are claimed by loose Workflow Studio publish artifacts (`cluster-probe`, `durable-probe`, `smoke-parallel-2`, `smoke-parallel-flow`, `smoke-published-flow`, `test-gate-flow`, `capability-ideation`) or by stale rows whose manifest file no longer exists (`issue-rca`, `incident-remediation`) — none of them declares the bot it borrows; (2) two are carve mistakes where a manifest pinned a uuid it does not own — `trading` pinned `a0000000-…-0045` (`identity-advisor`, owned by `identity`) while the real `trading-analyst` is `…-0046`, and `brand-graphics` pinned `b00f0000-…-0001` (`drone-operator`); (3) the rest are **deliberate aliases** that are correct as designed (`communications-bot` across switchboard/social/email-summarizer, `vids-operator` across vids/creative-studio/video/daily-trade-recap, `career-hunter` across career-hunter/job-apply, `rca-specialist` across intelligent-operations/intelligent-processing) and must NOT be resolved by editing manifests. `scripts/swarm-app-bot-integrity-check.sh` passes and flags 13 of these advisorily, but cannot see the inactive squatters because it inspects only `agent_ids[1]` of active apps.
 - **Who decides:** the operator. (1) and (2) uninstall or edit applications installed on the operator's own box; (3) changes the ADR-149 authorization core, which is load-bearing and should not be touched without approval. Nothing in this entry has been performed.
 - **Done when:** the census query in the ops doc returns zero rows for classes (a), (b) and (d) — the seven borrowed ids released and the two mispinned uuids corrected in `oshal-applications` and reinstalled — AND the deliberate aliases of class (c) are readable rather than removed, because an association shared on purpose stopped being read as exclusive ownership: either the reader resolves a multi-claim to a single accountable owner from `agents.metadata.manifestApp` (which already carries exactly one stamp per agent), or a manifest declares ownership separately from association, recorded in an ADR amending ADR-149. A regression guard crosses the real boundary that failed — the real reader against a real PostgreSQL carrying a real multi-claimed `UUID[]` row, extending `tests/unit/application-execution-ownership-postgres.spec.ts`, never a doubled query — and proves a deliberately shared bot is readable while an unowned claim is not. The integrity check is widened to scan the whole `agent_ids` array of active *and* inactive apps so a reappearing squatter fails it. `GET /api/tickets` as the operator returns the four `career-hunter` tickets that are dropped today, and the api log shows zero `Ambiguous package ownership` lines across a full boot.
+
+### Dependency tiers: four gaps the design surfaced (2026-09-14)
+
+**Context:** building `required` / `optional` app dependencies (ADR-085 addendum) exposed four
+independent holes. None blocks the store migration above; each is small and separately shippable.
+Detail and evidence: [backlog/store-dependency-tier-migration.md](backlog/store-dependency-tier-migration.md).
+
+**Done when**, per gap:
+
+- **"One of these connectors" cannot be expressed.** `home` needs SmartThings *or* Nest,
+  `email-summarizer` Gmail *or* Outlook, `payments` Square *or* PayPal. The schema says all-of
+  (`required`) or none-of (`optional`), so every such app must pick `optional` and loses the
+  "connect at least one" signal. *Done when* an app can declare a choice-of set that the install
+  preview and the setup screens render as "connect one of...", without it becoming a hard
+  install-time requirement, and a guard proves an app with none of them connected is reported
+  unready rather than broken.
+- **An app cannot ask whether its optional partner is installed.** Optional dependencies are an
+  install-time concept only, so a package that tiles a partner app's surface either 404s or
+  hand-rolls a probe. *Done when* a package can ask the kernel whether a named app is installed and
+  active (read-only, no new route per package) so its surface hides the tile instead of rendering a
+  dead one, with a guard proving the answer follows an uninstall.
+- **`marketplace.json`'s dependency mirror drifts unguarded.** The catalog entry for
+  `creative-studio` lists one app where its manifest lists four; `scripts/check-catalog.mjs` mirrors
+  identity/version/suite/displayName/source but not dependencies. *Done when* the catalog's
+  dependency block is generated from the manifest (tiered shape included) and the catalog gate fails
+  on drift, proven red by a mutation.
+- **The one-click installer hard-codes bundle dependencies.** `scripts/oshal-install.sh` carries
+  `BUNDLE_PACKAGES=([little-monsters]="little-monsters presentations" ...)` - "dependencies BOUND"
+  by hand - and `--apps` has no way to pull a package's optional extras. *Done when* bundles name
+  only their top package (the installer resolves the rest from the manifest), `--apps` accepts a
+  `--with-optional` passthrough, and `tests/unit/installer-scripts-parse.spec.ts` covers both.

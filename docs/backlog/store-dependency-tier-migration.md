@@ -12,6 +12,60 @@ one drags its whole shelf in, while apps that hand work to a partner app declare
 Operator decision (2026-09-14): **migrate every store manifest to the tiered form and reclassify,
 after a core carrying the tiers is deployed.**
 
+## Status (2026-09-14)
+
+| | where | state |
+|---|---|---|
+| the core contract, installer, loader and App Loader | `feat/store-compatibility-gate` (PR #431) `c333e180`, `93244803`, `961e5f2c` | **built, tested, pushed — NOT merged, NOT deployed** |
+| the store authoring guide | `oshal-applications` `feat/package-test-catalog-pilots` `bf7ff84` | pushed |
+| every published package manifest | `oshal-applications` | **untouched** — still the legacy flat form (valid, means all-required) |
+| the App Loader page | bind-mounted `src/pages/app-loader` | already live on the box, rendering through its back-compat branch until the API half deploys |
+| Test Lab scenario `app-dependency-tiers` | registered | reports `gap` until a core carrying the tiers is deployed |
+
+## Next steps, in order
+
+Each step is gated by the one before it. Steps 1-2 are the operator's call; 3-6 are an ordinary
+branch of work in the store repo.
+
+1. **Deploy a core that carries the tiers.** The change is on `feat/store-compatibility-gate`
+   (PR #431), not on `main` and not on the box. Either merge the PR and run
+   `bash scripts/oshal-deploy.sh`, or preview the branch with `bash scripts/oshal-deploy.sh
+   --preview` (the branch must track origin and match its freshly fetched tip). Announce it in
+   `COLLABORATE.md` first: that branch carries several other sessions' unreleased work.
+2. **Prove the deployed API speaks tiers.** Run the AI Test Lab scenario `app-dependency-tiers`; it
+   must report **pass**, not `gap`. By hand, as a signed-in operator:
+   `GET /api/swarm/registries/<slug>/preview/<package>` - `impact.dependencies.required` and
+   `impact.dependencies.optional` must both be objects. An array means the running image predates
+   the change, and converting a manifest now would break installs.
+3. **Resolve the three unverified classifications** in the table below (`create`, `creative-studio`,
+   `career-hunter`): read each package's surfaces, decide required vs optional per dependency, and
+   write the file:line evidence into that table. Nothing else in this document depends on it, so
+   this can be done before the deploy.
+4. **Convert the manifests** in `oshal-applications` with the recipe below - one commit per package
+   (or per shelf). `node scripts/oshal-app.js validate <dir>` must be clean for each, and
+   `node scripts/check-catalog.mjs` must pass for the store.
+5. **Regenerate the catalog mirror** so `marketplace.json` carries each package's new dependency
+   shape; today it drifts unguarded (see the follow-ups at the end).
+6. **Prove it on the box.** Install a converted launcher through the App Loader: its optional apps
+   must appear as unchecked checkboxes, declining them must install only the package, and choosing
+   one must install exactly that one. Record the result in `COLLABORATE.md`.
+
+## Where the code is
+
+| what | file |
+|---|---|
+| the one contract both the CLI and the runtime read | `scripts/oshal-app-dependencies.js` |
+| typed runtime view (`requiredAppDependencies`, `optionalAppDependencies`, `connectorAllowList`) | `src/shared/app-dependencies/index.ts` |
+| CLI: validate / install (`--with`, `--with-optional`) / uninstall / init | `scripts/oshal-app.js` |
+| App Loader preview, the dependency gate and the install route | `src/app/routes/app-registry-routes.ts` |
+| hot-loading what an install pulled in (both install routes) | `src/app/routes/app-install-dependencies.ts` |
+| the confirm screen's required rows and optional checkboxes | `src/pages/app-loader/index.html` |
+| guards (all mutation-proven) | `tests/unit/app-dependencies-{contract,installer,loader-browser}.spec.ts` |
+| Test Lab registration | `src/app/routes/test-lab-app-registry-scenarios.ts` |
+
+**Never read `manifest.dependencies.apps` directly again** - the two forms differ; go through
+`@/shared/app-dependencies` (or `require('./oshal-app-dependencies')` on the CLI side).
+
 ## Why the deploy has to come first
 
 A tiered manifest declares `uses: [app-dependencies]`, a [kernel-skill](../apps/kernel-skills.md) floor. A core that predates
