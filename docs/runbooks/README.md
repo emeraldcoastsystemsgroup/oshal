@@ -96,6 +96,9 @@ OSHAL pipelines and surfaces. One file per procedure.
   trade-recap pipeline (finance → deck → video → social).
 - [jarvis-provider-and-cockpit-walkthrough.md](./jarvis-provider-and-cockpit-walkthrough.md) —
   Jarvis provider health, failover, and a cockpit walkthrough.
+- [jarvis-couldnt-do-that-just-now.md](./jarvis-couldnt-do-that-just-now.md) — triage for the
+  Jarvis catch-all error: the refused bookmarked thread (page self-heals since `7aae3ce5`), the
+  briefings asset JSON 404 in the image, what is proven, and how to finish the live proof.
 - [business-domain-email-dns.md](./business-domain-email-dns.md) — DMARC/DKIM/SPF state for
   the `emeraldcoastsystemsgroup.com` business domain: verify commands, the DMARC-tighten
   follow-up, and the don't-rotate-DKIM gotcha.

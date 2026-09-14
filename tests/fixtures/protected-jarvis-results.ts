@@ -4,10 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Compose real Jarvis HTTP and isolated PostgreSQL with completed signed application execution fixtures.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Serve the real Jarvis page and its browser assets from this origin (absolute api dir, shared asset attach) and expose the base URL so Chromium cases run against the same real router and database.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
+import { resolve } from 'node:path';
 import { createProtectedResultFixture } from './protected-results';
+import { attachJarvisBrowserAssets } from './jarvis-package-tools-browser';
 import { DisposableAlertPostgres } from '../helpers/disposable-alert-postgres';
 import { createJarvisRoutes } from '@/app/routes/jarvis-routes';
 import { ensureJarvisSchema } from '@/app/routes/jarvis-task-store';
@@ -30,12 +33,13 @@ export async function createProtectedJarvisFixture(database: DisposableAlertPost
     (req as unknown as { oidc: unknown }).oidc = { isAuthenticated: () => true, user: { sub: actor.sub, iss: actor.issuer } };
     runWithRequestIdentity({ sub: actor.sub, principalIssuer: actor.issuer, isOperator: false }, next);
   });
-  app.use('/api/jarvis', createJarvisRoutes(ctx as never, 'src/api', async () => new Map()));
+  attachJarvisBrowserAssets(app);
+  app.use('/api/jarvis', createJarvisRoutes(ctx as never, resolve('src/api'), async () => new Map()));
   const server = app.listen(0, '127.0.0.1'); await new Promise<void>(done => server.once('listening', done));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const call = (path: string, user = 'alice', body?: unknown) => fetch(base + '/api/jarvis' + path, {
     method: body === undefined ? 'GET' : 'POST', headers: { 'x-fixture-user': user, 'content-type': 'application/json' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  return { ...fixture, pool, call,
+  return { ...fixture, pool, call, base,
     async close() { server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())); await fixture.close(); } };
 }

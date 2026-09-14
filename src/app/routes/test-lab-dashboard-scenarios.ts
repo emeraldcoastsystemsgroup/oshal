@@ -12,6 +12,7 @@ export const DASHBOARD_SCENARIOS: Scenario[] = [{
   description: 'Read the fixed compact Home/Jarvis assets without starting voice, generation or application work. Linked suites exercise actual browser layout, task grouping, preserved drafts, directory navigation and current-user summaries; run them from the core checkout with Chromium.',
   regressionTests: [
     { level: 'browser', path: 'tests/unit/jarvis-dashboard-browser.spec.ts' },
+    { level: 'browser', path: 'tests/unit/jarvis-legacy-thread-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/app-home-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/app-home-plan.spec.ts' },
     { level: 'unit', path: 'tests/unit/app-home-customization.spec.ts' },

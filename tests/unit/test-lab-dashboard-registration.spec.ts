@@ -14,6 +14,7 @@ it('registers daily dashboard once with browser, Home lifecycle and HTTP asset c
   expect(registered).toEqual(DASHBOARD_SCENARIOS);
   expect(registered[0].regressionTests).toEqual(expect.arrayContaining([
     { level: 'browser', path: 'tests/unit/jarvis-dashboard-browser.spec.ts' },
+    { level: 'browser', path: 'tests/unit/jarvis-legacy-thread-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/app-home-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/app-home-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-dashboard-assets.spec.ts' },

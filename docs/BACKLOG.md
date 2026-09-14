@@ -1360,3 +1360,30 @@ Hz with a dead-band, so `look-at` tracks a person — the operator's original "e
 load, inertia and stall on the rehearsal, with Circuit Lab's servo part as the electrical companion) and B6 (a
 jaw driven by an audio envelope, and a Pumpkin `speak` triggering it through a browser hand-off, never a
 server-to-server call) are each closed on their own criteria. None of them needs core code today.
+
+### Jarvis refused-thread recovery: finish the live proof and make it a Test Lab step (2026-09-14)
+
+**Context:** "Sorry — I couldn't do that just now" on the box was two defects
+([runbook](runbooks/jarvis-couldnt-do-that-just-now.md)): the page kept resending a bookmarked thread id the
+server refuses under `enforce` (every thread created before issuer provenance, 2026-09-11), and the briefings
+settings assets resolved through `__dirname` into a `dist/pages` that does not exist in the image. Both fixed in
+`7aae3ce5` with red-on-old-code guards; the page half is live on reload, the router half needs the next core
+deploy. The live proof was cut short by two Docker engine wedges on the host, so three pieces are still open.
+
+**Done when:**
+- `tests/unit/jarvis-legacy-thread-browser.spec.ts` (real page in Chromium against the real Jarvis router and
+  an isolated Postgres) has executed green on a box with Docker, and is kept in the Test Lab dashboard scenario's
+  regression list. It is written, typechecks, and is registered; it has not run.
+- The two live scripts in `scripts/operations/jarvis-live-*.js` have each produced one recorded pass on the
+  box: the operator's real question answered through the live brain (PAT path; answer read from
+  `chat_messages`, PAT revoked by id), and the guest Chromium pass showing `404 session_not_found` on the
+  planted thread, `202` on the fresh one, an answer bubble, and the new row stamped `urn:oshal:guest`.
+- The core deploy has shipped `7aae3ce5` and the Test Lab `cockpit-daily-dashboard` step "Briefing settings
+  client" reads `pass` on the box (today it reads `gap`).
+- The cleanup in the runbook is verified: PAT `jarvis-operator-ask-56e3d403` revoked by id, any
+  `jarvis-validate-56e3d403*` thread and `jarvis-legacy-e2e-*` row deleted by exact id.
+- **Innovation to land:** a Test Lab step, run as the signed-in user on the box, that creates an issuer-less
+  thread for that user through the task store, asks on it (expects `404 session_not_found`), asks on a fresh id
+  (expects `202` and a row with the caller's issuer), and deletes both — so the exact failure the operator hit
+  is exercised live by the Lab on every run, not only by fixtures. Needs a server-side cleanup path for the
+  rows it creates; it must never touch a thread the user actually uses.
