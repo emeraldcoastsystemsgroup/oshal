@@ -1147,3 +1147,26 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   installed Lab after a core deploy, and the batch path admits the `browser` level — schedule
   levels, the selector's exact-match rule and the page's counts are a separate slice, and changing
   the selector rule must not strand the existing `integration,unit` selector the operator uses.
+
+### AI Office: draw a deck, document or workbook in a brand kit's exact colors and fonts (2026-09-14)
+
+**Context:** Create 1.8.0 stores a person's brand kit (role colors, an Office-safe heading and body face, a
+logo and a voice) and every other studio now reads it. AI Office can only *approximate* it: it badges and
+pre-picks whichever of the ten built-in looks scores nearest the brand, because `resolveTheme(id)` in
+`src/features/presentation-generation/services/deck-themes.ts` resolves a look by id out of the fixed
+`DECK_THEMES` record, and `renderPptx` / `renderDocx` / `renderXlsx` accept only that id. A package cannot hand
+the renderer a look, so a brand's actual colors and faces never reach the generated file. This needs core and
+is not started; the operator asked for a brand kit, not for a renderer change.
+
+**Done when:**
+- `resolveTheme` accepts a known id **or** a validated custom look, `docxTheme`/`xlsxTheme` take the same input,
+  and the three renderers' `options.theme` type widens to match. An unknown id still falls back exactly as today.
+- A `brandTheme(input)` validator derives a complete `DeckTheme` from `{ base id, role colors, heading and body
+  face }`: every hex bounded, faces restricted to the existing Office-on-Windows-and-macOS list, chart colors
+  derived from the roles, and cover / decor / radius / headingCase inherited from the named base look.
+- An invalid custom look is refused with a readable error and never silently becomes the default look.
+- The presentations package passes the caller's own kit (already validated and owner-scoped by Create) and the
+  stored record names the look as a brand look, so a generated file's provenance stays legible.
+- Unit specs prove: a custom look renders its own colors and faces into .pptx, .docx and .xlsx; a refused look
+  renders nothing; the ten built-in looks are unchanged.
+- No new dependency, and no core route reads Create's storage.
