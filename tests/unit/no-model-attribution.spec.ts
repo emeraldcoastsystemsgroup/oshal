@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard: no tracked text file may carry a model co-author trailer (a Co-Authored-By line at the vendor's no-reply address) or a "Generated with" model-tool footer. No model attribution is allowed in this repo's commits, PR bodies or files (operator directive); scripts/test-lab-nightly.mjs stamped such a trailer into every auto-committed report, and the history of three repos had to be rewritten to remove it. Scans tracked files via git when a .git dir exists and walks the tree otherwise (the ci-local --head export shape), and proves it goes red on a fixture that contains the trailer.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Raise the real-tree walk ceiling to 180 s. The walk reads ~50 MB of tracked text; a cold read of a fresh export measured 14.5 s on a loaded host, and the 60 s ceiling was hit while the attribution-scrub tooling guard ran git-filter-repo in a sibling worker. The assertion is unchanged; only the budget grew, so the gate cannot go red on host load.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -15,9 +16,10 @@ import { extname, join, resolve } from 'path';
 const REPO_ROOT = resolve(__dirname, '../..');
 const SELF = 'tests/unit/no-model-attribution.spec.ts';
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
-// ~50 MB of tracked text; a cold-cache read right after a fresh export has been measured at ~6 s,
-// and the ceiling leaves room for a loaded CI host without weakening the assertion.
-const TREE_WALK_TIMEOUT_MS = 60_000;
+// ~50 MB of tracked text; a cold-cache read of a fresh export measured 6-15 s depending on host
+// load, and sibling workers (git-filter-repo in the tooling guard) share the CPU. The ceiling
+// leaves room for a loaded CI host without weakening the assertion.
+const TREE_WALK_TIMEOUT_MS = 180_000;
 
 /** Never text; skipped by extension so the walk does not read images and archives. */
 const BINARY_EXT = new Set([

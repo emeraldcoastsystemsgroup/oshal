@@ -54,6 +54,11 @@ OSHAL pipelines and surfaces. One file per procedure.
   openswarm forward-sync section is still current.
 - [update-check.md](./update-check.md) — daily app/core update detection, operator-gated apply
   flow, private-store token behavior, and troubleshooting.
+- [model-attribution-scrub.md](./model-attribution-scrub.md) — removing model attribution
+  (co-author trailers, "Generated with" footers) from commit history and PR descriptions across
+  the repos: the 2026-09-12 run and its numbers, the descendant-only rewrite that keeps signed
+  history intact, per-ref leases, the `oshal` ruleset toggle, pointer-only re-point of the shared
+  checkouts, what GitHub keeps regardless, and the guards that now hold the line.
 
 ## Enable / operate a feature
 
