@@ -8,6 +8,7 @@
  * 2026-08-17 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin ENCRYPTION_KEY to the API-only service so a host-configured encrypted-config vault key reaches config-routes without leaking into worker bot environments.
  * 2026-08-17 13:45:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the Entra/local identity bridge and hybrid-pilot switches to the controller API only; setting a migration posture in the CRM droplet env must reach auth composition without propagating identity-policy flags to worker bots.
  * 2026-08-26 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_JSON_BODY_LIMIT (body-limits.ts global JSON cap) — the gsquared lead-import 413 showed the documented tuning knob was never forwarded to the controller container.
+ * 2026-09-14 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the four marketing-suite knobs the api reads (sender, GitHub traffic token, Google scope override, Switchboard executor). All four failed silently: GOOGLE_CONNECT_SCOPES sat in .env with no compose entry, so the Search Console scope the scorecard needs never reached the container.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -61,6 +62,14 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   // paste in the package's settings outranks it, but a box operator managing keys in the env
   // file (their standing habit for RingCentral/Microsoft/Twilio) must not be silently ignored.
   { name: 'FMCSA_WEBKEY', readBy: 'intelligent-sales lib/is-fmcsa webKey() — env fallback behind the admin-pasted setting' },
+  // 2026-09-14, marketing suite P0: the store packages run inside the api, and every one of these
+  // fails SILENTLY when unforwarded — the send reports "unconfigured", the scorecard row reports
+  // NO DATA, the executor simply never arms. GOOGLE_CONNECT_SCOPES was set in .env on this box with
+  // no compose entry, so the Search Console scope the scorecard needs never reached the container.
+  { name: 'MARKETING_EMAIL_FROM', readBy: 'marketing-engine marketing-routes send path — the verified sender' },
+  { name: 'GITHUB_TRAFFIC_TOKEN', readBy: 'marketing-engine marketing-ops-routes ingest — GitHub traffic source' },
+  { name: 'GOOGLE_CONNECT_SCOPES', readBy: 'connector-provider-registry Google scopes override (webmasters.readonly for Search Console)' },
+  { name: 'SWITCHBOARD_PUBLISH_EXECUTOR', readBy: 'switchboard switchboard-calendar-routes — the scheduled-publish executor arm' },
 ];
 
 // This list is CURATED, not exhaustive, and that is a deliberate trade rather than laziness:

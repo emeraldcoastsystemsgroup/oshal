@@ -1265,6 +1265,14 @@ services:
       # Optional free REST pull is recovery/reconciliation only; no Actions runner.
       GITHUB_TICKET_TOKEN: ${GITHUB_TICKET_TOKEN:-}
       GITHUB_TICKET_WRITEBACK_TOKEN: ${GITHUB_TICKET_WRITEBACK_TOKEN:-}
+      # Marketing suite knobs the api process reads (the store packages run in this container).
+      # Compose forwards only what it names, so without these an operator setting them in .env
+      # sees no error at all — just a source that stays NO DATA or a send that stays unconfigured.
+      # Pinned by tests/unit/compose-env-passthrough.spec.ts.
+      GITHUB_TRAFFIC_TOKEN: ${GITHUB_TRAFFIC_TOKEN:-}
+      GOOGLE_CONNECT_SCOPES: ${GOOGLE_CONNECT_SCOPES:-}
+      MARKETING_EMAIL_FROM: ${MARKETING_EMAIL_FROM:-}
+      SWITCHBOARD_PUBLISH_EXECUTOR: ${SWITCHBOARD_PUBLISH_EXECUTOR:-}
       GITHUB_TICKET_FEEDS: ${GITHUB_TICKET_FEEDS:-}
       # Slack connector (Feeds app): OAuth v2 USER token. Callback
       # https://<host>/api/connect/slack/callback. App Client ID/Secret from api.slack.com.
