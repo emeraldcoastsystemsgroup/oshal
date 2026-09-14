@@ -25,7 +25,7 @@ vi.mock('node:fs', async importOriginal => {
     return fs.readSync(fd, buffer, offset, length, position);
   } };
 });
-import { hasNodeTestHarness, snapshotPackageTests, packageTestRecipePending } from '@/features/swarm-apps/services/package-test-snapshot';
+import { hasNodeTestHarness, RUNNER_OUT_OF_SCOPE, snapshotPackageTests, packageTestRecipePending } from '@/features/swarm-apps/services/package-test-snapshot';
 import { inventoryPackageTests } from '@/features/swarm-apps/services/package-test-inventory';
 import { mkdirSync } from 'node:fs';
 import { packageTestCase } from '../fixtures/package-testing';
@@ -99,7 +99,7 @@ it('admits a Node-harness Playwright recipe only once the browser prerequisites 
   expect(packageTestRecipePending({ ...recipe, sideEffects: 'external-write' }, verified)).toContain('External effects');
   expect(packageTestRecipePending({ ...recipe, runner: { ...recipe.runner, files: ['tests/browser/proof.ts'] } }, verified)).toContain('JavaScript suite files');
   expect(packageTestRecipePending({ ...recipe, runner: { kind: 'vitest', scope: 'package', files: ['tests/a.spec.ts'] } }, verified)).toBe('The vitest runner is unavailable.');
-  expect(packageTestRecipePending({ ...recipe, runner: { kind: 'external', scope: 'package', files: ['tests/a.mjs'] } }, verified)).toBe('The external runner is unavailable.');
+  expect(packageTestRecipePending({ ...recipe, runner: { kind: 'external', scope: 'package', files: ['tests/a.mjs'] } }, verified)).toBe(RUNNER_OUT_OF_SCOPE.external);
   const node = packageTestCase({ runner: { kind: 'node-test', scope: 'package', files: ['tests/a.test.cjs'] }, prerequisites: ['runner:node-test'] });
   expect(packageTestRecipePending(node)).toBeUndefined();
   expect(packageTestRecipePending({ ...node, prerequisites: ['runner:node-test', 'core:dependencies'] })).toContain('core:dependencies');

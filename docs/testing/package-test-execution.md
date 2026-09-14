@@ -6,12 +6,39 @@ survive page reloads and controller restarts; open a result to see its assertion
 output, package version, source revision and runner image. A changed installation
 marks earlier evidence stale. A stored pass describes the source that ran.
 
-The first supported recipe is package-scoped `node-test` at unit or integration
-level, with `none` or `fixture-write` effects and no live isolation. Supported
-prerequisites are `runner:node-test` and `fixture:core-checkout`. The latter exposes
-the trusted core image's packaged scripts/dependencies at `/app`, not a developer
-checkout. Database, sibling-package, browser, device, AI and outward-action
-prerequisites remain pending until their runner fixtures are provided.
+A recipe must be package-scoped, declare `none` or `fixture-write` effects and
+avoid live isolation. Beyond that, what runs is decided by one table — the sealed
+profile runner table in `package-test-snapshot.ts` — with one row per runner kind:
+
+| runner kind | capability it needs | container profile | level | suite harness |
+| --- | --- | --- | --- | --- |
+| `node-test` | `runner:node-test` (the floor, no probe) | `node` | unit, integration | — |
+| `playwright` | `runner:playwright` + `browser:chromium` | `browser` | browser | `node:test` |
+| `vitest` | `runner:vitest` | `vitest` | unit, integration | a `vitest` import |
+
+`fixture:core-checkout` is also part of the floor; it exposes the trusted core
+image's packaged scripts and dependencies at `/app`, not a developer checkout.
+Every other capability is **probe-verified, never assumed**: the sandbox runs a
+fixed suite in the image and admits only what that suite proved. The vitest
+capability is proved by actually executing a one-assertion vitest suite inside the
+container, because a runner file that exists is not a runner that works.
+
+Two runner kinds are deliberately **out of scope**, and the catalog says so as the
+pending reason rather than leaving them looking unfinished:
+
+- **`external`** drives a service outside the container — its own database or host
+  fixture. The sealed profile has no network, no mounts and no daemon socket.
+  Satisfying it means moving that boundary, which is an ADR-level decision.
+- **`smoke`** is not an isolated recipe at all; installation smokes run through the
+  smoke verifier.
+
+A **core-scoped** recipe of any kind is refused for the same structural reason: a
+package snapshot stages package bytes, so core repository files are never there.
+
+Adding a runner kind means adding a capability its probe can verify and a container
+profile that satisfies it. A profile may raise only the process, descriptor, tmp and
+CPU budgets its runner needs; the network stays off, no host path is mounted and the
+Docker socket is never passed in, whichever profile runs.
 
 Registration on install never executes package code. Starting a suite requires a
 current verified swarm administrator who can discover that application. The

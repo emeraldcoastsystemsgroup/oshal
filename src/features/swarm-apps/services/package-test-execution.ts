@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Recheck current authority and sealed source throughout isolated package test execution.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Carry the catalog-chosen container profile so browser recipes run under the Chromium profile.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Refuse a silent pass: a zero-exit run must report its TAP summary and at least one executed test, so an empty or early-exiting suite can never read as passed.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Read the TAP plan and its points as well as the `node --test` summary, so a vitest run whose reporter emits no summary is still counted from what it actually reported.
  */
 import type { AppSmokeResult } from './app-smoke-verifier';
 import type { PackageTestSnapshot } from './package-test-snapshot';
@@ -49,11 +50,11 @@ function watchAuthority(options: PackageTestExecution, controller: AbortControll
   return { denied: () => denied, stop: async () => { clearInterval(timer); await checking; } };
 }
 
-/** @description Read the `node --test` TAP summary the fixed launcher always produces.
+/** @description Read the `node --test` TAP summary the fixed launcher produces for the Node and browser profiles.
  * `node --test` exits 0 for a file that registers no tests, and a suite that calls `process.exit(0)`
  * exits 0 with no summary at all; both would otherwise be published as a pass.
  * @param output Bounded runner output. @returns Executed/passed/failed counts, or null when no summary was reported. */
-export function reportedTestCounts(output: string): { tests: number; pass: number; fail: number } | null {
+function tapSummaryCounts(output: string): { tests: number; pass: number; fail: number } | null {
   const last = (key: string): number | undefined => {
     const matches = [...output.matchAll(new RegExp(`^# ${key} (\\d+)$`, 'gm'))];
     return matches.length ? Number(matches[matches.length - 1][1]) : undefined;
@@ -61,6 +62,25 @@ export function reportedTestCounts(output: string): { tests: number; pass: numbe
   const tests = last('tests'), pass = last('pass'), fail = last('fail');
   if (tests === undefined || pass === undefined || fail === undefined) return null;
   return { tests, pass, fail };
+}
+
+/** @description Count a plain TAP 13 stream from its declared plan and its actual points. Vitest's TAP reporters
+ * emit a plan and one point per test but no `# tests` summary, so without this a green vitest run would be read
+ * as having reported nothing. A truncated stream still fails: fewer points than the plan is not a pass.
+ * @param output Bounded runner output. @returns Executed/passed/failed counts, or null when no plan was reported. */
+function tapPlanCounts(output: string): { tests: number; pass: number; fail: number } | null {
+  const plan = [...output.matchAll(/^1\.\.(\d+)$/gm)].pop();
+  if (!plan) return null;
+  const points = [...output.matchAll(/^(not ok|ok) \d+(?![0-9])/gm)];
+  const fail = points.filter(point => point[1] === 'not ok').length;
+  const planned = Number(plan[1]);
+  return { tests: planned, pass: points.length - fail, fail: fail + Math.max(0, planned - points.length) };
+}
+
+/** @description Read whatever test summary the runner actually reported, whichever reporter produced it.
+ * @param output Bounded runner output. @returns Executed/passed/failed counts, or null when nothing was reported. */
+export function reportedTestCounts(output: string): { tests: number; pass: number; fail: number } | null {
+  return tapSummaryCounts(output) ?? tapPlanCounts(output);
 }
 
 /** @description Explain a zero-exit run that proved nothing, or undefined when the run really did assert something. */

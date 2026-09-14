@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Verify browser-runner capabilities on the image, re-seal registrations when they change, require the Node harness for Playwright recipes and run them under the browser profile.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps, read through @/shared/app-dependencies (dependencies.required.apps or the legacy dependencies.apps).
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Verify the runner image lazily and only when a browser recipe is actually registered, so no installation pays a container it never needs.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Drive admission, sealing and profile choice from the sealed-profile runner table, so a new runner kind is a table row rather than another hardcoded pair of kinds.
  */
 
 import { createHash } from 'crypto';
@@ -19,7 +20,7 @@ import { requiredAppDependencies } from '@/shared/app-dependencies';
 import type { SwarmApplicationRecord, SwarmAppSmokeDeclaration } from '../types';
 import { userSmokePrerequisite, verifyAppSmokes, type AppSmokeVerificationOptions } from './app-smoke-verifier';
 import { loadPackageTestCatalog, packageTestSource, type LoadedPackageTestCatalog, type PackageTestCase, type PackageTestLevel, type PackageTestRunner } from '@/shared/package-testing';
-import { hasNodeTestHarness, NODE_RUNNER_CAPABILITIES, packageTestRecipePending, snapshotPackageTests } from './package-test-snapshot';
+import { NODE_RUNNER_CAPABILITIES, packageTestRecipePending, runnerHarnessFailure, RUNNER_PROFILES, snapshotPackageTests } from './package-test-snapshot';
 import { PackageTestSandbox } from './package-test-sandbox';
 import { executePackageTest, type InstalledAppTestResult } from './package-test-execution';
 import { inventoryPackageTests, type PackageTestInventory } from './package-test-inventory';
@@ -102,10 +103,11 @@ function sealExecutableCases(packageDir: string, cases: Registration['cases'], c
       if (runner.kind !== 'smoke' && runner.files.some(file => !staged.has(file))) {
         entry.executionError = 'A suite file is excluded from isolated source staging.'; continue;
       }
-      // A browser recipe runs under `node --test`; without the harness it would execute as a bare script and report nothing.
-      if (runner.kind === 'playwright' && runner.files.some(file => !hasNodeTestHarness(staged.get(file)!))) {
-        entry.executionError = 'Browser recipe requires the Node test harness (node:test).'; continue;
-      }
+      // Every runner kind declares the harness its suites must carry; without it a suite runs as a bare
+      // script and reports nothing, which would publish as a pass.
+      const harness = runner.kind === 'smoke' ? undefined
+        : runner.files.map(file => runnerHarnessFailure(runner.kind, staged.get(file)!)).find(Boolean);
+      if (harness) { entry.executionError = harness; continue; }
       entry.metadata.executionRevision = snapshot.revision;
       entry.metadata.sourceCommit = snapshot.sourceCommit;
       entry.metadata.revision = createHash('sha256').update(JSON.stringify({ catalog: entry.metadata.revision, execution: snapshot.revision })).digest('hex');
@@ -171,9 +173,11 @@ export class InstalledAppTestCatalog {
    * retried no sooner than ten minutes later, so a loaded or broken box cannot be flooded with containers.
    * @param cases Cases about to be returned to a caller. @returns Nothing. */
   private verifyLazily(cases: InstalledAppTestCase[]): void {
-    if (!this.verifyOnDemand || this.probing || this.verifiedCapabilities.has('runner:playwright')) return;
+    if (!this.verifyOnDemand || this.probing) return;
     if (Date.now() - this.probedAt < 600000) return;
-    if (!cases.some(test => test.runner.kind === 'playwright')) return;
+    const unverified = cases.filter(test => (RUNNER_PROFILES[test.runner.kind]?.capabilities ?? [])
+      .some(name => !this.verifiedCapabilities.has(name)));
+    if (!unverified.length) return;
     this.probedAt = Date.now();
     this.probing = this.verifyRunners().then(() => undefined).catch(() => undefined).finally(() => { this.probing = undefined; });
   }
@@ -307,13 +311,14 @@ export class InstalledAppTestCatalog {
   private async runSuite(expected: InstalledAppTestCase, registration: Registration, options: InstalledTestRunOptions): Promise<InstalledAppTestResult> {
     const pending = (error: string): InstalledAppTestResult => ({ name: expected.name, path: expected.path, status: 'pending', durationMs: 0, cleanupVerified: true, error });
     const runner = expected.runner;
-    if (!options.revalidate || (runner.kind !== 'node-test' && runner.kind !== 'playwright') || runner.scope !== 'package') return pending('Current execution authority is required.');
+    const recipe = runner.kind === 'smoke' ? undefined : RUNNER_PROFILES[runner.kind];
+    if (!options.revalidate || !recipe || runner.kind === 'smoke' || runner.scope !== 'package') return pending('Current execution authority is required.');
     const packageDir = path.dirname(path.resolve(registration.record.manifestPath));
     try {
       const snapshot = snapshotPackageTests(packageDir);
       if (snapshot.revision !== expected.executionRevision) return pending('Package source changed after selection. Refresh the catalog.');
       return await executePackageTest({ name: expected.name, path: expected.path, suiteFiles: runner.files,
-        profile: runner.kind === 'playwright' ? 'browser' : 'node',
+        profile: recipe.profile,
         timeoutMs: Math.min(options.timeoutMs ?? expected.limits.timeoutMs, expected.limits.timeoutMs), maxMemoryMb: expected.limits.maxMemoryMb,
         snapshot, snapshotNow: () => snapshotPackageTests(packageDir), image: this.runnerImage, sandbox: this.sandbox, signal: options.signal, executionId: options.executionId,
         current: async () => this.registrations.get(expected.appName) === registration && await options.revalidate!() });

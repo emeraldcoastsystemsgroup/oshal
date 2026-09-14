@@ -6,14 +6,23 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Materialize only bounded package snapshots and run fixed Node tests inside disposable memory-backed storage.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Arm the fixed launcher deadline independently of the controller before accepting any package bytes.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Add the browser profile: the launcher points Playwright at the image's system Chromium through a registry shim on the writable tmpfs, so Node-harness browser recipes run in the same closed container.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Add the vitest profile: the launcher runs the image's own globally installed vitest CLI over the staged suite with a TAP reporter, inside the same closed container — no network, no mounts, no daemon socket.
  */
 import path from 'node:path';
 
 /** @description One immutable, package-relative source file supplied by trusted catalog composition. */
 export interface PackageTestSandboxFile { path: string; content: Buffer }
 
-/** @description Which closed container profile a payload asks for; browser adds Chromium, nothing else. */
-export type PackageTestSandboxProfile = 'node' | 'browser';
+/** @description Which closed container profile a payload asks for. `browser` adds Chromium and `vitest`
+ * adds the image's own vitest CLI; neither adds a network, a mount or the daemon socket. */
+export type PackageTestSandboxProfile = 'node' | 'browser' | 'vitest';
+
+/** @description Every profile the launcher knows how to start, so an unknown name is refused before staging. */
+export const SANDBOX_PROFILES: readonly PackageTestSandboxProfile[] = ['node', 'browser', 'vitest'];
+
+/** @description Where the image installs the vitest CLI globally. Fixed and controller-owned: a package never
+ * supplies a runner path, and the launcher refuses the profile outright when this file is absent. */
+export const VITEST_CLI = '/usr/local/lib/node_modules/vitest/vitest.mjs';
 
 const MAX_BYTES = 32 * 1024 * 1024;
 
@@ -29,7 +38,7 @@ export function validateSandboxPath(value: string): void {
 export function sandboxPayload(files: PackageTestSandboxFile[], suiteFiles: string[], profile: PackageTestSandboxProfile = 'node'): string {
   if (!Array.isArray(files) || files.length === 0 || files.length > 4096
     || !Array.isArray(suiteFiles) || suiteFiles.length === 0 || suiteFiles.length > 64) throw new Error('package_test_snapshot_invalid');
-  if (profile !== 'node' && profile !== 'browser') throw new Error('package_test_profile_invalid');
+  if (!SANDBOX_PROFILES.includes(profile)) throw new Error('package_test_profile_invalid');
   const names = new Set<string>(); let bytes = 0;
   const snapshot = files.map(file => {
     validateSandboxPath(file.path);
@@ -70,7 +79,7 @@ process.stdin.on('end',()=>{
    const target=path.join(root,file.path);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,content,{flag:'wx',mode:0o600});names.add(file.path);
   }
   if(!input.suiteFiles.length||input.suiteFiles.some(file=>!names.has(file)||!/[.][cm]?js$/.test(file)))throw Error();
-  if(input.profile!==undefined&&input.profile!=='node'&&input.profile!=='browser')throw Error();
+  if(input.profile!==undefined&&!['node','browser','vitest'].includes(input.profile))throw Error();
   if(input.profile==='browser'){
    // Playwright resolves its browser from a registry directory; point that directory at a writable
    // tmpfs and lay the image's system Chromium under the exact paths Playwright expects. No download,
@@ -81,7 +90,15 @@ process.stdin.on('end',()=>{
    for(const name of ['chromium','chromium-headless-shell']){const target=registry.findExecutable(name).executablePath();if(!target)continue;fs.mkdirSync(path.dirname(target),{recursive:true});if(!fs.existsSync(target))fs.symlinkSync('/usr/bin/chromium',target);}
    Object.assign(env,{PLAYWRIGHT_BROWSERS_PATH:browsers,PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS:'1',PLAYWRIGHT_SKIP_BROWSER_GC:'1',OSHAL_CHROMIUM_EXECUTABLE:'/usr/bin/chromium'});
   }
-  const args=['--test','--test-reporter=tap','--test-concurrency=1','--',...input.suiteFiles.map(file=>path.join(root,file))];
+  let args=['--test','--test-reporter=tap','--test-concurrency=1','--',...input.suiteFiles.map(file=>path.join(root,file))];
+  if(input.profile==='vitest'){
+   // The image installs vitest globally; the launcher runs that fixed CLI over the staged suite and asks for a
+   // per-test TAP stream, so the controller reads what vitest actually reported. No network, no mount, no socket.
+   const cli='${VITEST_CLI}';
+   if(!fs.existsSync(cli)){process.stderr.write('Vitest runner is unavailable in this image.\n');process.exit(3);}
+   env.NODE_PATH='/app/node_modules:/usr/local/lib/node_modules';
+   args=[cli,'run','--root',root,'--reporter=tap-flat','--no-color','--pool=forks','--no-file-parallelism',...input.suiteFiles];
+  }
   const child=cp.spawn(process.execPath,args,{cwd:root,env,stdio:['ignore','inherit','inherit']});
   child.on('error',()=>process.exit(2));child.on('close',(code,signal)=>process.exit(code===null?1:code));
  }catch{process.stderr.write('Package test snapshot could not be materialized.\n');process.exit(2);}

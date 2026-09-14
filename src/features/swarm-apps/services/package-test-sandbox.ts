@@ -8,10 +8,11 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Mark only trusted pre-container validation failures as requiring no cleanup.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Add the browser container profile (more processes, descriptors and tmp for Chromium; still no network, no mounts, no daemon socket) and a real in-profile capability probe that verifies which runner prerequisites the image satisfies.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Read the probe report out of the TAP reporter's diagnostic framing (it re-emits a test's stdout as a comment, so the marker is never at column zero) and log which condition denied a capability set instead of silently returning nothing.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Generalize the container profile to a per-profile budget table and prove the vitest runner by actually executing a one-assertion suite with it inside the sealed container, rather than inferring it from a file's presence.
  */
 import { randomUUID } from 'node:crypto';
 import { createChildLogger } from '@/shared/logger';
-import { PACKAGE_TEST_LAUNCHER, sandboxPayload, type PackageTestSandboxFile, type PackageTestSandboxProfile } from './package-test-sandbox-launcher';
+import { PACKAGE_TEST_LAUNCHER, sandboxPayload, VITEST_CLI, type PackageTestSandboxFile, type PackageTestSandboxProfile } from './package-test-sandbox-launcher';
 import { dockerControl, removeSandbox, runAttachedSandbox, sandboxName } from './package-test-sandbox-process';
 
 /** @description Trusted catalog snapshot and controller-only limits; no command or environment fields exist. */
@@ -30,17 +31,27 @@ export interface PackageTestSandboxInput {
 }
 
 /** Fixed probe suite: reports, from inside the closed browser profile, what this image can actually run. */
-const RUNNER_PROBE_SUITE = `const { test } = require('node:test'); const fs = require('node:fs'); const path = require('node:path');
+const RUNNER_PROBE_SUITE = `const { test } = require('node:test'); const fs = require('node:fs'); const path = require('node:path'); const cp = require('node:child_process');
 test('runner probe', async () => {
   const core = process.env.OSHAL_CORE_ROOT || '/app';
   const report = { theme: fs.existsSync(path.join(core, 'src/shared/ui/css/surface-themes.css')),
-    bridge: fs.existsSync(path.join(core, 'src/shared/ui/js/surface-bridge-client.js')), dependencies: false, chromium: false };
+    bridge: fs.existsSync(path.join(core, 'src/shared/ui/js/surface-bridge-client.js')), dependencies: false, chromium: false, vitest: false };
   try { require.resolve('express'); report.dependencies = true; } catch {}
   try {
     const { chromium } = require('playwright'); const browser = await chromium.launch({ headless: true }); const page = await browser.newPage();
     await page.goto('data:text/html,<title>runner-probe</title>'); report.chromium = (await page.title()) === 'runner-probe';
     report.browser = browser.version(); await browser.close();
   } catch (error) { report.error = String(error && error.message || error).slice(0, 200); }
+  try {
+    // Prove the runner, do not infer it: run a one-assertion suite through the image's own vitest CLI and
+    // require a real TAP point back. A present file is not a working runner.
+    const dir = fs.mkdtempSync('/tmp/vitest-probe-');
+    fs.writeFileSync(path.join(dir, 'probe.test.mjs'), 'import { test, expect } from "vitest"; test("probe", () => { expect(1).toBe(1); });');
+    const run = cp.spawnSync(process.execPath, ['${VITEST_CLI}', 'run', '--root', dir, '--reporter=tap-flat', '--no-color', '--pool=forks', '--no-file-parallelism'],
+      { cwd: dir, encoding: 'utf8', timeout: 60000, env: Object.assign({}, process.env, { NODE_PATH: '/app/node_modules:/usr/local/lib/node_modules' }) });
+    report.vitest = run.status === 0 && /^ok 1 /m.test(String(run.stdout || ''));
+    if (!report.vitest) report.vitestError = String(run.stderr || run.stdout || run.error || '').slice(0, 200);
+  } catch (error) { report.vitestError = String(error && error.message || error).slice(0, 200); }
   console.log('OSHAL_RUNNER_PROBE ' + JSON.stringify(report));
 });
 `;
@@ -139,18 +150,26 @@ async function localImage(selected?: string): Promise<{ image: string; environme
   return { image, environmentKeys: entries.map(value => value.slice(0, value.indexOf('='))) };
 }
 
+/** @description Per-profile container budgets. Raising a budget is all a profile may do: the network stays off,
+ * no host path is mounted and the Docker socket is never passed in, whichever profile runs. */
+const PROFILE_BUDGETS: Readonly<Record<PackageTestSandboxProfile, { tmpMb: number; pids: string; cpus: string; nofile: string }>> = {
+  node: { tmpMb: 64, pids: '64', cpus: '1', nofile: 'nofile=256:256' },
+  browser: { tmpMb: 256, pids: '512', cpus: '2', nofile: 'nofile=4096:4096' },
+  vitest: { tmpMb: 256, pids: '256', cpus: '2', nofile: 'nofile=2048:2048' },
+};
+
 /** @description Build the closed disposable container profile; package code receives no host mount or daemon socket.
- * The browser profile only raises the process, descriptor and tmp budgets Chromium needs; the network stays off. */
+ * A profile only raises the process, descriptor, tmp and CPU budgets its runner needs; the network stays off. */
 function createArguments(name: string, image: string, memory: number, environmentKeys: string[], deadline: number, profile: PackageTestSandboxProfile): string[] {
-  const browser = profile === 'browser';
+  const budget = PROFILE_BUDGETS[profile] ?? PROFILE_BUDGETS.node;
   return ['create', '-i', '--rm', '--name', name, '--label', 'oshal.test-lab.sandbox=1',
     '--label', `oshal.test-lab.run-id=${name.slice(10)}`, '--label', `oshal.test-lab.deadline=${deadline}`, '--pull=never',
     '--network', 'none', '--read-only', '--init', '--user', '1000:1000',
     '--tmpfs', '/work:rw,nosuid,nodev,noexec,size=192m,uid=1000,gid=1000,mode=0700',
-    '--tmpfs', `/tmp:rw,nosuid,nodev,noexec,size=${browser ? 256 : 64}m,uid=1000,gid=1000,mode=0700`,
+    '--tmpfs', `/tmp:rw,nosuid,nodev,noexec,size=${budget.tmpMb}m,uid=1000,gid=1000,mode=0700`,
     '--workdir', '/work', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-    '--memory', `${memory}m`, '--memory-swap', `${memory}m`, '--pids-limit', browser ? '512' : '64', '--cpus', browser ? '2' : '1',
-    '--ulimit', browser ? 'nofile=4096:4096' : 'nofile=256:256', ...environmentKeys.flatMap(key => ['--env', `${key}=`]),
+    '--memory', `${memory}m`, '--memory-swap', `${memory}m`, '--pids-limit', budget.pids, '--cpus', budget.cpus,
+    '--ulimit', budget.nofile, ...environmentKeys.flatMap(key => ['--env', `${key}=`]),
     '--env', 'PATH=/usr/local/bin:/usr/bin:/bin', '--env', 'HOME=/tmp', '--env', 'NODE_OPTIONS=', '--env', 'NODE_PATH=',
     '--entrypoint', 'node', image, '-e', PACKAGE_TEST_LAUNCHER, '--', String(deadline)];
 }
@@ -171,7 +190,7 @@ export class PackageTestSandbox {
     const known = this.verified.get(image ?? '');
     if (known) return known;
     const result = await this.run({ files: [{ path: 'tests/runner-probe.test.cjs', content: Buffer.from(RUNNER_PROBE_SUITE) }],
-      suiteFiles: ['tests/runner-probe.test.cjs'], timeoutMs: 90000, maxMemoryMb: 512, image, profile: 'browser', executionId: randomUUID() });
+      suiteFiles: ['tests/runner-probe.test.cjs'], timeoutMs: 150000, maxMemoryMb: 512, image, profile: 'browser', executionId: randomUUID() });
     const payload = probeReportPayload(result.output);
     const verified = new Set<string>();
     if (payload === undefined || result.exitCode !== 0 || !result.cleanupVerified) {
@@ -185,6 +204,7 @@ export class PackageTestSandbox {
     if (report.theme === true) verified.add('core:shared-theme-assets');
     if (report.bridge === true) verified.add('core:surface-bridge');
     if (report.dependencies === true) { verified.add('core:dependencies'); verified.add('harness:oshal-core-root'); }
+    if (report.vitest === true) verified.add('runner:vitest');
     if (!verified.size) { logProbeFailure(image, result, true, report); return verified; }
     this.verified.set(image ?? '', verified);
     logger.info({ image: image ?? 'current-container', verified: [...verified] }, 'Package test runner probe verified image capabilities');

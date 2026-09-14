@@ -970,11 +970,19 @@ Until they pass, say the profile is proven against mocked boundaries only.
   widen the schedule level validator plus any DB constraint in migration 137 to allow `browser`.
   Do not simply change the exact-match rule — that strands the existing selector and the shortcut
   then refuses with "Existing schedule has different levels".
-- **Extend the profile set beyond Playwright.** `vitest` recipes need the core checkout inside the
-  container and `external` recipes need their own Postgres fixture, which the sealed profile cannot
-  give them today. The probe already returns a capability set, so the same mechanism generalizes:
-  add a capability name per runner kind and a profile that satisfies it, or decide explicitly that
-  those kinds stay host-only and say so in the catalog's pending reason.
+- **Extend the profile set beyond Playwright.** DONE. Admission, sealing and profile choice now come
+  from one sealed-profile runner table (`RUNNER_PROFILES` in `package-test-snapshot.ts`): a row per
+  runner kind naming the capability it needs, the container profile that satisfies it, the levels it
+  may claim and the harness its suites must carry. `vitest` is a real third profile — the image
+  already ships vitest globally, so the launcher runs that fixed CLI with a per-test TAP reporter
+  inside the same closed container, and `reportedTestCounts()` learned the TAP plan/points shape
+  because vitest's reporter emits no `# tests` summary. The capability is proved by *running* a
+  one-assertion vitest suite in the probe, not by finding a file. `external` and core-scoped recipes
+  are declared **out of scope** with the reason in the operator-visible pending reason: an external
+  recipe drives a service outside the container and the sealed profile has no network, no mounts and
+  no daemon socket, and a package snapshot never stages core files. Widening that is ADR-level.
+  Guarded by `tests/unit/package-test-runner-profiles.spec.ts` (12 cases, including two that run
+  against the real image). Not live on the box: the runner lives in the baked image.
 - **A passing suite with very large output is reported as failed.** `runAttachedSandbox()` caps
   output at 64 KB and rewrites a zero exit to 1 on overflow, so a chatty but green suite fails with
   "Package test assertions failed." Decide whether to keep the truncation marker but preserve the

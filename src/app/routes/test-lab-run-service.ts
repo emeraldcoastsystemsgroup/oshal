@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Preserve cancellation and verified cleanup when final authority validation refuses a completed sandbox result.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Discard completed output after any observed cancellation, including a concurrent watchdog refusal followed by successful final validation.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Admit verified Node-harness Playwright recipes alongside Node suites.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Admit verified vitest recipes too; the catalog still decides runnability, this gate only names the kinds a sealed profile exists for.
  */
 import { randomUUID } from 'node:crypto';
 import type { InstalledAppTestCatalog, InstalledAppTestCase, InstalledAppTestResult } from '@/features/swarm-apps';
@@ -53,7 +54,7 @@ export class TestLabRunService {
     if (context.auth.canRunSuites !== true) refusal('An operator is required to run package suites.');
     const test = this.catalog.list(context.visibleApps,context.auth).find(item => item.id === input.caseId);
     if (!test) refusal('This test is unavailable.',404);
-    if (!['node-test','playwright'].includes(test.runner.kind) || !test.runnable) refusal(test.pendingReason ?? 'This runner is unavailable.',409);
+    if (!['node-test','playwright','vitest'].includes(test.runner.kind) || !test.runnable) refusal(test.pendingReason ?? 'This runner is unavailable.',409);
     if (test.revision !== input.revision || test.executionRevision !== input.executionRevision) refusal('This test changed. Refresh the catalog.',409);
     return test;
   }
