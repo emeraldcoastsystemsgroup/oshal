@@ -381,7 +381,8 @@ future will lapse silently one day, and nothing warns ahead of time (five connec
 deployment are in that state). That is a new capability, not this defect — logged in BACKLOG.
 
 ## BUG-14 — Notifications copy describes only one of the two credential tiers
-- **Type:** Bug (copy accuracy) · **Priority:** Low · **Status:** OPEN
+- **Type:** Bug (copy accuracy) · **Priority:** Low · **Status:** **FIXED 2026-09-14** (the copy); the per-channel
+  tier in the routing table is a BACKLOG residual — see the closing note.
 - **Discovered:** 2026-08-09 by the as-built review behind
   [the Platform tools guide](../guides/platform-tools.md); **scope corrected the same day by the
   operator** — the first write-up of this entry called the service tier "a shared deployment
@@ -412,6 +413,33 @@ deployment are in that state). That is a new capability, not this defect — log
   check as documentation, in both directions — this one over-promised isolation, and the first
   write-up of the bug over-stated the exposure. Describe the tier model; do not collapse it to
   either extreme.
+
+**Closing note (2026-09-14).** Re-verified on `main` first: `notify.html:74-76` still read "Every send
+uses your own connected account (your Gmail, your Twilio, your Telegram chat), never a shared
+deployment credential." The senders were re-read too. Email is personal-only (`gmailReady`). SMS is
+personal-first with the deployment Twilio as fallback. Voice uses only the deployment Twilio. Telegram
+sends through the deployment's `TELEGRAM_BOT_TOKEN` to the user's saved chat id. So the entry's tier
+description holds.
+- **Fix:** the lead paragraph now says so per channel. Email always sends from your own Gmail. SMS uses
+  your own Twilio when you have one, otherwise the deployment's notification service. Voice and
+  Telegram always go through the deployment's service. The destination is always your own. No route
+  changed.
+- **Guard:** `tests/unit/notify-surface-tier-copy.spec.ts`. It builds the production router
+  (`buildNotificationRouter`) with nothing connected and the deployment service configured. The
+  channels that still deliver make up the service tier, `['sms', 'telegram', 'voice']`, and the page
+  must name each of them in a sentence about the deployment's service. It must not promise "never a
+  shared deployment credential", and it must say the destination stays the user's own. If a fallback
+  is added to any channel, that set changes and the copy has to follow.
+- **Red → green:** `npx vitest run tests/unit/notify-surface-tier-copy.spec.ts` gave 3 failed /
+  1 passed on the old copy. The behaviour case passed and the three copy cases failed, with `sms` and
+  `voice` unnamed. After the fix: 4 passed. Mutation: restoring the old paragraph gave 3 failed; putting
+  the fix back gave 4 passed. The neighbouring `notify-user-senders` and `notify-prefs-routes` specs
+  are unchanged and pass (25 tests across the three files).
+- **Not done, deliberately:** the entry's second half, showing the effective tier inside the routing
+  table at choose-time. For SMS that depends on whether this user connected their own Twilio, and
+  `GET /api/notify/prefs` reports no per-channel tier, so it needs a route change. That half is now the
+  whole of the BACKLOG item "Notifications: show the effective credential tier per channel in the
+  routing table".
 
 
 ## Unit-suite sweep (2026-08-13) — BUG-15 … BUG-17
