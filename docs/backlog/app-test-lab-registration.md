@@ -924,6 +924,77 @@ tests/session-crypto.test.mjs
   is closed too — a zero-exit run must report a TAP summary with at least one
   executed test point, for every runner kind, or it is failed.
 
+## Continuing the Test Lab runner work (handover, 2026-09-14)
+
+Everything below is on `feat/store-compatibility-gate` (PR 431) and pushed. None of it is deployed:
+the `src/` half needs a core deploy, while the Lab page half is already live because
+`any-bot/server` is bind-mounted read-only into `oshal-local-api`.
+
+### What shipped, and where it lives
+
+| Commit | Change |
+| --- | --- |
+| `a5021e36` | Run history follows an admitted batch until it is terminal (page + `test-lab-package-batch.js`). **Live now** through the bind mount. |
+| `20c9e59c` | `tests/unit/test-lab-installed-package-batch-follow.spec.ts` — the real server, the real Create package, real Chromium, no refresh click. |
+| `08440e77` | The browser profile: `package-test-sandbox{,-launcher}.ts`, `package-test-snapshot.ts` admission, `installed-app-test-catalog.ts` verification, `test-lab-run-service.ts` kind gate. |
+| `3b8b53ff` | The zero-test guard in `package-test-execution.ts` (`reportedTestCounts`). |
+| `a9e88e04` | Verification made lazy and opt-in per catalog, so no boot container. |
+
+The flow, end to end: `InstalledAppTestCatalog.list()` sees an unverified browser recipe and, only
+when the composed server called `enableRunnerVerification()`, fires `PackageTestSandbox.probe()`
+once. The probe runs a fixed suite in the browser profile and reports what the image satisfies.
+`refreshCapabilities()` adopts that set and re-seals every registration; `packageTestRecipePending()`
+then admits Playwright recipes whose prerequisites are all verified, and `sealExecutableCases()`
+refuses any whose suite files lack the `node:test` harness.
+
+### The one thing that is unproven
+
+The two Docker cases in `tests/unit/package-test-sandbox.spec.ts` (the probe on the real image, and a
+Playwright recipe driving loopback with the network off) have **never executed** — both attempts were
+declined by their own guards while the box was saturated. Run them with Docker up, `oshal-bot:latest`
+present, and the Docker VM's one-minute load below 6:
+
+```sh
+docker exec oshal-local-api cut -d' ' -f1-3 /proc/loadavg    # 8 CPUs; wait for < 6
+npx vitest run tests/unit/package-test-sandbox.spec.ts -t "browser profile|browser environment"
+```
+
+Until they pass, say the profile is proven against mocked boundaries only.
+
+### Next slices, with the design already worked out
+
+- **Admit the `browser` level into batches.** Today `discover()` selects only `node-test` recipes, so
+  a batch still reports browser rows as unavailable even once they are runnable. The compatible shape:
+  let the package-batch shortcut's `exactPackageSchedule()` accept **either** `integration,unit`
+  **or** `browser,integration,unit`, so the selector the operator already uses keeps working, and
+  widen the schedule level validator plus any DB constraint in migration 137 to allow `browser`.
+  Do not simply change the exact-match rule — that strands the existing selector and the shortcut
+  then refuses with "Existing schedule has different levels".
+- **Extend the profile set beyond Playwright.** `vitest` recipes need the core checkout inside the
+  container and `external` recipes need their own Postgres fixture, which the sealed profile cannot
+  give them today. The probe already returns a capability set, so the same mechanism generalizes:
+  add a capability name per runner kind and a profile that satisfies it, or decide explicitly that
+  those kinds stay host-only and say so in the catalog's pending reason.
+- **A passing suite with very large output is reported as failed.** `runAttachedSandbox()` caps
+  output at 64 KB and rewrites a zero exit to 1 on overflow, so a chatty but green suite fails with
+  "Package test assertions failed." Decide whether to keep the truncation marker but preserve the
+  exit code, or to cap per stream. Pre-existing, not introduced by this work.
+- **`portrait-studio`'s `camera-browser` recipe cannot ever run unattended.** Its suite file is a
+  hand-run script with its own `main()` and `process.exitCode` that exits 2 without `--playwright`
+  and `--picker`, so the catalog now refuses it at sealing instead of reporting a pass. Converting it
+  to a `node:test` suite makes it a real browser recipe. Scanned all 144 registered store suite
+  files: it is the only one affected.
+
+### Invariants worth not breaking
+
+- Admission is **probe-verified, never assumed** — nothing may infer Chromium from an image name.
+- The browser profile raises only process, descriptor, tmp and CPU budgets. Network stays off, no
+  mounts, no daemon socket, and the executable is always the image's own `/usr/bin/chromium`.
+- A catalog constructed in a test must never start a container: verification is opt-in per catalog
+  and the composed server is the only caller of `enableRunnerVerification()`.
+- Gate any container work on the **Docker VM's load**, not host memory. Memory headroom looked
+  healthy at the exact moment the VM was at load 133.
+
 ## Completion gate
 
 Close only when TLAB-01 through TLAB-09 and every applicable public/private row are resolved, installed catalogs
