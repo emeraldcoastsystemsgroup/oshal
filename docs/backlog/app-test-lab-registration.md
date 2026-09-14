@@ -920,8 +920,9 @@ tests/session-crypto.test.mjs
   done-when. Until it runs, the browser profile is unproven at its own
   boundary. Observed while building: `node --test` exits 0 for a file that
   registers no tests, so a harness-less recipe would read as passed; the
-  harness check at sealing closes that for browser recipes, and a zero-test
-  guard for every runner kind is worth its own row.
+  harness check at sealing closes that for browser recipes. The general case
+  is closed too — a zero-exit run must report a TAP summary with at least one
+  executed test point, for every runner kind, or it is failed.
 
 ## Completion gate
 

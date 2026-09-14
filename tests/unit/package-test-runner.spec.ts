@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove runtime-data exclusion in the child and bounded refusal when current authority never resolves.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Execute packaged surface and route-source assertions without forwarding nested runtime data.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Give the real packaged-surface Docker fixture the same outer test budget as neighboring isolated execution cases.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Prove a zero-exit run that asserted nothing is never published as passed.
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { InstalledAppTestCatalog } from '@/features/swarm-apps/services/installed-app-test-catalog';
 import { createPackageExecutionFixture, ObservedPackageTestSandbox, PACKAGE_TEST_IMAGE,
   type PackageExecutionFixtureOptions } from '../fixtures/package-test-execution';
-import { executePackageTest } from '@/features/swarm-apps/services/package-test-execution';
+import { executePackageTest, reportedTestCounts } from '@/features/swarm-apps/services/package-test-execution';
 import type { PackageTestSandbox } from '@/features/swarm-apps/services/package-test-sandbox';
 
 let root: string, sandbox: ObservedPackageTestSandbox, catalog: InstalledAppTestCatalog;
@@ -225,3 +226,40 @@ it('propagates caller cancellation to the actual container and never reports a c
   expect((await running).status).toBe('pending');
   expect(sandbox.last).toMatchObject({ cancelled: true, cleanupVerified: true });
 }, 60000);
+
+/** @description One sandbox that returns a fixed process outcome; no container is created. */
+function fixedSandbox(exitCode: number, output: string): PackageTestSandbox {
+  return { run: async () => ({ exitCode, output, image: 'sha256:fixture', timedOut: false,
+    cancelled: false, cleanupVerified: true }) } as PackageTestSandbox;
+}
+async function runFixed(exitCode: number, output: string) {
+  const snapshot = { revision: 'fixture', files: [] };
+  return executePackageTest({ name: 'Fixture', path: 'tests/fixture.test.js', suiteFiles: ['tests/fixture.test.js'],
+    timeoutMs: 1000, snapshot, snapshotNow: () => snapshot, current: async () => true, sandbox: fixedSandbox(exitCode, output) });
+}
+
+it.each([
+  ['a suite that registers no tests', '1..0\n# tests 0\n# suites 0\n# pass 0\n# fail 0\n', 'registered no tests'],
+  ['a suite that exits before its summary', 'TAP version 13\nok 1 - started\n', 'no test summary'],
+  ['a summary that executed no test points', '# tests 4\n# pass 0\n# fail 0\n', 'executed no test points'],
+])('never publishes a zero-exit run as passed when it asserted nothing: %s', async (_case, output, expected) => {
+  const result = await runFixed(0, output);
+  expect(result.status).toBe('failed');
+  expect(result.error).toContain(expected);
+  expect(result.output).toBe(output);
+});
+
+it('still passes a real summary and keeps the assertion failure message for a failing suite', async () => {
+  const summary = 'TAP version 13\nok 1 - totals\nok 2 - refusals\n1..2\n# tests 2\n# pass 2\n# fail 0\n';
+  const ok = await runFixed(0, summary);
+  expect(ok.status, ok.error).toBe('passed');
+  expect(ok.error).toBeUndefined();
+  const failing = 'TAP version 13\nnot ok 1 - totals\n1..1\n# tests 1\n# pass 0\n# fail 1\n';
+  await expect(runFixed(1, failing)).resolves.toMatchObject({ status: 'failed', error: 'Package test assertions failed.' });
+});
+
+it('reads the last TAP summary so a suite cannot forge an earlier one in its own output', () => {
+  const forged = 'console output: # tests 9\n# pass 9\n# fail 0\nTAP version 13\n1..0\n# tests 0\n# pass 0\n# fail 0\n';
+  expect(reportedTestCounts(forged)).toEqual({ tests: 0, pass: 0, fail: 0 });
+  expect(reportedTestCounts('nothing reported')).toBeNull();
+});

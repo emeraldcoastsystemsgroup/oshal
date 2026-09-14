@@ -147,6 +147,13 @@ and individual results. Browser, framework and other unavailable recipes remain
 listed with their prerequisites. A completed batch can contain failures or
 pending work; it is not an assertion that all package tests passed.
 
+A run that exits zero is published as passed only when it proves it asserted
+something. `node --test` exits zero for a file that registers no tests, and a
+suite that calls `process.exit(0)` exits zero with no summary at all, so the
+runner reads the TAP summary the fixed launcher always produces and fails the
+run when the summary is missing, reports zero tests, or reports no executed
+test points. The failure says which of those happened, and the output is kept.
+
 The **Package runs** history follows the admitted batch on its own. While a
 child run is active it refreshes every 1.5 s; between children, when no run is
 active yet, it checks the batch through `GET /schedules/:id/history` every 2 s

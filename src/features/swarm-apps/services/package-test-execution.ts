@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Recheck current authority and sealed source throughout isolated package test execution.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Carry the catalog-chosen container profile so browser recipes run under the Chromium profile.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Refuse a silent pass: a zero-exit run must report its TAP summary and at least one executed test, so an empty or early-exiting suite can never read as passed.
  */
 import type { AppSmokeResult } from './app-smoke-verifier';
 import type { PackageTestSnapshot } from './package-test-snapshot';
@@ -48,6 +49,29 @@ function watchAuthority(options: PackageTestExecution, controller: AbortControll
   return { denied: () => denied, stop: async () => { clearInterval(timer); await checking; } };
 }
 
+/** @description Read the `node --test` TAP summary the fixed launcher always produces.
+ * `node --test` exits 0 for a file that registers no tests, and a suite that calls `process.exit(0)`
+ * exits 0 with no summary at all; both would otherwise be published as a pass.
+ * @param output Bounded runner output. @returns Executed/passed/failed counts, or null when no summary was reported. */
+export function reportedTestCounts(output: string): { tests: number; pass: number; fail: number } | null {
+  const last = (key: string): number | undefined => {
+    const matches = [...output.matchAll(new RegExp(`^# ${key} (\\d+)$`, 'gm'))];
+    return matches.length ? Number(matches[matches.length - 1][1]) : undefined;
+  };
+  const tests = last('tests'), pass = last('pass'), fail = last('fail');
+  if (tests === undefined || pass === undefined || fail === undefined) return null;
+  return { tests, pass, fail };
+}
+
+/** @description Explain a zero-exit run that proved nothing, or undefined when the run really did assert something. */
+function silentPass(output: string): string | undefined {
+  const counts = reportedTestCounts(output);
+  if (!counts) return 'The runner reported no test summary; the suite exited before completing.';
+  if (counts.tests === 0) return 'The suite registered no tests, so it asserted nothing.';
+  if (counts.pass === 0 && counts.fail === 0) return 'The suite executed no test points, so it asserted nothing.';
+  return undefined;
+}
+
 /** @description Run immutable bytes and publish output only while source and caller remain current. */
 export async function executePackageTest(options: PackageTestExecution): Promise<InstalledAppTestResult> {
   const started = Date.now(), controller = new AbortController();
@@ -67,10 +91,13 @@ export async function executePackageTest(options: PackageTestExecution): Promise
     if (options.snapshotNow().revision !== options.snapshot.revision) return { ...refused('Package source changed during the test. Refresh the catalog.'), ...cleanup };
     if (options.signal?.aborted || result.cancelled) return { ...refused('Test cancelled.'), cancelled: true, cleanupVerified: result.cleanupVerified };
     if (result.exitCode === null && !result.timedOut) return { ...refused('The isolated runner is unavailable.'), ...cleanup };
-    const passed = result.exitCode === 0 && !result.timedOut && result.cleanupVerified;
+    const clean = result.exitCode === 0 && !result.timedOut && result.cleanupVerified;
+    const empty = clean ? silentPass(result.output) : undefined;
+    const passed = clean && !empty;
     return { ...base, status: passed ? 'passed' : 'failed', durationMs: Date.now() - started,
       output: result.output, image: result.image, timedOut: result.timedOut, cleanupVerified: result.cleanupVerified,
-      ...(!passed ? { error: result.timedOut ? 'Test exceeded its time limit.' : !result.cleanupVerified ? 'Test cleanup could not be verified.' : 'Package test assertions failed.' } : {}) };
+      ...(!passed ? { error: result.timedOut ? 'Test exceeded its time limit.' : !result.cleanupVerified ? 'Test cleanup could not be verified.'
+        : empty ?? 'Package test assertions failed.' } : {}) };
   } catch (error) {
     return { ...refused('The isolated runner or current package source is unavailable.'),
       cleanupVerified: (error as { cleanupVerified?: boolean })?.cleanupVerified === true };
