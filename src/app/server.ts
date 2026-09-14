@@ -193,6 +193,7 @@
  * 171 | maintainer@emeraldcoastsystemsgroup.com | Connect isolated installed-package tests, current caller policy and durable Test Lab results.
  * 178 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/admin/data-model (the data-model explorer: every Postgres table/view with owners, keys and RLS scope, shared objects, the app integration map and store inventories) behind requiresAuth + requiresOperator, read-only; ports wired to the platform pool and the app service. Guards: tests/unit/data-model-routes.spec.ts, tests/unit/data-model-explorer-browser.spec.ts.
  * 179 | maintainer@emeraldcoastsystemsgroup.com   | Moved the OpenAPI spec definition, the swagger-jsdoc scan globs and the /openapi.json + /api-docs + /docs mount into ./server-openapi so this entrypoint is back under the 1000 code-line cap. Pure move: the spec, the glob list and the registration order are unchanged, and createApp now calls registerOpenApiDocsRoutes at the same point in the middleware chain.
+ * 180 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149: the /api/ui profile route receives the authorization runtime's canDiscover and the actor resolver, so a synthesised rail can lock a tile whose target package the signed-in person cannot discover. Same-line wiring; no new code line in this file.
  */
 
 require('dotenv').config();
@@ -1596,7 +1597,7 @@ function createApp(): express.Application {
     packageRoutesSettled = true;
     logger.error({ err }, 'Swarm app auto-load failed during boot (non-fatal)');
   }));
-  app.use('/api/ui', requiresAuth, createUiProfileRoutes(new UIProfileService(), swarmAppService));
+  app.use('/api/ui', requiresAuth, createUiProfileRoutes(new UIProfileService(), swarmAppService, { runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor }));
   app.use('/api/ui', requiresAuth, createWorkspaceNavigationRoutes({ apps: swarmAppService,
     runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor, access: appAccessService }));
 
