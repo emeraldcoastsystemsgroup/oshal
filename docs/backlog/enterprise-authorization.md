@@ -53,6 +53,21 @@ screen. The reviewed manual recovery restores the exact old package and catalog,
 revokes its old role through Access Administration, activates the new package, then
 grants the explicitly reviewed named role. This is not an implemented upgrade flow.
 
+**Second occurrence, 2026-09-14 (store `df09dd73`, Create 1.8.0 "Brand Kit").** The same refusal
+happened again, which fixes the shape of the gap: `catalogRevision` hashes `{app, source, catalog}`
+and not the package version, so a release that only changes code or HTML activates normally, while
+**any release that adds a route** activates never, because a route adds a binding and a binding
+changes the catalog. The application does not partly start: its routes stay unmounted and every
+surface answers 503 until the files are rolled back. The cost each time is an operator-only sequence
+(revoke the role in Access, install and restart, grant the named role again) plus a package rollback
+if the operator is not present, which is what happened here.
+
+**Until the flow exists, the workaround a package owner must follow:** keep the previous package
+archive (`/app/output/_pkg-backups/<pkg>-pre-<TS>.tgz`), attempt the install only when the operator
+can perform the revoke and the grant, and restore the archive plus the previous `.oshal-install.json`
+sha immediately if activation is refused. A store package cannot avoid this by design: new
+functionality needs new routes, and new routes need bindings.
+
 **Done when:** the existing installer and Access Administration can preview and apply
 this transition without manually restoring package files:
 
@@ -66,6 +81,9 @@ this transition without manually restoring package files:
 - Prove legacy-to-named roles, permission expansion, cross-issuer targets, concurrent
   changes, failure and restart through real isolated PostgreSQL, installer/mounter
   and management-browser tests, registered in the existing authorization/Test Lab cards.
+- A package that only adds routes and permissions upgrades without an operator present: the
+  installer either carries the unchanged assignments onto the new revision when no existing
+  permission's meaning changed, or refuses with the exact list of what a reviewer must map.
 
 ## Test cases and AI Test Lab registration
 
