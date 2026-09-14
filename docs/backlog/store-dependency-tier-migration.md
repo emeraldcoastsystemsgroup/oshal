@@ -18,7 +18,7 @@ after a core carrying the tiers is deployed.**
 |---|---|---|
 | the core contract, installer, loader and App Loader | `main` `b8de2099` (PR #431 merged 2026-09-14) | **merged AND deployed.** The running image's `swarm-app-loader` validates “required/optional tiers or the legacy flat form… fail-closed at load” |
 | the store authoring guide | `oshal-applications` `main` (PR #185 merged 2026-09-14) | merged |
-| every published package manifest | `oshal-applications` | **untouched** — still the legacy flat form (valid, means all-required) |
+| every published package manifest | `oshal-applications` `feat/store-dependency-tiers` | **converted 2026-09-14** — all 61 tiered, the floor declared on all 59 non-group packages, membership unchanged |
 | the App Loader page | bind-mounted `src/pages/app-loader` | live, and the API half it was waiting for is now deployed |
 | Test Lab scenario `app-dependency-tiers` | registered | its precondition is now met (the core is deployed); **not re-run yet** — that is step 2 and needs a signed-in session |
 
@@ -36,13 +36,17 @@ signed-in browser session. Steps 3-6 are an ordinary branch of work in the store
    `GET /api/swarm/registries/<slug>/preview/<package>` - `impact.dependencies.required` and
    `impact.dependencies.optional` must both be objects. An array means the running image predates
    the change, and converting a manifest now would break installs.
-3. **Resolve the three unverified classifications** in the table below (`create`, `creative-studio`,
-   `career-hunter`): read each package's surfaces, decide required vs optional per dependency, and
-   write the file:line evidence into that table. Nothing else in this document depends on it, so
-   this can be done before the deploy.
-4. **Convert the manifests** in `oshal-applications` with the recipe below - one commit per package
-   (or per shelf). `node scripts/oshal-app.js validate <dir>` must be clean for each, and
-   `node scripts/check-catalog.mjs` must pass for the store.
+3. ~~**Resolve the three unverified classifications**~~ **DONE 2026-09-14.** All three read at the
+   source; the file:line evidence is in the table below, which replaces the "needs code evidence"
+   one. One hypothesis did not survive: `presentations` is **not** required by `create`.
+4. ~~**Convert the manifests**~~ **DONE 2026-09-14** on `oshal-applications` branch
+   `feat/store-dependency-tiers`. All 61 manifests carry the tiered form, comments intact and
+   re-indented in place (no YAML round-trip); the floor is declared on the 59 non-group packages
+   and withheld from the two groups (`intelligent-career`, `marketing-suite`). Connector tiers
+   follow the classification below. `node scripts/oshal-app.js validate <dir>` is clean for all 61,
+   and `check-catalog.mjs`, `check-store-test-discovery.mjs` and `check-store-separation.mjs` pass.
+   Versions were **not** bumped: the catalog mirrors identity/version/suite/displayName, not
+   dependencies, so nothing in `marketplace.json` moved — that is step 5.
 5. **Regenerate the catalog mirror** so `marketplace.json` carries each package's new dependency
    shape; today it drifts unguarded (see the follow-ups at the end).
 6. **Prove it on the box.** Install a converted launcher through the App Loader: its optional apps
@@ -134,13 +138,21 @@ for it did not finish, so nothing here should be treated as proven.
 | `system` | `identity`, `storage`, `cloud` | **optional** | same launcher text |
 | `intelligent-processing` (core `swarm-apps/`) | `intelligent-operations` | leave legacy | a kernel manifest, not a store package; all-required semantics are already correct |
 
-### Apps — needs code evidence before converting
+### Apps — resolved at the source (2026-09-14)
 
-| package | dependencies | working hypothesis | what to check |
+These are the three rows that were unverified. Each was decided by reading the package, and the
+evidence is the file:line that proves the app either does or does not need the dependency to run.
+
+| package | dependency | verdict | evidence |
 |---|---|---|---|
-| `create` | presentations, portrait-studio, video, lora, vids, creative-studio, scan-to-print | `presentations` required, the other six optional | its manifest says "`presentations` is deliberately an APP dependency here … Create embeds AI Office's SURFACE". Read `create/routes|src-routes|ui` for calls into each studio and whether a missing one degrades (hidden tile / empty state) or throws |
-| `creative-studio` | vids, video, portrait-studio, lora | `vids` required, the other three optional | "The tile + the creative_* tools ride the 'vids' app's /api/vids surface and vids_jobs ledger"; the other three have no comment — find any code reference at all |
-| `career-hunter` | portrait-studio | probably optional | no comment explains it; find where career-hunter calls or embeds portrait-studio and whether the board/resume tools work without it |
+| `create` | `presentations` | **optional** (hypothesis said required) | `create/tools/create-new.html:416-422` — the AI Office starter fetch has its own `.catch` that toasts *"AI Office starters could not be loaded — the studios still open."* `create/tools/create-home.html:448` renders *"No studio is installed yet…"* when none is present. No file under `create/routes/` or `create/src-routes/` references `presentations` at all; Create owns its runtime (`create/migrations/001-create-projects.sql`, `002-create-brand-kits.sql`) |
+| `create` | `portrait-studio`, `video`, `lora`, `vids`, `creative-studio`, `scan-to-print` | **optional** | each appears only as a `ui.static` tile with a raw partner `iframeUrl` (`create/oshal-app.yaml` ui block) and as a catalog row in `create/tools/create-home.html:252-258`; the same empty state at `:448` covers all of them |
+| `creative-studio` | `vids` | **required** | `creative-studio/routes/home-summary.js:19-20` queries `vids_jobs`, the table the vids package creates (`vids/migrations/059-vids-platform.sql:10`); the app's primary tile IS the vids job-queue surface (`creative-studio/oshal-app.yaml:184-191`) |
+| `creative-studio` | `video`, `portrait-studio`, `lora` | **optional** | referenced only as sibling `ui.static` tiles at `creative-studio/oshal-app.yaml:197-210` (`/api/video/ui`, `/api/portrait-studio/app`, `/api/lora/ui`); no route, tool or query touches them |
+| `career-hunter` | `portrait-studio` | **optional** | `career-hunter/tools/career-profile-studio.html:243` states it in the code — *"If the app isn't installed (404) the button never appears and upload still works"* — and `:247` is the probe that hides it. The other reference is the cross-app ribbon tile at `career-hunter/oshal-app.yaml:476-479` |
+
+`career-hunter` keeps its **absent** `connectors:` key (unfiltered) — it is declared in neither tier,
+as its own manifest comment requires.
 
 ### Connectors
 
@@ -160,17 +172,17 @@ drive the preview's "needs" vs "can use" text and tell an author what the app ca
 
 ## Done when
 
-- Every store package's `oshal-app.yaml` uses the tiered form with the floor declared (groups
+- **[met 2026-09-14]** Every store package's `oshal-app.yaml` uses the tiered form with the floor declared (groups
   excepted), comments intact, and `node scripts/oshal-app.js validate <dir>` clean for each.
-- The launchers (`create`, `life`, `games`, `system`) declare under `required` only what they truly
+- **[met 2026-09-14]** The launchers (`create`, `life`, `games`, `system`) declare under `required` only what they truly
   cannot run without; installing one no longer installs apps it merely routes to.
-- The three "needs code evidence" rows are resolved with a file:line reference recorded here.
-- `marketplace.json` mirrors each manifest's dependencies again (see the catalog-drift item below)
+- **[met 2026-09-14]** The three "needs code evidence" rows are resolved with a file:line reference recorded here.
+- **[open]** `marketplace.json` mirrors each manifest's dependencies again (see the catalog-drift item below)
   and `node scripts/check-catalog.mjs` passes.
-- A real install proves it end to end on the box: install a converted launcher and confirm the App
+- **[open]** A real install proves it end to end on the box: install a converted launcher and confirm the App
   Loader offers its optional apps as unchecked checkboxes, that declining them installs only the
   package, and that choosing one installs exactly that one.
-- The Test Lab step `app-dependency-tiers` reports **pass** (not `gap`) against the deployed API.
+- **[open]** The Test Lab step `app-dependency-tiers` reports **pass** (not `gap`) against the deployed API.
 
 ## Related open items this surfaced
 
