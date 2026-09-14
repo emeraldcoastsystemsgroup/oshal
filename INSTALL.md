@@ -363,7 +363,7 @@ can join the swarm it creates. `installer\lib\install-swarm.ps1` does.
 |---|---|
 | `…/cockpit/` | The starter cockpit (Jarvis · Create a Bot · Explore Apps) |
 | `…/cockpit/?profile=oshal-framework` | The full operator cockpit, every app surface grouped |
-| `…/cockpit/?app=eats` | An example focused app |
+| `…/cockpit/?app=intelligent-operations` | An example focused app (the incident queue) — every other app installs from the app store |
 | `…/api/health` | Liveness probe |
 
 In the default **zero-keys** mode the `noop` harness stands in for a real LLM (so bots

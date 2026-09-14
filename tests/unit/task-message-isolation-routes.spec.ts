@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Keep the inline credential-isolation fixture independent of production bot endpoint registration.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | BUG-17: the broker mock was bound to `resolveBotCreds`, a name connector-token-broker has not exported since 2026-08-06, so both `not.toHaveBeenCalled()` assertions could never fail. The mock and assertions now name `resolveServerOperationCreds`, a new case proves every mocked name is a real export, and the credential assertions run before the transport status so a routing change cannot turn this guard into a liveness check.
  */
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,7 +14,9 @@ import { createMessageRoutes } from '../../src/app/routes/message-routes';
 import { createTaskRoutes } from '../../src/app/routes/task-routes';
 import { BotNodeClient } from '../../src/features/agent-management';
 
-const brokerMocks = vi.hoisted(() => ({ resolveBotCreds: vi.fn(async () => ({ OSHAL_CRED_GOOGLE: 'token' })) }));
+const brokerMocks = vi.hoisted(() => ({
+  resolveServerOperationCreds: vi.fn(async () => ({ OSHAL_CRED_GOOGLE: 'token' })),
+}));
 vi.mock('../../src/app/routes/connector-token-broker', () => brokerMocks);
 
 const ENV_KEYS = [
@@ -27,7 +30,7 @@ const ENV_KEYS = [
 let savedEnv: Record<string, string | undefined>;
 
 beforeEach(() => {
-  brokerMocks.resolveBotCreds.mockClear();
+  brokerMocks.resolveServerOperationCreds.mockClear();
   savedEnv = {};
   for (const key of ENV_KEYS) {
     savedEnv[key] = process.env[key];
@@ -204,11 +207,15 @@ describe('task/message API isolation routes', () => {
         agentId: 'b0000000-0000-0000-0000-000000000001',
       }),
     });
-    expect(emailResponse.status).toBe(200);
-    expect(brokerMocks.resolveBotCreds).not.toHaveBeenCalled();
+    // The credential property is asserted first and on its own: a transport change must not be
+    // able to turn this security guard into a liveness check (BUG-17).
+    expect(brokerMocks.resolveServerOperationCreds).not.toHaveBeenCalled();
+    expect(processMessage).toHaveBeenCalledTimes(1);
     expect(processMessage.mock.calls[0][2]).not.toHaveProperty('creds');
+    expect(processMessage.mock.calls[0][2]).not.toHaveProperty('providerIntent');
+    expect(emailResponse.status).toBe(200);
 
-    brokerMocks.resolveBotCreds.mockClear();
+    brokerMocks.resolveServerOperationCreds.mockClear();
     const weatherResponse = await fetch(`${baseUrl}/api/send-message`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -220,10 +227,18 @@ describe('task/message API isolation routes', () => {
         agentId: 'a0000000-0000-0000-0000-000000000036',
       }),
     });
-    expect(weatherResponse.status).toBe(200);
-    expect(brokerMocks.resolveBotCreds).not.toHaveBeenCalled();
+    expect(brokerMocks.resolveServerOperationCreds).not.toHaveBeenCalled();
     expect(processMessage).toHaveBeenLastCalledWith('fallback-weather', 'Weather today.', expect.any(Object));
     expect(processMessage.mock.calls[1][2]).not.toHaveProperty('creds');
+    expect(processMessage.mock.calls[1][2]).not.toHaveProperty('providerIntent');
+    expect(weatherResponse.status).toBe(200);
+  });
+
+  it('mocks only broker names the real module exports, so the assertions above can go red', async () => {
+    const actual = await vi.importActual<Record<string, unknown>>('../../src/app/routes/connector-token-broker');
+    for (const name of Object.keys(brokerMocks)) {
+      expect(typeof actual[name], `connector-token-broker exports no "${name}"`).toBe('function');
+    }
   });
 });
 

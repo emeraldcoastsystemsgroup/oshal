@@ -72,8 +72,10 @@
 <div class="wrap">
   <h1>Notifications</h1>
   <p class="sub">Where each topic reaches <strong>you</strong> — your own saved routing over
-  <code>/api/notify/prefs</code>. Every send uses your own connected account (your Gmail, your
-  Twilio, your Telegram chat), never a shared deployment credential.</p>
+  <code>/api/notify/prefs</code>. Email always sends from your own connected Gmail. SMS uses your
+  own connected Twilio when you have one, otherwise this deployment's notification service; voice
+  calls and Telegram always go through the deployment's service. Whichever account sends, the
+  destination is always your own number or chat.</p>
 
   <div class="status" id="status">Loading…</div>
   <div id="banner"></div>

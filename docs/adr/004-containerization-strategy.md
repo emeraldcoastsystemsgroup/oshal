@@ -1,6 +1,7 @@
 # ADR-004: Containerization Strategy and "loke" Namespace
 
-**Status:** Accepted  
+**Status:** Accepted — partially superseded by [ADR-019](019-per-bot-container-architecture.md) for
+swarm mode; see "Superseded By" below (status corrected 2026-09-14)  
 **Date:** 2026-03-07  
 **Deciders:** Development Team  
 **Context:** Phase 2, Session 2 — Containerization

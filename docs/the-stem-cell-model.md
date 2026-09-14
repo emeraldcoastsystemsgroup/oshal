@@ -29,11 +29,12 @@ turns it into a specific app.**
 
 ## The proof
 
-The repo ships **nine distinct apps running on the same untouched core** — a K-12 study
-companion (Little Monsters), an incident-RCA workflow, a federal capture process, an email
-summarizer, and more. None of them forked the core. See the
-[app gallery](../README.md#example-apps--one-core-zero-forks) and build your own in ten minutes
-with the [tutorial](build-your-own-swarm-app.md).
+The core repo ships **10 kernel app manifests** on the same untouched core — the incident-RCA
+workflow, document intake, the Jarvis assistant, Workflow Studio, the Bot Forge and more — and
+every other app (a K-12 study companion, an email summarizer, career tools, …) installs from the
+[app store](https://github.com/emeraldcoastsystemsgroup/oshal-apps) as a package on that same
+core. None of them forked the core. Build your own with the
+[tutorial](build-your-own-swarm-app.md).
 
 `codex-packer` takes it one step further: it *interviews* an operator and **emits a new app
 manifest automatically** — so a non-engineer can mint a new app by conversation.

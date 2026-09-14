@@ -1,7 +1,8 @@
 # ADR-016: Swarm Agent Type and Inheritance Model
 
 ## Status
-Accepted
+**Superseded** by [ADR-017](017-localhost-swarm-inheritance-model.md), which names this ADR
+in its own Supersedes section (status corrected 2026-09-14; the index already said so).
 
 ## Context
 

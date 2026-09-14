@@ -23,7 +23,8 @@ figure / anti-drift rules / seeded bug-log), `cf197b73` (scorecard fail-loud gua
 - **Tier 2:** counts generator (BUG-9 — **EXTEND `scripts/site-apps-catalog.js`**, the existing
   provider/app gate; do NOT build a competing script); ADR status drift (BUG-10 — **coordinate**, a
   bot is already stamping supersessions, e.g. `d9f99996`); evidence-generator honesty (presence-vs-live
-  labeling, BUG-4 residual).
+  labeling, BUG-4 residual). *(2026-09-14: BUG-9 and BUG-10 are closed — see their entries. The BUG-4
+  residual is not.)*
 - ~~**Tier 2 — architecture-doc live-feature under-claims**~~ — **DONE 2026-08-02.** All three named
   under-claims are folded into `platform-feature-catalog.md` and corrected at their source:
   - **personal-graph** — `connectors-and-graph-architecture.md` claimed it "has no import in
@@ -47,9 +48,10 @@ figure / anti-drift rules / seeded bug-log), `cf197b73` (scorecard fail-loud gua
     (de-vendored 2026-07-23; nothing Unreal is tracked in this repo).
 - **Tier 3:** orphaned retired-feature docs (BUG-11), `docs/k8/` shipped-path (terraform),
   CLAUDE.md's stale extension-guide citation, stale infra facts (any-bot:latest, ports,
-  Keycloak), index hygiene.
+  Keycloak), index hygiene. *(2026-09-14: BUG-11, the `docs/k8/` path and the extension-guide
+  citation are closed — see BUG-11's entry. The stale infra facts were not re-checked.)*
 
-**Verified counts (for BUG-9 — don't re-derive):** 34 manifests · 307 connectors · 101 personas ·
+**Counts as read on 2026-07-18 (superseded — BUG-9 is fixed; run `node scripts/site-apps-catalog.js --docs` for today's):** 34 manifests · 307 connectors · 101 personas ·
 ~113 numbered ADRs (114 files) · **42 providers (CONFIRMED — `site-apps-catalog.js` already counts
 this; reader's "41 off-by-one" flag was itself wrong)** · ~44 registry bots · 49 compose containers
 (~40 bots). Worst drifts to fix: `platform-feature-catalog.md` ("28" **and** "63" ADRs on one page),
@@ -127,23 +129,85 @@ whitepaper/reference/stem-cell ("26 bots / 68 personas / 9 apps / 22 providers")
 - **Fix (planned):** re-run `scripts/connectors/gen-connector-docs.ts`.
 
 ## BUG-9 — Hand-typed counts drift and self-contradict
-- **Type:** Bug · **Priority:** Med · **Status:** OPEN (root-cause fix = counts generator)
+- **Type:** Bug · **Priority:** Med · **Status:** **FIXED 2026-09-14** — counts gate + guard; see the closing note.
 - **Where:** `docs/architecture/platform-feature-catalog.md` states both "28 ADRs" and "63 ADRs" on
   one page; whitepaper/reference/stem-cell say 26 bots · 68 personas · 9 apps · 22 providers.
   Verified: 34 manifests, 101 personas, 44 registry bots, 114 ADRs, ~40 containers, code-server 8444.
 - **Fix (planned):** write a generator that derives "By the Numbers" from the tree (settles the
   41-vs-43 provider ambiguity authoritatively); replace literals with generated values.
 
+**Closing note (2026-09-14).** Re-verified on `main` (`d679b696`) before any change, and it still
+reproduced: the whitepaper said "registry (26 today)" and "26 registry bots · 68 persona
+definitions", `docs/reference.md` said "68 persona YAML files", the feature catalog said "ADRs | 63
+(latest ADR-061)", and the stem-cell page said "nine distinct apps" (the "28 ADRs" half had already
+gone). The tree has 60 bots in `LOCAL_BOT_REGISTRY` (the default lineup `getActiveRegistry()`
+serves), 103 persona YAMLs, 10 kernel manifests, 40 providers, 310 connector specs and 157 ADR files
+up to ADR-156 — so the 2026-07-18 counts above had drifted too.
+- **Fix:** `scripts/site-apps-catalog.js` extended, not duplicated. One `countRepo()` now feeds both
+  the site claims and a new `DOC_CLAIMS` list (11 claims across the four pages), and
+  `node scripts/site-apps-catalog.js --docs` exits 3 on drift. The site path's behaviour is
+  unchanged. The literals were corrected; the catalog's "By the Numbers" keeps only the rows the tree
+  can count, and eight hand-typed rows were removed (pipeline phases, UI pages, session briefs,
+  containers, tables, unit tests, TypeScript errors, E2E cost). The stem-cell sentence now names the
+  10 kernel manifests and points at the app store instead of a dead README anchor.
+- **Guard:** `tests/unit/doc-count-claims.spec.ts`. Every gated doc count must equal the tree count,
+  the registry regex must equal the imported `LOCAL_BOT_REGISTRY.length`, and a stale literal or a
+  reworded phrase must each produce exactly one failure.
+- **Red → green:** before the doc fix, `npx vitest run tests/unit/doc-count-claims.spec.ts` gave
+  3 failed / 2 passed, with 12 drift errors including "claims 26, repo has 60", "claims 68, repo has
+  103" and "claims 63, repo has 157". After the fix: 5 passed. Mutation: putting the whitepaper row
+  back to "26 … 68" gave 3 failed, and breaking the registry counter's regex gave 4 failed. Both were
+  restored, and the run was back to 5 passed.
+- **Scope:** only the four pages above are gated. To bring another page under the gate, add a
+  `DOC_CLAIMS` row. The "22 providers" lines in `docs/research/*` are dated research notes and are
+  not gated.
+
 ## BUG-10 — ADR status drift (~20 ADRs)
-- **Type:** Bug · **Priority:** Med · **Status:** OPEN
+- **Type:** Bug · **Priority:** Med · **Status:** **FIXED 2026-09-14** — the named ADRs and the index; see the closing note.
 - **Where:** `docs/adr/` — worst: ADR-005 "Cline is the ONLY LLM path" still Accepted (reversed
   same-day by 020, superseded by 033); unrecorded supersessions (006→034, 016→017, 018→019,
   004→019/024, 050→083, 003→OIDC); ADR-038 "Proposed" but is the governing built architecture;
   duplicate ADR-090; README index "reconciled 07-05" but rows run to 07-18.
 - **Fix (planned):** stamp Superseded-by / correct statuses; renumber the duplicate 090; re-reconcile the index.
 
+**Closing note (2026-09-14).** Re-verified on `main` before any change. Four of the named items had
+already been corrected by other passes: ADR-005 reads SUPERSEDED by 033 (corrected 2026-07-23),
+ADR-006 is superseded in part by 034, ADR-038 is "Accepted — implemented", and the duplicate 090 is
+a recorded decision. The index says "ADR number 090 is shared by two files … kept unrenumbered so
+existing links stay valid" (2026-08-01), so the entry's "renumber the duplicate 090" is overruled
+and was not done. What still reproduced:
+- **ADR-016** read `Accepted`, although ADR-017's `## Supersedes` section names it and the index row
+  already said "Superseded by 017".
+- **ADR-004** read `Accepted` over its own `## Superseded By` section (partially, by ADR-019).
+- **ADR-018** read `Accepted`, although ADR-019's status says it "supersedes aspects of ADR-018". The
+  two ADRs disagree: 018's addendum says 019 "does not supersede ADR-018; it extends the contract".
+  The stamp records both rather than picking one.
+- **ADR-003** read `Accepted`. The server it protected, `src/api/server.js`, is deleted
+  (`src/app/server.ts` change log, seq 5), and nothing imports `src/api/auth-middleware.js`.
+- **ADR-050** read `Accepted` over its own 2026-06-20 update, which supersedes its route-orchestrator
+  design. The entry's "050→083" is wrong: ADR-083 says it "Amends / relates to" 050, so the stamp
+  says amended, not superseded.
+- **The index** had no rows for ADR-142 and ADR-143. Ten blank lines between rows 134 and 146 also
+  split the table, so the 22 rows after ADR-134 rendered as loose text rather than as table rows.
+- **Fix:** status stamps on 003, 004, 016, 018 and 050, each citing its evidence; index rows for 142
+  and 143; the 003/004/018 index rows now match their files; the table is one block again; the
+  reconciled stamp is dated 2026-09-14.
+- **Guard:** `tests/unit/adr-status-consistency.spec.ts` checks six things. Every ADR file has an
+  index row, and every row resolves. The index is one table, with no blank line between rows. A row
+  marked Superseded matches its file. A file whose status says Superseded matches its row. An ADR with
+  a `## Superseded By` section says so in its status. An ADR named in another ADR's `## Supersedes`
+  section, or in another ADR's status as superseded, carries a superseded stamp. There are also
+  parser self-tests, so the checks are not vacuous.
+- **Red → green:** `npx vitest run tests/unit/adr-status-consistency.spec.ts` gave 6 failed /
+  2 passed before the fix (142/143 unindexed; README.md:177…196 gaps; 016 twice; 004 twice; 018).
+  After the fix: 8 passed. Mutation: restoring ADR-016's old status and re-inserting one blank line
+  gave 3 failed; restored, it was back to 8 passed.
+- **Scope:** the guard covers supersession that is written in a checkable form: an index Status
+  cell, a `## Supersedes` or `## Superseded By` section, or "supersedes … ADR-NNN" in a status. It
+  cannot judge prose. The 003 and 050 stamps are grounded in the files cited above, not in the guard.
+
 ## BUG-11 — Orphaned retired-feature docs read as live
-- **Type:** Bug · **Priority:** Med · **Status:** OPEN
+- **Type:** Bug · **Priority:** Med · **Status:** **FIXED 2026-09-14** — see the closing note.
 - **Where:** Little Monsters (carved to another repo, ADR-085) still framed as in-repo across
   stem-cell/whitepaper/`deployment-models` demo link/backlog/cloudflare runbook; Jobs-2026 cutover
   runbook; Enrique store refs (purged); paused remote-apply. Also `docs/k8/` documents the dead
@@ -151,6 +215,38 @@ whitepaper/reference/stem-cell ("26 bots / 68 personas / 9 apps / 22 providers")
   `CLAUDE.md` cited an archived extension guide as authoritative.
 - **Fix (planned):** add carved-out/completed/paused banners or relocate; document the shipped k8s
   path; repoint the archived citation.
+
+**Closing note (2026-09-14).** Re-verified item by item on `main` before any change. Most of the entry
+had already been closed by other passes:
+- **Jobs-2026 cutover runbook, Enrique store refs, paused remote-apply:** nothing under `docs/`
+  mentions them any more. The only hits are this log.
+- **`docs/k8/`:** `docs/k8/README.md` leads with the shipped codeless path (ADR-129, helm + registry
+  images), sends multi-user tenants to `deploy/terraform/README.md` (which exists and documents the
+  Terraform layer), and labels `any-bot-kubernetes-setup.md` **legacy** in its index.
+- **CLAUDE.md's archived extension-guide citation:** gone. `CLAUDE.md` has no extension-guide
+  reference.
+- **Little Monsters:** the stem-cell page was corrected under BUG-9 today. The cloudflare runbook's
+  subdomain example and the BACKLOG items name it as a store package, which is accurate.
+
+What still reproduced was the same defect in three places. Each told a reader that a carved-out store
+app ships with the repo:
+- `INSTALL.md` "What you get" listed `…/cockpit/?app=eats` as the example focused app.
+- `docs/deployment-models.md`'s zero-keys quick start said "try /cockpit/?app=little-monsters".
+  Neither app is installed on a fresh clone.
+- The whitepaper's at-a-glance table listed "Example swarm apps | 7 (…little-monsters, capture-crm,
+  federal-capture, email-summarizer…)". The last four are store packages, and two of them are
+  commercial packages outside the public store.
+- **Fix:** both links now point at `?app=intelligent-operations`, a kernel manifest. The whitepaper row
+  now reads "Kernel app manifests | 10 in `swarm-apps/` … every other app is a store package", and a
+  12th `DOC_CLAIMS` row holds that count to the tree.
+- **Guard:** `tests/unit/fresh-install-doc-apps.spec.ts` checks every `?app=` in `INSTALL.md` and
+  `docs/deployment-models.md` against the kernel manifests' `name:` fields. The new `DOC_CLAIMS` row
+  is checked by `tests/unit/doc-count-claims.spec.ts`.
+- **Red → green:** `npx vitest run tests/unit/fresh-install-doc-apps.spec.ts
+  tests/unit/doc-count-claims.spec.ts` gave 5 failed / 3 passed before the fix (`eats`,
+  `little-monsters`, and the whitepaper row's missing phrase). After the fix: 8 passed. Mutation:
+  putting `?app=eats` back and changing the row to "7 in" gave 4 failed ("claims 7, repo has 10").
+  Restored, it was back to 8 passed.
 
 ## BUG-12 — Cockpit surfaces render their own hardcoded palette instead of the active theme
 - **Type:** Bug · **Priority:** Med · **Status:** FIXED 2026-08-10 (gate shipped)
@@ -287,7 +383,8 @@ future will lapse silently one day, and nothing warns ahead of time (five connec
 deployment are in that state). That is a new capability, not this defect — logged in BACKLOG.
 
 ## BUG-14 — Notifications copy describes only one of the two credential tiers
-- **Type:** Bug (copy accuracy) · **Priority:** Low · **Status:** OPEN
+- **Type:** Bug (copy accuracy) · **Priority:** Low · **Status:** **FIXED 2026-09-14** (the copy); the per-channel
+  tier in the routing table is a BACKLOG residual — see the closing note.
 - **Discovered:** 2026-08-09 by the as-built review behind
   [the Platform tools guide](../guides/platform-tools.md); **scope corrected the same day by the
   operator** — the first write-up of this entry called the service tier "a shared deployment
@@ -318,6 +415,33 @@ deployment are in that state). That is a new capability, not this defect — log
   check as documentation, in both directions — this one over-promised isolation, and the first
   write-up of the bug over-stated the exposure. Describe the tier model; do not collapse it to
   either extreme.
+
+**Closing note (2026-09-14).** Re-verified on `main` first: `notify.html:74-76` still read "Every send
+uses your own connected account (your Gmail, your Twilio, your Telegram chat), never a shared
+deployment credential." The senders were re-read too. Email is personal-only (`gmailReady`). SMS is
+personal-first with the deployment Twilio as fallback. Voice uses only the deployment Twilio. Telegram
+sends through the deployment's `TELEGRAM_BOT_TOKEN` to the user's saved chat id. So the entry's tier
+description holds.
+- **Fix:** the lead paragraph now says so per channel. Email always sends from your own Gmail. SMS uses
+  your own Twilio when you have one, otherwise the deployment's notification service. Voice and
+  Telegram always go through the deployment's service. The destination is always your own. No route
+  changed.
+- **Guard:** `tests/unit/notify-surface-tier-copy.spec.ts`. It builds the production router
+  (`buildNotificationRouter`) with nothing connected and the deployment service configured. The
+  channels that still deliver make up the service tier, `['sms', 'telegram', 'voice']`, and the page
+  must name each of them in a sentence about the deployment's service. It must not promise "never a
+  shared deployment credential", and it must say the destination stays the user's own. If a fallback
+  is added to any channel, that set changes and the copy has to follow.
+- **Red → green:** `npx vitest run tests/unit/notify-surface-tier-copy.spec.ts` gave 3 failed /
+  1 passed on the old copy. The behaviour case passed and the three copy cases failed, with `sms` and
+  `voice` unnamed. After the fix: 4 passed. Mutation: restoring the old paragraph gave 3 failed; putting
+  the fix back gave 4 passed. The neighbouring `notify-user-senders` and `notify-prefs-routes` specs
+  are unchanged and pass (25 tests across the three files).
+- **Not done, deliberately:** the entry's second half, showing the effective tier inside the routing
+  table at choose-time. For SMS that depends on whether this user connected their own Twilio, and
+  `GET /api/notify/prefs` reports no per-channel tier, so it needs a route change. That half is now the
+  whole of the BACKLOG item "Notifications: show the effective credential tier per channel in the
+  routing table".
 
 
 ## Unit-suite sweep (2026-08-13) — BUG-15 … BUG-17
@@ -471,7 +595,7 @@ boundary only; it cannot tell you the process reading that config has been exite
 The observer is the one component nothing observes.
 
 ## BUG-16 — The consolidation-cutover guard runs a second alert consumer against the operator's live alert queue
-- **Type:** Bug (test isolation) · **Priority:** High · **Status:** OPEN
+- **Type:** Bug (test isolation) · **Priority:** High · **Status:** **FIXED 2026-09-11** (`e9179047`), verified 2026-09-14 — see the closing note.
 - **Discovered:** 2026-08-13, by `tests/unit/alert-incident-cutover.spec.ts` failing in the sweep
   above. **Priority raised and framing corrected during verification** — the first write-up filed it
   Med, described only the harmless direction of the race, and asserted the product exonerated on an
@@ -599,8 +723,32 @@ synthetic prefixes — residue in the operations stream should go red on the nex
 for a week. The rule these two specs broke: **a DB-backed guard may read the operator's schema, but it
 must never start a background consumer on the operator's work queue.**
 
+**Closing note (2026-09-14).** This no longer reproduces. It was fixed on 2026-09-11 by `e9179047`
+("Complete account, installation, test catalog and bot initialization outcomes"), which never touched
+this entry. The verification:
+- `tests/unit/alert-incident-cutover.spec.ts` no longer reads a deployment DSN. It owns a
+  `DisposableAlertPostgres` (`tests/helpers/disposable-alert-postgres.ts`): a private
+  `postgres:16-alpine` container on tmpfs, published on loopback only, with migrations 104–109
+  applied and removed in `afterAll`.
+- It mounts the receiver with `startPendingSweep: false`, the route option added as change-log seq 8
+  in `alertmanager-routes.ts`, and it asserts through a `setInterval` spy that no sweep started.
+- The `afterAll` hang at `:119` is fixed. The close is guarded with `if (server)`.
+- `tests/unit/alert-incident-reopen.spec.ts`, the source of the 24 `probe-target` rows, runs on the
+  same disposable database.
+- **Run:** `npx vitest run tests/unit/alert-incident-cutover.spec.ts --reporter=verbose` gave
+  2 passed (355 ms and 276 ms; 3.54 s of test time including the container start; load1 3.46). That
+  is a real run, not the ~200 ms decline.
+- **Mutation:** dropping `startPendingSweep: false` fails `beforeAll` with "expected setInterval to
+  not be called at all, but actually been called 1 times". Restored, both cases pass.
+- **Live residue** (read-only `SELECT` on `oshal-local-db`, 2026-09-14): there are 3 `cut-%`
+  incidents (newest 2026-09-08 15:13Z), 24 `probe-target` incidents (newest 2026-08-13) and 1 `cut-%`
+  event (2026-08-14). None is newer than the fix. The rows are still present; deleting them is a
+  live-table write and was not done here.
+- **Prevention items from this entry:** the in-spec `setInterval` assertion exists. The repo-wide
+  assertion over `tests/unit/**` and the `ci-local.sh` residue post-gate do not.
+
 ## BUG-17 — The task/message credential-isolation guard asserts a retired route shape, and half of what it does assert is bound to a symbol that no longer exists
-- **Type:** Bug (stale guard) · **Priority:** Med · **Status:** OPEN
+- **Type:** Bug (stale guard) · **Priority:** Med · **Status:** **FIXED 2026-09-14** — see the closing note.
 - **Discovered:** 2026-08-13, by `tests/unit/task-message-isolation-routes.spec.ts` failing in the
   sweep above. **Both halves of the first write-up were corrected during verification** — its blast
   radius was over-stated and its guard-coverage loss was under-stated; the Med below is re-based on
@@ -712,6 +860,37 @@ been dead since 2026-08-06 and nothing noticed. And under the real-boundary doct
 *what crosses the controller→node boundary* has to observe that boundary — the posted body — not a
 controller-side collaborator the boundary no longer uses.
 
+**Closing note (2026-09-14).** Re-verified on `main` first. The "why it is red" half was already gone.
+`c18f057a` (2026-09-11) made the case spy `BotNodeClient.prototype.hasEndpoint` to `false`, so it runs
+the inline branch deterministically and no longer depends on nodes listening on 3032/3034. The spec
+ran green, 3 passed. The vacuous half still reproduced. `vi.mock` bound `resolveBotCreds`, which
+`connector-token-broker.ts` does not export (its only function export is `resolveServerOperationCreds`),
+so both `not.toHaveBeenCalled()` assertions could never fail. Nothing in the node-dispatch cases of
+`inline-hosted-brain-entry-points.spec.ts` looked at credentials in the posted body.
+- **Proof the guards were dead, by mutation of `message-routes.ts` (reverted after each run):**
+  - **M1:** the inline branch calls `resolveServerOperationCreds` before the turn. The old isolation
+    spec stayed green (3 passed).
+  - **M3:** the node branch adds `creds` and a `providerIntent` to its `executeBotOrInline` request.
+    Both reached the stub node's `/api/swarm-execute` body, and the old inline-hosted spec stayed green
+    (16 passed).
+- **Fix, tests only (`src/` unchanged):**
+  - `task-message-isolation-routes.spec.ts` mocks and asserts `resolveServerOperationCreds`.
+  - Each leg asserts no broker call, exactly one `processMessage` call, and no `creds` or
+    `providerIntent` in its options, all before the transport status.
+  - A new case imports the real `connector-token-broker` and requires every mocked name to be a
+    function there, so a rename cannot leave the guard asserting on nothing again.
+  - Both node-dispatch cases in `inline-hosted-brain-entry-points.spec.ts` assert the posted body has
+    no `creds` and no `providerIntent`.
+- **Red → green:**
+  - Under M1, the new isolation spec gave 1 failed / 3 passed, at the broker assertion (line 212), which
+    now runs ahead of the status check. Without M1: 4 passed.
+  - Under M3, the new inline-hosted spec gave 2 failed / 14 passed ("expected { url:
+    '/api/swarm-execute', … } to not have property "creds""). Without M3: 16 passed.
+  - Mutation of the new export case: adding a stale `resolveBotCreds` key to the mock gave 1 failed
+    ("connector-token-broker exports no "resolveBotCreds""). Removed, it was back to 4 passed.
+- **Stability:** the node cases already await `warmBotEndpointRegistry()` before driving the route.
+  Both files together ran 20 passed three times in a row, 4.8–5.3 s each, with no warm-race failure.
+
 ## BUG-18 — The assistant invents a `custom` op name, and the surface silently discards the edit
 - **Type:** Bug (integration contract / silent no-op) · **Priority:** High · **Status:** FIXED
   2026-08-13 (oshal#206, oshal-applications#78)
@@ -773,7 +952,7 @@ controller-side collaborator the boundary no longer uses.
   visible in one grep.
 
 ## BUG-19 — A stale-revision incident patch is discarded, leaving the incident permanently unlinked with no error and no log
-- **Type:** Bug (silent data loss) · **Priority:** High · **Status:** OPEN
+- **Type:** Bug (silent data loss) · **Priority:** High · **Status:** **FIXED 2026-09-14** — see the closing note.
 - **Discovered:** 2026-08-13, split out of BUG-16's verification, which explicitly refused to close
   it with a test-isolation fix. Independently re-verified against the tree before filing.
 
@@ -812,8 +991,40 @@ enforcing role, not a mocked one: the defect *is* the database's optimistic-conc
 More generally: **a function returning `T | null` to signal "your write did not happen" must never be
 called with `await` alone.** Worth a lint rule if a second instance turns up.
 
+**Closing note (2026-09-14).** Re-verified on `main` first, and it still reproduced.
+`alertmanager-routes.ts:710` awaited `incidents.updateIncident(...)` and discarded the result, and
+`updateIncident` still returns `null` on a stale revision and logs the miss only at DEBUG. No other
+`updateIncident` caller exists in `src/` (grep), so the audit this entry asked for found nothing more.
+- **Fix:** `recordIncident` now calls `linkIncidentTicket` (`src/app/routes/alertmanager-routes.ts`).
+  - On a `null` it re-reads the row with the new `IncidentStore.getIncident(incidentId)` and re-applies
+    the patch under the existing `withRevisionRetry` (5 attempts).
+  - A row already linked to the same ticket counts as linked.
+  - An exhausted budget logs at ERROR with `incidentId`, `revision` and `ticketId`, then rethrows into
+    the unchanged `recordIncident` catch, so the event is still decided.
+  - The link is loud; it is never silently dropped.
+- **Guard:** `tests/unit/alert-incident-ticket-link.spec.ts` runs the real receiver over a disposable
+  migrated PostgreSQL. The only interposition is a second writer bumping the row's `revision` on the
+  real database:
+  - once, just before the member upsert (the point where a concurrent pump's refire lands), after
+    which the incident must end linked to the ticket its event produced;
+  - before every link attempt, after which an ERROR naming the incident must be logged.
+
+  The ticket store is the in-memory double that `docs/governance/real-boundary-regression-audit.md`
+  already records, with `tests/alert-intake-rls-live.spec.ts` as its real companion.
+- **Red → green:** before the fix, `npx vitest run tests/unit/alert-incident-ticket-link.spec.ts`
+  gave 2 failed (8.18 s; tests 6.12 s; load1 5.20):
+  - "expected null to be truthy", the same signature BUG-16 recorded at the cutover spec's `:148`;
+  - "no ERROR log names the unlinked incident".
+
+  After the fix: 2 passed (6.94 s; load1 1.60). Mutation: putting the bare `updateIncident` call back
+  gave 2 failed; restored, 2 passed. Neighbours: the cutover, reopen, landing-durability and
+  triage-consolidation specs plus this one gave 5 files, 35 passed. `npx tsc --noEmit` is clean.
+- **Scope:** the fix makes a lost race loud and self-correcting. It does not change which connection
+  the incident writes use. That is BUG-20.
+
 ## BUG-20 — Incident writes run on the pool inside the claiming transaction, so they survive a rollback that reverts the claim
-- **Type:** Bug (lost atomicity) · **Priority:** Medium · **Status:** OPEN
+- **Type:** Bug (lost atomicity) · **Priority:** Medium · **Status:** OPEN — reproduced 2026-09-14; the fix needs a
+  design decision (see the note at the end).
 - **Discovered:** 2026-08-13, split out of BUG-16's verification. **The verifier corrected the
   documented rationale as well as the code**, and both halves are recorded here.
 
@@ -847,6 +1058,55 @@ A rule justified by a consequence that cannot occur is a rule people learn to di
 **Prevention (guard-per-fix):** a spec that makes the handler throw after an incident write and
 asserts no `oshal_incident` row survives once the event is back to `pending`. Real database, real
 transaction — mocking the executor here would mock precisely the boundary the defect lives on.
+
+**Investigation note (2026-09-14): reproduced, NOT fixed.** It still reproduces, and the fix described
+above does not work as written.
+
+**Reproduced.** The run was a scratch spec, deleted afterwards and not committed. It drove the real
+receiver over the disposable migrated PostgreSQL, with BUG-19's fix in place, and made the claiming
+connection fail on its decide-event and fail-event writes. That simulates a connection lost after the
+handler's incident writes.
+- After the rolled-back drain, the event was back to `pending`: not processed, `attempts = 0`. The
+  `oshal_incident` row (occurrence 1, linked), its `oshal_incident_member` row (occurrence 1) and an
+  `oshal_alert_dispatch` `create` row were all committed.
+- The next drain re-claimed the event and counted the same single delivery twice. The incident went to
+  occurrence 2, the member to occurrence 2, and there were two dispatch rows (`create`, `update`). The
+  event ended decided `consolidated`.
+
+The writes are where the entry says, with today's line numbers: `incident-store.ts:475-476`
+(`consolidate`), `:567` (`updateIncident`), `:587` (`upsertMember`), `:616`
+(`markMemberResolved`), and `dispatch-log.ts:165`. The deadlock rationale is still at
+`envelope-store.ts:609-610`.
+
+**Why the entry's fix was stopped.** "An executor parameter defaulting to the pool" is not enough,
+because of three things in the code:
+1. `consolidate` retries a unique violation (23505) by re-reading. On the claim transaction the first
+   error aborts the transaction, and every later statement fails with 25P02, so each attempt needs a
+   SAVEPOINT.
+2. `consolidateContended` opens its own connection for `BEGIN … pg_advisory_xact_lock … COMMIT`. On
+   the claiming connection it cannot BEGIN again, and its COMMIT would commit the claim. It would have
+   to become a savepoint, and the advisory lock would then be held for the whole batch.
+3. `recordIncident` promises that an incident-write failure never strands an event that already has a
+   ticket. On the claiming connection, one failed incident statement makes `decideEvent` and then
+   `failEvent` fail on the aborted transaction, and `withPendingEvents` rolls back the whole claimed
+   batch. The tickets `intakeAlert` created for those events are already committed, because
+   production writes tickets through `PostgresTicketStore` on the pool (`composition-root.ts:146`),
+   not on the claim.
+
+Point 3 also bounds the atomicity itself. The ticket is outside the claim transaction, so even with
+the executor threaded through, a rolled-back claim would leave a ticket with no incident row: the
+reverse orphan.
+
+**Decision needed** (design or operator): what commits and rolls back with the claim.
+- **(a)** The incident, member and dispatch rows, with a savepoint per event. Tickets stay outside and
+  re-consolidate on retry.
+- **(b)** The ticket as well, which puts the ticket store on the executor. That crosses into the
+  ticketing slice.
+- **(c)** Keep the pool writes and make re-consolidation of an already-worked event idempotent.
+
+The corrected wording of the `envelope-store.ts` comment depends on that choice, so the comment was
+not changed either. No guard was committed: a spec that is red today would turn the unit gate red for
+a known and undecided defect. The reproduction above is the record instead.
 
 ## BUG-21 — The monitoring overlay is not running, nothing starts it, and nothing notices it is gone
 - **Type:** Bug (observability / operational) · **Priority:** High · **Status:** **FIXED 2026-08-14** (#213) — see the closing note at the end.

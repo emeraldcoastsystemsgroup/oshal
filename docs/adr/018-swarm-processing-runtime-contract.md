@@ -1,7 +1,9 @@
 # ADR-018: Swarm Processing Runtime Contract
 
 ## Status
-Accepted
+Accepted — extended by [ADR-019](019-per-bot-container-architecture.md) (per-bot containers).
+ADR-019's status says it partially supersedes this ADR; the addendum below says it extends it rather
+than superseding it. Both records stand (status corrected 2026-09-14).
 
 ## Context
 

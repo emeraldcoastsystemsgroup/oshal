@@ -43,7 +43,7 @@ LLM and `MOCK_OIDC` fakes login.
 
 ```bash
 bash scripts/install.sh          # preflight → build → up → SELF-VERIFY → prints URLs
-# open http://localhost:35457/cockpit/   (try /cockpit/?app=little-monsters)
+# open http://localhost:35457/cockpit/   (try /cockpit/?app=intelligent-operations)
 ```
 
 `install.sh` defaults to this zero-keys path and self-verifies the boot — see

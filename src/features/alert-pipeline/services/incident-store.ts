@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The consolidation heart of the Operations Stream: the three-arm reopen rule over oshal_incident (refire / reopen-in-window / archive-and-recur), optimistic-concurrency field updates, and the membership ledger that decides when an incident is provably fully resolved.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-19: getIncident(incidentId) — the read-by-id an optimistic-concurrency caller needs to re-read the current revision after `updateIncident` answers null. The receiver's ticket link used to have no way to re-read, so it discarded the null and left the incident unlinked.
  */
 
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
@@ -237,6 +238,8 @@ SELECT * FROM oshal_incident
  WHERE dedup_key = $1 AND state <> 'archived'
  ORDER BY instance_seq DESC
  LIMIT 1`;
+
+const FIND_BY_ID_SQL = 'SELECT * FROM oshal_incident WHERE incident_id = $1';
 
 const LIST_OPEN_SQL = `
 SELECT * FROM oshal_incident
@@ -508,6 +511,18 @@ export class IncidentStore {
    */
   async findLive(dedupKey: string): Promise<IncidentRow | null> {
     const result = await this.pool.query(FIND_LIVE_SQL, [dedupKey]);
+    return result.rows.length > 0 ? mapIncident(result.rows[0]) : null;
+  }
+
+  /**
+   * @description One incident by id, in whatever state it is now. This is the re-read an
+   * optimistic-concurrency caller needs after {@link IncidentStore.updateIncident} answers null:
+   * the row's current revision, so the patch can be re-applied instead of dropped.
+   * @param incidentId - The incident to read.
+   * @returns The incident, or `null` when no row has that id.
+   */
+  async getIncident(incidentId: string): Promise<IncidentRow | null> {
+    const result = await this.pool.query(FIND_BY_ID_SQL, [incidentId]);
     return result.rows.length > 0 ? mapIncident(result.rows[0]) : null;
   }
 

@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Swallowed-failure leg: the deployed catch-based failover never fired live because task-orchestrator.handleError RESOLVES agentic provider errors as { success:false, error } — new cases pin both entry points replaying that result shape through the same retryHostedBrainTurn, the pure swallowedTurnFailure predicate rows, and the non-wall failed result staying failed (mutation kill for an unconditional retry).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ONE-CHOKEPOINT node dispatch: with a dynamically registered node-bound bot and a REAL local HTTP node, POST /api/send-message routes the turn to the node through executeBotOrInline — the demo operator's turn arrives with the CLI providerId STAMPED (the ADR-127 carve, env-stubbed), a plain caller's with the resolved hosted connection threaded — the controller orchestrator is never called, and both turns persist to the message store the history route replays. This is the route the live 2026-08-11 failure ran (a node-backed bot's chat dying on an exhausted hosted key), crossed at the real dispatch boundary.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Codex fleet default (2026-08-12): pickCliHarnessAgentId selects a codex-cli registry bot (the registry no longer declares claude-code), and the ADR-127 stamp expectation follows DEMO_CLI_ORDER's new first rung (openai-codex).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | BUG-17 node half: both node-dispatch cases now assert the body posted to /api/swarm-execute carries no `creds` and no `providerIntent`. The controller-to-node boundary is where a connector credential would cross, and nothing observed it: a route that added both to a chat turn left all 16 cases green.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -481,6 +482,9 @@ describe('POST /api/send-message — a node-bound bot dispatches AT its node thr
       expect(processMessage).not.toHaveBeenCalled();
       expect(node.bodies).toHaveLength(1);
       expect(node.bodies[0].url).toBe('/api/swarm-execute');
+      // A chat turn carries no connector credential across the controller-to-node boundary (BUG-17).
+      expect(node.bodies[0]).not.toHaveProperty('creds');
+      expect(node.bodies[0]).not.toHaveProperty('providerIntent');
       // Exactly the wire trio — resolver metadata must not ride to the node.
       expect(node.bodies[0].byoLlmConnection).toEqual(CONNECTION);
       expect(node.bodies[0].providerId).toBeUndefined();
@@ -516,6 +520,8 @@ describe('POST /api/send-message — a node-bound bot dispatches AT its node thr
       // Codex is the first DEMO_CLI_ORDER rung since the 2026-08-12 fleet default.
       expect(node.bodies[0].providerId).toBe('openai-codex');
       expect(node.bodies[0].byoLlmConnection).toBeUndefined();
+      expect(node.bodies[0]).not.toHaveProperty('creds');
+      expect(node.bodies[0]).not.toHaveProperty('providerIntent');
       expect(ladder).not.toHaveBeenCalled();
     } finally {
       release();

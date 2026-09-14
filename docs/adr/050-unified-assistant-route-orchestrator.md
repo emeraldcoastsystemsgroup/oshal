@@ -1,6 +1,8 @@
 # ADR-050: Unified Assistant ("Jarvis") — a route-layer orchestrator over the app swarm
 
-- **Status:** Accepted
+- **Status:** Accepted — the route-orchestrator design below was superseded in place by this ADR's
+  own 2026-06-20 update (Jarvis as an in-framework bot), and [ADR-083](083-knowledge-owner-call-out-routing.md)
+  amends its routing (status corrected 2026-09-14)
 - **Date:** 2026-06-17
 - **Supersedes / relates to:** ADR-036 (bot-owned application architecture), ADR-038 (swarms bundled by type), ADR-049 (OSHAL as aggregation platform)
 

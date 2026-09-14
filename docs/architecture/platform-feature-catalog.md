@@ -420,16 +420,15 @@ Every ticket flows through a complexity-gated pipeline:
 
 ## By the Numbers
 
+Every value below is counted from the tree by `node scripts/site-apps-catalog.js --docs`, and
+`tests/unit/doc-count-claims.spec.ts` fails when this table and the tree disagree. A number that
+cannot be counted from the tree does not belong here.
+
 | Metric | Value |
 |--------|-------|
-| Specialist bots | 46+ |
-| Swarm apps | 30 |
-| Pipeline phases | 8 |
-| UI pages | 15 |
-| ADRs | 63 (latest ADR-061) |
-| Session briefs | 150+ |
-| Docker containers (swarm) | 14 active + infra |
-| Database tables | 30+ |
-| Unit tests (vitest) | 33 passing (concierge envelope + store) |
-| TypeScript errors | 0 |
-| Proven E2E cost | $0.71/execution |
+| Registry bots (default lineup) | 60 |
+| Persona definitions | 103 |
+| Kernel app manifests (`swarm-apps/*.yaml`) | 10 |
+| LLM providers | 40 |
+| Hand-audited connector specs | 310 |
+| ADRs | 157 (latest ADR-156) |
