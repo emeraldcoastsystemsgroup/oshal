@@ -99,7 +99,29 @@ the package's BACKLOG B20 with the evidence.
   **503 `node_unavailable`** names the reason (the node refused the secret, or its build is not this
   package's engine tree — reinstall).
 - `GET /api/embodied/physics/status` lists the fleet (`nodes`: online, `stale`, telemetry, events).
-- A real drone node joins the same way (kind `drone`, refusing `load` and `clone`) — BACKLOG B6.
+- A PX4 flight stack joins the same way (kind `drone`, refusing `clone`) — below.
+
+### A PX4 flight stack as the drone node (BACKLOG B6)
+
+`install-engine.sh --with-px4` (run from inside the api container, like the plain install) also pulls
+the official Dronecode SITL image `px4io/px4-sitl` and starts `oshal-embodied-px4` in the engine's own
+compose project (profile `px4`) — the px4 binary directly, stdin open — and points the engine's PX4
+node at it (`EMBODIED_PX4_ADDR=embodied-px4:14580`). The node heartbeats as `embodied-px4`, kind
+`drone`, endpoint port 7415, beside `embodied-plant`. **Not enabled on this box:** its heartbeats meet
+the same core gate as the plant's (above); the proof is the sandbox below.
+
+- The truth-model selector offers **rail node embodied-px4 (px4-sih 1.18.0)**; after a reset the plant
+  reads controller `px4`. The rehearsal runs on the kinematic twin (one vehicle: `clone` is refused),
+  the flight on PX4 in OFFBOARD, every leg through the same guards and confirm.
+- `docker logs oshal-embodied-engine`: `vehicle at rest: NED (...) heading ... = room +x from the pad`
+  names the pad frame at each reset; `no telemetry after 5 heartbeats` means the vehicle answers an
+  earlier partner — recreate the vehicle beside the node (the installer recreates both);
+  `command N refused by the vehicle: MAV_RESULT r` and `vehicle says: ...` are PX4's own refusals and
+  warnings.
+- `docker logs oshal-embodied-px4`: `Armed by external command`, `Takeoff detected`, `Landing detected`.
+  A flood of `pxh>` prompts means stdin was closed (the shell spins on EOF).
+- Never start the image with its own entrypoint on Docker Desktop: it rewrites every MAVLink link to
+  `host.docker.internal`, so the vehicle talks to the host and never to the node.
 
 ## Sandbox: the rail on this box, on the real image, without touching the stack
 
@@ -121,16 +143,21 @@ as its node. Done 2026-09-13; the recipe, from a shell on the box:
    and delete the env file (it carries the live secrets). Migrations run on the fresh database at boot
    (about 40 s to `loadedCount`).
 4. The node: `docker run -d --name oshal-sandbox-engine --network oshal-local_oshal --read-only --tmpfs /tmp -e SWARM_SERVICE_SECRET=<the same> -e OSHAL_API_URL=http://oshal-sandbox-api:5000 -e EMBODIED_NODE_ENDPOINT=http://oshal-sandbox-engine:7414 -e EMBODIED_NODE_OWNER_SUB=sandbox-owner oshal-embodied-engine:local`.
+5. The vehicle (B6): add `-e EMBODIED_PX4_ADDR=embodied-px4:14580 -e EMBODIED_PX4_NODE_ENDPOINT=http://oshal-sandbox-engine:7415`
+   to the node above, and start `docker run -d -i --init --name oshal-sandbox-px4 --network oshal-local_oshal --network-alias embodied-px4 --entrypoint /opt/px4/bin/px4 -e PX4_SIM_MODEL=sihsim_quadx px4io/px4-sitl:latest`.
+   Recreate the vehicle whenever the node is recreated: PX4 answers the first partner it heard.
 
 What it showed: the engine container's heartbeat acknowledged by the real api through the real
 mounter (`auth: service`) and the real authorization runtime in `legacy` mode; `GET /physics/status`
 listing `embodied-plant` online, owned, not stale; `POST /world/reset {backend:'node'}` onto it; a
 drone-first exploration drafted, rehearsed on a session cloned on the node, executed through the api's
-own timer to done, landed. The same sandbox on `enforce` refuses the node before package code (the
+own timer to done, landed. With the vehicle (2026-09-14): `embodied-px4` online as kind `drone`, a reset
+onto it, a drone-first exploration to done in 183 s — PX4 armed by external command, detected the
+takeoff and the landing, localisation tracking throughout. The same sandbox on `enforce` refuses the node before package code (the
 mock user holds no grant: `403 authorization_app_admin_required`); on the box, where the caller is a
 machine and not a session, it is `401 authorization_identity_required`. The tile is at
 `http://127.0.0.1:35458/cockpit/?app=embodied` as the mock user while the sandbox runs. Remove it with
-`docker rm -f oshal-sandbox-api oshal-sandbox-engine oshal-sandbox-redis` and
+`docker rm -f oshal-sandbox-api oshal-sandbox-engine oshal-sandbox-px4 oshal-sandbox-redis` and
 `drop database oshal_sandbox`; nothing in the live stack was changed.
 
 ## Flying a trained policy (the certification gate)
