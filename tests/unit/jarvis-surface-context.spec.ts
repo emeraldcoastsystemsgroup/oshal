@@ -4,9 +4,40 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the screen-aware Jarvis loop: the `context` op travels the REAL relay to EVERY assistant frame (the floating orb panel included — the frame the relay originally didn't know about), normalizeAskSurfaceContext validates with the real contract and rejects a snapshot that never came through the bridge, buildSurfaceContextPrompt tells a drivable surface from a read-only one, and the producer's emitOps/consumeContext stamp the trusted app binding rather than trusting the model.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Success-path log guard: an /ask turn that returns surface ops (driven through the real authenticated router with only the model and persistence doubled) logs op count, op names as custom:<name>, the target app and the surface's declared custom names at INFO — the BUG-18 shape (an invented custom name) is now one grep in the api log; a context-free turn still only warns.
  */
 
-import { describe, expect, it } from 'vitest';
+import express, { type RequestHandler } from 'express';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const executeBot = vi.hoisted(() => vi.fn());
+/** Every line the routes logged, by module + level, so the success path can be asserted on. */
+const logLines = vi.hoisted(() => [] as Array<{ module: string; level: string; payload: Record<string, unknown>; msg: string }>);
+vi.mock('@/app/routes/inline-bot-execution', () => ({ executeBotOrInline: executeBot }));
+vi.mock('@/app/routes/connector-token-broker', () => ({ resolveBotCreds: vi.fn().mockResolvedValue({}) }));
+vi.mock('@/app/routes/free-tier-rotation', () => ({
+  resolveUserLlmConnection: vi.fn().mockResolvedValue(null), reportResolvedLlmFailure: vi.fn().mockResolvedValue(false),
+}));
+vi.mock('@/features/user-model', () => ({
+  withHavenContext: vi.fn(async (_pool: unknown, _sub: string, prompt: string) => prompt),
+  learnFromExchange: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('@/shared/services/database', () => ({
+  createOptionalPostgresPool: () => null, ensureConversationStoreSchema: async () => {},
+  runRuntimeSchemaBootstrap: vi.fn().mockResolvedValue(undefined), buildOwnerRlsPolicyStatements: vi.fn().mockReturnValue([]),
+}));
+vi.mock('@/shared/logger', () => ({
+  createChildLogger: (bindings: { module: string }) => {
+    const record = (level: string) => (payload: Record<string, unknown>, msg: string) => { logLines.push({ module: bindings.module, level, payload, msg }); };
+    return { info: record('info'), warn: record('warn'), error: record('error'), debug: record('debug') };
+  },
+}));
+
+import { InMemoryTaskStore } from '../../src/entities/task';
+import { InMemoryMessageStore } from '../../src/entities/message';
+import { createJarvisRoutes, purgeJarvisAskJobsForOwner } from '../../src/app/routes/jarvis-routes';
 import {
   SURFACE_BRIDGE_CHANNEL,
   SURFACE_BRIDGE_VERSION,
@@ -247,5 +278,90 @@ describe('producer — the client half stamps the trusted binding', () => {
   it('does NOT turn a context snapshot into a chat message (it is ambient state, not a user action)', () => {
     const { producer } = makeProducer();
     expect(producer.consumeInbound(envelope)).toBeNull();
+  });
+});
+
+describe('/ask — an emitted-ops turn is diagnosable from the api log alone', () => {
+  const OWNER = 'auth0|surface-log-owner';
+  const SESSION = 'surface-log-session';
+  // The BUG-18 shape exactly: a well-formed `custom` op whose name the surface never declared. It
+  // parses, it relays, the surface receives it and silently discards it — and before the success-path
+  // log line the only server-side trace was the raw pre-strip reply in a bot container's log.
+  const reply = 'Done — I made it shorter and centered the platform work.\n```oshal:surface\n'
+    + '{"ops":[{"op":"custom","name":"update_master_resume_summary","data":{"summary":"Shorter."}}]}\n```';
+  let server: Server;
+  let base: string;
+
+  beforeEach(async () => {
+    logLines.length = 0;
+    executeBot.mockReset();
+    executeBot.mockResolvedValue({ response: reply });
+    // Only the model, persistence and the test identity rail are doubles; the router is real.
+    const ctx = {
+      pool: { query: vi.fn(async () => ({ rows: [], rowCount: 0 })) },
+      taskStore: new InMemoryTaskStore(),
+      messageStore: new InMemoryMessageStore(),
+      ticketService: {
+        listTickets: vi.fn().mockResolvedValue([]), openChatTicket: vi.fn().mockResolvedValue({ ticketId: 'surface-log-chat' }),
+        createTicket: vi.fn(), updateStatus: vi.fn(),
+      },
+    };
+    const auth: RequestHandler = (request, _response, next) => {
+      (request as unknown as { oidc: unknown }).oidc = { isAuthenticated: () => true, user: { sub: OWNER } };
+      next();
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api/jarvis', auth, createJarvisRoutes(ctx as never, process.cwd()));
+    server = app.listen(0, '127.0.0.1');
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/jarvis`;
+  });
+
+  afterEach(async () => {
+    purgeJarvisAskJobsForOwner(OWNER);
+    if (!server) return;
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  });
+
+  /** POST /ask with (or without) a screen snapshot, then poll the job to its settled result. */
+  async function ask(context?: unknown): Promise<Record<string, unknown>> {
+    const response = await fetch(base + '/ask', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'Tighten my resume summary', sessionId: SESSION, ...(context ? { context } : {}) }),
+    });
+    expect(response.status).toBe(202);
+    const { jobId } = await response.json() as { jobId: string };
+    let result: Record<string, unknown> = {};
+    for (let attempt = 0; attempt < 200; attempt++) {
+      result = await (await fetch(base + '/ask/result?jobId=' + jobId)).json() as Record<string, unknown>;
+      if (result.status !== 'pending') break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    return result;
+  }
+  const surfaceLines = (level: string) => logLines.filter(line => line.module === 'jarvis-routes' && line.level === level && /surface ops/.test(line.msg));
+
+  it('logs op count, op names and the target app at INFO when ops are returned to the surface', async () => {
+    const result = await ask({ ...envelope, customOps: [{ name: 'resume_action', description: 'Edit this resume.' }] });
+    expect(result).toMatchObject({ status: 'done', surfaceOps: [{ op: 'custom', name: 'update_master_resume_summary' }] });
+    expect(String(result.answer)).not.toContain('```');
+    const success = surfaceLines('info');
+    expect(success).toHaveLength(1);
+    // The emitted name sits beside the names the surface declared: the mismatch IS the diagnosis.
+    expect(success[0].payload).toMatchObject({
+      sessionId: SESSION, app: APP, screen: 'resume-studio', ops: 1,
+      opNames: ['custom:update_master_resume_summary'], declaredCustomOps: ['resume_action'],
+    });
+    expect(surfaceLines('warn')).toHaveLength(0);
+  });
+
+  it('stays silent on the success path when the turn had no screen context — the ops are dropped and only the warning fires', async () => {
+    const result = await ask();
+    expect(result.status).toBe('done');
+    expect(result.surfaceOps).toBeUndefined();
+    expect(surfaceLines('info')).toHaveLength(0);
+    expect(surfaceLines('warn')).toHaveLength(1);
   });
 });

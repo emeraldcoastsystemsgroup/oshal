@@ -49,6 +49,7 @@
  * @module jarvis-routes
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2/3: the deterministic ambient hook now answers open asks, weekly trends and person connections through the person-model front door (detectPersonModelIntent / answerPersonModelIntent); recall phrasing is unchanged. Net -2 code lines on this over-cap file.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Decomposition: the per-thread chat-ticket + session-task registration moves to jarvis-thread-tickets.ts, taking this file from 804 code lines to under the 800-line threshold; the person-model recall hook is untouched.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Emitted surface ops log op count, names (custom:<name>) and the target app + its declared custom names at INFO on the success path, so a BUG-18 custom-name mismatch is diagnosable from the api log alone.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -196,6 +197,11 @@ function registerLegacyReadContainment(router: Router): void {
  *  owner the queue manager resolves by call-out — Jarvis never names a bot. */
 function ticketTypeForHandoff(h: Pick<HandoffDirective, 'platform'>): string {
   return h.platform ? 'oshal-dev' : 'task';
+}
+
+/** The identifier a surface actually matches on: `custom:<name>` for a custom op, else the op. */
+function describeSurfaceOp(op: SurfaceDirectiveOp): string {
+  return op.op === 'custom' ? `custom:${op.name}` : op.op;
 }
 
 /** Caller's sub: independently authenticated user first, verified SEC-01 delegation second, then
@@ -866,6 +872,16 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         const artifactReply = await resolveJarvisArtifactAnswer(stripPlanDirective(surface.cleanAnswer), artifactSelection, req, sub, artifactActions, artifactVisibleApps);
         const cleanAnswer = artifactReply.cleanAnswer;
         if (artifactReply.hadDirective) surfaceOps = [];
+        if (surfaceOps.length && surfaceContext) {
+          // The success-path twin of the "dropped" warning above. BUG-18 (a well-formed `custom` op
+          // whose name no surface handles) was only provable from a bot container's raw reply,
+          // because the clean answer and the persisted turn both have the fence stripped. Naming
+          // the emitted ops beside the names the surface declared makes that mismatch one grep.
+          logger.info({
+            sessionId, app: surfaceContext.app, screen: surfaceContext.surface, ops: surfaceOps.length,
+            opNames: surfaceOps.map(describeSurfaceOp), declaredCustomOps: (surfaceContext.customOps ?? []).map((op) => op.name),
+          }, 'jarvis: surface ops returned to the surface');
+        }
         const dispatched = !artifactSelection && !artifactReply.hadDirective && handoffs.length ? await dispatchHandoffs(ctx, sub, sessionId, handoffs) : [];
         const directAnswerSource = `jarvis-answer:${jobId}`;
         // An explicit "show me a diagram" request wins; otherwise the deterministic default picker
