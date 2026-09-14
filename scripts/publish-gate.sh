@@ -7,6 +7,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Fail-closed publish gate for developing directly on the public repo: scans tracked files for internal-only paths, vendor-prefixed credentials, and personal/employer identifiers. Attribution (author name + business email) and verified false positives (real place names, TTS voice ids) are deliberately excluded. Bare `git grep` (NOT `-- $(git ls-files)`, which argv-overflows and fails OPEN).
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Moved the personal/employer identifier list OUT of this tracked file into gitignored scripts/publish-gate.local.patterns: a public denylist republishes the very identifiers it protects (leak by enumeration — an employer name and family-name rules were publicly readable in this file's own regex). The gate loads the local file when present (fail-closed on this box), refuses if the patterns file is ever tracked, and states plainly when running with generic rules only.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Closed the binary blind spot. Every check here used `git grep -I`, which skips binary files, so the gate was text-only and a screenshot of a filled-in job application (home address, phone, EEO disclosures) passed clean — nothing in a PNG for a regex to match. Found live: artifacts/remote-control/ held 105 such captures, unignored, because the ignore rules covered only loose files at the top of artifacts/. New check 4 inverts the question for binaries — media is allowed ONLY in declared curated directories, everything else refused, so an automation pipeline dropping captures into a fresh dir fails closed without anyone having predicted the dir's name. Guarded by tests/unit/publish-gate.spec.ts.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Check 5 now refuses MODEL ATTRIBUTION in the commit messages a push publishes: a '-by:' trailer naming Claude or Anthropic, the vendor no-reply address, or the 'generated with' tool footer, matched case-insensitively on the identifier. The 2026-09-12 history scrub left no attributed commit reachable from origin; by 2026-09-14, 45 were reachable from main again (the scrub runbook's step-6 query at d679b696). The tree guard reads files, and no check read commit messages for this. Also fixes the scope: as the pre-push hook (--pre-push) the gate reads git's ref-update lines from stdin and judges the commits actually being pushed - a push BY SHA, the shared checkout's private-index recipe, publishes commits HEAD never reaches. History the remote already holds stays out of scope. The credential scan keeps HEAD and adds the pushed commits, so it only widens.
 # =============================================================================
 # publish-gate.sh — the safety net for developing directly on the PUBLIC repo.
 #
@@ -16,6 +17,8 @@
 #
 # It runs as the pre-push hook (.githooks/pre-push) and can be run by hand:
 #     bash scripts/publish-gate.sh
+# The hook passes --pre-push and git's ref-update lines on stdin, so check 5 judges the
+# commits actually being pushed; by hand, the push is assumed to be HEAD.
 #
 # It scans TRACKED files only (git ls-files) — what a push would actually send.
 #
@@ -28,6 +31,24 @@
 # never on an enumeration of the places it has appeared so far.
 # =============================================================================
 set -uo pipefail
+
+# --pre-push: called as the pre-push hook. git writes one "<local ref> <local sha> <remote ref>
+# <remote sha>" line per pushed ref to the hook's stdin. Read them FIRST, before any later command
+# could consume stdin. Refuse to wait on a terminal: a hand run takes no argument.
+PRE_PUSH=0
+PUSH_LINES=""
+case "${1:-}" in
+  "") ;;
+  --pre-push)
+    PRE_PUSH=1
+    if [ -t 0 ]; then
+      printf 'publish-gate: --pre-push reads the ref lines git gives a pre-push hook on stdin; by hand, run it with no argument\n' >&2
+      exit 2
+    fi
+    PUSH_LINES="$(cat)"
+    ;;
+  *) printf 'usage: %s [--pre-push]\n' "$0" >&2; exit 2 ;;
+esac
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -148,9 +169,32 @@ fi
 # Deliberately NOT `--all`: this box carries archive/pre-scrub-main and old worktree lanes
 # that will never be pushed, and scanning them would fail the gate on every push forever.
 # A gate that cries wolf on unpushable history is a gate people start bypassing.
+#
+# As the pre-push hook (--pre-push) the push itself is known: each ref-update line names the
+# commit being pushed, and `<sha> --not --remotes` (less the remote's current tip of that ref,
+# when this clone holds it) is what that ref publishes. HEAD is NOT the push when a commit goes
+# out BY SHA (`git push origin <sha>:refs/heads/x`) - the private-index recipe every agent in the
+# shared checkout uses while HEAD sits on another lane's branch.
 MSG_SCAN_RE="$CRED_RE"
 [ -n "$ID_RE" ] && MSG_SCAN_RE="$CRED_RE|$ID_RE"
-PENDING="$(git rev-list HEAD --not --remotes 2>/dev/null || true)"
+HEAD_PENDING="$(git rev-list HEAD --not --remotes 2>/dev/null || true)"
+PUSHED="$HEAD_PENDING"
+if [ "$PRE_PUSH" -eq 1 ]; then
+  PUSHED=""
+  while read -r lref lsha _rref rsha; do
+    [ -n "$lsha" ] && [ -n "${lsha//0/}" ] || continue    # blank, or all zeros: a DELETION publishes nothing
+    ALREADY=""
+    if [ -n "${rsha//0/}" ] && git cat-file -e "${rsha}^{commit}" 2>/dev/null; then ALREADY="$rsha"; fi
+    if ! PART="$(git rev-list "$lsha" --not --remotes $ALREADY 2>/dev/null)"; then
+      bad "cannot list the commits this push publishes for ${lref} (${lsha}) - refusing rather than scanning nothing"
+      continue
+    fi
+    [ -n "$PART" ] && PUSHED="${PUSHED}${PART}"$'\n'
+  done <<< "$PUSH_LINES"
+fi
+# The credential / identifier scan keeps HEAD's unpublished commits and adds the pushed ones, so it
+# only ever widens. The attribution scan (5b) judges exactly what this push publishes.
+PENDING="$(printf '%s\n%s\n' "$HEAD_PENDING" "$PUSHED" | awk 'NF && !seen[$0]++')"
 if [ -z "$PENDING" ]; then
   ok "no unpublished commit messages to scan"
 else
@@ -173,6 +217,52 @@ else
   else
     ok "no personal / credential content in unpublished commit messages"
   fi
+fi
+
+# ── 5b. Model attribution in the commit messages this push publishes ─────────
+# Operator directive: no model attribution anywhere in this repository - not in files, commit
+# messages or PR descriptions. The tree guard (tests/unit/no-model-attribution.spec.ts) reads
+# FILES; a harness session's default puts a co-author trailer and a tool footer in the commit
+# MESSAGE, which only this check sees. The 2026-09-12 history scrub
+# (docs/runbooks/model-attribution-scrub.md) left no attributed commit reachable from origin; by
+# 2026-09-14, 45 were reachable from main again (that runbook's step-6 query at d679b696).
+#
+# Matched on the IDENTIFIER, case-insensitively, in any spelling a session produces:
+#   - a '-by:' trailer (Co-Authored-By, Co-authored-by, Assisted-by, Signed-off-by, ...) whose
+#     value names Claude or Anthropic, at any address. The name is the identifier, so a trailer
+#     naming a person called Claude is refused too - credit them in the body instead;
+#   - the vendor's no-reply address anywhere in the message;
+#   - 'generated with / by / using / via' followed by Claude: the tool footer, link or no link.
+# Deliberately NOT through the credential scan's exclusion filter above: that filter drops every
+# line holding '<...>', and every trailer carries its address in angle brackets. `grep -a` so a
+# message is always read as text; LC_ALL=C so case folding and classes behave the same everywhere.
+#
+# Scope is PUSHED: exactly the commits this push publishes. History the remote already holds is
+# out of scope by construction - main still carries those 45 commits, removing them is an
+# operator-run history rewrite, and a gate that refused every push until then would halt all work.
+ATTRIB_RE='^[[:space:]]*[a-z]+([-_ ][a-z]+)*[-_ ]by[[:space:]]*:.*(claude|anthropic)|no-?reply@([a-z0-9-]+\.)*anthropic\.com|generated[[:space:]]+(with|by|using|via)[^[:alnum:]]*claude'
+ATTRIB_HITS=""
+ATTRIB_FIXES=""
+for sha in $PUSHED; do
+  if ! MSG="$(git show -s --format='%B' "$sha" 2>/dev/null)"; then
+    bad "cannot read the message of pushed commit $sha - refusing rather than passing it unread"
+    continue
+  fi
+  HIT="$(printf '%s\n' "$MSG" | LC_ALL=C grep -aiE "$ATTRIB_RE" | head -3 || true)"
+  [ -n "$HIT" ] || continue
+  SHORT="$(git rev-parse --short "$sha")"
+  ATTRIB_HITS="${ATTRIB_HITS}${SHORT} $(git log -1 --format='%s' "$sha")"$'\n'"$(printf '%s\n' "$HIT" | sed 's/^/    /')"$'\n'
+  ATTRIB_FIXES="${ATTRIB_FIXES}          ${SHORT}:  git rebase -i ${SHORT}~1   (mark it 'reword'), or git commit --amend if it is your branch tip"$'\n'
+done
+if [ -n "$ATTRIB_HITS" ]; then
+  bad "model attribution in unpublished COMMIT MESSAGE(s) - none is allowed in this repository:"
+  printf '%s' "$ATTRIB_HITS" | sed 's/^/       /' >&2
+  say "      -> Delete those lines from each message, then push again:"
+  printf '%s' "$ATTRIB_FIXES"
+  say "        Built with git commit-tree (private index)? Rebuild it with a clean -F message instead."
+  say "        Never push with --no-verify: this gate is the only wall between this repo and the world."
+else
+  ok "no model attribution in unpublished commit messages"
 fi
 
 echo ""

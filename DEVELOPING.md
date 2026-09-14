@@ -37,7 +37,11 @@ Two things run before anything reaches the remote:
      commercial capture packages);
    - vendor-prefixed credentials (`AKIA…`, `ghp_…`, private keys, …);
    - personal or employer identifiers (a maintainer's personal accounts, home network,
-     absolute user paths, an employer's internal infrastructure, third parties' details).
+     absolute user paths, an employer's internal infrastructure, third parties' details);
+   - in the commit messages being pushed: credentials, those identifiers, and model
+     attribution — a `-by:` trailer naming Claude or Anthropic, the vendor's no-reply address,
+     or a "generated with Claude" tool footer. Reword the commit (`git commit --amend`, or
+     `git rebase -i <sha>~1`); commits the remote already holds are never re-judged.
 
    It deliberately does **not** flag the author's own name or business email — that is
    attribution, and it stays. If the gate trips on a genuine false positive (a real place
