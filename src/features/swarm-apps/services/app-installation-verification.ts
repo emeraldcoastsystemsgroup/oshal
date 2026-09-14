@@ -4,7 +4,9 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify eligible installed smokes through their registered executor and link all other cases without running them.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps, read through @/shared/app-dependencies (dependencies.required.apps or the legacy dependencies.apps).
  */
+import { requiredAppDependencies } from '@/shared/app-dependencies';
 import type { SwarmApplicationRecord } from '../types';
 import type { AppSmokeFetch, AppSmokeResult } from './app-smoke-verifier';
 import type { InstalledAppTestCatalog, InstalledAppTestCase, InstalledTestRunOptions } from './installed-app-test-catalog';
@@ -34,7 +36,7 @@ async function resolveRecords(records: RecordEntry[], options: InstallationVerif
   const resolved = new Map(records.map(entry => [entry.requestedName, entry.record]));
   for (const { record } of records) {
     if (record?.manifest.kind !== 'group') continue;
-    for (const name of record.manifest.dependencies?.apps ?? []) {
+    for (const name of requiredAppDependencies(record.manifest)) {
       if (resolved.size >= 256) throw new Error('Installation verification exceeds 256 packages.');
       if (!resolved.has(name)) resolved.set(name, await options.resolveMember(name));
     }
@@ -119,7 +121,7 @@ export async function verifyInstalledApplications(records: RecordEntry[], catalo
   for (const entry of records) {
     const registered = registrations.get(entry.requestedName);
     let error = registrationError(entry.record, registered);
-    const members = entry.record?.manifest.kind === 'group' ? entry.record.manifest.dependencies?.apps ?? [] : [];
+    const members = entry.record?.manifest.kind === 'group' ? requiredAppDependencies(entry.record.manifest) : [];
     for (const name of members) {
       const memberError = registrationError(resolved.get(name) ?? null, registrations.get(name));
       if (memberError) error ||= `Member ${name}: ${memberError}`;

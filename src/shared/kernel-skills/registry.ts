@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #5 (finance): pin 'payments' as the 11th kernel skill. skill-registry.md called @/features/payments a KERNEL SKILL all along, but the code never contracted it — it stayed in dist only because finance-routes.ts imported it, and the finance carve removes that last core anchor. Without this pin the installed payments AND finance packages both fail at mount on a pruned dist (the exact google-calendar/notifications bug class D8 exists to close).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 spaces carve: pin 'spatial-mapping' as the 12th kernel skill. Identical situation to payments — the video->3D / import / RF / capture reconstruction engine + owner-scoped scan store stays kernel per ADR-093, but its ONLY core import anchor is spaces-routes.ts, which the spaces surface carve removes. Unlike drone/camera (anchored by their *-node-server.ts), spaces-operator is an INLINE concierge with no dedicated node, so there is no node-server to hold the engine in dist. Without this pin the installed spaces package fails at mount on a pruned dist.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Declare exact-principal artifact relay and in-process package tool compatibility floors.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Declare the app-dependencies compatibility floor: a manifest using dependencies.required/optional names it so an older core refuses the package instead of installing it without its required dependencies.
  */
 
 /**
@@ -33,6 +34,7 @@ export type KernelSkillId =
   | 'package-tools'
   | 'test-catalog'
   | 'jarvis-briefings'
+  | 'app-dependencies'
   | 'specialist-context'
   | 'spatial-mapping';
 
@@ -96,6 +98,9 @@ export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
   { id: 'specialist-context', title: 'Authorized specialist facts',
     why: 'Package-owned deterministic numeric reads feed accountable specialist dispatch under the actual caller.',
     modules: [{ specifier: '@/shared/specialist-context', distFile: 'dist/shared/specialist-context/index.js' }] },
+  { id: 'app-dependencies', title: 'Required and optional app dependencies',
+    why: 'The installer and loader read dependencies.required/optional; naming this floor makes an older core refuse such a package instead of dropping its required dependencies.',
+    modules: [{ specifier: '@/shared/app-dependencies', distFile: 'dist/shared/app-dependencies/index.js' }] },
   {
     id: 'test-catalog', title: 'Package test catalogs',
     why: 'Versioned test metadata installs with applications and remains separate from runner execution authority.',

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147: the /api/swarm/registries surface behind the App Loader. Three things here are the design, not plumbing. (1) PROBE BEFORE SAVE — a registry URL is validated by actually reading its catalog, so an operator cannot trust a source that does not resolve and an unreachable registry is diagnosed at the moment it is added rather than as an empty shelf later. (2) INSTALL PREVIEW — install mounts a package's routes INTO the controller process and runs its migrations against the platform database, so the preview enumerates exactly that (routes, migrations, bots, schedules, connectors, deps, audit posture) and Install is the second click. (3) PER-REGISTRY FENCED AGGREGATION — one unreachable registry renders as a broken row and never fails the page, mirroring how parseCatalog already fails soft per entry.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | FIX (found verifying the live deploy): a catalog audit binding whose sourceSha is the all-zeros UNAUDITED sentinel was counted as "signed". Every one of the 49 live store entries carries exactly that sentinel with an audit record at status "pending", so the loader labelled every unreviewed package "signed — carries a valid audit binding" on the install-decision screen; and because the unsigned gate keyed off the same flag, a third-party registry could skip allow_unsigned=false simply by publishing a sentinel binding. Audit posture is now a tri-state (audited | pending | none) derived from the binding's SHA, and the install decision is one pure exported function the preview AND the install both call, so the screen can no longer promise an install the route will refuse. The BUILT-IN registry deliberately keeps today's behaviour — it defers to OSHAL_PACKAGE_AUDIT_MODE exactly as /api/swarm/apps/install-remote does (ADR-147 D5: the built-in posture does not change) — so fixing the label does not break installs from the default store.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers in the App Loader. The preview lists required and optional apps/tools/connectors, each app with its state (installed | core | available from this source | unavailable) resolved exactly the way the installer resolves it, and withDependencyGate refuses the install when a required app cannot resolve or the block is invalid. Install takes the operator's optional selection (withOptional -> --with) and hot-loads every dependency the installer pulled from the store before the package itself; a required dependency that fails to load stops the package from loading.
  */
 
 import path from 'path';
@@ -24,9 +25,13 @@ import {
   type AppRegistry, type RegistryHostKind,
 } from '@/features/app-registries';
 import { resolvePackageAuditMode } from '@/features/swarm-apps';
+import { inspectAppDependencies, type AppDependencyLists } from '@/shared/app-dependencies';
 import { parseCatalog, type CatalogApp } from './app-store-remote';
 import { installerLogTail } from './update-check-cron';
 import { replacementFor, SOURCE_CONFLICT_EXIT, type SourceReplacement } from './app-install-source';
+import {
+  loadInstalledPackage, optionalSelectionArgs, parseOptionalSelection, type DependencyLoadReport,
+} from './app-install-dependencies';
 
 const logger = createChildLogger({ module: 'app-registry-routes' });
 
@@ -210,24 +215,61 @@ async function aggregateCatalog(pool: Pool, refresh: boolean): Promise<{
 }
 
 /**
+ * How the installer would resolve one dependency app: already installed, shipped by the framework,
+ * published by the same source (it installs from there), or none of those (the install fails).
+ */
+export type DependencyAppState = 'installed' | 'core' | 'available' | 'unavailable';
+
+/** One dependency tier as the confirm screen renders it. */
+export interface DescribedDependencyTier {
+  apps: Array<{ name: string; state: DependencyAppState }>;
+  tools: string[];
+  connectors: string[];
+}
+
+/** Both tiers, plus any problem that makes the installer refuse the block. */
+export interface DescribedDependencies {
+  required: DescribedDependencyTier;
+  optional: DescribedDependencyTier;
+  problems: string[];
+}
+
+/** Reads a manifest's dependency tiers for the screen — leniently, collecting problems, never throwing. */
+function describeDependencies(
+  manifest: Record<string, unknown>, resolveState: (name: string) => DependencyAppState,
+): DescribedDependencies {
+  const tiers = inspectAppDependencies(manifest);
+  const tier = (lists: AppDependencyLists): DescribedDependencyTier => ({
+    apps: lists.apps.slice(0, 24).map((name) => ({ name, state: resolveState(name) })),
+    tools: lists.tools.slice(0, 24),
+    connectors: lists.connectors.slice(0, 24),
+  });
+  return { required: tier(tiers.required), optional: tier(tiers.optional), problems: tiers.problems.slice(0, 6) };
+}
+
+/**
  * @description Enumerates what installing a package would actually DO, by reading its manifest at
  * the pinned ref without installing anything.
  *
  * This is the blast-radius screen. Activation `require()`s the package's routes into the
  * controller process and runs its migrations against the platform database, so "install" is code
- * deployment; the operator is entitled to see the specific list before approving it.
+ * deployment; the operator is entitled to see the specific list before approving it — including
+ * which required apps come with it and which optional apps they may add.
  *
  * @param manifest - the parsed oshal-app.yaml.
  * @param entry - the catalog entry it came from.
+ * @param resolveState - how the installer would resolve a dependency app (see DependencyAppState).
  * @returns The bounded description the confirm screen renders.
  */
-export function describeManifestImpact(manifest: Record<string, unknown>, entry: AggregatedApp): {
+export function describeManifestImpact(
+  manifest: Record<string, unknown>, entry: AggregatedApp, resolveState: (name: string) => DependencyAppState,
+): {
   routes: { count: number; mounts: string[] };
   migrations: { count: number; files: string[] };
   bots: { count: number; names: string[]; dedicatedNodes: number };
   schedules: { count: number; cadences: string[] };
   connectors: string[];
-  dependencies: string[];
+  dependencies: DescribedDependencies;
   signed: boolean;
   auditState: AuditState;
   auditReason: string;
@@ -237,11 +279,9 @@ export function describeManifestImpact(manifest: Record<string, unknown>, entry:
   const bots = Array.isArray(manifest.bots) ? manifest.bots as Record<string, unknown>[] : [];
   const schedules = Array.isArray(manifest.schedules) ? manifest.schedules as Record<string, unknown>[] : [];
   const uses = (manifest.uses ?? {}) as { connectors?: unknown };
-  const deps = (manifest.dependencies ?? {}) as { apps?: unknown; connectors?: unknown };
-  const connectors = new Set<string>();
-  for (const list of [uses.connectors, deps.connectors]) {
-    if (Array.isArray(list)) list.forEach((c) => connectors.add(String(c)));
-  }
+  const dependencies = describeDependencies(manifest, resolveState);
+  const connectors = new Set<string>(Array.isArray(uses.connectors) ? uses.connectors.map(String) : []);
+  for (const c of [...dependencies.required.connectors, ...dependencies.optional.connectors]) connectors.add(c);
   return {
     routes: {
       count: routes.length,
@@ -258,7 +298,7 @@ export function describeManifestImpact(manifest: Record<string, unknown>, entry:
       cadences: schedules.map((s) => String(s.cron ?? s.every ?? s.interval ?? '?')).slice(0, 12),
     },
     connectors: [...connectors].slice(0, 12),
-    dependencies: Array.isArray(deps.apps) ? deps.apps.map(String).slice(0, 12) : [],
+    dependencies,
     signed: entry.signed,
     auditState: entry.auditState,
     auditReason: entry.auditState === 'audited'
@@ -269,9 +309,49 @@ export function describeManifestImpact(manifest: Record<string, unknown>, entry:
   };
 }
 
+/**
+ * @description Folds the dependency tiers into the install decision the confirm screen shows. The
+ * installer refuses a package whose dependencies block is invalid or whose REQUIRED app is neither
+ * installed, shipped by the framework, nor published by the same source — so the screen says so
+ * instead of offering an Install that fails. Optional apps never affect the decision.
+ * @param decision - the audit decision (decideInstallAudit).
+ * @param dependencies - the described tiers.
+ * @param sourceLabel - the registry's display name, for the note.
+ * @returns The same decision, or a refusal naming the dependency problem.
+ */
+export function withDependencyGate(
+  decision: InstallAuditDecision, dependencies: DescribedDependencies, sourceLabel: string,
+): InstallAuditDecision {
+  if (!decision.allowed) return decision;
+  if (dependencies.problems.length) {
+    return { ...decision, allowed: false, note: `its dependencies block is invalid, so the installer will refuse it: ${dependencies.problems[0]}` };
+  }
+  const missing = dependencies.required.apps.filter((app) => app.state === 'unavailable').map((app) => app.name);
+  if (!missing.length) return decision;
+  return {
+    ...decision, allowed: false,
+    note: `it requires ${missing.join(', ')}, which ${missing.length === 1 ? 'is' : 'are'} not installed and not published by ${sourceLabel} — the installer would refuse it`,
+  };
+}
+
+/**
+ * @description Resolves a dependency app's state the way scripts/oshal-app.js does: an installed
+ * package folder, then a framework manifest (swarm-apps/<name>.yaml), then the source's catalog.
+ * @param deployedDir - the deploy directory the installer writes to.
+ * @param published - package names the source's catalog publishes.
+ * @returns A resolver for describeManifestImpact.
+ */
+export function dependencyStateResolver(deployedDir: string, published: ReadonlySet<string>): (name: string) => DependencyAppState {
+  return (name) => {
+    if (fs.existsSync(path.join(deployedDir, name, 'oshal-app.yaml'))) return 'installed';
+    if (fs.existsSync(path.resolve(process.cwd(), 'swarm-apps', `${name}.yaml`))) return 'core';
+    return published.has(name) ? 'available' : 'unavailable';
+  };
+}
+
 /** Locates a package in the aggregated catalog, resolving `<registry>/<name>` or a bare name. */
 async function locate(pool: Pool, registrySlug: string, name: string): Promise<{
-  registry: AppRegistry; entry: AggregatedApp;
+  registry: AppRegistry; entry: AggregatedApp; published: Set<string>;
 }> {
   if (!NAME_RE.test(name)) throw new AppRegistryError(400, 'invalid package name');
   const registry = await getRegistry(pool, registrySlug);
@@ -283,7 +363,7 @@ async function locate(pool: Pool, registrySlug: string, name: string): Promise<{
   if (!catalog.ok) throw new AppRegistryError(503, `registry catalog unavailable: ${catalog.reason}`);
   const entry = catalog.apps.find((a) => a.name === name);
   if (!entry) throw new AppRegistryError(404, `"${name}" is not published by "${registrySlug}"`);
-  return { registry, entry };
+  return { registry, entry, published: new Set(catalog.apps.map((a) => a.name)) };
 }
 
 /**
@@ -293,13 +373,18 @@ async function locate(pool: Pool, registrySlug: string, name: string): Promise<{
  * @param registry - the source registry.
  * @param entry - the catalog entry (repo/ref come from HERE, never from the caller).
  * @param ownerSub - the installing session's sub, stamped as owner on load.
- * @param loadApp - injected SwarmAppService.loadApp.
- * @returns ok plus the installer log tail, or a status-shaped error.
+ * @param deps - injected SwarmAppService.loadApp (+ the deploy-dir seam).
+ * @param options - the reviewed source-replacement token and the optional apps the operator chose.
+ * @returns ok plus the installer log tail and the dependency load report, or a status-shaped error.
  */
 async function runInstall(
   pool: Pool, registry: AppRegistry, entry: AggregatedApp, ownerSub: string | null,
-  deps: AppRegistryDeps, replaceSource?: string,
-): Promise<{ ok: true; log: string } | { ok: false; status: number; error: string; log?: string; replacement?: SourceReplacement }> {
+  deps: AppRegistryDeps, options: { replaceSource?: string; withOptional: string[] },
+): Promise<
+  | { ok: true; log: string; dependencies: DependencyLoadReport }
+  | { ok: false; status: number; error: string; log?: string; replacement?: SourceReplacement; dependencies?: DependencyLoadReport }
+> {
+  const { replaceSource, withOptional } = options;
   if (entry.status !== 'ready') {
     return { ok: false, status: 409, error: `"${entry.name}" is not installable — registry status is "${entry.status}"` };
   }
@@ -314,39 +399,37 @@ async function runInstall(
   }
 
   const source = await toRegistrySource(pool, registry);
-  const run = await new Promise<{ code: number; output: string }>((resolve) => {
+  const run = await execInstaller(
+    ['install', entry.name, '--repo', entry.source.url, '--ref', entry.source.ref, '--dest', deployedDir,
+      '--registry', registry.slug, ...(replaceSource ? ['--replace-source', replaceSource] : []),
+      ...optionalSelectionArgs(withOptional)],
+    {
+      ...buildInstallerEnv(),
+      ...(source.token ? { OSHAL_STORE_TOKEN: source.token } : {}),
+      // Decided once by decideInstallAudit — the same call the preview renders from.
+      OSHAL_PACKAGE_AUDIT_MODE: decision.auditMode,
+    },
+  );
+  const log = installerLogTail(run.output, source.token);
+  if (run.code !== 0) return { ok: false, status: run.code === SOURCE_CONFLICT_EXIT ? 409 : 502, error: 'install failed — see log', log };
+
+  const loaded = await loadInstalledPackage(deployedDir, entry.name, (manifestPath) => deps.loadApp(manifestPath, { ownerSub }));
+  if (!loaded.ok) return { ok: false, status: 500, log, error: loaded.error, dependencies: loaded.dependencies };
+  return { ok: true, log, dependencies: loaded.dependencies };
+}
+
+/** Runs scripts/oshal-app.js with the given arguments and environment; never rejects. */
+function execInstaller(args: string[], env: NodeJS.ProcessEnv): Promise<{ code: number; output: string }> {
+  return new Promise((resolve) => {
     execFile(
-      process.execPath,
-      [path.join(process.cwd(), 'scripts', 'oshal-app.js'), 'install', entry.name,
-        '--repo', entry.source!.url, '--ref', entry.source!.ref, '--dest', deployedDir,
-        '--registry', registry.slug, ...(replaceSource ? ['--replace-source', replaceSource] : [])],
-      {
-        cwd: process.cwd(), timeout: 180_000, maxBuffer: 1024 * 1024,
-        env: {
-          ...buildInstallerEnv(),
-          ...(source.token ? { OSHAL_STORE_TOKEN: source.token } : {}),
-          // Decided once by decideInstallAudit — the same call the preview renders from.
-          OSHAL_PACKAGE_AUDIT_MODE: decision.auditMode,
-        },
-      },
+      process.execPath, [path.join(process.cwd(), 'scripts', 'oshal-app.js'), ...args],
+      { cwd: process.cwd(), timeout: 180_000, maxBuffer: 1024 * 1024, env },
       (err, stdout, stderr) => {
         const raw = err ? (err as NodeJS.ErrnoException).code : 0;
         resolve({ code: typeof raw === 'number' ? raw : (err ? 1 : 0), output: `${stdout}\n${stderr}`.trim() });
       },
     );
   });
-  const log = installerLogTail(run.output, source.token);
-  if (run.code !== 0) return { ok: false, status: run.code === SOURCE_CONFLICT_EXIT ? 409 : 502, error: 'install failed — see log', log };
-
-  try {
-    await deps.loadApp(path.join(deployedDir, entry.name, 'oshal-app.yaml'), { ownerSub });
-  } catch (err) {
-    return {
-      ok: false, status: 500, log,
-      error: `installed on disk but hot-load failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-  return { ok: true, log };
 }
 
 /** Least-privilege environment for the installer child — no DB, session or provider credentials. */
@@ -481,16 +564,19 @@ export function createAppRegistryRoutes(pool: Pool, requiresAuth: RequestHandler
   /** The blast-radius screen. Reads the package's manifest at the pinned ref; installs nothing. */
   router.get('/:slug/preview/:name', ...guard, async (req: Request, res: Response) => {
     try {
-      const { registry, entry } = await locate(pool, String(req.params.slug), String(req.params.name));
+      const { registry, entry, published } = await locate(pool, String(req.params.slug), String(req.params.name));
       const manifest = await readRemoteManifest(pool, registry, entry);
+      const deployedDir = deps.deployedAppsDir || DEPLOYED_APPS_DIR;
+      const impact = describeManifestImpact(manifest, entry, dependencyStateResolver(deployedDir, published));
       res.json({
         name: entry.name, displayName: entry.displayName, version: entry.version,
         registry: registry.slug, registryLabel: registry.displayName,
         source: entry.source, allowUnsigned: registry.allowUnsigned,
-        replacement: entry.source ? replacementFor(deps.deployedAppsDir || DEPLOYED_APPS_DIR, entry.name,
+        replacement: entry.source ? replacementFor(deployedDir, entry.name,
           { repo: entry.source.url, registry: registry.slug }) : null,
-        install: decideInstallAudit(entry.auditState, registry, resolvePackageAuditMode()),
-        impact: describeManifestImpact(manifest, entry),
+        install: withDependencyGate(decideInstallAudit(entry.auditState, registry, resolvePackageAuditMode()),
+          impact.dependencies, registry.displayName),
+        impact,
       });
     } catch (err) { fail(res, err, 'GET /preview'); }
   });
@@ -499,13 +585,19 @@ export function createAppRegistryRoutes(pool: Pool, requiresAuth: RequestHandler
     const caller = getCaller(req);
     const slug = String(req.body?.registry ?? '');
     const name = String(req.body?.name ?? '');
+    const withOptional = parseOptionalSelection(req.body?.withOptional);
+    if (!withOptional) { res.status(400).json({ error: 'withOptional must be a list of at most 32 package names' }); return; }
     try {
       const { registry, entry } = await locate(pool, slug, name);
-      logger.warn({ name, registry: slug, by: caller.sub }, 'INSTALLING PACKAGE FROM REGISTRY');
-      const result = await runInstall(pool, registry, entry, caller.sub ?? null, deps,
-        typeof req.body?.replaceSource === 'string' ? req.body.replaceSource : undefined);
-      if (!result.ok) { res.status(result.status).json({ error: result.error, log: result.log, replacement: result.replacement }); return; }
-      res.status(201).json({ installed: true, name: entry.name, registry: slug, log: result.log });
+      logger.warn({ name, registry: slug, withOptional, by: caller.sub }, 'INSTALLING PACKAGE FROM REGISTRY');
+      const result = await runInstall(pool, registry, entry, caller.sub ?? null, deps, {
+        replaceSource: typeof req.body?.replaceSource === 'string' ? req.body.replaceSource : undefined, withOptional,
+      });
+      if (!result.ok) {
+        res.status(result.status).json({ error: result.error, log: result.log, replacement: result.replacement, dependencies: result.dependencies });
+        return;
+      }
+      res.status(201).json({ installed: true, name: entry.name, registry: slug, log: result.log, dependencies: result.dependencies });
     } catch (err) { fail(res, err, 'POST /install'); }
   });
 

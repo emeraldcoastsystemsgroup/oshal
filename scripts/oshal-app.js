@@ -19,6 +19,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Validate package-owned Takeout declarations before install and verify their named handler exports during route compilation.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Validate first-class manifest schedules before install, including service-route ownership/auth, named handler exports, and static bounded bodies.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Validate fixed in-process package tool declarations and required capabilities before installation.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers through the shared contract (oshal-app-dependencies.js): `validate` checks required/optional (or the legacy flat form); `install` resolves REQUIRED apps fail-closed as before and installs OPTIONAL apps only when asked (`--with a,b` / `--with-optional`), recording both tiers in .oshal-install.json; `uninstall` blocks on required dependents only and reports optional ones; `init` scaffolds the tiered form.
  *
  * The npm-of-OSHAL-apps helper. An OSHAL app package is a folder with a definition
  * file (oshal-app.yaml — the package.json analog), personas, compiled routes, migrations,
@@ -45,6 +46,7 @@ const { validateScheduleDeclarations } = require('./oshal-app-schedules');
 const { loadApplicationAuthorization } = require('./oshal-authorization-contract');
 const { validatePackageTools } = require('./oshal-package-tools');
 const { loadPackageTestCatalog } = require('./oshal-test-catalog');
+const { inspectAppDependencies, readAppDependencies, DEPENDENCY_TIERS_SKILL } = require('./oshal-app-dependencies');
 const {
   loadPackageAuditAssessment,
   resolvePackageAuditMode,
@@ -162,12 +164,10 @@ function validatePackage(dir) {
     }
   });
 
-  // ── dependencies well-formed ────────────────────────────────────────────────
-  if (m.dependencies) {
-    for (const k of ['apps', 'tools', 'connectors']) {
-      if (m.dependencies[k] !== undefined && !Array.isArray(m.dependencies[k])) err(`dependencies.${k} must be an array`);
-    }
-  }
+  // ── dependencies: required/optional tiers (or the legacy flat form = all required) ──
+  // The same contract the runtime loader applies, so a package that validates here loads there.
+  const dependencies = inspectAppDependencies(m);
+  dependencies.problems.forEach(err);
 
   // ── routes: auth (ADR-085 D2) ──────────────────────────────────────────────
   // Shape + loud warnings only. The AUTHORITATIVE mode check is fail-closed server-side
@@ -260,8 +260,8 @@ function validatePackage(dir) {
   }
   // A kernel skill is always present — it is never an installable app. Catching this here saves an
   // author the install-time "dependency not found" hunt (this is exactly what little-monsters had).
-  if (m.dependencies && Array.isArray(m.dependencies.apps) && m.dependencies.apps.includes('presentations')) {
-    warn("dependencies.apps includes 'presentations' — deck generation is a KERNEL SKILL, not an app dependency. Use `uses: [deck-generation]`.");
+  if ([...dependencies.required.apps, ...dependencies.optional.apps].includes('presentations')) {
+    warn("dependencies name the 'presentations' app — deck generation is a KERNEL SKILL, not an app dependency. Use `uses: [deck-generation]`.");
   }
 
   // ── theme: a known skin id, or a bundled ui/*.css ───────────────────────────
@@ -312,14 +312,28 @@ source:
   path: ${name}
   ref: main
 
-# Dependencies. TODAY the installer resolves \`apps\` only (fail-closed);
-# \`tools\`/\`connectors\` are declarative (tools: not yet verified/ref-counted —
-# BACKLOG D11; connectors: ALSO the app's runtime connector allow-list —
-# [] means this app's surfaces never offer account connections).
+# Kernel skills this app calls. ${DEPENDENCY_TIERS_SKILL} is the floor for the
+# required/optional dependencies below: an older core refuses the package instead
+# of installing it without its required dependencies.
+uses: [${DEPENDENCY_TIERS_SKILL}]
+
+# Dependencies, in two tiers:
+#   required: installed with this app (missing apps come from the same store,
+#             fail-closed); a required tool must exist at load; a required app
+#             cannot be removed while this app is installed.
+#   optional: offered at install (App Loader checkbox, or install --with <app>),
+#             never installed unasked and never blocking; the app works without.
+# connectors (both tiers) is ALSO the app's connector allow-list: [] everywhere
+# means this app's surfaces never offer account connections.
 dependencies:
-  apps: []
-  tools: []
-  connectors: []
+  required:
+    apps: []
+    tools: []
+    connectors: []
+  optional:
+    apps: []
+    tools: []
+    connectors: []
 
 # RAG collections this app OWNS (glob prefixes). Surfaced in uninstall-impact;
 # deleted at uninstall only under the operator's explicit ?dropData=true.
@@ -379,37 +393,73 @@ function defaultDeployDir() {
 }
 
 /**
- * Resolve a package's dependencies.apps (ADR-085 §3): each dep must be (a) already
- * installed in the deploy dir, (b) shipped by the framework (swarm-apps/<dep>.yaml in
- * cwd), or (c) installable from the same store — in which case it is installed
- * recursively. Fail-closed on anything unresolvable. `seen` breaks dependency cycles.
- * Returns the resolution map for provenance, or null on failure.
+ * Resolve one dependency app (ADR-085 §3): (a) already installed in the deploy dir, (b) shipped
+ * by the framework (swarm-apps/<dep>.yaml in cwd), or (c) — when `install` is true — installed
+ * from the same store, recursively. `seen` breaks dependency cycles. Returns the resolution
+ * state, 'not-selected' for an absent app we were not asked to install, or null on failure.
+ */
+function resolveDependencyApp(dep, opts, seen, install) {
+  if (seen.has(dep)) return 'cycle-already-resolving';
+  if (fs.existsSync(path.join(opts.destAbs, dep, 'oshal-app.yaml'))) return 'installed';
+  if (fs.existsSync(path.resolve(process.cwd(), 'swarm-apps', `${dep}.yaml`))) return 'core';
+  if (!install) return 'not-selected';
+  console.log(C.dim(`  dependency "${dep}" not present — installing from the store …`));
+  // Only the requested package's optional choices apply; a dependency installs its REQUIRED apps.
+  const rc = installPackage(dep, {
+    repo: opts.repo,
+    ref: opts.ref,
+    dest: opts.destAbs,
+    auditMode: opts.auditMode,
+    registry: opts.registry,
+  }, seen);
+  if (rc === 0) return 'installed-from-store';
+  if (rc === require('./oshal-install-source').SOURCE_CONFLICT_EXIT) {
+    const error = new Error(`dependency ${dep} requires source replacement review`);
+    error.code = rc;
+    throw error;
+  }
+  return null;
+}
+
+/** The optional apps to install: all (`--with-optional`), the named ones (`--with`), or none. */
+function selectOptionalApps(optionalApps, opts, name) {
+  if (opts.withOptional) return new Set(optionalApps);
+  const requested = opts.with || [];
+  const unknown = requested.filter((dep) => !optionalApps.includes(dep));
+  if (unknown.length) {
+    console.error(C.red(`--with names ${unknown.join(', ')} — not an optional dependency of "${name}"`
+      + ` (optional apps: ${optionalApps.length ? optionalApps.join(', ') : 'none'}).`));
+    return null;
+  }
+  return new Set(requested);
+}
+
+/**
+ * Resolve a package's dependency tiers. REQUIRED apps resolve fail-closed exactly as before;
+ * OPTIONAL apps install only when selected (a selected one that cannot install also fails closed —
+ * the operator asked for it). Returns `{ required, optional }` resolution maps for provenance, or
+ * null on failure (nothing partially enabled).
  */
 function resolveDependencies(manifest, opts, seen) {
-  const deps = (manifest.dependencies && Array.isArray(manifest.dependencies.apps)) ? manifest.dependencies.apps : [];
-  const resolution = {};
-  for (const dep of deps) {
-    if (seen.has(dep)) { resolution[dep] = 'cycle-already-resolving'; continue; }
-    if (fs.existsSync(path.join(opts.destAbs, dep, 'oshal-app.yaml'))) { resolution[dep] = 'installed'; continue; }
-    if (fs.existsSync(path.resolve(process.cwd(), 'swarm-apps', `${dep}.yaml`))) { resolution[dep] = 'core'; continue; }
-    console.log(C.dim(`  dependency "${dep}" not present — installing from the store …`));
-    const rc = installPackage(dep, {
-      repo: opts.repo,
-      ref: opts.ref,
-      dest: opts.destAbs,
-      auditMode: opts.auditMode,
-      registry: opts.registry,
-    }, seen);
-    if (rc !== 0) {
-      if (rc === require('./oshal-install-source').SOURCE_CONFLICT_EXIT) {
-        const error = new Error(`dependency ${dep} requires source replacement review`);
-        error.code = rc;
-        throw error;
-      }
-      console.error(C.red(`  unresolved dependency "${dep}" — failing closed (nothing partially enabled).`));
+  const tiers = readAppDependencies(manifest);
+  const resolution = { required: {}, optional: {} };
+  for (const dep of tiers.required.apps) {
+    const state = resolveDependencyApp(dep, opts, seen, true);
+    if (state === null) {
+      console.error(C.red(`  unresolved required dependency "${dep}" — failing closed (nothing partially enabled).`));
       return null;
     }
-    resolution[dep] = 'installed-from-store';
+    resolution.required[dep] = state;
+  }
+  const selected = selectOptionalApps(tiers.optional.apps, opts, manifest.name);
+  if (!selected) return null;
+  for (const dep of tiers.optional.apps) {
+    const state = resolveDependencyApp(dep, opts, seen, selected.has(dep));
+    if (state === null) {
+      console.error(C.red(`  selected optional dependency "${dep}" could not be installed — failing closed.`));
+      return null;
+    }
+    resolution.optional[dep] = state;
   }
   return resolution;
 }
@@ -535,6 +585,18 @@ function landInstalledPackage(src, dest, details) {
   });
 }
 
+/** Print both dependency tiers, and how to add the optional apps that were not installed. */
+function reportResolution(name, resolution) {
+  const entries = ['required', 'optional'].flatMap((tier) => Object.entries(resolution[tier] || {})
+    .filter(([, state]) => state !== 'not-selected')
+    .map(([dep, state]) => `${dep}=${state}${tier === 'optional' ? ' (optional)' : ''}`));
+  if (entries.length) console.log(C.dim(`  deps: ${entries.join(', ')}`));
+  const skipped = Object.keys(resolution.optional || {}).filter((dep) => resolution.optional[dep] === 'not-selected');
+  if (skipped.length) {
+    console.log(C.dim(`  optional, not installed: ${skipped.join(', ')} — add with: install ${name} --with ${skipped.join(',')}`));
+  }
+}
+
 /** Copy only after the final provenance check has passed under the package lock. */
 function writeInstalledPackage(src, dest, details) {
   const target = path.join(dest, details.name);
@@ -558,8 +620,7 @@ function writeInstalledPackage(src, dest, details) {
     audit: auditProvenance(details.assessment),
   }, null, 2));
   console.log(C.green(`✓ installed ${details.name} → ${target}`) + C.dim(`  (${details.sha.slice(0, 8)})`));
-  const depNames = Object.keys(details.resolution);
-  if (depNames.length) console.log(C.dim(`  deps: ${depNames.map((dep) => `${dep}=${details.resolution[dep]}`).join(', ')}`));
+  reportResolution(details.name, details.resolution);
   console.log(C.dim('  the swarm loader auto-loads deployed-apps/ on boot; or hot-load now:'));
   console.log(C.dim(`  curl -X POST localhost:5000/api/swarm/apps/load -H 'content-type: application/json' -d '{"path":"${target.replace(/\\/g, '/')}/oshal-app.yaml"}'`));
   return 0;
@@ -620,7 +681,9 @@ function installPackage(name, opts, seen) {
     }
     const manifest = readValidatedManifest(src, name, repo, assessment);
     if (!manifest) return 1;
-    const resolution = resolveDependencies(manifest, { repo, ref, destAbs: dest, auditMode, registry: opts.registry }, seen);
+    const resolution = resolveDependencies(manifest, {
+      repo, ref, destAbs: dest, auditMode, registry: opts.registry, with: opts.with, withOptional: opts.withOptional,
+    }, seen);
     if (resolution === null) return 1;
 
     const sha = git(['-C', tmp, 'rev-parse', 'HEAD']);
@@ -752,6 +815,39 @@ function buildPackage(pkgDirInput, opts) {
  * first). Schema is never dropped — if the package ships migrations/uninstall.sql the
  * command prints how to apply it (explicit opt-in, data-loss gate).
  */
+/**
+ * The offline uninstall impact over the deploy dir, mirroring the SERVER's semantics
+ * (SwarmAppService.uninstallImpact / tool-ownership.ts): REQUIRED app dependents and required-tool
+ * dependents block; OPTIONAL dependents are reported and never block; orphans are the target's
+ * own required apps nothing else requires. The CLI scans the deploy dir where the server scans the
+ * ACTIVE registry rows; what counts and what BLOCKS is the same rule.
+ */
+function localUninstallImpact(dest, name) {
+  const read = (dir) => {
+    try { return yaml.load(fs.readFileSync(path.join(dir, 'oshal-app.yaml'), 'utf8')) || {}; } catch { return {}; }
+  };
+  const installed = fs.readdirSync(dest).filter((e) => fs.existsSync(path.join(dest, e, 'oshal-app.yaml')));
+  const tiers = new Map(installed.map((e) => [e, inspectAppDependencies(read(path.join(dest, e)))]));
+  // D11 server parity: PROVIDED = the manifest's tools[].name ONLY — deliberately NOT
+  // ui.static[].toolName (ribbon surface ids, not registry tools; the server's
+  // providedToolNames() draws the same line). DEPENDED = the required tools.
+  const targetTools = read(path.join(dest, name)).tools;
+  const provided = new Set((Array.isArray(targetTools) ? targetTools : []).map((t) => t && t.name).filter(Boolean));
+  const others = installed.filter((e) => e !== name);
+  const toolDependents = others // [{ app, tools }] — same shape as the server's computeToolDependents
+    .map((e) => ({ app: e, tools: tiers.get(e).required.tools.filter((t) => provided.has(t)) }))
+    .filter((d) => d.tools.length);
+  const orphans = tiers.get(name).required.apps.filter((dep) => installed.includes(dep)
+    && !others.some((e) => e !== dep && tiers.get(e).required.apps.includes(dep)));
+  return {
+    provided,
+    toolDependents,
+    orphans,
+    dependents: others.filter((e) => tiers.get(e).required.apps.includes(name)),
+    optionalDependents: others.filter((e) => tiers.get(e).optional.apps.includes(name)),
+  };
+}
+
 function uninstallPackage(name, opts) {
   const dest = path.resolve(opts.dest || defaultDeployDir());
   const target = path.join(dest, name);
@@ -759,47 +855,11 @@ function uninstallPackage(name, opts) {
     console.error(C.red(`"${name}" is not installed in ${dest}`));
     return 1;
   }
-  // Impact: scan the OTHER installed packages' declared deps — apps AND tools, mirroring
-  // the SERVER's semantics (SwarmAppService.uninstallImpact / tool-ownership.ts). The CLI
-  // scans the deploy dir (its offline view) where the server scans the ACTIVE registry rows;
-  // what counts as provided/depended and what BLOCKS is byte-for-byte the same rule.
-  const readManifestObj = (dir) => {
-    try { return yaml.load(fs.readFileSync(path.join(dir, 'oshal-app.yaml'), 'utf8')) || {}; } catch { return {}; }
-  };
-  const readDeps = (dir) => {
-    const m = readManifestObj(dir);
-    return (m.dependencies && Array.isArray(m.dependencies.apps)) ? m.dependencies.apps : [];
-  };
-  // D11 server parity: PROVIDED = the manifest's tools[].name ONLY — deliberately NOT
-  // ui.static[].toolName (ribbon surface ids, not registry tools; the server's
-  // providedToolNames() draws the same line). DEPENDED = dependencies.tools.
-  const providedTools = (dir) => {
-    const m = readManifestObj(dir);
-    return (Array.isArray(m.tools) ? m.tools : []).map((t) => t && t.name).filter(Boolean);
-  };
-  const dependedTools = (dir) => {
-    const m = readManifestObj(dir);
-    return (m.dependencies && Array.isArray(m.dependencies.tools)) ? m.dependencies.tools : [];
-  };
-  const provided = new Set(providedTools(target));
-  const dependents = [];
-  const toolDependents = []; // [{ app, tools }] — same shape as the server's computeToolDependents
-  for (const entry of fs.readdirSync(dest)) {
-    if (entry === name) continue;
-    const dir = path.join(dest, entry);
-    if (!fs.existsSync(path.join(dir, 'oshal-app.yaml'))) continue;
-    if (readDeps(dir).includes(name)) dependents.push(entry);
-    const overlap = provided.size ? dependedTools(dir).filter((t) => provided.has(t)) : [];
-    if (overlap.length) toolDependents.push({ app: entry, tools: overlap });
-  }
-  const myDeps = readDeps(target);
-  const orphans = myDeps.filter((dep) =>
-    fs.existsSync(path.join(dest, dep, 'oshal-app.yaml')) && // only installed packages can orphan
-    !fs.readdirSync(dest).some((e) => e !== name && e !== dep && fs.existsSync(path.join(dest, e, 'oshal-app.yaml')) && readDeps(path.join(dest, e)).includes(dep)),
-  );
+  const { provided, dependents, optionalDependents, toolDependents, orphans } = localUninstallImpact(dest, name);
 
   console.log(C.bold(`\nuninstall impact — ${name}`));
   console.log(`  dependents: ${dependents.length ? C.red(dependents.join(', ')) : C.green('none')}`);
+  console.log(`  optional dependents (lose that integration, never block): ${optionalDependents.length ? C.yellow(optionalDependents.join(', ')) : C.dim('none')}`);
   console.log(`  tools provided: ${provided.size ? [...provided].join(', ') : C.dim('none')}`);
   console.log(`  tool dependents: ${toolDependents.length ? C.red(toolDependents.map((d) => `${d.app} needs tool(s) ${d.tools.join(', ')}`).join('; ')) : C.green('none')}`);
   console.log(`  would-be orphans (NOT auto-removed): ${orphans.length ? C.yellow(orphans.join(', ')) : C.dim('none')}`);
@@ -832,23 +892,27 @@ function usage() {
   ${C.bold('init')} <name> [--dir <parent>]        scaffold a new app package
   ${C.bold('validate')} <package-dir>               lint a package against the app-package contract
   ${C.bold('install')} <name> [--repo <url>] [--ref <ref>] [--dest <dir>] [--replace-source <token>]
-                                    [--audit-mode compatible|enforce]
+                                    [--audit-mode compatible|enforce] [--with a,b | --with-optional]
                                     pull a package from a git store repo (git-subdir) into
                                     deployed-apps/ where the swarm loader picks it up —
-                                    resolving dependencies.apps npm-style and enforcing
-                                    the store audit policy (default: compatible)
+                                    installing its REQUIRED apps npm-style (fail-closed),
+                                    its OPTIONAL apps only when named (--with) or all
+                                    (--with-optional), and enforcing the store audit
+                                    policy (default: compatible)
   ${C.bold('build')} <package-dir> [--framework <oshal checkout>]
                                     compile the package's src-routes/*.ts → routes/*.js
                                     against a framework checkout, @/ imports preserved
   ${C.bold('uninstall')} <name> [--dest <dir>] [--yes] [--force]
-                                    dependency-aware removal: shows the impact (dependents
-                                    block; orphans reported, never auto-removed); schema kept
+                                    dependency-aware removal: shows the impact (required
+                                    dependents block; optional dependents and orphans are
+                                    reported, never auto-removed); schema kept
 
 Examples:
   node scripts/oshal-app.js init my-app
   node scripts/oshal-app.js validate ../oshal-applications/little-monsters
   node scripts/oshal-app.js install hello-oshal            # from the default store
   node scripts/oshal-app.js install little-monsters --dest ./deployed-apps
+  node scripts/oshal-app.js install scan-to-print --with cad-studio   # plus one optional app
 `);
 }
 
@@ -878,6 +942,8 @@ function main(argv) {
       auditMode: flag('--audit-mode'),
       registry: flag('--registry'),
       replaceSource: flag('--replace-source'),
+      with: rest.includes('--with') ? String(flag('--with') || '').split(',').map((s) => s.trim()).filter(Boolean) : [],
+      withOptional: rest.includes('--with-optional'),
     });
   }
   if (cmd === 'build') {

@@ -20,6 +20,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com  | ADR-141: readManifest validates `kind: group` (no code keys, members required, toolbar borrows only from members, setup steps name a member + a toolbar surface) and the per-user `readiness:` block (own mount, canonical path, session-admitting route, RFC 6901 pointers) — both fail closed at load, from swarm-app-group.ts.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Validate explicit user smoke prerequisites against read-only PAT probes and the closest session-authenticated route.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Validate package-owned tool declarations through the shared tool contract before activation.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | Validate dependencies (required/optional tiers or the legacy flat form) through the shared CLI/runtime contract, fail-closed at load.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -45,6 +46,7 @@ import { validateArtifactActionsDeclaration } from '@/shared/artifact-exchange';
 import { loadApplicationAuthorization } from '@/shared/application-authorization';
 import { validatePackageTools } from '@/shared/package-tools';
 import { loadPackageTestCatalog } from '@/shared/package-testing';
+import { readAppDependencies } from '@/shared/app-dependencies';
 import { validateGroupManifest, validateReadinessDeclarations, validateGuestSeedDeclaration, validateSummaryDeclaration } from './swarm-app-group';
 import { validateAppIntegrations } from './app-integrations';
 import {
@@ -766,10 +768,11 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
       throw new Error(
         `Manifest ${absPath}: uses names unknown kernel skill(s): ${unknown.join(', ')}. ` +
           `Known skills: ${[...KERNEL_SKILL_IDS].join(', ')}. ` +
-          `A skill is a kernel capability an app CALLS — an app dependency goes under dependencies.apps.`,
+          `A skill is a kernel capability an app CALLS — an app dependency goes under dependencies.required/optional.`,
       );
     }
   }
+  try { readAppDependencies(manifest); } catch (err) { throw new Error(`Manifest ${absPath}: ${(err as Error).message}`); }
 
   // ADR-090 addendum: `skillProfiles:` names PROFILEABLE CAPABILITIES (not kernel modules), and
   // validation is fail-closed on both the key AND the body. An unknown capability key would sit in

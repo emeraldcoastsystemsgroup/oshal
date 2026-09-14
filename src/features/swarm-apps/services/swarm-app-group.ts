@@ -6,11 +6,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups. A `kind: group` manifest carries NO code and binds installed member apps into one front door: its `toolbar[]` BORROWS member surfaces by app + surface name (a reference the loader resolves — never a copied URL, so a renamed surface fails the group instead of leaving a dead tile), its `setup[]` drives the ONE kernel setup dashboard from the members' per-user `readiness:` probes (the session-authenticated sibling of `smoke:`). Static validation (loader) and resolution against the active members (service: fail-closed at activation, lenient-with-warning at profile synthesis) both live here so the service stays under its size budget.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guest-seed contract: validateGuestSeedDeclaration validates the manifest's `guestSeed:` hook fail-closed at load, mirroring readiness but requiring a SERVICE-admitting owner route (service | service-or-oidc) — core, not a browser session, is the caller (it POSTs with the service secret + x-oshal-user-sub = the guest sub). An app that declares a guest seed behind a session-only route would be uncallable by the orchestrator, so that's a load error, not a silent no-op.
  * Home customization | Codex | Validate optional selectable metric catalog pointers under the existing session-owned route contract.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps (dependencies.required.apps, or the legacy dependencies.apps), read through the shared dependency contract; optional apps are install-time offers, never members.
  */
 
 import fs from 'fs';
 import yaml from 'js-yaml';
 import { resolveRouteAuthMode } from '@/shared/route-auth';
+import { readAppDependencies } from '@/shared/app-dependencies';
 import type {
   SwarmAppGroupSetupStep,
   SwarmAppGroupToolbarEntry,
@@ -152,16 +154,11 @@ function isJsonPointer(value: unknown): value is string {
 }
 
 function memberNames(manifest: SwarmAppManifest, absPath: string): string[] {
-  const members = manifest.dependencies?.apps;
-  if (!Array.isArray(members) || members.length === 0) {
-    throw new Error(`Manifest ${absPath}: a group must list its member apps under dependencies.apps (non-empty)`);
-  }
-  const seen = new Set<string>();
-  for (const m of members) {
-    if (typeof m !== 'string' || !SLUG.test(m)) throw new Error(`Manifest ${absPath}: dependencies.apps entries must be package slugs`);
-    if (m === manifest.name) throw new Error(`Manifest ${absPath}: a group cannot be its own member`);
-    if (seen.has(m)) throw new Error(`Manifest ${absPath}: dependencies.apps repeats "${m}"`);
-    seen.add(m);
+  let members: string[];
+  try { members = readAppDependencies(manifest).required.apps; }
+  catch (err) { throw new Error(`Manifest ${absPath}: ${(err as Error).message}`); }
+  if (members.length === 0) {
+    throw new Error(`Manifest ${absPath}: a group must list its member apps under dependencies.required.apps (non-empty)`);
   }
   return members;
 }
@@ -180,7 +177,7 @@ function validateToolbar(manifest: SwarmAppManifest, absPath: string, members: S
     if (unknown.length) throw new Error(`Manifest ${absPath}: ${at} has unknown field(s): ${unknown.join(', ')} — a tile is BORROWED by reference; label/icon/iframeUrl come from the member`);
     const entry = value as unknown as SwarmAppGroupToolbarEntry;
     if (typeof entry.app !== 'string' || !members.has(entry.app)) {
-      throw new Error(`Manifest ${absPath}: ${at}.app "${String(entry.app)}" is not a member (dependencies.apps: ${[...members].join(', ')})`);
+      throw new Error(`Manifest ${absPath}: ${at}.app "${String(entry.app)}" is not a member (required apps: ${[...members].join(', ')})`);
     }
     if (typeof entry.surface !== 'string' || !SLUG.test(entry.surface)) throw new Error(`Manifest ${absPath}: ${at}.surface must be a surface slug (the member's ui.static[].toolName)`);
     if (entry.group !== undefined && (typeof entry.group !== 'string' || !entry.group.trim())) throw new Error(`Manifest ${absPath}: ${at}.group, when present, must be a non-empty label`);
@@ -237,7 +234,7 @@ export function validateGroupManifest(manifest: SwarmAppManifest, absPath: strin
   }
   const present = GROUP_FORBIDDEN_KEYS.filter((k) => (manifest as unknown as Record<string, unknown>)[k] !== undefined);
   if (present.length) {
-    throw new Error(`Manifest ${absPath}: a group carries no code — remove ${present.join(', ')}. A group binds installed apps (dependencies.apps) and borrows their surfaces (toolbar); anything that executes belongs in a member package.`);
+    throw new Error(`Manifest ${absPath}: a group carries no code — remove ${present.join(', ')}. A group binds installed apps (its required dependencies) and borrows their surfaces (toolbar); anything that executes belongs in a member package.`);
   }
   const members = new Set(memberNames(manifest, absPath));
   const surfaces = validateToolbar(manifest, absPath, members);

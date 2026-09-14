@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-141: a `kind: group` (no code, no smokes of its own) is verified THROUGH its members via options.resolveMember — every member must be installed, active and pass its own smokes, reported as `<member>/<smoke>`; without a resolver the group fails by name rather than passing empty.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Report missing verified-user prerequisites as pending while refusing malformed supplied PATs and executing valid caller tokens over HTTP.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Allow a controller-owned request transport for read-only service smokes without serializing caller sessions or changing other authentication modes.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps, read through @/shared/app-dependencies (dependencies.required.apps or the legacy dependencies.apps).
  */
 
 import fs from 'fs';
@@ -15,6 +16,7 @@ import type {
   SwarmApplicationRecord,
   SwarmAppSmokeDeclaration,
 } from '../types';
+import { requiredAppDependencies } from '@/shared/app-dependencies';
 import { isGroupManifest } from './swarm-app-group';
 
 const MAX_RESPONSE_BYTES = 256 * 1024;
@@ -262,7 +264,7 @@ async function verifyGroupThroughMembers(
   }
   const smokes: AppSmokeResult[] = [];
   const errors: string[] = [];
-  for (const memberName of record.manifest.dependencies?.apps ?? []) {
+  for (const memberName of requiredAppDependencies(record.manifest)) {
     const member = await options.resolveMember(memberName);
     if (!member) { errors.push(`member ${memberName} is not installed`); continue; }
     if (member.status !== 'active') { errors.push(`member ${memberName} is inactive`); continue; }

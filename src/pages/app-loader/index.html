@@ -4,6 +4,7 @@ CHANGE LOG
 SEQ | AUTHOR | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
+2 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers on the confirm screen: required apps listed with how each resolves (installed / built in / installs from this source / unavailable), optional apps as checkboxes whose selection is sent as withOptional, and the dependencies that loaded reported after install.
 -->
 <!--
   App Loader — install applications from ANY git location (ADR-147). Admin only.
@@ -96,6 +97,10 @@ SEQ | AUTHOR | DESCRIPTION
     .impact li { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: .88rem; }
     .impact li b { min-width: 92px; flex-shrink: 0; }
     .impact li.danger { color: var(--red); }
+    .optional-deps { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; }
+    .optional-deps h3 { font-size: .74rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-muted); margin: 0 0 4px; }
+    .optional-deps label { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: .88rem; }
+    .optional-deps label.unavailable { color: var(--ink-muted); }
     .log { font-family: ui-monospace, monospace; font-size: .76rem; background: #10141a; color: #d6e2f0; padding: 12px; border-radius: 8px; max-height: 220px; overflow: auto; white-space: pre-wrap; margin-top: 12px; }
   </style>
 <!-- Shared semantic cards follow the selected portal finish without changing page layout. -->
@@ -192,6 +197,7 @@ SEQ | AUTHOR | DESCRIPTION
       <h2 id="dlgTitle" style="margin:4px 0 10px"></h2>
       <p class="sub" id="dlgSource"></p>
       <ul class="impact" id="dlgImpact"></ul>
+      <div class="optional-deps" id="dlgOptional" hidden></div>
       <p class="hint" id="dlgAudit"></p>
       <label id="dlgReplacement" hidden><input id="dlgReplaceCheck" type="checkbox"> <span id="dlgReplaceText"></span></label>
     </div>
@@ -503,6 +509,51 @@ SEQ | AUTHOR | DESCRIPTION
     // ── The blast-radius screen ───────────────────────────────────────────────
     var dlg = document.getElementById('installDlg');
 
+    // How the installer resolves each dependency app (the server resolves it the same way).
+    var DEP_STATE = {
+      installed: 'already installed',
+      core: 'built in',
+      available: 'installs from this source',
+      unavailable: 'NOT AVAILABLE — not installed and not published by this source',
+    };
+
+    // Rows for the REQUIRED tier: they come with the package, so they belong in the blast radius.
+    function requiredDependencyRows(required) {
+      var rows = [];
+      if (required.apps.length) {
+        rows.push(['requires', required.apps.map(function (a) {
+          return '<strong>' + esc(a.name) + '</strong> (' + esc(DEP_STATE[a.state] || a.state) + ')';
+        }).join(', '), required.apps.some(function (a) { return a.state === 'unavailable'; })]);
+      }
+      if (required.tools.length) rows.push(['needs tools', esc(required.tools.join(', ')), false]);
+      if (required.connectors.length) rows.push(['needs', 'connections: ' + esc(required.connectors.join(', ')), false]);
+      return rows;
+    }
+
+    // The OPTIONAL tier: the app works without these, so each available one is the operator's choice.
+    function renderOptionalDependencies(optional) {
+      var box = document.getElementById('dlgOptional');
+      if (!optional.apps.length && !optional.tools.length && !optional.connectors.length) { box.hidden = true; return; }
+      var html = '<h3>Optional</h3><p class="hint" style="margin:0 0 6px">This app works without these. ' +
+        'Checked apps install from the same source with it.</p>';
+      html += optional.apps.map(function (a) {
+        var choosable = a.state === 'available';
+        var already = a.state === 'installed' || a.state === 'core';
+        return '<label class="' + (choosable || already ? '' : 'unavailable') + '"><input type="checkbox" data-optional-app="' +
+          esc(a.name) + '"' + (already ? ' checked' : '') + (choosable ? '' : ' disabled') + '> ' +
+          '<span><strong>' + esc(a.name) + '</strong> <span class="hint">' + esc(DEP_STATE[a.state] || a.state) + '</span></span></label>';
+      }).join('');
+      if (optional.tools.length) html += '<p class="hint" style="margin:6px 0 0">Can use tools: ' + esc(optional.tools.join(', ')) + '</p>';
+      if (optional.connectors.length) html += '<p class="hint" style="margin:6px 0 0">Can use connections: ' + esc(optional.connectors.join(', ')) + '</p>';
+      box.innerHTML = html;
+      box.hidden = false;
+    }
+
+    function selectedOptionalApps() {
+      return Array.prototype.slice.call(document.querySelectorAll('#dlgOptional input[data-optional-app]:checked:not(:disabled)'))
+        .map(function (input) { return input.getAttribute('data-optional-app'); });
+    }
+
     async function openInstall(registry, name) {
       state.pending = null;
       state.replacement = null;
@@ -512,6 +563,8 @@ SEQ | AUTHOR | DESCRIPTION
       document.getElementById('dlgTitle').textContent = name;
       document.getElementById('dlgSource').textContent = 'Reading the package manifest…';
       document.getElementById('dlgImpact').innerHTML = '';
+      document.getElementById('dlgOptional').hidden = true;
+      document.getElementById('dlgOptional').innerHTML = '';
       document.getElementById('dlgAudit').textContent = '';
       document.getElementById('dlgConfirm').disabled = true;
       if (!dlg.open) dlg.showModal();
@@ -537,8 +590,15 @@ SEQ | AUTHOR | DESCRIPTION
         items.push(['schedules', i.schedules.count
           ? i.schedules.count + ' recurring job(s) — ' + esc(i.schedules.cadences.join(', '))
           : 'none', i.schedules.count > 0]);
-        if (i.connectors.length) items.push(['connectors', esc(i.connectors.join(', ')), false]);
-        if (i.dependencies.length) items.push(['also installs', esc(i.dependencies.join(', ')), false]);
+        if (Array.isArray(i.dependencies)) {
+          // An API from before dependency tiers: one flat list, every entry required.
+          if (i.connectors.length) items.push(['connectors', esc(i.connectors.join(', ')), false]);
+          if (i.dependencies.length) items.push(['also installs', esc(i.dependencies.join(', ')), false]);
+        } else {
+          items = items.concat(requiredDependencyRows(i.dependencies.required));
+          if (i.dependencies.problems.length) items.push(['dependencies', esc(i.dependencies.problems.join('; ')), true]);
+          renderOptionalDependencies(i.dependencies.optional);
+        }
 
         document.getElementById('dlgImpact').innerHTML = items.map(function (it) {
           return '<li' + (it[2] ? ' class="danger"' : '') + '><b>' + it[0] + '</b><span>' + it[1] + '</span></li>';
@@ -586,9 +646,14 @@ SEQ | AUTHOR | DESCRIPTION
       try {
         var payload = Object.assign({}, state.pending);
         if (state.replacement) payload.replaceSource = state.replacement.token;
+        var chosen = selectedOptionalApps();
+        if (chosen.length) payload.withOptional = chosen;
         var r = await call('POST', '/api/swarm/registries/install', payload);
         dlg.close();
-        show('ok', 'Installed "' + r.name + '" and loaded it live.');
+        var deps = r.dependencies || { loaded: [], failed: [] };
+        show('ok', 'Installed "' + r.name + '" and loaded it live.' +
+          (deps.loaded.length ? ' Also installed: ' + deps.loaded.join(', ') + '.' : '') +
+          (deps.failed.length ? ' Did not load: ' + deps.failed.map(function (f) { return f.name; }).join(', ') + ' (see the server log).' : ''));
         state.pending = null;
         await load(true);
       } catch (e) {

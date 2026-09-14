@@ -40,6 +40,7 @@
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: applyArtifactActions on activate / unregister on deactivate — the app's "Send to…" declarations join the shared registry with the skill-profiles discipline (replace-by-app, retract-on-absent, full teardown on toggle-off).
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | synthesiseProfile forwards ribbon.hideStatusBar (true → true, else undefined) exactly like hideChatPanel/hideAssistant, so the cockpit can drop the operational status bar for apps that are not ticket/queue-shaped.
  * 35 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups: activate() fail-closes a `kind: group` whose borrowed toolbar surfaces or setup readiness do not resolve against its ACTIVE members (member + surface named; the record lands inactive); synthesiseProfile renders a group as its kernel setup-dashboard tile followed by the member surfaces its toolbar borrows (resolved at synthesis, so a member that moves a surface is followed); getGroupSetupPlan() hands the dashboard route the steps with each member's probe. autoLoadAll loads groups AFTER every app (orderGroupsLast) so directory order cannot fail-close a group's first boot. Resolution logic lives in swarm-app-group.ts (this file is over its 800-line budget); the static-item map moved there as staticRibbonItems.
+ * 38 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers: only a REQUIRED app dependency blocks an uninstall and counts toward orphans; apps that list the target as OPTIONAL are reported (optionalDependents) and never block. Group members and the connector allow-list read through @/shared/app-dependencies so the tiered and legacy forms agree.
  */
 
 import type { Pool } from 'pg';
@@ -47,6 +48,7 @@ import { existsSync, readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import yaml from 'js-yaml';
 import { createChildLogger } from '@/shared/logger';
+import { connectorAllowList, optionalAppDependencies, requiredAppDependencies } from '@/shared/app-dependencies';
 import {
   registerDynamicToolUI,
   deregisterDynamicToolUI,
@@ -552,14 +554,16 @@ export class SwarmAppService {
 
   /**
    * @description ADR-085 §5 uninstall impact: who depends on this app, and which of ITS
-   * dependencies would become orphans if it left. Dependents = ACTIVE installed apps whose
-   * manifest.dependencies.apps names it (removal is blocked while any exist). Orphans =
-   * this app's own app-dependencies that no OTHER active app would still depend on —
-   * OFFERED for removal, never auto-removed (nothing cascades).
+   * dependencies would become orphans if it left. Dependents = ACTIVE installed apps that REQUIRE
+   * it (removal is blocked while any exist). Optional dependents = active apps that merely can use
+   * it — reported, never blocking. Orphans = this app's own required app-dependencies that no
+   * OTHER active app still requires — OFFERED for removal, never auto-removed (nothing cascades).
    */
   async uninstallImpact(name: string): Promise<{
     exists: boolean;
     dependents: string[];
+    /** Active apps that list this app as an OPTIONAL dependency — they lose that integration. */
+    optionalDependents: string[];
     orphanCandidates: string[];
     /** Live RAG collections the manifest's ragCollections globs match — what a
      *  dropData uninstall would delete. Empty when undeclared or no teardown port. */
@@ -575,6 +579,7 @@ export class SwarmAppService {
       return {
         exists: false,
         dependents: [],
+        optionalDependents: [],
         orphanCandidates: [],
         ragCollections: [],
         toolsProvided: [],
@@ -582,7 +587,7 @@ export class SwarmAppService {
       };
     }
     const all = (await this.repo.list()).filter((r) => r.status === 'active' && r.name !== name);
-    const depsOf = (r: SwarmApplicationRecord): string[] => r.manifest.dependencies?.apps ?? [];
+    const depsOf = (r: SwarmApplicationRecord): string[] => requiredAppDependencies(r.manifest);
     const dependents = all.filter((r) => depsOf(r).includes(name)).map((r) => r.name);
     const orphanCandidates = depsOf(record).filter(
       (dep) => !all.some((r) => depsOf(r).includes(dep)),
@@ -590,6 +595,7 @@ export class SwarmAppService {
     return {
       exists: true,
       dependents,
+      optionalDependents: all.filter((r) => optionalAppDependencies(r.manifest).includes(name)).map((r) => r.name),
       orphanCandidates,
       ragCollections: await this.matchRagCollections(record),
       toolsProvided: providedToolNames(record.manifest),
@@ -828,11 +834,9 @@ export class SwarmAppService {
       themeCssUrl,
       assistant,
       chatBots: chatBots.length ? chatBots : undefined,
-      // Connector allow-list: forwarded only when the manifest declares the key —
-      // absent must stay absent so legacy apps keep the unfiltered catalog.
-      connectors: Array.isArray(manifest.dependencies?.connectors)
-        ? manifest.dependencies.connectors
-        : undefined,
+      // Connector allow-list (both dependency tiers): forwarded only when the manifest declares
+      // the key — absent must stay absent so legacy apps keep the unfiltered catalog.
+      connectors: connectorAllowList(manifest),
       // Surface-bridge op allow-list: forwarded only when declared. The relay treats
       // absence as an EMPTY allow-list (fail-closed) — no declaration = no bridge.
       surfaceOps: Array.isArray(manifest.surface?.ops) ? manifest.surface.ops : undefined,
@@ -879,7 +883,7 @@ export class SwarmAppService {
    */
   private async activeMembers(group: SwarmAppManifest): Promise<Map<string, SwarmAppManifest>> {
     const members = new Map<string, SwarmAppManifest>();
-    for (const name of group.dependencies?.apps ?? []) {
+    for (const name of requiredAppDependencies(group)) {
       const rec = await this.repo.findByName(name);
       if (rec?.status === 'active') members.set(name, rec.manifest);
     }

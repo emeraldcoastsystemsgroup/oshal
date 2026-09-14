@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 D8: lock the kernel-skill contract. The kernel's skills are its package-facing API — every declared module must exist AND be re-exported by the build anchor (the re-export is the only thing that carries a feature into dist/, since tsconfig.server.json excludes src/features/**). Also proves the manifest `uses:` validator fails CLOSED on an unknown skill id, so a typo dies at load instead of crashing an installed app at mount.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #5 (finance): the contract grows to eleven — 'payments' is pinned as a declared skill because the finance rip removed its last core importer and BOTH the finance and payments store packages resolve @/features/payments from dist. The spec list is the guard that a future "cleanup" of the anchor can't silently unpin it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin authenticated-artifacts and package-tools in the exact declared capability contract.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin app-dependencies: the floor a manifest names when it uses dependencies.required/optional, so an older core refuses the package instead of installing it without its required dependencies.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -60,6 +61,7 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
     // contract keeps @/features/payments in dist.
     expect([...KERNEL_SKILL_IDS].sort()).toEqual(
       [
+        'app-dependencies',
         'application-authorization',
         'authenticated-artifacts',
         'package-tools',

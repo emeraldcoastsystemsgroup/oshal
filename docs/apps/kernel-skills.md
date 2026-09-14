@@ -27,6 +27,7 @@ the carve doesn't prune them out of `dist/` (the google-calendar/notifications b
 | `scheduling` | `@/features/scheduling` | Manifest `schedules:` register and tear down through it. |
 | `memory` | `@/features/memory`, `@/features/user-model`, `@/features/personal-data` | Cross-app user state. |
 | `tool-registry` | `@/features/tool-registry`, `@/features/llm-provider` | Tool + model access — the aggregation thesis (ADR-049). |
+| `app-dependencies` | `@/shared/app-dependencies` | Compatibility floor for `dependencies.required` / `dependencies.optional`. A manifest using the tiered form declares it, so an older core refuses the package instead of installing it without its required dependencies. See [dependencies](authoring-app-packages.md#dependencies--lifecycle). |
 | `test-catalog` | `@/shared/package-testing` | Versioned package test declarations registered on activation. See [the catalog contract](../testing/package-test-catalog.md); local runners remain explicit prerequisites. |
 | `application-authorization` | `@/shared/application-authorization` | Imported application roles and permissions evaluated for the current exact user and selected business tenant. |
 | `package-tools` | `@/shared/package-tools` | Activation-scoped `ctx.tools.register` handlers run under current caller authorization and the tool approval policy. |
@@ -45,14 +46,17 @@ Source of truth: [`src/shared/kernel-skills/registry.ts`](../../src/shared/kerne
 uses:
   - deck-generation
   - rag
+  - app-dependencies   # the floor for the required/optional form below
 dependencies:
-  apps: []        # a SKILL never goes here — it isn't an installable app
+  required:
+    apps: []      # a SKILL never goes here — it isn't an installable app
 ```
 
 Validation is **fail-closed**: an unknown skill id fails at manifest load, not at mount.
 
-**A skill is not an app dependency.** `dependencies.apps` is for real apps — it drives install
-resolution and the reverse-dependency guard. A skill is always present, so it needs neither.
+**A skill is not an app dependency.** `dependencies.required.apps` / `dependencies.optional.apps`
+are for real apps — they drive install resolution and the reverse-dependency guard. A skill is
+always present, so it needs neither.
 Little Monsters used to declare `dependencies.apps: [presentations]`; what it actually needed was
 the always-present `deck-generation` engine. When the presentations app carves to the store, only
 its **surface** carves — the engine stays kernel ("skills with a surface", migration plan §2).

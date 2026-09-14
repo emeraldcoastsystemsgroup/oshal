@@ -8,11 +8,13 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Execute sealed offline Node suites in a disposable sandbox with current authority and source checks.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Carry an optional request-bound service-smoke transport without adding caller sessions to reusable execution authority.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Verify browser-runner capabilities on the image, re-seal registrations when they change, require the Node harness for Playwright recipes and run them under the browser profile.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps, read through @/shared/app-dependencies (dependencies.required.apps or the legacy dependencies.apps).
  */
 
 import { createHash } from 'crypto';
 import path from 'node:path';
 import { createChildLogger } from '@/shared/logger';
+import { requiredAppDependencies } from '@/shared/app-dependencies';
 import type { SwarmApplicationRecord, SwarmAppSmokeDeclaration } from '../types';
 import { userSmokePrerequisite, verifyAppSmokes, type AppSmokeVerificationOptions } from './app-smoke-verifier';
 import { loadPackageTestCatalog, packageTestSource, type LoadedPackageTestCatalog, type PackageTestCase, type PackageTestLevel, type PackageTestRunner } from '@/shared/package-testing';
@@ -243,7 +245,7 @@ export class InstalledAppTestCatalog {
     return [...this.registrations].filter(([name]) => visibleApps.has(name)).map(([name, entry]) => {
       const group = entry.record.manifest.kind === 'group';
       const caseIds = [...new Set([...entry.cases.keys(), ...(group
-        ? (entry.record.manifest.dependencies?.apps ?? []).filter(member => visibleApps.has(member))
+        ? requiredAppDependencies(entry.record.manifest).filter(member => visibleApps.has(member))
           .flatMap(member => [...(this.registrations.get(member)?.cases.keys() ?? [])]) : [])])];
       return { name, displayName: visibleApps.get(name) || name, version: entry.record.version, source: entry.source,
         coverage: entry.record.manifest.testing ? 'catalog' : group ? 'members' : caseIds.length ? 'smoke-only' : 'not-declared', caseIds };

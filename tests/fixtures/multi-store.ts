@@ -1,4 +1,8 @@
-/** Local Git stores for exercising real installer and browser boundaries without live services. */
+/**
+ * CHANGE LOG
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Local Git stores for exercising real installer and browser boundaries without live services.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | A package may declare optional apps (or opt into the tiered form); such packages are written as dependencies.required/optional with the app-dependencies floor, legacy packages keep the flat form.
+ */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -6,17 +10,37 @@ import { pathToFileURL } from 'node:url';
 
 const audit = require('../../scripts/oshal-package-audit') as { PACKAGE_AUDIT_CONTROLS: string[] };
 
-export function createStore(root: string, packages = [{ name: 'sample-app', deps: [] as string[] }]) {
+/** One fixture package: required apps (`deps`), and optionally the tiered form with optional apps. */
+export interface FixturePackage {
+  name: string;
+  deps: string[];
+  optional?: string[];
+  tiered?: boolean;
+}
+
+/** The manifest's dependencies block: legacy flat, or required/optional with its compatibility floor. */
+function dependencyYaml({ deps, optional, tiered }: FixturePackage): string {
+  if (!tiered && !optional) return `dependencies:\n  apps: ${JSON.stringify(deps)}`;
+  return [
+    'uses: [app-dependencies]',
+    'dependencies:',
+    `  required:\n    apps: ${JSON.stringify(deps)}`,
+    `  optional:\n    apps: ${JSON.stringify(optional ?? [])}`,
+  ].join('\n');
+}
+
+export function createStore(root: string, packages: FixturePackage[] = [{ name: 'sample-app', deps: [] }]) {
   mkdirSync(root, { recursive: true });
   execFileSync('git', ['init', '-b', 'main', root], { stdio: 'pipe' });
   mkdirSync(join(root, 'audits'));
   const repo = pathToFileURL(root).href;
-  const apps = packages.map(({ name, deps }) => {
+  const apps = packages.map((pkg) => {
+    const { name } = pkg;
     const sourcePath = name === 'sample-app' ? 'source-folder' : name;
     mkdirSync(join(root, sourcePath));
     writeFileSync(join(root, sourcePath, 'oshal-app.yaml'), [
       `name: ${name}`, `displayName: ${name}`, 'version: 1.0.0', 'suite: ai-engineering',
-      `dependencies:\n  apps: ${JSON.stringify(deps)}`,
+      dependencyYaml(pkg),
       'routes:\n  - mountPath: /api/sample-app\n    module: routes/index.js\n    factory: createRoutes\n    auth: session',
     ].join('\n'));
     const sourceSha = '0'.repeat(40);
