@@ -593,7 +593,7 @@ boundary only; it cannot tell you the process reading that config has been exite
 The observer is the one component nothing observes.
 
 ## BUG-16 — The consolidation-cutover guard runs a second alert consumer against the operator's live alert queue
-- **Type:** Bug (test isolation) · **Priority:** High · **Status:** OPEN
+- **Type:** Bug (test isolation) · **Priority:** High · **Status:** **FIXED 2026-09-11** (`e9179047`), verified 2026-09-14 — see the closing note.
 - **Discovered:** 2026-08-13, by `tests/unit/alert-incident-cutover.spec.ts` failing in the sweep
   above. **Priority raised and framing corrected during verification** — the first write-up filed it
   Med, described only the harmless direction of the race, and asserted the product exonerated on an
@@ -720,6 +720,30 @@ post-gate that fails when `oshal_incident` holds a row whose `primary_target` ma
 synthetic prefixes — residue in the operations stream should go red on the next run, not accumulate
 for a week. The rule these two specs broke: **a DB-backed guard may read the operator's schema, but it
 must never start a background consumer on the operator's work queue.**
+
+**Closing note (2026-09-14).** This no longer reproduces. It was fixed on 2026-09-11 by `e9179047`
+("Complete account, installation, test catalog and bot initialization outcomes"), which never touched
+this entry. The verification:
+- `tests/unit/alert-incident-cutover.spec.ts` no longer reads a deployment DSN. It owns a
+  `DisposableAlertPostgres` (`tests/helpers/disposable-alert-postgres.ts`): a private
+  `postgres:16-alpine` container on tmpfs, published on loopback only, with migrations 104–109
+  applied and removed in `afterAll`.
+- It mounts the receiver with `startPendingSweep: false`, the route option added as change-log seq 8
+  in `alertmanager-routes.ts`, and it asserts through a `setInterval` spy that no sweep started.
+- The `afterAll` hang at `:119` is fixed. The close is guarded with `if (server)`.
+- `tests/unit/alert-incident-reopen.spec.ts`, the source of the 24 `probe-target` rows, runs on the
+  same disposable database.
+- **Run:** `npx vitest run tests/unit/alert-incident-cutover.spec.ts --reporter=verbose` gave
+  2 passed (355 ms and 276 ms; 3.54 s of test time including the container start; load1 3.46). That
+  is a real run, not the ~200 ms decline.
+- **Mutation:** dropping `startPendingSweep: false` fails `beforeAll` with "expected setInterval to
+  not be called at all, but actually been called 1 times". Restored, both cases pass.
+- **Live residue** (read-only `SELECT` on `oshal-local-db`, 2026-09-14): there are 3 `cut-%`
+  incidents (newest 2026-09-08 15:13Z), 24 `probe-target` incidents (newest 2026-08-13) and 1 `cut-%`
+  event (2026-08-14). None is newer than the fix. The rows are still present; deleting them is a
+  live-table write and was not done here.
+- **Prevention items from this entry:** the in-spec `setInterval` assertion exists. The repo-wide
+  assertion over `tests/unit/**` and the `ci-local.sh` residue post-gate do not.
 
 ## BUG-17 — The task/message credential-isolation guard asserts a retired route shape, and half of what it does assert is bound to a symbol that no longer exists
 - **Type:** Bug (stale guard) · **Priority:** Med · **Status:** **FIXED 2026-09-14** — see the closing note.
