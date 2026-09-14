@@ -1170,3 +1170,71 @@ is not started; the operator asked for a brand kit, not for a renderer change.
 - Unit specs prove: a custom look renders its own colors and faces into .pptx, .docx and .xlsx; a refused look
   renders nothing; the ten built-in looks are unchanged.
 - No new dependency, and no core route reads Create's storage.
+
+### An open maker-reference library the engineering bots can cite (2026-09-14)
+
+**Context:** the animatronics work ([ADR-156](adr/156-animatronic-props-as-a-peripheral-kind.md)) started from a
+survey of open animatronic and robotics builds, and the reasoning we took from each is recorded prose in
+[animatronic prop hardware](architecture/animatronic-prop-hardware.md) §5. The operator keeps finding more of
+them and wants them kept. Today `animatronics-bot`, `small-motors-bot`, `robotics-bot` and `3d-printing-bot`
+carry that kind of knowledge as persona prose with no sources, and nothing can cite a build, diff two
+approaches, or answer "has anyone solved this mechanism already". The RAG rail that would hold it already
+exists (`infra-runbooks` is the only collection, and personas already curl `/api/rag/search`).
+
+**Done when:**
+- A `maker-references` collection holds one document per build with the same fields every time: what it is,
+  the mechanism or subsystem, the actuators and controller it uses, the licence, the source URL, and what a
+  reader would take from it. Provenance is a `web:` prefixed `doc_id` per the citation rule.
+- Adding a reference is one command against a URL and a short note, and re-running it updates rather than
+  duplicates; nothing is vendored into the tree.
+- `animatronics-bot`, `small-motors-bot` and `robotics-bot` search that collection before answering a
+  mechanism question and cite `doc_id`s, with a red-proven case that an uncited answer fails review.
+- A build whose licence forbids reuse is recorded as a reference and marked not-to-copy, so the catalogue
+  never silently launders code.
+
+### The `prop` kind belongs in embodied's vocabulary (2026-09-14)
+
+**Context:** [ADR-156](adr/156-animatronic-props-as-a-peripheral-kind.md) D6 declares the ADR-151 D1 `prop`
+kind inside the `animatronics` package because `embodied` was under an open claim the day it shipped. Two
+packages now describe one vocabulary. `animatronics/tests/engine-kind.test.js` pins the manifest's field set to
+embodied's `CapabilityManifest` and asserts embodied still refuses the kind, so it goes red the day the fold-in
+lands — by design, and the only thing keeping the duplicate temporary.
+
+**Done when:**
+- `KIND_VOCABULARY.prop` exists in embodied's capability manifest with senses `channel-state`,
+  `controller-hello`, `supply`, acts `pose`, `scenario`, `look-at`, `jog`, `arm`, `disarm`, `e-stop`, minimum
+  safety class 1, and `disarm` in the confirm-exempt set.
+- The animatronics package imports that row instead of declaring its own, its seam test is rewritten to assert
+  the import, and a rig's manifest validates under embodied's own `validateManifest`.
+- Whether a `prop` also becomes a node on the rail stays gated on the ADR-149 decision the embodied backlog
+  already records; this entry is the vocabulary only.
+
+### One parts model across Circuit Lab, Animatronics and Embodied (2026-09-14)
+
+**Context:** three packages now describe the same physical parts in three places — Circuit Lab's shaft-driver
+catalog (motors, servos, steppers with nameplate numbers), the animatronics servo catalog (pulse range, travel,
+speed, currents, torque, mass, price), and embodied's parts model (masses, prices, motor curves feeding MJCF).
+Circuit Lab's own backlog already carries the half of this that pairs it with embodied ([ADR-152](adr/152-embodied-physics-and-training-lab.md) D1).
+A servo bought once should be describable once.
+
+**Done when:**
+- One row per real part is the source: identity, mass, price and a source line, plus the per-domain blocks
+  each lab needs (electrical nameplate, pulse and speed, inertia and curves), and each package reads the
+  blocks it understands rather than restating name, mass or price.
+- A cross-package read-only test fails when a part's shared fields drift between packages, the way Circuit
+  Lab already reads embodied's parts model and animatronics reads embodied's manifest module.
+- Neither the store's package-separation guard nor the canonical route compile is weakened to allow it: the
+  shared rows travel as data, not as an imported runtime.
+
+### Animatronic props: the bench, tracking, dynamics and sound (2026-09-14)
+
+**Context:** `animatronics` 0.1.0 rehearses and drives a rig, and its own backlog carries the done-when
+criteria. Four of those items need something outside the package and are worth seeing from here: hardware, a
+camera, a physics model and audio.
+
+**Done when:** the package's B2 (the reference ESP32 sketch compiled, flashed and bench-proven with a scope on
+one output, then a Test Lab case with a hardware prerequisite), B3 (a detected face becomes a bearing at a few
+Hz with a dead-band, so `look-at` tracks a person — the operator's original "eyes that follow you"), B5 (servo
+load, inertia and stall on the rehearsal, with Circuit Lab's servo part as the electrical companion) and B6 (a
+jaw driven by an audio envelope, and a Pumpkin `speak` triggering it through a browser hand-off, never a
+server-to-server call) are each closed on their own criteria. None of them needs core code today.
