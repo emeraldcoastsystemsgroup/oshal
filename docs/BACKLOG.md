@@ -1387,3 +1387,51 @@ deploy. The live proof was cut short by two Docker engine wedges on the host, so
   (expects `202` and a row with the caller's issuer), and deletes both — so the exact failure the operator hit
   is exercised live by the Lab on every run, not only by fixtures. Needs a server-side cleanup path for the
   rows it creates; it must never touch a thread the user actually uses.
+
+### Package-owned engine containers need a documented pattern (2026-09-14)
+
+**Context:** two packages now run their compute in a container the package owns, because the api image is
+Alpine and their Python stacks publish glibc-only wheels — `aero-lab` 1.2.0 (aerosim; casadi has no musl
+wheel) and `cad-studio` 0.1.0 (OCCT/CadQuery). Both arrived at the same shape independently: an
+`engine/container/Dockerfile` built locally from upstream images and PyPI pins (nothing third-party
+committed, no image published), an `engine/install-engine.sh` run from inside the api container, its own
+compose project so the core deploy's `--remove-orphans` cannot sweep it, a join to the stack network by
+alias with no published port, and a build-hash handshake so a container built from a different package
+tree is refused with the exact reinstall command instead of answering with stale physics. The store's
+[BUILDING-EXTENSIONS.md](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/BUILDING-EXTENSIONS.md)
+has no section on any of it, so the third package will hand-roll it again from two sources that already
+disagree in small ways.
+
+**Done when:**
+- BUILDING-EXTENSIONS.md carries the pattern with both shipped precedents named, and a new package can
+  follow it without reading either package's source.
+- The three properties that are load-bearing are stated as requirements, not options: the compose project
+  name is the package's own and is asserted after `up` (an inherited `COMPOSE_PROJECT_NAME` silently put
+  the first one in the core project, where the next deploy swept it); the container carries no
+  `oshal.tier` label (that is the Prometheus docker_sd selector for core/worker tiers); and a stale
+  container is refused with the install command rather than served.
+- The capability route hands the surface the reason and the install command, so no surface hardcodes
+  setup instructions — the behaviour aero-lab's engine-down banner already has.
+- An installed package ends up with a working engine without an operator step, or the refusal path is
+  explicit: either the installer runs a declared post-install command, or the first engine call builds
+  and starts the container, and when it cannot, capabilities stay false with the exact command.
+
+### A calendar-preparation agent: brief me before the meeting (2026-09-14)
+
+**Context:** operator's idea, 2026-09-11, while the Calendar Preparation surface was being pinned to the
+default rail (Communications group, `/api/calendar/review`). That surface is a review page, not an agent.
+What was described is the agent behind it: before a meeting, the person gets a notification carrying a
+brief — what was discussed with these people last time, notes and actions from previous meetings,
+who the attendees are and the background the swarm already holds — assembled in the background on a
+schedule rather than at request time. The material it would read already exists in pieces: ambient recall
+(ADR-100 phases 2-4), transcripts, the identity records, and the calendar package's own domain state.
+
+**Done when:**
+- A dedicated ticket type assembles a per-meeting brief for the caller's own calendar from previously
+  recorded material, on a schedule, and stores it in the calendar package's `user_sub`-keyed state.
+- Every claim in a brief cites what produced it (a transcript, a note, a prior brief); an attendee or a
+  meeting with no history produces an honest "no prior context", never invented background.
+- Delivery goes through an existing channel (notification, Switchboard or mail) and is consent
+  default-OFF per the automation opt-in rule — the brief is assembled for the caller only, and nothing
+  the caller has not authorised reaches reasoning.
+- The surface shows the same brief it sends, so what the person reads and what was delivered cannot drift.
