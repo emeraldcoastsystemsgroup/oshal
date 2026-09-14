@@ -6,6 +6,9 @@ its done-when evidence; resolved history is preserved in the [archive](./archive
 relevant ADR or feature documentation, release notes, and git history.
 
 - [hardening.md](./hardening.md) — security hardening backlog.
+- [artifact-exchange-continuation.md](./artifact-exchange-continuation.md) — ADR-139 "Send to…": what
+  shipped, what is half-landed, how to continue the rollout, and three recurrence risks the rollout
+  exposed (hardcoded codex model default, no backoff on a dead model, no guard for dated-test time bombs).
 - [test-lab.md](./test-lab.md) — AI Test Lab backlog (ADR-063).
 - [trading-advisor.md](./trading-advisor.md) — trading advisor backlog.
 - [bot-ui-db-persistence.md](./bot-ui-db-persistence.md) — Bot UI DB persistence (Option B).

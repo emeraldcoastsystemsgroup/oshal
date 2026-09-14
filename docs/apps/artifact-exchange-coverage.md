@@ -107,6 +107,12 @@ One package needs a route that does not exist at all:
 - **Packages with no artifact surface.** Roughly half the store — a weather reader, a scoreboard, a
   game — genuinely has nothing to hand to another app. Absence here is correct, not debt.
 
+## Continuing this
+
+[artifact-exchange-continuation.md](../backlog/artifact-exchange-continuation.md) is the handover:
+the mechanism in one pass, what is half-landed (the Stage 4a picker and the Jarvis leg were written
+but unmerged), the cheapest next moves, and the traps that make a naive coverage count wrong.
+
 ## Done when
 
 - The three untagged byte-serving sources carry the standard tag, one live dispatch each.
