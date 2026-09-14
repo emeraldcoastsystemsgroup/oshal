@@ -7,6 +7,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Stale-guard the recap-data.json fallback: only use its numbers when its date matches the report day. A frozen prior-day copy could otherwise silently supply the headline P/L when the DB equity row is missing (the failure mode behind the June-30-labeled July-6 email).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Honesty rails: "changes" (strategy-journal entries since the prior session — knob turns, universe changes, incidents) and "ops" (date-guarded ops-notes.json from the runner: lateness, restarts, outages) now ride in deck-data so the report SAYS what changed and what broke.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | One BOOK, not one mode (ADR-134 D2 #7): the headline equity and the four order/decision reads were keyed on mode, so with two live books enabled mode='live' merged two accounts' curves and fills into one headline. The headline book is OSHAL_TRADING_BOOK (default = OSHAL_TRADING_MODE, i.e. the legacy 'paper' ref — byte-identical output today); its id resolves via the roster, else the DB-side md5 derivation for the legacy refs, else DECK_DATA_FAIL naming the unknown ref. The deck also carries books[] + booksTotal (per-book breakdown via scripts/lib/trading-book-report.js) for the journal + site. OSHAL_DECK_OUT_DIR overrides the output directory (the real-CLI spec must never overwrite the operator's deck-data.json). The per-book reads fail LOUD (BOOKS_READ_FAIL on stderr); a silent empty books[] would strip the journal's books clause with no trace.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Per-trade P&L on the engine's own cost (engineRealizedForBook): the stored realized_pnl uses the venue's wash-sale-adjusted average and counts each disallowed loss twice. Each trade carries pnl (engine), venuePnl (what the venue column says) and pnlBasis; a manual host run without compiled core keeps the venue figure and says so.
  */
 /*
  * oshal-deck-data.js — EXTRACTION for the DETAILED daily trade-recap deck.
@@ -31,6 +32,49 @@ const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
 const books = require('./lib/trading-book-report');
+
+/**
+ * @description The engine's own realized pricing, from the compiled core module. Inside the api
+ * container (where the daily recap runs this script) it is always there; a manual host run without a
+ * build falls back to the venue's stored figure and SAYS so, per trade and on stderr.
+ * @returns engineRealizedForBook, or null when this checkout has no compiled core.
+ */
+function loadEngineRealized() {
+  for (const candidate of ['/app/dist/app/trading-engine-cost-basis.js', path.join(__dirname, '..', 'dist', 'app', 'trading-engine-cost-basis.js')]) {
+    if (fs.existsSync(candidate)) return require(candidate).engineRealizedForBook;
+  }
+  return null;
+}
+
+/**
+ * @description Replace each sell's stored venue-basis P&L with the engine's own. The stored
+ * realized_pnl uses the venue's wash-sale-adjusted average and counts each disallowed loss twice; the
+ * engine replay is what the round trip actually made. A sell the ledger cannot cover keeps no figure.
+ * @param db - The report's operator-scoped connection (RLS). @param sub - Owner. @param bookId - Book. @param trades - Day rows.
+ * @returns Nothing; trades are updated in place with pnl, venuePnl and pnlBasis.
+ */
+async function priceTradesOnEngineCost(db, sub, bookId, trades) {
+  const sells = trades.filter((t) => t.side === 'sell' && t.status === 'filled');
+  for (const t of trades) { t.venuePnl = t.pnl; t.pnlBasis = 'venue'; }
+  if (!sells.length) return;
+  const engineRealizedForBook = loadEngineRealized();
+  if (!engineRealizedForBook) {
+    console.error('oshal-deck-data: compiled core not found; per-trade P&L is the venue figure (pnlBasis=venue), which double-counts wash-sale losses');
+    return;
+  }
+  let realized;
+  try {
+    realized = await engineRealizedForBook({ pool: db }, sub, bookId, sells.map((t) => t.symbol));
+  } catch (err) {
+    console.error(`oshal-deck-data: engine realized P&L unavailable (${err.message}); per-trade P&L is the venue figure (pnlBasis=venue)`);
+    return;
+  }
+  for (const t of sells) {
+    const sale = realized.get(String(t.order_id));
+    t.pnl = sale ? Math.round(sale.realizedPnl * 100) / 100 : null;
+    t.pnlBasis = 'engine';
+  }
+}
 
 // OSHAL_DECK_OUT_DIR: where recap-data.json is read and deck-data.json is written (default: the
 // operator video package's out/ directory, as before).
@@ -157,12 +201,15 @@ function readOpsNotes(targetDate) {
     }
 
     trades = await q(
-      `SELECT o.symbol, o.side, o.qty::float, o.filled_avg_price::float AS fill, o.realized_pnl::float AS pnl, o.status,
+      `SELECT o.order_id::text AS order_id, o.symbol, o.side, o.qty::float, o.filled_avg_price::float AS fill, o.realized_pnl::float AS pnl, o.status,
               d.confidence::float AS confidence, left(d.rationale, 300) AS rationale, d.indicators
          FROM oshal_trading_orders o
          LEFT JOIN oshal_trading_decisions d ON d.decision_id = o.decision_id
         WHERE o.user_sub=$1 AND o.book_id=$2 AND (o.created_at ${ET})::date = $3::date
         ORDER BY o.created_at`, [SUB, bookId, targetDate]);
+    // The operator-scoped client, not the pool: oshal_trading_orders is under RLS and only this
+    // connection carries the oshal.is_operator setting the report reads with.
+    await priceTradesOnEngineCost(client, SUB, bookId, trades);
 
     whyThemes = await q(
       `SELECT coalesce(indicators->>'reason','signal-driven') AS theme, count(*)::int AS n, round(avg(confidence)::numeric,2)::float AS avg_conf
