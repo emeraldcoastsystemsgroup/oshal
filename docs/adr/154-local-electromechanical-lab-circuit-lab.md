@@ -165,6 +165,13 @@ co-simulation the backlog had sketched was not needed for these mechanisms and w
 a general 2-D linkage layer stays open with its own done-when. A fifth starter, the belt-driven
 crank-slider, puts the whole chain on one canvas.
 
+**As built, 0.5.1 (2026-09-14).** A hotfix with a lesson: the framework's Test Lab catalog loader
+refuses a WHOLE manifest when any `expected` line exceeds 500 characters (0.5.0's engine-solver
+case carried one of 568), and a refused manifest leaves the app unmounted on the box while the
+store row keeps the old version — the failure is silent from the page. The lines were split, and
+the framework-coupled route suite now loads the package's own catalog through the framework's
+loader (`scripts/oshal-test-catalog.js`) so the limit is a red test, not a dead tile.
+
 **Verification shipped with it.** The real-solver Python suite (17 cases at 0.1.0, 26 at 0.2.0, 32 at 0.3.0, 36 at 0.5.0, in the engine image and
 the installer's self-test: LED, RC, switch mid-run, geared motor, stalled motor, PWM through a
 MOSFET, mechanism refusals, protocol), the contract suite (Node ≡ Python library and build hash)
