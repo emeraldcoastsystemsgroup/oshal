@@ -12,5 +12,6 @@ export * from './dedup-key';
 export * from './envelope-store';
 export * from './incident-store';
 export * from './dispatch-log';
+export * from './event-effects';
 export * from './topology-store';
 export * from './funnel-stats';

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The consolidation heart of the Operations Stream: the three-arm reopen rule over oshal_incident (refire / reopen-in-window / archive-and-recur), optimistic-concurrency field updates, and the membership ledger that decides when an incident is provably fully resolved.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-19: getIncident(incidentId) — the read-by-id an optimistic-concurrency caller needs to re-read the current revision after `updateIncident` answers null. The receiver's ticket link used to have no way to re-read, so it discarded the null and left the incident unlinked.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | BUG-20: consolidateLanded folds one landed event into its incident and membership exactly once. With options.eventId the consolidation records the event's `consolidate` effect in the same statement (arms A/B, only when the upsert wrote) or transaction (arm C), and the member upsert records `member` the same way; a replay returns the recorded arm on the current row instead of counting again.
  */
 
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
@@ -19,6 +20,7 @@ import {
   type IncidentRow,
   type IncidentState,
 } from './alert-pipeline-types';
+import { readAppliedEffects, recordEffect, type AppliedEffects } from './event-effects';
 
 const logger = createChildLogger({ module: 'incident-store' });
 
@@ -62,6 +64,11 @@ export interface ConsolidateOptions {
   priority?: string;
   /** Row owner for RLS; defaults to the pipeline's machine owner. */
   ownerSub?: string;
+  /**
+   * The landed event being worked, when there is one. The consolidation is then recorded as that
+   * event's `consolidate` effect in the same statement or transaction as the write (BUG-20).
+   */
+  eventId?: string;
 }
 
 /**
@@ -186,6 +193,21 @@ RETURNING *,
   (xmax <> 0 AND reopened_at IS NOT NULL AND reopened_at = updated_at) AS was_reopened`;
 
 /**
+ * The same upsert, recording the landed event's `consolidate` effect in the SAME statement - and
+ * only when the upsert wrote. An eligibility refusal writes nothing and records nothing, so arm C
+ * can still take the event (BUG-20). $14 is the event id, $15 the row owner.
+ */
+const CONSOLIDATE_UPSERT_RECORDED_SQL = `
+WITH w AS (${CONSOLIDATE_UPSERT_SQL}),
+recorded AS (
+  INSERT INTO oshal_alert_event_effect (event_id, effect, owner_sub, detail)
+  SELECT $14::uuid, 'consolidate', $15, jsonb_build_object(
+    'incidentId', w.incident_id, 'wasCreated', w.was_created, 'wasReopened', w.was_reopened, 'wasRecurrence', false)
+    FROM w
+)
+SELECT * FROM w`;
+
+/**
  * Arm C, second half: a fresh instance linked back to the one it supersedes. Runs after the
  * archive in the same transaction, so the derived `instance_seq` is exactly the archived row's
  * plus one.
@@ -261,6 +283,16 @@ ON CONFLICT (incident_id, member_key) DO UPDATE SET
   severity_num     = LEAST(oshal_incident_member.severity_num, EXCLUDED.severity_num),
   fingerprint      = COALESCE(EXCLUDED.fingerprint, oshal_incident_member.fingerprint),
   resolved_at      = NULL`;
+
+/** The member upsert, recording the landed event's `member` effect in the same statement (BUG-20). */
+const MEMBER_UPSERT_RECORDED_SQL = `
+WITH w AS (${MEMBER_UPSERT_SQL}
+  RETURNING incident_id, member_key),
+recorded AS (
+  INSERT INTO oshal_alert_event_effect (event_id, effect, owner_sub, detail)
+  SELECT $11::uuid, 'member', $12, jsonb_build_object('incidentId', w.incident_id, 'memberKey', w.member_key) FROM w
+)
+SELECT 1 FROM w`;
 
 const MEMBER_RESOLVE_SQL = `
 UPDATE oshal_incident_member
@@ -473,7 +505,7 @@ export class IncidentStore {
     for (let attempt = 1; attempt <= CONSOLIDATE_MAX_ATTEMPTS; attempt += 1) {
       try {
         const prior = await this.findLatestInstance(this.pool, dedupKey, false);
-        const fast = prior === null || isLive(prior) ? await this.upsertLive(this.pool, genesis) : null;
+        const fast = prior === null || isLive(prior) ? await this.upsertLive(this.pool, genesis, options.eventId) : null;
         const outcome = fast ?? (await this.consolidateContended(dedupKey, genesis, options));
         logger.debug(
           {
@@ -501,6 +533,50 @@ export class IncidentStore {
     const exhausted = new Error(`consolidate(): ${dedupKey} lost ${CONSOLIDATE_MAX_ATTEMPTS} consecutive races`);
     logger.error({ err: exhausted, dedupKey }, 'consolidation abandoned under sustained contention');
     throw exhausted;
+  }
+
+  /**
+   * @description Fold one LANDED event into its incident and membership exactly once (BUG-20).
+   * What the event already applied is read first (`applied`, when the caller has read it); a
+   * consolidation already recorded for this event is returned as recorded - its arm, on the row as
+   * it is now - instead of being counted again, and the member is upserted only if its effect is
+   * not recorded. Each write records its effect in the same statement or transaction, so a crash
+   * between them leaves the next drain to apply exactly what is missing.
+   * @param event - The landed event, with its consolidation identity.
+   * @param options - Consolidation options; `eventId` is the landed event.
+   * @param member - The member identity; its attach reason follows the arm.
+   * @param applied - Effects already read for this event, when the caller has them.
+   * @returns The outcome, and whether it was replayed rather than applied.
+   */
+  async consolidateLanded(
+    event: AlertEventRow,
+    options: ConsolidateOptions & { eventId: string },
+    member: Omit<IncidentMemberInput, 'attachReason'>,
+    applied?: AppliedEffects,
+  ): Promise<ConsolidationOutcome & { replayed: boolean }> {
+    const done = applied ?? (await readAppliedEffects(this.pool, options.eventId));
+    const recorded = done.get('consolidate');
+    const outcome = recorded ? await this.replayConsolidation(recorded, options.eventId) : await this.consolidate(event, options);
+    if (!done.has('member')) {
+      await this.upsertMember(outcome.incident.incidentId, { ...member, attachReason: outcome.wasCreated ? 'genesis' : 'same-key' },
+        { eventId: options.eventId, ownerSub: options.ownerSub });
+    }
+    return { ...outcome, replayed: recorded !== undefined };
+  }
+
+  /** The outcome a landed event already recorded, on the incident row as it is now. */
+  private async replayConsolidation(recorded: Record<string, unknown>, eventId: string): Promise<ConsolidationOutcome> {
+    const incident = await this.getIncident(String(recorded.incidentId));
+    if (!incident) {
+      throw new Error(`consolidateLanded(): event ${eventId} recorded incident ${String(recorded.incidentId)}, which no longer exists`);
+    }
+    logger.info({ eventId, incidentId: incident.incidentId }, 'landed event already consolidated; replaying its recorded outcome');
+    return {
+      incident,
+      wasCreated: recorded.wasCreated === true,
+      wasReopened: recorded.wasReopened === true,
+      wasRecurrence: recorded.wasRecurrence === true,
+    };
   }
 
   /**
@@ -580,11 +656,13 @@ export class IncidentStore {
    * auto-close over a live signal.
    * @param incidentId - The owning incident.
    * @param member - The member identity and why it attached.
+   * @param record - The landed event this upsert works, when there is one: its `member` effect is
+   *   recorded in the same statement (BUG-20).
    * @returns Nothing; the write is unconditional.
    */
-  async upsertMember(incidentId: string, member: IncidentMemberInput): Promise<void> {
+  async upsertMember(incidentId: string, member: IncidentMemberInput, record?: { eventId: string; ownerSub?: string }): Promise<void> {
     try {
-      await this.pool.query(MEMBER_UPSERT_SQL, [
+      const values = [
         incidentId,
         member.memberKey,
         member.alertname ?? '',
@@ -595,7 +673,10 @@ export class IncidentStore {
         member.seenAt ?? new Date(),
         member.attachReason,
         member.dependencyHops ?? null,
-      ]);
+      ];
+      await (record
+        ? this.pool.query(MEMBER_UPSERT_RECORDED_SQL, [...values, record.eventId, record.ownerSub ?? PIPELINE_OWNER_SUB])
+        : this.pool.query(MEMBER_UPSERT_SQL, values));
     } catch (error) {
       logger.error({ err: error, incidentId, memberKey: member.memberKey }, 'incident member upsert failed');
       throw error;
@@ -638,8 +719,11 @@ export class IncidentStore {
    * `null` when the conflicting row exists but the eligibility gate refused it — the signal that
    * this identity needs arm C.
    */
-  private async upsertLive(db: Queryable, genesis: GenesisParams): Promise<ConsolidationOutcome | null> {
-    const result = await db.query(CONSOLIDATE_UPSERT_SQL, [...genesis.values, genesis.reopenWindowSeconds]);
+  private async upsertLive(db: Queryable, genesis: GenesisParams, eventId?: string): Promise<ConsolidationOutcome | null> {
+    const values = [...genesis.values, genesis.reopenWindowSeconds];
+    const result = await (eventId
+      ? db.query(CONSOLIDATE_UPSERT_RECORDED_SQL, [...values, eventId, genesis.values[11]])
+      : db.query(CONSOLIDATE_UPSERT_SQL, values));
     if (result.rows.length === 0) return null;
     const row = result.rows[0];
     return {
@@ -667,6 +751,12 @@ export class IncidentStore {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [dedupKey]);
       const prior = await this.findLatestInstance(client, dedupKey, true);
       const outcome = await this.resolveArmUnderLock(client, prior, genesis, options);
+      if (options.eventId) {
+        await recordEffect(client, options.eventId, 'consolidate', String(genesis.values[11]), {
+          incidentId: outcome.incident.incidentId, wasCreated: outcome.wasCreated,
+          wasReopened: outcome.wasReopened, wasRecurrence: outcome.wasRecurrence,
+        });
+      }
       await client.query('COMMIT');
       return outcome;
     } catch (error) {

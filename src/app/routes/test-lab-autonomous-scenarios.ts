@@ -7,6 +7,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register signed remote authorization and exact-principal result regressions with a fixed isolated runner.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Register package tool activation, current authorization and execution boundary tests.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register bot initialization, specialist context and briefing behavior suites with read-only discovery and explicit runner prerequisites.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Register the BUG-20 guards on the isolated nightly regression scenario: the alert replay-idempotency and consolidateLanded suites on disposable PostgreSQL.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -47,6 +48,8 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/alert-incident-reopen.spec.ts' },
     { level: 'integration', path: 'tests/unit/topology-traversal.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-postgres-isolation.spec.ts' },
+    { level: 'integration', path: 'tests/unit/alert-event-replay-idempotency.spec.ts' },
+    { level: 'integration', path: 'tests/unit/alert-consolidate-landed-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/nightly-isolated-runner.spec.ts' },
     { level: 'integration', path: 'tests/unit/ci-local-scheduled-ref.spec.ts' },
     { level: 'integration', path: 'tests/unit/ci-local-run-log.spec.ts' },

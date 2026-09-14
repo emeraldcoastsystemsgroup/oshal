@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Close the Alertmanager HMAC raw-body gap: the receiver now owns a bounded JSON parser whose verify hook captures the exact bytes before signature verification, while the global parser reserves only /api/alerts/alertmanager. Whitespace/key-order differences no longer depend on JSON reserialization, and a configured HMAC secret remains fail-closed.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Allow independently owned receivers to omit the background sweep while preserving the controller default and request drains.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | BUG-19: the ticket link no longer discards `updateIncident`'s null. When a concurrent pump's refire moved the revision between consolidation and the link, the patch matched nothing, the event was already decided, and the incident stayed unlinked forever with nothing logged. linkIncidentTicket re-reads the row and re-applies the patch under withRevisionRetry, and logs at ERROR with the incident id and revision when the budget runs out. Guard: tests/unit/alert-incident-ticket-link.spec.ts.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | BUG-20: working a landed event is an idempotent consumer. It reads what the event already applied, replays a recorded intake decision instead of triaging again (so a re-drain neither opens nor bubbles a ticket a second time), and consolidates, upserts the member and appends the dispatch row only for effects not yet recorded, each recording itself atomically with its write. A claim that rolls back after these pool writes and re-drains the event changes nothing twice.
  */
 
 /**
@@ -65,9 +66,12 @@ import {
   hasUsableIdentity,
   withRevisionRetry,
   renderDedupKey,
+  readAppliedEffects,
+  recordEffect,
   renderIdentitySource,
   resolveDeploymentId,
   type AlertEventRow,
+  type AppliedEffects,
   type ClaimDecision,
   type IncidentRow,
   type LandEnvelopeResult,
@@ -710,42 +714,45 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
    * @param event - The landed event.
    * @param decided - What the triage path did with it.
    * @param identity - The resolved consolidation identity, or null when it has none.
+   * @param applied - What this event already applied; each effect is applied at most once (BUG-20).
    * @returns The incident id, or null when no incident was written.
    */
   const recordIncident = async (
     event: AlertEventRow,
     decided: IntakeDecision,
     identity: { dedupKey: string; identitySource: string } | null,
+    applied: AppliedEffects,
   ): Promise<string | null> => {
     // Only a decision that produced or bubbled a ticket has an incident. Noise, drops and
     // resolutions are recorded on the event itself and deliberately mint nothing.
     if (!incidents || !identity || !TICKETED_DECISIONS.has(decided.decision)) return null;
     try {
-      const outcome = await incidents.consolidate(
+      const outcome = await incidents.consolidateLanded(
         { ...event, dedupKey: identity.dedupKey, identitySource: identity.identitySource },
         {
           reopenWindowSeconds: consolidationTtlSeconds(),
           claimRuleId: decided.claimRuleId ?? null,
           intakeStatus: decided.intakeStatus ?? 'backlog',
           ownerSub: ALERT_INTAKE_OWNER_SUB,
+          eventId: event.eventId,
         },
+        {
+          memberKey: identity.dedupKey,
+          alertname: event.alertname,
+          target: event.target,
+          severity: event.severity,
+          severityNum: event.severityNum,
+          fingerprint: event.fingerprint || null,
+        },
+        applied,
       );
       const incident = outcome.incident;
-      await incidents.upsertMember(incident.incidentId, {
-        memberKey: identity.dedupKey,
-        alertname: event.alertname,
-        target: event.target,
-        severity: event.severity,
-        severityNum: event.severityNum,
-        fingerprint: event.fingerprint || null,
-        attachReason: outcome.wasCreated ? 'genesis' : 'same-key',
-      });
       // Link the ticket once. A refire must not re-stamp it: the ticket a recurrence opens is a
       // different ticket, and arm C already gave that recurrence its own incident row.
       if (decided.ticketId && incident.ticketId !== decided.ticketId) {
         await linkIncidentTicket(incidents, incident, decided.ticketId);
       }
-      await dispatches?.record({
+      if (!applied.has('dispatch:ticket')) await dispatches?.record({
         incidentId: incident.incidentId,
         dedupKey: identity.dedupKey,
         targetChannel: 'ticket',
@@ -758,7 +765,7 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
         ticketId: decided.ticketId ?? null,
         ttlSeconds: null,
         payload: null,
-      });
+      }, event.eventId);
       return incident.incidentId;
     } catch (err) {
       logger.error(
@@ -769,11 +776,28 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
     }
   };
 
+  /**
+   * @description Take the triage decision for a landed event and record it as the event's `intake`
+   * effect on the pool, so the decision survives a claim that rolls back and a re-drain replays it
+   * instead of triaging again (BUG-20). Recorded after the ticket write: a crash between the two can
+   * bubble the ticket once more on the re-drain, which is the one window this leaves.
+   * @param event - The landed event.
+   * @returns The decision.
+   */
+  const intakeOnce = async (event: AlertEventRow): Promise<IntakeDecision> => {
+    const decided = await intakeAlert(toWireAlert(event), emptyTally());
+    if (options.pool) await recordEffect(options.pool, event.eventId, 'intake', ALERT_INTAKE_OWNER_SUB, { ...decided });
+    return decided;
+  };
+
   const decideLandedEvent = async (store: EnvelopeStore, event: AlertEventRow, executor: Queryable): Promise<void> => {
     try {
-      const decided = await intakeAlert(toWireAlert(event), emptyTally());
+      // A claim that rolled back after this event's pool writes committed re-drains it: apply only
+      // what it has not applied yet, and replay the rest from what it recorded (BUG-20).
+      const applied = await readAppliedEffects(executor, event.eventId);
+      const decided = (applied.get('intake') as IntakeDecision | undefined) ?? (await intakeOnce(event));
       const identity = resolveEventIdentity(event);
-      const incidentId = await recordIncident(event, decided, identity);
+      const incidentId = await recordIncident(event, decided, identity, applied);
       await store.decideEvent(
         event.eventId,
         decided.decision,

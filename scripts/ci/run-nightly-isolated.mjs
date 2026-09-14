@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Retain truthful local nightly fixture results without using deployment credentials or calling live endpoints.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Document the fixed runner API and its evidence boundaries for scheduler callers.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | BUG-20 guards join the fixed isolated set: a re-drained alert event changes the world once, and consolidateLanded applies each effect once, both on disposable PostgreSQL.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
@@ -19,6 +20,8 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/alert-incident-reopen.spec.ts',
   'tests/unit/topology-traversal.spec.ts',
   'tests/unit/alert-postgres-isolation.spec.ts',
+  'tests/unit/alert-event-replay-idempotency.spec.ts',
+  'tests/unit/alert-consolidate-landed-postgres.spec.ts',
   'tests/unit/nightly-isolated-runner.spec.ts',
   'tests/unit/ci-local-scheduled-ref.spec.ts',
   'tests/unit/ci-local-run-log.spec.ts',

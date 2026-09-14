@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Named guard for durable alert landing: a delivery is stored and expanded BEFORE anything interprets it (proven by call ordering against the ticket write, not by inspecting the response text), a landing that throws answers a non-2xx so Alertmanager redelivers and cuts no ticket, a landing that fails mid-write rolls back and still refuses to acknowledge, a committed landing answers 202 carrying the envelope id and the expanded event count, the landed events drive the consolidation to a real ticket and each one is stamped with its durable decision, an event whose intake fails records an attempt instead of vanishing, a body that is not an envelope is parked as an ingest deadletter and answered 400, and a receiver wired without a database keeps the in-memory response contract. The database is a faithful stand-in for the four pipeline tables — statements are dispatched by shape and pending rows are handed out once, the way SKIP LOCKED hands them out.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-20: the double classifies the effect ledger (oshal_alert_event_effect) before the event table it shares a prefix with - a first drain has applied nothing - instead of serving the effect read as the pending-claim query and draining the queue into it.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -39,7 +40,7 @@ type SqlKind =
   | 'decide-event'
   | 'fail-event'
   | 'insert-deadletter'
-  | 'other';
+  | 'other' | 'select-effects';
 
 /** The `oshal_alert_event` columns in the exact order the insert binds them. */
 const EVENT_INSERT_COLUMNS = [
@@ -65,6 +66,9 @@ function classify(sql: string): SqlKind {
   if (s.startsWith('BEGIN')) return 'begin';
   if (s.startsWith('COMMIT')) return 'commit';
   if (s.startsWith('ROLLBACK')) return 'rollback';
+  // The effect ledger (BUG-20) shares the event table's name as a prefix, so it is classified first:
+  // this double has applied no effects, and an effect write is accepted and forgotten.
+  if (s.includes('OSHAL_ALERT_EVENT_EFFECT')) return s.startsWith('SELECT') ? 'select-effects' : 'other';
   if (s.startsWith('INSERT INTO OSHAL_ALERT_ENVELOPE')) return 'insert-envelope';
   if (s.startsWith('INSERT INTO OSHAL_ALERT_EVENT')) return 'insert-event';
   if (s.startsWith('INSERT INTO OSHAL_ALERT_DEADLETTER')) return 'insert-deadletter';
