@@ -4,8 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add exact-principal briefing preferences and durable source ownership/announcement cursors.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Drop the top-level BEGIN;/COMMIT; pair: the migration runner wraps each file and its app_migrations history INSERT in one transaction on one client, so the file-level COMMIT ended that transaction early and left the history row outside it. Every statement here runs inside a transaction block, so no no-transaction pragma is needed.
  */
-BEGIN;
 CREATE TABLE IF NOT EXISTS jarvis_briefing_sources (
   source_id TEXT PRIMARY KEY, app TEXT NOT NULL, session_id TEXT NOT NULL UNIQUE,
   definition JSONB NOT NULL, active BOOLEAN NOT NULL DEFAULT FALSE
@@ -34,4 +34,3 @@ DROP POLICY IF EXISTS briefing_cursor_control_plane ON jarvis_briefing_cursors;
 CREATE POLICY briefing_cursor_control_plane ON jarvis_briefing_cursors USING (current_setting('oshal.is_operator',true)='on') WITH CHECK(current_setting('oshal.is_operator',true)='on');
 ALTER TABLE IF EXISTS jarvis_tasks ADD COLUMN IF NOT EXISTS briefing_source_id TEXT;
 ALTER TABLE IF EXISTS jarvis_tasks ADD COLUMN IF NOT EXISTS principal_issuer TEXT;
-COMMIT;

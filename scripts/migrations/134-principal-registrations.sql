@@ -1,5 +1,5 @@
 -- CHANGE LOG: 1 | maintainer@emeraldcoastsystemsgroup.com | Register exact directory metadata without granting identity or permissions.
-BEGIN;
+-- CHANGE LOG: 2 | maintainer@emeraldcoastsystemsgroup.com | Drop the top-level BEGIN;/COMMIT; pair: the migration runner wraps each file and its app_migrations history INSERT in one transaction on one client, so the file-level COMMIT ended that transaction early and left the history row outside it. Every statement here runs inside a transaction block, so no no-transaction pragma is needed.
 CREATE TABLE IF NOT EXISTS oshal_principal_registrations (
     issuer TEXT NOT NULL, user_sub TEXT NOT NULL, display_name TEXT NOT NULL, email TEXT,
     source TEXT NOT NULL CHECK(source IN ('manual','directory-snapshot')), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -31,4 +31,3 @@ ALTER TABLE oshal_roster_audit FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS roster_control_plane ON oshal_roster_audit;
 CREATE POLICY roster_control_plane ON oshal_roster_audit USING (current_setting('oshal.is_operator',true)='on')
       WITH CHECK(current_setting('oshal.is_operator',true)='on');
-COMMIT;
