@@ -160,6 +160,30 @@ machine and not a session, it is `401 authorization_identity_required`. The tile
 `docker rm -f oshal-sandbox-api oshal-sandbox-engine oshal-sandbox-px4 oshal-sandbox-redis` and
 `drop database oshal_sandbox`; nothing in the live stack was changed.
 
+
+## Build the arm (BACKLOG B21/B22 aside, this part is done)
+
+The Build panel's second half is the arm the swarm would print for hands: a desk-class six-axis arm on
+12 V serial-bus servos, 0.415 m of reach, 0.15 kg of payload, sized from the same parts model the drone
+uses. Every number in the panel is generated — reach, the drive each joint takes, the margin it has, the
+mass budget, the price and the repeatability budget the servo's measured backlash implies.
+
+- **The document** (`design document` beside the fit) is `GET /api/embodied/build/arm/design.md`: the
+  sizing rules and where their figures come from, the joint table, the sweep that chose the link lengths,
+  the printed parts, the mass budget, the bill of materials and the print rules. Measure the servo you
+  buy before printing: the case, the spline offset and the horn disc are the three numbers every pocket
+  and hub follow, and two of them are not published by the vendor.
+- **Open in CAD Studio** on any part posts that part's program to the CAD Studio package and lands you
+  there, exactly as the drone's parts do.
+- **Check on physics** asks the engine container to hold the payload in each joint's worst pose and to
+  run the taught pick-and-place over seeded scenes. The joint rows gain a *measured* column and the
+  summary gives four verdicts: it holds its payload, the physics agrees with the sizing, the taught task
+  works, and the duty cycle is inside the continuous rating. It takes a few seconds and does not block
+  the api or a drone world stepping on the same container. Without the container it answers
+  `503 physics_unavailable` with the install command, like every other physics route.
+- The check **measures**; it never restates the design. A design figure that is wrong comes back as a
+  disagreement — that is what makes the verdict worth reading.
+
 ## Flying a trained policy (the certification gate)
 
 1. **Explore first.** The gate replays the policy's recorded flight through *your* world's map; a

@@ -179,6 +179,22 @@ baseline, so a learned policy is always compared to something that already works
   thrust jitter, 8 parallel environments, 1 000 000 steps. Seed 1 beats the controller on every
   facet (mean 0.026 vs 0.035 m, endpoints 0.9 / 1.4 vs 2.3 / 2.4 cm, no crashes); seeds 0 and 2 win
   the endpoints and lose the mean. One seed of three; B19's done-when stands.
+- **The arm we print (D1 and D5 task 3, 0.12.0):** the hands get the drone's treatment — one parts model, three
+  consumers. A desk-class six-axis arm on 12 V serial-bus servos: each joint's requirement is the worst gravity
+  torque over the poses its limits allow (searched, and never a pose that reaches through the bench) plus a dynamic
+  allowance, and each takes the simplest drive that holds it — one servo, two in parallel, then a printed belt. It
+  lands on two direct servos at the shoulder, 0.415 m of reach, 0.15 kg of payload, about USD 240 of parts. Ten
+  printed parts are CAD Studio programs validated against that package's own contract; the MuJoCo model is generated
+  from the same design, with each link's mass where the sizing lumps it and each joint a position servo limited to
+  its drive's stall torque. **The design is then checked against the physics rather than asserted**
+  (`POST /physics/arm/check`): the container holds the payload in each joint's worst pose and runs the taught
+  pick-and-place — task 3's deterministic baseline — and reports what it measured beside what the design expected.
+  On desk-6: shoulder 2.06 N·m measured against 2.04 designed, elbow 0.97 against 0.96, every joint inside its
+  continuous torque, the task 3 of 3 scenes. Two honest findings came out of it: the design's own worst pose for the
+  elbow reached through the bench until the search learned the arm is bolted to one, and a servo's damping must be
+  its motor's torque-speed line (stall over no-load speed) — an invented damping ratio had the elbow at stall
+  carrying nothing. The learned half (a policy that beats the taught baseline) is BACKLOG B21; the arm as a plant
+  inside the room's WorldSim, and as a node on the rail, is B22.
 - **Not built, recorded as BACKLOG with done-when:** a hardware node behind the same envelopes with its
   own link-loss failsafe (B6 — the PX4 flight stack proves the envelopes, not the hardware), a training
   recipe that beats the controller on three seeds (B19 — one of three so far), tasks D5.2–D5.4.
@@ -207,7 +223,8 @@ baseline, so a learned policy is always compared to something that already works
    certification gate and the policy as the plant's controller — **done 0.8.0**; the ctbr recipe beats
    the reference on one seed of three (0.11.0, B19).
 4. Task 2 (exploration policy vs the frontier planner) — open.
-5. Arm MJCF and task 3; then task 4 — open.
+5. Arm MJCF and task 3 — **the model, the taught baseline and the physics check done 0.12.0**; the learned policy
+   (B21) and the arm inside the room's world and on the rail (B22) are open. Task 4 (the door pull) — open.
 6. Policy-as-provider behind the confirm gate; hardware-in-the-loop — B19 (the win on three seeds), B6
    (a PX4 flight stack is a `drone` node on the rail since 0.11.0; the hardware is not).
 
