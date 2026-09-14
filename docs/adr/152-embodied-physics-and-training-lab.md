@@ -159,9 +159,29 @@ baseline, so a learned policy is always compared to something that already works
   evidence. The dialled bridge is unaffected. Proven anyway on the platform's own image in a sandbox
   beside the stack (own database and redis, mock identity, `legacy` mode; the runbook has the recipe):
   the container node acknowledged, a world reset onto it, an exploration to done through the api.
-- **Not built, recorded as BACKLOG with done-when:** a real node behind the same envelopes (B6: kind
-  `drone`, refusing `load` and `clone`, its own link-loss failsafe — the node double is that shape),
-  a training recipe that beats the controller on three seeds (B19), tasks D5.2–D5.4.
+- **A flight stack as the drone node (B6, 0.11.0):** the package's engine image also runs a PX4 node
+  (`embodied_px4_node.py`): the official Dronecode SITL image (SIH physics, PX4 1.18.0) flown over
+  MAVLink as a `drone`-kind node on the same rail. `load` binds the scene for rays and contacts only,
+  `step` streams the setpoint in OFFBOARD and reports the vehicle's own estimate without sleeping,
+  `sense` casts the MuJoCo rays from that pose, `clone` is refused (the rehearsal runs on the kinematic
+  twin), `drop` lands; the pad frame is the vehicle at rest. In the sandbox a drone-first exploration
+  ran to done on it through the api's own timer (PX4: armed by external command, takeoff detected,
+  landing detected; localisation tracking throughout, 2026-09-14). The real stack found three seam
+  defects the plant could not, each now under a test: the setpoint mask ignored yaw (the vehicle
+  kept its boot heading, every sweep at altitude landed 90° off); a sweep was expressed against a
+  truth snapshot taken before sensing instead of the pose the frames report; and hit points were
+  rounded coarser than the pose, so a vehicle a centimetre off its pad had its climb refused. The
+  image's own entrypoint aims MAVLink at `host.docker.internal` on Docker Desktop, so the compose
+  service runs the px4 binary directly. Not enabled on the dev box: its heartbeats meet the same core
+  gate as the plant's (B20).
+- **The ctbr recipe (B19, 0.11.0):** the SimpleFlight shape on this plant — collective thrust and body
+  rates through the plant's own rate loop, a 10-point reference look-ahead, a smoothness penalty,
+  thrust jitter, 8 parallel environments, 1 000 000 steps. Seed 1 beats the controller on every
+  facet (mean 0.026 vs 0.035 m, endpoints 0.9 / 1.4 vs 2.3 / 2.4 cm, no crashes); seeds 0 and 2 win
+  the endpoints and lose the mean. One seed of three; B19's done-when stands.
+- **Not built, recorded as BACKLOG with done-when:** a hardware node behind the same envelopes with its
+  own link-loss failsafe (B6 — the PX4 flight stack proves the envelopes, not the hardware), a training
+  recipe that beats the controller on three seeds (B19 — one of three so far), tasks D5.2–D5.4.
 
 ## Consequences
 
@@ -184,12 +204,12 @@ baseline, so a learned policy is always compared to something that already works
    0.7.0** over a package-owned bridge; the swarm node rail — **done 0.9.0** (the container joins as a
    drone node; the sim flies it through `RailDroneNode` beside `RemotePlant`).
 3. Task 1 with a PPO baseline and the deterministic autopilot as the reference — **done 0.7.0**; the
-   certification gate and the policy as the plant's controller — **done 0.8.0**; no policy beats the
-   reference yet (B19).
+   certification gate and the policy as the plant's controller — **done 0.8.0**; the ctbr recipe beats
+   the reference on one seed of three (0.11.0, B19).
 4. Task 2 (exploration policy vs the frontier planner) — open.
 5. Arm MJCF and task 3; then task 4 — open.
-6. Policy-as-provider behind the confirm gate; hardware-in-the-loop — B19 (the win), B6 (a real node
-   on the rail the plant already speaks).
+6. Policy-as-provider behind the confirm gate; hardware-in-the-loop — B19 (the win on three seeds), B6
+   (a PX4 flight stack is a `drone` node on the rail since 0.11.0; the hardware is not).
 
 ## Related
 

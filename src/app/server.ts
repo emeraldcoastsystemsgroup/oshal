@@ -191,6 +191,7 @@
  * 169 | maintainer@emeraldcoastsystemsgroup.com | Bind package-owned specialist facts to current application authority before accountable dispatch.
  * 170 | maintainer@emeraldcoastsystemsgroup.com | Register per-user Jarvis briefing settings and source lifecycle against current principal and application authority.
  * 171 | maintainer@emeraldcoastsystemsgroup.com | Connect isolated installed-package tests, current caller policy and durable Test Lab results.
+ * 178 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/admin/data-model (the data-model explorer: every Postgres table/view with owners, keys and RLS scope, shared objects, the app integration map and store inventories) behind requiresAuth + requiresOperator, read-only; ports wired to the platform pool and the app service. Guards: tests/unit/data-model-routes.spec.ts, tests/unit/data-model-explorer-browser.spec.ts.
  */
 
 require('dotenv').config();
@@ -310,6 +311,9 @@ import { createLinkedInAssistantRoutes } from './routes/linkedin-assistant-route
 // (trading route imports removed: the trading SURFACE carved to the oshal-applications store,
 //  ADR-085 Wave 3 — the ENGINE stays kernel in app/trading-{engine,schema}.ts + the dispatch loops.)
 import { createSecurityRoutes } from './routes/security-routes';
+import { createDataModelRoutes } from './routes/data-model-routes';
+import { createDataModelPorts } from './data-model-ports';
+import { createDataModelService } from '@/features/data-model';
 import { createJoinRoutes } from './routes/join-routes';
 import { createJarvisRoutes } from './routes/jarvis-routes';
 import { createJarvisPackageToolService } from './composition/jarvis-package-tool-wiring';
@@ -1405,6 +1409,12 @@ function createApp(): express.Application {
   app.use('/api/security', requiresAuth, requiresOperator, createSecurityRoutes(ctx, apiDir,
     async () => (await swarmAppService.getActiveManifests()).flatMap((m) =>
       (m.routes ?? []).map((r) => ({ appName: m.name, mountPath: r.mountPath, auth: r.auth, requiresAuth: r.requiresAuth })))));
+  // Data-model explorer (/data-model page): every Postgres table and view with its owners, keys and
+  // RLS row scope, the objects shared across apps, the app integration map and the non-Postgres
+  // store inventories. Read-only, but the payload names every installed app's tables and policies,
+  // so the whole mount is operator-only - same gate, same reason as /api/security above.
+  app.use('/api/admin/data-model', requiresAuth, requiresOperator, createDataModelRoutes(createDataModelService(
+    createDataModelPorts({ pool: ctx.pool, apps: () => swarmAppService }))));
   // Add a computer — mints a join code (OSJOIN1.*) so another machine can attach as a worker
   // node long after the installer printed the original one. OPERATOR-ONLY: a join code embeds
   // REMOTE_CLIENT_SHARED_SECRET in plaintext and anyone holding it can register a node that

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from server.ts (1000-line cap decomposition): standalone HTML serving helpers + UI asset / engineering-page directory resolution. Verbatim moves — this module MUST stay flat in src/app/ so the __dirname-relative path candidates keep resolving to the same locations as before.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | /applications opts into guestWelcome: the app-store preview surface welcomes anonymous visitors through the /guest demo landing (?next= deep link back) instead of bouncing them to Google OAuth.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148: register the /users swarm access-management surface. requiresAuth only, deliberately — the page is where a signed-in user learns they are NOT an admin, and where the first person on a virgin swarm claims root before any operator exists; the privileged reads and every write are fenced by requiresOperator inside /api/swarm/roles.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Registered the /data-model page (data-model explorer). requiresAuth only at the page, like /users and /app-loader: a non-operator gets the explanatory screen, and every read is fenced by requiresOperator on /api/admin/data-model.
  */
 
 import express from 'express';
@@ -234,6 +235,7 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
   const usersDir = resolveExistingPath([path.resolve(__dirname, '../pages/users'), path.resolve(process.cwd(), 'src/pages/users')]);
   const appLoaderDir = resolveExistingPath([path.resolve(__dirname, '../pages/app-loader'), path.resolve(process.cwd(), 'src/pages/app-loader')]);
   const pumpkinDir = resolveExistingPath([path.resolve(__dirname, '../pages/pumpkin'), path.resolve(process.cwd(), 'src/pages/pumpkin')]);
+  const dataModelDir = resolveExistingPath([path.resolve(__dirname, '../pages/data-model'), path.resolve(process.cwd(), 'src/pages/data-model')]);
 
   return [
     { routePath: '/task-explorer', pageDir: taskExplorerDir },
@@ -270,6 +272,9 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
     // and every install is fenced by requiresOperator inside /api/swarm/registries. Deliberately
     // NO guestWelcome mat: browsing a catalog is harmless, installing code is not.
     { routePath: '/app-loader', pageDir: appLoaderDir },
+    // Data-model explorer. requiresAuth only at the page level so a non-admin sees why the data is
+    // withheld; every read is fenced by requiresOperator on /api/admin/data-model.
+    { routePath: '/data-model', pageDir: dataModelDir },
     // Pumpkin projector — the full-screen jack-o'-lantern display for the Halloween prop (?app=pumpkin).
     { routePath: '/pumpkin', pageDir: pumpkinDir },
   ];

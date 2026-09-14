@@ -42,6 +42,7 @@ kind of physical device.
 | A physical prop driven **only through a manifest-declared, owner-resolved tool** | store package `pumpkin` (projector over a paired SSE room) | A bot cannot obtain the pairing token; the tool is the only door. |
 | A generic owned worker node that executes one claimed task at a time | `packages/oshal-chat` remote client, A2A `mcp.call-tool` | Owner-scoped dispatch since 2026-07-23. |
 | The **physics plant as a swarm node**: the embodied engine container heartbeats in and takes command envelopes exactly as a drone node does; the sim flies it through `RailDroneNode` beside the dialled `RemotePlant` | ADR-152, store package `embodied` 0.9.0 (`/api/embodied/nodes`, `auth: service`) | The seam a real drone node fills (embodied BACKLOG B6): same envelopes, kind `drone`, no `load`, no `clone`. |
+| A **PX4 flight stack as a drone node**: the official SITL image (SIH physics) flown over MAVLink in OFFBOARD behind the same envelopes; its own estimate is the truth, the scene is cast from that pose | ADR-152, store package `embodied` 0.11.0 (`embodied_px4_node.py`, `install-engine.sh --with-px4`) | Kind `drone`: refuses `clone` (the rehearsal runs on the kinematic twin); every leg through the unchanged guards and confirm. Proven in the sandbox; the hardware is embodied BACKLOG B6. |
 
 What does **not** exist: any manipulator provider, any notion of an object with a pose and an
 affordance inside a Spaces scan, any "physical task" ticket type, and any device-kind-agnostic

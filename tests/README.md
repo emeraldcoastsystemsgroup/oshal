@@ -89,6 +89,14 @@ existing **Cockpit appearance** Lab card links the browser recipe; its live
 stylesheet readiness check does not run Chromium. The remaining command cases
 retain existing static-surface, cache-header and Lab-registration contracts.
 
+`npm run test:data-model` covers the data-model explorer: the catalog fold and its parity with the
+schema-docs generator, ownership over a real temporary source tree, the integration map, the
+service cache, the page model, the Test Lab registration, a real catalog read from a disposable
+PostgreSQL container, the operator gate over actual HTTP, and the page in Chromium. The fixtures
+are temporary directories, a disposable database and fixture store ports; no deployment database,
+graph, vector or cache store is read. The **Data model explorer** Lab card links these suites; its
+live step only reads the current snapshot.
+
 The autonomous backlog suites have matching Lab registrations and local commands:
 
 | Command | Coverage |

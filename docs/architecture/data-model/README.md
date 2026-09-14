@@ -150,6 +150,25 @@ diagram, columns, how its tables are created, and the core tables it references.
 indexes them in `SCHEMAS.md` at its root. Foreign keys from a package into core link back to
 these pages.
 
+## Explorer
+
+Operators can navigate the same model live at **`/data-model`** (Admin console → Data model). It
+reads the running deployment rather than a committed snapshot:
+
+- **Apps & integrations** - one node per installed app plus core, joined by what manifests declare
+  (context offers, artifact Send-to flows matched by MIME type, dependencies, group members) and by
+  database links (tables two owners both declare, foreign keys that cross an owner boundary).
+- **Tables** - an owner's tables and views, or a table's foreign-key neighbourhood one to three hops
+  out; every column, key, declaring file and the RLS row scope read from `pg_policies`.
+- **Shared objects** - multi-owner tables and cross-owner foreign keys.
+- **Other stores** - the TimescaleDB catalog, SQLite tables parsed from source, tables declared but
+  not present, unowned live relations, and ArangoDB, ChromaDB and Redis inventories (Redis shows key
+  families and value types only, never values).
+
+The page is signed-in only; `/api/admin/data-model` is operator-only. The catalog SQL, the RLS
+classifier and the DDL parser are held identical to this generator's by
+`tests/unit/data-model-catalog.spec.ts`. Local suites: `npm run test:data-model`.
+
 ## Regenerating
 
 ```bash
