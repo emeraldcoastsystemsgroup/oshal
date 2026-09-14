@@ -4,6 +4,7 @@
 -- -----------------------------------------------------------------------------
 -- 1 | maintainer@emeraldcoastsystemsgroup.com | Converge superuser-created runtime role ADMIN membership without regranting it from managed non-superuser creators.
 -- 2 | maintainer@emeraldcoastsystemsgroup.com | Reset legacy app table and sequence default grants before establishing the exact runtime privilege allowlist.
+-- 3 | maintainer@emeraldcoastsystemsgroup.com | Add the derived application-execution-ownership helper (migration 142) to the bot contract: EXECUTE for oshal_app and oshal_bot, never PUBLIC. A bot node's ADR-149 posture guard needs that one decision; the tables behind it stay outside the contract, which is why migration 140's direct grants were stripped here on every boot.
 -- ===========================================================================
 -- app-role-provisioning.sql  (ADR-076)
 --
@@ -399,14 +400,20 @@ GRANT USAGE ON SEQUENCE public.oshal_cost_events_id_seq TO oshal_bot;
 
 RESET ROLE;
 
--- Only the derived ticket-owner helper is part of the bot contract. Every
--- SECURITY DEFINER helper is private by default; the app gets all three.
+-- Only derived helpers are part of the bot contract: ticket ownership, and
+-- application execution ownership (which application claims a bot or tool,
+-- and whether it is protected - the ADR-149 posture guard a bot node runs
+-- before accepting any execution). The bot gets those decisions, never the
+-- tables behind them. Every SECURITY DEFINER helper is private by default; the
+-- app gets all four.
 REVOKE EXECUTE ON FUNCTION public.oshal_is_tenant_member(text) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_owns_task(text) FROM PUBLIC, oshal_bot;
 REVOKE EXECUTE ON FUNCTION public.oshal_owns_ticket(uuid) FROM PUBLIC, oshal_bot;
+REVOKE EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) FROM PUBLIC, oshal_bot;
 GRANT EXECUTE ON FUNCTION public.oshal_is_tenant_member(text) TO oshal_app;
 GRANT EXECUTE ON FUNCTION public.oshal_owns_task(text) TO oshal_app;
 GRANT EXECUTE ON FUNCTION public.oshal_owns_ticket(uuid) TO oshal_app, oshal_bot;
+GRANT EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) TO oshal_app, oshal_bot;
 
 COMMIT;
 

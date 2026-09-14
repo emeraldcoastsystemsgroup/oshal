@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Apply migration 142: ownership is read through the derived oshal_application_execution_claims helper, so the fixture schema needs it; the schema-loss case still fails closed through it.
  */
 /** Disposable local PostgreSQL only. Never consumes DATABASE_URL or deployment credentials. */
 import { execFileSync } from 'node:child_process';
@@ -36,6 +37,7 @@ beforeAll(async () => {
   if (!ready) throw new Error('Disposable authorization PostgreSQL did not become ready');
   await owner.query(readFileSync(resolve('scripts/migrations/127-application-authorization.sql'), 'utf8'));
   await owner.query('CREATE TABLE swarm_applications(name TEXT PRIMARY KEY, agent_ids TEXT[], tool_names TEXT[], manifest_path TEXT, manifest JSONB)');
+  await owner.query(readFileSync(resolve('scripts/migrations/142-application-execution-claims-helper.sql'), 'utf8'));
   await owner.query("CREATE ROLE authorization_runtime LOGIN PASSWORD 'fixture-only' NOSUPERUSER NOBYPASSRLS");
   await owner.query('GRANT USAGE ON SCHEMA public TO authorization_runtime');
   await owner.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO authorization_runtime');

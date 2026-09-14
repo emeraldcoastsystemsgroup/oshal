@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Compare the bound executable name against the ownership arrays as text. `swarm_applications.agent_ids` is UUID[] (migration 022) while the parameter binds as text, so `$1=ANY(agent_ids)` raised `operator does not exist: text = uuid` for every kind:'bots' read. That threw ApplicationOwnershipUnavailableError, which canReadProtectedResult swallows to `false`, so every Jarvis ask answered 404 session_not_found from 2026-09-11 (c18f057a) onward. Log the swallowed failure: callers turn it into a bare refusal, so an unlogged one hid a three-day Jarvis outage.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Resolve an ambiguous bot association to the loader-stamped owner instead of refusing. `swarm_applications.agent_ids` is an ASSOCIATION column and is deliberately many-to-many (swarm-app-repository `upsert` resolves `workflow.workerBot` by name for carved apps with no `bots:`, so Jarvis catalog/mesh/selector keep working after ADR-085) — twelve live ids are claimed by more than one app, several of them correctly. Reading it as ownership, which must be 1:1, raised `Ambiguous package ownership` on every such read; callers swallow that to `false`, so tickets vanished from the operator's own listing (docs/operations/agent-id-ownership-collisions.md). `agents.metadata.manifestApp` is loader-stamped (manifest-bot-runtime `upsertManifestBot`) and is the authoritative owner, so arbitrate with it. No stamp, an inactive agent, a tool name, or a stamp that is not one of the claimants still refuses: this is an authorization path and an unresolvable case must fail closed.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Read the claims through oshal_application_execution_claims (migration 142) instead of querying oshal_authorization_applications and swarm_applications inline. The bot node runs this same reader as oshal_bot, and the governed bot contract gives that role the derived answer, not the tables - so the posture guard stops failing closed on 42501 for every bot execution (BUG-25). The controller calls the same helper, so ownership has one definition.
  */
 /** Durable package ownership closes the interval before activation and survives disabled/uninstalled packages. */
 import type { Pool } from 'pg';
@@ -70,18 +71,12 @@ export async function readApplicationExecutionOwnership(pool: Pick<Pool, 'query'
   kind: 'bots' | 'tools'; id: string; app?: string; mode: 'legacy' | 'enforce';
 }): Promise<ApplicationExecutionOwnership | undefined> {
   if (!pool || !input.id || !['bots','tools'].includes(input.kind)) throw new ApplicationOwnershipUnavailableError();
-  const column = input.kind === 'bots' ? 'agent_ids' : 'tool_names';
   try {
-    const result = await runWithSystemIdentity(() => pool.query(`
-      SELECT app, bool_or(protected) AS protected FROM (
-        SELECT app_name AS app, protected FROM oshal_authorization_applications
-          WHERE CASE WHEN $2::text IS NULL THEN $1=ANY(${column}::text[]) ELSE app_name=$2 END
-        UNION ALL
-        SELECT sa.name AS app, (sa.manifest ? 'authorization' OR COALESCE(aa.protected,FALSE)
-          OR ($3::boolean AND replace(sa.manifest_path,chr(92),'/') ~ '(^|/)oshal-app[.]yaml$')) AS protected
-        FROM swarm_applications sa LEFT JOIN oshal_authorization_applications aa ON aa.app_name=sa.name
-          WHERE CASE WHEN $2::text IS NULL THEN $1=ANY(sa.${column}::text[]) ELSE sa.name=$2 END
-      ) ownership GROUP BY app`, [input.id, input.app ?? null, input.mode !== 'legacy']));
+    // One definition of ownership for the controller and every bot node: the derived helper from
+    // migration 142, which the governed bot contract lets oshal_bot execute without reading the tables.
+    const result = await runWithSystemIdentity(() => pool.query(
+      'SELECT app, protected FROM oshal_application_execution_claims($1, $2, $3, $4)',
+      [input.kind, input.id, input.app ?? null, input.mode !== 'legacy']));
     if (!result.rows.length) return undefined;
     const claims = result.rows.map((row: { app?: unknown; protected?: unknown }) => {
       if (typeof row.app !== 'string' || !row.app || typeof row.protected !== 'boolean') throw new Error('Invalid package ownership');

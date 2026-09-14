@@ -1754,39 +1754,6 @@ pass instead of gap against the deployed API.
 - **Who decides:** the operator. (1) and (2) uninstall or edit applications installed on the operator's own box; (3) changes the ADR-149 authorization core, which is load-bearing and should not be touched without approval. Nothing in this entry has been performed.
 - **Done when:** the census query in the ops doc returns zero rows for classes (a), (b) and (d) — the seven borrowed ids released and the two mispinned uuids corrected in `oshal-applications` and reinstalled — AND the deliberate aliases of class (c) are readable rather than removed, because an association shared on purpose stopped being read as exclusive ownership: either the reader resolves a multi-claim to a single accountable owner from `agents.metadata.manifestApp` (which already carries exactly one stamp per agent), or a manifest declares ownership separately from association, recorded in an ADR amending ADR-149. A regression guard crosses the real boundary that failed — the real reader against a real PostgreSQL carrying a real multi-claimed `UUID[]` row, extending `tests/unit/application-execution-ownership-postgres.spec.ts`, never a doubled query — and proves a deliberately shared bot is readable while an unowned claim is not. The integrity check is widened to scan the whole `agent_ids` array of active *and* inactive apps so a reappearing squatter fails it. `GET /api/tickets` as the operator returns the four `career-hunter` tickets that are dropped today, and the api log shows zero `Ambiguous package ownership` lines across a full boot.
 
-### The bot database role can read almost nothing it was meant to (2026-09-14)
-
-**Context:** fixing [BUG-25](operations/bug-log.md) showed that `oshal_bot` can `SELECT` only **3 of
-409** public tables on this stack. Migration 099 created the least-privilege bot role and intended
-blanket DML plus "default-privilege grants from BOTH object-creating roles ... so future tables stay
-readable without another migration" — but `pg_default_acl` carries **no `oshal_bot` entry at all**,
-and every runtime table is owned by `oshal_app`. So nothing `oshal_app` has created since is
-readable by the bot role, including `agents`, `swarm_applications` and `chat_tasks` — the last of
-which 099's own docblock names as a bot write path ("chat_tasks cost rows ... are all DML").
-
-Migration 140 granted the three relations and one function that the ADR-149 posture guard needs,
-because Jarvis was down. It deliberately did **not** re-grant wholesale: that changes a
-least-privilege security posture and belongs to the operator.
-
-**Why this is not obviously urgent, and why that is the danger:** bots heartbeat over Redis and
-their LLM execution does not read these tables, so the fleet looks healthy. The failures are silent
-and only surface when a code path actually reads — which is exactly how this one waited to be found
-by a person trying to say hi.
-
-**Done when:**
-- The real privilege set `oshal_bot` NEEDS is enumerated from the code that runs in a bot node (not
-  guessed from the table list), with the file:line that performs each read or write.
-- A migration grants exactly that set, keeping `oshal_workload_identities` and
-  `oshal_user_delegations` revoked per migration 099, and keeping every RLS policy intact —
-  `oshal_bot` stays `NOSUPERUSER`/`NOBYPASSRLS` and no policy is relaxed to make a query pass.
-- `ALTER DEFAULT PRIVILEGES` is set **for the `oshal_app` role** as well, so a table created by the
-  api's runtime DDL tomorrow does not silently reopen this gap. Migration 099 set defaults only for
-  `oshal`.
-- A guard asserts the required set against a real PostgreSQL and the real role, extending
-  `tests/unit/bot-role-ownership-reads-postgres.spec.ts`, and is proven red by revoking one grant.
-- A written decision records which tables the bot is deliberately DENIED, so the next missing grant
-  is distinguishable from a deliberate boundary — the ambiguity that made BUG-25 take a live outage
-  to notice.
 ### Dependency tiers: four gaps the design surfaced (2026-09-14)
 
 **Context:** building `required` / `optional` app dependencies (ADR-085 addendum) exposed four
