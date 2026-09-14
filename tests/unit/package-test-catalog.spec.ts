@@ -107,3 +107,33 @@ it('re-seals a Node-harness browser recipe once the sandbox verifies the browser
   expect(after.find(test => test.caseId === 'invoice-totals')).toMatchObject({ runnable: true });
   expect([...catalog.capabilities]).toEqual(expect.arrayContaining(['runner:node-test', 'fixture:core-checkout', 'runner:playwright']));
 });
+
+it('verifies the runner image only when a browser recipe is registered, only once, and never without the server arming it', async () => {
+  const probes: Array<string | undefined> = [];
+  const sandbox = { probe: async (image?: string) => { probes.push(image); return new Set(['runner:playwright', 'browser:chromium']); } };
+  const source = createPackageExecutionFixture(root, { name: 'lazy-verify' });
+  const nodeOnly = new InstalledAppTestCatalog({ sandbox: sandbox as never, runnerImage: 'fixture:image' });
+  nodeOnly.enableRunnerVerification(); nodeOnly.register(source.record);
+  const visible = new Map([[source.record.name, source.record.displayName]]);
+  nodeOnly.list(visible, { canRunSuites: true });
+  expect(probes, 'a package with no browser recipe must not cost a container').toEqual([]);
+
+  mkdirSync(join(source.dir, 'tests/browser'), { recursive: true });
+  writeFileSync(join(source.dir, 'tests/browser/proof.mjs'), "import { test } from 'node:test';\ntest('x', () => {});\n");
+  writeFileSync(join(source.dir, 'tests/test-lab.yaml'), yaml.dump({ version: 1, cases: [source.test,
+    { ...source.test, id: 'proof', level: 'browser', sideEffects: 'none',
+      runner: { kind: 'playwright', scope: 'package', files: ['tests/browser/proof.mjs'] }, prerequisites: ['runner:playwright', 'browser:chromium'] }] }));
+
+  const unarmed = new InstalledAppTestCatalog({ sandbox: sandbox as never, runnerImage: 'fixture:image' });
+  unarmed.register(source.record); unarmed.list(visible, { canRunSuites: true });
+  expect(probes, 'a catalog the server never armed must not probe').toEqual([]);
+
+  const armed = new InstalledAppTestCatalog({ sandbox: sandbox as never, runnerImage: 'fixture:image' });
+  armed.enableRunnerVerification(); armed.register(source.record);
+  expect(armed.list(visible, { canRunSuites: true }).find(test => test.caseId === 'proof')).toMatchObject({ runnable: false });
+  armed.list(visible, { canRunSuites: true });
+  await expect.poll(() => [...armed.capabilities].includes('runner:playwright')).toBe(true);
+  expect(probes, 'exactly one probe, carrying the configured image').toEqual(['fixture:image']);
+  expect(armed.list(visible, { canRunSuites: true }).find(test => test.caseId === 'proof')).toMatchObject({ runnable: true });
+  expect(probes).toEqual(['fixture:image']);
+});

@@ -120,15 +120,20 @@ own loopback. Playwright is pointed at the image's system Chromium through a
 registry shim on the writable tmpfs; no browser is downloaded and no
 package-supplied executable path is honored.
 
-Admission is verified, never assumed. At boot the api runs one probe suite in
-the browser profile and adopts only what that probe proves on the image:
+Admission is verified, never assumed. The api runs one probe suite in the
+browser profile the first time an installed package actually registers a
+browser recipe and someone reads the catalog — never at boot, so an
+installation without browser recipes never pays for a container, and a restart
+does not start one. It adopts only what that probe proves on the image:
 `runner:playwright` and `browser:chromium` when Chromium actually launched and
 rendered a page, `core:shared-theme-assets` and `core:surface-bridge` when
 those files exist under the core root, `core:dependencies` and
 `harness:oshal-core-root` when the core's modules resolve. Until the probe
 succeeds, browser recipes stay pending with "The playwright runner is
-unavailable."; a probe that fails under load is retried at the next boot.
-`OSHAL_TEST_LAB_RUNNER_PROBE=off` skips the probe. Recipes without the
+unavailable."; a probe that fails under load is retried on a later read, no
+sooner than ten minutes afterwards, so a loaded box is never flooded with
+containers. `OSHAL_TEST_LAB_RUNNER_PROBE=off` leaves the Node-only floor in
+place and never probes. Recipes without the
 `node:test` harness are refused at sealing, because under `node --test` a bare
 script would report nothing. Vitest, external and service-authenticated smoke
 recipes remain unavailable in the isolated runner.

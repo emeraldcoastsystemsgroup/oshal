@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Carry an optional request-bound service-smoke transport without adding caller sessions to reusable execution authority.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Verify browser-runner capabilities on the image, re-seal registrations when they change, require the Node harness for Playwright recipes and run them under the browser profile.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps, read through @/shared/app-dependencies (dependencies.required.apps or the legacy dependencies.apps).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Verify the runner image lazily and only when a browser recipe is actually registered, so no installation pays a container it never needs.
  */
 
 import { createHash } from 'crypto';
@@ -150,11 +151,31 @@ export class InstalledAppTestCatalog {
   private readonly sandbox: PackageTestSandbox;
   private readonly runnerImage?: string;
   private verifiedCapabilities: ReadonlySet<string> = NODE_RUNNER_CAPABILITIES;
+  private verifyOnDemand = false;
+  private probing?: Promise<void>;
+  private probedAt = 0;
 
   /** @description Use a server-owned runner recipe and optional immutable image selection. */
   constructor(options: { sandbox?: PackageTestSandbox; runnerImage?: string } = {}) {
     this.sandbox = options.sandbox ?? new PackageTestSandbox();
     this.runnerImage = options.runnerImage;
+  }
+
+  /** @description Allow the composed server to verify the runner image the first time a browser recipe is
+   * actually registered and read. Off by default, so a catalog built in a test never starts a container.
+   * @returns Nothing. */
+  enableRunnerVerification(): void { this.verifyOnDemand = true; }
+
+  /** @description Verify once, lazily, and only when an unverified browser recipe is visible: the probe costs
+   * a disposable container, so an installation without browser recipes never pays for one. A failed probe is
+   * retried no sooner than ten minutes later, so a loaded or broken box cannot be flooded with containers.
+   * @param cases Cases about to be returned to a caller. @returns Nothing. */
+  private verifyLazily(cases: InstalledAppTestCase[]): void {
+    if (!this.verifyOnDemand || this.probing || this.verifiedCapabilities.has('runner:playwright')) return;
+    if (Date.now() - this.probedAt < 600000) return;
+    if (!cases.some(test => test.runner.kind === 'playwright')) return;
+    this.probedAt = Date.now();
+    this.probing = this.verifyRunners().then(() => undefined).catch(() => undefined).finally(() => { this.probing = undefined; });
   }
 
   /** @description Probe the runner image inside the closed browser profile and adopt whatever it verifies.
@@ -235,6 +256,7 @@ export class InstalledAppTestCatalog {
           ...(reason ? { pendingReason: reason } : {}) });
       }
     }
+    this.verifyLazily(cases);
     return cases.sort((a, b) => a.id.localeCompare(b.id));
   }
 
