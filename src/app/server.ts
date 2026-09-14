@@ -192,6 +192,7 @@
  * 170 | maintainer@emeraldcoastsystemsgroup.com | Register per-user Jarvis briefing settings and source lifecycle against current principal and application authority.
  * 171 | maintainer@emeraldcoastsystemsgroup.com | Connect isolated installed-package tests, current caller policy and durable Test Lab results.
  * 178 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/admin/data-model (the data-model explorer: every Postgres table/view with owners, keys and RLS scope, shared objects, the app integration map and store inventories) behind requiresAuth + requiresOperator, read-only; ports wired to the platform pool and the app service. Guards: tests/unit/data-model-routes.spec.ts, tests/unit/data-model-explorer-browser.spec.ts.
+ * 179 | maintainer@emeraldcoastsystemsgroup.com   | Moved the OpenAPI spec definition, the swagger-jsdoc scan globs and the /openapi.json + /api-docs + /docs mount into ./server-openapi so this entrypoint is back under the 1000 code-line cap. Pure move: the spec, the glob list and the registration order are unchanged, and createApp now calls registerOpenApiDocsRoutes at the same point in the middleware chain.
  */
 
 require('dotenv').config();
@@ -403,9 +404,9 @@ import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-i
 import { PROMETHEUS_CONTENT_TYPE, renderRuntimeMetrics } from '@/shared/observability';
 import { gucEnabled } from '@/shared/services/database/guc-pool';
 
-// OpenAPI/Swagger imports
-import swaggerJsdoc from 'swagger-jsdoc';
-import swaggerUi from 'swagger-ui-express';
+// OpenAPI spec + the /openapi.json, /api-docs and /docs mount — extracted verbatim to
+// ./server-openapi (1000-line cap decomposition).
+import { registerOpenApiDocsRoutes } from './server-openapi';
 
 const logger = createChildLogger({ module: 'server' });
 
@@ -413,48 +414,6 @@ const logger = createChildLogger({ module: 'server' });
  * @description Default server port. Can be overridden via PORT env var.
  */
 const DEFAULT_PORT = 3456;
-
-// OpenAPI/Swagger configuration
-const swaggerDefinition = {
-  openapi: '3.0.0',
-  info: {
-    title: 'OSHAL Control Plane API',
-    version: '1.0.0',
-    description: 'OpenAPI documentation for the OSHAL control plane API.',
-  },
-  servers: [
-    {
-      url: 'http://localhost:3456',
-      description: 'Local development server',
-    },
-  ],
-  components: {
-    securitySchemes: {
-      bearerAuth: {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT',
-      },
-    },
-  },
-  security: [{ bearerAuth: [] }],
-};
-
-const swaggerOptions = {
-  swaggerDefinition,
-  apis: [
-    path.resolve(process.cwd(), 'src/app/routes/*.ts'),
-    path.resolve(process.cwd(), 'src/app/routes/**/*.ts'),
-    path.resolve(process.cwd(), 'dist/app/routes/*.js'),
-    path.resolve(process.cwd(), 'dist/app/routes/**/*.js'),
-    path.resolve(__dirname, './routes/*.ts'),
-    path.resolve(__dirname, './routes/**/*.ts'),
-    path.resolve(__dirname, './routes/*.js'),
-    path.resolve(__dirname, './routes/**/*.js'),
-  ],
-};
-
-const swaggerSpec = swaggerJsdoc(swaggerOptions);
 
 /* Standalone HTML/file helpers (resolveExistingPath, sendHtmlResponse, readOptionalTextFile) live
  * in ./server-ui-assets; auth-callback + OIDC-recovery + onboarding helpers live in
@@ -708,15 +667,7 @@ function createApp(): express.Application {
   });
 
   // Serve OpenAPI JSON and Swagger UI
-  app.use('/openapi.json', (_req, res) => {
-    res.setHeader('Content-Type', 'application/json');
-    res.send(swaggerSpec);
-  });
-  app.get(['/api-docs', '/api-docs/'], (_req, res) => {
-    logger.info('GET /api-docs - redirecting to /docs');
-    res.redirect(302, '/docs');
-  });
-  app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+  registerOpenApiDocsRoutes(app);
 
   // Health endpoint (public, no auth required) — used by Docker healthcheck
   // Placed BEFORE OIDC middleware to ensure healthcheck works without any auth setup
