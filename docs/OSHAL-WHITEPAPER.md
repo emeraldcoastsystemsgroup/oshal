@@ -158,7 +158,7 @@ register tool ─▶ create agent ─▶ assign tool ─▶ generate persona
           └─▶ container ─▶ heartbeat ─▶ mesh subscribe ─▶ visible in the registry
 ```
 
-Static bots live in the registry (26 today) plus a compose service, UUID‑matched across compose ·
+Static bots live in the registry (60 today) plus a compose service, UUID‑matched across compose ·
 registry · Redis · Postgres. This loop is the line between a *starter repo* and a *framework*.
 
 ## 9. Tools, RAG, and scheduling
@@ -241,7 +241,7 @@ constant — **more agents, more workflows, more vendors, joining one swarm that
 |---|---|
 | Agent harnesses | 5 (+ echo no‑op) |
 | LLM providers | 40+ (incl. local Ollama / LM Studio / LiteLLM) |
-| Swarm bots / personas | 26 registry bots · 68 persona definitions |
+| Swarm bots / personas | 60 registry bots · 103 persona definitions |
 | Standard tools | 31 across 16 categories |
 | Built‑in pipelines | build (7‑phase) · incident RCA (3‑phase) |
 | Example swarm apps | 7 (engineering, issue‑rca, little‑monsters, capture‑crm, federal‑capture, email‑summarizer, codex‑packer) |

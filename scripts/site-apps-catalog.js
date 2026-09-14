@@ -9,6 +9,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Drop the dead 'federal-capture' PRIVATE_APPS row with its rip (ADR-085 Wave 3, same reasoning). gov-contracting's row follows with its own rip.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Drop the dead 'gov-contracting' PRIVATE_APPS row with its rip (ADR-085 Wave 3) — the capture-family carve complete; no in-repo capture manifests remain.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Opt-in analytics for the hand-written root page: rewrite the <!-- ANALYTICS:START/END --> head block from the shared lib/product-site/analytics.js builder (SITE_ANALYTICS_* env, default none), the same single config source as the generated product pages and the nightly lab report. With the provider unset the block collapses back to the bare marker pair — the committed bytes — so an unconfigured regeneration leaves no stale snippet behind and the tracked page cannot churn. Missing markers WARN instead of failing: analytics is opt-in and must never block a deploy.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | BUG-9 (hand-typed counts drift): the tree counts move into one countRepo() and the claim check into claimErrors(), so the site claims and a new DOC_CLAIMS list are checked against the SAME numbers. `--docs` verifies the persona / registry-bot / kernel-manifest / provider / connector / ADR counts written into the whitepaper, reference, stem-cell and feature-catalog pages and exits 3 on drift. The site path is unchanged. main() now runs only as a CLI so tests/unit/doc-count-claims.spec.ts can require the module and hold the docs to the tree.
  */
 
 /**
@@ -16,6 +17,7 @@
  *
  *   node scripts/site-apps-catalog.js            # rewrite the grid in site/oswarm.ai/index.html
  *   node scripts/site-apps-catalog.js --check    # exit 1 if the site is stale (CI / pre-deploy gate)
+ *   node scripts/site-apps-catalog.js --docs     # exit 3 if a count written into the docs has drifted
  *
  * Source of truth: swarm-apps/<app>.yaml  (status + displayName + description).
  * The grid is rewritten between the <!-- APPS:START --> / <!-- APPS:END --> markers.
@@ -154,51 +156,156 @@ function render(apps) {
  * 306. The site says 306 + "a bulk importer takes it further", which is true of what you download.
  */
 function verifyClaims(html) {
-  const countMatches = (file, re) => ((fs.readFileSync(path.join(REPO, file), 'utf8').match(re) || []).length);
-  const claims = [
-    {
-      what: 'LLM providers',
-      actual: countMatches('src/features/llm-provider/services/provider-definitions.ts', /^ {4}id: '/gm),
-      source: 'PROVIDER_DEFINITIONS in src/features/llm-provider/services/provider-definitions.ts',
-      patterns: [/(\d+) providers wired in/, /<strong>(\d+) model providers<\/strong>/],
-    },
-    {
-      what: 'hand-audited connectors',
-      actual: fs.existsSync(path.join(REPO, 'swarm-apps', 'connectors'))
-        ? fs.readdirSync(path.join(REPO, 'swarm-apps', 'connectors')).filter((f) => f.endsWith('.yaml')).length
-        : 0,
-      source: 'swarm-apps/connectors/*.yaml',
-      // The stat tile carries the SAME number and was the one instance no pattern covered —
-      // it could have drifted alone while the two prose claims stayed green (2026-07-28).
-      patterns: [
-        /<strong>(\d+) hand-audited connectors ship in the repo/,
-        /(\d+) hand-audited specs/,
-        /<div class="n">(\d+)<\/div><div class="l">Connectors in catalog/,
-      ],
-    },
-  ];
-
-  const errors = [];
-  for (const c of claims) {
-    for (const re of c.patterns) {
-      const m = re.exec(html);
-      if (!m) {
-        errors.push(`  ${c.what}: the site no longer contains the phrase this gate checks (${re}).\n` +
-                    `    Someone reworded the claim. Re-point the pattern, or the number stops being verified.`);
-        continue;
-      }
-      const claimed = Number(m[1]);
-      if (claimed !== c.actual) {
-        errors.push(`  ${c.what}: site claims ${claimed}, repo has ${c.actual}.\n` +
-                    `    Truth: ${c.source}. Fix the site copy (or the count) — do not publish an unsubstantiated number.`);
-      }
-    }
-  }
+  const counts = countRepo();
+  const errors = claimErrors(SITE_CLAIMS, counts, () => html);
   if (errors.length) {
     console.error('[site-apps] NUMERIC CLAIMS FAILED — refusing to publish:\n' + errors.join('\n'));
     process.exit(3);
   }
-  console.log(`[site-apps] numeric claims verified: ${claims.map((c) => `${c.actual} ${c.what}`).join(', ')}`);
+  console.log(`[site-apps] numeric claims verified: ${SITE_CLAIMS.map((c) => `${counts[c.count]} ${c.what}`).join(', ')}`);
+}
+
+/** Where each count comes from — printed with every failure so it names which side is wrong. */
+const COUNT_SOURCES = {
+  providers: 'PROVIDER_DEFINITIONS in src/features/llm-provider/services/provider-definitions.ts',
+  connectors: 'swarm-apps/connectors/*.yaml',
+  personas: 'ai-lab/bot-personas/*.yaml',
+  registryBots: 'LOCAL_BOT_REGISTRY in src/app/extensions/swarm/swarm-bot-registry-local.ts (the default lineup)',
+  kernelManifests: 'swarm-apps/*.yaml (the kernel-resident manifests)',
+  adrRecords: 'docs/adr/NNN-*.md',
+  latestAdr: 'the highest NNN prefix in docs/adr/',
+};
+
+/**
+ * @description Counts the inventory straight from the tree. Every numeric claim, on the site and
+ * in the docs, is checked against these numbers, so each count is derived in exactly one place.
+ * `registryBots` counts the literal `agentId` entries of LOCAL_BOT_REGISTRY, the default lineup
+ * `getActiveRegistry()` serves; tests/unit/doc-count-claims.spec.ts pins that count to the
+ * imported array, so a reformat of the registry cannot make it miscount unnoticed.
+ * @returns {Record<string, number>} providers, connectors, personas, registryBots,
+ *   kernelManifests, adrRecords and latestAdr.
+ */
+function countRepo() {
+  const countMatches = (file, re) => ((fs.readFileSync(path.join(REPO, file), 'utf8').match(re) || []).length);
+  const listDir = (dir, re) => {
+    const abs = path.join(REPO, dir);
+    return fs.existsSync(abs) ? fs.readdirSync(abs).filter((f) => re.test(f)) : [];
+  };
+  const adrNumbers = listDir('docs/adr', /^\d{3}.*\.md$/).map((f) => Number(f.slice(0, 3)));
+  return {
+    providers: countMatches('src/features/llm-provider/services/provider-definitions.ts', /^ {4}id: '/gm),
+    connectors: listDir('swarm-apps/connectors', /\.yaml$/).length,
+    personas: listDir('ai-lab/bot-personas', /\.yaml$/).length,
+    registryBots: countMatches('src/app/extensions/swarm/swarm-bot-registry-local.ts', /^ {4}agentId: '/gm),
+    kernelManifests: listDir('swarm-apps', /\.yaml$/).length,
+    adrRecords: adrNumbers.length,
+    latestAdr: adrNumbers.length ? Math.max(...adrNumbers) : 0,
+  };
+}
+
+/** The site's numeric claims, checked against the rendered page. */
+const SITE_CLAIMS = [
+  {
+    what: 'LLM providers',
+    count: 'providers',
+    patterns: [/(\d+) providers wired in/, /<strong>(\d+) model providers<\/strong>/],
+  },
+  {
+    what: 'hand-audited connectors',
+    count: 'connectors',
+    // The stat tile carries the SAME number and was the one instance no pattern covered —
+    // it could have drifted alone while the two prose claims stayed green (2026-07-28).
+    patterns: [
+      /<strong>(\d+) hand-audited connectors ship in the repo/,
+      /(\d+) hand-audited specs/,
+      /<div class="n">(\d+)<\/div><div class="l">Connectors in catalog/,
+    ],
+  },
+];
+
+const CATALOG = 'docs/architecture/platform-feature-catalog.md';
+
+/**
+ * Counts written into the docs (BUG-9). These pages carried hand-typed numbers that no generator
+ * owned — "26 registry bots · 68 persona definitions", "63 ADRs (latest ADR-061)" — and they
+ * drifted for months. Each row names the file it lives in; `--docs` and the unit guard fail when a
+ * number disagrees with the tree or when its phrase has been reworded out from under the pattern.
+ */
+const DOC_CLAIMS = [
+  { file: 'docs/OSHAL-WHITEPAPER.md', what: 'registry bots', count: 'registryBots',
+    patterns: [/registry \((\d+) today\)/, /(\d+) registry bots/] },
+  { file: 'docs/OSHAL-WHITEPAPER.md', what: 'persona definitions', count: 'personas',
+    patterns: [/(\d+) persona definitions/] },
+  { file: 'docs/reference.md', what: 'persona YAML files', count: 'personas',
+    patterns: [/(\d+) persona YAML files/] },
+  { file: 'docs/the-stem-cell-model.md', what: 'kernel app manifests', count: 'kernelManifests',
+    patterns: [/\*\*(\d+) kernel app manifests\*\*/] },
+  { file: CATALOG, what: 'registry bots', count: 'registryBots',
+    patterns: [/\| Registry bots \(default lineup\) \| (\d+) \|/] },
+  { file: CATALOG, what: 'persona definitions', count: 'personas',
+    patterns: [/\| Persona definitions \| (\d+) \|/] },
+  { file: CATALOG, what: 'kernel app manifests', count: 'kernelManifests',
+    patterns: [/\| Kernel app manifests \(`swarm-apps\/\*\.yaml`\) \| (\d+) \|/] },
+  { file: CATALOG, what: 'LLM providers', count: 'providers',
+    patterns: [/\| LLM providers \| (\d+) \|/] },
+  { file: CATALOG, what: 'hand-audited connector specs', count: 'connectors',
+    patterns: [/\| Hand-audited connector specs \| (\d+) \|/] },
+  { file: CATALOG, what: 'ADR files', count: 'adrRecords',
+    patterns: [/\| ADRs \| (\d+) \(latest ADR-\d+\) \|/] },
+  { file: CATALOG, what: 'latest ADR', count: 'latestAdr',
+    patterns: [/\| ADRs \| \d+ \(latest ADR-(\d+)\) \|/] },
+];
+
+/**
+ * @description Checks each claim's phrases against the text it lives in and the tree count it
+ * asserts. A phrase that stops matching is ALSO a failure (someone reworded the claim out from
+ * under the gate) — deliberate, not a bug.
+ * @param {Array<{what: string, count: string, patterns: RegExp[], file?: string}>} claims - The claims.
+ * @param {Record<string, number>} counts - Tree counts from countRepo().
+ * @param {(claim: object) => string} textOf - Returns the text a claim is checked against.
+ * @returns {string[]} One message per failing phrase; empty when every claim holds.
+ */
+function claimErrors(claims, counts, textOf) {
+  const errors = [];
+  for (const c of claims) {
+    const text = textOf(c);
+    const where = c.file ? `${c.file} — ` : '';
+    for (const re of c.patterns) {
+      const m = re.exec(text);
+      if (!m) {
+        errors.push(`  ${where}${c.what}: the text no longer contains the phrase this gate checks (${re}).\n` +
+                    `    Someone reworded the claim. Re-point the pattern, or the number stops being verified.`);
+        continue;
+      }
+      const claimed = Number(m[1]);
+      if (claimed !== counts[c.count]) {
+        errors.push(`  ${where}${c.what}: claims ${claimed}, repo has ${counts[c.count]}.\n` +
+                    `    Truth: ${COUNT_SOURCES[c.count]}. Fix the copy (or the count) — do not publish an unsubstantiated number.`);
+      }
+    }
+  }
+  return errors;
+}
+
+/**
+ * @description Every drifted or unanchored count in the docs covered by DOC_CLAIMS.
+ * @param {Record<string, number>} [counts] - Tree counts; defaults to countRepo().
+ * @param {(file: string) => string} [readDoc] - Reads a repo-relative doc; defaults to the committed file.
+ * @returns {string[]} Failure messages; empty when the docs agree with the tree.
+ */
+function docClaimErrors(counts = countRepo(), readDoc = (file) => fs.readFileSync(path.join(REPO, file), 'utf8')) {
+  return claimErrors(DOC_CLAIMS, counts, (c) => readDoc(c.file));
+}
+
+/** `--docs`: verify the doc counts and exit 3 on drift, the same code the site claims use. */
+function verifyDocClaims() {
+  const errors = docClaimErrors();
+  if (errors.length) {
+    console.error('[site-apps] DOC COUNTS DRIFTED:\n' + errors.join('\n'));
+    process.exit(3);
+  }
+  const files = new Set(DOC_CLAIMS.map((c) => c.file)).size;
+  console.log(`[site-apps] doc counts verified: ${DOC_CLAIMS.length} claims across ${files} files`);
 }
 
 /**
@@ -225,6 +332,10 @@ function applyAnalytics(html) {
 }
 
 function main() {
+  if (process.argv.includes('--docs')) {
+    verifyDocClaims();
+    return;
+  }
   const check = process.argv.includes('--check');
   const { published, withheld } = collect();
   const html = fs.readFileSync(SITE, 'utf8');
@@ -254,4 +365,6 @@ function main() {
   console.log(`[site-apps] rewrote the app grid in ${path.relative(REPO, SITE)}`);
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = { countRepo, claimErrors, docClaimErrors, DOC_CLAIMS, SITE_CLAIMS };

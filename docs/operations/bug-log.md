@@ -49,7 +49,7 @@ figure / anti-drift rules / seeded bug-log), `cf197b73` (scorecard fail-loud gua
   CLAUDE.md's stale extension-guide citation, stale infra facts (any-bot:latest, ports,
   Keycloak), index hygiene.
 
-**Verified counts (for BUG-9 — don't re-derive):** 34 manifests · 307 connectors · 101 personas ·
+**Counts as read on 2026-07-18 (superseded — BUG-9 is fixed; run `node scripts/site-apps-catalog.js --docs` for today's):** 34 manifests · 307 connectors · 101 personas ·
 ~113 numbered ADRs (114 files) · **42 providers (CONFIRMED — `site-apps-catalog.js` already counts
 this; reader's "41 off-by-one" flag was itself wrong)** · ~44 registry bots · 49 compose containers
 (~40 bots). Worst drifts to fix: `platform-feature-catalog.md` ("28" **and** "63" ADRs on one page),
@@ -127,12 +127,38 @@ whitepaper/reference/stem-cell ("26 bots / 68 personas / 9 apps / 22 providers")
 - **Fix (planned):** re-run `scripts/connectors/gen-connector-docs.ts`.
 
 ## BUG-9 — Hand-typed counts drift and self-contradict
-- **Type:** Bug · **Priority:** Med · **Status:** OPEN (root-cause fix = counts generator)
+- **Type:** Bug · **Priority:** Med · **Status:** **FIXED 2026-09-14** — counts gate + guard; see the closing note.
 - **Where:** `docs/architecture/platform-feature-catalog.md` states both "28 ADRs" and "63 ADRs" on
   one page; whitepaper/reference/stem-cell say 26 bots · 68 personas · 9 apps · 22 providers.
   Verified: 34 manifests, 101 personas, 44 registry bots, 114 ADRs, ~40 containers, code-server 8444.
 - **Fix (planned):** write a generator that derives "By the Numbers" from the tree (settles the
   41-vs-43 provider ambiguity authoritatively); replace literals with generated values.
+
+**Closing note (2026-09-14).** Re-verified on `main` (`d679b696`) before any change, and it still
+reproduced: the whitepaper said "registry (26 today)" and "26 registry bots · 68 persona
+definitions", `docs/reference.md` said "68 persona YAML files", the feature catalog said "ADRs | 63
+(latest ADR-061)", and the stem-cell page said "nine distinct apps" (the "28 ADRs" half had already
+gone). The tree has 60 bots in `LOCAL_BOT_REGISTRY` (the default lineup `getActiveRegistry()`
+serves), 103 persona YAMLs, 10 kernel manifests, 40 providers, 310 connector specs and 157 ADR files
+up to ADR-156 — so the 2026-07-18 counts above had drifted too.
+- **Fix:** `scripts/site-apps-catalog.js` extended, not duplicated. One `countRepo()` now feeds both
+  the site claims and a new `DOC_CLAIMS` list (11 claims across the four pages), and
+  `node scripts/site-apps-catalog.js --docs` exits 3 on drift. The site path's behaviour is
+  unchanged. The literals were corrected; the catalog's "By the Numbers" keeps only the rows the tree
+  can count, and eight hand-typed rows were removed (pipeline phases, UI pages, session briefs,
+  containers, tables, unit tests, TypeScript errors, E2E cost). The stem-cell sentence now names the
+  10 kernel manifests and points at the app store instead of a dead README anchor.
+- **Guard:** `tests/unit/doc-count-claims.spec.ts`. Every gated doc count must equal the tree count,
+  the registry regex must equal the imported `LOCAL_BOT_REGISTRY.length`, and a stale literal or a
+  reworded phrase must each produce exactly one failure.
+- **Red → green:** before the doc fix, `npx vitest run tests/unit/doc-count-claims.spec.ts` gave
+  3 failed / 2 passed, with 12 drift errors including "claims 26, repo has 60", "claims 68, repo has
+  103" and "claims 63, repo has 157". After the fix: 5 passed. Mutation: putting the whitepaper row
+  back to "26 … 68" gave 3 failed, and breaking the registry counter's regex gave 4 failed. Both were
+  restored, and the run was back to 5 passed.
+- **Scope:** only the four pages above are gated. To bring another page under the gate, add a
+  `DOC_CLAIMS` row. The "22 providers" lines in `docs/research/*` are dated research notes and are
+  not gated.
 
 ## BUG-10 — ADR status drift (~20 ADRs)
 - **Type:** Bug · **Priority:** Med · **Status:** OPEN
