@@ -8,9 +8,11 @@ committed snapshot of one reference database; the explorer reads whatever deploy
   `GET /api/admin/data-model/drift`, all
   **operator-only** (`requiresAuth` + `requiresOperator` on the mount in `src/app/server.ts`).
   Read-only: catalog `SELECT`s, a source scan, and read calls to the other stores.
-- **Landed:** PR #431 (`feat/store-compatibility-gate`), commit `18edcbf4`.
-- **Not yet deployed.** `src/app` is not bind-mounted, so the route only exists after a core
-  deploy. See [Deploying](#deploying-it).
+- **Landed:** commit `18edcbf4`, merged to `main` through PR #431 (merge `b8de2099`, 2026-09-14).
+- **Deployed 2026-09-14.** `src/app` is not bind-mounted, so the route only exists after a core
+  deploy; `scripts/oshal-deploy.sh` deployed `b8de2099` (image `1fe73566ae87`), whose
+  `src/app/server.ts` mounts `/api/admin/data-model`. What remains is the operator walk-through in
+  [Deploying](#deploying-it), steps 3-4.
 
 ## What it shows
 
@@ -162,10 +164,13 @@ npm run test:data-model     # 92 tests; needs Docker (disposable Postgres) and P
 
 ## Deploying it
 
-The page files are bind-mounted, but the route is not: **a core deploy is required.**
+The page files are bind-mounted, but the route is not: **a core deploy is required.** Steps 1-2
+are done — PR #431 merged as `b8de2099` and `scripts/oshal-deploy.sh` deployed it on 2026-09-14
+(image `1fe73566ae87`, api + 34 bots, parity clean). Steps 3-4 are the open work. They are kept
+below for a fresh deployment.
 
-1. Merge PR #431, or preview-deploy the branch: `bash scripts/oshal-deploy.sh --preview`
-   (the branch must track origin and match its fetched tip).
+1. ~~Merge PR #431, or preview-deploy the branch~~ — done: PR #431 merged. On another deployment,
+   deploy a `main` that contains `18edcbf4` with `bash scripts/oshal-deploy.sh`.
 2. Check the box first: no deploy lock, the api healthy, and the Docker VM not starved —
    a build under memory pressure fails and rolls back.
 3. Verify: open `/data-model` as an operator; the Apps view draws; the Tables view lists core's

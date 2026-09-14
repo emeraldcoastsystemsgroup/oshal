@@ -3,11 +3,13 @@
 The core now reads a manifest's `dependencies` as two tiers — `required` and `optional` — and the
 installer, the loader and the App Loader all honour the difference ([ADR-085](../adr/085-remote-app-packages-and-registries.md) "Addendum — dependency
 tiers", `scripts/oshal-app-dependencies.js`, `@/shared/app-dependencies`; the author-facing contract
-is in [the authoring guide](../apps/authoring-app-packages.md)). **No published package
-has been converted yet.** The legacy flat form still loads and means *all required*, which is why
-nothing broke on the day the core change landed — and also why the store still over-declares:
-`create`, `life`, `games` and `system` list up to eight apps they merely route to, so installing
-one drags its whole shelf in, while apps that hand work to a partner app declare nothing at all.
+is in [the authoring guide](../apps/authoring-app-packages.md)). **All 61 published packages are
+now converted** — store PR #197, merged to `oshal-applications` `main` on 2026-09-14 as `64fb705`
+(see [Status](#status-2026-09-14)). The legacy flat form still loads and means *all required*, which
+is why nothing broke on the day the core change landed — and it is why, before the conversion, the
+store over-declared: `create`, `life`, `games` and `system` listed up to eight apps they merely route
+to, so installing one dragged its whole shelf in, while apps that hand work to a partner app
+declared nothing at all.
 
 Operator decision (2026-09-14): **migrate every store manifest to the tiered form and reclassify,
 after a core carrying the tiers is deployed.**
@@ -18,14 +20,16 @@ after a core carrying the tiers is deployed.**
 |---|---|---|
 | the core contract, installer, loader and App Loader | `main` `b8de2099` (PR #431 merged 2026-09-14) | **merged AND deployed.** The running image's `swarm-app-loader` validates “required/optional tiers or the legacy flat form… fail-closed at load” |
 | the store authoring guide | `oshal-applications` `main` (PR #185 merged 2026-09-14) | merged |
-| every published package manifest | `oshal-applications` `feat/store-dependency-tiers` | **converted 2026-09-14** — all 61 tiered, the floor declared on all 59 non-group packages, membership unchanged |
+| every published package manifest | `oshal-applications` `main` `64fb705` (PR #197 merged 2026-09-14) | **converted and merged** — all 61 tiered, the floor declared on all 59 non-group packages, membership unchanged. Checked on store `main`: 61 of 61 `*/oshal-app.yaml` use `required`/`optional` and none the flat form; the two without the floor are the groups `intelligent-career` and `marketing-suite` |
 | the App Loader page | bind-mounted `src/pages/app-loader` | live, and the API half it was waiting for is now deployed |
 | Test Lab scenario `app-dependency-tiers` | registered | its precondition is now met (the core is deployed); **not re-run yet** — that is step 2 and needs a signed-in session |
 
 ## Next steps, in order
 
-Each step is gated by the one before it. Step 1 is done; step 2 is the next action and needs a
-signed-in browser session. Steps 3-6 are an ordinary branch of work in the store repo.
+Each step was gated by the one before it. Steps 1, 3 and 4 are done — step 4 merged (PR #197) while
+step 2 was still recorded open, so step 2 is the next action: it is now the check that the merged
+store and the deployed core agree, and it needs a signed-in browser session. Steps 5-6 are an
+ordinary branch of work in the store repo.
 
 1. ~~**Deploy a core that carries the tiers.**~~ **DONE 2026-09-14.** PR #431 merged to `main` as
    `b8de2099` and deployed with `bash scripts/oshal-deploy.sh` (image `1fe73566ae87`, api + 34 bots,
@@ -40,7 +44,8 @@ signed-in browser session. Steps 3-6 are an ordinary branch of work in the store
    source; the file:line evidence is in the table below, which replaces the "needs code evidence"
    one. One hypothesis did not survive: `presentations` is **not** required by `create`.
 4. ~~**Convert the manifests**~~ **DONE 2026-09-14** on `oshal-applications` branch
-   `feat/store-dependency-tiers`. All 61 manifests carry the tiered form, comments intact and
+   `feat/store-dependency-tiers`, merged to store `main` through PR #197 as `64fb705`. All 61
+   manifests carry the tiered form, comments intact and
    re-indented in place (no YAML round-trip); the floor is declared on the 59 non-group packages
    and withheld from the two groups (`intelligent-career`, `marketing-suite`). Connector tiers
    follow the classification below. `node scripts/oshal-app.js validate <dir>` is clean for all 61,
@@ -79,6 +84,10 @@ every box still on the old core stops being able to install it.
 
 Order: core deploy → verify the Test Lab step `app-dependency-tiers` reports **pass** rather than
 `gap` (it reads one install preview and checks both tiers come back) → then convert the store.
+
+As it happened (2026-09-14): the core deploy came first (`b8de2099`), then the store conversion
+merged (PR #197, `64fb705`) with the Test Lab verification still recorded open — which is why step 2
+above is the next action.
 
 ## How to convert a manifest
 
@@ -120,11 +129,12 @@ Rules the contract enforces (all fail-closed at `oshal-app validate` and at load
 Verify each converted package with `node scripts/oshal-app.js validate <dir>` before publishing,
 and re-run `node scripts/check-catalog.mjs` in the store.
 
-## Proposed classification
+## Classification (applied by the conversion, PR #197)
 
-Evidence below is the manifest's own comments, quoted from the package. Three groups still need
-code-level verification before they are converted — the subagents that were reading the surfaces
-for it did not finish, so nothing here should be treated as proven.
+Evidence below is the manifest's own comments, quoted from the package. The three rows that first
+needed code-level verification were resolved at the source before the conversion — see
+[the second table](#apps--resolved-at-the-source-2026-09-14), which replaced the "needs code
+evidence" rows.
 
 ### Apps — evidence is the manifest comment
 

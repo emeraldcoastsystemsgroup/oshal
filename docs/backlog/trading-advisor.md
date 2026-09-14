@@ -4,6 +4,13 @@ A prioritized, tracked list of tuning and improvement work for the trading advis
 (ADR-052/053/054). Reference: **[apps/trading/advisor.md](../apps/trading/advisor.md)** (as-built). All items are
 **paper-only** until live sign-off; none of this lifts the live gate.
 
+> **Contradiction flagged 2026-09-14 — not resolved here.** The sentence above says every item is paper-only
+> until live sign-off, but items 4, 21 and 22 below describe a **live** book: item 4 recommends moving "the live
+> book" to `balanced`, item 21's wash-sale basis was "verified to the cent on a live book", and item 22 records a
+> hand-placed position trimmed "on the live book". Both cannot be current. Whether a live book is armed, and what
+> that means for these items, is the operator's decision and is being handled outside this backlog; until it is
+> settled, this header and those items disagree.
+
 Source of truth for the signal/money layers:
 - Signals: [algorithms.ts](../../src/features/trading/services/algorithms.ts),
   [multi-timeframe.ts](../../src/features/trading/services/multi-timeframe.ts)
@@ -52,7 +59,12 @@ Source of truth for the signal/money layers:
    treat posture choice as a tuning experiment — backtest `active` against the items below before keeping
    it as the live default, or move the live book to `balanced` until `active` is shown to beat it.
 
-5. **The venue's average cost is not an entry price — a wash-sale adjustment reads as an instant stop-loss.**
+*Item ids:* items 21 and 22 were added on 2026-09-13 numbered as a second 5 and 6, so two items shared each
+number. They were renumbered on 2026-09-14 so every id in this file is unique; their text is unchanged. The
+MEDIUM items keep 5–11, which is what the cross-references in this file and in
+[advisor-deep-dive.md](../apps/trading/advisor-deep-dive.md) cite.
+
+21. **The venue's average cost is not an entry price — a wash-sale adjustment reads as an instant stop-loss.**
    The Schwab adapter maps the venue's `averagePrice` straight onto `avgEntryPrice`
    ([schwab-broker-adapter.ts:672](../../src/features/trading/services/schwab-broker-adapter.ts#L672)), and every
    money rule keys off that one field — `exitsToRun`, `trailingExits`, `nextPeaks` and `rebalanceTrims` in
@@ -74,7 +86,7 @@ Source of truth for the signal/money layers:
    trim, while a real decline past the stop measured from the engine's fill price still does — and the divergence
    between the two bases is visible on the surface rather than silently corrected.
 
-6. **Every position in a bound account is managed, including one a human placed.** `runAutopilot` reads LIVE broker
+22. **Every position in a bound account is managed, including one a human placed.** `runAutopilot` reads LIVE broker
    positions rather than its own ledger, so a position the operator opened by hand is indistinguishable from one the
    engine opened. On an armed book that means `rebalanceTrims` sells the excess over the per-name cap at the next
    five-minute fire (observed on the live book: a hand-placed position trimmed roughly three minutes after it

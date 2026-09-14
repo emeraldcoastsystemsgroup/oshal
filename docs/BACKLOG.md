@@ -574,12 +574,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ### ADR-139 Stage 4a — the source direction: a generic "pick an artifact" picker
 - **Implemented:** shared registry-backed source discovery, connected-storage adapter and picker component; Portrait Studio 1.11.0 consumes it and provides its finished-image gallery. The old modal and its private helpers are deleted. Local real HTTP/file/handle/Chromium acceptance passes; see ADR-139 Stage 4a.
-- **Remaining:** merge the protected core change, install Portrait Studio 1.11.0 and record one signed-in selection on the deployed cockpit.
+- **Remaining:** install Portrait Studio 1.11.0 and record one signed-in selection on the deployed cockpit. The protected core change is merged and deployed (checked 2026-09-14): `21ad8902` is on `main` and an ancestor of `b8de2099`, the PR #431 merge that `scripts/oshal-deploy.sh` deployed that day.
 - **Done when:** the deployed picker lists registered sources and a selected authorized image reaches Portrait Studio's crop stage through its owner-bound handle.
 
 ### ADR-139 Stage 4b ? the NL leg ("Jarvis, send this to X")
 - **Implemented:** Jarvis loads versioned YAML tool metadata with keywords and usage context. An explicitly selected artifact supplies a live compatible/visible destination catalog; strict model proposals resolve to the existing browser dispatcher, retaining owner checks and destination confirmation. Local model-fixture, registry/handle and browser proof are documented in ADR-139.
-- **Remaining:** protected core merge, deployment, and a signed-in turn using the actual model to name a destination; exercise an ambiguous request and a confirmation-requiring destination.
+- **Remaining:** a signed-in turn using the actual model to name a destination; exercise an ambiguous request and a confirmation-requiring destination. The protected core merge and deployment are done (checked 2026-09-14): `62e9e4c1` is on `main` and an ancestor of `b8de2099`, the PR #431 merge deployed that day.
 - **Done when:** one live-proven Jarvis turn dispatches the selected artifact to the named destination, outward actions retain their confirmation gate, and ambiguous/unavailable targets return available choices without dispatch.
 
 ### Surface theming — visual spot check across themes
@@ -756,7 +756,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** the Trends tab's Paper · auto tile and curve are bankroll-based and labelled paper; open alerts show price-since-announced; and Real · auto is either still "not built" with the gate stated, or built behind a PROVEN scorecard row plus a double opt-in flag, with orders audited like the manual path.
 
 ### Trading watchdog hardening — the rest of the checks (ADR-134 D3.7)
-- **Remaining:** quote volume/recency corroboration beyond the pre-market gap check; broker-number parsing; and the deliberate narrowing recorded in ADR-134 — "uncovered position" for autopilot-managed names is approximated as held-past-the-stop rather than reconciled against the venue's own working stop orders, because the watchdog reads the ledger, not the venue.
+- **Remaining:** quote volume/recency corroboration beyond the pre-market gap check; ~~broker-number parsing~~ (shipped in the same change, #354 — `toNumber`, the "strict broker-number parse" in `scripts/lib/trading-watchdog-checks.js`, which throws on anything that is not a plain finite number; checked 2026-09-14); and the deliberate narrowing recorded in ADR-134 — "uncovered position" for autopilot-managed names is approximated as held-past-the-stop rather than reconciled against the venue's own working stop orders, because the watchdog reads the ledger, not the venue.
 - **Done when:** the remaining checks ship with the same mutation guards, and the uncovered-position check compares against venue-resident stops rather than a loss threshold.
 
 ### Futures extension layer (ADR-116)
@@ -779,7 +779,8 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   live venue positions rather than its own ledger — a hand-placed position was cap-trimmed about three minutes after
   it filled. That is the hazard ["Arming a second autopilot leg is a deliberate, gated act"](#arming-a-second-autopilot-leg-is-a-deliberate-gated-act)
   reserves for a second book, already live on the first.
-- **Remaining:** both fixes, with their done-when criteria and the code references, are written up as items 5 and 6
+- **Remaining:** both fixes, with their done-when criteria and the code references, are written up as items 21 and 22
+  (numbered 5 and 6 until 2026-09-14, when the file's duplicate ids were made unique)
   in [backlog/trading-advisor.md](backlog/trading-advisor.md) — the engine must own its entry price, and it must
   manage only the positions it opened. Neither is started; the operator has not chosen between fixing the core,
   ring-fencing symbols with `TRADING_CORE_SYMBOLS=SYMBOL:0`, and pausing the live leg.
@@ -879,17 +880,16 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** decide whether Headscale joins the default bring-up (operator call — it is an outward-facing network service, so default-on deserves the same opt-in scrutiny as any other outward behaviour), or stays opt-in but **fails loudly**: `-OffLan` should refuse with "Headscale is not running, start it with scripts/headscale-setup.sh" instead of quietly emitting a LAN-only code. Whichever is chosen, `oshal-up.sh` should report Headscale's state alongside the rest of the tier so "why can't my laptop join" is answerable without reading four files.
 - **Done when:** a machine on a different network completes the documented path end to end — join the overlay, enrol as an edge node, reach the API — and a deliberately stopped Headscale produces a message naming the cause instead of a join code that cannot work. Relevant to [ADR-135](adr/135-print-to-swarm-and-print-to-rag.md) P2: an edge printer off the LAN needs exactly this reachability before its device-bound credential is worth anything.
 
-### Data-model explorer: deploy it and prove it on the box
-- **Current state:** the explorer is built, reviewed and pushed to PR #431 at `18edcbf4` — the
+### Data-model explorer: deployed — prove it on the box
+- **Current state:** the explorer is built, reviewed, merged and deployed — the
   `src/features/data-model` slice, `/api/admin/data-model` (operator-only), the `/data-model` page,
   the Admin-console tool link and the **Data model explorer** Test Lab card. `npm run test:data-model`
-  is 51/51 on that commit (including a disposable-PostgreSQL catalog read and the page in Chromium),
-  the publish gate is clean and the typecheck adds no errors. It has NEVER run on the deployed stack:
-  `src/app` is not bind-mounted, so the route needs a core deploy, and on 2026-09-14 the box was
-  running the older preview image `1694a3ca` under a starved Docker VM while other sessions held
-  their own rebuilds.
-- **Remaining:** deploy #431 (merge, or `scripts/oshal-deploy.sh --preview`) once the box is quiet,
-  then walk all four views against real data as an operator and run the Lab card. Record the live
+  was 51/51 on `18edcbf4` (including a disposable-PostgreSQL catalog read and the page in Chromium),
+  the publish gate was clean and the typecheck added no errors. Checked 2026-09-14: `18edcbf4` is on
+  `main` and an ancestor of `b8de2099`, the PR #431 merge; `src/app/server.ts` at `b8de2099` mounts
+  `/api/admin/data-model` behind `requiresAuth` + `requiresOperator`; and `scripts/oshal-deploy.sh`
+  deployed `b8de2099` that day (image `1fe73566ae87`). The deploy this entry waited on is done.
+- **Remaining:** walk all four views against real data as an operator and run the Lab card. Record the live
   counts — tables, apps, integration links and, in particular, the unowned relations the snapshot
   reports — so the first real reading is on the record rather than inferred from the fixtures.
 - **Done when:** an operator loads `/data-model` on the deployed stack, each view renders from the
@@ -1107,8 +1107,8 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** each commissioned package item has primary-source citations where legally material, a focused calculation/isolation guard, and clean-tenant output evidence; core retains only shared framework dependencies. See [ADR-123](adr/123-payroll-app.md).
 
 ### Ambient Recall (ADR-100) — live acceptance on real transcripts
-- **Delivered (2026-09-12, `018607e6` + `8a88d33e` on `feat/store-compatibility-gate`, PR #431, preview-deployed):** Phases 2-4 as recorded in [ADR-100](adr/100-ambient-person-model.md) and the [release record](releases/ambient-recall-phases-2-4-2026-09-12.md) — Jarvis front door for asks/trends/connections, semantic recall with database-enforced deletion parity (migration 138), profile pages, the consent-trigger convergence, the parity gate, the in-container gate and live-proof scripts, and the Test Lab scenario `ambient-recall`.
-- **Remaining:** merge PR #431 and release from `main`; a mic session with speaker recognition on and one named voice (the box holds zero transcripts and the analyst has never run — no `chat_tasks` row under `a0000000-0000-0000-0000-000000000055`); run the `ambient-recall` Lab scenario; allow modeling for that voice and let one enrichment sweep produce asks and topics.
+- **Delivered (2026-09-12, `018607e6` + `8a88d33e`; merged to `main` through PR #431 as `b8de2099` and deployed from `main` with `scripts/oshal-deploy.sh` on 2026-09-14):** Phases 2-4 as recorded in [ADR-100](adr/100-ambient-person-model.md) and the [release record](releases/ambient-recall-phases-2-4-2026-09-12.md) — Jarvis front door for asks/trends/connections, semantic recall with database-enforced deletion parity (migration 138), profile pages, the consent-trigger convergence, the parity gate, the in-container gate and live-proof scripts, and the Test Lab scenario `ambient-recall`.
+- **Remaining:** (the merge and the `main` release are done — see Delivered) a mic session with speaker recognition on and one named voice (the box holds zero transcripts and the analyst has never run — no `chat_tasks` row under `a0000000-0000-0000-0000-000000000055`); run the `ambient-recall` Lab scenario; allow modeling for that voice and let one enrichment sweep produce asks and topics.
 - **Done when:** the Lab scenario passes all five steps on a `main` deploy; one `ambient_person_asks` row exists that the analyst produced with a cost row under its agent id; the People tab shows that voice's topics and presence from real lines; a paraphrase recall returns a related hit from real speech.
 
 ### Ambient Recall — attributed ingest fixture for the Test Lab
@@ -1152,7 +1152,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** every rating displayed in the World package is sourced to the licensed dataset/version and unknown outlets are represented as unknown rather than guessed. See [ADR-061](adr/061-world-intelligence-layer.md).
 
 ### Marketing suite — core dependencies (package work is in the store)
-- **Remaining:** the suite's application work — audience and recipient consent, compliant email broadcasts, a campaign budget held as a finance project, sequences, SMS, attribution, paid ads, and the Marketing Suite group — is designed in [the marketing suite spec](apps/marketing-suite-spec.md) and tracked with done-when criteria in `marketing-engine/BACKLOG.md` in [oshal-applications](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/marketing-engine/BACKLOG.md); the earlier engine-phase items (launch execution, waitlist capture, the X posting decision, per-user Mastodon instances, the first real campaign and its Monday ticket) moved there. Core owns four dependencies, each needing operator approval before it starts: (1) the Resend connector gains a `headers` parameter limited to `List-Unsubscribe`/`List-Unsubscribe-Post` and a bounded batch action — today's action is one recipient with `additionalProperties: false`; (2) a bounded PostHog stats resource so scorecard site-traffic ingest stops recording `resource_unavailable`; (3) ads connectors (Google Ads, Microsoft Advertising, Meta, LinkedIn Ads), read-only spend first.
+- **Remaining:** the suite's application work — audience and recipient consent, compliant email broadcasts, a campaign budget held as a finance project, sequences, SMS, attribution, paid ads, and the Marketing Suite group — is designed in [the marketing suite spec](apps/marketing-suite-spec.md) and tracked with done-when criteria in `marketing-engine/BACKLOG.md` in [oshal-applications](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/marketing-engine/BACKLOG.md) — its **How to continue** section at the top is the pickup order (land the two PRs, recreate the api for the env passthrough, install 0.5.0 plus the `marketing-suite` group on a healthy box, the two operator-only steps, then P1); the earlier engine-phase items (launch execution, waitlist capture, the X posting decision, per-user Mastodon instances, the first real campaign and its Monday ticket) moved there. Core owns four dependencies, each needing operator approval before it starts: (1) the Resend connector gains a `headers` parameter limited to `List-Unsubscribe`/`List-Unsubscribe-Post` and a bounded batch action — today's action is one recipient with `additionalProperties: false`; (2) a bounded PostHog stats resource so scorecard site-traffic ingest stops recording `resource_unavailable`; (3) ads connectors (Google Ads, Microsoft Advertising, Meta, LinkedIn Ads), read-only spend first.
 - **Done when:** each core dependency is merged with its guard — a schema test that refuses any header outside the unsubscribe pair, a PostHog resource test, and per-connector auth tests — and the package backlog's broadcast item passes its live proof through the extended Resend action. The compose passthrough half is merged (core `477f3a0b`, PR #431) with its guard in `tests/unit/compose-env-passthrough.spec.ts`; it reaches a running container only at the next recreate.
 
 ### HTML5 Game Generator package (held)
@@ -1170,6 +1170,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### print-drop swarm adoption (print-to-swarm / print-to-RAG)
 - **Remaining:** the adoption phase the operator named at kickoff — an opt-in (default OFF, per the automation directive) drop-folder watcher that feeds oshal: (a) print-to-swarm (a printed document opens a ticket / reaches Jarvis) and (b) print-to-bot (routes into a chosen bot's RAG corpus keyed on the sidecar metadata). Ships as a store package (Rule 0c), not core; the drop folder is untrusted LAN input and must be parsed defensively.
 - **Designed 2026-09-03, awaiting operator review:** [ADR-135](adr/135-print-to-swarm-and-print-to-rag.md) + [print-ingest-spec](apps/print-ingest-spec.md). Five phases (P0 core extraction fix → P4 print-to-ticket) and five open questions the operator must settle before build. The RAG review that ADR carries found a **blocking core defect**: `/api/rag/upload` does `buffer.toString('utf-8')` with no text extraction while the Knowledge tab advertises `.pdf`/`.docx`, so every uploaded PDF is embedded as mojibake — `src/features/doc-extract/` already solves it and is wired only to `/api/vision/read-doc`. That fix (P0) is a prerequisite for print-to-RAG and a bug worth fixing on its own.
+- **Superseded status — checked against both trees 2026-09-14:** the bullet above is out of date. ADR-135 is **Accepted** (2026-09-03) and its "Build state" records all five open questions answered (Amendments D and E). **P0 is fixed on `main`:** `src/app/routes/rag-routes.ts` now extracts text through `extractDocText` from `@/features/doc-extract` (PR #273, `44d3697a`), so the blocking defect no longer blocks. **P1 is built:** the store package `print-ingest` is on `oshal-applications` `main` (0.3.0) and installs `inactive`, so a fresh install does nothing until an operator activates it. P2 and P3 were dropped by amendment and P4 is not started (ADR-135 "Build state"). What remains is proving the done-when below on an installed box.
 - **Done when:** a store package watches the drop folder only after the operator explicitly enables it, each printed document reaches the chosen corpus/ticket with provenance from its sidecar, hostile file content cannot escape the parser, and a fresh install does nothing until opted in.
 
 ### career-hunter — a story per role: revive the interview loop as the resume review conversation (ADR-141 D7)
@@ -1418,9 +1419,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** a launcher-shaped app (Create, Life, Games, the creative bundle) declares `ui.static` tiles whose `iframeUrl` points at ANOTHER package's surface. Under ADR-149 enforce mode the target may be unprovisioned for the signed-in person; the rail still renders the tile and a click lands on the kernel's role-guidance 403 page inside the frame. Create's own surfaces ask `GET /api/authorization/me?app=` and render such studios locked (create 1.2.0), but the rail is manifest-static and `synthesiseProfile` has no view of the target app.
 - **Done when:** `synthesiseProfile` resolves, for each static tile whose `iframeUrl` is under another active package's mount, that package's `canDiscover(actor)` and renders a non-discoverable target as a locked tile (kept in place, `guest-disabled` style, with the role-guidance link) rather than a dead frame; ADR-141 groups get the same treatment for borrowed tiles; a unit guard proves a discoverable target keeps its tile, a non-discoverable one is locked, a tile under the app's OWN mount is never touched, and legacy-mode packages are always discoverable; no manifest change is required.
 
-### Jarvis fixes are on the branch but not in the running image (2026-09-14)
-- **Remaining:** the Jarvis thread and briefing-asset fix (`7aae3ce5`, an ancestor of the PR 431
-  head) only reaches users on the next core deploy. Verified on the box at 02:36 UTC: the running
+### Jarvis thread and briefing-asset fix: deployed, live proof outstanding (2026-09-14)
+- **Deployed (checked 2026-09-14):** `7aae3ce5` is on `main` and an ancestor of `b8de2099`, the PR 431
+  merge, and `scripts/oshal-deploy.sh` deployed `b8de2099` on image `1fe73566ae87` (api + 34 bots,
+  parity clean) — the deploy record naming the image and commit that the done-when asks for.
+- **Remaining:** the two live proofs in the done-when. History, for context: before that deploy the
+  fix reached users only on the next core deploy. Verified on the box at 02:36 UTC: the running
   image (rev `1694a3ca`) has `/app/dist` but no `/app/dist/pages`, so the briefing settings client
   asset cannot be served from `dist`; session 56e3d403 recorded the matching
   `GET /api/jarvis/briefings/client.js` 404 under a signed-in probe, and fixed the route to serve
@@ -1656,29 +1660,29 @@ was held by another session, so it was requested in the store thread (2026-09-14
 
 ### Multipart uploads lose the RLS request identity — the same trap sits in core (2026-09-14)
 
-**Context:** spaces 0.7.0 refused every import larger than one socket chunk with `500 failed to import
-capture`: the identity middleware binds the caller with AsyncLocalStorage `run`, multer/busboy consume
-the body on the socket's own async context, and once the parser finished on a later chunk the handler
-after multer reached the GUC pool with no identity — refused under `OSHAL_DB_GUC_STRICT=deny` and by the
-owner RLS policy (`new row violates row-level security policy for table "spatial_scans"`). Reproduced on
-the box's own image with public `.splat` files; the 2 MB probe failed once and passed on retry, so it is
-a race, not a size limit. Fixed in spaces 0.7.1 (store `b84a720e`) by capturing `getRequestIdentity()`
-before the stream and re-entering it in multer's completion callback, with a guard
-(`spaces/tests/upload-identity.core.test.js`) that writes a 3 MB multipart body in 256 KB chunks with
-gaps and asserts the service saw the identity — red on 0.7.0, green on 0.7.1. Core has six multer routes
-(`agent-profile`, `ambient-speaker`, `artifact-exchange`, `rag`, `swarm-app`, `voice`) and none of them
-re-binds the identity after the upload; whichever of them writes an owner-RLS table after multer is
-exposed to the same shape. That is a mechanism shared by every multer route, not an observation about
-any one of them — each must be proven or fixed on its own.
-
-**Done when:**
-- A shared helper in `src/shared/middleware` (or beside `request-identity.ts`) wraps a multer parser so
-  its completion callback runs inside the identity captured before the stream, and every core multer
-  route that touches the database after the upload uses it.
-- Each such route has a chunked-upload regression test over real loopback HTTP (the spaces guard is the
-  pattern) that fails when the re-bind is removed.
-- `docs/governance/RLS-RUNBOOK.md` names multipart bodies as an async-context boundary and points at the
-  helper, so the next upload route does not re-learn this.
+- **Built 2026-09-14 on `fix/backlog-sweep`; not deployed.** `preserveRequestIdentity` in
+  `src/shared/middleware/multipart-identity.ts` captures the request identity before multer streams
+  the body and re-enters it around the parser's continuation — the spaces 0.7.1 shape, now shared.
+- **Scope, re-measured:** core has six multer routes. Four touch the database under the caller's
+  identity after the upload and now use the helper: `POST /api/rag/upload` (knowledge-memory
+  record; `knowledge_memory_documents` and `rag_chunks` are FORCE RLS), `POST /api/swarm/apps/import`
+  (`swarm_applications`, FORCE RLS), `POST /api/jarvis/ambient/audio` (`ambient_user_settings`,
+  `ambient_audio_chunk_receipts`, `ambient_speaker_*`, FORCE RLS) and
+  `POST /api/agents/:agentId/profile/avatar` (`agents`, which has no RLS policy, so the lost identity
+  changed the stamp from operator to anonymous, not the outcome). Two are not exposed and were left
+  unchanged: `POST /api/voice/transcribe` touches no database after the upload, and
+  `POST /api/artifacts/handles/upload` mints an in-memory handle whose authorization reads all run
+  under `runWithSystemIdentity`. Table posture read from `pg_class` on the local stack.
+- **Guard:** `tests/unit/multipart-request-identity-postgres.spec.ts` drives the four real routers
+  over loopback HTTP with the body streamed in 64 KB chunks with gaps, through the production GUC
+  pool, into a FORCE-RLS table as `oshal_app` in a throwaway database the spec creates and drops
+  (5/5). Red on all four routes before the fix — rag 500 `RAG ingestion failed`, import 400
+  `new row violates row-level security policy`, ambient 500 `speaker_service_unavailable`, avatar
+  500 with the same RLS error — and red again on all four when the helper's re-bind line is
+  removed. `docs/governance/RLS-RUNBOOK.md` names multipart bodies as an async-context boundary and
+  points at the helper.
+- **Remaining:** nothing against the done-when; the running api keeps the defect until a core
+  deploy carries this change.
 
 ### Spaces: the PLY→splat converter runs on the api's event loop and a large import can take the box down (2026-09-14)
 
@@ -1699,21 +1703,24 @@ gaussians subsampled in about 6 s).
 - A regression test imports a PLY above the gate and one below it and proves the api keeps answering
   `/health` throughout.
 
-### Store packages still declare the old flat `dependencies` (2026-09-14)
+### Store dependency tiers: manifests converted; catalog mirror and live proof open (2026-09-14)
 
 **Context:** the core reads `dependencies` as `required` / `optional` tiers and the installer, loader
-and App Loader honour the difference (ADR-085 addendum). No published package has been converted: the
-legacy flat form still loads and means all-required, so `create`, `life`, `games` and `system` keep
-dragging in up to eight apps they merely route to, and apps that hand work to a partner declare
-nothing. The operator approved converting and reclassifying the store **after** a core carrying the
+and App Loader honour the difference (ADR-085 addendum). The legacy flat form still loads and means
+all-required, which made `create`, `life`, `games` and `system` drag in up to eight apps they merely
+route to. The operator approved converting and reclassifying the store **after** a core carrying the
 tiers is deployed - a tiered manifest declares the `app-dependencies` floor, which an older core
-refuses on purpose.
+refuses on purpose. **Both halves have now happened (checked 2026-09-14):** the core carrying the
+tiers is deployed (`b8de2099`, the PR #431 merge, per the `scripts/oshal-deploy.sh` log), and the
+store conversion merged to `oshal-applications` `main` through PR #197 (`64fb705`) — all 61
+`*/oshal-app.yaml` on store `main` use the tiered form and none the flat one.
 
 **Done when:** the plan, the per-package classification with its evidence, and the acceptance
 criteria in [backlog/store-dependency-tier-migration.md](backlog/store-dependency-tier-migration.md)
-are satisfied - every store manifest tiered and validating, the launchers requiring only what they
-cannot run without, `marketplace.json` mirroring the new shape, and the Test Lab step
-`app-dependency-tiers` reporting pass instead of gap against the deployed API.
+are satisfied. Met, with the evidence recorded in the plan: every store manifest tiered and
+validating, and the launchers requiring only what they cannot run without. Still open:
+`marketplace.json` mirroring the new shape, and the Test Lab step `app-dependency-tiers` reporting
+pass instead of gap against the deployed API.
 ### Twelve agent ids are claimed by more than one application (2026-09-14)
 - **Remaining:** `swarm_applications.agent_ids` is an *association* column (the loader fills it so Jarvis's catalog, mesh fan-out, selector composition and competency ranking can find an app's bot), but the ADR-149 reader `readApplicationExecutionOwnership` reads it as an *ownership* column and raises `Ambiguous package ownership` when an id resolves to more than one app. Twelve ids do; the full census, the evidence for each, and the measured blast radius are in [operations/agent-id-ownership-collisions.md](operations/agent-id-ownership-collisions.md). The refusal is **not new** — before `086832cf` (2026-09-14) the reader failed a type comparison and refused *every* id silently; that commit made unique ids work and these twelve loud. Since the 06:46:14Z boot, 682 refusals, all from `GET /api/tickets`, across 6 of the 12 ids; `career-hunter`/`job-apply` is the largest (204 refusals, 4 operator-owned tickets silently dropped from the operator's own list). Three different problems, and only one of them is "delete the squatter": (1) seven ids are claimed by loose Workflow Studio publish artifacts (`cluster-probe`, `durable-probe`, `smoke-parallel-2`, `smoke-parallel-flow`, `smoke-published-flow`, `test-gate-flow`, `capability-ideation`) or by stale rows whose manifest file no longer exists (`issue-rca`, `incident-remediation`) — none of them declares the bot it borrows; (2) two are carve mistakes where a manifest pinned a uuid it does not own — `trading` pinned `a0000000-…-0045` (`identity-advisor`, owned by `identity`) while the real `trading-analyst` is `…-0046`, and `brand-graphics` pinned `b00f0000-…-0001` (`drone-operator`); (3) the rest are **deliberate aliases** that are correct as designed (`communications-bot` across switchboard/social/email-summarizer, `vids-operator` across vids/creative-studio/video/daily-trade-recap, `career-hunter` across career-hunter/job-apply, `rca-specialist` across intelligent-operations/intelligent-processing) and must NOT be resolved by editing manifests. `scripts/swarm-app-bot-integrity-check.sh` passes and flags 13 of these advisorily, but cannot see the inactive squatters because it inspects only `agent_ids[1]` of active apps.
 - **Who decides:** the operator. (1) and (2) uninstall or edit applications installed on the operator's own box; (3) changes the ADR-149 authorization core, which is load-bearing and should not be touched without approval. Nothing in this entry has been performed.
@@ -1752,3 +1759,33 @@ by a person trying to say hi.
 - A written decision records which tables the bot is deliberately DENIED, so the next missing grant
   is distinguishable from a deliberate boundary — the ambiguity that made BUG-25 take a live outage
   to notice.
+### Dependency tiers: four gaps the design surfaced (2026-09-14)
+
+**Context:** building `required` / `optional` app dependencies (ADR-085 addendum) exposed four
+independent holes. None blocks the store migration above; each is small and separately shippable.
+Detail and evidence: [backlog/store-dependency-tier-migration.md](backlog/store-dependency-tier-migration.md).
+
+**Done when**, per gap:
+
+- **"One of these connectors" cannot be expressed.** `home` needs SmartThings *or* Nest,
+  `email-summarizer` Gmail *or* Outlook, `payments` Square *or* PayPal. The schema says all-of
+  (`required`) or none-of (`optional`), so every such app must pick `optional` and loses the
+  "connect at least one" signal. *Done when* an app can declare a choice-of set that the install
+  preview and the setup screens render as "connect one of...", without it becoming a hard
+  install-time requirement, and a guard proves an app with none of them connected is reported
+  unready rather than broken.
+- **An app cannot ask whether its optional partner is installed.** Optional dependencies are an
+  install-time concept only, so a package that tiles a partner app's surface either 404s or
+  hand-rolls a probe. *Done when* a package can ask the kernel whether a named app is installed and
+  active (read-only, no new route per package) so its surface hides the tile instead of rendering a
+  dead one, with a guard proving the answer follows an uninstall.
+- **`marketplace.json`'s dependency mirror drifts unguarded.** The catalog entry for
+  `creative-studio` lists one app where its manifest lists four; `scripts/check-catalog.mjs` mirrors
+  identity/version/suite/displayName/source but not dependencies. *Done when* the catalog's
+  dependency block is generated from the manifest (tiered shape included) and the catalog gate fails
+  on drift, proven red by a mutation.
+- **The one-click installer hard-codes bundle dependencies.** `scripts/oshal-install.sh` carries
+  `BUNDLE_PACKAGES=([little-monsters]="little-monsters presentations" ...)` - "dependencies BOUND"
+  by hand - and `--apps` has no way to pull a package's optional extras. *Done when* bundles name
+  only their top package (the installer resolves the rest from the manifest), `--apps` accepts a
+  `--with-optional` passthrough, and `tests/unit/installer-scripts-parse.spec.ts` covers both.

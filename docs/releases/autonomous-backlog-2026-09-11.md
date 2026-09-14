@@ -7,6 +7,12 @@ Before this run, core HEAD and remote branch `feat/store-compatibility-gate` bot
 authorization foundation and previous platform-readiness work. PR431 remains open with required
 independent review. This is a source checkpoint, not a deployed release declaration.
 
+> **Status update (2026-09-14):** core PR431 has since merged to `main` as `b8de2099` and was
+> deployed from that commit with `scripts/oshal-deploy.sh`; public store PR185 merged as `4e15108`.
+> Statements below that either PR is open are as of 2026-09-11. The core SHAs in this record were
+> rewritten before the merge (same patch, new SHA — `git patch-id` matches), so check them on `main`
+> by content or subject, not with `git merge-base --is-ancestor`.
+
 Prior authorization verification recorded 178 passing tests in 15 registered suites. The
 registration parity test was rerun before this request and passed. Public application source
 is at `d75fe4757f17e7777b6038b036262fa421301fe6`. No new deployment is claimed.

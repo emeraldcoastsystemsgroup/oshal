@@ -43,22 +43,23 @@ line of its own. **Do not write per-destination handling for the two kinds.**
   "Joining the artifact exchange" section of `BUILDING-EXTENSIONS.md` in the store repo for app
   authors — the `artifacts:` block had shipped with no author documentation at all.
 
-## Half-landed — check this first
+## Half-landed at handover — both halves are now on `main` and deployed
 
 Stage 4a (the shared picker that finally *consumes* `provides:`) and a Jarvis artifact-handoff leg
-are **written but were not on `main`** at handover. They were last seen on
-`feat/store-compatibility-gate` as `src/app/routes/artifact-picker-routes.ts` (`/sources`,
-`/storage`) reading the registry through `registeredArtifactActionApps()`.
+were **written but not on `main`** when this handover was written. **Both have since landed — do not
+rebuild them** (checked 2026-09-14 against `origin/main`):
 
-**Before building either, confirm where they are**, because rebuilding them would be waste:
+- **Stage 4a:** `src/app/routes/artifact-picker-routes.ts` (`/sources`, `/storage`, reading the
+  registry through `registeredArtifactActionApps()`) is on `main` from `21ad8902`, and
+  `src/app/routes/artifact-exchange-routes.ts` mounts it through `createArtifactPickerRoutes`.
+- **The Jarvis leg:** `src/app/routes/jarvis-artifact-routing.ts` is on `main` from `62e9e4c1`, and
+  `src/app/routes/jarvis-routes.ts` imports it.
+- Both commits are ancestors of `b8de2099` (the PR #431 merge), which `scripts/oshal-deploy.sh`
+  deployed on 2026-09-14.
 
-```bash
-git log --oneline --all -- src/app/routes/artifact-picker-routes.ts
-git branch -a --contains <the commit>
-```
-
-If they are still unmerged, landing them is the highest-value next move: it closes the source
-direction, which is the half of the ADR that has been open longest.
+What is still open for them is acceptance on the deployed cockpit — a signed-in picker selection and
+a live Jarvis turn — tracked in [BACKLOG.md](../BACKLOG.md) under `### ADR-139 Stage 4a` and
+`### ADR-139 Stage 4b`. That acceptance, then the cheapest rollout moves below, is the next work.
 
 ## Continuing the rollout
 
@@ -149,4 +150,5 @@ assertion. That is greppable.
   SHAs, so `git merge-base --is-ancestor <sha> origin/main` reports every one of them missing while
   the work is present. Check content — `git show origin/main:<path> | grep <marker>` — before
   concluding anything was lost.
-- Stage 4a and the Jarvis leg were unmerged at handover. See **Half-landed** above.
+- Stage 4a and the Jarvis leg were unmerged at handover; both are now on `main` and in the deployed
+  image. See **Half-landed at handover** above.

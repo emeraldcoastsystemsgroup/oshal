@@ -130,9 +130,11 @@ collisions, redirect refusal and credential isolation.
 
 ## Browser recipes in the isolated runner
 
-Status 2026-09-14: in source on `feat/store-compatibility-gate` (08440e77). The
-installed api runs an older image and keeps every browser recipe pending until
-the next core deploy. Batches still select Node suites only; admitting the
+Status 2026-09-14: built on `feat/store-compatibility-gate` (08440e77), on `main`
+since PR #431 merged as `b8de2099`, and in the image deployed from that commit
+the same day — so the "older image" that kept every browser recipe pending has
+been replaced. Admission on the running api still follows the probe described
+below, never the deploy alone. Batches still select Node suites only; admitting the
 `browser` level into schedules is a separate, unbuilt slice (see the Test Lab
 backlog).
 

@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: reserve kernel memory namespaces from generic upload, ingest, and delete unless the exact caller is an authenticated admin.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: require an exact authenticated operator for every globally destructive collection deletion, including non-reserved collections.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-135 P0 — /upload actually extracts text. It did `f.buffer.toString('utf-8')` with no format detection while every upload surface advertises .pdf/.docx, so a PDF was embedded as mojibake: it ingested "successfully", polluted the collection with binary noise, and matched nothing a user searched for. The doc-extract slice already does this job properly (magic bytes over extension over MIME, pdf-parse, DOCX via yauzl, never throws) and had exactly one caller. Uploads now run through it with a corpus-sized character cap; a file that yields no readable text is REPORTED, not silently ingested — all files unreadable is a 422 naming each reason, a partial batch ingests the readable files and returns the rejections. The response and the knowledge-document record carry accepted/rejected/truncated so a surface can tell the user what actually landed.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | POST /upload re-enters the caller's RLS request identity after multer (preserveRequestIdentity). A body whose last bytes reach multer on a later socket chunk completed the parse with the AsyncLocalStorage identity gone, so the owner-scoped knowledge_memory_documents INSERT ran as anonymous non-operator and RLS refused it (500 "RAG ingestion failed"). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -34,6 +35,7 @@ import { callerFromRequest, resolveRole, Role } from '@/features/governance';
 import { getUserTenantIds } from './connector-tenancy';
 import { classifyKnowledgeScope, type MemoryLayerService } from '@/features/memory';
 import { extractDocText } from '@/features/doc-extract';
+import { preserveRequestIdentity } from '@/shared/middleware/multipart-identity';
 
 const logger = createChildLogger({ module: 'rag-routes' });
 
@@ -364,7 +366,7 @@ export function createRagRoutes(ragService: RagService, memoryService?: MemoryLa
    *     summary: Upload and ingest files into RAG
    *     tags: [RAG]
    */
-  router.post('/upload', upload.array('files', 20), async (req, res) => {
+  router.post('/upload', preserveRequestIdentity(upload.array('files', 20)), async (req, res) => {
     logger.info({ fileCount: (req.files as Express.Multer.File[])?.length ?? 0 }, 'POST /api/rag/upload');
     try {
       const files = req.files as Express.Multer.File[];

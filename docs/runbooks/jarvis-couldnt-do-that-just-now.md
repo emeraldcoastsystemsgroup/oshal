@@ -58,8 +58,9 @@ causes met on 2026-09-13 are below, with what was fixed, what was proven, and wh
 2. **`tests/unit/jarvis-legacy-thread-browser.spec.ts` has not run.** Same cause: `DisposableAlertPostgres`
    could not start its `postgres:16-alpine` container. It is registered in the Test Lab dashboard scenario as a
    browser-level regression reference.
-3. **The core deploy** that makes the briefings asset fix live: `bash scripts/oshal-deploy.sh` from `main` after
-   PR 431 merges (or `--preview` on the branch). Then the Test Lab "Briefing settings client" step must read `pass`.
+3. ~~**The core deploy** that makes the briefings asset fix live~~ — **done 2026-09-14.** PR 431 merged to `main` as
+   `b8de2099`, and `scripts/oshal-deploy.sh` deployed that commit (image `1fe73566ae87`); the briefing-asset fix
+   `7aae3ce5` is an ancestor of it. What is left: the Test Lab "Briefing settings client" step must read `pass`.
 
 ## How to continue (exact steps)
 
@@ -102,7 +103,7 @@ The refusal protects a thread from being appended to by a same-`sub` principal f
 The 2026-09-11 change made it fail closed on purpose and tests it. The page-side roll is the correct
 recovery: the thread id was only ever a browser bookmark.
 
-## The 2026-09-14 cause: every ask 404'd, including fresh threads (root-caused, fix needs a deploy)
+## The 2026-09-14 cause: every ask 404'd, including fresh threads (root-caused; fix deployed 2026-09-14)
 
 **Symptom.** Every `POST /api/jarvis/ask` answered `404 session_not_found` — not just bookmarked
 threads. The page rolled to a fresh thread, the fresh thread was refused too, and the operator heard
@@ -143,7 +144,9 @@ PostgreSQL carrying migration 022's real `UUID[]` column; 5/5 green, and proven 
 query (the three `bots` cases fail with `ApplicationOwnershipUnavailableError`, `tools` still passes).
 
 **This is `src/app/**`, which is baked into the image — Jarvis stays broken until
-`bash scripts/oshal-deploy.sh` runs.** There is no live workaround: the failure is a query/plan type
+`bash scripts/oshal-deploy.sh` runs.** That deploy has happened: `086832cf` is on `main` and an ancestor
+of `b8de2099`, which `scripts/oshal-deploy.sh` deployed on 2026-09-14 (checked against git and the
+deploy log). There is no live workaround: the failure is a query/plan type
 mismatch, independent of data, so no row edit or restart changes it. Do **not** "fix" it by altering
 `swarm_applications.agent_ids` to `TEXT[]` — migration 022 declares `UUID[]` and
 `jarvis-orchestrator.ts` joins `agents.agent_id` (uuid) to `sa.agent_ids[1]`.

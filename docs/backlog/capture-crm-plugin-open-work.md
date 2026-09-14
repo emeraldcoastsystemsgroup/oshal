@@ -1,11 +1,22 @@
 # Capture CRM — swarm-app plugin (OPEN WORK / handover)
 
+> **SUPERSEDED — checked against the tree 2026-09-14.** This file is the June 2026 handover for a
+> plugin that framed an external Python board on `:8787` from a core manifest,
+> `swarm-apps/capture-crm.yaml`. That shape is gone: `swarm-apps/capture-crm.yaml` is not on `main`,
+> and the installed application is the private `capture-crm` package ("Federal CRM"), whose surfaces
+> are native routes under `/api/capture-crm` with durable relationship, pursuit, contract and delivery
+> records — no external board. **The current scope, status and remaining work are in
+> [government-contracting-crm.md](government-contracting-crm.md); do not resume from "Next session"
+> below.** This file's open steps 2 and 3 (a `capture-triage` coordinator workflow and a live
+> coordinator run) correspond to what that record lists as "live coordinator execution", which it
+> says needs its own reviewable work order.
+
 Historical handover. The current private application replaces the external board with a native
 CRM surface and durable relationship, pursuit, contract and delivery records. Follow the
 [current delivery and acceptance record](government-contracting-crm.md). The deployment and
 file-path statements below describe the original handover, not the current installation.
 
-**Status:** beta, loaded & integration-verified on the local stack · **paused 2026-06-01** · resume from "Next session" below.
+**Status at handover (superseded — see above):** beta, loaded & integration-verified on the local stack · **paused 2026-06-01** · ~~resume from "Next session" below~~.
 
 > **Re-baseline 2026-07-19:** the ⚠️ blocker below is RESOLVED — `federal-capture` is a live,
 > registered ticket type (mapped in `src/entities/ticket/queue-classification.ts` to the
@@ -48,7 +59,7 @@ and `crm/*.py` (the capture engine; its `Advance` currently posts generic `build
 nor a custom `capture-triage` ticket can be created via the API. The plugin was therefore built to NOT
 depend on a custom ticketType (coordinator reachable via cockpit chat; board uses generic `build` tickets).
 
-## Next session (pick up here)
+## Next session (historical — superseded; pick up from government-contracting-crm.md instead)
 1. **Rebuild the dist** so the source enum (incl. `federal-capture`) is live: `npm run build` then restart
    the swarm controller (or rebuild `oshal-local-api`). Confirm `POST /api/tickets {ticketType:"federal-capture"}`
    is accepted. (Coordinate — another session owns "OSHAL local stack bring-up".)

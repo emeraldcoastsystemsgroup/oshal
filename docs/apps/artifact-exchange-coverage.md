@@ -110,8 +110,9 @@ One package needs a route that does not exist at all:
 ## Continuing this
 
 [artifact-exchange-continuation.md](../backlog/artifact-exchange-continuation.md) is the handover:
-the mechanism in one pass, what is half-landed (the Stage 4a picker and the Jarvis leg were written
-but unmerged), the cheapest next moves, and the traps that make a naive coverage count wrong.
+the mechanism in one pass, what was half-landed at handover (the Stage 4a picker and the Jarvis leg,
+both since merged to `main` and deployed), the cheapest next moves, and the traps that make a naive
+coverage count wrong.
 
 ## Done when
 

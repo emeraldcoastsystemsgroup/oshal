@@ -7,11 +7,12 @@ this document; none is carried over from a summary.
 ## What this is, in one paragraph
 
 > **Where the code lives.** The ADR-149 authorization work described here — the ownership
-> reader, the protected-result boundary and its Postgres regression spec — is on
-> `origin/feat/store-compatibility-gate`, not on `main`, as of this writing
-> (`git cat-file -e origin/main:src/app/application-execution-ownership.ts` fails; the
-> branch that contains `086832cf` is that one). It is nevertheless what the box is running.
-> Source paths below are therefore written as plain paths, not repository links.
+> reader, the protected-result boundary and its Postgres regression spec — was on
+> `origin/feat/store-compatibility-gate`, not on `main`, when this was written. It is on `main`
+> now: PR #431 merged as `b8de2099` on 2026-09-14 (checked that day —
+> `git cat-file -e origin/main:src/app/application-execution-ownership.ts` succeeds and `086832cf`
+> is an ancestor of `origin/main`), and `b8de2099` is the commit the box was deployed from that day.
+> Source paths below are written as plain paths because they were not on `main` at the time.
 
 
 `swarm_applications.agent_ids` was built as an **association** column — the loader fills it so

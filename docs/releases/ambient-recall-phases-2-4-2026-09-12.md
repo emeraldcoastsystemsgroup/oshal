@@ -3,6 +3,7 @@
 **Date:** 2026-09-12 (thread closed 2026-09-13)
 **Commits:** `018607e6` (Phases 2-4), `8a88d33e` (consent-trigger convergence) on `feat/store-compatibility-gate` — [PR #431](https://github.com/emeraldcoastsystemsgroup/oshal/pull/431), **not merged to `main`** when this record was written.
 **Deployed:** preview deploys of both commits with `scripts/oshal-deploy.sh --preview` on the dev box (api + all bot nodes, parity clean, zero unhealthy). A release from `main` still has to happen after the PR merges.
+**Status update (2026-09-14):** PR #431 merged to `main` as `b8de2099` — both commits above are its ancestors — and `scripts/oshal-deploy.sh` released that commit from `main` the same day (image `1fe73566ae87`, api + 34 bots, parity clean). Step 1 of *How to continue* is done.
 **Design record:** [ADR-100](../adr/100-ambient-person-model.md) carries the as-built update and every deviation from the plan, with the file that proves each one.
 
 ## What the app does now
@@ -56,7 +57,7 @@ Transcript retention is 30 days (`ambient_user_settings.transcript_retention_day
 
 ## How to continue
 
-1. **Land it.** Merge PR #431 when its owner is ready (it carries other lanes' work too), then release from `main` with `bash scripts/oshal-deploy.sh`. Migration 138 is idempotent and the lazy DDL converges, so a redeploy is safe.
+1. ~~**Land it.**~~ **Done 2026-09-14:** PR #431 merged as `b8de2099` and was released from `main` with `bash scripts/oshal-deploy.sh`. Migration 138 is idempotent and the lazy DDL converges, so a redeploy is safe.
 2. **Get real data.** In the Jarvis panel, turn ambient listening on with speaker recognition, speak for a few minutes, and name a voice under Manage Voices. `POST /api/jarvis/ambient/segments` cannot set a speaker, so attributed data only comes from the audio path.
 3. **Prove it in the Lab.** Run the `ambient-recall` scenario from the AI Test Lab; all five steps should pass. Then open the People tab, allow modeling for the named voice, and wait one sweep (default five minutes) for the analyst to produce asks and topics.
 4. **If a projection ever drifts:** `npx ts-node -r tsconfig-paths/register scripts/person-model-rebuild.ts --owner <sub>` (or `--all`). Pure SQL/IO; safe to repeat.

@@ -4,11 +4,30 @@ CHANGE LOG
 SEQ                 | AUTHOR                      | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — full plan to migrate the standalone ai-optimize (C:\Projects\ai-optimize, :8799) into native OSHAL surfaces + tools + a bot, retiring the standalone Docker stack.
+2 | maintainer@emeraldcoastsystemsgroup.com   | Status corrected against the tree: "PLANNED, not started" was false — Phase 1's routes, surface and table exist and are mounted; the app bundle and Phases 2-6 do not; the cockpit Optimizer opens Token Chase.
 -->
 
 # ai-optimize — Native Migration Plan
 
-> **Status — 2026-06-17: PLANNED, not started.** Awaiting operator sign-off.
+> **Status — corrected 2026-09-14: Phase 1's routes, surface and table are built; Phases 2–6 are not.**
+> The 2026-06-17 line below ("PLANNED, not started") is contradicted by the tree, checked on `main`:
+> - **Built (Phase 1, catalog + configs):** `src/app/routes/optimize-routes.ts` — `GET /catalog` from the
+>   live provider registry, `GET`/`POST /configs` for a per-user roster, and the `optimize-configs.html`
+>   surface in `any-bot/server/services/tools/optimize/`; migration `scripts/migrations/032-optimize.sql`
+>   (`optimize_configs`, keyed by `user_sub`); mounted in `src/app/server.ts` as
+>   `app.use('/api/optimize', requiresAuth, createOptimizeRoutes(ctx))`. Guard:
+>   `tests/optimizer-native-routing.spec.ts`, "native optimize API is mounted for roster/catalog work".
+> - **Not built:** Phase 1's app bundle (no `optimize` manifest in `swarm-apps/` or the store, no
+>   optimizer persona or registry entry) and Phases 2–6 — there is no race, judge, report, runs or
+>   batch route under `/api/optimize`.
+> - **The cockpit's Optimizer button opens Token Chase, not this plan's race.** The ribbon's
+>   `tool-token-chase` view frames the first-party `/api/token-chase/ui` (same guard file, first case).
+>   Token Chase — [ADR-046](../adr/046-token-chase-checkpoint-replay-optimization.md),
+>   `src/features/token-chase/`, `src/app/routes/token-chase-routes.ts`, mounted at `/api/token-chase`
+>   behind `requiresAuth` — replays captured runs on other lanes and judges the variants, which is a
+>   different mechanism from racing one prompt across a roster.
+>
+> *Original status, 2026-06-17:* PLANNED, not started. Awaiting operator sign-off.
 > Legacy app still runs standalone at `C:\Projects\ai-optimize` → `docker compose` → `localhost:8799`
 > (container `ai-optimize-ai-optimize-1`). It stays up until each native surface reaches parity, then we retire it.
 
