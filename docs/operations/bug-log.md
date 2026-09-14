@@ -1169,3 +1169,67 @@ port. The "skipped" count is only how vitest labels individual cases when a `bef
 grep that filters to the `Tests` line alone hides the failure and the exit code; read `Test Files`
 and the exit status, not the test tally. Sixteen specs share this DSN gate and all fail loudly the
 same way.
+
+## BUG-25 — The bot role cannot read what its own fail-closed guard reads, so every bot execution answered 503
+
+**Reported by the operator, twice, on 2026-09-14:** *"i still cant say hi to jarvis it says sorry
+that didnt work"* — after an earlier fix that day had been reported to him as resolving Jarvis.
+
+**It was a different defect wearing the same face.** The earlier fix (the text-vs-uuid ownership
+query) was real and did work: the ask no longer 404s, the session task reaches `processing`, the
+context builds, and the api calls the bot. The failure moved one layer deeper.
+
+**Symptom.** `POST /api/jarvis/ask` returns `202` with a jobId; the job resolves to
+`status: "error"` carrying `Bot node returned 500: {... "error":"authorization_bot_posture_unavailable"}`
+with `durationMs` under 300 and **zero tokens** — no model was ever called. The page speaks its
+generic apology. The api is healthy throughout and logs no error of its own beyond relaying the 500.
+
+**Root cause.** `src/app/bot-node-application-authorization.ts` resolves ADR-149 posture by calling
+`readApplicationExecutionOwnership` with the **bot node's** pool, and fails closed on any exception.
+The bot connects as `oshal_bot`; the relations it must read are owned by `oshal_app`:
+
+```
+permission denied for table oshal_authorization_applications   (SQLSTATE 42501)
+permission denied for function oshal_is_tenant_member          (SQLSTATE 42501)
+```
+
+**The grant was missed, not withheld.** Migration 099 revokes exactly two controller-only tables
+from `oshal_bot` — `oshal_workload_identities` and `oshal_user_delegations` — and neither is this.
+Migration 127 creates `oshal_authorization_applications` with no `GRANT` statement at all, and
+`pg_default_acl` carries **no `oshal_bot` entry**, so nothing `oshal_app` creates is readable by the
+bot role.
+
+**Why a missing GRANT is worse here than a denial.** `readProtectedBotApplication` wraps the whole
+resolution in `catch { throw new BotApplicationAuthorizationError('authorization_bot_posture_unavailable') }`.
+A privilege error is therefore indistinguishable from "this bot is protected and you may not run
+it" — so the failure is not "one denied execution", it is **every** bot execution, permanently, with
+the cause named only in the bot container's own log. This is the same shape as the bug that hid the
+original Jarvis outage for three days: an authorization gate that cannot tell an infrastructure
+failure from a legitimate refusal.
+
+**Fix.** `scripts/migrations/140-bot-role-ownership-reads.sql` — `SELECT` on the three relations the
+reader queries, plus `EXECUTE` on the one RLS helper their policies call. The `EXECUTE` is not
+optional: without it `swarm_applications`' policy raises 42501 instead of returning a filtered
+result. Neither widens what the bot may **see** — `oshal_bot` stays `NOSUPERUSER`/`NOBYPASSRLS`,
+every policy still evaluates, and `oshal_authorization_applications` keeps its operator-only
+`authorization_control_plane` policy. The grants let the policies run instead of erroring.
+
+**Proof it is fixed — live, not inferred.** Jarvis answers `"Hi. I'm here."` to `hi`, end to end
+through the real ask path under a time-boxed PAT revoked by id afterwards.
+
+**Guard.** `tests/unit/bot-role-ownership-reads-postgres.spec.ts` crosses the real boundary — a real
+PostgreSQL, the real `oshal_bot` role, the real relations and helper — because a mock cannot express
+a privilege. Mutation-checked: revoking the two grants turns 2 of its 4 cases red; re-applying the
+migration turns them green. One case also asserts the control-plane policy still exists, so the
+grant can never become the reason it is gone.
+
+**The wider finding, deliberately not fixed here.** `oshal_bot` can `SELECT` only **3 of 409** public
+tables, so migration 099's intended blanket grants are not in effect for anything `oshal_app`
+created afterwards — `agents`, `swarm_applications` and `chat_tasks` among them, the last of which
+099's own docblock names as a bot write path. Re-granting wholesale changes a least-privilege
+security posture and is the operator's decision, recorded in [BACKLOG.md](../BACKLOG.md).
+
+**The tell, for next time.** A bot-node 500 whose body carries `durationMs` under a second and
+`totalTokens: 0` never reached a model — read the **bot container's** log, not the api's. The api
+only ever sees the relayed 500.
+

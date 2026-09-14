@@ -1718,3 +1718,37 @@ cannot run without, `marketplace.json` mirroring the new shape, and the Test Lab
 - **Remaining:** `swarm_applications.agent_ids` is an *association* column (the loader fills it so Jarvis's catalog, mesh fan-out, selector composition and competency ranking can find an app's bot), but the ADR-149 reader `readApplicationExecutionOwnership` reads it as an *ownership* column and raises `Ambiguous package ownership` when an id resolves to more than one app. Twelve ids do; the full census, the evidence for each, and the measured blast radius are in [operations/agent-id-ownership-collisions.md](operations/agent-id-ownership-collisions.md). The refusal is **not new** — before `086832cf` (2026-09-14) the reader failed a type comparison and refused *every* id silently; that commit made unique ids work and these twelve loud. Since the 06:46:14Z boot, 682 refusals, all from `GET /api/tickets`, across 6 of the 12 ids; `career-hunter`/`job-apply` is the largest (204 refusals, 4 operator-owned tickets silently dropped from the operator's own list). Three different problems, and only one of them is "delete the squatter": (1) seven ids are claimed by loose Workflow Studio publish artifacts (`cluster-probe`, `durable-probe`, `smoke-parallel-2`, `smoke-parallel-flow`, `smoke-published-flow`, `test-gate-flow`, `capability-ideation`) or by stale rows whose manifest file no longer exists (`issue-rca`, `incident-remediation`) — none of them declares the bot it borrows; (2) two are carve mistakes where a manifest pinned a uuid it does not own — `trading` pinned `a0000000-…-0045` (`identity-advisor`, owned by `identity`) while the real `trading-analyst` is `…-0046`, and `brand-graphics` pinned `b00f0000-…-0001` (`drone-operator`); (3) the rest are **deliberate aliases** that are correct as designed (`communications-bot` across switchboard/social/email-summarizer, `vids-operator` across vids/creative-studio/video/daily-trade-recap, `career-hunter` across career-hunter/job-apply, `rca-specialist` across intelligent-operations/intelligent-processing) and must NOT be resolved by editing manifests. `scripts/swarm-app-bot-integrity-check.sh` passes and flags 13 of these advisorily, but cannot see the inactive squatters because it inspects only `agent_ids[1]` of active apps.
 - **Who decides:** the operator. (1) and (2) uninstall or edit applications installed on the operator's own box; (3) changes the ADR-149 authorization core, which is load-bearing and should not be touched without approval. Nothing in this entry has been performed.
 - **Done when:** the census query in the ops doc returns zero rows for classes (a), (b) and (d) — the seven borrowed ids released and the two mispinned uuids corrected in `oshal-applications` and reinstalled — AND the deliberate aliases of class (c) are readable rather than removed, because an association shared on purpose stopped being read as exclusive ownership: either the reader resolves a multi-claim to a single accountable owner from `agents.metadata.manifestApp` (which already carries exactly one stamp per agent), or a manifest declares ownership separately from association, recorded in an ADR amending ADR-149. A regression guard crosses the real boundary that failed — the real reader against a real PostgreSQL carrying a real multi-claimed `UUID[]` row, extending `tests/unit/application-execution-ownership-postgres.spec.ts`, never a doubled query — and proves a deliberately shared bot is readable while an unowned claim is not. The integrity check is widened to scan the whole `agent_ids` array of active *and* inactive apps so a reappearing squatter fails it. `GET /api/tickets` as the operator returns the four `career-hunter` tickets that are dropped today, and the api log shows zero `Ambiguous package ownership` lines across a full boot.
+
+### The bot database role can read almost nothing it was meant to (2026-09-14)
+
+**Context:** fixing [BUG-25](operations/bug-log.md) showed that `oshal_bot` can `SELECT` only **3 of
+409** public tables on this stack. Migration 099 created the least-privilege bot role and intended
+blanket DML plus "default-privilege grants from BOTH object-creating roles ... so future tables stay
+readable without another migration" — but `pg_default_acl` carries **no `oshal_bot` entry at all**,
+and every runtime table is owned by `oshal_app`. So nothing `oshal_app` has created since is
+readable by the bot role, including `agents`, `swarm_applications` and `chat_tasks` — the last of
+which 099's own docblock names as a bot write path ("chat_tasks cost rows ... are all DML").
+
+Migration 140 granted the three relations and one function that the ADR-149 posture guard needs,
+because Jarvis was down. It deliberately did **not** re-grant wholesale: that changes a
+least-privilege security posture and belongs to the operator.
+
+**Why this is not obviously urgent, and why that is the danger:** bots heartbeat over Redis and
+their LLM execution does not read these tables, so the fleet looks healthy. The failures are silent
+and only surface when a code path actually reads — which is exactly how this one waited to be found
+by a person trying to say hi.
+
+**Done when:**
+- The real privilege set `oshal_bot` NEEDS is enumerated from the code that runs in a bot node (not
+  guessed from the table list), with the file:line that performs each read or write.
+- A migration grants exactly that set, keeping `oshal_workload_identities` and
+  `oshal_user_delegations` revoked per migration 099, and keeping every RLS policy intact —
+  `oshal_bot` stays `NOSUPERUSER`/`NOBYPASSRLS` and no policy is relaxed to make a query pass.
+- `ALTER DEFAULT PRIVILEGES` is set **for the `oshal_app` role** as well, so a table created by the
+  api's runtime DDL tomorrow does not silently reopen this gap. Migration 099 set defaults only for
+  `oshal`.
+- A guard asserts the required set against a real PostgreSQL and the real role, extending
+  `tests/unit/bot-role-ownership-reads-postgres.spec.ts`, and is proven red by revoking one grant.
+- A written decision records which tables the bot is deliberately DENIED, so the next missing grant
+  is distinguishable from a deliberate boundary — the ambiguity that made BUG-25 take a live outage
+  to notice.
