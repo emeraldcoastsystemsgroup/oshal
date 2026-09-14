@@ -28,6 +28,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Exported one limiter-only classification rule for both the runtime scanner and CI inventory, eliminating manual allowlist entries that went stale/red on every new rate-limiter mount.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Reclassify Profile Studio's public mount around its short-lived one-use dispatch capability after removing the reusable fleet service secret.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Recognize the SEC-01 delegated-user middleware as an explicit authenticated mount guard for Graph and Jarvis route scans.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Allow-list the three application-authorization mounts (/api/authorization, /api/authorization/tenant-memberships, /api/user-directory). All 14 routes beneath them ARE guarded - requiresAuth is passed INTO the factory (the CLAUDE.md-blessed `registerFooRoutes(app, requiresAuth, deps)` shape) rather than wrapped around the mount, and each factory applies it as its first router.use. This scanner classifies posture on the literal substring requiresAuth in the mount TEXT, which these mounts do not contain, so the Security Center has been carrying three standing HIGH route_auth findings that describe nothing insecure. Deliberately NOT fixed by teaching the parser to resolve the deps variable: requiresAuth being PRESENT in an object does not prove it is APPLIED, and deriving a guard from a substring is precisely the failure this file's SEQ 5 already had to undo.
  *
  * @module features/security/route-audit
  */
@@ -60,6 +61,15 @@ export const PUBLIC_BY_DESIGN: readonly string[] = [
                          // token is unset, 403 on a bad/missing signature — never open by omission
   '/api/remote-clients', // router-level authorizeRemoteClient (OIDC session OR shared-secret header)
   '/api/apply',          // box callback ingest — every route requires the service secret (serviceSecretOk)
+  // Application authorization (ADR-149) — requiresAuth is PASSED IN, not wrapped: server.ts L1139 builds
+  // { requiresAuth, resolveActor, authorizationTool } and every factory applies it as its FIRST router.use
+  // (authorization-routes.ts L57 and L102, external-tenant-membership-routes.ts L25,
+  // user-directory-routes.ts L23 + a blanket requireRosterAdmin at L26). Verified route-by-route 2026-09-14.
+  // Matching is exact-or-slash-boundary, so '/api/authorization' also covers any FUTURE
+  // '/api/authorization/*' mount — re-review a new child, never assume it.
+  '/api/authorization',
+  '/api/authorization/tenant-memberships',
+  '/api/user-directory', // returns the full user roster — two independent admin checks, not one
   '/api/profile-studio', // desktop result callback — one-use capability bound to exact owner,
                          // dispatch generation, task, client, operation, and expiry; atomic consume
   // Self-guarded PACKAGE mounts (ADR-085 D2 `auth: public` declarations, reviewed 2026-07-24):

@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the '/api/jarvis' limiter-only entry (+ LIMITER_ONLY_PATHS). The web-hardening close-out mounted expensiveOpLimiter on /api/jarvis, which registers no handlers, but the CI-side inventory classifies limiter-only mounts by ALLOWLIST while the runtime scanner skips them BY RULE - so the gate went red on main the moment that mount landed, on a path whose every real router is guarded (serviceSecretOr(requiresAuth) + two requiresAuth mounts). Mirrors the /api/intake entry exactly. The asymmetry itself is the real defect and is named in the entry's reason: the parser should learn the scanner's Limiter rule so the next such mount does not repeat this.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed limiter-only mounts from the reviewed anonymous-route allowlist. The CI inventory now applies the runtime scanner's shared isLimiterOnlyMiddleware rule, so a limiter registration is derived as handler-less rather than manually waived.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Re-review Profile Studio's non-OIDC callback as short-lived, one-use, exact-dispatch capability authenticated after removal of the reusable fleet secret.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Review the three /api/authorization, /api/authorization/tenant-memberships and /api/user-directory mounts. All 14 routes beneath them ARE guarded: requiresAuth is passed into the factory (the CLAUDE.md-blessed shape) instead of wrapping the mount, and each factory applies it as its first router.use. This spec and the runtime scanner both classify posture on the literal substring requiresAuth in the mount text, so both had been standing red on a false positive. Deliberately NOT fixed by teaching the parser to follow the deps variable: the presence of requiresAuth in an object does not prove it is applied, and inferring a guard from a substring is the exact trap this repo has already paid for. A reviewed entry demands someone read the module, which is the stronger contract.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Re-review Apply ingest as a hashed one-use
  *   exact-task capability; internal queue controls retain constant-time service authentication and
  *   the former interactive secret-bearing callbacks are terminally retired.
@@ -112,4 +113,27 @@ export const UNGUARDED_ALLOWLIST: readonly UnguardedRouteEntry[] = [
   //  server.ts no longer mounts the path (the stale-entry guard demands removal). The
   //  packaged route ships the same self-guarded posture: WORLD_INGEST_TOKEN fail-closed
   //  writes, open shared-feed reads, ENABLE_WORLD_INTELLIGENCE 503 gate.)
+  {
+    path: '/api/authorization',
+    reason:
+      'Guarded, not anonymous - requiresAuth is PASSED IN rather than wrapped around the mount, which is the pattern CLAUDE.md explicitly blesses ("registerFooRoutes(app, requiresAuth, deps)"). server.ts L1139 builds ' +
+      '{ requiresAuth, resolveActor, authorizationTool } from the same binding /api/providers uses (L587), and BOTH factories apply it as their FIRST router.use: authorization-routes.ts L57 (createAuthorizationRoutes) and ' +
+      'L102 (createAuthorizationPageRoutes). Beneath it the actor resolver throws 401 without a verified sub/issuer and rejects the guest issuer outright, and every operation adds its own scope check (403). ' +
+      'Wrapping the mount would add a second identical guard and change nothing observable. The inventory flags it only because it classifies posture on the literal substring requiresAuth in the mount TEXT, which ' +
+      'this mount does not contain. NOTE: matching is exact-or-slash-boundary, so this entry also covers any FUTURE /api/authorization/* mount - a new child must be re-reviewed, never assumed.',
+  },
+  {
+    path: '/api/authorization/tenant-memberships',
+    reason:
+      'Guarded, not anonymous - same passed-in requiresAuth as /api/authorization (server.ts L1139/L1141). external-tenant-membership-routes.ts L25 applies it as the first router.use, and the service re-checks ' +
+      'currentAdmin (401/403) plus the .assign and .directory permissions around every apply. Listed explicitly even though the /api/authorization entry already covers it by slash-boundary, so removing the ' +
+      'parent entry can never silently unreview this child.',
+  },
+  {
+    path: '/api/user-directory',
+    reason:
+      'Guarded, not anonymous - same passed-in requiresAuth (server.ts L1139/L1143). user-directory-routes.ts L23 applies it as the first router.use and L26 adds a blanket requireRosterAdmin, which the roster read then ' +
+      'enforces a SECOND time inside application-principal-directory.ts. This mount is the one of the three that would matter most if it were open - it returns the full user roster (sub, issuer, label falling back to ' +
+      'email, status, lastSeenAt) - which is why it carries two independent admin checks rather than one.',
+  },
 ];
