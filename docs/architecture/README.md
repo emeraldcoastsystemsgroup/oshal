@@ -192,6 +192,12 @@ The guiding model is:
     on the flight controller's spare UART (relay-only drones) or as the Pi's radio bridge, the vendor
     facts that constrain it, ArduPilot left stock with the companion as its ground station, two layers of
     protection per hop, the range test that replaces the catalog rows, R1–R5 bring-up
+- [drone-relay-expansion.md](./drone-relay-expansion.md)
+  - ADR-155 companion (design; the sized parts built in `drone-relay` 0.2.0): relay postures — hover or
+    perch, what a perch saves (about 15 relays in rotation → about 5) and costs (Fresnel height or the
+    ground exponent); the control plane out of band (LoRa direct: reach, heartbeat air time, what the
+    controller gains); proxy replies, queued commands and store-and-forward; couriers for bulk data;
+    trees, lattices, two bases, two radios per relay; where computing lives in the chain
 - [kernel-vs-app-packages.md](./kernel-vs-app-packages.md)
   - what is Tier-0 kernel (always-on: 4 DBs + Redis + Vault + code-server + diarization + the
     controller/API + 19 default bots) vs. what a Tier-2 app package declares; the cross-app

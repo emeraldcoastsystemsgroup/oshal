@@ -2,8 +2,9 @@
 
 **Status:** Proposed, 2026-09-14. The formation rules, the simulation, the envelope protocol, the
 transport catalog and the designer concierge are BUILT as store package `drone-relay` 0.1.0 the
-same day (see *As built*); the relay role on the real drone node and a radio transport are its
-backlog B1 and B2. Extends [ADR-099](./099-drones-as-remote-swarm-nodes.md) (each drone is a
+same day (see *As built*), and its expansion — relay postures, an out-of-band control plane, a
+courier, store-and-forward — as 0.2.0 the same day (see *Expansion*); the relay role on the real
+drone node and a radio transport are its backlog B1 and B2. Extends [ADR-099](./099-drones-as-remote-swarm-nodes.md) (each drone is a
 swarm node; drone-to-drone coordination rides the swarm's authenticated rails) and
 [ADR-098](./098-drone-ops-app.md) (draft → human approve → execute); companion of
 [ADR-151](./151-eyes-and-hands-embodied-swarm.md) / [ADR-152](./152-embodied-physics-and-training-lab.md)
@@ -187,6 +188,55 @@ two autonomous motions — shift inward along the flown corridor, return to laun
 shelter-ward, the class ADR-099 already exempts from confirm. The tip's own mission commands still
 pass the geofence at execution. Nothing in the package commands a vehicle.
 
+### D8 — A relay is a radio that has to be somewhere: hover or perch (0.2.0)
+
+The chain's rules do not care whether a relay flies or sits; the battery does. A relay may
+**perch** at its slot — land, motors off, radio, companion and flight controller awake at a
+fraction of hover draw (`perchDrawFraction`, default 0.03) — and its time on station stretches by
+that fraction: the far slot of the default chain holds 4111 s perched against 123 s hovering, and
+the relays in rotation fall from about 15 to about 5. The on-board rule is unchanged; "hold" means
+"land here", and a perched relay that must move takes off and drains at the full rate. The price
+is height: a radio on the ground fits Espressif's ground-level exponent near 3, at which the same
+kilometre needs 22 relays, so the plan states the antenna height a perch needs to keep 60 % of the
+first Fresnel zone clear (1.5 m at a 200 m hop on 2.4 GHz) and warns when the spec still assumes
+the air-to-air exponent. Ground nodes — relays that never flew — are the limit of the idea and
+stay backlog (B7): they cannot move to close a gap.
+
+### D9 — Two planes: heartbeats and the RTL word may ride a second radio direct from the base (0.2.0)
+
+With a control channel out of band (`controlChannel`, any catalog radio but the chain's — LoRa
+usually), the controller has no ghosts, knows a gap at the heartbeat period instead of the
+staleness window, can command the outer segment to the meeting point instead of leaving it to walk
+in blind, and can recall every drone whether or not the chain stands; the inward walk becomes the
+backstop for a dead control radio. The plan sizes the channel by its direct reach at the design
+margin and by the air its heartbeats cost: on LoRa a 50-byte frame is about 330 ms, so five nodes
+every 2 s occupy 82.5 % of the channel and every 10 s 16.5 % — scheduled by the base, one slot per
+node per period, the latter fits. The simulation still runs the chain in band (B8).
+
+### D10 — Proxy and store-and-forward are protocol semantics, not a relay reading a payload (0.2.0)
+
+While the tip is out of reach, the outermost reachable relay answers status queries for it from
+its last heartbeat (an ordinary `reply` signed with the relay's own key, carrying `proxy: {for,
+ageS}` so the controller knows), queues commands for it (bounded; held no longer than the tip's
+replay window, since the relay cannot re-sign), and the tip buffers what it collects and drains it
+through the chain's spare capacity once reconnected. The run reports the buffer and the drain
+(19 KB and 1.4 s for the tight chain's 7.5 s outage at 20 kbps); the queue and the proxy reply are
+the relay role's (B11, on B1). A relay still never reads a payload.
+
+### D11 — Bulk data goes home by courier; the chain carries commands, telemetry and events (0.2.0)
+
+Pictures and scans do not fit a 50 kbps chain and it should not try. A courier flies to the tip,
+lands beside it, loads over a fast radio and flies home; the plan sizes the trip. 100 MB over
+Wi-Fi Direct on a fifteen-minute battery is a 613 s trip — about 587 MB/h, 1.3 Mbps, twenty-six
+times the chain — from one drone in rotation and the Wi-Fi radio the tip's Pi already has. Over
+the chain's own ESP-NOW the load alone is 53 min and the trip does not fit a battery. The relays
+rotating home in a hovering chain are not free couriers (they come from their slots, a hop or more
+short of the tip); the courier is a dedicated trip.
+
+The formation beyond a line — trees (B5), lattices (B9), two bases, two radios per relay (B10) —
+and where computing lives in the chain (the tip and the base compute; a relay forwards, proxies and
+appends what it hears) are the expansion document's §5–§6.
+
 ## Open decisions for the operator (cost / benefit)
 
 | # | Question | Option A | Option B | Recommendation |
@@ -195,6 +245,8 @@ pass the geofence at execution. Nothing in the package commands a vehicle.
 | Q2 | Where the relay role lives first | The TypeScript drone node (Pi), testable against the simulation and the node doubles | ESP-IDF firmware (C) on the module alone | **A first (B1), then B** — the rules are pure and identical in both |
 | Q3 | The link model | A hard edge at the modelled zero-margin range (today) | Frame loss as a function of margin, its width from the range test (package B3) | **Run the range test first**, then B |
 | Q4 | Two tips on one chain (a tree) | Later (package B5) | Now | **A** — the envelope already routes trees; the planner does not need to yet |
+| Q5 | The first chain's posture | Perch: about 5 relays instead of 15 for the kilometre, on perches with 1.5 m of height or a stub mast; a landing on unprepared ground per slot | Hover: no landing, 15 relays in rotation or a much shorter corridor | **A** — the range test's height pass tells whether a stub mast is enough; hover for the three-drone R5 flight, which is inside direct-link range anyway |
+| Q6 | A control radio in the first chain | A LoRa module on every drone: heartbeats and RTL direct, scheduled every 10 s | In band on ESP-NOW: one radio, the staleness window and the blind inward walk | **B for R1–R5, then A** — prove the chain's own rules first; add the second radio when the chain leaves direct-link range |
 
 ## Consequences
 
@@ -220,17 +272,34 @@ and `tests/engine-sim.test.js`, all deterministic, on the modelled link):
   and with 15 it forces none. A 15-minute battery needs 8. That is the number the concierge puts
   in front of a designer before anything is bought: battery, corridor length, or relays.
 
+**What 0.2.0 puts numbers on** (`tests/engine-chain.test.js`, `tests/engine-sim.test.js`, deterministic,
+on the modelled link):
+
+- Perched at 3 % of hover draw, the far slot holds 4111 s and the default chain needs about 5
+  relays in rotation; six perched relays hold thirty minutes with no forced return and no swap,
+  four hold two hours. Every perch needs 1.5 m of antenna height at the 200 m hop; on the ground
+  exponent the kilometre needs 22 relays (12 in long-range mode).
+- The hover rotation stands at 15: the simulation still forces returns with 13 and 14.
+- A LoRa control channel reaches the tip direct; five nodes every 2 s occupy 82.5 % of it (19 %
+  first-try delivery unscheduled), every 10 s 16.5 %. BLE as a control radio reaches 204 m.
+- A 100 MB courier over Wi-Fi Direct on 900 s: 40 s to load, 613 s a trip, 587 MB/h ≈ 1.3 Mbps.
+  Over ESP-NOW the load is 3200 s and the trip does not fit eight minutes.
+- The tight chain's 7.5 s outage costs a 20 kbps tip 18.8 KB, drained in 1.4 s.
+
 **Backlog** (package `BACKLOG.md`, done-when criteria): B1 the relay role on the real drone node
 (core PR), B2 the ESP-NOW transport adapter and the bench range test, B3 frame loss below the
 edge, B4 corridors from the drone package's map with per-leg exponents, B5 trees, B6 the
-formation handed to Drone Ops as a draft fleet mission.
+formation handed to Drone Ops as a draft fleet mission; from 0.2.0, B7 ground nodes, B8 the
+control plane inside the simulation, B9 a lattice, B10 two radios per relay, B11 the proxy and the
+command queue in the relay role.
 
 **What this ADR does not claim:** a real-world range for any radio; that the hard-edge
 simulation predicts an outage to the second in the air; that any vehicle has flown a chain.
 
 ## Build order
 
-1. `drone-relay` 0.1.0 — done 2026-09-14 (engine, simulation, protocol, concierge, tile, tests).
+1. `drone-relay` 0.1.0 — done 2026-09-14 (engine, simulation, protocol, concierge, tile, tests);
+   0.2.0 the same day (postures, the control plane and the courier sized, store-and-forward).
 2. The range test on two ESP32-C6 boards (hardware document §5) → the catalog rows become measured.
 3. B1 — the relay role on the drone node, a core PR, proven over loopback node doubles.
 4. B2 — the ESP-NOW adapter on the bench between boards.
@@ -249,3 +318,15 @@ the write-up and the envelope trace; the `relay-designer` concierge; the tile. T
 3 surface cases in store-ci (plain node), 11 framework-coupled route cases over loopback HTTP
 including the catalog loaded through core's own loader; all registered in its Test Lab catalog.
 The canonical route rebuild is byte-identical to the committed routes. No core code changed.
+
+### 0.2.0 — the expansion, same day
+
+`engine/chain` takes `posture` / `perchDrawFraction` (station time and the rotation cycle in their
+general form, `perchAntennaHeightM`), `controlChannel` / `heartbeatS` (the `control` block: direct
+reach, nodes on air, frame time, duty, unscheduled first-try delivery, ok) and `courierMB` /
+`courierTransport` (the `courier` block: load, trip, MB/h, equivalent kbps, feasible), each refusal
+naming its field; `engine/relay-sim` drains a perched relay at the fraction while it holds still and
+reports `longestOutageS`, `tipBufferKB`, `drainS`; the write-up, the capabilities route, the tile's
+form and facts, the persona and the Test Lab catalog carry them. Tests: 31 engine + 3 surface cases
+in store-ci, 11 framework-coupled route cases. No core code changed. Design:
+[drone-relay-expansion](../architecture/drone-relay-expansion.md).
