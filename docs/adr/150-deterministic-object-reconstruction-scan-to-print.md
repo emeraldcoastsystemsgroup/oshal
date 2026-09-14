@@ -1,7 +1,11 @@
 # ADR-150: Deterministic object reconstruction — one occupancy grid for silhouettes, depth and LiDAR (the Scan to Print package)
 
 **Status:** Accepted — **BUILT** 2026-09-12 as the store package `scan-to-print` 0.1.0
-(`emeraldcoastsystemsgroup/oshal-applications`, `scan-to-print/`). Nothing in core changed; this
+(`emeraldcoastsystemsgroup/oshal-applications`, `scan-to-print/`); extended to 0.2.0 (phone camera
+capture, store #192) and 0.3.0 (the `contours` artifact and "Open in CAD Studio", store #194, the
+consumer being [ADR-153](153-iterative-cad-kernel-cad-studio.md)) by 2026-09-13. The handover and
+the open backlog live with the package: `scan-to-print/docs/CONTINUATION.md` and
+`scan-to-print/BACKLOG.md` (B1–B16). Nothing in core changed; this
 ADR records the decision because the occupancy-grid contract is a platform building block that
 later sensor work (ADR-111's LiDAR imports, ADR-140's device hands) will build on.
 **Related:** [ADR-111](111-spatial-mapping-3d-reconstruction.md) (room-scale video→3DGS; the

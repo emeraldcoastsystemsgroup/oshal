@@ -913,6 +913,15 @@ one request against `/-/healthy` plus an `up` query — and warn loudly otherwis
 cannot be closure evidence for the scraper **running**; per the integration-boundary rule those are
 different boundaries needing different guards.
 
+**2026-09-14 — the tail reproduced twice in one night, the second time on a third container.** Two
+ungraceful engine stops (containers finished 00:19:02Z and ~03:54Z) each left `oshal-local-prometheus`
+and `oshal-local-alertmanager` Exited (255) and not restarted despite `restart: unless-stopped`, while
+every container that recorded exit 0 came back on its own; on the second, `oshal-local-api` recorded
+exit 255 too and also did not come back. Both times a human running `scripts/oshal-up.sh` is what
+restored the overlay. Timestamps, what was read before the bring-up, and the two still-open unknowns
+are in [BACKLOG.md](../BACKLOG.md) under "Monitoring overlay does not survive an ungraceful engine
+stop (BUG-21 tail)". The mechanism — why exit 255 is treated as final — remains undiagnosed.
+
 ## BUG-22 — The nightly gate has failed 46 consecutive runs, emailed every time, and nothing changed
 - **Type:** Bug (process / ignored signal) · **Priority:** High · **Status:** OPEN — prevention SHIPPED
   and two of five gates fixed 2026-09-09; `unit`, `e2e-green` and `trivy` are BACKLOG-quarantined.
@@ -1051,6 +1060,22 @@ ran 55+ minutes against the 68 s the same gate took in that morning's manual run
 cannot allocate memory reports on the host, in the same red a real defect would use.** Until that is
 separated, a red night is not evidence about the code — which means part of this 46-run streak may
 never have been about the code at all.
+
+### Progress 2026-09-14 — the first run with spec-level output kept (reduced gate, loaded host)
+
+`bash scripts/ci-local.sh --head --skip-image` on `231b76f4` (04:58–05:20 UTC, image build /
+smoke / trivy skipped, the box **not** idle: 22 idle Claude Code sessions and VS Code open, 0.4–1.3
+GB host RAM free, Docker VM load1 2–5) was run with its output kept —
+`%LOCALAPPDATA%\oshal\ci-runs\ci-head-skipimage-20260913-2358.out.log`. Result:
+`FAILED gates: unit lint security-policy e2e-green` (unit 45 failed files — 27 with 49 failed
+tests, 18 listed failed with no failed-test count — plus 1 runner error; lint 1 warning;
+security-policy 5; e2e 59 of 532). The gate table, summaries and per-spec
+classification by first error line are in
+[local-ci.md → "First kept run — 2026-09-14"](../runbooks/local-ci.md#first-kept-run--2026-09-14-reduced-gate-loaded-host)
+and the full lists in [local-ci-bug22-run-2026-09-14.md](../runbooks/local-ci-bug22-run-2026-09-14.md).
+The unit gate's reporter kept titles and durations only, so the error lines for 34 of the 49 unit
+tests come from two re-runs named there; 15 remain "detail not in the log". Nothing was fixed and
+no cause is asserted; BUG-22 stays OPEN.
 
 ## BUG-23 — Career Hunter AI scoring was dead for 25 days behind two credential walls, and the board looked merely "quiet"
 - **Type:** Bug (silent degradation / credential posture) · **Priority:** High · **Status:** FIXED 2026-09-05 (store 1.12.4 + 1.12.5, core PR #302)

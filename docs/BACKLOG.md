@@ -167,6 +167,51 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** update `docs/building-a-bot.md` and the bot-registry section of CLAUDE.md to explain monitoring inherited from `x-bot-common`; container-label discovery makes a manual scrape-target step unnecessary.
 - **Done when:** both surfaces state that a bot inheriting `x-bot-common` is scraped automatically, and neither instructs anyone to edit `ops/monitoring/prometheus.yml`.
 
+### Monitoring overlay does not survive an ungraceful engine stop (BUG-21 tail)
+- **Remaining:** BUG-21 closed 2026-08-14 (#213) — the overlay is started by `scripts/oshal-up.sh`
+  and guarded by `scripts/monitoring-liveness-check.sh`, and both work. But it recorded the exit 255
+  as "unexplained rather than diagnosed", and on 2026-09-13 that tail recurred with a reproducible
+  trigger. After the Docker engine stopped ungracefully, `oshal-local-prometheus` and
+  `oshal-local-alertmanager` each recorded exit **255** and were NOT restarted, while every container
+  recording exit **0** (`oshal-local-api`, `oshal-local-cadvisor`, all forty bots) came back normally.
+  All four inspected carry the same `restart: unless-stopped` and all finished at the same instant
+  (2026-09-14T00:19:02Z); Prometheus's own log shows routine TSDB compaction right up to the stop, so
+  it was killed, not crashed. Net effect: the fleet auto-restarts **monitored by nothing** and
+  `docker ps` looks correct the whole time, until a human runs `oshal-up.sh`. The exit-code
+  correlation is observational — WHY 255 defeats `unless-stopped` here is still undiagnosed and is
+  the first thing to establish. Note the stack watchdog does not cover this: it probes engine, api
+  and bot heartbeats, not the overlay (and is currently paused by operator request).
+- **Done when:** an ungraceful engine stop (the stack up, then the Docker VM killed) followed by an
+  engine start brings Prometheus and Alertmanager back WITHOUT `oshal-up.sh` — or, if Docker's
+  restart behaviour cannot be changed, something that is not a human notices within one scrape
+  interval and says so. `monitoring-liveness-check.sh --strict` is already the assertion; what is
+  missing is anything that RUNS it when nobody is watching. A regression guard must cross the
+  restart boundary (stop the engine for real, restart, assert without the bring-up script) — a
+  compose-config or mocked-docker test is not closure evidence for this failure.
+- **Observed again 2026-09-14 — a second occurrence the same night, and on a third container.** The
+  Docker engine went down under host memory starvation and was relaunched at ~03:52Z (session
+  ddb0aed5 recorded the engine pipe absent at 03:51Z). Every container auto-started out of order and
+  nobody ran `oshal-up.sh`. Read at 04:05Z, BEFORE any bring-up: `oshal-local-prometheus`
+  Exited (255), `oshal-local-alertmanager` Exited (255), and `oshal-local-api` Exited (255) finished
+  2026-09-14T03:54:35Z with `RestartCount` 0 — all three carrying `restart: unless-stopped`, while
+  every container that recorded exit 0 was already running again without help. `docker ps` looked
+  correct for the running set throughout and nothing reported that the observers were gone;
+  `scripts/monitoring-liveness-check.sh` passed (35 targets, all up) only after this session chose to
+  run `scripts/oshal-up.sh` at 04:05Z. That sequence — stack up, engine stopped ungracefully, engine
+  started, and the two containers checked WITHOUT the bring-up script — is the reproduction the
+  done-when asks for, arrived at by accident: the first was at 2026-09-14T00:19:02Z (recorded above,
+  PR #440, commit 8c0d34ec), this is the second the same night, and both times they did not come
+  back. Two things this does NOT establish. (1) Why exit 255 defeats `unless-stopped` while exit 0
+  does not is still undiagnosed; this is a second dated observation of the symptom, not an
+  explanation of the mechanism. (2) `oshal-local-api` recorded exit 255 and also did not come back,
+  which is the same symptom on a third container — the first occurrence above lists the api among
+  the exit-0 containers that recovered, so the pattern is wider than the two monitoring containers
+  and is not specific to the overlay. Open for the operator and deliberately not decided here: the
+  stack watchdog that could run the liveness check unattended is PAUSED by operator decision since
+  2026-08-07 (`scripts/oshal-stack-watchdog.ps1`, pause file under `%LOCALAPPDATA%\oshal\`) because
+  Docker must not start by itself, so anything that closes this has to observe without starting the
+  engine.
+
 ### DB-backed alert specs borrow the operator's database
 - **Remaining:** `tests/unit/alert-incident-cutover.spec.ts` stands a live alert *consumer* on the
   operator's production queue and `tests/unit/alert-incident-reopen.spec.ts` leaks incident rows into
@@ -225,6 +270,21 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### The nightly can wedge for hours deleting its own previous export
 - **Remaining:** the 2026-09-09 23:30 run never got past `head-src`. That gate's first line, `rm -rf "$GATE_SRC"`, was deleting the `ci-src` export (a full `node_modules`) left behind by the previous night's failed run, and sat there from 00:00:50 until it was killed at ~10:00 — **9 hours, 16 CPU-seconds in total, and no progress across a 20-second sample**. It was not a file lock: an exclusive open on a file inside that tree succeeded, and no running process referenced the path. `robocopy /MIR` from an empty directory then purged the same tree in **39 seconds**. `prepare_head_src` bounds only `npm ci` with a timeout — the `rm -rf` and the `git archive | tar` after it are unbounded — so one hung delete held `ci-local.lock` all night and the run produced no outcome line and no alert at all. It will recur: every run that fails after `npm ci` leaves a `node_modules` export for the next run to delete. The cause of the hang is **not established**; MSYS `rm` against a deep `node_modules` tree is the leading candidate, not a finding.
 - **Done when:** the purge in `prepare_head_src` (and the `ci-scan-src` purge in `gate_secrets`) is timeout-bounded and fails loud instead of hanging; it uses a delete that clears a real `node_modules` export on this box in minutes (robocopy mirror-from-empty did it in 39 s); and a run that inherits a leftover export from a failed run reaches its gates and writes an outcome line.
+### `secret-scan` reports PASS even when gitleaks could not read part of the tree
+- **Remaining:** `gitleaks detect` exits **0** when it fails to read files, so `gate_secrets` records a PASS having scanned less than the tree. Measured 2026-09-10 against `origin/main`: 5 of 5077 exported files logged `could not read file: ... cannot allocate memory` and the gate still passed. Memory pressure is the trigger seen so far, but the exit code says nothing about read failures in general (permissions, a path the scanner cannot open), so a clean `secret-scan` is not evidence the tree is clean. This is the false-green twin of the false-red already recorded in the host-contention entry above: that one is about a red night that is not about the code, this one is about a green night that did not look at everything. The scanner's own stderr already names every unread path, so the signal exists and is simply discarded.
+- **Done when:** `gate_secrets` fails (or loudly degrades to a named non-pass outcome) when gitleaks reports any unreadable path, rather than inheriting its exit code alone; a run with a deliberately unreadable file in the export is shown not to pass; and the count of unread paths appears in the gate's log line so a partial scan is visible without opening the scanner output.
+### Publish gate: refuse model-attribution trailers at push time
+- **Remaining:** the 2026-09-12 scrub ([runbook](runbooks/model-attribution-scrub.md)) rewrote 498 commits across three repos because sessions kept following the harness default of appending a model `Co-Authored-By:` trailer. The tree guard `tests/unit/no-model-attribution.spec.ts` covers FILES; the trailers live in commit MESSAGES, which it cannot see. `scripts/publish-gate.sh` check 5 already scans unpublished commit messages for tokens and personal details — it is the right wall for the public repo, and it is fail-closed on every push.
+- **Done when:** check 5 refuses a push whose unpublished commits carry a `Co-Authored-By:` line at a model vendor no-reply address or a "Generated with" model-tool footer, naming the offending commit; `tests/unit/publish-gate.spec.ts` proves red on such a fixture commit and green on a clean one; and the PR-description sweep (`scripts/governance/attribution-scrub/strip_pr_footers.py`) stays documented as the remedy for bodies, which no hook can see.
+
+### Store and private repos have no attribution guard
+- **Remaining:** `oshal-applications` (163 commits rewritten) and `oshal-app-private` (49) were scrubbed on 2026-09-12 but carry neither the tree guard nor a push-time check, and their private-plan GitHub settings offer no rulesets. Recurrence there is invisible until someone greps.
+- **Done when:** each repo runs an equivalent of `tests/unit/no-model-attribution.spec.ts` in its own gate (store-ci for the store), proven red on a fixture, and its pre-push hook refuses attributed commit messages the same way the core gate does once the entry above lands.
+
+### GitHub-side residue of the 2026-09-12 attribution scrub
+- **Remaining:** closed-PR refs `refs/pull/N/head` still reach the old commits (verified on core #426 and #430 after the push) and old SHAs stay viewable at `/commit/<sha>` until GitHub garbage-collects. Only GitHub Support can purge unreachable objects; nothing on any branch carries the attribution and the contributors graph is computed from `main`.
+- **Done when:** either a support request is filed for the three repos and a sample old SHA returns 404 while `git ls-remote origin 'refs/pull/*/head'` no longer reaches an attributed commit, or the operator records here that the residue is accepted.
+
 ## Security, tenancy, and trust boundaries
 
 ### The SEC/CORE/APP hardening-track identifiers have no definition anywhere in the repo
@@ -1654,3 +1714,7 @@ criteria in [backlog/store-dependency-tier-migration.md](backlog/store-dependenc
 are satisfied - every store manifest tiered and validating, the launchers requiring only what they
 cannot run without, `marketplace.json` mirroring the new shape, and the Test Lab step
 `app-dependency-tiers` reporting pass instead of gap against the deployed API.
+### Twelve agent ids are claimed by more than one application (2026-09-14)
+- **Remaining:** `swarm_applications.agent_ids` is an *association* column (the loader fills it so Jarvis's catalog, mesh fan-out, selector composition and competency ranking can find an app's bot), but the ADR-149 reader `readApplicationExecutionOwnership` reads it as an *ownership* column and raises `Ambiguous package ownership` when an id resolves to more than one app. Twelve ids do; the full census, the evidence for each, and the measured blast radius are in [operations/agent-id-ownership-collisions.md](operations/agent-id-ownership-collisions.md). The refusal is **not new** — before `086832cf` (2026-09-14) the reader failed a type comparison and refused *every* id silently; that commit made unique ids work and these twelve loud. Since the 06:46:14Z boot, 682 refusals, all from `GET /api/tickets`, across 6 of the 12 ids; `career-hunter`/`job-apply` is the largest (204 refusals, 4 operator-owned tickets silently dropped from the operator's own list). Three different problems, and only one of them is "delete the squatter": (1) seven ids are claimed by loose Workflow Studio publish artifacts (`cluster-probe`, `durable-probe`, `smoke-parallel-2`, `smoke-parallel-flow`, `smoke-published-flow`, `test-gate-flow`, `capability-ideation`) or by stale rows whose manifest file no longer exists (`issue-rca`, `incident-remediation`) — none of them declares the bot it borrows; (2) two are carve mistakes where a manifest pinned a uuid it does not own — `trading` pinned `a0000000-…-0045` (`identity-advisor`, owned by `identity`) while the real `trading-analyst` is `…-0046`, and `brand-graphics` pinned `b00f0000-…-0001` (`drone-operator`); (3) the rest are **deliberate aliases** that are correct as designed (`communications-bot` across switchboard/social/email-summarizer, `vids-operator` across vids/creative-studio/video/daily-trade-recap, `career-hunter` across career-hunter/job-apply, `rca-specialist` across intelligent-operations/intelligent-processing) and must NOT be resolved by editing manifests. `scripts/swarm-app-bot-integrity-check.sh` passes and flags 13 of these advisorily, but cannot see the inactive squatters because it inspects only `agent_ids[1]` of active apps.
+- **Who decides:** the operator. (1) and (2) uninstall or edit applications installed on the operator's own box; (3) changes the ADR-149 authorization core, which is load-bearing and should not be touched without approval. Nothing in this entry has been performed.
+- **Done when:** the census query in the ops doc returns zero rows for classes (a), (b) and (d) — the seven borrowed ids released and the two mispinned uuids corrected in `oshal-applications` and reinstalled — AND the deliberate aliases of class (c) are readable rather than removed, because an association shared on purpose stopped being read as exclusive ownership: either the reader resolves a multi-claim to a single accountable owner from `agents.metadata.manifestApp` (which already carries exactly one stamp per agent), or a manifest declares ownership separately from association, recorded in an ADR amending ADR-149. A regression guard crosses the real boundary that failed — the real reader against a real PostgreSQL carrying a real multi-claimed `UUID[]` row, extending `tests/unit/application-execution-ownership-postgres.spec.ts`, never a doubled query — and proves a deliberately shared bot is readable while an unowned claim is not. The integrity check is widened to scan the whole `agent_ids` array of active *and* inactive apps so a reappearing squatter fails it. `GET /api/tickets` as the operator returns the four `career-hunter` tickets that are dropped today, and the api log shows zero `Ambiguous package ownership` lines across a full boot.

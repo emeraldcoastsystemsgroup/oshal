@@ -50,6 +50,10 @@ OSHAL pipelines and surfaces. One file per procedure.
 - [local-ci.md](./local-ci.md) — **the automatic daily gate**: `scripts/ci-local.sh` runs every
   gate (typecheck / unit / gitleaks / e2e-green / image build / smoke / trivy) on the operator's
   machine for $0; windowless daily task, email only on failure. Proven all-green 2026-07-09.
+- [local-ci-bug22-run-2026-09-14.md](./local-ci-bug22-run-2026-09-14.md) — BUG-22's first kept
+  run: the spec-level failures of `ci-local.sh --head --skip-image` on 2026-09-14 (loaded host),
+  classified by first error line — unit 49 tests, e2e 59, security-policy 5, lint 1 — with the
+  verbatim assertions and the kept-log path. Evidence only; no causes.
 - [gha-local.md](./gha-local.md) — `scripts/gha-local.ts`: run ANY GitHub Actions workflow locally
   ($0, no cloud runners) — plan/run/install; `uses:` mapped to local equivalents, push+login stripped,
   jobs execute from a clean HEAD export. The generic bridge beside the hardened daily gate (ADR-090).
@@ -58,6 +62,11 @@ OSHAL pipelines and surfaces. One file per procedure.
   openswarm forward-sync section is still current.
 - [update-check.md](./update-check.md) — daily app/core update detection, operator-gated apply
   flow, private-store token behavior, and troubleshooting.
+- [model-attribution-scrub.md](./model-attribution-scrub.md) — removing model attribution
+  (co-author trailers, "Generated with" footers) from commit history and PR descriptions across
+  the repos: the 2026-09-12 run and its numbers, the descendant-only rewrite that keeps signed
+  history intact, per-ref leases, the `oshal` ruleset toggle, pointer-only re-point of the shared
+  checkouts, what GitHub keeps regardless, and the guards that now hold the line.
 
 ## Enable / operate a feature
 

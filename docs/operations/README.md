@@ -15,3 +15,7 @@ retained as historical artifacts, not the active intake path.
 - [concurrent-session-collision-2026-09-08.md](./concurrent-session-collision-2026-09-08.md) —
   two agent sessions fixed the same defect two minutes apart: what duplicated, what one fix fed
   the other, and what is still open.
+- [agent-id-ownership-collisions.md](./agent-id-ownership-collisions.md) — twelve agent ids are
+  claimed by more than one application, so the ADR-149 ownership reader raises
+  `Ambiguous package ownership` and the caller refuses. Census, classification with evidence,
+  measured blast radius, and a proposed resolution for the operator to decide.
