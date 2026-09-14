@@ -1,0 +1,83 @@
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com   | Data-model explorer: an operator surface to navigate every database oshal runs - Postgres tables and views with their foreign keys, owners and row-level-security scope; objects shared across applications; the app integration map; and the time-series, SQLite, graph, vector and cache stores. Reads /api/admin/data-model (operator-only); the page itself explains the requirement to anyone else.
+-->
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+  <!-- Shared portal palette: resolve before paint and follow the parent or saved choice live. -->
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css">
+  <script src="/shared/ui/js/surface-theme.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data model explorer</title>
+  <link rel="stylesheet" href="/data-model/data-model.css">
+</head>
+<body>
+  <div class="dm-shell">
+    <header class="dm-head">
+      <div>
+        <p class="eyebrow">Admin</p>
+        <h1>Data model explorer</h1>
+        <p class="muted" id="stats">Tables, relationships, shared objects and app integrations across every store.</p>
+      </div>
+      <div class="dm-head-actions">
+        <div class="search-wrap">
+          <input id="search" type="search" placeholder="Search tables, columns, apps" aria-label="Search tables, columns and apps" autocomplete="off">
+          <div id="results" class="results" hidden></div>
+        </div>
+        <button id="fit" type="button">Fit</button>
+        <button id="refresh" type="button">Rebuild</button>
+        <a class="top-link" href="/admin" target="_top" rel="noreferrer">Admin console</a>
+      </div>
+    </header>
+
+    <p class="status-banner" id="banner" role="status" hidden></p>
+
+    <nav class="dm-tabs" role="tablist" aria-label="Explorer views">
+      <button type="button" role="tab" data-view="apps">Apps &amp; integrations</button>
+      <button type="button" role="tab" data-view="tables">Tables</button>
+      <button type="button" role="tab" data-view="shared">Shared objects</button>
+      <button type="button" role="tab" data-view="stores">Other stores</button>
+    </nav>
+
+    <div class="dm-main">
+      <aside class="dm-side" aria-label="View controls">
+        <div id="appsControls" class="control-group">
+          <h2>Links</h2>
+          <label><input type="checkbox" data-kind="context-offer" checked> <span class="swatch swatch--context-offer"></span>Context offers</label>
+          <label><input type="checkbox" data-kind="artifact" checked> <span class="swatch swatch--artifact"></span>Artifact Send-to</label>
+          <label><input type="checkbox" data-kind="dependency" checked> <span class="swatch swatch--dependency"></span>Dependencies</label>
+          <label><input type="checkbox" data-kind="group-member" checked> <span class="swatch swatch--group-member"></span>Group members</label>
+          <label><input type="checkbox" data-kind="shared-table" checked> <span class="swatch swatch--shared-table"></span>Shared tables</label>
+          <label><input type="checkbox" data-kind="foreign-key" checked> <span class="swatch swatch--foreign-key"></span>Cross-owner foreign keys</label>
+          <label class="spaced"><input type="checkbox" id="showIsolated"> Show apps with no links or tables</label>
+        </div>
+        <div id="tablesControls" class="control-group" hidden>
+          <h2>Scope</h2>
+          <label for="ownerSelect">Owner</label>
+          <select id="ownerSelect"></select>
+          <label for="depthSelect">Neighbourhood depth</label>
+          <select id="depthSelect">
+            <option value="1">1 hop</option>
+            <option value="2">2 hops</option>
+            <option value="3">3 hops</option>
+          </select>
+        </div>
+        <div id="sideList" class="side-list"></div>
+      </aside>
+
+      <section class="dm-canvas" aria-label="Graph">
+        <svg id="graph" role="img" aria-label="Data model graph"></svg>
+        <div id="listArea" class="list-area" hidden></div>
+      </section>
+
+      <aside class="dm-detail" id="detail" aria-live="polite" aria-label="Details"></aside>
+    </div>
+  </div>
+  <script type="module" src="/data-model/js/app.js"></script>
+</body>
+</html>

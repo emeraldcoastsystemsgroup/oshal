@@ -64,6 +64,7 @@
  *            | the coupled-briefing positions leg — the four /api/trading* surfaces carved to
  *            | the app store (ADR-085 Wave 3); the trading engine + all 8 autopilot dispatch/
  *            | reconcile loops + the trading-bot/weather-bot nodes stay framework-resident.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Registered the data-model explorer card (DATA_MODEL_SCENARIOS): a read-only operator step over /api/admin/data-model with its unit, integration and browser suites. Guard: tests/unit/data-model-test-lab-registration.spec.ts.
  * ---------------------------------------------------------------------------
  * Appearance | maintainer@emeraldcoastsystemsgroup.com | Register the read-only Workspace asset check and linked actual browser proof.
  * @module test-lab-scenarios
@@ -78,6 +79,7 @@ import { APP_REGISTRY_SCENARIOS } from './test-lab-app-registry-scenarios';
 import { AUTHORIZATION_SCENARIOS } from './test-lab-authorization-scenarios';
 import { AUTONOMOUS_SCENARIOS } from './test-lab-autonomous-scenarios';
 import { AMBIENT_SCENARIOS } from './test-lab-ambient-scenarios';
+import { DATA_MODEL_SCENARIOS } from './test-lab-data-model-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 
 const SELF_PORT = process.env.PORT || '5000';
@@ -237,6 +239,7 @@ export const SCENARIOS: Scenario[] = [
   ...AUTHORIZATION_SCENARIOS,
   ...AUTONOMOUS_SCENARIOS,
   ...AMBIENT_SCENARIOS,
+  ...DATA_MODEL_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,

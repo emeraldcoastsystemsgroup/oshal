@@ -16,6 +16,7 @@ Self-contained HTML/CSS/JS page bundles served by the OSHAL Express server. Each
 | `queue-manager-admin/` | `/queue-manager-admin/` | Native | Native queue manager process-flow page for dispatch, agent load, and run correlation |
 | `queue-dashboard/` | `/queue-dashboard/` | Replacement | OSHAL replacement for the old Bull Board queue dashboard with native refresh/status controller and live queue telemetry |
 | `redis-visibility/` | `/redis-visibility/` | Native Beta | Redis diagnostics and visibility page (also available via legacy compat route) |
+| `data-model/` | `/data-model/` | Native | Data-model explorer: tables, relationships, shared objects, app integrations and store inventories (operator-only data) |
 | `process-lab/` | `/process-lab/` | Native | Non-invasive lifecycle tracing lab for running preset tickets, watching flow state, and reviewing captured swarm artifacts |
 
 ## Legacy UI-Enhanced Assets
