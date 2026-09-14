@@ -7,6 +7,13 @@
 > 2026-09-13, planning bands ±30%, re-check at adoption). Work items with done-when criteria live in
 > the package backlog: [`marketing-engine/BACKLOG.md`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/marketing-engine/BACKLOG.md).
 > Earlier design: [marketing engine spec](../business/marketing-engine-spec.md) (ADR-131/132/133).
+>
+> **P0 landed in the repos on 2026-09-14, not yet on the box** — store `4b8984e5` and core
+> `477f3a0b` (both on open PRs): marketing-engine 0.5.0 with three readiness probes and its route
+> module split (all 20 routes unchanged), the `marketing-suite` ADR-141 group front door, the
+> compose passthrough for the four marketing env names, and a store write-class ledger that now
+> follows a route's package-local import closure. Installing it on the running stack and the two
+> operator steps are the rest of P0; both are items in the package backlog.
 
 ## 1. Outcome
 
@@ -188,7 +195,7 @@ From the [market scan §I](../business/marketing-suite-market-research.md#i-comp
 | Need | Why | Change |
 |---|---|---|
 | Resend actions: `headers` on send, batch send | RFC 8058 headers and batching are impossible through today's action (`additionalProperties: false`, single recipient) | `swarm-apps/connectors/resend.yaml` |
-| Env passthrough | the api container receives only the variables compose enumerates: `GOOGLE_CONNECT_SCOPES` is set in `.env` but has no compose entry, and `MARKETING_EMAIL_FROM`, `GITHUB_TRAFFIC_TOKEN` and `SWITCHBOARD_PUBLISH_EXECUTOR` (all read inside the api) have none either (checked 2026-09-13) | `docker-compose.oshal-local.yml` + `.env.example` |
+| ~~Env passthrough~~ — **merged in core `477f3a0b` (PR #431), reaches the container at the next recreate** | the api container receives only the variables compose enumerates; all four marketing names now sit on the api service and are pinned by `tests/unit/compose-env-passthrough.spec.ts` | `docker-compose.oshal-local.yml` + `.env.example` |
 | PostHog bounded stats resource | the scorecard's site-traffic row cannot fill without it | `swarm-apps/connectors/posthog.yaml` |
 | Ads connectors (P6) | spend read and budget write for Google/Microsoft/Meta/LinkedIn | connector specs + hub provider entries + deterministic provider intents |
 
