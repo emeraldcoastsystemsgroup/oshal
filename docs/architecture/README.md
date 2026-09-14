@@ -240,3 +240,4 @@ The guiding model is:
 
 The reading order is the core-runtime spine only; the sectioned index above is the complete
 inventory (feature/data-plane and plan-era docs are deliberately not in the spine).
+- [swarm-administration.md](swarm-administration.md) — who may administer a swarm and how applications get into one: swarm root and the single synchronous operator-gate chokepoint, the multi-registry App Loader, the three authorization axes and why they stay separate, the constraints that are expensive to rediscover, how to verify it on a box, and the open threads.

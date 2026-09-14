@@ -1088,6 +1088,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** a fresh LOCAL_AUTH admin completes or skips each re-enterable step, failures name the package, anonymous users cannot invoke installation, and an ADR prevents a typed store URL from gaining unchecked code execution. See [ADR-117](adr/117-local-auth-invited-users.md).
 
 ### Swarm root — the three pieces ADR-148 did not build
+- **Context:** [swarm administration — as built, and how to continue](architecture/swarm-administration.md).
 - **Remaining:** [ADR-148](adr/148-swarm-root.md) shipped the role store, root claim/transfer, the
   role-aware `isOperatorIdentity`, bootstrap-claims-root and the `/users` page. Three things remain:
   (1) a `MOCK_OIDC` box's installer-configured identity stays break-glass-only until someone claims
@@ -1102,6 +1103,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   signed-in non-operator and 200 as an admin granted through `swarm_roles`.
 
 ### App Loader — the ADR-147 decisions that did not ship
+- **Context:** [swarm administration — as built, and how to continue](architecture/swarm-administration.md).
 - **Implemented in the current branch:** cross-source replacement requires explicit approval bound
   to the observed installed provenance and is rechecked at the installer write; Applications Discover
   reads the aggregate catalog; App Loader can revoke trust and requires typed-host confirmation to
@@ -1114,6 +1116,25 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** a two-registry dependency spec fails closed on ambiguity; a fence spec where a
   hostname resolving to `10.0.0.0/8` is refused through a real local resolver seam; and ADR-147's
   As built section records the completed behavior and evidence.
+
+### One place that answers "what am I allowed to do"
+- **Context:** [swarm administration — as built, and how to continue](architecture/swarm-administration.md) section 3.
+- **Remaining:** three authorization axes now exist and each is correct in isolation:
+  `swarm_roles` (who administers the SWARM, ADR-148), the governance RBAC role + permissions
+  (`features/governance/rbac/policy.ts`, which as of 2026-09-13 reads `swarm_roles` first and
+  then the env allowlists), and `application-authorization` (who may use each INSTALLED APP,
+  released 2026-09-11, surfaced at `/access`). Nobody — operator or user — can see all
+  three together, so "why can't I open this?" is answered by checking three surfaces and an
+  environment file. The axes must NOT be merged: folding per-app access into swarm
+  administration would make "may use the photo app" and "may administer the swarm" one
+  decision. What is missing is a READ-ONLY view that joins them for one identity and names the
+  source of each grant (`swarm-role` | `break-glass` | `idp-claim` | `app-assignment`), which
+  `/api/governance/whoami` already reports for the first two.
+- **Done when:** one authenticated surface shows, for the caller and — for an admin — for any
+  chosen subject: their swarm role and where it came from, their governance permissions, and
+  their per-app assignments; every value is read from the existing stores with no new grant
+  path; and a guard proves a break-glass-only operator is labelled as such rather than
+  rendering identically to a granted admin.
 
 ### `swarm-cli` zsh completion
 - **Remaining:** execute the current completion in real zsh, covering sourced/autoloaded modes, command/state dispatch, and saved context completion.
