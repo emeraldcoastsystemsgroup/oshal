@@ -151,7 +151,21 @@ and reconcile a saved board after every schematic edit (placements kept, jumpers
 proof is the partition equality on every starter example both ways in plain node, the route suite,
 and the actual page in Chromium (a layout, a move, a jumper). Migration 002 adds the column.
 
-**Verification shipped with it.** The real-solver Python suite (17 cases at 0.1.0, 26 at 0.2.0, 32 at 0.3.0, in the engine image and
+**As built, 0.5.0 (2026-09-14).** Non-rigid mechanics (B5) without a co-simulation layer: the
+mechanism solver now produces *clusters* of rigidly meshed shaft groups, one rotational node each
+(driven or passive), joined by *compliant links* — a torsion spring (a twist integrator with a
+stiffness and a damping torque between two nodes), a belt between two pulleys (a saturating
+viscous coupling of the rim speeds that creeps under load and slips at the grip), and a
+crank-slider whose slider mass, damper, spring and friction act on its node through the exact
+crank kinematics, making the node's inertia position-dependent (every torque summed on a torque
+node, a unit capacitor integrating the quotient). The real solver checks a spring and a load
+ringing at `sqrt(k/J)/2π`, a belt at the radius ratio then slipping at its grip, and the slider
+following `x(θ)` within 0.05 mm over two revolutions with a stroke of `2r`. The Planck.js
+co-simulation the backlog had sketched was not needed for these mechanisms and was not built;
+a general 2-D linkage layer stays open with its own done-when. A fifth starter, the belt-driven
+crank-slider, puts the whole chain on one canvas.
+
+**Verification shipped with it.** The real-solver Python suite (17 cases at 0.1.0, 26 at 0.2.0, 32 at 0.3.0, 36 at 0.5.0, in the engine image and
 the installer's self-test: LED, RC, switch mid-run, geared motor, stalled motor, PWM through a
 MOSFET, mechanism refusals, protocol), the contract suite (Node ≡ Python library and build hash)
 and the transport suite against a fake bridge (plain node, store-ci), the gear-to-CAD suite
