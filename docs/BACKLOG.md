@@ -1118,3 +1118,32 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### Cockpit rail: static tiles that target another package must follow that package's discoverability (ADR-149)
 - **Remaining:** a launcher-shaped app (Create, Life, Games, the creative bundle) declares `ui.static` tiles whose `iframeUrl` points at ANOTHER package's surface. Under ADR-149 enforce mode the target may be unprovisioned for the signed-in person; the rail still renders the tile and a click lands on the kernel's role-guidance 403 page inside the frame. Create's own surfaces ask `GET /api/authorization/me?app=` and render such studios locked (create 1.2.0), but the rail is manifest-static and `synthesiseProfile` has no view of the target app.
 - **Done when:** `synthesiseProfile` resolves, for each static tile whose `iframeUrl` is under another active package's mount, that package's `canDiscover(actor)` and renders a non-discoverable target as a locked tile (kept in place, `guest-disabled` style, with the role-guidance link) rather than a dead frame; ADR-141 groups get the same treatment for borrowed tiles; a unit guard proves a discoverable target keeps its tile, a non-discoverable one is locked, a tile under the app's OWN mount is never touched, and legacy-mode packages are always discoverable; no manifest change is required.
+
+### Jarvis fixes are on the branch but not in the running image (2026-09-14)
+- **Remaining:** the Jarvis thread and briefing-asset fix (`7aae3ce5`, an ancestor of the PR 431
+  head) only reaches users on the next core deploy. Verified on the box at 02:36 UTC: the running
+  image (rev `1694a3ca`) has `/app/dist` but no `/app/dist/pages`, so the briefing settings client
+  asset cannot be served from `dist`; session 56e3d403 recorded the matching
+  `GET /api/jarvis/briefings/client.js` 404 under a signed-in probe, and fixed the route to serve
+  from `src`. `src/api/jarvis.html` is bind-mounted, so the thread half of that fix is already live
+  while the route half is not — the two halves ship together only at deploy.
+- **Done when:** a core deploy from the merged PR 431 head serves the briefing settings asset with
+  a 200 to a signed-in operator, a refused persisted thread rolls to a fresh one in the live
+  surface, and the deploy record names the image and commit. Nothing here needs new code.
+
+### Test Lab browser runner: the real-boundary proof has not run (2026-09-14)
+- **Remaining:** the disposable browser profile is built and pushed (`08440e77`, docs `d07aba01`,
+  merged at `ed2a4f95`), and its admission, harness and re-seal rules pass as pure tests. The two
+  Docker cases in `tests/unit/package-test-sandbox.spec.ts` — the in-profile capability probe on
+  the real image, and a Node-harness Playwright recipe driving loopback with the network off —
+  have never been executed. Two attempts were declined by their own guards: the Windows host had
+  381 MB free at 01:37 UTC, and the Docker VM's one-minute load was 22 at 02:22 and 133 at 02:36
+  on 8 CPUs while other lanes held their own rebuilds. Until those cases run, the browser profile
+  is proven only against mocked boundaries and must not be described as working.
+- **Run it with:** `npx vitest run tests/unit/package-test-sandbox.spec.ts -t "browser profile|browser environment"`
+  from the core checkout, with Docker up and `oshal-bot:latest` present, when the Docker VM's
+  one-minute load is below 6 (read it with `docker exec oshal-local-api cut -d' ' -f1-3 /proc/loadavg`).
+- **Done when:** both cases pass on the image, a Create browser recipe runs to a result from the
+  installed Lab after a core deploy, and the batch path admits the `browser` level — schedule
+  levels, the selector's exact-match rule and the page's counts are a separate slice, and changing
+  the selector rule must not strand the existing `integration,unit` selector the operator uses.
