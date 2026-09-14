@@ -1597,3 +1597,19 @@ gaussians subsampled in about 6 s).
   scan `failed` with the reason when the worker dies.
 - A regression test imports a PLY above the gate and one below it and proves the api keeps answering
   `/health` throughout.
+
+### Store packages still declare the old flat `dependencies` (2026-09-14)
+
+**Context:** the core reads `dependencies` as `required` / `optional` tiers and the installer, loader
+and App Loader honour the difference (ADR-085 addendum). No published package has been converted: the
+legacy flat form still loads and means all-required, so `create`, `life`, `games` and `system` keep
+dragging in up to eight apps they merely route to, and apps that hand work to a partner declare
+nothing. The operator approved converting and reclassifying the store **after** a core carrying the
+tiers is deployed - a tiered manifest declares the `app-dependencies` floor, which an older core
+refuses on purpose.
+
+**Done when:** the plan, the per-package classification with its evidence, and the acceptance
+criteria in [backlog/store-dependency-tier-migration.md](backlog/store-dependency-tier-migration.md)
+are satisfied - every store manifest tiered and validating, the launchers requiring only what they
+cannot run without, `marketplace.json` mirroring the new shape, and the Test Lab step
+`app-dependency-tiers` reporting pass instead of gap against the deployed API.

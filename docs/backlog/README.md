@@ -26,5 +26,8 @@ relevant ADR or feature documentation, release notes, and git history.
 - [lm-feature-backlog.md](./lm-feature-backlog.md) — Little Monsters feature backlog.
 - [non-human-checklist.md](./non-human-checklist.md) — machine-doable burn-down tracker with
   done-when criteria and human-only exclusions.
+- [store-dependency-tier-migration.md](./store-dependency-tier-migration.md) - converting the
+  store's packages to the ADR-085 `required` / `optional` dependency tiers: sequencing behind the
+  core deploy, the per-package classification and its evidence, and the gaps it surfaced.
 - [archive/](./archive/README.md) — dated snapshots of verified-resolved queue entries; these are
   searchable implementation history, not active work.

@@ -56,6 +56,18 @@ beforeAll(async () => {
   ]);
   const app = express(); app.use(express.json()); app.use(auth);
   app.get('/catalog-fixture', (_req, res) => res.json({ apps: store.apps }));
+  // The page is bind-mounted, so it goes live before the API that speaks tiers. This preview is
+  // shaped exactly like the API before this change: one flat dependencies[] and no tiers.
+  app.get('/api/swarm/registries/legacy-api/preview/:name', (req, res) => res.json({
+    name: req.params.name, displayName: 'Legacy shaped', version: '1.0.0',
+    registry: 'legacy-api', registryLabel: 'Legacy API', source: { url: 'https://example.test/s', ref: 'main' }, replacement: null,
+    install: { allowed: true, auditMode: 'compatible', note: 'not audited yet' },
+    impact: {
+      routes: { count: 0, mounts: [] }, migrations: { count: 0, files: [] },
+      bots: { count: 0, names: [], dedicatedNodes: 0 }, schedules: { count: 0, cadences: [] },
+      connectors: ['slack'], dependencies: ['engine'], signed: false, auditState: 'pending', auditReason: 'audit pending',
+    },
+  }));
   app.use('/api/swarm/registries', createAppRegistryRoutes(pool, auth, {
     deployedAppsDir: dest,
     loadApp: async (manifestPath) => {
@@ -143,6 +155,22 @@ describe('the confirm screen and the install through the real routes', () => {
     await page.waitForFunction(() => /Will not install/.test(document.getElementById('dlgAudit')?.textContent || ''));
     expect(await page.locator('#dlgConfirm').isDisabled()).toBe(true);
     expect(await page.locator('#dlgImpact li.danger', { hasText: 'requires' }).innerText()).toMatch(/not-published \(NOT AVAILABLE/);
+    await page.close();
+  }, 60000);
+});
+
+describe('the page runs ahead of the API it talks to', () => {
+  it('renders an API that still returns one flat dependency list, offering no optional choices', async () => {
+    const page = await browser.newPage();
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route('**/*', route => route.request().url().startsWith(base) ? route.continue() : route.abort());
+    await page.goto(base + '/app-loader/?registry=legacy-api&name=scanner');
+    await page.waitForFunction(() => /also installs/.test(document.getElementById('dlgImpact')?.textContent || ''));
+    expect(await page.locator('#dlgImpact').innerText()).toMatch(/also installs\s+engine/);
+    expect(await page.locator('#dlgOptional').isHidden()).toBe(true);
+    expect(await page.locator('#dlgConfirm').isDisabled()).toBe(false);
+    expect(errors).toEqual([]);
     await page.close();
   }, 60000);
 });
