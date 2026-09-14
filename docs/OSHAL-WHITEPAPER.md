@@ -244,7 +244,7 @@ constant — **more agents, more workflows, more vendors, joining one swarm that
 | Swarm bots / personas | 60 registry bots · 103 persona definitions |
 | Standard tools | 31 across 16 categories |
 | Built‑in pipelines | build (7‑phase) · incident RCA (3‑phase) |
-| Example swarm apps | 7 (engineering, issue‑rca, little‑monsters, capture‑crm, federal‑capture, email‑summarizer, codex‑packer) |
+| Kernel app manifests | 10 in `swarm-apps/` (incident operations, document intake, Jarvis, Workflow Studio, the Bot Forge, …); every other app is a store package |
 | Incident RCA cost | ~$1.30 (vs ~$4.05 two‑bot) — ~68% lower |
 | Live insertion | 18 tools + 18 agents + 18 containers in ~52s |
 

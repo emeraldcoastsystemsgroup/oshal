@@ -10,6 +10,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Drop the dead 'gov-contracting' PRIVATE_APPS row with its rip (ADR-085 Wave 3) — the capture-family carve complete; no in-repo capture manifests remain.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Opt-in analytics for the hand-written root page: rewrite the <!-- ANALYTICS:START/END --> head block from the shared lib/product-site/analytics.js builder (SITE_ANALYTICS_* env, default none), the same single config source as the generated product pages and the nightly lab report. With the provider unset the block collapses back to the bare marker pair — the committed bytes — so an unconfigured regeneration leaves no stale snippet behind and the tracked page cannot churn. Missing markers WARN instead of failing: analytics is opt-in and must never block a deploy.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | BUG-9 (hand-typed counts drift): the tree counts move into one countRepo() and the claim check into claimErrors(), so the site claims and a new DOC_CLAIMS list are checked against the SAME numbers. `--docs` verifies the persona / registry-bot / kernel-manifest / provider / connector / ADR counts written into the whitepaper, reference, stem-cell and feature-catalog pages and exits 3 on drift. The site path is unchanged. main() now runs only as a CLI so tests/unit/doc-count-claims.spec.ts can require the module and hold the docs to the tree.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | BUG-11: the whitepaper's at-a-glance row listed carved-out store apps (little-monsters, capture-crm, federal-capture) as the repo's example apps. The row now states the kernel manifest count, and a DOC_CLAIMS entry holds that count to swarm-apps/*.yaml.
  */
 
 /**
@@ -236,6 +237,8 @@ const DOC_CLAIMS = [
     patterns: [/registry \((\d+) today\)/, /(\d+) registry bots/] },
   { file: 'docs/OSHAL-WHITEPAPER.md', what: 'persona definitions', count: 'personas',
     patterns: [/(\d+) persona definitions/] },
+  { file: 'docs/OSHAL-WHITEPAPER.md', what: 'kernel app manifests', count: 'kernelManifests',
+    patterns: [/\| Kernel app manifests \| (\d+) in `swarm-apps\/`/] },
   { file: 'docs/reference.md', what: 'persona YAML files', count: 'personas',
     patterns: [/(\d+) persona YAML files/] },
   { file: 'docs/the-stem-cell-model.md', what: 'kernel app manifests', count: 'kernelManifests',

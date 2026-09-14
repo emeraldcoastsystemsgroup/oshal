@@ -205,7 +205,7 @@ and was not done. What still reproduced:
   cannot judge prose. The 003 and 050 stamps are grounded in the files cited above, not in the guard.
 
 ## BUG-11 — Orphaned retired-feature docs read as live
-- **Type:** Bug · **Priority:** Med · **Status:** OPEN
+- **Type:** Bug · **Priority:** Med · **Status:** **FIXED 2026-09-14** — see the closing note.
 - **Where:** Little Monsters (carved to another repo, ADR-085) still framed as in-repo across
   stem-cell/whitepaper/`deployment-models` demo link/backlog/cloudflare runbook; Jobs-2026 cutover
   runbook; Enrique store refs (purged); paused remote-apply. Also `docs/k8/` documents the dead
@@ -213,6 +213,38 @@ and was not done. What still reproduced:
   `CLAUDE.md` cited an archived extension guide as authoritative.
 - **Fix (planned):** add carved-out/completed/paused banners or relocate; document the shipped k8s
   path; repoint the archived citation.
+
+**Closing note (2026-09-14).** Re-verified item by item on `main` before any change. Most of the entry
+had already been closed by other passes:
+- **Jobs-2026 cutover runbook, Enrique store refs, paused remote-apply:** nothing under `docs/`
+  mentions them any more. The only hits are this log.
+- **`docs/k8/`:** `docs/k8/README.md` leads with the shipped codeless path (ADR-129, helm + registry
+  images), sends multi-user tenants to `deploy/terraform/README.md` (which exists and documents the
+  Terraform layer), and labels `any-bot-kubernetes-setup.md` **legacy** in its index.
+- **CLAUDE.md's archived extension-guide citation:** gone. `CLAUDE.md` has no extension-guide
+  reference.
+- **Little Monsters:** the stem-cell page was corrected under BUG-9 today. The cloudflare runbook's
+  subdomain example and the BACKLOG items name it as a store package, which is accurate.
+
+What still reproduced was the same defect in three places. Each told a reader that a carved-out store
+app ships with the repo:
+- `INSTALL.md` "What you get" listed `…/cockpit/?app=eats` as the example focused app.
+- `docs/deployment-models.md`'s zero-keys quick start said "try /cockpit/?app=little-monsters".
+  Neither app is installed on a fresh clone.
+- The whitepaper's at-a-glance table listed "Example swarm apps | 7 (…little-monsters, capture-crm,
+  federal-capture, email-summarizer…)". The last four are store packages, and two of them are
+  commercial packages outside the public store.
+- **Fix:** both links now point at `?app=intelligent-operations`, a kernel manifest. The whitepaper row
+  now reads "Kernel app manifests | 10 in `swarm-apps/` … every other app is a store package", and a
+  12th `DOC_CLAIMS` row holds that count to the tree.
+- **Guard:** `tests/unit/fresh-install-doc-apps.spec.ts` checks every `?app=` in `INSTALL.md` and
+  `docs/deployment-models.md` against the kernel manifests' `name:` fields. The new `DOC_CLAIMS` row
+  is checked by `tests/unit/doc-count-claims.spec.ts`.
+- **Red → green:** `npx vitest run tests/unit/fresh-install-doc-apps.spec.ts
+  tests/unit/doc-count-claims.spec.ts` gave 5 failed / 3 passed before the fix (`eats`,
+  `little-monsters`, and the whitepaper row's missing phrase). After the fix: 8 passed. Mutation:
+  putting `?app=eats` back and changing the row to "7 in" gave 4 failed ("claims 7, repo has 10").
+  Restored, it was back to 8 passed.
 
 ## BUG-12 — Cockpit surfaces render their own hardcoded palette instead of the active theme
 - **Type:** Bug · **Priority:** Med · **Status:** FIXED 2026-08-10 (gate shipped)
