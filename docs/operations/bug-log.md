@@ -722,7 +722,7 @@ for a week. The rule these two specs broke: **a DB-backed guard may read the ope
 must never start a background consumer on the operator's work queue.**
 
 ## BUG-17 — The task/message credential-isolation guard asserts a retired route shape, and half of what it does assert is bound to a symbol that no longer exists
-- **Type:** Bug (stale guard) · **Priority:** Med · **Status:** OPEN
+- **Type:** Bug (stale guard) · **Priority:** Med · **Status:** **FIXED 2026-09-14** — see the closing note.
 - **Discovered:** 2026-08-13, by `tests/unit/task-message-isolation-routes.spec.ts` failing in the
   sweep above. **Both halves of the first write-up were corrected during verification** — its blast
   radius was over-stated and its guard-coverage loss was under-stated; the Med below is re-based on
@@ -833,6 +833,37 @@ call the real broker, confirm the guard goes red) rather than trusting the name,
 been dead since 2026-08-06 and nothing noticed. And under the real-boundary doctrine: a guard about
 *what crosses the controller→node boundary* has to observe that boundary — the posted body — not a
 controller-side collaborator the boundary no longer uses.
+
+**Closing note (2026-09-14).** Re-verified on `main` first. The "why it is red" half was already gone.
+`c18f057a` (2026-09-11) made the case spy `BotNodeClient.prototype.hasEndpoint` to `false`, so it runs
+the inline branch deterministically and no longer depends on nodes listening on 3032/3034. The spec
+ran green, 3 passed. The vacuous half still reproduced. `vi.mock` bound `resolveBotCreds`, which
+`connector-token-broker.ts` does not export (its only function export is `resolveServerOperationCreds`),
+so both `not.toHaveBeenCalled()` assertions could never fail. Nothing in the node-dispatch cases of
+`inline-hosted-brain-entry-points.spec.ts` looked at credentials in the posted body.
+- **Proof the guards were dead, by mutation of `message-routes.ts` (reverted after each run):**
+  - **M1:** the inline branch calls `resolveServerOperationCreds` before the turn. The old isolation
+    spec stayed green (3 passed).
+  - **M3:** the node branch adds `creds` and a `providerIntent` to its `executeBotOrInline` request.
+    Both reached the stub node's `/api/swarm-execute` body, and the old inline-hosted spec stayed green
+    (16 passed).
+- **Fix, tests only (`src/` unchanged):**
+  - `task-message-isolation-routes.spec.ts` mocks and asserts `resolveServerOperationCreds`.
+  - Each leg asserts no broker call, exactly one `processMessage` call, and no `creds` or
+    `providerIntent` in its options, all before the transport status.
+  - A new case imports the real `connector-token-broker` and requires every mocked name to be a
+    function there, so a rename cannot leave the guard asserting on nothing again.
+  - Both node-dispatch cases in `inline-hosted-brain-entry-points.spec.ts` assert the posted body has
+    no `creds` and no `providerIntent`.
+- **Red → green:**
+  - Under M1, the new isolation spec gave 1 failed / 3 passed, at the broker assertion (line 212), which
+    now runs ahead of the status check. Without M1: 4 passed.
+  - Under M3, the new inline-hosted spec gave 2 failed / 14 passed ("expected { url:
+    '/api/swarm-execute', … } to not have property "creds""). Without M3: 16 passed.
+  - Mutation of the new export case: adding a stale `resolveBotCreds` key to the mock gave 1 failed
+    ("connector-token-broker exports no "resolveBotCreds""). Removed, it was back to 4 passed.
+- **Stability:** the node cases already await `warmBotEndpointRegistry()` before driving the route.
+  Both files together ran 20 passed three times in a row, 4.8–5.3 s each, with no warm-race failure.
 
 ## BUG-18 — The assistant invents a `custom` op name, and the surface silently discards the edit
 - **Type:** Bug (integration contract / silent no-op) · **Priority:** High · **Status:** FIXED
