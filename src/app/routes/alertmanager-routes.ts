@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Durable landing (Operations Stream): with a Pool wired, an authenticated delivery is written verbatim to oshal_alert_envelope and expanded into oshal_alert_event BEFORE anything canonicalizes, claims, or cuts a ticket, and the receiver answers 202 with the envelope id and the expanded event count. The response now states only what is DURABLE: a landing failure answers 503 so Alertmanager redelivers, and a body that is not an envelope is parked as an ingest deadletter and answered 400. Consolidation runs off the landed rows — the request drains them in-process so alert-to-ticket latency is the request itself, and a 5-second sweep claims any straggler through EnvelopeStore.withPendingEvents (SKIP LOCKED, so a sweep and a request never take the same row), stamping every event's durable claim decision. Pool-less runs keep the in-memory intake shape end to end
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Close the Alertmanager HMAC raw-body gap: the receiver now owns a bounded JSON parser whose verify hook captures the exact bytes before signature verification, while the global parser reserves only /api/alerts/alertmanager. Whitespace/key-order differences no longer depend on JSON reserialization, and a configured HMAC secret remains fail-closed.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Allow independently owned receivers to omit the background sweep while preserving the controller default and request drains.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | BUG-19: the ticket link no longer discards `updateIncident`'s null. When a concurrent pump's refire moved the revision between consolidation and the link, the patch matched nothing, the event was already decided, and the incident stayed unlinked forever with nothing logged. linkIncidentTicket re-reads the row and re-applies the patch under withRevisionRetry, and logs at ERROR with the incident id and revision when the budget runs out. Guard: tests/unit/alert-incident-ticket-link.spec.ts.
  */
 
 /**
@@ -62,11 +63,13 @@ import {
   EnvelopeStore,
   IncidentStore,
   hasUsableIdentity,
+  withRevisionRetry,
   renderDedupKey,
   renderIdentitySource,
   resolveDeploymentId,
   type AlertEventRow,
   type ClaimDecision,
+  type IncidentRow,
   type LandEnvelopeResult,
   type Queryable,
   type UnclaimedReason,
@@ -90,6 +93,39 @@ import {
 import { TicketTypeSchema } from '@/entities/ticket';
 
 const logger = createChildLogger({ module: 'alertmanager-routes' });
+
+/**
+ * @description Points an incident at the ticket its event produced, under optimistic concurrency.
+ * `updateIncident` answers null when the revision moved between consolidation and this write (a
+ * second pump refired the same identity). That null is the signal to re-read and re-apply, not a
+ * result to ignore: ignoring it left the incident unlinked forever, because the event is decided
+ * and nothing re-claims it (BUG-19). An exhausted budget is logged here with the incident id and
+ * the last revision tried, then rethrown for the caller's own failure path.
+ * @param store - The incident store.
+ * @param incident - The incident as consolidation returned it.
+ * @param ticketId - The ticket the triage path produced for this event.
+ * @returns The linked incident.
+ */
+async function linkIncidentTicket(store: IncidentStore, incident: IncidentRow, ticketId: string): Promise<IncidentRow> {
+  let revision = incident.revision;
+  try {
+    return await withRevisionRetry(async (attempt) => {
+      if (attempt > 1) {
+        const fresh = await store.getIncident(incident.incidentId);
+        if (!fresh) throw new Error(`incident ${incident.incidentId} vanished before its ticket was linked`);
+        if (fresh.ticketId === ticketId) return fresh;
+        revision = fresh.revision;
+      }
+      return store.updateIncident(incident.incidentId, revision, { ticketId });
+    }, { label: `ticket link for incident ${incident.incidentId}` });
+  } catch (err) {
+    logger.error(
+      { err, incidentId: incident.incidentId, revision, ticketId },
+      'Incident ticket link failed — the incident is NOT linked to its ticket',
+    );
+    throw err;
+  }
+}
 
 /** Default receiver bound; alert batches larger than this require an explicit operator override. */
 export const DEFAULT_ALERTMANAGER_BODY_LIMIT = '100kb';
@@ -707,7 +743,7 @@ export function createAlertmanagerRoutes(ticketService: TicketService, options: 
       // Link the ticket once. A refire must not re-stamp it: the ticket a recurrence opens is a
       // different ticket, and arm C already gave that recurrence its own incident row.
       if (decided.ticketId && incident.ticketId !== decided.ticketId) {
-        await incidents.updateIncident(incident.incidentId, incident.revision, { ticketId: decided.ticketId });
+        await linkIncidentTicket(incidents, incident, decided.ticketId);
       }
       await dispatches?.record({
         incidentId: incident.incidentId,

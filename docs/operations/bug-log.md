@@ -950,7 +950,7 @@ so both `not.toHaveBeenCalled()` assertions could never fail. Nothing in the nod
   visible in one grep.
 
 ## BUG-19 — A stale-revision incident patch is discarded, leaving the incident permanently unlinked with no error and no log
-- **Type:** Bug (silent data loss) · **Priority:** High · **Status:** OPEN
+- **Type:** Bug (silent data loss) · **Priority:** High · **Status:** **FIXED 2026-09-14** — see the closing note.
 - **Discovered:** 2026-08-13, split out of BUG-16's verification, which explicitly refused to close
   it with a test-isolation fix. Independently re-verified against the tree before filing.
 
@@ -988,6 +988,37 @@ reported, never dropped. Per the integration-boundary corollary this needs a rea
 enforcing role, not a mocked one: the defect *is* the database's optimistic-concurrency behaviour.
 More generally: **a function returning `T | null` to signal "your write did not happen" must never be
 called with `await` alone.** Worth a lint rule if a second instance turns up.
+
+**Closing note (2026-09-14).** Re-verified on `main` first, and it still reproduced.
+`alertmanager-routes.ts:710` awaited `incidents.updateIncident(...)` and discarded the result, and
+`updateIncident` still returns `null` on a stale revision and logs the miss only at DEBUG. No other
+`updateIncident` caller exists in `src/` (grep), so the audit this entry asked for found nothing more.
+- **Fix:** `recordIncident` now calls `linkIncidentTicket` (`src/app/routes/alertmanager-routes.ts`).
+  - On a `null` it re-reads the row with the new `IncidentStore.getIncident(incidentId)` and re-applies
+    the patch under the existing `withRevisionRetry` (5 attempts).
+  - A row already linked to the same ticket counts as linked.
+  - An exhausted budget logs at ERROR with `incidentId`, `revision` and `ticketId`, then rethrows into
+    the unchanged `recordIncident` catch, so the event is still decided.
+  - The link is loud; it is never silently dropped.
+- **Guard:** `tests/unit/alert-incident-ticket-link.spec.ts` runs the real receiver over a disposable
+  migrated PostgreSQL. The only interposition is a second writer bumping the row's `revision` on the
+  real database:
+  - once, just before the member upsert (the point where a concurrent pump's refire lands), after
+    which the incident must end linked to the ticket its event produced;
+  - before every link attempt, after which an ERROR naming the incident must be logged.
+
+  The ticket store is the in-memory double that `docs/governance/real-boundary-regression-audit.md`
+  already records, with `tests/alert-intake-rls-live.spec.ts` as its real companion.
+- **Red → green:** before the fix, `npx vitest run tests/unit/alert-incident-ticket-link.spec.ts`
+  gave 2 failed (8.18 s; tests 6.12 s; load1 5.20):
+  - "expected null to be truthy", the same signature BUG-16 recorded at the cutover spec's `:148`;
+  - "no ERROR log names the unlinked incident".
+
+  After the fix: 2 passed (6.94 s; load1 1.60). Mutation: putting the bare `updateIncident` call back
+  gave 2 failed; restored, 2 passed. Neighbours: the cutover, reopen, landing-durability and
+  triage-consolidation specs plus this one gave 5 files, 35 passed. `npx tsc --noEmit` is clean.
+- **Scope:** the fix makes a lost race loud and self-correcting. It does not change which connection
+  the incident writes use. That is BUG-20.
 
 ## BUG-20 — Incident writes run on the pool inside the claiming transaction, so they survive a rollback that reverts the claim
 - **Type:** Bug (lost atomicity) · **Priority:** Medium · **Status:** OPEN
