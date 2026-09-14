@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Serve unchanged Jarvis markup and real client assets over isolated synthetic HTTP for dashboard proofs.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Let a case refuse chosen thread ids (or every ask) with the server's real session_not_found contract, so the page's roll-to-a-fresh-thread resend is proven at the HTTP boundary.
  */
 import express, { type Express } from 'express';
 import { resolve } from 'node:path';
@@ -32,6 +33,8 @@ export function dashboardState() {
     result: { status: 'done', answer: 'A **clear answer** with its existing discussion.' } as Record<string, unknown>,
     resultGate: undefined as Promise<void> | undefined, speechGate: undefined as Promise<void> | undefined,
     taskStatus: 200, claims: [] as unknown[], transcription: 'Explain the fixture status.', speechSamples: 4000, denyMicrophone: false,
+    // Thread ids /ask answers with the server's 404 session_not_found contract; '*' refuses every ask.
+    refusedSessionIds: [] as string[],
   };
 }
 
@@ -71,7 +74,10 @@ function dashboardTaskRoutes(app: Express, state: ReturnType<typeof dashboardSta
 /** @description Model asynchronous answers and speech only at their HTTP boundary. */
 function dashboardConversationRoutes(app: Express, state: ReturnType<typeof dashboardState>) {
   app.post('/api/jarvis/ask', (req, res) => {
-    state.asks.push(req.body); res.json({ jobId: 'dashboard-answer' });
+    state.asks.push(req.body);
+    const refused = state.refusedSessionIds.includes('*') || state.refusedSessionIds.includes(String(req.body?.sessionId));
+    if (refused) { res.status(404).json({ error: 'session_not_found' }); return; }
+    res.json({ jobId: 'dashboard-answer' });
   });
   app.get('/api/jarvis/ask/result', async (_req, res) => { await state.resultGate; res.json(state.result); });
   app.post('/api/voice/synthesize', async (_req, res) => {

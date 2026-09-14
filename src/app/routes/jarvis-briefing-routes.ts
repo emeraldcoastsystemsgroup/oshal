@@ -4,8 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Expose authenticated per-user briefing settings and atomic announcement claims.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Serve the settings page assets from the tree copy at <cwd>/src/pages: src/pages is excluded from the server build, so the __dirname path did not exist in the baked image and the missing file surfaced as a JSON 404 the browser refused to execute. A missing asset is now a plain 404 from this router.
  */
-import { Router, json, type Request, type RequestHandler, type ErrorRequestHandler } from 'express';
+import { Router, json, type Request, type Response, type RequestHandler, type ErrorRequestHandler } from 'express';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import type { AuthorizationActor } from '@/shared/application-authorization';
@@ -13,6 +15,32 @@ import { BriefingPreferenceSchema } from '@/shared/briefings';
 import type { JarvisBriefingService } from '../composition/jarvis-briefing-service';
 import { createChildLogger } from '@/shared/logger';
 const logger = createChildLogger({ module: 'jarvis-briefing-routes' });
+/**
+ * @description Locate a settings page asset across the layouts the server runs in. `src/pages/**` is
+ * excluded from the server build (tsconfig.server.json), so under the baked image `__dirname` is
+ * `dist/app/routes` and `../../pages` does not exist; the tree copy (and bind mount) at
+ * `<cwd>/src/pages` is what every other page route serves from. The `__dirname` candidate keeps a
+ * ts-node/tsx process started from another directory working.
+ * @param file - Asset name inside src/pages/jarvis-briefings.
+ * @returns The first existing candidate, or null when the asset is missing from every layout.
+ */
+function resolveBriefingPage(file: string): string | null {
+  const candidates = [resolve(process.cwd(), 'src/pages/jarvis-briefings', file), resolve(__dirname, '../../pages/jarvis-briefings', file)];
+  return candidates.find(candidate => existsSync(candidate)) ?? null;
+}
+/**
+ * @description Send a settings page asset, answering 404 inside this router so a missing file never
+ * falls through to the app-level error handler as a JSON body the browser refuses to run as script.
+ * @param res - Response that has not yet been written.
+ * @param file - Asset name inside src/pages/jarvis-briefings.
+ */
+function sendBriefingPage(res: Response, file: string): void {
+  const path = resolveBriefingPage(file);
+  if (!path) { logger.error({ file }, 'Briefing page asset missing from every layout'); res.status(404).send('Not found'); return; }
+  res.sendFile(path, error => {
+    if (error && !res.headersSent) { logger.error({ err: error, file }, 'Briefing page asset failed to send'); res.status(404).send('Not found'); }
+  });
+}
 /**
  * @description Keep settings and browser claims behind the same verified caller and same-origin mutation boundary.
  * @param service - Trusted preference and delivery service.
@@ -35,10 +63,10 @@ export function createJarvisBriefingRoutes(service: JarvisBriefingService, requi
     }
   };
   router.get('/settings', async (req, res) => {
-    try { await resolveActor(req); res.sendFile(resolve(__dirname, '../../pages/jarvis-briefings/index.html')); }
-    catch { res.status(401).send('Authentication required'); }
+    try { await resolveActor(req); } catch { res.status(401).send('Authentication required'); return; }
+    sendBriefingPage(res, 'index.html');
   });
-  router.get('/client.js', (_req, res) => res.sendFile(resolve(__dirname, '../../pages/jarvis-briefings/client.js')));
+  router.get('/client.js', (_req, res) => sendBriefingPage(res, 'client.js'));
   router.get('/', run(async (req, actor) => { z.object({}).strict().parse(req.query); return service.catalog(actor); }));
   router.use((req, res, next) => {
     if (req.get('origin') !== `${req.protocol}://${req.get('host')}` || req.get('sec-fetch-site') === 'cross-site'

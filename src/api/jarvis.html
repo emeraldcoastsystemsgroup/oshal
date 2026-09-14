@@ -1314,6 +1314,16 @@ let SESSION_ID = (function () {
 function freshSessionId() {
   return 'jarvis-' + ((window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(16).slice(2)));
 }
+/* Point new turns at a fresh thread WITHOUT clearing the screen. Used when the server answers
+   session_not_found for the persisted thread id — a thread bookmarked in localStorage before issuer
+   provenance existed, or one opened under another sign-in (the refusal is deliberate and guarded in
+   tests/unit/protected-jarvis-results.spec.ts). The id is only a browser bookmark, so the turn in
+   flight is resent under a new one instead of every ask failing forever. */
+function rollToFreshThread() {
+  SESSION_ID = freshSessionId();
+  try { localStorage.setItem('jarvisSessionId', SESSION_ID); } catch (_) {}
+  if (typeof loadThreads === 'function') loadThreads();
+}
 /* Start a NEW thread → a fresh chat-ticket opens on the next send. Clears the on-screen
    conversation + rolling context so the new thread is genuinely separate. */
 function startNewThread(announce) {
@@ -1467,7 +1477,7 @@ async function handleInput(text) {
       pendingAttachments = []; renderAttachStrip();   // consumed for this turn — clear the strip
       setStatus('Thinking…');
     }
-    const r = await fetch('/api/jarvis/ask', {
+    const postAsk = () => fetch('/api/jarvis/ask', {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       // The live screen travels with the turn. Sent verbatim as the relay delivered it — the server
@@ -1478,8 +1488,21 @@ async function handleInput(text) {
         ...(window.__surfaceContext ? { context: window.__surfaceContext } : {}),
       }),
     });
-    const j0 = await r.json().catch(() => ({}));
-    if (!r.ok || !j0.jobId) throw new Error(j0.message || j0.error || ('HTTP ' + r.status));
+    let r = await postAsk();
+    let j0 = await r.json().catch(() => ({}));
+    if (r.status === 404 && j0.error === 'session_not_found') {
+      // The server refuses a thread it cannot attribute to the CURRENT sign-in. Roll to a fresh
+      // thread and resend this one turn — once, so a refusal of the new thread surfaces as an error.
+      rollToFreshThread();
+      bubble.innerHTML = '<div style="opacity:.6">That conversation is no longer available under your current sign-in — starting a new chat…</div>';
+      r = await postAsk();
+      j0 = await r.json().catch(() => ({}));
+    }
+    if (!r.ok || !j0.jobId) {
+      throw new Error(j0.error === 'session_not_found'
+        ? 'Jarvis could not open a conversation for your current sign-in.'
+        : (j0.message || j0.error || ('HTTP ' + r.status)));
+    }
     seenDone.add(j0.jobId);   // handled inline here — keep the shelf from re-announcing it
     const d = await waitForResult(j0.jobId);
     if (d.status === 'error') {

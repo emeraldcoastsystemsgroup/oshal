@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify actual dashboard coverage is registered and read-only readiness preserves unavailable/refused outcomes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin the briefing settings client readiness step and the briefing asset suite in the registration.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
@@ -16,6 +17,7 @@ it('registers daily dashboard once with browser, Home lifecycle and HTTP asset c
     { level: 'browser', path: 'tests/unit/app-home-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/app-home-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-dashboard-assets.spec.ts' },
+    { level: 'integration', path: 'tests/unit/jarvis-briefing-assets.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-delayed-visual-lifecycle.integration.spec.ts' },
     { level: 'unit', path: 'tests/unit/isolated-browser.spec.ts' },
   ]));
@@ -31,6 +33,7 @@ it('reads only fixed assets using current session and never starts assistant wor
   expect(fetcher.mock.calls.map(call => call[0])).toEqual([
     'http://127.0.0.1:5017/api/jarvis/assets/jarvis-dashboard.css',
     'http://127.0.0.1:5017/api/jarvis/assets/jarvis-dashboard.js',
+    'http://127.0.0.1:5017/api/jarvis/briefings/client.js',
     'http://127.0.0.1:5017/cockpit/js/views/AppsHomeView.js',
   ]);
   for (const call of vi.mocked(fetch).mock.calls) expect(call[1]).toEqual({

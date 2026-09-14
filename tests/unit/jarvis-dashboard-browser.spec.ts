@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove compact Jarvis layout, grouped real task actions and retained voice/stage flows in Chromium.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove the page rolls a refused persisted thread id to a fresh one and resends the turn exactly once (the 'Sorry — I couldn't do that just now' regression after issuer provenance landed).
  */
 import { type Browser, type Page, type Frame } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -31,10 +32,12 @@ afterAll(async () => {
 }, 30_000);
 
 /** @description Read the real current page with all outbound origins blocked. */
-async function openDashboard(width = 1280, height = 800, embedded = false, theme = 'workspace') {
+async function openDashboard(width = 1280, height = 800, embedded = false, theme = 'workspace', persistedSessionId?: string) {
   const context = await browser.newContext({ viewport: { width, height }, reducedMotion: 'reduce', permissions: ['microphone'] });
   await context.route('**/*', route => new URL(route.request().url()).origin === fixture.base ? route.continue() : route.abort());
   await context.addInitScript(value => localStorage.setItem('cockpit-theme', value), theme);
+  // A thread id this browser bookmarked on an earlier visit — the page reads it before any turn.
+  if (persistedSessionId) await context.addInitScript(value => localStorage.setItem('jarvisSessionId', value), persistedSessionId);
   await context.addInitScript(() => {
     const clear = CanvasRenderingContext2D.prototype.clearRect;
     (window as any).fixtureCanvasDraws = {};
@@ -309,5 +312,35 @@ it('keeps Stopped visible after the active audio completion cleanup settles', as
     await surface.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     expect(await surface.locator('#assistantState').textContent()).toBe('Stopped');
     expect(await surface.evaluate('ttsAudio === null || ttsAudio.paused')).toBe(true);
+  } finally { await context.close(); }
+});
+
+it('rolls a refused persisted thread id to a fresh thread and resends the turn once', async () => {
+  // The server refuses a thread it cannot attribute to the current sign-in (404 session_not_found,
+  // guarded in tests/unit/protected-jarvis-results.spec.ts). The bookmarked id must not brick every ask.
+  fixture.state.refusedSessionIds = ['jarvis-legacy-fixture-thread'];
+  const { surface, context } = await openDashboard(1280, 800, false, 'workspace', 'jarvis-legacy-fixture-thread');
+  try {
+    await surface.locator('#typein').fill('How did I do in the market last week?'); await surface.locator('#typer button').click();
+    await expect.poll(() => fixture.state.asks.length, { timeout: 5000 }).toBe(2);
+    expect(fixture.state.asks[0]).toMatchObject({ message: 'How did I do in the market last week?', sessionId: 'jarvis-legacy-fixture-thread' });
+    const fresh = String(fixture.state.asks[1].sessionId);
+    expect(fixture.state.asks[1].message).toBe('How did I do in the market last week?');
+    expect(fresh).toMatch(/^jarvis-[0-9a-f-]{36}$/);
+    await expect.poll(() => surface.locator('#resultContent strong').textContent(), { timeout: 5000 }).toBe('clear answer');
+    expect(await surface.evaluate(() => localStorage.getItem('jarvisSessionId'))).toBe(fresh);
+    expect(await surface.locator('#convo').textContent()).not.toContain('session_not_found');
+  } finally { await context.close(); }
+});
+
+it('surfaces a refusal of the fresh thread as one readable error instead of retrying again', async () => {
+  fixture.state.refusedSessionIds = ['*'];
+  const { surface, context } = await openDashboard(1280, 800, false, 'workspace', 'jarvis-legacy-fixture-thread');
+  try {
+    await surface.locator('#typein').fill('Try again please.'); await surface.locator('#typer button').click();
+    await expect.poll(() => surface.locator('#convo .err').count(), { timeout: 5000 }).toBe(1);
+    expect(await surface.locator('#convo .err').textContent()).toBe('Jarvis could not open a conversation for your current sign-in.');
+    expect(fixture.state.asks.length).toBe(2);
+    expect(fixture.state.asks[1].sessionId).not.toBe('jarvis-legacy-fixture-thread');
   } finally { await context.close(); }
 });
