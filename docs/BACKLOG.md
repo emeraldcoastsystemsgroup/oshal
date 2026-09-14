@@ -410,9 +410,13 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   so none of them can run on this box. The log does not reach back before the recreate; the start date is
   inferred from the commit, not observed. Trading's own schedules (`trading-events`, `trading-fast`,
   `trading-autopilot`) take the queue path and dispatched normally in the same window.
-- **Who decides:** the operator — which principal a protected app's declared schedule runs as (the
-  installing owner, a per-app automation assignment, or the app's own service identity admitted for
-  `kind: 'jobs'` only). It extends the authorization core, so nothing was changed.
+- **Decided 2026-09-14 (operator):** [ADR-157](adr/157-scheduled-application-services-run-under-an-activated-principal.md)
+  - two classes: a **system service** runs as the application's service principal, activated by a swarm
+  administrator with exactly the declared permissions; a **user service** runs as the person who activated it
+  from the app's configuration. Nothing runs by declaration; an inactive schedule skips at INFO and shows as a
+  readiness to-do. Slices: S1 kernel contract (manifest `runsAs`/`requires`, activation table, service
+  principal, runner, routes), S2 the Scheduled services panel + readiness + guide, S3 the five packages
+  declare, S4 Jarvis. Status per slice is kept here as each lands.
 - **Done when:** a protected app's manifest schedule executes under a recorded principal that
   `authorize()` accepts for `kind: 'jobs'`, an app that principal is not assigned to is still refused, a unit
   guard proves both against the real policy, and each of the five schedules above logs `Manifest
