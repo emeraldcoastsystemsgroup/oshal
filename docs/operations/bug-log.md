@@ -161,12 +161,48 @@ up to ADR-156 — so the 2026-07-18 counts above had drifted too.
   not gated.
 
 ## BUG-10 — ADR status drift (~20 ADRs)
-- **Type:** Bug · **Priority:** Med · **Status:** OPEN
+- **Type:** Bug · **Priority:** Med · **Status:** **FIXED 2026-09-14** — the named ADRs and the index; see the closing note.
 - **Where:** `docs/adr/` — worst: ADR-005 "Cline is the ONLY LLM path" still Accepted (reversed
   same-day by 020, superseded by 033); unrecorded supersessions (006→034, 016→017, 018→019,
   004→019/024, 050→083, 003→OIDC); ADR-038 "Proposed" but is the governing built architecture;
   duplicate ADR-090; README index "reconciled 07-05" but rows run to 07-18.
 - **Fix (planned):** stamp Superseded-by / correct statuses; renumber the duplicate 090; re-reconcile the index.
+
+**Closing note (2026-09-14).** Re-verified on `main` before any change. Four of the named items had
+already been corrected by other passes: ADR-005 reads SUPERSEDED by 033 (corrected 2026-07-23),
+ADR-006 is superseded in part by 034, ADR-038 is "Accepted — implemented", and the duplicate 090 is
+a recorded decision. The index says "ADR number 090 is shared by two files … kept unrenumbered so
+existing links stay valid" (2026-08-01), so the entry's "renumber the duplicate 090" is overruled
+and was not done. What still reproduced:
+- **ADR-016** read `Accepted`, although ADR-017's `## Supersedes` section names it and the index row
+  already said "Superseded by 017".
+- **ADR-004** read `Accepted` over its own `## Superseded By` section (partially, by ADR-019).
+- **ADR-018** read `Accepted`, although ADR-019's status says it "supersedes aspects of ADR-018". The
+  two ADRs disagree: 018's addendum says 019 "does not supersede ADR-018; it extends the contract".
+  The stamp records both rather than picking one.
+- **ADR-003** read `Accepted`. The server it protected, `src/api/server.js`, is deleted
+  (`src/app/server.ts` change log, seq 5), and nothing imports `src/api/auth-middleware.js`.
+- **ADR-050** read `Accepted` over its own 2026-06-20 update, which supersedes its route-orchestrator
+  design. The entry's "050→083" is wrong: ADR-083 says it "Amends / relates to" 050, so the stamp
+  says amended, not superseded.
+- **The index** had no rows for ADR-142 and ADR-143. Ten blank lines between rows 134 and 146 also
+  split the table, so the 22 rows after ADR-134 rendered as loose text rather than as table rows.
+- **Fix:** status stamps on 003, 004, 016, 018 and 050, each citing its evidence; index rows for 142
+  and 143; the 003/004/018 index rows now match their files; the table is one block again; the
+  reconciled stamp is dated 2026-09-14.
+- **Guard:** `tests/unit/adr-status-consistency.spec.ts` checks six things. Every ADR file has an
+  index row, and every row resolves. The index is one table, with no blank line between rows. A row
+  marked Superseded matches its file. A file whose status says Superseded matches its row. An ADR with
+  a `## Superseded By` section says so in its status. An ADR named in another ADR's `## Supersedes`
+  section, or in another ADR's status as superseded, carries a superseded stamp. There are also
+  parser self-tests, so the checks are not vacuous.
+- **Red → green:** `npx vitest run tests/unit/adr-status-consistency.spec.ts` gave 6 failed /
+  2 passed before the fix (142/143 unindexed; README.md:177…196 gaps; 016 twice; 004 twice; 018).
+  After the fix: 8 passed. Mutation: restoring ADR-016's old status and re-inserting one blank line
+  gave 3 failed; restored, it was back to 8 passed.
+- **Scope:** the guard covers supersession that is written in a checkable form: an index Status
+  cell, a `## Supersedes` or `## Superseded By` section, or "supersedes … ADR-NNN" in a status. It
+  cannot judge prose. The 003 and 050 stamps are grounded in the files cited above, not in the guard.
 
 ## BUG-11 — Orphaned retired-feature docs read as live
 - **Type:** Bug · **Priority:** Med · **Status:** OPEN

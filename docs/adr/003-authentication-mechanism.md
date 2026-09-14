@@ -1,7 +1,10 @@
 # ADR 003: Authentication Mechanism — API Key (Bearer Token)
 
 ## Status
-Accepted
+**Superseded** in practice (status corrected 2026-09-14). The API configuration server this ADR
+protected, `src/api/server.js`, was deleted (`src/app/server.ts` change log, seq 5), and nothing imports
+`src/api/auth-middleware.js` any more. Routes authenticate through OIDC
+(`src/shared/middleware/oidc.ts`, [ADR-008](008-mock-oidc-development-mode.md)).
 
 ## Date
 2026-03-07
