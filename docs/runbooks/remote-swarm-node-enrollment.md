@@ -291,3 +291,18 @@ Pass criteria:
 - Node never appears: check that the control-plane URL is reachable from the remote host and is not `localhost` unless the remote daemon runs on the same machine.
 - Capabilities are only `mcp.list-tools`/`mcp.call-tool`: the MCP server did not initialize or did not return tool names. Check the MCP command, args, CWD, and OS permissions.
 - Off-LAN node cannot reach the control plane: join the Headscale tailnet first and use the tailnet-reachable control-plane URL. `OSJOIN1` alone does not provision overlay credentials.
+
+- **The registry lists zero clients while a node process is running.** Check three things, in this order, before
+  reinstalling anything. (1) **Is the swarm-wide secret retired here?** `GET /api/remote-clients` answering `401`
+  with `{"error":"Unauthorized","code":"shared_secret_retired"}` — and an api log line "refused swarm-wide shared
+  secret" — means `REMOTE_CLIENT_REQUIRE_NODE_TOKEN=true` and every node still holding that secret is locked out.
+  Its config carrying a 48-character shared secret rather than an `oshal_pat_…` value is the tell; re-enrol it
+  (`POST /api/join/enroll`) for a per-node token. A token that was minted and then revoked leaves the node in
+  exactly this state. (2) **Can the node actually reach the control plane?** A `controlPlaneUrl` of
+  `http://localhost:35457` resolves `::1` first on Windows, which a stale `wslrelay` can hold while `127.0.0.1`
+  answers normally — the node's requests then never arrive and the api log shows nothing from it at all. Compare
+  `http://localhost:<port>/api/health` against `http://127.0.0.1:<port>/api/health`; if only the second answers, see
+  [localhost-wedge-wslrelay.md](localhost-wedge-wslrelay.md), and point the node at `127.0.0.1`. (3) **Is system
+  control on?** `allowSystemControl` defaults to off, and with it off the node refuses `shell.exec` — file push/pull
+  and every remote job built on it — even though it registers and heartbeats normally. The registry is in-memory, so
+  none of this self-heals on a controller restart: a node that cannot authenticate simply never reappears.

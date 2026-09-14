@@ -368,3 +368,38 @@ staging URL from a misfired test, open the cockpit and approve manually:
 ```
 POST /api/tickets/<ticket_id>/resume   { "decision": "approved" }
 ```
+
+### The nightly stops at "could not acquire the shared render-node lease"
+
+Symptom, every run since 2026-08-06: `run-<date>.log` holds one line —
+
+```
+FAILED: could not acquire the shared render-node lease: node-lease CLI returned no JSON (exit 1):
+{"level":"error","module":"oshal-node-lease","message":"Expected property name or '}' in JSON at position 1"}
+```
+
+— followed by the alert email. Task Scheduler reports result `1`.
+
+**Cause: Windows PowerShell 5.1 strips embedded double quotes from native-command arguments.**
+`Enter-SharedNodeLease` builds its metadata with `ConvertTo-Json -Compress` and passes it as one argument to
+`docker exec … oshal-node-lease.js --metadata-json <json>`. Under 5.1 the CLI receives `{requestedDate:2026-09-10,…}`
+and refuses it at position 1. PowerShell 7 fixed native argument passing, but the scheduled task launches
+`powershell.exe` (5.1) through `run-daily-recap-hidden.vbs`, so that fix never applies here.
+
+Reproduce in one line (5.1 only) — sent quoted, arrives unquoted:
+
+```powershell
+$m = @{ a = '1' } | ConvertTo-Json -Compress
+docker exec oshal-local-api node -e "process.stdout.write(process.argv[1])" $m
+```
+
+**Recovery until the runner is fixed:** run the recap for a date by hand with the lease step satisfied, or quote the
+value so it survives (`$m -replace '"','\"'`). Do not "fix" it by dropping the metadata — the lease row is what keeps
+the recap and the video pump off each other's node.
+
+**Related defect in the same path:** the lease is acquired *before* the market-calendar check
+(`alpaca-is-session.js`), so weekends and holidays also fail here and send an alert instead of exiting quietly with
+"no market session". Move the calendar check ahead of the lease when fixing the quoting.
+
+The open item, with done-when criteria, is in [BACKLOG](../BACKLOG.md) under "Video, character, and creative
+automation".

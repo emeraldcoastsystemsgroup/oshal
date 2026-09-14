@@ -704,6 +704,27 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** Phase 1 evidence rail (config/output flags on the backtest runner, a frozen-constant walk-forward in-sample/out-of-sample driver, the ensemble-exit and percent-ATR buffer sweeps, the Kibot env documented); Phase 2 the six-stage locked-winner optimizer inside that walk-forward on every market with bars on disk — this is the evidence gate; Phase 3 ingest the archives into `market_bars`; Phase 4 a durable paper book with stop triggers, behind an operator approval gate; Phase 5 cockpit coverage. The fail-closed live adapter and contract risk semantics are NOT scheduled: they open only if Phase 2 out-of-sample is positive on at least one market AND the operator names a futures-approved account and vendor.
 - **Done when:** the Phase 2 out-of-sample report is published in futures-backtester.md and ADR-116 carries an amendment stating which way it fell — a negative result closes the live items as "do not build live", which is an acceptable end state. The paper and UI phases carry their own done-whens in the phasing doc.
 
+### The armed book's stop-loss measures against the venue's adjusted cost basis (2026-09-13)
+
+- **Found on the live book:** the engine takes its entry price from the venue's reported position average
+  ([schwab-broker-adapter.ts:672](../src/features/trading/services/schwab-broker-adapter.ts#L672) → `avgEntryPrice`),
+  and that number carries the broker's **wash-sale adjustment**. After the engine sells a name at a loss and its own
+  rotation re-buys it inside 30 days, the disallowed loss is folded into the replacement shares overnight, so the
+  next session's first fire reads a 5–18% loss on a position that is flat or up on the price the engine actually
+  paid — and stops it out, which books a bigger disallowed loss into the next re-buy. Over one week the re-entries
+  it stopped were mostly names that had not moved anywhere near the stop distance, several of them sold for a gain.
+  The same figure is stamped into `cost_basis`, so recorded `realized_pnl` and every report over it are overstated
+  by the carried amount. The arithmetic was verified to the cent across three consecutive round trips.
+- **Second, related finding:** the autopilot manages every position in the account it is armed for, because it reads
+  live venue positions rather than its own ledger — a hand-placed position was cap-trimmed about three minutes after
+  it filled. That is the hazard ["Arming a second autopilot leg is a deliberate, gated act"](#arming-a-second-autopilot-leg-is-a-deliberate-gated-act)
+  reserves for a second book, already live on the first.
+- **Remaining:** both fixes, with their done-when criteria and the code references, are written up as items 5 and 6
+  in [backlog/trading-advisor.md](backlog/trading-advisor.md) — the engine must own its entry price, and it must
+  manage only the positions it opened. Neither is started; the operator has not chosen between fixing the core,
+  ring-fencing symbols with `TRADING_CORE_SYMBOLS=SYMBOL:0`, and pausing the live leg.
+- **Done when:** the two trading-advisor items are closed on their own criteria.
+
 ## Video, character, and creative automation
 
 ### Video Series conductor live acceptance
@@ -757,6 +778,39 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### Joke-shorts pump deferred work
 - **Remaining:** add per-show destination opt-in/dry-run publishing, post-render mechanical quality review, shared recap/pump node lease, a declared Pumpkin bot, and an explicit external-persona manifest shape.
 - **Done when:** nothing publishes without destination consent, bad episodes pause automatically, recap and pump cannot collide, Jarvis discovers Pumpkin, and the loader rejects orphan personas while accepting declared external copies. See [ADR-120](adr/120-joke-shorts-pump.md).
+
+### The nightly trade recap has failed at the render-node lease since 2026-08-06
+
+- **Found 2026-09-12:** every scheduled run since the shared render-node lease landed has stopped at
+  `could not acquire the shared render-node lease: node-lease CLI returned no JSON`, and the alert rail has emailed
+  a failure every day (weekends included). Cause: `Enter-SharedNodeLease` passes a compact JSON string as an
+  argument to a native command ([run-daily-recap.ps1](../scripts/run-daily-recap.ps1) `--metadata-json`), and
+  **Windows PowerShell 5.1 strips the embedded double quotes from native-command arguments**, so the CLI receives
+  `{requestedDate:...}` and refuses it at position 1. Reproduced directly: a `ConvertTo-Json -Compress` value sent
+  through `docker exec` arrives unquoted. The scheduled task runs `powershell.exe`, so PowerShell 7's fixed argument
+  passing never applies. Secondary defect in the same path: the lease is acquired **before** the market-calendar
+  check, so non-trading days fail and alert instead of exiting quietly.
+- **Remaining:** pass the metadata so it survives 5.1 native-argument handling (escape the quotes, or hand the value
+  over stdin / a file / discrete flags rather than one JSON argument), move the calendar check ahead of the lease,
+  and add a guard that would go red on the quoting regression. The last recap that reached the operator was
+  2026-08-03; 2026-08-04/05 failed earlier in the chain, at render-node reachability.
+- **Done when:** a scheduled run acquires the lease and completes end to end, a non-trading day exits without an
+  alert, and a spec covers the argument round trip. Recovery detail is in
+  [runbooks/daily-trade-recap-pipeline.md](runbooks/daily-trade-recap-pipeline.md); the pipeline is
+  [ADR-074](adr/074-daily-trade-recap-pipeline.md).
+
+### Daily Trade Recap's Home tiles count a table the production path never writes
+
+- **Found 2026-09-12:** the `daily-trade-recap` package's Home summary counts rows in `workflow_runs` for its ticket
+  type, but the production recap is a host scheduled task that creates no ticket and no workflow run — so the four
+  tiles read `0` on a good night and a bad one alike. There are no `workflow_runs` rows for the type at all; the
+  ticket path was last exercised in June, and three of those tickets still sit at `approval_required`, which the
+  "needing review" tile does not count either (it counts workflow-run states, not ticket states).
+- **Remaining:** decide which record is the truth for this app — have the nightly runner record a run for its ticket
+  type, or point the summary at what the runner already writes (its dated artifacts and run log) — then make the
+  tiles reflect it. Whichever is chosen, a tile that cannot distinguish "never ran" from "ran fine" is the defect.
+- **Done when:** a completed nightly moves a tile, a failed nightly is visible on Home without opening a log, and
+  the stale June tickets are resolved or shown. See [ADR-074](adr/074-daily-trade-recap-pipeline.md).
 
 ## Device, edge, spatial, and operations domains
 
@@ -881,6 +935,30 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### TV surfaces — OSHAL Home in the Fire TV, Roku, and Samsung stores
 - **Remaining:** the Get oshal page's TV tile says the apps are not in any store, because they are not: Fire TV (`packages/oshal-firetv`), Roku (`packages/oshal-roku`) and Samsung (`packages/oshal-samsung-tv`) install only by developer-mode sideload from a build. The four-phase registration runbook exists (`docs/tv-surfaces/roku-and-samsung-registration.md`) but none of its phases is recorded as done for any of the three, and the Roku README records that its channel has not been built or tested on a device.
 - **Done when:** each app is installable from its platform store or that store's private/beta channel under the business developer account, a store-installed copy completes `/tv` pairing against the public swarm and speaks a Jarvis answer, and the TV tile links to the listings instead of the sideload guide.
+
+### No remote node is registered: the shared secret is retired and nodes were never re-enrolled
+
+- **Found 2026-09-12:** `GET /api/remote-clients` returns **zero clients** on the operator's box, read as the
+  operator, while an `@oshal/chat` worker is running on that same machine. Three independent causes, each verified:
+  (1) the control plane runs `REMOTE_CLIENT_REQUIRE_NODE_TOKEN=true`, so `authorizeRemoteClient` refuses the
+  swarm-wide secret with `shared_secret_retired` ([remote-client-routes.ts](../src/app/routes/remote-client-routes.ts)),
+  and the running worker's config still holds exactly that secret — its per-node token was minted in August and
+  revoked a minute later; (2) the worker's `controlPlaneUrl` is `http://localhost:35457`, and on that host
+  `localhost` resolves to `::1` first, which is wedged by a stale `wslrelay` while `127.0.0.1` answers 200, so its
+  requests never arrive at all (the api log has no entry from it); (3) `allowSystemControl` is off in its config, so
+  even once registered it refuses `shell.exec`, which is the transport every remote-node job here is built on. The
+  registry is in-memory, so nothing repopulates it on its own.
+- **Consequence worth naming:** the fail-closed retirement worked exactly as designed, but nothing reports the
+  resulting empty fleet. Jobs that need a node (the nightly recap's render step among them) fail one layer deeper,
+  at "could not reach the render node", which reads as a node problem rather than an enrollment problem.
+- **Remaining:** re-enrol the nodes that should exist onto per-node tokens (`POST /api/join/enroll`), point them at
+  `127.0.0.1` or clear the `::1` wedge ([runbooks/localhost-wedge-wslrelay.md](runbooks/localhost-wedge-wslrelay.md)),
+  turn on system control where a node is expected to run jobs, and surface "no node registered" where an operator
+  will see it rather than only in a failing job's log.
+- **Done when:** the registry lists the expected nodes with recent heartbeats, a node job completes end to end, and
+  a deliberately empty fleet produces a message naming enrollment as the cause. See
+  [ADR-114](adr/114-user-owned-remote-nodes.md) and
+  [runbooks/remote-swarm-node-enrollment.md](runbooks/remote-swarm-node-enrollment.md).
 
 ## Application-package follow-ups
 
