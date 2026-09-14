@@ -1660,29 +1660,29 @@ was held by another session, so it was requested in the store thread (2026-09-14
 
 ### Multipart uploads lose the RLS request identity — the same trap sits in core (2026-09-14)
 
-**Context:** spaces 0.7.0 refused every import larger than one socket chunk with `500 failed to import
-capture`: the identity middleware binds the caller with AsyncLocalStorage `run`, multer/busboy consume
-the body on the socket's own async context, and once the parser finished on a later chunk the handler
-after multer reached the GUC pool with no identity — refused under `OSHAL_DB_GUC_STRICT=deny` and by the
-owner RLS policy (`new row violates row-level security policy for table "spatial_scans"`). Reproduced on
-the box's own image with public `.splat` files; the 2 MB probe failed once and passed on retry, so it is
-a race, not a size limit. Fixed in spaces 0.7.1 (store `b84a720e`) by capturing `getRequestIdentity()`
-before the stream and re-entering it in multer's completion callback, with a guard
-(`spaces/tests/upload-identity.core.test.js`) that writes a 3 MB multipart body in 256 KB chunks with
-gaps and asserts the service saw the identity — red on 0.7.0, green on 0.7.1. Core has six multer routes
-(`agent-profile`, `ambient-speaker`, `artifact-exchange`, `rag`, `swarm-app`, `voice`) and none of them
-re-binds the identity after the upload; whichever of them writes an owner-RLS table after multer is
-exposed to the same shape. That is a mechanism shared by every multer route, not an observation about
-any one of them — each must be proven or fixed on its own.
-
-**Done when:**
-- A shared helper in `src/shared/middleware` (or beside `request-identity.ts`) wraps a multer parser so
-  its completion callback runs inside the identity captured before the stream, and every core multer
-  route that touches the database after the upload uses it.
-- Each such route has a chunked-upload regression test over real loopback HTTP (the spaces guard is the
-  pattern) that fails when the re-bind is removed.
-- `docs/governance/RLS-RUNBOOK.md` names multipart bodies as an async-context boundary and points at the
-  helper, so the next upload route does not re-learn this.
+- **Built 2026-09-14 on `fix/backlog-sweep`; not deployed.** `preserveRequestIdentity` in
+  `src/shared/middleware/multipart-identity.ts` captures the request identity before multer streams
+  the body and re-enters it around the parser's continuation — the spaces 0.7.1 shape, now shared.
+- **Scope, re-measured:** core has six multer routes. Four touch the database under the caller's
+  identity after the upload and now use the helper: `POST /api/rag/upload` (knowledge-memory
+  record; `knowledge_memory_documents` and `rag_chunks` are FORCE RLS), `POST /api/swarm/apps/import`
+  (`swarm_applications`, FORCE RLS), `POST /api/jarvis/ambient/audio` (`ambient_user_settings`,
+  `ambient_audio_chunk_receipts`, `ambient_speaker_*`, FORCE RLS) and
+  `POST /api/agents/:agentId/profile/avatar` (`agents`, which has no RLS policy, so the lost identity
+  changed the stamp from operator to anonymous, not the outcome). Two are not exposed and were left
+  unchanged: `POST /api/voice/transcribe` touches no database after the upload, and
+  `POST /api/artifacts/handles/upload` mints an in-memory handle whose authorization reads all run
+  under `runWithSystemIdentity`. Table posture read from `pg_class` on the local stack.
+- **Guard:** `tests/unit/multipart-request-identity-postgres.spec.ts` drives the four real routers
+  over loopback HTTP with the body streamed in 64 KB chunks with gaps, through the production GUC
+  pool, into a FORCE-RLS table as `oshal_app` in a throwaway database the spec creates and drops
+  (5/5). Red on all four routes before the fix — rag 500 `RAG ingestion failed`, import 400
+  `new row violates row-level security policy`, ambient 500 `speaker_service_unavailable`, avatar
+  500 with the same RLS error — and red again on all four when the helper's re-bind line is
+  removed. `docs/governance/RLS-RUNBOOK.md` names multipart bodies as an async-context boundary and
+  points at the helper.
+- **Remaining:** nothing against the done-when; the running api keeps the defect until a core
+  deploy carries this change.
 
 ### Spaces: the PLY→splat converter runs on the api's event loop and a large import can take the box down (2026-09-14)
 
