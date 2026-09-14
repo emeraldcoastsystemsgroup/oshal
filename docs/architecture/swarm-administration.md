@@ -160,10 +160,17 @@ Each has a BACKLOG entry with done-when criteria. Ordered by what a reader would
    silent escalation on any box reachable before its first login.
 2. **`/users` cannot invite or disable an account.** It lists local accounts and grants roles; the
    invite and disable flows still live in the local-auth admin API.
-3. **No route-chain guard for the 403 path.** The shipped guards cover the store and
-   `isOperatorIdentity`; the live 401 and 200 paths were verified on a box. What is missing is a
-   spec that mounts `/api/swarm/roles` and `/api/swarm/registries` behind the real auth middleware
-   and asserts 403 for a signed-in non-operator and 200 for an admin granted through `swarm_roles`.
+3. **~~No route-chain guard for the 403 path.~~ CLOSED 2026-09-14** —
+   `tests/unit/swarm-admin-route-chain-authorization.spec.ts` mounts the real
+   `/api/swarm/roles` and `/api/swarm/registries` routers behind the real deployment auth set
+   (`createApplicationAuthMiddlewareSet` in its LOCAL_AUTH shape, signed in through the real
+   `POST /api/local-auth/login`) against a disposable PostgreSQL holding the real `swarm_roles`
+   table, and asserts all three outcomes: anonymous refused, **signed-in non-operator 403**, and
+   200 for an admin granted through a `swarm_roles` row — plus 403 again after the revoke. Both
+   break-glass allowlists are stubbed empty, so the row is the only path to operator. Every
+   assertion reads the RESPONSE BODY: on a box every unauthenticated `/api/*` path answers an
+   identical 401 including paths that do not exist, so a status-only assertion would prove the
+   global guard and never the mount.
 4. **Cross-registry dependencies.** Dependency *tiers* now exist (required/optional, resolved
    `installed → core manifest → the source's catalog`, refused with "not published by
    <source>", and shown on the confirm screen). Still unbuilt: resolving a dependency from a
@@ -195,4 +202,4 @@ Each has a BACKLOG entry with done-when criteria. Ordered by what a reader would
 | Registries + host adapters | `src/features/app-registries/` |
 | Registry API, preview, install decision | `src/app/routes/app-registry-routes.ts` |
 | Pages | `src/pages/users/`, `src/pages/app-loader/`, `src/pages/admin/`, `src/pages/cockpit/tools/devices.html` |
-| Guards | `tests/unit/swarm-roles-store.spec.ts`, `app-registries.spec.ts`, `admin-console-access.spec.ts`, `cockpit-tool-surfaces.spec.ts` |
+| Guards | `tests/unit/swarm-roles-store.spec.ts`, `app-registries.spec.ts`, `admin-console-access.spec.ts`, `cockpit-tool-surfaces.spec.ts`, `swarm-admin-route-chain-authorization.spec.ts` (the route chain end to end) |

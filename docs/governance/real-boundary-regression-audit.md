@@ -82,6 +82,34 @@ fixtures. It checks same-ref dispatch, confirmation refusal, foreign handles, re
 and stale selection. This does not prove deployed model disambiguation. Keep ADR-139 Stage 4b open
 until a signed-in live model handoff and ambiguous-target refusal are recorded after deployment.
 
+## Swarm administration route chain (2026-09-14)
+
+`tests/unit/swarm-admin-route-chain-authorization.spec.ts` closes the ADR-148 open thread "no
+route-chain guard for the 403 path". The boundary that had no coverage is the CHAIN, not any one
+function: the shipped guards proved the role store and `isOperatorIdentity` separately, and the
+signed-in non-operator 403 existed only as a hand check on a box. The spec runs the whole chain for
+real — the deployment auth set from `createApplicationAuthMiddlewareSet` in its LOCAL_AUTH shape, a
+session cookie minted by the real `POST /api/local-auth/login`, that set's own `requiresAuth`,
+`requiresOperator`, `isOperatorIdentity`, the privileged-identity snapshot, a real `swarm_roles`
+table in a disposable PostgreSQL container, and the shipped `/api/swarm/roles` and
+`/api/swarm/registries` routers. Both break-glass allowlists are stubbed empty, so a row is the
+only path to operator; the same account is asserted 403 before the grant, 200 after it, and 403
+again after the revoke.
+
+The ONE scoped double is `SwarmAppService.loadApp`, injected into the registry router. It is
+outside the boundary (it installs a package) and throws if anything calls it, so no assertion can
+reach it. Its real companions are `tests/unit/multi-store-installer.spec.ts` and
+`tests/unit/app-dependencies-loader-browser.spec.ts`.
+
+Every outcome is asserted on the RESPONSE BODY, never the status alone: on a live box every
+unauthenticated `/api/*` path answers an identical 401, including paths that do not exist, so a
+status-only assertion proves the global guard and not the mount. Mutation-proven both ways on
+2026-09-14 — making `requiresOperator` always call `next()` turned 3 of 4 red (the non-operator
+case first, "expected 200 to be 403"), and dropping the `swarm_roles` snapshot consult from
+`isOperatorIdentity` turned 2 of 4 red ("expected 403 to be 200") while leaving the anonymous and
+non-operator refusals green. This is not evidence for RLS: `swarm_roles` deliberately has no row
+policy — the route is the gate — and the spec asserts exactly that gate.
+
 ## Rules for future fixes
 
 1. Name the failed boundary in the test header and name what remains doubled.
