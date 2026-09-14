@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Admit Node-harness Playwright recipes when the sandbox has verified the browser prerequisites; other kinds stay explicitly unavailable.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Replace the hardcoded pair of admitted kinds with a sealed-profile runner table (capability, container profile, levels, harness per kind) and name, as the operator-visible pending reason, which kinds are deliberately out of scope and which boundary admitting them would move.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Stage a package's catalog/ directory. Packages ship data their routes read at runtime there (animatronics' servos.json, circuit-lab's drivers.json); without it the sealed sandbox ran a snapshot that differed from the installed package, and the route and browser suites of both failed on ENOENT in the Test Lab while passing on a host checkout. The allowlist stays an allowlist: runtime data, credentials and every other directory are still excluded.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Stage a package's personas/ directory too. A package suite that loads its manifest through the framework's own loader reads the persona files the manifest names; without them animatronics' routes-http failed one case in the Test Lab (ENOENT personas/animatronics-director.yaml) while passing on a host checkout. Persona YAML is shipped, reviewed package source - 41 of the 59 store packages carry the directory.
  */
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync } from 'node:fs';
@@ -21,7 +22,7 @@ export interface PackageTestSnapshot {
   sourceCommit?: string;
 }
 const OMIT = new Set(['.git', 'node_modules', '__pycache__', '.cache', 'coverage', 'logs', 'output']);
-const SOURCE_DIRS = new Set(['lib', 'src', 'src-routes', 'routes', 'ui', 'tools', 'scripts', 'migrations', 'tests', 'engine', 'catalog']);
+const SOURCE_DIRS = new Set(['lib', 'src', 'src-routes', 'routes', 'ui', 'tools', 'scripts', 'migrations', 'tests', 'engine', 'catalog', 'personas']);
 const SOURCE_TYPES = /\.(?:[cm]?js|[cm]?ts|tsx|jsx|json|ya?ml|html|css|sql|py|txt|md|svg)$/i;
 const ROOT_METADATA = new Set(['.oshal-install.json', 'oshal-app.yaml', 'authorization.yaml', 'tools.yaml', 'package.json', 'package-lock.json', 'tsconfig.json']);
 const MAX_BYTES = 32 * 1024 * 1024;

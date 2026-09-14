@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Seal packaged route sources and tool surfaces while excluding their runtime and credential files.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove Playwright recipe admission follows verified browser capabilities and the harness check.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | A package's catalog/ data is staged into the sealed snapshot and changes its revision; credentials, runtime output and directories outside the allowlist stay out.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | personas/ is staged alongside catalog/: a manifest loaded through the framework loader reads the persona files it names.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -88,9 +89,9 @@ it('includes packaged tool and route sources in revisions without admitting thei
   }
 });
 
-it('stages the catalog/ data that package routes read at runtime, and still nothing outside the allowlist', () => {
+it('stages the catalog/ data and personas/ that package code reads at runtime, and still nothing outside the allowlist', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'lab-package-catalog-')); roots.push(root);
-  const included = ['catalog/servos.json', 'catalog/drivers.json', 'routes/driver-catalog.js'];
+  const included = ['catalog/servos.json', 'catalog/drivers.json', 'routes/driver-catalog.js', 'personas/director.yaml'];
   const excluded = ['catalog/credentials.json', 'catalog/output/run.json', 'catalog/data/customer.json',
     'docs/ARCHITECTURE.md', 'firmware/controller.ino'];
   for (const name of [...included, ...excluded]) {
