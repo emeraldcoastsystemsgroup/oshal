@@ -7,18 +7,22 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Derive clearable verified-user prerequisites, exclude user probes from unattended installation eligibility, and fail malformed supplied tokens.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Execute sealed offline Node suites in a disposable sandbox with current authority and source checks.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Carry an optional request-bound service-smoke transport without adding caller sessions to reusable execution authority.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Verify browser-runner capabilities on the image, re-seal registrations when they change, require the Node harness for Playwright recipes and run them under the browser profile.
  */
 
 import { createHash } from 'crypto';
 import path from 'node:path';
+import { createChildLogger } from '@/shared/logger';
 import type { SwarmApplicationRecord, SwarmAppSmokeDeclaration } from '../types';
 import { userSmokePrerequisite, verifyAppSmokes, type AppSmokeVerificationOptions } from './app-smoke-verifier';
 import { loadPackageTestCatalog, packageTestSource, type LoadedPackageTestCatalog, type PackageTestCase, type PackageTestLevel, type PackageTestRunner } from '@/shared/package-testing';
-import { packageTestRecipePending, snapshotPackageTests } from './package-test-snapshot';
+import { hasNodeTestHarness, NODE_RUNNER_CAPABILITIES, packageTestRecipePending, snapshotPackageTests } from './package-test-snapshot';
 import { PackageTestSandbox } from './package-test-sandbox';
 import { executePackageTest, type InstalledAppTestResult } from './package-test-execution';
 import { inventoryPackageTests, type PackageTestInventory } from './package-test-inventory';
 export type { InstalledAppTestResult } from './package-test-execution';
+
+const logger = createChildLogger({ module: 'installed-app-test-catalog' });
 
 export type InstalledTestAuth = Pick<AppSmokeVerificationOptions, 'serviceSecret' | 'authorization'> & { canRunSuites?: boolean };
 export interface InstalledTestRunOptions extends Pick<AppSmokeVerificationOptions, 'apiBaseUrl' | 'timeoutMs' | 'serviceSmokeFetch'>, InstalledTestAuth {
@@ -61,10 +65,11 @@ interface Registration {
 }
 
 /** @description Explain unavailable execution without attempting an AI call or a mutation. */
-function pendingReason(entry: Registration['cases'] extends Map<string, infer E> ? E : never, auth: InstalledTestAuth): string | undefined {
+function pendingReason(entry: Registration['cases'] extends Map<string, infer E> ? E : never, auth: InstalledTestAuth,
+  capabilities: ReadonlySet<string> = NODE_RUNNER_CAPABILITIES): string | undefined {
   const smoke = entry.smoke;
   if (!smoke) {
-    const recipe = entry.declaration ? packageTestRecipePending(entry.declaration) : 'Test declaration is unavailable.';
+    const recipe = entry.declaration ? packageTestRecipePending(entry.declaration, capabilities) : 'Test declaration is unavailable.';
     if (recipe) return recipe;
     if (entry.executionError || !entry.metadata.executionRevision) return entry.executionError || 'Sealed package source is unavailable.';
     return auth.canRunSuites === true ? undefined : 'A swarm administrator must start isolated package tests.';
@@ -83,16 +88,20 @@ function pendingReason(entry: Registration['cases'] extends Map<string, infer E>
 }
 
 /** @description Bind executable cases to the complete staged source inventory, including imported helpers. */
-function sealExecutableCases(packageDir: string, cases: Registration['cases']): void {
-  const executable = [...cases.values()].filter(entry => entry.declaration && !packageTestRecipePending(entry.declaration));
+function sealExecutableCases(packageDir: string, cases: Registration['cases'], capabilities: ReadonlySet<string>): void {
+  const executable = [...cases.values()].filter(entry => entry.declaration && !packageTestRecipePending(entry.declaration, capabilities));
   if (!executable.length) return;
   try {
     const snapshot = snapshotPackageTests(packageDir);
-    const staged = new Set(snapshot.files.map(file => file.path));
+    const staged = new Map(snapshot.files.map(file => [file.path, file.content]));
     for (const entry of executable) {
       const runner = entry.metadata.runner;
       if (runner.kind !== 'smoke' && runner.files.some(file => !staged.has(file))) {
         entry.executionError = 'A suite file is excluded from isolated source staging.'; continue;
+      }
+      // A browser recipe runs under `node --test`; without the harness it would execute as a bare script and report nothing.
+      if (runner.kind === 'playwright' && runner.files.some(file => !hasNodeTestHarness(staged.get(file)!))) {
+        entry.executionError = 'Browser recipe requires the Node test harness (node:test).'; continue;
       }
       entry.metadata.executionRevision = snapshot.revision;
       entry.metadata.sourceCommit = snapshot.sourceCommit;
@@ -138,11 +147,22 @@ export class InstalledAppTestCatalog {
   private readonly registrations = new Map<string, Registration>();
   private readonly sandbox: PackageTestSandbox;
   private readonly runnerImage?: string;
+  private verifiedCapabilities: ReadonlySet<string> = NODE_RUNNER_CAPABILITIES;
 
   /** @description Use a server-owned runner recipe and optional immutable image selection. */
   constructor(options: { sandbox?: PackageTestSandbox; runnerImage?: string } = {}) {
     this.sandbox = options.sandbox ?? new PackageTestSandbox();
     this.runnerImage = options.runnerImage;
+  }
+
+  /** @description Probe the runner image inside the closed browser profile and adopt whatever it verifies.
+   * A failed or empty probe leaves the Node-only floor in place; nothing is assumed from the image name.
+   * @returns The verified prerequisite names now admitted. */
+  async verifyRunners(): Promise<ReadonlySet<string>> {
+    const verified = await this.sandbox.probe(this.runnerImage);
+    logger.info({ image: this.runnerImage ?? 'current', verified: [...verified] }, 'Package test runner capabilities verified');
+    if (verified.size) this.refreshCapabilities(verified);
+    return this.verifiedCapabilities;
   }
 
   /** @description Reject missing or malformed catalogs before a toggle can activate package resources. */
@@ -174,12 +194,22 @@ export class InstalledAppTestCatalog {
         installationEligible: false, method: 'LOCAL', path: declaration.runner.files.join(', '), auth: 'none', runnable: false,
       } });
     }
-    sealExecutableCases(packageDir, cases);
+    sealExecutableCases(packageDir, cases, this.verifiedCapabilities);
     this.registrations.set(snapshot.name, { record: snapshot, source, cases });
   }
 
   /** @description Remove executable registrations before asynchronous deactivation begins. */
   unregister(appName: string): void { this.registrations.delete(appName); }
+
+  /** @description Prerequisites the runner image has been verified to satisfy, beyond the closed Node profile. */
+  get capabilities(): ReadonlySet<string> { return this.verifiedCapabilities; }
+
+  /** @description Adopt a verified capability set and re-seal every registration so admission and sealing agree.
+   * @param values Verified prerequisite names from the sandbox probe. @returns Nothing. */
+  refreshCapabilities(values: Iterable<string>): void {
+    this.verifiedCapabilities = new Set([...NODE_RUNNER_CAPABILITIES, ...values]);
+    for (const entry of [...this.registrations.values()]) this.register(entry.record);
+  }
 
   /** @description Report registration drift only for currently visible installed applications. */
   inventory(visibleApps: ReadonlyMap<string, string>): PackageTestInventory[] {
@@ -198,7 +228,7 @@ export class InstalledAppTestCatalog {
     for (const [name, registration] of this.registrations) {
       if (!visibleApps.has(name)) continue;
       for (const entry of registration.cases.values()) {
-        const reason = pendingReason(entry, auth);
+        const reason = pendingReason(entry, auth, this.verifiedCapabilities);
         cases.push({ ...structuredClone(entry.metadata), runnable: !reason,
           ...(reason ? { pendingReason: reason } : {}) });
       }
@@ -239,7 +269,7 @@ export class InstalledAppTestCatalog {
     }
     const userPrerequisite = entry.smoke && userSmokePrerequisite(entry.smoke, options.authorization);
     if (userPrerequisite?.status === 'failed') return { name: expected.name, path: expected.path, durationMs: 0, ...userPrerequisite };
-    const reason = pendingReason(entry, options);
+    const reason = pendingReason(entry, options, this.verifiedCapabilities);
     if (reason) return pending(reason);
     if (!entry.smoke) return this.runSuite(entry.metadata, registration, options);
     const result = await verifyAppSmokes([{ requestedName: expected.appName, record: {
@@ -252,12 +282,14 @@ export class InstalledAppTestCatalog {
   /** @description Stage current matching bytes without inheriting API credentials or writable mounts. */
   private async runSuite(expected: InstalledAppTestCase, registration: Registration, options: InstalledTestRunOptions): Promise<InstalledAppTestResult> {
     const pending = (error: string): InstalledAppTestResult => ({ name: expected.name, path: expected.path, status: 'pending', durationMs: 0, cleanupVerified: true, error });
-    if (!options.revalidate || expected.runner.kind !== 'node-test' || expected.runner.scope !== 'package') return pending('Current execution authority is required.');
+    const runner = expected.runner;
+    if (!options.revalidate || (runner.kind !== 'node-test' && runner.kind !== 'playwright') || runner.scope !== 'package') return pending('Current execution authority is required.');
     const packageDir = path.dirname(path.resolve(registration.record.manifestPath));
     try {
       const snapshot = snapshotPackageTests(packageDir);
       if (snapshot.revision !== expected.executionRevision) return pending('Package source changed after selection. Refresh the catalog.');
-      return await executePackageTest({ name: expected.name, path: expected.path, suiteFiles: expected.runner.files,
+      return await executePackageTest({ name: expected.name, path: expected.path, suiteFiles: runner.files,
+        profile: runner.kind === 'playwright' ? 'browser' : 'node',
         timeoutMs: Math.min(options.timeoutMs ?? expected.limits.timeoutMs, expected.limits.timeoutMs), maxMemoryMb: expected.limits.maxMemoryMb,
         snapshot, snapshotNow: () => snapshotPackageTests(packageDir), image: this.runnerImage, sandbox: this.sandbox, signal: options.signal, executionId: options.executionId,
         current: async () => this.registrations.get(expected.appName) === registration && await options.revalidate!() });

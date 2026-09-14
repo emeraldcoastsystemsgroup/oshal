@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Share the same current-principal runner with local catalog schedules.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Keep a verified operator session inside a request-bound local read-only service-smoke transport so application authorization sees the real caller.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Scope selected-package visibility work while retaining every fresh identity and access check.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Verify the package runner image once per boot so browser recipes become runnable only after a real in-profile probe.
  */
 import type { Request } from 'express';
 import type { AppContext } from './app-context';
@@ -86,6 +87,10 @@ export function createTestLabWiring(ctx: AppContext, apps: SwarmAppService, acce
   };
   const runService = new TestLabRunService(new PostgresTestLabRunStore(ctx.pool, ready,
     async ids => (await Promise.all(ids.map(id => new PackageTestSandbox().cleanupExecution(id)))).every(Boolean)), apps.testLabCatalog);
+  // Browser recipes become runnable only after the image proves, inside the closed profile, that it
+  // can launch Chromium and carries the core assets they need. One disposable container per boot;
+  // OSHAL_TEST_LAB_RUNNER_PROBE=off leaves the Node-only floor in place.
+  if (process.env.OSHAL_TEST_LAB_RUNNER_PROBE !== 'off') void ready.then(() => apps.testLabCatalog.verifyRunners()).catch(() => undefined);
   return { installedTests: apps.testLabCatalog, executionAuth, runContext, runService,
     serviceSmokeFetch: (req, test) => createServiceSmokeFetch(req, authorization.resolveActor,
       `http://127.0.0.1:${process.env.PORT || '5000'}`, test.path),

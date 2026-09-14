@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove fixed package Node execution, credential and filesystem isolation, resource refusal and complete Docker cancellation cleanup.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Kill a separate controller process and prove automatic deadline disposal and correlated hostile-orphan cleanup.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove unavailable image preflight certifies that no container requires cleanup.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove the browser profile on the real image: the probe verifies Chromium, a Node-harness Playwright recipe drives loopback only, and Node recipes see no browser environment.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -173,3 +174,28 @@ dockerTest('reaps a correlated orphan even when its fixture stopped the in-conta
     expect(await sandbox.cleanupExecution(executionId)).toBe(true); await waitForRemoval(executionId);
   } finally { controller.kill('SIGKILL'); await sandbox.cleanupExecution(executionId); }
 }, 45000);
+
+dockerTest('verifies the browser profile on the real image and runs a Node-harness Playwright recipe against loopback with no network', async () => {
+  const sandbox = new PackageTestSandbox();
+  const verified = await sandbox.probe(image);
+  expect([...verified]).toEqual(expect.arrayContaining(['runner:playwright', 'browser:chromium', 'core:dependencies', 'harness:oshal-core-root']));
+  const result = await sandbox.run({ files: [{ path: 'tests/browser.test.cjs', content: Buffer.from(`const {test}=require('node:test'),assert=require('node:assert/strict'),http=require('node:http');
+test('drives the image Chromium against a loopback fixture only',async()=>{
+  const server=http.createServer((_request,response)=>{response.setHeader('content-type','text/html');response.end('<title>fixture</title><p id="p">loopback</p>');});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const {chromium}=require('playwright');const browser=await chromium.launch({headless:true});
+  const page=await browser.newPage();await page.goto('http://127.0.0.1:'+server.address().port+'/');
+  assert.equal(await page.title(),'fixture');assert.equal(await page.locator('#p').textContent(),'loopback');
+  let external='blocked';try{await page.goto('http://example.com/',{timeout:5000});external='reached';}catch{}
+  assert.equal(external,'blocked');await browser.close();server.close();});`) }],
+    suiteFiles: ['tests/browser.test.cjs'], image, timeoutMs: 90000, maxMemoryMb: 768, profile: 'browser' });
+  expect(result.output, result.output).toContain('ok 1');
+  expect(result.exitCode, result.output).toBe(0);
+  expect(result.cleanupVerified).toBe(true);
+}, 240000);
+
+dockerTest('keeps the browser environment out of a Node recipe that did not declare it', async () => {
+  const result = await new PackageTestSandbox().run(input(`const {test}=require('node:test'),assert=require('node:assert/strict');
+test('no browser environment under the node profile',()=>{assert.equal(process.env.PLAYWRIGHT_BROWSERS_PATH,undefined);assert.equal(process.env.OSHAL_CHROMIUM_EXECUTABLE,undefined);});`));
+  expect(result.exitCode, result.output).toBe(0);
+}, 60000);

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify fresh principal and application discovery checks at the deployed Test Lab composition boundary.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise real history HTTP with unrelated held access and fresh selected-app revocation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Switch the boot-time runner probe off: this composition boundary is proven without starting a browser container.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Request } from 'express';
@@ -20,6 +21,8 @@ import { createTestLabRunRoutes } from '@/app/routes/test-lab-run-routes';
 vi.mock('@/app/routes/test-lab-run-schema', () => ({ ensureTestLabRunSchema: async () => undefined }));
 vi.mock('@/app/routes/test-lab-schedule-schema', () => ({ ensureTestLabScheduleSchema: async () => undefined }));
 const cleanup: Array<() => void> = [];
+// The wiring probes the runner image once per boot; that is a real Docker run, proven in package-test-sandbox.spec.ts, not here.
+process.env.OSHAL_TEST_LAB_RUNNER_PROBE = 'off';
 afterEach(() => { for (const stop of cleanup.splice(0)) stop(); });
 
 function fixture() {

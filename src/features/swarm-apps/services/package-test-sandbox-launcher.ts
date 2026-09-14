@@ -5,11 +5,15 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Materialize only bounded package snapshots and run fixed Node tests inside disposable memory-backed storage.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Arm the fixed launcher deadline independently of the controller before accepting any package bytes.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Add the browser profile: the launcher points Playwright at the image's system Chromium through a registry shim on the writable tmpfs, so Node-harness browser recipes run in the same closed container.
  */
 import path from 'node:path';
 
 /** @description One immutable, package-relative source file supplied by trusted catalog composition. */
 export interface PackageTestSandboxFile { path: string; content: Buffer }
+
+/** @description Which closed container profile a payload asks for; browser adds Chromium, nothing else. */
+export type PackageTestSandboxProfile = 'node' | 'browser';
 
 const MAX_BYTES = 32 * 1024 * 1024;
 
@@ -22,9 +26,10 @@ export function validateSandboxPath(value: string): void {
 }
 
 /** @description Freeze a bounded source payload without accepting a shell command or runtime environment. */
-export function sandboxPayload(files: PackageTestSandboxFile[], suiteFiles: string[]): string {
+export function sandboxPayload(files: PackageTestSandboxFile[], suiteFiles: string[], profile: PackageTestSandboxProfile = 'node'): string {
   if (!Array.isArray(files) || files.length === 0 || files.length > 4096
     || !Array.isArray(suiteFiles) || suiteFiles.length === 0 || suiteFiles.length > 64) throw new Error('package_test_snapshot_invalid');
+  if (profile !== 'node' && profile !== 'browser') throw new Error('package_test_profile_invalid');
   const names = new Set<string>(); let bytes = 0;
   const snapshot = files.map(file => {
     validateSandboxPath(file.path);
@@ -35,7 +40,7 @@ export function sandboxPayload(files: PackageTestSandboxFile[], suiteFiles: stri
   });
   if (new Set(suiteFiles).size !== suiteFiles.length) throw new Error('package_test_suites_invalid');
   for (const file of suiteFiles) { validateSandboxPath(file); if (!names.has(file) || !/\.[cm]?js$/.test(file)) throw new Error('package_test_suites_invalid'); }
-  return JSON.stringify({ files: snapshot, suiteFiles });
+  return JSON.stringify({ files: snapshot, suiteFiles, profile });
 }
 
 /**
@@ -65,6 +70,17 @@ process.stdin.on('end',()=>{
    const target=path.join(root,file.path);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,content,{flag:'wx',mode:0o600});names.add(file.path);
   }
   if(!input.suiteFiles.length||input.suiteFiles.some(file=>!names.has(file)||!/[.][cm]?js$/.test(file)))throw Error();
+  if(input.profile!==undefined&&input.profile!=='node'&&input.profile!=='browser')throw Error();
+  if(input.profile==='browser'){
+   // Playwright resolves its browser from a registry directory; point that directory at a writable
+   // tmpfs and lay the image's system Chromium under the exact paths Playwright expects. No download,
+   // no network, no package-supplied path: the executable is always /usr/bin/chromium from the image.
+   if(!fs.existsSync('/usr/bin/chromium')){process.stderr.write('Browser runner is unavailable in this image.\n');process.exit(3);}
+   const browsers='/tmp/pw';fs.mkdirSync(browsers,{recursive:true,mode:0o700});process.env.PLAYWRIGHT_BROWSERS_PATH=browsers;
+   const {registry}=require('/app/node_modules/playwright-core/lib/server/registry/index.js');
+   for(const name of ['chromium','chromium-headless-shell']){const target=registry.findExecutable(name).executablePath();if(!target)continue;fs.mkdirSync(path.dirname(target),{recursive:true});if(!fs.existsSync(target))fs.symlinkSync('/usr/bin/chromium',target);}
+   Object.assign(env,{PLAYWRIGHT_BROWSERS_PATH:browsers,PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS:'1',PLAYWRIGHT_SKIP_BROWSER_GC:'1',OSHAL_CHROMIUM_EXECUTABLE:'/usr/bin/chromium'});
+  }
   const args=['--test','--test-reporter=tap','--test-concurrency=1','--',...input.suiteFiles.map(file=>path.join(root,file))];
   const child=cp.spawn(process.execPath,args,{cwd:root,env,stdio:['ignore','inherit','inherit']});
   child.on('error',()=>process.exit(2));child.on('close',(code,signal)=>process.exit(code===null?1:code));

@@ -101,6 +101,32 @@ The registered installed-application suite also exercises service-smoke sessions
 through real local HTTP and application policy, including revoked rights, issuer
 collisions, redirect refusal and credential isolation.
 
+## Browser recipes in the isolated runner
+
+Node-harness Playwright recipes (`runner.kind: playwright`, `level: browser`, a
+`node:test` suite that launches Chromium itself, exactly the shape the host
+`test:package` command already runs) can run in the same disposable container
+as Node suites. The container profile differs only in what Chromium needs:
+more processes, more file descriptors, a larger `/tmp`, two CPUs and the
+recipe's declared memory limit. The network stays off, there are no mounts and
+no daemon socket, and the recipe's fixture server listens on the container's
+own loopback. Playwright is pointed at the image's system Chromium through a
+registry shim on the writable tmpfs; no browser is downloaded and no
+package-supplied executable path is honored.
+
+Admission is verified, never assumed. At boot the api runs one probe suite in
+the browser profile and adopts only what that probe proves on the image:
+`runner:playwright` and `browser:chromium` when Chromium actually launched and
+rendered a page, `core:shared-theme-assets` and `core:surface-bridge` when
+those files exist under the core root, `core:dependencies` and
+`harness:oshal-core-root` when the core's modules resolve. Until the probe
+succeeds, browser recipes stay pending with "The playwright runner is
+unavailable."; a probe that fails under load is retried at the next boot.
+`OSHAL_TEST_LAB_RUNNER_PROBE=off` skips the probe. Recipes without the
+`node:test` harness are refused at sealing, because under `node --test` a bare
+script would report nothing. Vitest, external and service-authenticated smoke
+recipes remain unavailable in the isolated runner.
+
 ## Run a package batch
 
 In **Package runs**, select one application and choose **Run package suites**.

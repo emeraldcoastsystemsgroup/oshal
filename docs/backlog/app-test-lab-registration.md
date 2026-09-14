@@ -901,6 +901,31 @@ tests/session-crypto.test.mjs
   remains is only the courtesy observation in the operator's own signed-in
   browser on the next Create batch; the page it loads is the one proven here.
 
+## Follow-up: browser recipes in the isolated runner
+
+- [ ] Run Node-harness Playwright recipes in the disposable sandbox so the
+  browser rows every batch reports as "The playwright runner is unavailable."
+  (eight of Create's eighteen) execute like Node suites.
+  Built 2026-09-14 on `feat/store-compatibility-gate`: the sandbox gained a
+  browser profile (Chromium's process, descriptor and tmp budgets; network
+  still off) and a real in-profile capability probe; the launcher points
+  Playwright at the image's system Chromium through a registry shim; admission
+  follows only verified capabilities; the catalog re-seals on verification and
+  refuses recipes without the `node:test` harness; the run service admits the
+  kind; the api probes once per boot. Pure admission and re-seal proofs pass
+  (`package-test-snapshot.spec.ts`, `package-test-catalog.spec.ts`). The
+  real-boundary proof (`package-test-sandbox.spec.ts`: probe on the real image,
+  a Playwright recipe driving loopback with no network) is written but has NOT
+  yet run: at 01:30 UTC the host had under 100 MB free and the WSL VM was at
+  its 7 GB cap, and a Chromium container at that moment saturated the engine
+  once already tonight. Done when that spec passes on the image, a Create
+  browser recipe runs to a result from the installed Lab, and batches admit
+  the `browser` level (a separate slice: schedule levels, selector and page).
+  Observed while building: `node --test` exits 0 for a file that registers no
+  tests, so a harness-less recipe would read as passed; the harness check at
+  sealing closes that for browser recipes, and a zero-test guard for every
+  kind is worth its own row.
+
 ## Completion gate
 
 Close only when TLAB-01 through TLAB-09 and every applicable public/private row are resolved, installed catalogs

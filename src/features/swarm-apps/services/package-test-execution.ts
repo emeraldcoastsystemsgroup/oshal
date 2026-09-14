@@ -4,10 +4,12 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Recheck current authority and sealed source throughout isolated package test execution.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Carry the catalog-chosen container profile so browser recipes run under the Chromium profile.
  */
 import type { AppSmokeResult } from './app-smoke-verifier';
 import type { PackageTestSnapshot } from './package-test-snapshot';
 import { PackageTestSandbox } from './package-test-sandbox';
+import type { PackageTestSandboxProfile } from './package-test-sandbox-launcher';
 
 export interface InstalledAppTestResult extends AppSmokeResult {
   output?: string;
@@ -21,6 +23,8 @@ export interface PackageTestExecution {
   name: string; path: string; suiteFiles: string[]; timeoutMs: number; maxMemoryMb?: number;
   snapshot: PackageTestSnapshot; snapshotNow: () => PackageTestSnapshot;
   current: () => Promise<boolean>; signal?: AbortSignal; executionId?: string; image?: string; sandbox: PackageTestSandbox;
+  /** Closed container profile derived from the declared runner kind; browser recipes get Chromium, nothing else. */
+  profile?: PackageTestSandboxProfile;
 }
 
 /** @description Bound policy reads so a failed provider cannot hold cancellation or result publication open. */
@@ -55,7 +59,7 @@ export async function executePackageTest(options: PackageTestExecution): Promise
   const watch = watchAuthority(options, controller);
   try {
     if (!await currentAuthority(options)) return { ...refused('Current test execution authority is unavailable.'), cleanupVerified: true };
-    const result = await options.sandbox.run({ files: options.snapshot.files, suiteFiles: options.suiteFiles,
+    const result = await options.sandbox.run({ files: options.snapshot.files, suiteFiles: options.suiteFiles, profile: options.profile,
       timeoutMs: options.timeoutMs, maxMemoryMb: options.maxMemoryMb, signal: controller.signal, image: options.image, executionId: options.executionId });
     const cleanup = { cleanupVerified: result.cleanupVerified, cancelled: result.cancelled, timedOut: result.timedOut };
     await watch.stop();

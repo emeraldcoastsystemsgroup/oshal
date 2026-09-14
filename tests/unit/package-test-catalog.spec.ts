@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Validate real package files through the shared contract, runtime loader and CLI.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove browser recipes are re-sealed only after verified capabilities and refused without the Node harness.
  */
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,6 +15,8 @@ import yaml from 'js-yaml';
 import { loadPackageTestCatalog, validatePackageTestCatalog } from '@/shared/package-testing';
 import { readManifest } from '@/features/swarm-apps';
 import { packageManifest, packageTestCase, writeTestPackage } from '../fixtures/package-testing';
+import { createPackageExecutionFixture } from '../fixtures/package-test-execution';
+import { InstalledAppTestCatalog } from '@/features/swarm-apps/services/installed-app-test-catalog';
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'oshal-test-catalog-contract-')); });
@@ -80,4 +83,27 @@ it('binds revisions to referenced suite bytes and accepts pinned core references
   expect(loadPackageTestCatalog(fixture.dir, fixture.manifest)!.catalog.cases[0].runner).toEqual(core.runner);
   expect(() => validatePackageTestCatalog({ version: 1, cases: [{ ...core, runner: { ...core.runner, revision: 'main' } }] }, fixture.manifest)).toThrow('exact 40');
   expect(loadPackageTestCatalog(fixture.dir, { name: 'old-package' })).toBeNull();
+});
+
+it('re-seals a Node-harness browser recipe once the sandbox verifies the browser profile, and refuses one without the harness', () => {
+  const source = createPackageExecutionFixture(root, { name: 'browser-recipes' });
+  mkdirSync(join(source.dir, 'tests/browser'), { recursive: true });
+  writeFileSync(join(source.dir, 'tests/browser/proof.mjs'), "import { test } from 'node:test';\ntest('registration never executes a suite', () => {});\n");
+  writeFileSync(join(source.dir, 'tests/browser/bare.mjs'), "console.log('no harness');\n");
+  const browser = (id: string, file: string) => ({ ...source.test, id, level: 'browser', runner: { kind: 'playwright', scope: 'package', files: [file] },
+    prerequisites: ['runner:playwright', 'browser:chromium', 'core:shared-theme-assets'], sideEffects: 'none' });
+  writeFileSync(join(source.dir, 'tests/test-lab.yaml'), yaml.dump({ version: 1,
+    cases: [source.test, browser('proof', 'tests/browser/proof.mjs'), browser('bare', 'tests/browser/bare.mjs')] }));
+  const catalog = new InstalledAppTestCatalog(); catalog.register(source.record);
+  const visible = new Map([[source.record.name, source.record.displayName]]);
+  const before = catalog.list(visible, { canRunSuites: true });
+  expect(before.find(test => test.caseId === 'proof')).toMatchObject({ runnable: false, pendingReason: 'The playwright runner is unavailable.' });
+  expect(before.find(test => test.caseId === 'invoice-totals')).toMatchObject({ runnable: true });
+  catalog.refreshCapabilities(['runner:playwright', 'browser:chromium', 'core:shared-theme-assets']);
+  const after = catalog.list(visible, { canRunSuites: true });
+  const proof = after.find(test => test.caseId === 'proof')!;
+  expect(proof.runnable).toBe(true); expect(proof.executionRevision).toMatch(/^[a-f0-9]{64}$/);
+  expect(after.find(test => test.caseId === 'bare')).toMatchObject({ runnable: false, pendingReason: 'Browser recipe requires the Node test harness (node:test).' });
+  expect(after.find(test => test.caseId === 'invoice-totals')).toMatchObject({ runnable: true });
+  expect([...catalog.capabilities]).toEqual(expect.arrayContaining(['runner:node-test', 'fixture:core-checkout', 'runner:playwright']));
 });

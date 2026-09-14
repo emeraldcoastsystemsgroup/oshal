@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise source growth races and bounded snapshot reads with real temporary files.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Seal packaged route sources and tool surfaces while excluding their runtime and credential files.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove Playwright recipe admission follows verified browser capabilities and the harness check.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -24,7 +25,7 @@ vi.mock('node:fs', async importOriginal => {
     return fs.readSync(fd, buffer, offset, length, position);
   } };
 });
-import { snapshotPackageTests, packageTestRecipePending } from '@/features/swarm-apps/services/package-test-snapshot';
+import { hasNodeTestHarness, snapshotPackageTests, packageTestRecipePending } from '@/features/swarm-apps/services/package-test-snapshot';
 import { inventoryPackageTests } from '@/features/swarm-apps/services/package-test-inventory';
 import { mkdirSync } from 'node:fs';
 import { packageTestCase } from '../fixtures/package-testing';
@@ -84,4 +85,29 @@ it('includes packaged tool and route sources in revisions without admitting thei
     expect(snapshotPackageTests(root).revision).not.toBe(first.revision);
     writeFileSync(path.join(root, name), 'original');
   }
+});
+
+it('admits a Node-harness Playwright recipe only once the browser prerequisites are verified, and nothing else', () => {
+  const recipe = packageTestCase({ level: 'browser', runner: { kind: 'playwright', scope: 'package', files: ['tests/browser/proof.mjs'] },
+    prerequisites: ['runner:playwright', 'browser:chromium', 'core:shared-theme-assets'], sideEffects: 'none' });
+  expect(packageTestRecipePending(recipe)).toBe('The playwright runner is unavailable.');
+  const chromium = new Set(['runner:playwright', 'browser:chromium']);
+  expect(packageTestRecipePending(recipe, chromium)).toBe('Additional prerequisites require verification: core:shared-theme-assets.');
+  const verified = new Set([...chromium, 'core:shared-theme-assets']);
+  expect(packageTestRecipePending(recipe, verified)).toBeUndefined();
+  expect(packageTestRecipePending({ ...recipe, level: 'unit' }, verified)).toContain('own verified runner');
+  expect(packageTestRecipePending({ ...recipe, sideEffects: 'external-write' }, verified)).toContain('External effects');
+  expect(packageTestRecipePending({ ...recipe, runner: { ...recipe.runner, files: ['tests/browser/proof.ts'] } }, verified)).toContain('JavaScript suite files');
+  expect(packageTestRecipePending({ ...recipe, runner: { kind: 'vitest', scope: 'package', files: ['tests/a.spec.ts'] } }, verified)).toBe('The vitest runner is unavailable.');
+  expect(packageTestRecipePending({ ...recipe, runner: { kind: 'external', scope: 'package', files: ['tests/a.mjs'] } }, verified)).toBe('The external runner is unavailable.');
+  const node = packageTestCase({ runner: { kind: 'node-test', scope: 'package', files: ['tests/a.test.cjs'] }, prerequisites: ['runner:node-test'] });
+  expect(packageTestRecipePending(node)).toBeUndefined();
+  expect(packageTestRecipePending({ ...node, prerequisites: ['runner:node-test', 'core:dependencies'] })).toContain('core:dependencies');
+  expect(packageTestRecipePending({ ...node, prerequisites: ['runner:node-test', 'core:dependencies'] }, new Set(['core:dependencies']))).toBeUndefined();
+});
+
+it('recognizes the Node test harness a browser recipe must carry', () => {
+  expect(hasNodeTestHarness(Buffer.from("import { test, before } from 'node:test';\n"))).toBe(true);
+  expect(hasNodeTestHarness(Buffer.from("const { test } = require('node:test');\n"))).toBe(true);
+  expect(hasNodeTestHarness(Buffer.from("import { chromium } from 'playwright';\nconsole.log('bare script');\n"))).toBe(false);
 });

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Seal bounded package source for isolated tests without mounting deployment files or credentials.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Include canonical packaged tool surfaces and TypeScript route sources in sealed test input.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Admit Node-harness Playwright recipes when the sandbox has verified the browser prerequisites; other kinds stay explicitly unavailable.
  */
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync } from 'node:fs';
@@ -23,15 +24,30 @@ const SOURCE_TYPES = /\.(?:[cm]?js|[cm]?ts|tsx|jsx|json|ya?ml|html|css|sql|py|tx
 const ROOT_METADATA = new Set(['.oshal-install.json', 'oshal-app.yaml', 'authorization.yaml', 'tools.yaml', 'package.json', 'package-lock.json', 'tsconfig.json']);
 const MAX_BYTES = 32 * 1024 * 1024;
 const MAX_FILES = 4096;
-const KNOWN_PREREQUISITES = new Set(['runner:node-test', 'fixture:core-checkout']);
+/** @description What the closed Node profile satisfies without any probe: the only capabilities before the image is verified. */
+export const NODE_RUNNER_CAPABILITIES: ReadonlySet<string> = new Set(['runner:node-test', 'fixture:core-checkout']);
+/** @description Prerequisites the browser profile can satisfy, each admitted only once the sandbox probe has verified it on the image. */
+export const BROWSER_RUNNER_PREREQUISITES: ReadonlySet<string> = new Set(['runner:playwright', 'browser:chromium',
+  'core:shared-theme-assets', 'core:surface-bridge', 'core:dependencies', 'harness:oshal-core-root']);
 
-/** @description Admit only the closed offline Node recipe; unresolved dependencies stay explicit. */
-export function packageTestRecipePending(test: PackageTestCase): string | undefined {
-  if (test.runner.kind !== 'node-test' || test.runner.scope !== 'package') return `The ${test.runner.kind} runner is unavailable.`;
-  if (test.runner.files.length > 64 || test.runner.files.some(file => !/\.[cm]?js$/.test(file))) return 'The isolated Node recipe supports up to 64 JavaScript suite files.';
-  if (!['unit', 'integration'].includes(test.level)) return 'Browser and live suites require their own verified runner.';
+/** @description Detect the Node test harness in a sealed suite; a browser recipe must be one, or it would run as a bare script. */
+export function hasNodeTestHarness(content: Buffer): boolean {
+  return /(?:\bfrom\s*['"]node:test['"]|\brequire\(\s*['"]node:test['"]\s*\))/.test(content.subarray(0, 65536).toString('utf8'));
+}
+
+/** @description Admit the closed offline Node recipe, or a Node-harness Playwright recipe once the browser profile is verified;
+ * every other kind and every unverified prerequisite stays explicitly unavailable.
+ * @param test Declared case. @param capabilities Prerequisites verified for the runner image. @returns Pending reason, or undefined when runnable. */
+export function packageTestRecipePending(test: PackageTestCase, capabilities: ReadonlySet<string> = NODE_RUNNER_CAPABILITIES): string | undefined {
+  const runner = test.runner;
+  if ((runner.kind !== 'node-test' && runner.kind !== 'playwright') || runner.scope !== 'package') return `The ${runner.kind} runner is unavailable.`;
+  const browser = runner.kind === 'playwright';
+  if (browser && !(capabilities.has('runner:playwright') && capabilities.has('browser:chromium'))) return 'The playwright runner is unavailable.';
+  if (runner.files.length > 64 || runner.files.some(file => !/\.[cm]?js$/.test(file))) return `The isolated ${browser ? 'browser' : 'Node'} recipe supports up to 64 JavaScript suite files.`;
+  if (browser ? test.level !== 'browser' : !['unit', 'integration'].includes(test.level)) return 'Browser and live suites require their own verified runner.';
   if (!['none', 'fixture-write'].includes(test.sideEffects) || test.isolation.mode === 'live') return 'External effects are unavailable in the isolated test runner.';
-  const missing = test.prerequisites.filter(value => !KNOWN_PREREQUISITES.has(value));
+  const known = new Set([...NODE_RUNNER_CAPABILITIES, ...capabilities]);
+  const missing = test.prerequisites.filter(value => !known.has(value));
   if (missing.length) return `Additional prerequisites require verification: ${missing.join(', ')}.`;
   return undefined;
 }
