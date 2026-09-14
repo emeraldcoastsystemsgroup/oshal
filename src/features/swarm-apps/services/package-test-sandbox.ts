@@ -10,10 +10,11 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Read the probe report out of the TAP reporter's diagnostic framing (it re-emits a test's stdout as a comment, so the marker is never at column zero) and log which condition denied a capability set instead of silently returning nothing.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Generalize the container profile to a per-profile budget table and prove the vitest runner by actually executing a one-assertion suite with it inside the sealed container, rather than inferring it from a file's presence.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Carry whether the bounded capture dropped bytes, so a verdict can tell an incomplete record from a failed run.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Verify harness:core-test-fixtures on the image: the probe loads every staged core fixture (CORE_TEST_FIXTURES) through the image's tsx CommonJS hook from OSHAL_CORE_ROOT, the way the store browser specs do, and the prerequisite is advertised only when each one loaded. A file the image carries but cannot load, or does not carry at all, leaves the three cases that declare it honestly pending.
  */
 import { randomUUID } from 'node:crypto';
 import { createChildLogger } from '@/shared/logger';
-import { PACKAGE_TEST_LAUNCHER, sandboxPayload, VITEST_CLI, type PackageTestSandboxFile, type PackageTestSandboxProfile } from './package-test-sandbox-launcher';
+import { CORE_TEST_FIXTURES, PACKAGE_TEST_LAUNCHER, sandboxPayload, VITEST_CLI, type PackageTestSandboxFile, type PackageTestSandboxProfile } from './package-test-sandbox-launcher';
 import { dockerControl, removeSandbox, runAttachedSandbox, sandboxName } from './package-test-sandbox-process';
 
 /** @description Trusted catalog snapshot and controller-only limits; no command or environment fields exist. */
@@ -36,8 +37,16 @@ const RUNNER_PROBE_SUITE = `const { test } = require('node:test'); const fs = re
 test('runner probe', async () => {
   const core = process.env.OSHAL_CORE_ROOT || '/app';
   const report = { theme: fs.existsSync(path.join(core, 'src/shared/ui/css/surface-themes.css')),
-    bridge: fs.existsSync(path.join(core, 'src/shared/ui/js/surface-bridge-client.js')), dependencies: false, chromium: false, vitest: false };
+    bridge: fs.existsSync(path.join(core, 'src/shared/ui/js/surface-bridge-client.js')), dependencies: false, chromium: false, vitest: false, fixtures: false };
   try { require.resolve('express'); report.dependencies = true; } catch {}
+  try {
+    // Load the shared browser fixtures the way a store spec does: through the core root's own tsx CommonJS hook,
+    // from OSHAL_CORE_ROOT. A file the image carries but cannot load is not a fixture a recipe can use.
+    const coreRequire = require('node:module').createRequire(path.join(core, 'package.json'));
+    coreRequire('tsx/cjs');
+    const fixtures = ${JSON.stringify(CORE_TEST_FIXTURES)};
+    report.fixtures = fixtures.length > 0 && fixtures.every(file => Object.values(coreRequire(path.join(core, file))).some(value => typeof value === 'function'));
+  } catch (error) { report.fixturesError = String(error && error.message || error).slice(0, 200); }
   try {
     const { chromium } = require('playwright'); const browser = await chromium.launch({ headless: true }); const page = await browser.newPage();
     await page.goto('data:text/html,<title>runner-probe</title>'); report.chromium = (await page.title()) === 'runner-probe';
@@ -208,6 +217,7 @@ export class PackageTestSandbox {
     if (report.bridge === true) verified.add('core:surface-bridge');
     if (report.dependencies === true) { verified.add('core:dependencies'); verified.add('harness:oshal-core-root'); }
     if (report.vitest === true) verified.add('runner:vitest');
+    if (report.fixtures === true) verified.add('harness:core-test-fixtures');
     if (!verified.size) { logProbeFailure(image, result, true, report); return verified; }
     this.verified.set(image ?? '', verified);
     logger.info({ image: image ?? 'current-container', verified: [...verified] }, 'Package test runner probe verified image capabilities');

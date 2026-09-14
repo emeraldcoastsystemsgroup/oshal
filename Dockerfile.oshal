@@ -57,6 +57,19 @@
 #                      |                          | local Trivy gate caught; the
 #                      |                          | daily rebuild now self-heals
 #                      |                          | fixable OS CVEs.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | Carry the two shared Test
+#                      |                          | Lab browser fixtures
+#                      |                          | (tests/fixtures/isolated-
+#                      |                          | browser.ts and stl-viewer.ts)
+#                      |                          | at /app/tests/fixtures. The
+#                      |                          | sealed sandbox runs THIS
+#                      |                          | image with OSHAL_CORE_ROOT=
+#                      |                          | /app on a read-only root, and
+#                      |                          | three store browser cases
+#                      |                          | require them from there; the
+#                      |                          | runner probe loads them
+#                      |                          | through tsx before it
+#                      |                          | advertises the prerequisite.
 # =============================================================================
 #
 # Why this image exists:
@@ -327,6 +340,17 @@ COPY config-seed/ ./config-seed.dist/
 COPY src/api/chat.html ./dist/chat.html
 
 COPY ai-lab/bot-personas/ ./ai-lab/bot-personas/
+
+# Test Lab: the shared browser fixtures three store browser cases (cad-studio, embodied, scan-to-print)
+# require from the core root — the `harness:core-test-fixtures` prerequisite. The sealed sandbox runs
+# THIS image with OSHAL_CORE_ROOT=/app on a read-only root, so the only way a store spec can require
+# /app/tests/fixtures/<name>.ts is for the image to carry it. Exactly the measured closure and nothing
+# else from tests/: two files, no relative imports, runtime dependencies only (playwright, express,
+# loaded through tsx). The runner probe loads each one through tsx before advertising the prerequisite.
+# Needs the matching `!tests/fixtures/<name>.ts` allowlist entries in .dockerignore (tests/ is excluded
+# wholesale). Guard: tests/unit/package-test-core-fixtures.spec.ts holds this COPY, the allowlist and
+# the staged set (CORE_TEST_FIXTURES) to one another.
+COPY tests/fixtures/isolated-browser.ts tests/fixtures/stl-viewer.ts ./tests/fixtures/
 
 RUN chmod +x /app/scripts/container-start.sh 2>/dev/null || true && \
     chmod +x /app/scripts/bot-entrypoint.sh 2>/dev/null || true && \
