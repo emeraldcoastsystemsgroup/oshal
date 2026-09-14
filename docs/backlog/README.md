@@ -5,6 +5,11 @@ queue is [../BACKLOG.md](../BACKLOG.md). Active entries state only reproducible 
 its done-when evidence; resolved history is preserved in the [archive](./archive/README.md), the
 relevant ADR or feature documentation, release notes, and git history.
 
+- [outstanding-work-index-2026-09-14.md](./outstanding-work-index-2026-09-14.md) — a map, not a
+  queue: every document across this repo and `oshal-applications` that records unfinished work, with
+  its counted open-item total, item shape, blocked-or-ready call and last-updated date; plus the
+  stale and contradictory claims found while indexing (nine documents still describe core PR #431 or
+  store PR #185 as open) and a prioritised "ready to pick up now" list.
 - [hardening.md](./hardening.md) — security hardening backlog.
 - [artifact-exchange-continuation.md](./artifact-exchange-continuation.md) — ADR-139 "Send to…": what
   shipped, what is half-landed, how to continue the rollout, and three recurrence risks the rollout
