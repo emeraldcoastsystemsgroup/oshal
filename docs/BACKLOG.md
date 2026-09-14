@@ -146,6 +146,27 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 - **Remaining:** ~~add the scrape step to the checklist~~ — **superseded 2026-08-13.** Prometheus now discovers bots by container label (BUG-15 closed), so there is no scrape step to document and nothing for a checklist to omit. What remains is smaller: `docs/building-a-bot.md` and CLAUDE.md's bot-registry section should say that monitoring is INHERITED from the `x-bot-common` anchor, so nobody re-adds a manual step or wonders where to register a new bot.
 - **Done when:** both surfaces state that a bot inheriting `x-bot-common` is scraped automatically, and neither instructs anyone to edit `ops/monitoring/prometheus.yml`.
 
+### Monitoring overlay does not survive an ungraceful engine stop (BUG-21 tail)
+- **Remaining:** BUG-21 closed 2026-08-14 (#213) — the overlay is started by `scripts/oshal-up.sh`
+  and guarded by `scripts/monitoring-liveness-check.sh`, and both work. But it recorded the exit 255
+  as "unexplained rather than diagnosed", and on 2026-09-13 that tail recurred with a reproducible
+  trigger. After the Docker engine stopped ungracefully, `oshal-local-prometheus` and
+  `oshal-local-alertmanager` each recorded exit **255** and were NOT restarted, while every container
+  recording exit **0** (`oshal-local-api`, `oshal-local-cadvisor`, all forty bots) came back normally.
+  All four inspected carry the same `restart: unless-stopped` and all finished at the same instant
+  (2026-09-14T00:19:02Z); Prometheus's own log shows routine TSDB compaction right up to the stop, so
+  it was killed, not crashed. Net effect: the fleet auto-restarts **monitored by nothing** and
+  `docker ps` looks correct the whole time, until a human runs `oshal-up.sh`. The exit-code
+  correlation is observational — WHY 255 defeats `unless-stopped` here is still undiagnosed and is
+  the first thing to establish. Note the stack watchdog does not cover this: it probes engine, api
+  and bot heartbeats, not the overlay (and is currently paused by operator request).
+- **Done when:** an ungraceful engine stop (the stack up, then the Docker VM killed) followed by an
+  engine start brings Prometheus and Alertmanager back WITHOUT `oshal-up.sh` — or, if Docker's
+  restart behaviour cannot be changed, something that is not a human notices within one scrape
+  interval and says so. `monitoring-liveness-check.sh --strict` is already the assertion; what is
+  missing is anything that RUNS it when nobody is watching. A regression guard must cross the
+  restart boundary (stop the engine for real, restart, assert without the bring-up script) — a
+  compose-config or mocked-docker test is not closure evidence for this failure.
 ### DB-backed alert specs borrow the operator's database
 - **Remaining:** `tests/unit/alert-incident-cutover.spec.ts` stands a live alert *consumer* on the
   operator's production queue and `tests/unit/alert-incident-reopen.spec.ts` leaks incident rows into
