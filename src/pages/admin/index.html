@@ -57,6 +57,46 @@ SEQ | AUTHOR | DESCRIPTION
           </div>
         </div>
         <div class="chip-wrap" id="operatorPermissions"></div>
+        <p class="role-source" id="operatorSource"></p>
+      </section>
+
+      <!-- ADR-147/148: the admin console is where an administrator lands, so it has to REACH the
+           admin surfaces. Before this it linked only to /cockpit/ and /utilities, and the tools
+           built since (App Loader, Users, per-app Access) were URL-only. Each route self-gates;
+           these are navigation, not permission. -->
+      <section class="panel panel-wide" data-admin-section="admin-tools">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Tools</p>
+            <h2>Admin tools</h2>
+          </div>
+        </div>
+        <div class="tool-grid">
+          <a class="tool-link" href="/app-loader">
+            <span class="codicon codicon-cloud-download"></span>
+            <span><b>App Loader</b><small>Install applications from any git source</small></span>
+          </a>
+          <a class="tool-link" href="/users">
+            <span class="codicon codicon-organization"></span>
+            <span><b>Users &amp; roles</b><small>Swarm root, admins, local accounts</small></span>
+          </a>
+          <a class="tool-link" href="/access">
+            <span class="codicon codicon-shield"></span>
+            <span><b>Application access</b><small>Who may use each installed app</small></span>
+          </a>
+          <a class="tool-link" href="/applications">
+            <span class="codicon codicon-extensions"></span>
+            <span><b>Applications</b><small>Installed apps, versions and updates</small></span>
+          </a>
+          <a class="tool-link" href="/config">
+            <span class="codicon codicon-settings-gear"></span>
+            <span><b>Configuration</b><small>Platform settings and secrets</small></span>
+          </a>
+          <a class="tool-link" href="/cockpit/tools/dlq.html">
+            <span class="codicon codicon-warning"></span>
+            <span><b>Dead letters</b><small>Quarantined queue items</small></span>
+          </a>
+        </div>
       </section>
 
       <section class="panel" data-admin-section="security-posture">

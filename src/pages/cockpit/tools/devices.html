@@ -147,6 +147,26 @@
       signs that TV in to your account.</p>
     </section>
 
+    <!-- ADR-147: the page is about extending your swarm's reach, and applications are the other
+         half of that. The browse link is for everyone; the App Loader half is revealed only to an
+         administrator (the same /api/cli-tokens/whoami check the cockpit rail uses), because every
+         registry route is requiresOperator and offering it to a basic user would hand them a 403. -->
+    <section class="card" id="appsTile">
+      <div class="tile-head"><span class="codicon codicon-extensions"></span><h2>Apps</h2></div>
+      <p class="lead">Applications are what your swarm can actually do — a job hunt, a trading desk,
+      a photo studio. They install into the swarm itself, so every device you added above gets them.</p>
+      <div class="actions">
+        <a class="btn primary" href="/applications">Browse applications</a>
+      </div>
+      <div id="appsAdmin" hidden>
+        <p class="fine"><b>Administrators</b> can install from the app store or from any git source
+        you trust — GitHub, GitLab or your own server.</p>
+        <div class="actions">
+          <a class="btn" href="/app-loader">Open the App Loader</a>
+        </div>
+      </div>
+    </section>
+
   </div>
 
   <p class="foot">The desktop installer carries a credential bound to one computer and to you. It can
@@ -233,6 +253,28 @@
     if (s < 172800) return Math.round(s / 3600) + ' h ago';
     return Math.round(s / 86400) + ' d ago';
   }
+
+  // ADR-147: reveal the App Loader only for an administrator. Cosmetic ONLY — every
+
+  // registry route is requiresOperator server-side, so a wrong answer here leaks nothing.
+
+  // Fails closed (stays hidden) on any error: offering a dead link is worse than omitting it.
+
+  (async () => {
+
+    try {
+
+      const res = await fetch('/api/cli-tokens/whoami', { headers: { accept: 'application/json' } });
+
+      if (!res.ok) return;
+
+      const me = await res.json();
+
+      if (me && me.operator === true) document.getElementById('appsAdmin').hidden = false;
+
+    } catch (e) { /* stay hidden */ }
+
+  })();
 
   // Caller-scoped by the server: a basic user sees the computers bound to them, an operator sees
   // every registered node. Polled so the new PC shows up here without a reload.
