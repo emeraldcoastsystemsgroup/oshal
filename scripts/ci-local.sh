@@ -26,6 +26,7 @@
 # 19 | maintainer@emeraldcoastsystemsgroup.com   | BUG-22: the failure alert said the same sentence for 38 consecutive nights, so a NEW gate breaking inside the standing failure was indistinguishable from the standing failure. The subject now leads with what CHANGED ("NEW: image-smoke (night 38)" / "no change from last run") and the body separates newly-red from already-known and names the streak. Derived from the run log by scripts/ci/ci-gate-streak.mjs — no new state to keep. The headline is also written to the log, so the signal survives an api container that is down and cannot send mail.
 # 20 | maintainer@emeraldcoastsystemsgroup.com   | Collapse duplicate gate names before writing the run-outcome line. The 2026-09-08 run re-executed a block (a mid-run edit to this file shifted the running shell's byte offset) and recorded `unpushed-commits` plus three *-skipped names twice, which made the new alert headline unreadable. That line is the durable record every later streak comparison reads, so a duplicate written here is wrong in the log forever.
 # 21 | maintainer@emeraldcoastsystemsgroup.com   | Require pinned core/store compatibility in disposable exports and retain compiler diagnostics per run.
+# 22 | maintainer@emeraldcoastsystemsgroup.com   | Two false outcomes closed. (1) The 2026-09-09 run sat nine hours inside `rm -rf` of the previous night's ci-src export (a full node_modules), held the lock all night and wrote no outcome line: prepare_head_src and gate_secrets now purge through scripts/ci/ci-purge.sh - watchdog-bounded, robocopy-then-rm on Windows, one `purge: OK|FAIL` line, and a FAIL fails the gate instead of hanging the run. (2) `gitleaks detect` exits 0 when it skips paths it cannot read (2026-09-10: 5 of 5077 files unread, secret-scan PASS): gate_secrets now runs through scripts/ci/ci-secret-scan.sh, which counts the scanner's skipped/unread stderr lines and writes `unread=N of M exported files` into the verdict, failing on any N above zero.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -88,6 +89,11 @@ log() { printf '[%s] %s\n' "$(date +%FT%T)" "$*" | tee -a "$LOG"; }
 
 # Git for Windows ships coreutils timeout; degrade to unbounded if absent.
 if ! command -v timeout >/dev/null 2>&1; then timeout() { shift; "$@"; }; fi
+
+# Bounded, fail-loud purge of the disposable exports, and the partial-scan-aware secret gate.
+# Sourced after `log` is defined so their outcome lines reach the summary log.
+. "$REPO_DIR/scripts/ci/ci-purge.sh"
+. "$REPO_DIR/scripts/ci/ci-secret-scan.sh"
 
 # ── Single-instance lock (atomic mkdir). Without it, overlapping runs rm -f
 # each other's e2e datastores and share port 3456. Stale (>4h) locks from a
@@ -203,7 +209,11 @@ resolve_source_commit() {
 GATE_SRC="$REPO_DIR"
 prepare_head_src() {
   GATE_SRC="$STATE_DIR/ci-src"
-  rm -rf "$GATE_SRC"; mkdir -p "$GATE_SRC"
+  # The previous run's export is a full node_modules. The 2026-09-09 run sat nine hours inside
+  # `rm -rf` of it and wrote no outcome line; purge_tree is watchdog-bounded and fails this gate
+  # loudly instead, so the run still reaches its other gates and its outcome line.
+  purge_tree "$GATE_SRC" || return 1
+  mkdir -p "$GATE_SRC" || return 1
   (cd "$REPO_DIR" && git archive "$SOURCE_SHA" | tar -x -C "$GATE_SRC") || return 1
   (cd "$GATE_SRC" && timeout 1800 npm ci --legacy-peer-deps) || return 1
   # Pre-seed the @xenova/transformers model cache from the working repo. The memory/RAG
@@ -350,15 +360,23 @@ gate_lint() {
 # job - NOT the working tree, which holds the operator's live gitignored .env and
 # credential files. --network none: gitleaks needs no egress; a compromised
 # scanner image gets nothing to exfiltrate and nowhere to send it.
+# The scanner invocation on its own, so the gate body below reads as outcome policy. The stand-in
+# in tests/unit/ci-local-secret-scan.spec.ts replaces `docker` on PATH and pins these arguments.
+gitleaks_container_scan() {
+  MSYS_NO_PATHCONV=1 timeout 900 docker run --rm --network none \
+    -v "$(cygpath -m "$1"):/scan:ro" \
+    zricethezav/gitleaks:latest detect --source=/scan --no-git \
+    --config=/scan/.gitleaks.toml --redact
+}
 gate_secrets() {
   local exp="$STATE_DIR/ci-scan-src" rc=0
-  rm -rf "$exp"; mkdir -p "$exp"
-  (cd "$REPO_DIR" && git archive "$SOURCE_SHA" | tar -x -C "$exp") || { rm -rf "$exp"; return 1; }
-  MSYS_NO_PATHCONV=1 timeout 900 docker run --rm --network none \
-    -v "$(cygpath -m "$exp"):/scan:ro" \
-    zricethezav/gitleaks:latest detect --source=/scan --no-git \
-    --config=/scan/.gitleaks.toml --redact || rc=1
-  rm -rf "$exp"
+  purge_tree "$exp" || return 1
+  mkdir -p "$exp" || return 1
+  (cd "$REPO_DIR" && git archive "$SOURCE_SHA" | tar -x -C "$exp") || { purge_tree "$exp"; return 1; }
+  # gitleaks exits 0 when it skips paths it cannot read. run_secret_scan counts those from its
+  # stderr and refuses PASS on a partial scan (2026-09-10: 5 of 5077 files unread, gate green).
+  run_secret_scan "$exp" gitleaks_container_scan "$exp" || rc=1
+  purge_tree "$exp" || rc=1
   return $rc
 }
 
