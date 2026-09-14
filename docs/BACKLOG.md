@@ -274,8 +274,36 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** `gitleaks detect` exits **0** when it fails to read files, so `gate_secrets` records a PASS having scanned less than the tree. Measured 2026-09-10 against `origin/main`: 5 of 5077 exported files logged `could not read file: ... cannot allocate memory` and the gate still passed. Memory pressure is the trigger seen so far, but the exit code says nothing about read failures in general (permissions, a path the scanner cannot open), so a clean `secret-scan` is not evidence the tree is clean. This is the false-green twin of the false-red already recorded in the host-contention entry above: that one is about a red night that is not about the code, this one is about a green night that did not look at everything. The scanner's own stderr already names every unread path, so the signal exists and is simply discarded.
 - **Done when:** `gate_secrets` fails (or loudly degrades to a named non-pass outcome) when gitleaks reports any unreadable path, rather than inheriting its exit code alone; a run with a deliberately unreadable file in the export is shown not to pass; and the count of unread paths appears in the gate's log line so a partial scan is visible without opening the scanner output.
 ### Publish gate: refuse model-attribution trailers at push time
-- **Remaining:** the 2026-09-12 scrub ([runbook](runbooks/model-attribution-scrub.md)) rewrote 498 commits across three repos because sessions kept following the harness default of appending a model `Co-Authored-By:` trailer. The tree guard `tests/unit/no-model-attribution.spec.ts` covers FILES; the trailers live in commit MESSAGES, which it cannot see. `scripts/publish-gate.sh` check 5 already scans unpublished commit messages for tokens and personal details — it is the right wall for the public repo, and it is fail-closed on every push.
-- **Done when:** check 5 refuses a push whose unpublished commits carry a `Co-Authored-By:` line at a model vendor no-reply address or a "Generated with" model-tool footer, naming the offending commit; `tests/unit/publish-gate.spec.ts` proves red on such a fixture commit and green on a clean one; and the PR-description sweep (`scripts/governance/attribution-scrub/strip_pr_footers.py`) stays documented as the remedy for bodies, which no hook can see.
+- **Built 2026-09-14 on `fix/publish-gate-attribution`.** `scripts/publish-gate.sh` check 5b refuses a
+  push whose commits carry model attribution in the MESSAGE: a `-by:` trailer (`Co-Authored-By` in any
+  casing, `Assisted-by`, `Signed-off-by`, ...) naming Claude or Anthropic, the vendor no-reply address
+  anywhere, or "generated with / by / using / via" followed by Claude (the tool footer, link or no
+  link). It matches case-insensitively on the identifier and names each offending commit by short SHA
+  and subject, with the matched line and the reword command. It does not reuse check 5's credential
+  exclusion filter, which drops every line holding `<...>` — the angle brackets every trailer's address
+  sits in.
+- **Scope:** exactly the commits the push publishes. The pre-push hook now calls the gate with
+  `--pre-push` and passes git's ref-update lines on stdin. Before this, check 5 read only
+  `HEAD --not --remotes`, so a push BY SHA (the private-index recipe) with HEAD on another branch
+  published commits the gate never looked at. History the remote already holds stays out of scope —
+  by remote-tracking refs and by git's `<remote sha>` — so the 45 attributed commits reachable from
+  `main` at `d679b696` (the runbook's step-6 query) do not block anyone's push; removing them remains the operator-run scrub in
+  [the runbook](runbooks/model-attribution-scrub.md). The credential / identifier scan keeps HEAD and
+  adds the pushed commits, so it only widened.
+- **Guard:** `tests/unit/publish-gate.spec.ts`, 26 new cases (43 in the file): 13 attribution
+  spellings refused, each row tripping exactly one rule; a clean message, a human co-author, the
+  maintainer and prose naming the model all pass; the fix instructions; the unpushed-range and
+  already-published scope; the pre-push scope (by SHA with HEAD clean, unrelated work on HEAD, git's
+  `<remote sha>` with no remote-tracking refs, a deletion, fail-closed enumeration); and one real
+  `git push` through the real hook. Against origin/main's gate and hook all 26 failed and a demo push
+  landed an attributed commit on the remote, both from HEAD and by SHA; with the change, 43/43 pass
+  and both pushes are refused. 14 of 15 single-point mutations of the gate and hook turned their test
+  red; the survivor re-cased a pattern that `grep -i` folds anyway.
+- **Live when:** `core.hooksPath` points at the shared checkout's `.githooks`, and the hook runs
+  `scripts/publish-gate.sh` from that same working tree, so the wall is up once that tree carries the
+  merged files — not at merge time.
+- **Still a remedy, not a guard:** a PR description is invisible to every hook;
+  `scripts/governance/attribution-scrub/strip_pr_footers.py` (runbook step 7) is how bodies are cleaned.
 
 ### Store and private repos have no attribution guard
 - **Remaining:** `oshal-applications` (163 commits rewritten) and `oshal-app-private` (49) were scrubbed on 2026-09-12 but carry neither the tree guard nor a push-time check, and their private-plan GitHub settings offer no rulesets. Recurrence there is invisible until someone greps.

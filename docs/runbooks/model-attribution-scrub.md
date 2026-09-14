@@ -149,11 +149,17 @@ rewriting the shared checkout.
 - `tests/unit/attribution-scrub-tooling.spec.ts` — drives the real rewrite over a fixture repo
   (real git + git-filter-repo): trailer and footer gone, trees identical, clean root SHA kept.
 - `scripts/test-lab-nightly.mjs` no longer writes the trailer (PR #436).
+- `scripts/publish-gate.sh` check 5b, on every push through the pre-push hook — refuses a push whose
+  commits carry model attribution in the MESSAGE (a `-by:` trailer naming Claude or Anthropic, the
+  vendor no-reply address, or the tool footer), naming each commit and the reword command. It judges
+  exactly what the push publishes, including a push by SHA, and never re-judges history the remote
+  already holds, so commits still on `main` from before it existed do not block pushes; this runbook
+  stays the way to remove those. Guarded by `tests/unit/publish-gate.spec.ts`.
 
 ## How to continue (BACKLOG, "Promotion, deployment, and regression proof")
 
-- *Publish gate: refuse model-attribution trailers at push time* — the pre-push wall for the
-  public repo; commit messages are where the trailers came from and the tree guard cannot see them.
+- *Publish gate: refuse model-attribution trailers at push time* — built 2026-09-14 as check 5b
+  (see "Guards in place"); the entry records the red and green evidence.
 - *Store and private repos have no attribution guard* — `oshal-applications` and
   `oshal-app-private` were scrubbed but nothing stops a recurrence there.
 - *GitHub-side residue of the 2026-09-12 attribution scrub* — decide whether to ask GitHub Support

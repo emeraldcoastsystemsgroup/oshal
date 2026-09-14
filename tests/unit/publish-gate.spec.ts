@@ -8,11 +8,12 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | 2026-07-31 23:21:37 America/Chicago — Raises the real-repository gate assertion timeout because a full parallel unit run can spend more than Vitest's 5s default in shell/git startup before the gate reports clean.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bound each disposable Git/Bash gate process and give the two-invocation branch-scope proof explicit full-suite startup headroom.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Apply the documented full-suite startup allowance to the real-repository gate assertion itself; the child process remains independently bounded at 15 seconds.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Guards the model-attribution refusal added to check 5. Every spelling of the co-author trailer, the vendor no-reply address and the tool footer that a session produces goes red and names the commit; a human co-author, the maintainer and prose that merely names the model pass; history the remote already holds is never re-judged. Also pins the PRE-PUSH scope - the ref-update lines git writes to the hook's stdin - including a push BY SHA while HEAD is clean, and drives one case through a real `git push` with the real hook installed, the boundary a direct gate call cannot exercise.
  */
 
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join, resolve } from 'path';
 
@@ -57,21 +58,40 @@ interface GateResult {
   output: string;
 }
 
+interface RunOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  input?: string;
+  timeout?: number;
+}
+
 /**
- * @description Run the real publish gate against a checkout and capture its verdict.
- * @param cwd - Repository to scan. The gate cd's to that repo's toplevel.
- * @returns Exit code and combined stdout+stderr.
+ * @description Run a process to completion and capture its verdict instead of throwing on a
+ * non-zero exit — a refusal is the result under test, not an error.
+ * @param file - Executable.
+ * @param args - Arguments.
+ * @param options - Working directory, environment, stdin and a per-process time bound.
+ * @returns Exit code and output (stdout on success, stdout+stderr on failure).
  */
-function runGate(cwd: string): GateResult {
+function captureRun(file: string, args: string[], options: RunOptions): GateResult {
   try {
-    const output = execFileSync(BASH, [GATE], {
-      cwd, encoding: 'utf8', stdio: 'pipe', timeout: 15_000,
-    });
+    const output = execFileSync(file, args, { encoding: 'utf8', stdio: 'pipe', timeout: 15_000, ...options });
     return { code: 0, output };
   } catch (err) {
     const e = err as { status?: number; stdout?: string; stderr?: string };
     return { code: e.status ?? 1, output: `${e.stdout ?? ''}${e.stderr ?? ''}` };
   }
+}
+
+/**
+ * @description Run the real publish gate against a checkout and capture its verdict.
+ * @param cwd - Repository to scan. The gate cd's to that repo's toplevel.
+ * @param opts - `args` for the gate (e.g. `--pre-push`) and `input` for its stdin, which as the
+ *               pre-push hook carries git's ref-update lines.
+ * @returns Exit code and combined stdout+stderr.
+ */
+function runGate(cwd: string, opts: { args?: string[]; input?: string } = {}): GateResult {
+  return captureRun(BASH, [GATE, ...(opts.args ?? [])], { cwd, input: opts.input });
 }
 
 /**
@@ -160,6 +180,152 @@ function withFixture(
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+/**
+ * @description Publish a fixture's current branch to a fresh bare remote, so its commits become
+ *              "already published" — the state that must take a commit out of scope.
+ * @param dir - Fixture repository.
+ * @returns Path of the bare remote, for tests that inspect what a push actually landed.
+ */
+function publishTo(dir: string): string {
+  const remote = mkdtempSync(join(tmpdir(), 'oshal-gate-remote-'));
+  execFileSync('git', ['init', '-q', '--bare', remote], { stdio: 'pipe' });
+  git(dir, 'remote', 'add', 'origin', remote);
+  const branch = execFileSync('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim();
+  git(dir, 'push', '-q', 'origin', branch);
+  return remote;
+}
+
+/**
+ * @description Resolve a revision (or pass other rev-parse flags) inside a fixture.
+ * @param dir - Fixture repository.
+ * @param args - rev-parse arguments, e.g. `['--short', sha]`.
+ * @returns The trimmed rev-parse output.
+ */
+function revParse(dir: string, ...args: string[]): string {
+  return execFileSync('git', ['-C', dir, 'rev-parse', ...args], { encoding: 'utf8' }).trim();
+}
+
+let changeCounter = 0;
+
+/**
+ * @description Commit one new file with an exact, possibly multi-line message.
+ *
+ * The message goes to `git commit -F -` on stdin rather than `-m`, so trailers, blank lines and
+ * the footer's emoji reach git byte-for-byte on every platform. Only the new file is staged, so
+ * untracked fixture tooling (an installed copy of the gate) never joins the tree under test.
+ *
+ * @param dir - Fixture repository.
+ * @param message - Full commit message.
+ * @returns The new commit's full SHA.
+ */
+function commitMessage(dir: string, message: string): string {
+  changeCounter += 1;
+  const rel = `src/change-${changeCounter}.ts`;
+  writeFileSync(join(dir, rel), `export const change = ${changeCounter};\n`, 'utf8');
+  git(dir, 'add', '--', rel);
+  execFileSync(
+    'git',
+    ['-C', dir, '-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-F', '-'],
+    { input: message, stdio: 'pipe' },
+  );
+  return revParse(dir, 'HEAD');
+}
+
+/** The object name git writes on a pre-push line for a ref that does not exist on that side. */
+const ZERO_SHA = '0'.repeat(40);
+
+/**
+ * @description One ref-update line in the exact shape git writes to a pre-push hook's stdin.
+ * @param localRef - Local ref (or `(delete)`).
+ * @param localSha - Commit being pushed (all zeros for a deletion).
+ * @param remoteRef - Destination ref on the remote.
+ * @param remoteSha - The remote's current value of that ref (all zeros when it is new).
+ * @returns The line, newline-terminated.
+ */
+function pushLine(localRef: string, localSha: string, remoteRef = localRef, remoteSha = ZERO_SHA): string {
+  return `${localRef} ${localSha} ${remoteRef} ${remoteSha}\n`;
+}
+
+/**
+ * @description Install the REAL pre-push hook and gate into a fixture — both untracked — so an
+ * actual `git push` drives them exactly as it does on a maintainer checkout. Only a real push
+ * makes git write the ref-update lines to the hook's stdin, which no direct gate call exercises.
+ * `core.hooksPath` is set locally so a global hooks path can never substitute other hooks.
+ *
+ * @param dir - Fixture repository.
+ * @returns void
+ */
+function installRealHook(dir: string): void {
+  const hooks = join(dir, '.git', 'hooks');
+  mkdirSync(hooks, { recursive: true });
+  copyFileSync(join(REPO_ROOT, '.githooks', 'pre-push'), join(hooks, 'pre-push'));
+  chmodSync(join(hooks, 'pre-push'), 0o755);
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  copyFileSync(GATE, join(dir, 'scripts', 'publish-gate.sh'));
+  git(dir, 'config', 'core.hooksPath', hooks);
+}
+
+/**
+ * @description Push a refspec through the fixture's hooks and capture the verdict.
+ *
+ * `OSHAL_SKIP_PREPUSH_VERIFY=1` skips only the hook's HEAD typecheck (a fixture has no
+ * node_modules); the hook runs the publish gate before that switch is even read, so a green push
+ * here still means the gate passed it.
+ *
+ * @param dir - Fixture repository with a hook installed.
+ * @param refspec - What to push, e.g. `<sha>:refs/heads/lane`.
+ * @returns Exit code and combined stdout+stderr.
+ */
+function gitPush(dir: string, refspec: string): GateResult {
+  return captureRun('git', ['-C', dir, 'push', '-q', 'origin', refspec], {
+    timeout: 60_000,
+    env: { ...process.env, OSHAL_SKIP_PREPUSH_VERIFY: '1' },
+  });
+}
+
+/**
+ * @description Read a ref from a bare remote.
+ * @param remote - Bare repository path.
+ * @param ref - Full ref name.
+ * @returns The ref's SHA, or null when the ref does not exist there.
+ */
+function remoteRef(remote: string, ref: string): string | null {
+  try {
+    return execFileSync('git', ['--git-dir', remote, 'rev-parse', '--verify', '-q', ref], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    }).trim();
+  } catch {
+    return null; // rev-parse --verify -q exits 1 with no output for a missing ref
+  }
+}
+
+/**
+ * The model vendor's no-reply address, assembled at runtime: this spec is a tracked file, and
+ * tests/unit/no-model-attribution.spec.ts refuses any tracked file carrying a real co-author
+ * trailer at that address — the whole shape must never appear here as one literal.
+ */
+const MODEL_ADDRESS = ['noreply', 'anthropic.com'].join('@');
+
+/** The model tool's footer as the harness writes it, split for the same reason. */
+const TOOL_FOOTER = ['Generated with [Claude', ' Code](https://claude.com/claude-code)'].join('');
+
+/**
+ * @description Build one git trailer line, by default at the vendor no-reply address.
+ * @param key - Trailer key exactly as written, e.g. `Co-Authored-By`.
+ * @param name - Display name.
+ * @param address - Email address; defaults to the vendor no-reply address.
+ * @returns The trailer line.
+ */
+function trailer(key: string, name: string, address = MODEL_ADDRESS): string {
+  return `${key}: ${name} <${address}>`;
+}
+
+/** What a harness session appends by default — the shape that reached main on 2026-09-14. */
+const HARNESS_TRAILER = trailer('Co-Authored-By', 'Claude Opus 5 (1M context)');
 
 describe('publish gate: the wall between this public repo and the world', () => {
   it('passes on this repository', () => {
@@ -274,22 +440,6 @@ describe('publish gate: the wall between this public repo and the world', () => 
  * pipeline writing into a subdirectory was uncovered.
  */
 describe('commit messages, which the tree checks cannot see', () => {
-  /**
-   * @description Give a fixture a bare remote and push, so its commits become "already
-   *              published" — the state that must take a commit out of scope.
-   * @param dir - Fixture repository.
-   * @returns void
-   */
-  function publishTo(dir: string): void {
-    const remote = mkdtempSync(join(tmpdir(), 'oshal-gate-remote-'));
-    execFileSync('git', ['init', '-q', '--bare', remote], { stdio: 'pipe' });
-    git(dir, 'remote', 'add', 'origin', remote);
-    const branch = execFileSync('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'], {
-      encoding: 'utf8',
-    }).trim();
-    git(dir, 'push', '-q', 'origin', branch);
-  }
-
   it('FAILS when an unpushed commit message carries a credential', () => {
     const dir = makeFixture(undefined, `wire up deploy, token ${fakeToken()}`);
     try {
@@ -374,4 +524,243 @@ describe('artifacts/ ignore rules cover pipeline debris at any depth', () => {
     // re-include work at all — git cannot re-include a file through an excluded parent directory.
     expect(isIgnored('artifacts/jarvis-rich-ux-mockups/option-d-new.png')).toBe(false);
   });
+});
+
+/**
+ * The 2026-09-12 history scrub left no attributed commit reachable from origin; by 2026-09-14, 45
+ * commits reachable from main carried a model co-author trailer again (d679b696). The
+ * tree guard (no-model-attribution.spec.ts) reads FILES; the trailer lives in the commit MESSAGE,
+ * and the only wall in front of a message is this push gate. It must refuse the trailer in every
+ * spelling a session produces, pass human co-authors and prose, judge only what the push
+ * publishes, and never re-judge history the remote already holds.
+ */
+describe('model attribution in commit messages is refused at push time', () => {
+  // Every row after the first trips exactly ONE of the gate's three rules (named trailer, vendor
+  // address, tool footer) and none of the others — so narrowing any one rule turns a row red
+  // instead of hiding behind a rule that happens to match the same line.
+  const OTHER = 'bot@example.org';
+  const REFUSED: Array<[string, string]> = [
+    ['the trailer exactly as the harness appends it', `fix: wire the importer\n\nWhy it changed.\n\n${HARNESS_TRAILER}\n`],
+    ['GitHub casing (Co-authored-by)', `fix: wire the importer\n\n${trailer('Co-authored-by', 'Claude Sonnet 4.5', OTHER)}\n`],
+    ['all lower case', `fix: wire the importer\n\n${trailer('co-authored-by', 'claude', OTHER)}\n`],
+    ['all upper case', `fix: wire the importer\n\n${trailer('CO-AUTHORED-BY', 'CLAUDE CODE', OTHER.toUpperCase())}\n`],
+    ['an indented trailer', `fix: wire the importer\n\n   ${trailer('Co-Authored-By', 'Claude', OTHER)}\n`],
+    ['an Anthropic co-author that never says Claude', `fix: wire the importer\n\n${trailer('Co-Authored-By', 'Anthropic Assistant', OTHER)}\n`],
+    ['a model named under another -by trailer key', `fix: wire the importer\n\n${trailer('Assisted-by', 'Claude Code', OTHER)}\n`],
+    ['the vendor no-reply address outside any -by trailer', `fix: wire the importer\n\n${trailer('Model', 'Some Model')}\n`],
+    ['the vendor no-reply address in mixed case', `fix: wire the importer\n\n${trailer('Model', 'Bot', 'NoReply@Anthropic.COM')}\n`],
+    ['the tool footer with its emoji and link', `feat: add the export\n\nBody.\n\n\u{1F916} ${TOOL_FOOTER}\n`],
+    ['the tool footer without the link', 'feat: add the export\n\nGenerated with Claude Code\n'],
+    ['the tool footer in upper case', 'feat: add the export\n\nGENERATED WITH CLAUDE CODE\n'],
+    ['the tool footer mid-sentence', 'feat: add the export\n\nThis change was generated by Claude.\n'],
+  ];
+
+  it.each(REFUSED)('FAILS on %s, naming the commit', (_label, message) => {
+    const dir = makeFixture();
+    try {
+      const sha = commitMessage(dir, message);
+      const r = runGate(dir);
+      expect(r.output).toContain('model attribution in unpublished COMMIT MESSAGE');
+      expect(r.output).toContain(revParse(dir, '--short', sha));
+      expect(r.code).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  const PASSED: Array<[string, string]> = [
+    ['a clean message', 'fix: wire the importer\n\nWhy it changed.\n'],
+    ['a human co-author', 'feat: pair on the importer\n\nCo-authored-by: Pat Rivera <pat.rivera@example.org>\n'],
+    ['the maintainer as co-author', 'feat: pair on the importer\n\nCo-authored-by: oshal maintainers <maintainer@emeraldcoastsystemsgroup.com>\n'],
+    ['prose that names the model without attributing to it', 'docs: say why Claude sessions must not sign commits\n\nThe gate refuses co-author trailers that name a model.\n'],
+  ];
+
+  it.each(PASSED)('PASSES on %s', (_label, message) => {
+    const dir = makeFixture();
+    try {
+      commitMessage(dir, message);
+      const r = runGate(dir);
+      expect(r.output).toContain('no model attribution in unpublished commit messages');
+      expect(r.code).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('tells the pusher how to fix it — reword, never --no-verify', () => {
+    const dir = makeFixture();
+    try {
+      const sha = commitMessage(dir, `fix: wire the importer\n\n${HARNESS_TRAILER}\n`);
+      const r = runGate(dir);
+      expect(r.code).toBe(1);
+      expect(r.output).toContain(HARNESS_TRAILER);
+      expect(r.output).toContain('git commit --amend');
+      expect(r.output).toContain(`git rebase -i ${revParse(dir, '--short', sha)}~1`);
+      expect(r.output).toContain('--no-verify');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('names only the attributed commit inside a longer unpushed range', () => {
+    const dir = makeFixture();
+    let remote = '';
+    try {
+      remote = publishTo(dir);
+      const before = commitMessage(dir, 'fix: first\n');
+      const bad = commitMessage(dir, `fix: second\n\n${HARNESS_TRAILER}\n`);
+      const after = commitMessage(dir, 'fix: third\n');
+      const r = runGate(dir);
+      expect(r.code).toBe(1);
+      expect(r.output).toContain(revParse(dir, '--short', bad));
+      expect(r.output).not.toContain(revParse(dir, '--short', before));
+      expect(r.output).not.toContain(revParse(dir, '--short', after));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      if (remote) rmSync(remote, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('does NOT re-judge attributed history the remote already holds', () => {
+    // main carries 45 such commits (2026-09-14). Removing them is an operator-run history rewrite; a
+    // gate that refused every push until then would halt all work, so published = out of scope.
+    const dir = makeFixture();
+    let remote = '';
+    try {
+      commitMessage(dir, `fix: already shipped\n\n${HARNESS_TRAILER}\n`);
+      expect(runGate(dir).code).toBe(1); // in scope while unpublished
+      remote = publishTo(dir);
+      expect(runGate(dir).code).toBe(0); // published: never re-judged
+      commitMessage(dir, 'fix: new clean work on top\n');
+      const r = runGate(dir);
+      expect(r.output).toContain('no model attribution in unpublished commit messages');
+      expect(r.code).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      if (remote) rmSync(remote, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
+/**
+ * As the pre-push hook the gate is told what is actually being pushed: git writes one
+ * "<local ref> <local sha> <remote ref> <remote sha>" line per ref to the hook's stdin. HEAD alone
+ * is not the push — the shared checkout's private-index recipe pushes BY SHA
+ * (`git push origin <sha>:refs/heads/x`) while HEAD sits on another lane's branch.
+ */
+describe('pre-push scope: the commits the push publishes, not whatever HEAD is', () => {
+  it('refuses an attributed commit pushed BY SHA while HEAD is clean', () => {
+    const dir = makeFixture();
+    let remote = '';
+    try {
+      remote = publishTo(dir);
+      git(dir, 'checkout', '-q', '-b', 'lane');
+      const sha = commitMessage(dir, `fix: lane work\n\n${HARNESS_TRAILER}\n`);
+      git(dir, 'checkout', '-q', '-');
+      expect(runGate(dir).code).toBe(0); // by hand the scope is HEAD, which is published and clean
+      const r = runGate(dir, { args: ['--pre-push'], input: pushLine(sha, sha, 'refs/heads/lane') });
+      expect(r.output).toContain('model attribution in unpublished COMMIT MESSAGE');
+      expect(r.output).toContain(revParse(dir, '--short', sha));
+      expect(r.code).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      if (remote) rmSync(remote, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('judges only what is pushed, not unrelated unpushed work sitting on HEAD', () => {
+    const dir = makeFixture();
+    let remote = '';
+    try {
+      remote = publishTo(dir);
+      git(dir, 'checkout', '-q', '-b', 'other');
+      const clean = commitMessage(dir, 'fix: clean lane work\n');
+      git(dir, 'checkout', '-q', '-');
+      commitMessage(dir, `wip: someone else\n\n${HARNESS_TRAILER}\n`);
+      expect(runGate(dir).code).toBe(1); // by hand, HEAD's own unpushed commit is judged
+      const r = runGate(dir, { args: ['--pre-push'], input: pushLine('refs/heads/other', clean) });
+      expect(r.output).toContain('no model attribution in unpublished commit messages');
+      expect(r.code).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      if (remote) rmSync(remote, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('does not re-judge what the remote already has, even with no remote-tracking refs', () => {
+    // A push to a bare path (no remote name) leaves no refs/remotes/* behind, so `--not --remotes`
+    // excludes nothing — git's <remote sha> on the pre-push line is the only record of what the
+    // remote holds, and it alone must keep the published attributed commit out of scope.
+    const dir = makeFixture();
+    const remote = mkdtempSync(join(tmpdir(), 'oshal-gate-remote-'));
+    try {
+      execFileSync('git', ['init', '-q', '--bare', remote], { stdio: 'pipe' });
+      const published = commitMessage(dir, `fix: already shipped\n\n${HARNESS_TRAILER}\n`);
+      git(dir, 'push', '-q', remote, 'HEAD:refs/heads/main');
+      const next = commitMessage(dir, 'fix: clean follow-up\n');
+      const r = runGate(dir, {
+        args: ['--pre-push'],
+        input: pushLine('refs/heads/main', next, 'refs/heads/main', published),
+      });
+      expect(r.output).toContain('no model attribution in unpublished commit messages');
+      expect(r.code).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('ignores a ref deletion, which publishes nothing', () => {
+    const dir = makeFixture();
+    try {
+      const deletion = pushLine('(delete)', ZERO_SHA, 'refs/heads/gone', revParse(dir, 'HEAD'));
+      const r = runGate(dir, { args: ['--pre-push'], input: deletion });
+      expect(r.output).toContain('no model attribution in unpublished commit messages');
+      expect(r.code).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('fails closed when a pushed commit cannot be enumerated', () => {
+    const dir = makeFixture();
+    try {
+      const r = runGate(dir, { args: ['--pre-push'], input: pushLine('refs/heads/x', 'f'.repeat(40)) });
+      expect(r.output).toContain('cannot list the commits this push publishes');
+      expect(r.code).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('through a REAL git push and the REAL hook: refused by SHA and from HEAD, clean lands', () => {
+    const dir = makeFixture();
+    let remote = '';
+    try {
+      remote = publishTo(dir);
+      installRealHook(dir);
+      const home = revParse(dir, '--abbrev-ref', 'HEAD');
+
+      git(dir, 'checkout', '-q', '-b', 'lane');
+      const bad = commitMessage(dir, `fix: lane work\n\n${HARNESS_TRAILER}\n`);
+      const fromHead = gitPush(dir, 'HEAD:refs/heads/lane');
+      expect(fromHead.output).toContain(revParse(dir, '--short', bad));
+      expect(fromHead.code).not.toBe(0);
+
+      git(dir, 'checkout', '-q', home);
+      const bySha = gitPush(dir, `${bad}:refs/heads/lane`);
+      expect(bySha.output).toContain('model attribution in unpublished COMMIT MESSAGE');
+      expect(bySha.code).not.toBe(0);
+      expect(remoteRef(remote, 'refs/heads/lane')).toBeNull();
+
+      git(dir, 'checkout', '-q', '-b', 'clean-lane');
+      const good = commitMessage(dir, 'fix: clean lane work\n');
+      git(dir, 'checkout', '-q', home);
+      expect(gitPush(dir, `${good}:refs/heads/clean-lane`).code).toBe(0);
+      expect(remoteRef(remote, 'refs/heads/clean-lane')).toBe(good);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      if (remote) rmSync(remote, { recursive: true, force: true });
+    }
+  }, 90_000);
 });
