@@ -1435,3 +1435,87 @@ schedule rather than at request time. The material it would read already exists 
   default-OFF per the automation opt-in rule — the brief is assembled for the caller only, and nothing
   the caller has not authorised reaches reasoning.
 - The surface shows the same brief it sends, so what the person reads and what was delivered cannot drift.
+
+### Spaces → embodied: the drone simulation starts a world from a real scan (2026-09-14)
+
+**Context:** the operator asked whether an imported Space can be worked into the drone flying program.
+The drone program is the store package `embodied` (ADR-151, ADR-152): its `WorldSim` starts from a
+hidden `Scene` (room box, axis-aligned obstacle boxes in metres z-up, surfaces/objects/zones/appliances)
+chosen by id from `engine/world/scenes.ts`, and the drone discovers that scene through its own LiDAR
+sweeps. ADR-151 D3 and open decision Q3 already say the world model is the Spaces scan. The Spaces half
+is built and installed: `spaces` 0.8.0 (store commits `9cf1639b` + `45aa3aff` on
+`feat/package-test-catalog-pilots`) serves `GET /api/spaces/scans/:id/scene` — the ready scan's splat
+mapped into embodied's frame (+Y-up Spaces frame → z-up by a proper rotation; `up=auto` puts the dense
+floor at the bottom, 3DGS exports are usually −Y up), the 1st–99th percentile box with floaters
+clipped and counted, scale 1 for a metric LiDAR import or fitted to `ceilingM` (2.4 m) otherwise,
+5 cm voxels coarsened until the box cap (1500) fits, occupied voxels merged into `kind: fixture`
+boxes, drone home and base park on the clearest open floor. `GET /api/spaces/scenes` lists the
+caller's ready scans as ADR-139 `provides` artifacts of type `application/vnd.oshal.embodied-scene+json`
+and the Spaces surface tags every ready scan as a send-to source. The package README documents the
+query contract; `spaces/tests/spaces-embodied-scene.test.js` proves the converter against the compiled
+module (14/14 with the surfaces suite). What is missing is the embodied half — the `embodied/**` claim
+was held by another session, so it was requested in the store thread (2026-09-14 01:40 UTC), not built.
+
+**Done when:**
+- `embodied/oshal-app.yaml` declares `artifacts.accepts` `{ id: scene, label: "Fly it in embodied",
+  types: [application/vnd.oshal.embodied-scene+json], mode: post, endpoint:
+  /api/embodied/world/scenes/import-artifact }` and the endpoint redeems `{ ref }` through
+  `redeemArtifactViaRelay` (the idiom `spaces-routes.ts` uses for `/scans/import-artifact`), parses
+  `{ scene, stats, scanId, title }`, runs `validateScene` plus size caps (obstacles ≤ 1500, room ≤ 30 m a
+  side), and registers the scene per owner under `scene.name` (`scan:<scanId>`) beside the in-memory
+  sessions.
+- `POST /api/embodied/world/reset { scenario }` accepts an owner-registered id as well as the built-in
+  `SCENARIOS`, and `/capabilities.scenarios` lists the owner's imports after the built-ins so the tile's
+  Room selector shows them; an unknown id still answers 400 `unknown_scenario`.
+- A route test drives the real compiled router over loopback HTTP with a scene produced by the Spaces
+  converter (the sample in the store thread or `GET …/scene` on the box), proves the world resets into
+  it, and proves a LiDAR sweep from the drone home paints the scanned walls into the voxel map.
+- The 📤 chip on a ready Spaces scan offers "Fly it in embodied" in the cockpit and the world is reset
+  into the scan without leaving the browser (ADR-139 post mode), verified by a human on the box.
+- The surface says plainly that a scanned box is a hollow shell (a splat is a surface) and that outdoor
+  captures need an explicit `scaleM` — the ceiling fit is for rooms.
+
+### Multipart uploads lose the RLS request identity — the same trap sits in core (2026-09-14)
+
+**Context:** spaces 0.7.0 refused every import larger than one socket chunk with `500 failed to import
+capture`: the identity middleware binds the caller with AsyncLocalStorage `run`, multer/busboy consume
+the body on the socket's own async context, and once the parser finished on a later chunk the handler
+after multer reached the GUC pool with no identity — refused under `OSHAL_DB_GUC_STRICT=deny` and by the
+owner RLS policy (`new row violates row-level security policy for table "spatial_scans"`). Reproduced on
+the box's own image with public `.splat` files; the 2 MB probe failed once and passed on retry, so it is
+a race, not a size limit. Fixed in spaces 0.7.1 (store `b84a720e`) by capturing `getRequestIdentity()`
+before the stream and re-entering it in multer's completion callback, with a guard
+(`spaces/tests/upload-identity.core.test.js`) that writes a 3 MB multipart body in 256 KB chunks with
+gaps and asserts the service saw the identity — red on 0.7.0, green on 0.7.1. Core has six multer routes
+(`agent-profile`, `ambient-speaker`, `artifact-exchange`, `rag`, `swarm-app`, `voice`) and none of them
+re-binds the identity after the upload; whichever of them writes an owner-RLS table after multer is
+exposed to the same shape. That is a mechanism shared by every multer route, not an observation about
+any one of them — each must be proven or fixed on its own.
+
+**Done when:**
+- A shared helper in `src/shared/middleware` (or beside `request-identity.ts`) wraps a multer parser so
+  its completion callback runs inside the identity captured before the stream, and every core multer
+  route that touches the database after the upload uses it.
+- Each such route has a chunked-upload regression test over real loopback HTTP (the spaces guard is the
+  pattern) that fails when the re-bind is removed.
+- `docs/governance/RLS-RUNBOOK.md` names multipart bodies as an async-context boundary and points at the
+  helper, so the next upload route does not re-learn this.
+
+### Spaces: the PLY→splat converter runs on the api's event loop and a large import can take the box down (2026-09-14)
+
+**Context:** importing the 117 MB `father-day.ply` from the same public set into the sandbox api
+collapsed the 7 GB Docker VM (engine API 500, `docker` CLI hung, the main api unreachable); the 44 MB
+`goldorak-ply.ply` had already blocked the event loop for about 14 s, during which a concurrent upload
+timed out against `srv.requestTimeout` (30 s). `convertPly` in
+`src/features/spatial-mapping/services/import-format.ts` parses the whole buffer into JavaScript objects
+on the main thread and the route accepts up to 300 MB. `.splat` passthrough is cheap (65 MB / 2 M
+gaussians subsampled in about 6 s).
+
+**Done when:**
+- A `.ply` larger than a configured byte gate (default around 50 MB, from config, not a literal) is
+  refused at `POST /api/spaces/scans/import` with a 413 that names the limit, before the file is read.
+- PLY conversion runs off the event loop (a worker thread or a child process with a memory cap) so a
+  large import can neither block other requests nor take the api process with it; the service marks the
+  scan `failed` with the reason when the worker dies.
+- A regression test imports a PLY above the gate and one below it and proves the api keeps answering
+  `/health` throughout.

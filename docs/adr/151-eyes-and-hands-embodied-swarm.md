@@ -202,3 +202,33 @@ package carries its own node runtime the way `drone` and `camera` do today.
 3. Spaces object layer (teach + fiducial), keep-out from the ADR-150 grid.
 4. First vendor adapter on purchased hardware; e-stop and link-loss proven on the bench.
 5. Drone re-scan → verify loop; then the Q1 kernel extraction if accepted.
+
+## As built — D3, the Spaces half (2026-09-14)
+
+The operator asked whether an imported Space can be worked into the drone flying program. D3 says
+the world model is the Spaces scan; Q3 recommends extending Spaces rather than a second scene
+store. The Spaces side of that is now built and the embodied side is specified and requested:
+
+- **Spaces 0.8.0** (store `9cf1639b` + `45aa3aff`, `feat/package-test-catalog-pilots`) serves
+  `GET /api/spaces/scans/:id/scene`: the ready scan's Gaussian-splat positions become plain data in
+  embodied's `Scene` shape — room box, `kind: fixture` obstacle boxes in metres z-up with the floor at
+  0, empty surfaces/objects/zones/appliances (the discovery reads the map it builds, never the
+  scene), drone home and base park on the clearest open floor. The capture is mapped by a proper
+  rotation (Spaces' own frame is +Y up; 3DGS exports are usually −Y up and `up=auto` puts the dense
+  floor at the bottom), bounded by its 1st–99th percentile box with floaters clipped and counted,
+  scaled 1:1 for a metric LiDAR import or fitted to a ceiling height otherwise, voxelised at 5 cm and
+  coarsened until the box cap fits the embodied raycaster and the MuJoCo plant. Every decision comes
+  back in `stats`. `GET /api/spaces/scenes` lists the caller's ready scans as ADR-139 `provides`
+  artifacts of type `application/vnd.oshal.embodied-scene+json`, and the Spaces surface tags each
+  ready scan as a send-to source. The package README carries the query contract;
+  `spaces/tests/spaces-embodied-scene.test.js` proves the converter against the compiled module.
+- **Findings from real captures** (public 3DGS set, 22 k – 1.1 M gaussians): a splat is a surface, so
+  a scanned box is a hollow shell (fine for keep-out); an indoor shop becomes an 11.5 × 18 m room of
+  1 195 boxes in about 8 s; outdoor captures with sky floaters need an explicit `scaleM` — the ceiling
+  fit is for rooms.
+- **Embodied side (open):** an `artifacts.accepts` entry whose endpoint redeems the handle through
+  `redeemArtifactViaRelay`, runs `validateScene`, and registers the scene per owner as a scenario the
+  world can reset from, listed in the tile's Room selector. Requested from the package's claim holder
+  in the store thread; the done-when criteria are in [BACKLOG](../BACKLOG.md#spaces--embodied-the-drone-simulation-starts-a-world-from-a-real-scan-2026-09-14).
+  Until it lands, the scene is a download ("Scene for drones" on a ready scan) and a `WorldSim`
+  constructed with `opts.scene` in a test.
