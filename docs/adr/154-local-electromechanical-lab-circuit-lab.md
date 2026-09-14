@@ -172,11 +172,44 @@ store row keeps the old version — the failure is silent from the page. The lin
 the framework-coupled route suite now loads the package's own catalog through the framework's
 loader (`scripts/oshal-test-catalog.js`) so the limit is a red test, not a dead tile.
 
-**Verification shipped with it.** The real-solver Python suite (17 cases at 0.1.0, 26 at 0.2.0, 32 at 0.3.0, 36 at 0.5.0, in the engine image and
+**0.6.0 (2026-09-14) — on the store branch, NOT installed; real-solver run pending.** Firmware in the
+loop, the OUTPUT half of B1: an `arduino` part
+(an Uno — 5V, GND, D2–D13, A0–A5) carries a `sketch`; the worker compiles it for the ATmega328P
+with Debian's `gcc-avr` against the Arduino AVR core (precompiled into a `core.a` at image build)
+and runs the HEX in `avr8js` (MIT, the npm tarball pinned by sha512 in the Dockerfile) for the
+transient, at most 10 s, timers 0/1/2 and the USART live so `delay`, `millis`, `analogWrite` and
+`Serial` behave; every OUTPUT pin's edges become a PWL source through 25 Ω in the same deck (INPUT
+pins are loads, INPUT_PULLUP a 35 kΩ to the rail, the 5V pin a sensed rail). A sketch that does not
+compile is refused naming `parts[i].props.sketch` with the compiler's words; a board whose GND is
+unwired warns. The sketch cannot read the circuit back — `digitalRead` / `analogRead` see the
+AVR's defaults — and that INPUT half stays in the package BACKLOG with its done-when (a per-tick
+co-simulation through `libngspice`, which Debian bookworm carries at the same version). The engine
+image grows by the toolchain (about 250 MB downloaded on the first build); the firmware runner
+files join the build hash so an api and an engine of different vintages refuse each other. Also in
+0.6.0, the assistant: the manifest declares the surface-bridge ops (`context`, `custom`, `notify` —
+the cockpit relay is fail-closed without them) and the page publishes what it shows (the open
+design's parts, wires, readings, warnings and selection as a capped digest) on every open, save,
+run, selection and view change; Jarvis edits through one custom op, `circuit_action`, whose
+description is the ten-action vocabulary, applied through the routes the canvas already uses with
+one solve at the end; and the concierge runs in `jarvisMode: delegate`, so a circuit question in
+the chat gets the design's numbers from its tools rather than a link to the tile. No core code
+changed for any of it. Verified on a host checkout: the six plain-node suites, the 11-case HTTP
+suite and the 11-case Chromium suite (the rail through the real bridge client). NOT yet run: the
+39-case real-solver suite and the installer self-test inside the rebuilt engine image — the
+reference box's Docker daemon dropped the build session under load after every Dockerfile step
+had completed; the package's `docs/continuing-0.6.0.md` is the hand-over. The box runs 0.5.1.
+
+**Verification shipped with it.** The real-solver Python suite (17 cases at 0.1.0, 26 at 0.2.0, 32 at 0.3.0, 36 at 0.5.0, 39 written for 0.6.0 — the four firmware cases unrun as of 2026-09-14, in the engine image and
 the installer's self-test: LED, RC, switch mid-run, geared motor, stalled motor, PWM through a
-MOSFET, mechanism refusals, protocol), the contract suite (Node ≡ Python library and build hash)
+MOSFET, mechanism refusals, protocol, a blink sketch's LED at the sketch period with its serial
+captured, `analogWrite`'s RC average at the duty, a sketch that does not compile refused naming
+it), the contract suite (Node ≡ Python library and build hash)
 and the transport suite against a fake bridge (plain node, store-ci), the gear-to-CAD suite
 (plain node, read-only cross-package), the driver-catalog suite (plain node, read-only cross-package against embodied's parts model),
-the framework-coupled HTTP suite with the real engine
-client (9 cases) and the actual-page Chromium suite (5 cases at 0.2.0, 8 at 0.3.0), all
-registered in the Test Lab with their prerequisites.
+the breadboard-model suite and the assistant-rail suite (plain node — the manifest's surface
+ops, the vocabulary under the contract's 600-character cap, the digest under 4,000 characters on
+a 200-part circuit), the framework-coupled HTTP suite with the real engine client (9 cases, 11 at
+0.6.0 — the catalog through the framework's own loader) and the actual-page Chromium suite (5
+cases at 0.2.0, 8 at 0.3.0, 11 at 0.6.0 — the sketch edits as multi-line text and is saved
+intact; the rail through the real bridge client), all registered in the Test Lab with their
+prerequisites.
