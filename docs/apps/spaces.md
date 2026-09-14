@@ -31,6 +31,13 @@ The **reconstruct** lane runs through a provider seam: the always-available `Sim
 ([`scripts/spatial-recon-edge/`](../../scripts/spatial-recon-edge/README.md):
 ffmpeg→COLMAP→splatfacto→`.splat`, optional `RECON_TOKEN` shared secret, job-dir reaping).
 
+The **import** lane gates a `.ply` by size and converts it off the api's event loop: a `.ply` above
+`OSHAL_SPACES_PLY_MAX_BYTES` (default 50 MiB) is refused with a `413` naming the limit while the
+upload streams, and one under it is parsed in a worker thread capped at
+`OSHAL_SPACES_PLY_WORKER_HEAP_MB` (default 1024) — an overrun ends the worker and the scan reads
+`failed` with the reason, the api keeps answering. Both knobs live in `.env.example`; `.splat`
+passthrough is not gated.
+
 ### Mobile ingest — phone pairing (no browser login on the phone)
 
 The **import** lane is how an iPhone/iPad Pro LiDAR scan gets back to the swarm — but a phone (native
