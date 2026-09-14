@@ -4,11 +4,12 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Cross the real boundary of the wash-sale veto. withEngineCostBasis catches ANY error and returns the positions unchanged, so a wrong column name or a broken book filter would make the fix silently inert in production while every pure test stayed green - the stop-losses would keep firing and nothing would say why. This drives the real SQL against a real PostgreSQL and the real oshal_trading_orders schema, inside a transaction that is always rolled back.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | engineRealizedForBook against the real schema: prices a live sell on the live book's own fill, keyed by order id, ignores a rejected row, and reads nothing from the paper book on the same symbol.
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { Client } from 'pg';
-import { withEngineCostBasis } from '../../src/app/trading-engine-cost-basis';
+import { withEngineCostBasis, engineRealizedForBook } from '../../src/app/trading-engine-cost-basis';
 import type { Position, TradingBook } from '../../src/features/trading';
 
 const ADMIN_URL = process.env.TRADING_TEST_ADMIN_URL
@@ -74,6 +75,27 @@ describe('withEngineCostBasis against the real oshal_trading_orders schema', () 
     const [p] = await withEngineCostBasis({ pool: client as never }, SUB, book(LIVE), [position('CRM', 5, 265.878, 252.3901)]);
     expect(p.engineAvgCost).toBeCloseTo(244.465, 6);
     expect(p.avgEntryPrice).toBe(265.878); // the venue figure is carried untouched
+  });
+
+  it('prices each sell of one book on that book’s own fills, by order id, ignoring rejected rows', async () => {
+    if (!client) return;
+    await fill(LIVE, 'NTAP', 'buy', 4, 100, '2026-09-11T14:00:00Z');
+    await fill(PAPER, 'NTAP', 'buy', 4, 10, '2026-09-11T14:05:00Z');
+    await fill(LIVE, 'NTAP', 'sell', 4, 90, '2026-09-11T15:00:00Z');
+    await client.query(
+      `INSERT INTO oshal_trading_orders (user_sub, mode, decision_id, broker, client_order_id, symbol, side, qty, order_type,
+         status, filled_qty, created_at, book_id)
+       SELECT user_sub, mode, decision_id, broker, gen_random_uuid()::text, symbol, 'sell', 4, 'market', 'rejected', 0,
+              '2026-09-11T15:01:00Z'::timestamptz, book_id
+         FROM oshal_trading_orders WHERE user_sub = $1 AND book_id = $2 AND symbol = 'NTAP' LIMIT 1`, [SUB, LIVE]);
+    const live = await engineRealizedForBook({ pool: client as never }, SUB, LIVE, ['ntap']);
+    const sells = (await client.query(
+      `SELECT order_id::text AS id FROM oshal_trading_orders WHERE user_sub = $1 AND book_id = $2 AND symbol = 'NTAP' AND side = 'sell' AND status = 'filled'`,
+      [SUB, LIVE])).rows;
+    expect(sells).toHaveLength(1);
+    expect(live.size).toBe(1);
+    expect(live.get(sells[0].id)).toEqual({ costBasis: 100, realizedPnl: -40 });
+    expect((await engineRealizedForBook({ pool: client as never }, SUB, PAPER)).size).toBe(0);
   });
 
   it('is book-scoped: paper fills on the same symbol never leak into the live basis', async () => {

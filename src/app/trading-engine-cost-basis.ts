@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The engine's OWN average cost per position, replayed from its own filled orders, so a stop-loss can tell a real loss from a wash-sale artifact. Schwab reports the wash-sale-adjusted basis; on 2026-09-14 the live book stop-lossed 10 names and all 10 were within 5% of what the engine had actually paid (two were up). Book-scoped by (user_sub, book_id) because the paper and live books trade the same symbols at different fills — replaying them together produces a basis neither book ever had. Trusted only when the replayed quantity equals the venue quantity.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Price realized P&L on the engine's own cost: replayEngineRealized (pure, per sell, same average-cost reset-on-flat replay) and engineRealizedForBook (book-scoped read). The stored realized_pnl uses the venue's wash-sale-adjusted average and counts each disallowed loss twice (-6,451.61 against -1,540.50 of actual cash on the live book's flat names); reports read this instead. A sell the ledger cannot cover gets no figure rather than a guessed one. No decision path reads realized P&L, and none changes here.
  */
 
 import type { AppContext } from './composition-root';
@@ -129,5 +130,100 @@ export async function withEngineCostBasis(
     return { ...p, engineAvgCost: basis };
   });
   logger.info({ bookId: book.bookId, longs: longs.length, covered, ms: Date.now() - started }, 'engine cost basis attached');
+  return out;
+}
+
+/** One filled order row with its identity, for pricing each sell on the engine's own cost. */
+export interface EngineSaleRow extends EngineFillRow {
+  order_id: string;
+}
+
+/** The engine's realized result for one sell. */
+export interface EngineRealizedSale {
+  /** Average cost of the shares this sell closed, from the engine's own fills. */
+  costBasis: number;
+  /** (fill - costBasis) x qty: what the round trip actually made or lost. */
+  realizedPnl: number;
+}
+
+/**
+ * @description Price every sell for ONE symbol against the engine's own average cost at that moment:
+ * the same average-cost, reset-on-flat replay as `replayEngineCost`.
+ *
+ * The stored `realized_pnl` uses the venue's average price, which after a wash sale carries the
+ * disallowed loss - so each disallowed loss is counted twice, once at the loss sale and again through
+ * the re-buy's inflated basis. On the live book that made -6,451.61 out of -1,540.50 of actual cash on
+ * the names that went back to flat. This replay is the economic figure: a symbol that returns to flat
+ * realizes exactly its sells minus its buys. The venue's column stays as it is (it is what the venue
+ * reported); reports read this.
+ *
+ * A sell the replay cannot fully cover - the ledger shows fewer shares than were sold, from ledger
+ * drift or shares the engine did not buy - gets no entry: its cost is unknowable from here, and a
+ * guessed figure would be reported as fact.
+ *
+ * @param rows - Filled orders for one symbol and one book, in chronological order.
+ * @returns The realized result for each sell the engine's own fills fully cover, by order id.
+ */
+export function replayEngineRealized(rows: readonly EngineSaleRow[]): Map<string, EngineRealizedSale> {
+  const sales = new Map<string, EngineRealizedSale>();
+  let qty = 0;
+  let cost = 0;
+  for (const r of rows) {
+    const q = Number(r.filled_qty ?? 0);
+    const px = Number(r.filled_avg_price ?? 0);
+    if (!(q > 0) || !(px > 0) || !Number.isFinite(q) || !Number.isFinite(px)) continue;
+    if (r.side === 'buy') {
+      qty += q;
+      cost += q * px;
+      continue;
+    }
+    if (r.side !== 'sell') continue;
+    if (qty > 0 && qty + QTY_EPSILON >= q) {
+      const avg = cost / qty;
+      sales.set(r.order_id, { costBasis: avg, realizedPnl: (px - avg) * q });
+    }
+    const take = Math.min(q, qty);
+    if (take > 0) {
+      cost -= (cost / qty) * take;
+      qty -= take;
+    }
+    if (qty <= QTY_EPSILON) { qty = 0; cost = 0; }
+  }
+  return sales;
+}
+
+/**
+ * @description The engine's realized result for the sells in ONE book, keyed by order id, read from
+ * the book's own filled orders. Book-scoped by `(user_sub, book_id)` like every trading store, because
+ * replaying two books together prices a sale against lots it never held. A failed read throws: a
+ * report must not print a number it could not compute.
+ *
+ * @param ctx - Anything carrying the pool.
+ * @param sub - Owner sub.
+ * @param bookId - The book.
+ * @param symbols - Optional symbols to limit the replay to (their full history is still read).
+ * @returns Realized results for every fully covered sell.
+ */
+export async function engineRealizedForBook(
+  ctx: Pick<AppContext, 'pool'>, sub: string, bookId: string, symbols?: readonly string[],
+): Promise<Map<string, EngineRealizedSale>> {
+  const scoped = symbols && symbols.length ? [...new Set(symbols.map((s) => s.toUpperCase()))] : null;
+  const rows = (await ctx.pool.query(
+    `SELECT order_id::text AS order_id, upper(symbol) AS symbol, side, filled_qty, filled_avg_price
+       FROM oshal_trading_orders
+      WHERE user_sub = $1 AND book_id = $2 AND status = 'filled'
+        ${scoped ? 'AND upper(symbol) = ANY($3::text[])' : ''}
+      ORDER BY upper(symbol), created_at, order_id`,
+    scoped ? [sub, bookId, scoped] : [sub, bookId])).rows as Array<EngineSaleRow & { symbol: string }>;
+  const bySymbol = new Map<string, EngineSaleRow[]>();
+  for (const r of rows) {
+    const list = bySymbol.get(r.symbol) ?? [];
+    list.push(r);
+    bySymbol.set(r.symbol, list);
+  }
+  const out = new Map<string, EngineRealizedSale>();
+  for (const list of bySymbol.values()) {
+    for (const [orderId, sale] of replayEngineRealized(list)) out.set(orderId, sale);
+  }
   return out;
 }
