@@ -6,12 +6,20 @@ this document; none is carried over from a summary.
 
 ## What this is, in one paragraph
 
+> **Where the code lives.** The ADR-149 authorization work described here — the ownership
+> reader, the protected-result boundary and its Postgres regression spec — is on
+> `origin/feat/store-compatibility-gate`, not on `main`, as of this writing
+> (`git cat-file -e origin/main:src/app/application-execution-ownership.ts` fails; the
+> branch that contains `086832cf` is that one). It is nevertheless what the box is running.
+> Source paths below are therefore written as plain paths, not repository links.
+
+
 `swarm_applications.agent_ids` was built as an **association** column — the loader fills it so
 Jarvis's catalog, mesh `BID_REQUEST` fan-out, selector composition and competency ranking can find
 an app's bot ([`swarm-app-repository.ts`](../../src/features/swarm-apps/services/swarm-app-repository.ts),
 `upsert`). Association is legitimately many-to-many: three packages in the creative bundle really do
 share one accountable bot. The ADR-149 ownership reader
-([`application-execution-ownership.ts`](../../src/app/application-execution-ownership.ts)) reads the
+(`src/app/application-execution-ownership.ts`) reads the
 same column as an **ownership** column, and ownership must be one-to-one — so it raises
 `Ambiguous package ownership` whenever a bot id resolves to more than one app name. Twelve ids do.
 
@@ -158,7 +166,7 @@ declares `incident-remediation-bot` at `intelligent-operations`' id, last update
 
 ### The mechanism
 
-`canReadProtectedResult` ([`src/shared/protected-results/index.ts`](../../src/shared/protected-results/index.ts))
+`canReadProtectedResult` (`src/shared/protected-results/index.ts`)
 answers, for a task with no recorded protected executions and no durable results — the ordinary case:
 
 ```ts
