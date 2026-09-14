@@ -224,13 +224,18 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   rows, and a `ci-local.sh` post-gate fails if synthetic residue reappears.
 
 ### Surface-bridge ops have no success-path log line
-- **Remaining:** `src/app/routes/jarvis-routes.ts` logs when surface ops are **dropped** for lack of
-  screen context but logs nothing when they are successfully extracted and returned, so a delivered
-  op that the surface then ignores leaves no server-side trace. Proving BUG-18 required reading the
-  raw pre-strip reply out of a bot container log, because both the clean answer and the persisted turn
-  have the fence already removed.
-- **Done when:** an emitted-ops turn logs op count + names + the target app at INFO, and the BUG-18
-  failure shape (a `custom` op whose name no surface handles) is diagnosable from the api log alone.
+- **Done (2026-09-14):** `POST /ask` in `src/app/routes/jarvis-routes.ts` logs an emitted-ops turn at
+  INFO — `jarvis: surface ops returned to the surface` with `sessionId`, `app`, `screen`, `ops` (count),
+  `opNames` (`custom:<name>` for a custom op, else the op) and `declaredCustomOps` (the names the
+  surface published in its context snapshot) — so the BUG-18 shape is one grep of the api log: the
+  emitted name sits beside the declared names. A turn with no screen context still only warns.
+  Guard: `tests/unit/jarvis-surface-context.spec.ts` ("/ask — an emitted-ops turn is diagnosable from
+  the api log alone") drives the real authenticated router with the model doubled, posts the BUG-18
+  reply against a Resume Studio context declaring `resume_action`, and asserts the returned ops and the
+  exact INFO payload; it failed at the INFO assertion before the line existed and passes after
+  (`npx vitest run tests/unit/jarvis-surface-context.spec.ts`, 24 passed).
+- **Remaining:** nothing against the done-when; the running api carries the line only after the next
+  core deploy.
 
 ### Hugging Face lane — first real completion through the router
 - **Remaining:** PR #288 registered Hugging Face Inference Providers as a free-tier, operator-key, and
@@ -1202,8 +1207,8 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** either the engine is repaired and `npx vitest run tests/unit/person-model-parity-postgres.spec.ts` is green from the host, or `ci-local.sh --head` runs the gate inside the api container when the host port is dead; and the twin shares its assertion list with the spec so they cannot drift.
 
 ### `jarvis-routes.ts` is over the decomposition threshold
-- **Remaining:** the file counts 802 code lines (the Phase 2 change was net −2). CLAUDE.md requires a decomposition plan before any addition; the person-model hook was routed through the slice for that reason.
-- **Done when:** the file is below 800 code lines with the existing jarvis specs green, and the recall hook is unchanged.
+- **Done (2026-09-14):** the per-thread chat-ticket + session-task registration (`threadTicketKey`, `ensureSessionTask`, `ensureThreadChatTicket`, the durable open-ticket lookup, and a new `closeThreadChatTicket` behind `POST /thread/close`) moved unchanged to `src/app/routes/jarvis-thread-tickets.ts`, named like the `jarvis-task-store` / `jarvis-result-access` siblings. `grep -vE "^\s*(//|\*|/\*|$)" src/app/routes/jarvis-routes.ts | wc -l` reads 732 (was 804, measured the same way); the sibling is 92. The person-model recall hook is untouched (`tests/unit/person-model-surface.spec.ts` still pins it). Specs run on the committed tree: `jarvis-surface-context`, `jarvis-package-tools-chat`, `jarvis-task-lifecycle`, `jarvis-legacy-service-containment`, `person-model-surface`, `core05-ai-disabled-boundary`, `jarvis-deliverable-capture`, `jarvis-speaker-wiring`, `jarvis-delayed-visual-lifecycle.integration`, `protected-jarvis-results` green; `jarvis-artifact-routing`, `jarvis-provider-intent-routing`, `jarvis-catalog-block` and `machine-write-identity` carry six failures that reproduce with the same assertion lines on untouched `origin/main` `5e1348ba`, so they predate this change.
+- **Remaining:** nothing against the done-when.
 
 ### Surface-glass spec is red on four page surfaces
 - **Remaining:** `tests/unit/surface-glass-assets.spec.ts` lists `src/pages/access`, `src/pages/app-loader`, `src/pages/jarvis-briefings` and `src/pages/users` as lacking the shared glass stylesheet (observed 2026-09-12 on `feat/store-compatibility-gate`; not introduced by the person-model work).
