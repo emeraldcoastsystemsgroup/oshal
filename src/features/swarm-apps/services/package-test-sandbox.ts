@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Add the browser container profile (more processes, descriptors and tmp for Chromium; still no network, no mounts, no daemon socket) and a real in-profile capability probe that verifies which runner prerequisites the image satisfies.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Read the probe report out of the TAP reporter's diagnostic framing (it re-emits a test's stdout as a comment, so the marker is never at column zero) and log which condition denied a capability set instead of silently returning nothing.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Generalize the container profile to a per-profile budget table and prove the vitest runner by actually executing a one-assertion suite with it inside the sealed container, rather than inferring it from a file's presence.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Carry whether the bounded capture dropped bytes, so a verdict can tell an incomplete record from a failed run.
  */
 import { randomUUID } from 'node:crypto';
 import { createChildLogger } from '@/shared/logger';
@@ -62,6 +63,8 @@ const logger = createChildLogger({ module: 'package-test-sandbox' });
 export interface PackageTestSandboxResult {
   exitCode: number | null; output: string; timedOut: boolean; cancelled: boolean;
   image: string; cleanupVerified: boolean;
+  /** The capture window dropped bytes. An absent TAP summary is then unknown evidence, never a failure. */
+  truncated: boolean;
 }
 
 /**
@@ -221,7 +224,7 @@ export class PackageTestSandbox {
         || !Number.isInteger(memory) || memory < 16 || memory > 4096) throw new Error('package_test_limits_invalid');
       return { payload, memory, name };
     });
-    const empty = { exitCode: null, output: '', timedOut: false, cancelled: false, image: input.image || '', cleanupVerified: true };
+    const empty = { exitCode: null, output: '', timedOut: false, cancelled: false, image: input.image || '', cleanupVerified: true, truncated: false };
     if (input.signal?.aborted) return { ...empty, cancelled: true };
     const { image, environmentKeys } = await beforeContainer(() => localImage(input.image));
     if (input.signal?.aborted) return { ...empty, image, cancelled: true };

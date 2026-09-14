@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Kill a separate controller process and prove automatic deadline disposal and correlated hostile-orphan cleanup.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove unavailable image preflight certifies that no container requires cleanup.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove the browser profile on the real image: the probe verifies Chromium, a Node-harness Playwright recipe drives loopback only, and Node recipes see no browser environment.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Hold the flooding fixture to the current capture contract: still bounded, still killed, still non-zero, and now reported as truncated rather than through the retired overflow marker.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -124,7 +125,9 @@ dockerTest('cancels an already running process and verifies the named container 
 dockerTest('bounds output bytes and kills a flooding fixture instead of accumulating arbitrary controller memory', async () => {
   const result = await new PackageTestSandbox().run(input(`setInterval(()=>process.stdout.write('x'.repeat(65536)),1);`));
   expect(Buffer.byteLength(result.output)).toBeLessThan(64 * 1024 + 100);
-  expect(result.output).toContain('output limit exceeded'); expect(result.cleanupVerified).toBe(true); expect(result.exitCode).not.toBe(0);
+  expect(result.output).toContain('bytes of package test output omitted');
+  expect(result.truncated).toBe(true);
+  expect(result.cleanupVerified).toBe(true); expect(result.exitCode).not.toBe(0);
 }, 45000);
 
 dockerTest('refuses a missing local image without pulling or falling back to another runtime', async () => {

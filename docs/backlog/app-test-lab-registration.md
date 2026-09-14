@@ -983,10 +983,30 @@ Until they pass, say the profile is proven against mocked boundaries only.
   no daemon socket, and a package snapshot never stages core files. Widening that is ADR-level.
   Guarded by `tests/unit/package-test-runner-profiles.spec.ts` (12 cases, including two that run
   against the real image). Not live on the box: the runner lives in the baked image.
-- **A passing suite with very large output is reported as failed.** `runAttachedSandbox()` caps
-  output at 64 KB and rewrites a zero exit to 1 on overflow, so a chatty but green suite fails with
-  "Package test assertions failed." Decide whether to keep the truncation marker but preserve the
-  exit code, or to cap per stream. Pre-existing, not introduced by this work.
+- **A passing suite with very large output is reported as failed.** DONE. Reproduced first: a
+  two-test green suite printing ~242 KB came back `exitCode 1`, `reportedTestCounts null`, published
+  `status: failed / "Package test assertions failed."` The bound is **65,536 bytes (64 KiB)**,
+  enforced in `runAttachedSandbox()` in `package-test-sandbox-process.ts` and nowhere else; no
+  docker-attach buffer, `maxBuffer` or log-field cap is involved. Three stacked causes: the capture
+  kept only the HEAD, so the TAP summary (emitted last) was discarded; overflow called `stop()`,
+  reaping the container mid-run; and `resolve()` literally rewrote `exitCode 0` to `1`.
+  The bound is unchanged and was NOT raised. The same 64 KiB budget is now spent on a head (48 KiB)
+  and a tail (16 KiB) through `createOutputWindow()`, with a one-line `... N bytes ... omitted ...`
+  gap between them so no spliced line can read as a real one; the run is drained past the bound
+  instead of reaped (a 64 MiB runaway ceiling still kills a true flooder, at ~5.6 s in the flooding
+  fixture); and the exit code is reported as returned, with a new `truncated` flag carried through
+  `PackageTestSandboxResult` to `InstalledAppTestResult`.
+  `packageTestOutcome()` now rests the verdict on the run's own evidence, exit code plus the TAP
+  plan/summary. **There is a third state**: a truncated run whose evidence did not survive is
+  published `pending` with `OUTPUT_TRUNCATED_INDETERMINATE`, never a pass and never a failure
+  (`pending` already aggregates as not-verified in `app-installation-verification.ts`). Under
+  truncation, planned-but-unseen TAP points are reported as `unknown`, not as failures. The
+  zero-test and early-exit refusals are untouched, so the sibling lane's false-positive fix stands.
+  Guarded by `tests/unit/package-test-output-truncation.spec.ts` (9 cases; two drive a real
+  over-threshold run, one green and one red, through the real container and capture path).
+  Mutation-proved twice: restoring the exit-code rewrite reddens the real green Docker case;
+  counting unseen points as failures reddens the indeterminate case.
+  Not live on the box: the runner lives in the baked image.
 - **`portrait-studio`'s `camera-browser` recipe cannot ever run unattended.** Its suite file is a
   hand-run script with its own `main()` and `process.exitCode` that exits 2 without `--playwright`
   and `--picker`, so the catalog now refuses it at sealing instead of reporting a pass. Converting it
