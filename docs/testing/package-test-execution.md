@@ -167,6 +167,22 @@ place and never probes. Recipes without the
 script would report nothing. Vitest, external and service-authenticated smoke
 recipes remain unavailable in the isolated runner.
 
+`harness:core-test-fixtures` is verified the same way. Three store browser cases
+(cad-studio `surface-lifecycle`, embodied `surface-browser` and scan-to-print
+`surface-freshness`) require the core's shared browser fixtures —
+`tests/fixtures/isolated-browser.ts` and `tests/fixtures/stl-viewer.ts` — from
+`OSHAL_CORE_ROOT` through `tsx/cjs`. The image carries exactly that closure at
+`/app/tests/fixtures/` (`Dockerfile.oshal`; two files, no relative imports,
+runtime dependencies only — `CORE_TEST_FIXTURES` in
+`package-test-sandbox-launcher.ts`), and the probe loads each one through tsx
+from the core root before the prerequisite is advertised. A file the image lacks
+or cannot load keeps those cases pending with `Additional prerequisites require
+verification: harness:core-test-fixtures.` The staged set, the Dockerfile COPY,
+the `.dockerignore` allowlist and the advertisement are held to one another by
+`tests/unit/package-test-core-fixtures.spec.ts`; the Docker case in
+`tests/unit/package-test-sandbox.spec.ts` proves the advertisement against the
+real image.
+
 ## Run a package batch
 
 In **Package runs**, select one application and choose **Run package suites**.

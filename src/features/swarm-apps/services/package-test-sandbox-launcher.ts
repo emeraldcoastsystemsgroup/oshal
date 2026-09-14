@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Arm the fixed launcher deadline independently of the controller before accepting any package bytes.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Add the browser profile: the launcher points Playwright at the image's system Chromium through a registry shim on the writable tmpfs, so Node-harness browser recipes run in the same closed container.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Add the vitest profile: the launcher runs the image's own globally installed vitest CLI over the staged suite with a TAP reporter, inside the same closed container — no network, no mounts, no daemon socket.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Name the core test fixtures the image carries at OSHAL_CORE_ROOT for browser recipes that declare harness:core-test-fixtures. Three store browser cases require tests/fixtures/isolated-browser.ts and tests/fixtures/stl-viewer.ts from the core root through tsx, and the image shipped no tests/ at all; this is the measured closure (two files, no relative imports, runtime dependencies only), fixed and controller-owned like VITEST_CLI, so the probe asks the image about exactly this set and the Dockerfile COPY is held to it.
  */
 import path from 'node:path';
 
@@ -23,6 +24,13 @@ export const SANDBOX_PROFILES: readonly PackageTestSandboxProfile[] = ['node', '
 /** @description Where the image installs the vitest CLI globally. Fixed and controller-owned: a package never
  * supplies a runner path, and the launcher refuses the profile outright when this file is absent. */
 export const VITEST_CLI = '/usr/local/lib/node_modules/vitest/vitest.mjs';
+
+/** @description The core test fixtures a browser recipe may require from OSHAL_CORE_ROOT (`harness:core-test-fixtures`):
+ * the shared isolated-browser launcher and the STL viewer helpers, loaded through the image's tsx CommonJS hook exactly
+ * as the store specs load them. This is the whole measured closure — no relative imports, runtime dependencies only —
+ * and Dockerfile.oshal copies exactly these paths to /app/tests/fixtures/; the probe advertises the prerequisite only
+ * after loading every one of them on the image. Nothing else from tests/ reaches the image. */
+export const CORE_TEST_FIXTURES: readonly string[] = ['tests/fixtures/isolated-browser.ts', 'tests/fixtures/stl-viewer.ts'];
 
 const MAX_BYTES = 32 * 1024 * 1024;
 
