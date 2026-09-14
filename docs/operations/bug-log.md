@@ -23,7 +23,8 @@ figure / anti-drift rules / seeded bug-log), `cf197b73` (scorecard fail-loud gua
 - **Tier 2:** counts generator (BUG-9 — **EXTEND `scripts/site-apps-catalog.js`**, the existing
   provider/app gate; do NOT build a competing script); ADR status drift (BUG-10 — **coordinate**, a
   bot is already stamping supersessions, e.g. `d9f99996`); evidence-generator honesty (presence-vs-live
-  labeling, BUG-4 residual).
+  labeling, BUG-4 residual). *(2026-09-14: BUG-9 and BUG-10 are closed — see their entries. The BUG-4
+  residual is not.)*
 - ~~**Tier 2 — architecture-doc live-feature under-claims**~~ — **DONE 2026-08-02.** All three named
   under-claims are folded into `platform-feature-catalog.md` and corrected at their source:
   - **personal-graph** — `connectors-and-graph-architecture.md` claimed it "has no import in
@@ -47,7 +48,8 @@ figure / anti-drift rules / seeded bug-log), `cf197b73` (scorecard fail-loud gua
     (de-vendored 2026-07-23; nothing Unreal is tracked in this repo).
 - **Tier 3:** orphaned retired-feature docs (BUG-11), `docs/k8/` shipped-path (terraform),
   CLAUDE.md's stale extension-guide citation, stale infra facts (any-bot:latest, ports,
-  Keycloak), index hygiene.
+  Keycloak), index hygiene. *(2026-09-14: BUG-11, the `docs/k8/` path and the extension-guide
+  citation are closed — see BUG-11's entry. The stale infra facts were not re-checked.)*
 
 **Counts as read on 2026-07-18 (superseded — BUG-9 is fixed; run `node scripts/site-apps-catalog.js --docs` for today's):** 34 manifests · 307 connectors · 101 personas ·
 ~113 numbered ADRs (114 files) · **42 providers (CONFIRMED — `site-apps-catalog.js` already counts
@@ -1021,7 +1023,8 @@ called with `await` alone.** Worth a lint rule if a second instance turns up.
   the incident writes use. That is BUG-20.
 
 ## BUG-20 — Incident writes run on the pool inside the claiming transaction, so they survive a rollback that reverts the claim
-- **Type:** Bug (lost atomicity) · **Priority:** Medium · **Status:** OPEN
+- **Type:** Bug (lost atomicity) · **Priority:** Medium · **Status:** OPEN — reproduced 2026-09-14; the fix needs a
+  design decision (see the note at the end).
 - **Discovered:** 2026-08-13, split out of BUG-16's verification. **The verifier corrected the
   documented rationale as well as the code**, and both halves are recorded here.
 
@@ -1055,6 +1058,55 @@ A rule justified by a consequence that cannot occur is a rule people learn to di
 **Prevention (guard-per-fix):** a spec that makes the handler throw after an incident write and
 asserts no `oshal_incident` row survives once the event is back to `pending`. Real database, real
 transaction — mocking the executor here would mock precisely the boundary the defect lives on.
+
+**Investigation note (2026-09-14): reproduced, NOT fixed.** It still reproduces, and the fix described
+above does not work as written.
+
+**Reproduced.** The run was a scratch spec, deleted afterwards and not committed. It drove the real
+receiver over the disposable migrated PostgreSQL, with BUG-19's fix in place, and made the claiming
+connection fail on its decide-event and fail-event writes. That simulates a connection lost after the
+handler's incident writes.
+- After the rolled-back drain, the event was back to `pending`: not processed, `attempts = 0`. The
+  `oshal_incident` row (occurrence 1, linked), its `oshal_incident_member` row (occurrence 1) and an
+  `oshal_alert_dispatch` `create` row were all committed.
+- The next drain re-claimed the event and counted the same single delivery twice. The incident went to
+  occurrence 2, the member to occurrence 2, and there were two dispatch rows (`create`, `update`). The
+  event ended decided `consolidated`.
+
+The writes are where the entry says, with today's line numbers: `incident-store.ts:475-476`
+(`consolidate`), `:567` (`updateIncident`), `:587` (`upsertMember`), `:616`
+(`markMemberResolved`), and `dispatch-log.ts:165`. The deadlock rationale is still at
+`envelope-store.ts:609-610`.
+
+**Why the entry's fix was stopped.** "An executor parameter defaulting to the pool" is not enough,
+because of three things in the code:
+1. `consolidate` retries a unique violation (23505) by re-reading. On the claim transaction the first
+   error aborts the transaction, and every later statement fails with 25P02, so each attempt needs a
+   SAVEPOINT.
+2. `consolidateContended` opens its own connection for `BEGIN … pg_advisory_xact_lock … COMMIT`. On
+   the claiming connection it cannot BEGIN again, and its COMMIT would commit the claim. It would have
+   to become a savepoint, and the advisory lock would then be held for the whole batch.
+3. `recordIncident` promises that an incident-write failure never strands an event that already has a
+   ticket. On the claiming connection, one failed incident statement makes `decideEvent` and then
+   `failEvent` fail on the aborted transaction, and `withPendingEvents` rolls back the whole claimed
+   batch. The tickets `intakeAlert` created for those events are already committed, because
+   production writes tickets through `PostgresTicketStore` on the pool (`composition-root.ts:146`),
+   not on the claim.
+
+Point 3 also bounds the atomicity itself. The ticket is outside the claim transaction, so even with
+the executor threaded through, a rolled-back claim would leave a ticket with no incident row: the
+reverse orphan.
+
+**Decision needed** (design or operator): what commits and rolls back with the claim.
+- **(a)** The incident, member and dispatch rows, with a savepoint per event. Tickets stay outside and
+  re-consolidate on retry.
+- **(b)** The ticket as well, which puts the ticket store on the executor. That crosses into the
+  ticketing slice.
+- **(c)** Keep the pool writes and make re-consolidation of an already-worked event idempotent.
+
+The corrected wording of the `envelope-store.ts` comment depends on that choice, so the comment was
+not changed either. No guard was committed: a spec that is red today would turn the unit gate red for
+a known and undecided defect. The reproduction above is the record instead.
 
 ## BUG-21 — The monitoring overlay is not running, nothing starts it, and nothing notices it is gone
 - **Type:** Bug (observability / operational) · **Priority:** High · **Status:** **FIXED 2026-08-14** (#213) — see the closing note at the end.
