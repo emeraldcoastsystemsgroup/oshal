@@ -17,7 +17,8 @@ export {
 } from './service-activation-store';
 export {
   ApplicationServiceActivationService, type ApplicationServiceActivationOptions,
-  type ApplicationServiceDeclaration, type ApplicationServiceState, type ApplicationServicesView,
+  type ApplicationServiceDeactivation, type ApplicationServiceDeclaration,
+  type ApplicationServiceState, type ApplicationServicesView,
 } from './service-activation-service';
 export {
   APPLICATION_SERVICE_PRINCIPAL_ISSUER, applicationServicePrincipalSub, serviceActivationGrantSource,

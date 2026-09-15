@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com     | ADR-157 S1: prove the kernel services routes over a real loopback HTTP server and the real activation service — a non-administrator asking for a system service gets 403, an administrator gets it, a person activates only for themselves, and a second person can neither deactivate someone else's activation nor make it disappear.
+ * 2   | maintainer@emeraldcoastsystemsgroup.com     | Deactivation over the wire: a person who holds no activation reads 200 {deactivated:false} and a person who reaches for the system service reads 403 — the two answers a caller must be able to tell apart — while an unknown or contradictory principal class is a 400 and the system activation survives every one of them.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -164,5 +165,67 @@ describe('ADR-157 scheduled services routes', () => {
     const closed = await call('DELETE', `/${APP}/services/${SCHEDULE_ID}/activation?targetSub=alice&targetIssuer=${encodeURIComponent(ISSUER)}`, 'admin');
     expect(closed.body).toEqual({ deactivated: true });
     expect(registered).toEqual([]);
+  });
+
+  // The schedule below is unclassified, so a system activation and a person's activation of the
+  // SAME schedule are both live — which is every service-route schedule on a box until a package
+  // declares runsAs, and the shape in which a deactivation could reach the wrong principal.
+  describe('with the application\'s system service and one person\'s both live', () => {
+    beforeEach(async () => {
+      await call('POST', `/${APP}/services/${SCHEDULE_ID}/activate`, 'admin', { runsAs: 'system' });
+      await call('POST', `/${APP}/services/${SCHEDULE_ID}/activate`, 'alice', { runsAs: 'user' });
+    });
+
+    /** @description The live activations of the fixture schedule, by class, read from the store. */
+    async function liveClasses(): Promise<string[]> {
+      return (await activations.listByApp(APP)).map(row => row.runsAs).sort();
+    }
+
+    it('tells a person who holds no activation apart from one who lacks permission', async () => {
+      const mine = await call('DELETE', `/${APP}/services/${SCHEDULE_ID}/activation?targetSub=bob`, 'bob');
+      expect(mine.status).toBe(200);
+      expect(mine.body).toEqual({ deactivated: false });
+
+      const untargeted = await call('DELETE', `/${APP}/services/${SCHEDULE_ID}/activation`, 'bob');
+      expect(untargeted.status).toBe(200);
+      expect(untargeted.body).toEqual({ deactivated: false });
+
+      const reachingForTheSystemOne = await call('DELETE', `/${APP}/services/${SCHEDULE_ID}/activation?runsAs=system`, 'bob');
+      expect(reachingForTheSystemOne.status).toBe(403);
+      expect(reachingForTheSystemOne.body).toEqual({ error: 'authorization_service_admin_required' });
+
+      expect(await liveClasses()).toEqual(['system', 'user']);
+      expect(registered).toEqual(['alice']);
+    });
+
+    it('answers a named principal that never activated with not-found, leaving every other activation live', async () => {
+      const stray = await call('DELETE', `/${APP}/services/${SCHEDULE_ID}/activation?targetSub=never-activated`, 'admin');
+      expect(stray.body).toEqual({ deactivated: false });
+      expect(await liveClasses()).toEqual(['system', 'user']);
+
+      const hers = await call('DELETE', `/${APP}/services/${SCHEDULE_ID}/activation?targetSub=alice`, 'admin');
+      expect(hers.body).toEqual({ deactivated: true });
+      expect(await liveClasses()).toEqual(['system']);
+      expect(registered).toEqual([]);
+    });
+
+    it('closes the system service only when a swarm administrator names that class', async () => {
+      const closed = await call('DELETE', `/${APP}/services/${SCHEDULE_ID}/activation?runsAs=system`, 'admin');
+      expect(closed.body).toEqual({ deactivated: true });
+      expect(await liveClasses()).toEqual(['user']);
+      expect(registered).toEqual(['alice']);
+    });
+
+    it('refuses a class it does not know and a class that contradicts the named person', async () => {
+      const unknown = await call('DELETE', `/${APP}/services/${SCHEDULE_ID}/activation?runsAs=whatever`, 'admin');
+      expect(unknown.status).toBe(400);
+      expect(unknown.body).toEqual({ error: 'authorization_service_class_required' });
+
+      const contradiction = await call('DELETE', `/${APP}/services/${SCHEDULE_ID}/activation?runsAs=system&targetSub=alice`, 'admin');
+      expect(contradiction.status).toBe(400);
+      expect(contradiction.body).toEqual({ error: 'authorization_service_class_mismatch' });
+
+      expect(await liveClasses()).toEqual(['system', 'user']);
+    });
   });
 });

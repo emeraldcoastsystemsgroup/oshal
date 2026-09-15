@@ -12,6 +12,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-157 S1: GET /:name/services, POST /:name/services/:id/activate and DELETE /:name/services/:id/activation — read the declared services with their activation state, turn one on under an explicitly named principal class, and turn it off again.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The deactivation names its principal class the same way the activation does: `?runsAs=system|user`, refused with the same 400 when it is anything else. Turning a service off no longer depends on which activation a lookup happens to find, so a person with nothing to turn off reads a 200 not-found instead of an administration refusal.
  *
  * @module application-service-activation-routes
  */
@@ -87,21 +88,33 @@ export function registerApplicationServiceActivationRoutes(router: Router): void
     }
   });
 
-  /** Deactivate one service: the caller's own, or — for a swarm administrator — a named person's. */
+  /**
+   * Deactivate one service under the principal class the caller names: `?runsAs=system` is the
+   * application's own activation and needs swarm administration, exactly as activating it does;
+   * anything else is one person's activation — the caller's own, or `?targetSub=` for a swarm
+   * administrator closing someone else's. A principal that holds no activation reads 200
+   * `{ deactivated: false }`, which is how a caller tells "there was nothing to turn off" apart
+   * from the 403 that says they may not turn it off.
+   */
   router.delete('/:name/services/:id/activation', async (req: Request, res: Response) => {
     const name = String(req.params.name);
     const scheduleId = String(req.params.id);
+    const runsAs: unknown = req.query.runsAs;
+    if (runsAs !== undefined && runsAs !== 'system' && runsAs !== 'user') {
+      res.status(400).json({ error: 'authorization_service_class_required' });
+      return;
+    }
     const targetSub = typeof req.query.targetSub === 'string' ? req.query.targetSub : undefined;
     const targetIssuer = typeof req.query.targetIssuer === 'string' ? req.query.targetIssuer : undefined;
     const composed = handles(res);
     if (!composed) return;
     try {
       const actor = await composed.resolveActor(req);
-      const closed = await composed.service.deactivate(actor, { app: name, scheduleId, targetSub, targetIssuer });
-      logger.info({ app: name, scheduleId, closed }, 'Scheduled service deactivation requested');
+      const closed = await composed.service.deactivate(actor, { app: name, scheduleId, runsAs, targetSub, targetIssuer });
+      logger.info({ app: name, scheduleId, runsAs: runsAs ?? 'user', closed }, 'Scheduled service deactivation requested');
       res.json({ deactivated: closed });
     } catch (error) {
-      fail(res, error, { name, scheduleId });
+      fail(res, error, { name, scheduleId, runsAs });
     }
   });
 }

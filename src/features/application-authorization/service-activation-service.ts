@@ -5,13 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: activate, deactivate and resolve scheduled application services. A system service is classified and turned on by a swarm administrator and runs as the application's own principal; a user service is turned on by a person, for themselves, and only after they are authorized for what it needs RIGHT NOW. Nothing here bypasses authorize(); it records what a person did.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: the services view carries the ADR-145 to-do descriptor for itself — a path and RFC 6901 pointers a setup dashboard probes in the viewer's own session — so "N scheduled services awaiting activation" is a readiness fact the kernel states, not a string a surface invents.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Fix: a deactivation names its principal class instead of inferring it. Asking for a principal that held no activation fell through to an untargeted lookup, and the row that matches COALESCE(target_sub,'')='' is the application's OWN system activation — so a stale or mistyped target switched off a service for everyone, and a person with nothing to turn off was told they needed administration. The class now decides: `system` takes the same swarm-administration check activation takes, through one shared assertion, and everything else resolves exactly one named person's activation or answers not-found.
  *
  * @module service-activation-service
  */
 import { randomUUID } from 'node:crypto';
 import { createChildLogger } from '@/shared/logger';
 import type { AuthorizationActor, AuthorizationCatalog, AuthorizationDecision, AuthorizationOperation } from '@/shared/application-authorization';
-import { assertActor } from './policy';
+import { assertActor, validSubject } from './policy';
 import { ApplicationAuthorizationError, type AuthorizationStore } from './types';
 import { revokeServiceActivationGrants, writeServiceActivationGrants } from './service-activation-grants';
 import {
@@ -81,6 +82,21 @@ export interface ApplicationServicesView {
   readiness: ApplicationServicesReadiness;
 }
 
+/**
+ * What a deactivation names. The principal class is stated, never inferred from a lookup that
+ * missed: the schedule's untargeted row belongs to the application itself, so resolving it because
+ * some other principal had no activation would close a service nobody asked about.
+ */
+export interface ApplicationServiceDeactivation {
+  app: string;
+  scheduleId: string;
+  /** The class being closed. Absent means `user` — one person's activation. */
+  runsAs?: ApplicationServiceRunsAs;
+  /** Whose activation, for a `user` deactivation. Absent means the caller's own. */
+  targetSub?: string;
+  targetIssuer?: string;
+}
+
 /** Composition-injected ports. The service owns no transport and no scheduler of its own. */
 export interface ApplicationServiceActivationOptions {
   activations: ApplicationServiceActivationStore;
@@ -142,9 +158,7 @@ export class ApplicationServiceActivationService {
     const declaration = await this.requireDeclaration(input.app, input.scheduleId);
     const posture = this.requirePosture(input.app);
     this.assertClass(declaration, input.runsAs);
-    if (input.runsAs === 'system' && !actor.isSwarmAdmin) {
-      throw new ApplicationAuthorizationError(403, 'authorization_service_admin_required');
-    }
+    this.assertSystemAuthority(actor, input.runsAs);
     const principal = input.runsAs === 'system'
       ? { sub: applicationServicePrincipalSub(input.app), issuer: APPLICATION_SERVICE_PRINCIPAL_ISSUER }
       : { sub: actor.sub, issuer: actor.issuer };
@@ -158,24 +172,30 @@ export class ApplicationServiceActivationService {
     return this.openActivation(actor, declaration, input.runsAs, principal, posture);
   }
 
-  /** @description Deactivate a service: the caller's own user activation, or, for a swarm
-   * administrator, a system activation or one person's activation of a user service.
+  /** @description Deactivate one scheduled service under the principal class the caller names.
+   *
+   * `system` is the application's own activation and takes the SAME swarm-administration check
+   * that activating one takes — the shared assertion below, not a second rule. Anything else is
+   * one person's activation: the caller's own, or a named person's for a swarm administrator, and
+   * a principal that holds none is answered with not-found. Nothing falls back from one principal
+   * to another, so a caller can only ever close what they named.
+   *
+   * The declaration's proposed class is deliberately NOT re-checked here: a package that changes
+   * `runsAs` after the fact must not strand an activation that is already running.
+   *
    * @param actor - The verified caller.
-   * @param input - Application, schedule and (administrators only) whose activation to close.
-   * @returns True when a live activation was closed.
+   * @param input - Application, schedule, the principal class and (administrators only) whose
+   * activation to close.
+   * @returns True when a live activation was closed; false when that principal holds none.
    */
-  async deactivate(actor: AuthorizationActor, input: { app: string; scheduleId: string; targetSub?: string; targetIssuer?: string }): Promise<boolean> {
+  async deactivate(actor: AuthorizationActor, input: ApplicationServiceDeactivation): Promise<boolean> {
     assertActor(actor);
     const declaration = await this.requireDeclaration(input.app, input.scheduleId);
-    const target = input.targetSub === undefined
-      ? { targetSub: actor.sub, targetIssuer: actor.issuer }
-      : { targetSub: input.targetSub, targetIssuer: input.targetIssuer ?? actor.issuer };
-    const own = target.targetSub === actor.sub && target.targetIssuer === actor.issuer;
-    if (!own && !actor.isSwarmAdmin) throw new ApplicationAuthorizationError(403, 'authorization_service_owner_required');
-    const user = await this.options.activations.findLive({ app: input.app, scheduleId: declaration.scheduleId, ...target });
-    const system = user ? null : await this.options.activations.findLive({ app: input.app, scheduleId: declaration.scheduleId });
-    if (system && !actor.isSwarmAdmin) throw new ApplicationAuthorizationError(403, 'authorization_service_admin_required');
-    const activation = user ?? system;
+    const runsAs = input.runsAs ?? 'user';
+    this.assertSystemAuthority(actor, runsAs);
+    const activation = runsAs === 'system'
+      ? await this.findSystemActivation(input, declaration.scheduleId)
+      : await this.findPrincipalActivation(actor, input, declaration.scheduleId);
     if (!activation) return false;
     await this.closeActivation(activation, actor);
     if (activation.runsAs === 'user' && activation.targetSub) {
@@ -269,6 +289,55 @@ export class ApplicationServiceActivationService {
     });
     logger.info({ app: activation.app, scheduleId: activation.scheduleId, runsAs: activation.runsAs, removed },
       'Scheduled application service deactivated');
+  }
+
+  /** @description The one authority rule for a SYSTEM service, applied identically wherever the
+   * application's own principal is turned on or off: only a swarm administrator (ADR-148) acts as
+   * the application. Activation and deactivation call this same assertion so the two can never
+   * drift apart.
+   * @param actor - The verified caller.
+   * @param runsAs - The principal class the caller named.
+   * @returns Nothing; throws 403 when a system act is attempted without swarm administration.
+   */
+  private assertSystemAuthority(actor: AuthorizationActor, runsAs: ApplicationServiceRunsAs): void {
+    if (runsAs === 'system' && !actor.isSwarmAdmin) {
+      throw new ApplicationAuthorizationError(403, 'authorization_service_admin_required');
+    }
+  }
+
+  /** @description The schedule's system activation: the application principal's own row, which
+   * carries no target. Naming a person alongside it names two different principals, so that is a
+   * refusal rather than a filter.
+   * @param input - The deactivation request.
+   * @param scheduleId - The resolved full schedule id.
+   * @returns The live system activation, or null when the service is not activated as one.
+   */
+  private async findSystemActivation(input: ApplicationServiceDeactivation, scheduleId: string): Promise<ApplicationServiceActivation | null> {
+    if (input.targetSub !== undefined || input.targetIssuer !== undefined) {
+      throw new ApplicationAuthorizationError(400, 'authorization_service_class_mismatch');
+    }
+    return this.options.activations.findLive({ app: input.app, scheduleId });
+  }
+
+  /** @description Exactly one person's activation — the caller's own, or, for a swarm
+   * administrator, a named person's. A target that is not a subject names nobody, and an
+   * untargeted lookup is the application's own row, so it is refused rather than widened.
+   * @param actor - The verified caller.
+   * @param input - The deactivation request.
+   * @param scheduleId - The resolved full schedule id.
+   * @returns That person's live activation, or null when they hold none.
+   */
+  private async findPrincipalActivation(actor: AuthorizationActor, input: ApplicationServiceDeactivation,
+    scheduleId: string): Promise<ApplicationServiceActivation | null> {
+    const target = input.targetSub === undefined
+      ? { targetSub: actor.sub, targetIssuer: actor.issuer }
+      : { targetSub: input.targetSub, targetIssuer: input.targetIssuer ?? actor.issuer };
+    if (!validSubject(target.targetSub) || !validSubject(target.targetIssuer)) {
+      throw new ApplicationAuthorizationError(400, 'authorization_service_target_invalid');
+    }
+    const own = target.targetSub === actor.sub && target.targetIssuer === actor.issuer;
+    if (!own && !actor.isSwarmAdmin) throw new ApplicationAuthorizationError(403, 'authorization_service_owner_required');
+    return this.options.activations.findLive({ app: input.app, scheduleId, ...target });
   }
 
   /** @description A package proposal binds the class: a `user` service is never activated as system. */
