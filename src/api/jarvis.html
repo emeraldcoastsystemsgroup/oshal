@@ -1506,8 +1506,9 @@ async function handleInput(text) {
     seenDone.add(j0.jobId);   // handled inline here — keep the shelf from re-announcing it
     const d = await waitForResult(j0.jobId);
     if (d.status === 'error') {
-      bubble.innerHTML = `<span class="err">${esc(d.error || "That didn't work.")}</span>`;
-      speak("Sorry, that didn't work.");
+      const failure = askFailureLines(d);
+      bubble.innerHTML = `<span class="err">${esc(failure.text)}</span>`;
+      speak(failure.speech);
     } else {
       // Only the live request may dispatch. History/shelf replay never enters this branch.
       if (d.artifactAction && !dispatchedArtifactJobs.has(j0.jobId)) {
@@ -1547,6 +1548,24 @@ async function handleInput(text) {
   }
 }
 
+/* What a failed turn TELLS the operator. "Sorry, that didn't work" is the right apology for a turn
+   that genuinely broke, and the wrong one for a box that simply has no AI engine connected — the
+   operator repeats the question, gets the same shrug, and never learns that the fix is one saved
+   endpoint. The server marks that state with code NO_HOSTED_BRAIN and sends the actionable
+   sentence, so the SPOKEN line says it too; the spoken variant drops the arrows, which a speech
+   engine reads as noise. Pure on purpose: unit-tested out of this file (same pattern as
+   voiceFailureMessage — see tests/unit/jarvis-no-hosted-brain-honesty.spec.ts). */
+function askFailureLines(result){
+  const r=result||{};
+  const text=String(r.error||'').trim();
+  if(r.code==='NO_HOSTED_BRAIN'){
+    return {
+      text: text || 'Jarvis has no AI engine connected — add one under Settings → Connections → Bring Your Own LLM.',
+      speech: 'Jarvis has no AI engine connected. Add one in Settings, under Connections, Bring Your Own LLM.',
+    };
+  }
+  return { text: text || "That didn't work.", speech: "Sorry, that didn't work." };
+}
 /* Poll one job to completion. Async because a tool-using turn can outlast Cloudflare's ~100s edge
    timeout if a connection is held open; returns the final {status:'done'|'error', ...} payload. */
 async function waitForResult(jobId) {
