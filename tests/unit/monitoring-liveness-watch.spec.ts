@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the BUG-21 tail: prove the unattended watch actually fails when the overlay is not there, that a confirmed failure reaches the alert rail, that a standing outage does not mail every run, that recovery is announced once, and that an absent engine is observed rather than started. The strict check, curl, the closed socket, Git Bash, cscript and PowerShell all run for real; only the `docker` CLI is doubled, on PATH, so the exact argv is asserted instead of a live container being exec'd.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Hand the child exactly one PATH key and give MSYS bash forward-slash script paths. Spreading process.env and then adding PATH leaves Windows a second, case-different copy of the same variable, and whichever CreateProcess picks decides whether the recording docker shim is on PATH at all - a guard that silently exercised the real docker CLI would be worse than no guard.
  */
 
 import { afterAll, describe, expect, it } from 'vitest';
@@ -22,6 +23,31 @@ const LAUNCHER_PATH = join(ROOT, 'scripts', 'monitoring-liveness-watch-hidden.vb
 const REGISTER_PATH = join(ROOT, 'scripts', 'register-monitoring-liveness-task.ps1');
 const ALERT_ENTRYPOINT = '/app/scripts/oshal-send-alert.js';
 const SCRATCH = mkdtempSync(join(tmpdir(), 'oshal-monitoring-watch-'));
+
+/**
+ * @description Give a Windows path to MSYS bash in the only form it opens reliably.
+ * @param value Absolute path produced by node.
+ * @returns The same path with forward slashes.
+ */
+function forBash(value: string): string {
+  return value.replaceAll('\\', '/');
+}
+
+/**
+ * @description Build a child environment with exactly one PATH key, the shim's directory first.
+ * @param binDir Directory holding the recording docker shim.
+ * @param extra Case-specific variables for this run.
+ * @returns An environment safe to hand CreateProcess, which matches variable names case-insensitively.
+ */
+function shimmedEnvironment(binDir: string, extra: Record<string, string>): Record<string, string> {
+  const base: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined || key.toUpperCase() === 'PATH') continue;
+    base[key] = value;
+  }
+  base.PATH = `${binDir}${delimiter}${process.env.PATH ?? ''}`;
+  return { ...base, ...extra };
+}
 
 afterAll(() => rmSync(SCRATCH, { recursive: true, force: true }));
 
@@ -102,16 +128,14 @@ function createHarness(name: string): Harness {
  * @returns Exit status plus the combined output of the run.
  */
 function runWatch(harness: Harness, env: Record<string, string>): { status: number; output: string } {
-  const run = spawnSync(BASH, [WATCH_PATH], {
+  const run = spawnSync(BASH, [forBash(WATCH_PATH)], {
     encoding: 'utf8',
     timeout: 90_000,
-    env: {
-      ...process.env,
-      PATH: `${harness.binDir}${delimiter}${process.env.PATH ?? ''}`,
+    env: shimmedEnvironment(harness.binDir, {
       FAKE_DOCKER_LOG: harness.callLog,
       MONITORING_WATCH_STATE_DIR: harness.stateDir,
       ...env,
-    },
+    }),
   });
   return { status: run.status ?? -1, output: `${run.stdout ?? ''}${run.stderr ?? ''}` };
 }
@@ -142,13 +166,13 @@ function readState(harness: Harness): string {
 function writeStubCheck(harness: Harness, status: number): string {
   const path = join(harness.dir, `stub-check-${status}.sh`);
   writeFileSync(path, `#!/usr/bin/env bash\necho "Monitoring: watching 35 oshal targets, all up."\nexit ${status}\n`);
-  return path;
+  return forBash(path);
 }
 
 describe('monitoring-liveness-check --strict against a target that is not there', () => {
   it('exits non-zero and names the endpoint it could not reach', async () => {
     const port = await closedPort();
-    const run = spawnSync(BASH, [CHECK_PATH, '--strict'], {
+    const run = spawnSync(BASH, [forBash(CHECK_PATH), '--strict'], {
       encoding: 'utf8',
       timeout: 60_000,
       env: { ...process.env, PROMETHEUS_PORT: String(port) },
