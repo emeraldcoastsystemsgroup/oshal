@@ -79,7 +79,8 @@ Flags: `--url --token --secret --sub --context --label --session --new --json --
 eval "$(swarm-cli completion bash)"                                   # this shell
 swarm-cli completion bash | sudo tee /etc/bash_completion.d/swarm-cli # persist
 
-# zsh
+# zsh (either one)
+eval "$(swarm-cli completion zsh)"                                    # in ~/.zshrc, after compinit
 swarm-cli completion zsh > "${fpath[1]}/_swarm-cli"                   # then restart zsh
 
 # PowerShell
@@ -90,8 +91,11 @@ Completes subcommands, flags, `completion <shell>`, `tokens revoke`, and even yo
 names for `--context`. Inside `chat`, **TAB** completes slash-commands (`/help /catalog /tasks
 /whoami /history /session /new /clear /exit`).
 
-> zsh completion is emitted and syntax-checked but has **not** been executed on a real zsh —
-> see the backlog. bash and PowerShell are verified through their own completion engines.
+> zsh completion runs in a real zsh in `tests/unit/swarm-cli-zsh-completion.spec.ts`: the
+> printed script passes `zsh -n`, and TAB in an interactive zsh offers the commands,
+> `completion <shell>`, `tokens revoke` and your saved `--context` names, for both zsh installs
+> above (the spec needs a zsh with the `zsh/zpty` module on PATH or in `OSHAL_ZSH`). bash and
+> PowerShell are verified through their own completion engines.
 
 ## Scripting
 
