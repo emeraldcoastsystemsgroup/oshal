@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Admit exact-owner schedules and atomically lease catalog batches across local API processes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Take readiness as a re-requestable thunk so a bootstrap that lost the boot-time pool acquire is retried by the next query rather than refusing every one.
  */
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
@@ -27,13 +28,13 @@ function refused(message: string, status = 409): never { throw Object.assign(new
 
 /** @description Durable local scheduling with principal-qualified lookups and conditional lease updates. */
 export class PostgresTestLabScheduleStore implements TestLabScheduleStore {
-  constructor(private readonly pool: Pool, private readonly ready: Promise<unknown> = Promise.resolve()) {}
+  constructor(private readonly pool: Pool, private readonly ready: () => Promise<unknown> = () => Promise.resolve()) {}
 
   private async query(sql: string, values: unknown[] = []) {
-    await this.ready; return runWithSystemIdentity(() => this.pool.query(sql,values));
+    await this.ready(); return runWithSystemIdentity(() => this.pool.query(sql,values));
   }
   private async transaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
-    await this.ready;
+    await this.ready();
     return runWithSystemIdentity(async () => {
       const client = await this.pool.connect();
       try { await client.query('BEGIN'); const result = await work(client); await client.query('COMMIT'); return result; }

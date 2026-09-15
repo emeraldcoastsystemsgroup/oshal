@@ -108,7 +108,7 @@ describe('Database authority fence',() => {
 
   it('does not free capacity for an expired runner until external cleanup is positively verified',async () => {
     const actor = { issuer: 'https://first.test',sub: 'same-sub' }; const id = randomUUID();
-    const store = new PostgresTestLabRunStore(fixture.pool,Promise.resolve(),async () => false);
+    const store = new PostgresTestLabRunStore(fixture.pool,() => Promise.resolve(),async () => false);
     const run = { id,requestId: randomUUID(),actor,test: TEST_CASE,state: 'queued' as const,createdAt: new Date().toISOString(),updatedAt: new Date().toISOString() };
     await store.create(run); await store.begin(actor,id);
     await fixture.pool.query("UPDATE oshal_test_lab_runs SET lease_until=NOW()-INTERVAL '1 second' WHERE id=$1",[id]);

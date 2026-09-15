@@ -52,6 +52,7 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/authorization-contract-files.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-postgres-integration.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-schema-recovery.spec.ts' },
+    { level: 'integration', path: 'tests/unit/authorization-readiness-consumers.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-runtime.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-app-access-routes.spec.ts' },
     { level: 'unit', path: 'tests/unit/kernel-skills.spec.ts' },

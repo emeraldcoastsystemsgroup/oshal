@@ -112,6 +112,32 @@ case first, "expected 200 to be 403"), and dropping the `swarm_roles` snapshot c
 non-operator refusals green. This is not evidence for RLS: `swarm_roles` deliberately has no row
 policy — the route is the gate — and the spec asserts exactly that gate.
 
+## Authorization readiness handed to downstream consumers (2026-09-15)
+
+`tests/unit/authorization-readiness-consumers.spec.ts` closes the gap left by
+`tests/unit/authorization-schema-recovery.spec.ts`: the bootstrap thunk recovers, but the readiness
+the wiring RETURNS was derived from it once, so a first-attempt failure was inherited permanently
+by everything chaining off it - including the queued-principal capture that
+`TicketService.createTicket` performs on every authenticated ticket.
+
+The defective boundary is a pool acquire lost under real contention, and it runs for real: a
+disposable `postgres:16-alpine` container, a genuine `pg` Pool with `max: 1` and a 500 ms acquire
+timeout whose only client the test holds, the production GUC wrapper, and the real locked-DDL
+bootstraps. The failure is a real `timeout exceeded when trying to connect` raised out of
+`applyLockedSchema`, not an injected error, and recovery is asserted by reading the tables the
+retry had to create and the `oshal_queued_application_principals` row the retry had to insert.
+
+The scoped doubles are all OUTSIDE that boundary: the tool catalog and dynamic executor registry
+(recorded call counts, so "the tools registered on the retry" is an assertion rather than a mock
+return), the `SwarmAppService`/`AppAccessService` ports, and the ticket row store. The ticket store
+is doubled deliberately - ticket persistence is not what fails here, and substituting it is what
+makes the case assert on the capture that follows the insert. Its real companions are the
+ticket-store RLS entries at the top of this table. Red-proven on `1f0978a0`: both cases fail with
+`timeout exceeded when trying to connect`, the first raised out of `createTicket`.
+
+Not covered: the user-directory and Jarvis-briefing routes are proven at their readiness seam only,
+not driven over HTTP.
+
 ## Rules for future fixes
 
 1. Name the failed boundary in the test header and name what remains doubled.

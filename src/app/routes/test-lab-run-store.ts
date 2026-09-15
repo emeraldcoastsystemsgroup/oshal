@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Persist exact-caller runs, idempotent admission, cancellation and crash leases in PostgreSQL.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Take readiness as a re-requestable thunk so a bootstrap that lost the boot-time pool acquire is retried by the next read rather than refusing every one.
  */
 import type { Pool } from 'pg';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -19,11 +20,11 @@ function decoded(row: Record<string, any> | undefined): TestLabRun | null {
 
 /** Durable control-plane store; every user lookup additionally binds both principal fields. */
 export class PostgresTestLabRunStore implements TestLabRunStore {
-  constructor(private readonly pool: Pool, private readonly ready: Promise<unknown> = Promise.resolve(),
+  constructor(private readonly pool: Pool, private readonly ready: () => Promise<unknown> = () => Promise.resolve(),
     private readonly recoverExecution?: (ids: string[]) => Promise<boolean>) {}
 
   private async query(sql: string, args: unknown[] = []) {
-    await this.ready;
+    await this.ready();
     return runWithSystemIdentity(() => this.pool.query(sql, args));
   }
 

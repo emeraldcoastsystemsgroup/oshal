@@ -108,7 +108,7 @@ export class LocalAccountFixture {
     const directory = createApplicationPrincipalDirectory(this.runtime, () => Promise.resolve(), {
       OIDC_ISSUER_URL: directoryIssuer, OIDC_CLIENT_ID: 'fixture', OIDC_CLIENT_SECRET: 'fixture',
     });
-    app.use('/api/user-directory', createUserDirectoryRoutes({ ready: Promise.resolve(), registrations: directory.registrations,
+    app.use('/api/user-directory', createUserDirectoryRoutes({ ready: () => Promise.resolve(), registrations: directory.registrations,
       roster: directory.roster }, { requiresAuth: (_req, _res, next) => next(), resolveActor: async req => ({
       sub: req.oidc?.user?.sub ?? '', issuer: req.oidc?.user?.iss ?? '', isActive: req.oidc?.isAuthenticated() ?? false,
       isSwarmAdmin: isOperatorIdentity(req.oidc?.user?.sub, req.oidc?.user?.email),
