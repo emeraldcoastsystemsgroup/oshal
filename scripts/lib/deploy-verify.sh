@@ -4,6 +4,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com | Post-deploy live verification for scripts/oshal-deploy.sh. On 2026-09-15 a deploy reported DEPLOYED while Jarvis answered nothing and a ticket raised at 00:51Z escalated on manifest_worker_dispatch_failed instead of being worked. Container health, image parity and a 200 on /health were all green throughout: every existing gate measures the STACK, and none of them measures the PRODUCT. These three checks do - the bot role can still read what its own posture guard reads, Jarvis answers a question as the operator, and one synthetic ticket leaves the queue without parking in a failed state.
+# 2 | maintainer@emeraldcoastsystemsgroup.com | Hand the probe runner a path that resolves where the probe actually executes. The first real run of this gate reported jarvis-ask and ticket-dispatch FAILED against a stack where both were fine: Git Bash rewrites a POSIX-absolute argument on its way into native docker.exe, so the container path reached node as a Windows host path, node resolved it against /app and died MODULE_NOT_FOUND. Neither product check ever ran. The staging cp beside it was already guarded; the runner was not, and no existing case could see it because they shadow docker with a bash function, which never crosses the boundary that rewrites the argument.
 # -----------------------------------------------------------------------------
 #
 # Sourced by scripts/oshal-deploy.sh; also runnable on its own after fixing a failure:
@@ -77,13 +78,23 @@ oshal_verify_stage_probe() {
 }
 
 # Run one staged probe check inside the api container. Its stdout is a single detail line.
+#
+# $dest is a CONTAINER path and has to reach node inside the container spelled exactly that way.
+# Git Bash rewrites every POSIX-absolute argument handed to a native Windows executable, and
+# docker.exe is one - so an unguarded call arrives in the container as
+#   node C:/Users/<user>/AppData/Local/Temp/oshal-deploy-live-verification.js
+# which node resolves against its /app working directory and rejects as MODULE_NOT_FOUND before
+# the probe can reach the product. That is not hypothetical: it is how both product checks failed
+# on this gate's first real deploy while the stack itself was healthy. The staging cp above is
+# guarded for precisely this reason and the runner beside it was missed, because the path is
+# behind $dest where a grep for "/tmp/" cannot see it.
+#
+# MSYS_NO_PATHCONV is read only by the Git Bash runtime when it marshals arguments into a native
+# child. On a Linux operator's box nothing reads it, the argument was never rewritten, and the
+# call is byte-for-byte the one that already works there.
 oshal_verify_run_probe() {
   local api="${OSHAL_VERIFY_API_CONTAINER:-oshal-local-api}"
   local dest="${OSHAL_VERIFY_PROBE_DEST:-/tmp/oshal-deploy-live-verification.js}"
-  # $dest is an absolute CONTAINER path. Passed to docker.exe from MSYS it is rewritten to
-  # the Windows temp path, node resolves that against /app, and every probe dies with
-  # MODULE_NOT_FOUND before it can reach the product. Staging above already guards its cp;
-  # this call needs the same guard, and a grep for "/tmp/" cannot see it behind $dest.
   MSYS_NO_PATHCONV=1 docker exec "$api" node "$dest" "$1" 2>&1
 }
 

@@ -5,12 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards the post-deploy live verification. On 2026-09-15 a deploy printed DEPLOYED while Jarvis answered nothing and an operator ticket escalated on manifest_worker_dispatch_failed: every existing gate measures containers, none measured the product. Two boundaries are crossed for real here — the actual scripts/lib/deploy-verify.sh executed by the real Git Bash with a stubbed docker binary (ordering, loudness, the skip switch, the exact remedy text), and the actual probe checks run by the real Node against a real loopback HTTP server speaking the api's contracts (verdicts, cleanup, and no secret in the output) — in ONE process, because this host's firewall refuses a cross-process connection to a Node listener. What is NOT crossed, and is stated rather than implied: the real api, the real queue manager and the real Jarvis bot. Only a deploy reaches those, which is why the deploy is where this runs. 
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the cleanup itself, in both directions. The Jarvis check used to close its thread and leave the chat-ticket, the chat_tasks row and its chat_messages behind on every deploy - and leave the row WITHOUT closing anything when the ask was refused, which is the path this gate exists to hit. So: the pass path must delete the thread's ticket and its task, the refused path must still delete the task it caused to be written, and a cleanup step that fails must report at error level naming what was left behind while the already-decided verdict survives untouched. Plus the runbook honesty the deploy's no-rollback policy depends on: what a deploy spends, and the manual rollback for the one failure class exit 4 does not cure.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cross the argument boundary the cases below are blind to. They shadow docker with a bash FUNCTION, so the command never leaves the shell and its arguments are never marshalled into a native process - which is exactly the boundary that broke the gate on its first real deploy: Git Bash rewrote the staged container path on its way into docker.exe, node resolved the Windows host path it received against the image's /app working directory, and both product checks died MODULE_NOT_FOUND while every case here stayed green. The new cases put a copy of the real node binary on PATH as `docker` - a genuine native executable, which is the property that makes the host runtime convert the argument at all - and assert that the path the runtime was handed resolves, under the image's own WORKDIR, to the file that was staged in the container. One case is the negative control: it drives the pre-fix call shape and requires the harness to SEE the rewrite, so the suite can never pass by being blind again.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -175,6 +176,137 @@ describe('scripts/lib/deploy-verify.sh — the three checks a deploy is not fini
       expect(parsed.status, file).toBe(0);
     }
   });
+});
+
+/* -- The argument boundary the cases above cannot see --------------------------------------------
+ * Every case above shadows `docker` with a bash FUNCTION. The command never leaves the shell, so its
+ * arguments are never marshalled into a native process - and that marshalling is the boundary that
+ * broke this gate on its first real deploy. Git Bash rewrites a POSIX-absolute argument on its way
+ * into docker.exe, so the staged container path arrived inside the api as a Windows host path, node
+ * resolved it against the image's /app working directory, and BOTH product checks died
+ * MODULE_NOT_FOUND without ever reaching the product. Every case above stayed green through it.
+ *
+ * These cases cross it for real. `docker` on PATH here is a COPY OF THE REAL NODE BINARY: a genuine
+ * native, non-MSYS executable, which is the property that makes the host runtime convert the
+ * argument at all - a shell function or a .sh stub is not converted, which is precisely why the
+ * harness above could not see the defect. The copy records the argv it was actually handed, and the
+ * assertion is the one the failure was about: resolve that path the way node inside the container
+ * resolves it, and require it to be the file that was staged there. */
+
+/** The image's own working directory - what a path node cannot resolve gets resolved against. */
+const CONTAINER_CWD = (/^WORKDIR\s+(\S+)\s*$/m.exec(readFileSync(path.resolve('Dockerfile.oshal'), 'utf8')) ?? [])[1];
+const STAGED_PROBE = '/tmp/oshal-deploy-live-verification.js';
+/** Each case spawns a real shell and a real native binary, on a box that runs at load 6-39. */
+const NATIVE_CASE_TIMEOUT_MS = 60_000;
+/** Record argv, then stop before the native binary tries to run `exec` as a script. */
+const ARGV_RECORDER = `const fs = require('node:fs');
+const path = require('node:path');
+fs.writeFileSync(process.env.OSHAL_RECORDED_ARGV, JSON.stringify({
+  subcommand: path.basename(process.argv[1] || ''),
+  args: process.argv.slice(2),
+}));
+process.exit(0);
+`;
+
+/** A path this host's Git Bash accepts inside PATH and after `source`. */
+function toShellPath(target: string): string {
+  return process.platform === 'win32'
+    ? `/${target[0].toLowerCase()}${target.slice(2).replace(/\\/g, '/')}`
+    : target;
+}
+
+let nativeDir: string;
+let recorderPath: string;
+let recordPath: string;
+
+/** What a native child was actually handed, after the host runtime finished with the argv. */
+type Handed = { subcommand: string; args: string[] };
+
+/**
+ * @description Run one line of the REAL library in the REAL shell with `docker` resolved to a native
+ * executable that records its own argv, and return what that executable was handed.
+ * @param line - The shell line to run once the library has been sourced.
+ * @returns The subcommand and the arguments the native `docker` actually received.
+ */
+function handedToDocker(line: string): Handed {
+  rmSync(recordPath, { force: true });
+  const run = spawnSync(BASH, ['--noprofile', '--norc', '-c',
+    `set -uo pipefail\nPATH="$1:$PATH"\nsource "$2"\n${line}\n`,
+    'deploy-verify-native', toShellPath(nativeDir), toShellPath(LIB)],
+  { cwd: process.cwd(), encoding: 'utf8', timeout: BASH_TIMEOUT_MS,
+    env: {
+      ...process.env,
+      NODE_OPTIONS: `--require "${recorderPath.replace(/\\/g, '/')}"`,
+      OSHAL_RECORDED_ARGV: recordPath.replace(/\\/g, '/'),
+    } });
+  let raw = '';
+  try { raw = readFileSync(recordPath, 'utf8'); } catch { raw = ''; }
+  expect(raw, `the native docker recorded nothing for: ${line}\n${run.stdout}\n${run.stderr}`).not.toBe('');
+  return JSON.parse(raw) as Handed;
+}
+
+describe('scripts/lib/deploy-verify.sh - the path the container runtime is actually handed', () => {
+  beforeAll(() => {
+    nativeDir = path.join(scratch, 'native-bin');
+    mkdirSync(nativeDir, { recursive: true });
+    // The real node binary, renamed. Native and non-MSYS is the whole point: that property is what
+    // decides whether this host's runtime rewrites the argument on the way in.
+    const fake = path.join(nativeDir, process.platform === 'win32' ? 'docker.exe' : 'docker');
+    copyFileSync(process.execPath, fake);
+    if (process.platform !== 'win32') chmodSync(fake, 0o755);
+    // Run it once here: the first execution of a freshly written binary pays a one-off on-access
+    // scan on a Windows host (measured ~8s), and that belongs in setup, not in a case's budget.
+    spawnSync(fake, ['--version'], { encoding: 'utf8', timeout: 120_000 });
+    recorderPath = path.join(scratch, 'record-argv.cjs');
+    writeFileSync(recorderPath, ARGV_RECORDER);
+    recordPath = path.join(scratch, 'recorded-argv.json');
+  }, 60_000);
+
+  it('reads the resolution base off the image that runs the probe', () => {
+    // Not a magic string: /app is where node resolves from, which is why the failure read
+    // "Cannot find module '/app/C:/Users/...'". If the image moves, this guard moves with it.
+    expect(CONTAINER_CWD, 'Dockerfile.oshal must declare the WORKDIR this guard resolves against').toBe('/app');
+  });
+
+  it('hands the probe runner a path that resolves, inside the container, to the staged probe', () => {
+    const handed = handedToDocker('oshal_verify_run_probe jarvis');
+    expect(handed.subcommand).toBe('exec');
+    expect(handed.args.slice(0, 2)).toEqual(['oshal-local-api', 'node']);
+    expect(handed.args[3], 'the check name has to survive the crossing too').toBe('jarvis');
+    // THE assertion: node in the container resolves what it was handed against CONTAINER_CWD. A host
+    // path resolves to /app/<host path> and dies MODULE_NOT_FOUND; the staged path resolves to itself.
+    expect(path.posix.resolve(CONTAINER_CWD, handed.args[2].replace(/\\/g, '/'))).toBe(STAGED_PROBE);
+  }, NATIVE_CASE_TIMEOUT_MS);
+
+  it('hands the staging copy a relative source and a destination that stays in the container', () => {
+    const handed = handedToDocker('oshal_verify_stage_probe');
+    expect(handed.subcommand).toBe('cp');
+    // The load-bearing half. A relative source has nothing for the host runtime to eat; the moment
+    // anyone spells it absolutely - $(pwd)/scripts/..., or an absolute OSHAL_VERIFY_PROBE_SRC - it
+    // is rewritten on the way in exactly like the runner's path was.
+    expect(handed.args[0], 'a relative source has nothing for the host runtime to eat')
+      .toBe('scripts/operations/deploy-live-verification.js');
+    // Measured on this host, not assumed: `name:/path` is NOT rewritten - removing the cp's
+    // MSYS_NO_PATHCONV leaves this argument byte-identical. So this pins the destination contract
+    // and the cp's own guard stays as belt-and-braces; it is the source above that carries the risk.
+    expect(handed.args[1]).toBe(`oshal-local-api:${STAGED_PROBE}`);
+  }, NATIVE_CASE_TIMEOUT_MS);
+
+  it('SEES the host runtime rewrite an unguarded container path - the defect itself', () => {
+    // The pre-fix call shape, spelled out. If this host does not rewrite it, the two cases above are
+    // vacuous - so this one asserts the rewrite rather than letting the suite pass by being blind.
+    const handed = handedToDocker(`docker exec oshal-local-api node "${STAGED_PROBE}" jarvis`);
+    const resolved = path.posix.resolve(CONTAINER_CWD, handed.args[2].replace(/\\/g, '/'));
+    if (process.platform === 'win32') {
+      expect(handed.args[2], 'Git Bash must be rewriting this, or the guard proves nothing').not.toBe(STAGED_PROBE);
+      // The exact shape of the production failure: /app/<drive>:/<host path>.
+      expect(resolved).toMatch(/^\/app\/[A-Za-z]:\//);
+    } else {
+      // A Linux operator's runtime never rewrote it, and the guarded call is byte-for-byte this one.
+      expect(handed.args[2]).toBe(STAGED_PROBE);
+      expect(resolved).toBe(STAGED_PROBE);
+    }
+  }, NATIVE_CASE_TIMEOUT_MS);
 });
 
 describe('scripts/oshal-deploy.sh — where the verification sits in the run', () => {
