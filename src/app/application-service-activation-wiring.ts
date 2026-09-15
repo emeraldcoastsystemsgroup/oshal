@@ -9,6 +9,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-157 S1: compose the scheduled-service activation authority, register it with the service-route runner, and expose it to the kernel-served services routes the way the scheduler handle is already exposed.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Take and hand on schema readiness as a re-requestable thunk. A single chained promise kept its own rejection, so a bootstrap that lost the pool at boot refused every activation read for the life of the process.
  *
  * @module application-service-activation-wiring
  */
@@ -56,7 +57,7 @@ export function setApplicationServiceActivations(value: ApplicationServiceActiva
 export interface ApplicationServiceActivationWiringDeps {
   pool: Pool;
   /** Schema readiness for the ADR-149 control plane. */
-  ready: Promise<unknown>;
+  ready: () => Promise<unknown>;
   policy: AuthorizationStore;
   describeApp(app: string): { source: string; catalogRevision: string; catalog: import('@/shared/application-authorization').AuthorizationCatalog | null } | null;
   authorize(actor: AuthorizationActor, operation: AuthorizationOperation): Promise<AuthorizationDecision>;
@@ -116,8 +117,20 @@ async function userInstance(
 export function createApplicationServiceActivationWiring(
   deps: ApplicationServiceActivationWiringDeps,
 ): ApplicationServiceActivationService {
-  const schemaReady = deps.ready.then(() => ensureApplicationServiceActivationSchema(deps.pool));
-  void schemaReady.catch(error => logger.error({ err: error }, 'Scheduled service activations unavailable'));
+  // Memoized, and dropped on failure, so the next activation read retries the bootstrap instead
+  // of inheriting one boot-time rejection for the life of the process — the same shape the
+  // authorization readiness it chains off now uses.
+  let pending: Promise<void> | null = null;
+  const schemaReady = (): Promise<void> => {
+    if (!pending) {
+      pending = deps.ready()
+        .then(() => ensureApplicationServiceActivationSchema(deps.pool))
+        .catch(error => { pending = null; throw error; });
+    }
+    return pending;
+  };
+  void schemaReady().catch(error => logger.error({ err: error },
+    'Scheduled service activations unavailable; the next activation read retries the schema bootstrap'));
   const activations = new PostgresApplicationServiceActivationStore(deps.pool, schemaReady);
   const service = new ApplicationServiceActivationService({
     activations, policy: deps.policy, describeApp: deps.describeApp, authorize: deps.authorize,

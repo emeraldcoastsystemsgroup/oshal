@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Observe verified sessions, retain explicit local links, and expose provider-aware management inventory.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Unite reviewed registrations and assignment targets with account inventory while preserving verified-only authority.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Take schema readiness as a re-requestable thunk so a bootstrap that failed at boot is retried by the next directory read instead of refusing for the life of the process.
  */
 import type { Request, RequestHandler } from 'express';
 import type { Pool } from 'pg';
@@ -25,10 +26,10 @@ function label(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= 512 && !/[\u0000-\u001f\u007f]/.test(value) ? value : null;
 }
 /** @description Integrate exact observed identities with existing account stores, without granting or creating accounts.
- * @param pool Control-plane pool. @param ready Schema readiness. @param env Authentication configuration.
+ * @param pool Control-plane pool. @param ready Re-requestable schema readiness. @param env Authentication configuration.
  * @returns Verified observer, current native identity resolver, target resolver and scoped inventory.
  */
-export function createApplicationPrincipalDirectory(pool: Pool, ready: Promise<unknown>, env: NodeJS.ProcessEnv = process.env) {
+export function createApplicationPrincipalDirectory(pool: Pool, ready: () => Promise<unknown>, env: NodeJS.ProcessEnv = process.env) {
   return new ApplicationPrincipalDirectory(pool,ready,env);
 }
 class ApplicationPrincipalDirectory {
@@ -36,7 +37,7 @@ class ApplicationPrincipalDirectory {
   readonly registrations: PrincipalRegistrationStore;
   private providerSignature = '';
   private configuredProviders: ReturnType<typeof principalLoginProviders> = new Map();
-  constructor(private readonly pool: Pool,private readonly ready: Promise<unknown>,private readonly env: NodeJS.ProcessEnv) {
+  constructor(private readonly pool: Pool,private readonly ready: () => Promise<unknown>,private readonly env: NodeJS.ProcessEnv) {
     this.store = new PrincipalDirectoryStore(pool);
     this.registrations = new PrincipalRegistrationStore(pool);
   }
@@ -65,7 +66,7 @@ class ApplicationPrincipalDirectory {
       || typeof claims.exp !== 'number' || !Number.isFinite(claims.exp) || claims.exp <= claims.iat) throw new Error('Verified principal protocol evidence is invalid');
     const currentIssuer = getAuthenticatedPrincipalIssuer(req); const currentSub = getCaller(req).sub;
     let canonicalLocalSub: string | null = null;
-    await this.ready;
+    await this.ready();
     if (currentIssuer === LOCAL_AUTH_PRINCIPAL_ISSUER) {
       if (!currentSub || !getPreservedDirectoryClaims(req) || !await this.hasTable('oshal_external_identity_links')) throw new Error('Verified canonical link unavailable');
       const linked = await runWithSystemIdentity(() => this.pool.query(`SELECT l.local_user_sub FROM oshal_external_identity_links l
@@ -84,7 +85,7 @@ class ApplicationPrincipalDirectory {
     catch (error) { logger.warn({ err: error }, 'Verified principal observation unavailable'); res.status(503).json({ error: 'principal_directory_unavailable' }); }
   };
   nativePrincipal = async (sub: string, issuer: string): Promise<{ isActive: boolean; isSwarmAdmin: boolean }> => {
-    await this.ready; const row = await this.store.get(issuer,sub); const enabled = this.providers();
+    await this.ready(); const row = await this.store.get(issuer,sub); const enabled = this.providers();
     const isActive = Boolean(row && !row.canonicalLocalSub && row.status === 'active' && enabled.has(issuer));
     return { isActive, isSwarmAdmin: Boolean(isActive && row && configuredPrincipalOperator(row,enabled,this.env)) };
   };
@@ -94,12 +95,12 @@ class ApplicationPrincipalDirectory {
       const account = await getSessionSnapshot(this.pool,sub);
       return account ? { sub,issuer,isActive: account.status === 'active',isSwarmAdmin: false,directory: [] } : null;
     }
-    await this.ready; const row = await this.store.get(issuer,sub); if (!row) return null;
+    await this.ready(); const row = await this.store.get(issuer,sub); if (!row) return null;
     return { sub,issuer,...await this.nativePrincipal(sub,issuer),isSwarmAdmin: false,directory: [] };
   };
   inventory = async (actor: AuthorizationActor): Promise<AuthorizationInventory> => {
     if (!actor.isActive || !actor.isSwarmAdmin) return { users: [], groups: [] };
-    await this.ready;
+    await this.ready();
     const [native, locals, registered] = await Promise.all([this.store.list(), this.hasTable('oshal_local_users').then(exists =>
       exists ? runWithSystemIdentity(() => listUsers(this.pool)) : []), this.registrations.list()]);
     const enabled = this.providers();
@@ -119,7 +120,7 @@ class ApplicationPrincipalDirectory {
     }))) };
   };
   roster = async (actor: AuthorizationActor, assignmentUsers: AuthorizationInventory['users'] = []) => {
-    requireRosterAdmin(actor); await this.ready;
+    requireRosterAdmin(actor); await this.ready();
     const [inventory, native, registered, historical, revision] = await Promise.all([
       this.inventory(actor), this.store.list(), this.registrations.list(), historicalPrincipalReferences(this.pool), this.registrations.revision(),
     ]);

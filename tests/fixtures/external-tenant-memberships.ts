@@ -48,7 +48,7 @@ export class ExternalMembershipFixture {
     await this.database.owner.query('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO users_runtime');
     this.pool = wrapPoolWithGuc(new Pool({ ...this.database.runtime.options, password: this.database.runtime.options.password,
       max: 1, connectionTimeoutMillis: 1000 }));
-    this.directory = createApplicationPrincipalDirectory(this.pool, Promise.resolve(), this.env);
+    this.directory = createApplicationPrincipalDirectory(this.pool, () => Promise.resolve(), this.env);
     this.store = new PostgresExternalTenantMembershipStore(this.pool);
     this.service = new ExternalTenantMembershipService(this.store, { refreshActor: this.refreshActor,
       resolveTarget: this.directory.targetActor, now: () => this.now });
