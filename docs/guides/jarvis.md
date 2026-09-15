@@ -250,6 +250,12 @@ one.
 turns one network address may spend per minute (`OSHAL_RATE_LIMIT_EXPENSIVE=on`, off by default).
 Wait a minute and ask again; nothing already running is lost.
 
+**"Jarvis has no AI engine connected — add one under Settings → Connections → Bring Your Own
+LLM."** Written in the conversation and spoken aloud. Your account has no model endpoint Jarvis is
+allowed to run a turn on. Open **Settings → Connections**, fill in the *Bring Your Own LLM* card
+with an OpenAI-compatible base URL, model and key, then ask again. The **Work queue**, including
+briefings already delivered to it, keeps listing its items meanwhile — it does not need a live model.
+
 ---
 
 For the design rationale behind the classify → delegate → synthesize flow, see
