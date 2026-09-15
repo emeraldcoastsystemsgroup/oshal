@@ -2268,7 +2268,7 @@ registerAuthorizationTools(...))` — a plain promise, created once — and four
 which each build their own schema on top of it. A failed first attempt was inherited by all four
 permanently, even though every authorization operation had since recovered.
 
-**Remaining:** nothing on the readiness itself — the returned value is now
+**Remaining:** nothing on the readiness itself (PR #498) — the returned value is now
 `createRetryableReady(...)` (`src/shared/services/database/retryable-ready.ts`, the shape
 `createSchemaReady` and the ADR-157 activation wiring each wrote by hand), every consumer asks it
 per operation, and ticket creation logs and degrades rather than losing a committed row to a
