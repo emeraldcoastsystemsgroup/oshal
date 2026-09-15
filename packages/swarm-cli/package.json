@@ -31,6 +31,6 @@
     "directory": "packages/swarm-cli"
   },
   "scripts": {
-    "test": "vitest run --root ../.. tests/unit/swarm-cli.spec.ts"
+    "test": "vitest run --root ../.. tests/unit/swarm-cli.spec.ts tests/unit/swarm-cli-zsh-completion.spec.ts"
   }
 }
