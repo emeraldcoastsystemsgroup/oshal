@@ -1565,6 +1565,16 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   381 MB free at 01:37 UTC, and the Docker VM's one-minute load was 22 at 02:22 and 133 at 02:36
   on 8 CPUs while other lanes held their own rebuilds. Until those cases run, the browser profile
   is proven only against mocked boundaries and must not be described as working.
+- **Deployed half verified 2026-09-15 00:35Z** (image `651c503a44c4`, the `aba0e31f` deploy): the two
+  shared fixtures the `harness:core-test-fixtures` prerequisite needs are IN the running image at
+  `/app/tests/fixtures/` (isolated-browser.ts 4,624 B, stl-viewer.ts 8,654 B) and load through the
+  image’s own tsx exactly as the runner probe loads them (`require("tsx/cjs")` then the fixture;
+  exports `closeOwnedBrowser, launchIsolatedBrowser, observeBrowserExit`). That is the staging and
+  probe mechanism only. The three store cases that declare the prerequisite (cad-studio
+  surface-lifecycle, embodied surface-browser, scan-to-print surface-freshness) still report
+  `pending` on the HOST batch runner by design — it supplies disposable offline fixtures only — so
+  the sealed-sandbox run remains the open proof, and the Test Lab route refuses a service identity
+  under ADR-149, which is why it needs the operator’s signed-in session.
 - **Run it with:** `npx vitest run tests/unit/package-test-sandbox.spec.ts -t "browser profile|browser environment"`
   from the core checkout, with Docker up and `oshal-bot:latest` present, when the Docker VM's
   one-minute load is below 6 (read it with `docker exec oshal-local-api cut -d' ' -f1-3 /proc/loadavg`).
