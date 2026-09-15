@@ -98,14 +98,16 @@ export async function runActivatedServiceTick<T>(
   const target = { app: input.app, kind: 'jobs' as const, operation: input.scheduleId };
   if (!await isApplicationExecutionProtected(target)) return { ran: true, result: await execute() };
   if (!runtime) return { ran: false, reason: 'not-activated', detail: 'activation authority unavailable' };
-  const activation = await runtime.resolveDispatch(input);
+  const authority = runtime;
+  const activation = await authority.resolveDispatch(input);
   if (!activation) return { ran: false, reason: 'not-activated' };
   if (activation.suspendedReason) return { ran: false, reason: 'suspended', detail: activation.suspendedReason };
-  return runActivatedTick(activation, execute);
+  return runActivatedTick(authority, activation, execute);
 }
 
 /** @description Execute one tick under a resolved activation, suspending it on a denial. */
 async function runActivatedTick<T>(
+  authority: ManifestServiceActivationRuntime,
   activation: ApplicationServiceActivation,
   execute: () => Promise<T>,
 ): Promise<ServiceTickOutcome<T>> {
@@ -122,7 +124,7 @@ async function runActivatedTick<T>(
       if (!(error instanceof ApplicationExecutionDeniedError)) throw error;
       logger.warn({ app: activation.app, scheduleId: activation.scheduleId, reason: error.code },
         'Scheduled application service denied at run time — activation suspended until reactivated');
-      await runtime!.suspend(activation, error.code);
+      await authority.suspend(activation, error.code);
       return { ran: false, reason: 'denied', detail: error.code };
     }
   });
