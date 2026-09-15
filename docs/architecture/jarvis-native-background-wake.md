@@ -73,6 +73,35 @@ and applicable OIDC cookies before the app can listen again.
 - A single component owns the microphone at a time: native listener, visible Jarvis, or local
   push-to-talk.
 
+## End-to-end wiring (verified by code read 2026-09-15)
+
+The chain is complete; every hop below was read, not inferred. Nothing in this feature is
+unwired. Listed so a delivery thread does not have to re-derive it.
+
+| # | hop | where |
+|---|---|---|
+| 1 | Windows `System.Speech` child emits `ready` / `wake` / `error` only | `packages/oshal-chat/src/main/background-wake.ts` (`WindowsSystemSpeechWakeDetector`, `buildWindowsWakeScript`) |
+| 2 | service accepts at confidence >= 0.70, stops the child, opens Jarvis | `src/main/main.ts:78-87` (`BackgroundWakeService`, `onWake` -> `notifyNativeWake`) |
+| 3 | one short-lived audio-free signal queued, TTL-bounded | `src/main/cockpit-window.ts:331-338` (`notifyNativeWake`) |
+| 4 | dispatched into `/api/jarvis` frames only, gated on a page-set ready flag | `src/main/cockpit-window.ts:155-183` (`deliverPendingNativeWake`) |
+| 5 | page declares readiness and receives the event | `src/api/jarvis.html:2505` (`__OSHAL_JARVIS_NATIVE_WAKE_READY__`), `:2507` (`oshal:native-wake`) |
+| 6 | page takes the microphone, records the bounded command | `src/api/jarvis.html:2135-2277` (`nativeWakeCommandActive`, monitor, release) |
+| 7 | transcription | `POST /api/voice/transcribe` - `src/app/routes/voice-routes.ts:82` (memory-only multipart) |
+| 8 | the turn | `POST /api/jarvis/ask` - the normal authenticated route |
+
+Operator surface, also complete: IPC `wake:get-status` / `wake:set-enabled` / `wake:set-paused` /
+`wake:microphone-owner` (`main.ts:521-531`), preload bridge (`preload.ts:55-61`), settings UI and
+state dot (`renderer/index.html:105-122`, `renderer/renderer.js:329-365`), tray menu with
+pause/turn-off (`main.ts:223-245`), and sign-out teardown that clears the persisted identity
+(`main.ts:421-423`).
+
+One dependency worth stating for delivery: hop 8 is the shared `/ask` path, so a wake turn is
+answered immediately only when the deterministic provider-bound lane matches
+(`jarvis-provider-intent-detect.ts` - weather, priority inbox, read-only Walmart catalog).
+Every other phrase is acknowledged and completed as queued work. That is correct behaviour, not a
+wake defect, and it is the reason the fast-lane widening in
+[operating-fluency-spec.md](operating-fluency-spec.md) matters more for voice than for typing.
+
 ## Verification
 
 Automated coverage is in `tests/unit/oshal-chat-background-wake.spec.ts`. It pins identity gating,
@@ -86,13 +115,34 @@ Run:
 npm --prefix packages/oshal-chat run build
 npm --prefix packages/oshal-chat run test:wake
 npx vitest run tests/unit/oshal-chat-background-wake.spec.ts tests/unit/jarvis-ambient-client.spec.ts --reporter=dot
-npx playwright test tests/jarvis-audio-lifecycle.spec.ts --reporter=line
+PLAYWRIGHT_PORT=35457 PLAYWRIGHT_REUSE_SERVER=true MOCK_OIDC=true \
+  npx playwright test tests/jarvis-audio-lifecycle.spec.ts --reporter=line
 npm run typecheck
 node --check packages/oshal-chat/src/renderer/renderer.js
 ```
 
 `test:wake` synthesizes "Hey Jarvis" into a `MemoryStream` and recognizes it with the installed
 offline engine. It opens no microphone and creates no audio file.
+
+**Re-run 2026-09-15 against core `09503c5d` - the whole suite above is green.** The 07-11 record
+below predates the ADR-050 decomposition of `jarvis-routes.ts` (07-18) and the surface-op and
+package-tool blocks that landed on `/ask` since, so it was re-run rather than quoted.
+
+| step | result |
+|---|---|
+| `npm --prefix packages/oshal-chat run build` | exit 0 |
+| `node --check packages/oshal-chat/src/renderer/renderer.js` | OK |
+| `vitest oshal-chat-background-wake + jarvis-ambient-client` | **21 passed / 2 files** (07-11: 16) |
+| `npm --prefix packages/oshal-chat run test:wake` | `{"confidence":0.987673938,"ok":true,"rawAudioStored":false,"locale":"en-US","phrase":"Hey Jarvis"}` - byte-identical to 07-11 |
+| `playwright tests/jarvis-audio-lifecycle.spec.ts` | **7 passed (7.1 s)** |
+| `npm run typecheck` | exit 0 |
+
+⛔ **The Playwright line in the Run block above is corrected.** The bare
+`npx playwright test tests/jarvis-audio-lifecycle.spec.ts` fails on this box with
+`Process from config.webServer was not able to start. Exit code: 1`. The live-stack form
+(`PLAYWRIGHT_PORT=35457 PLAYWRIGHT_REUSE_SERVER=true MOCK_OIDC=true`, per CLAUDE.md) is what runs,
+and is what produced the 7/7 above. A future reader following the old command would read an
+environment failure as a wake regression.
 
 Recorded verification cutoff (2026-07-11): 219 Vitest tests passed across 18 suites and 29
 Playwright tests passed across the three
