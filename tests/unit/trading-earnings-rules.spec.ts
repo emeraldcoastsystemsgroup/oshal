@@ -120,9 +120,40 @@ function harness(opts: { held?: number; refPrice?: number; verdict?: string; sub
   return { deps, calls, positions, setPrint: (p) => { print = p; }, setRefusal: (e) => { refuse = e; }, setNow: (d) => { now = d; }, setVenue: (o) => { venue = o; } };
 }
 
+/**
+ * Cover the harness's fake position with the engine's OWN filled BUY, so the holding is ACCOUNTED.
+ *
+ * ADR-159 withholds every order for a position this book's filled orders cannot explain, and these
+ * rules only ever act on a name the engine bought — so a fixture with no ledger behind its position
+ * was describing a hand-bought holding the engine must NOT trade. Prior seeds for the symbol are
+ * cleared first: the replay trusts a basis only when the replayed quantity equals the venue quantity,
+ * so a second case reusing a symbol would otherwise over-cover it and read as unaccounted again.
+ * @param symbol - The held symbol to cover.
+ * @param qty - The venue quantity to cover exactly.
+ * @returns Nothing.
+ */
+async function coverWithEngineFill(symbol: string, qty: number): Promise<void> {
+  await pool.query('DELETE FROM oshal_trading_orders WHERE user_sub=$1 AND book_id=$2 AND symbol=$3', [SUB, book.bookId, symbol]);
+  const sig = (await pool.query(
+    `INSERT INTO oshal_trading_signals (user_sub, mode, book_id, source, title, body, symbols, indicators, content_hash)
+       VALUES ($1,'paper',$2,'spec-seed',$3,'seed',$4,'{}',$5) RETURNING signal_id`,
+    [SUB, book.bookId, `${symbol} engine buy`, [symbol], crypto.randomUUID()])).rows[0];
+  const dec = (await pool.query(
+    `INSERT INTO oshal_trading_decisions (user_sub, mode, book_id, signal_ids, agent_id, action, symbol, side, qty, order_type, confidence, rationale, indicators, guardrails)
+       VALUES ($1,'paper',$2,$3::uuid[],'spec-seed','buy',$4,'buy',$5,'market',1,'seeded engine fill','{}','{}') RETURNING decision_id`,
+    [SUB, book.bookId, [sig.signal_id], symbol, qty])).rows[0];
+  await pool.query(
+    `INSERT INTO oshal_trading_orders (user_sub, mode, book_id, decision_id, broker, broker_order_id, client_order_id, symbol, side, qty, order_type, status, filled_qty, filled_avg_price)
+       VALUES ($1,'paper',$2,$3,'alpaca',$4,$5,$6,'buy',$7,'market','filled',$7,100)`,
+    [SUB, book.bookId, dec.decision_id, `brk-seed-${symbol}-${crypto.randomUUID().slice(0, 8)}`, `${SUB}:seed-${symbol}-${crypto.randomUUID().slice(0, 8)}`, symbol, qty]);
+}
+
 /** Arm a rule for one symbol and point the harness's fake position at it. */
 async function arm(h: Harness, symbol: string, over: Record<string, unknown> = {}): Promise<EventRuleRow> {
   if (h.positions[0]) h.positions[0].symbol = symbol;
+  // The engine bought what it manages (ADR-159) — cover the fixture's holding unless the case is
+  // explicitly about an unaccounted one, which seeds nothing and says so.
+  if (h.positions[0] && h.positions[0].qty > 0) await coverWithEngineFill(symbol, h.positions[0].qty);
   const rule = normalizeEventRule({ symbol, expiresAt: EXPIRES, expectedAt: EXPECTED, ...over });
   return createEventRule(pool as never, SUB, { book, rule });
 }
@@ -486,6 +517,68 @@ describe('the state machine — armed → detected → classified → fired, thr
     await tickEarningsRules(ctx(), SUB, h.deps());
     expect(h.calls.place.length).toBe(1);
     expect((await getEventRule(pool as never, SUB, rule.ruleId))?.timeline.at(-1)?.detail).toContain('book_disabled');
+  });
+});
+
+describe('ADR-159 — the watcher places no order for a holding the engine cannot account for', () => {
+  /** Arm exactly as `arm` does, then STRIP the covering fill: the holding becomes one the operator
+   *  bought by hand, which is what the engine reads off the venue and must never manage. */
+  async function armUncovered(h: Harness, symbol: string, over: Record<string, unknown> = {}): Promise<EventRuleRow> {
+    const rule = await arm(h, symbol, over);
+    await pool.query('DELETE FROM oshal_trading_orders WHERE user_sub=$1 AND book_id=$2 AND symbol=$3', [SUB, book.bookId, symbol]);
+    return rule;
+  }
+  /** Drive a rule to the point of firing: detected → classified → a print that agrees with the miss. */
+  async function driveToFire(h: Harness): Promise<void> {
+    await tickEarningsRules(ctx(), SUB, h.deps());
+    await tickEarningsRules(ctx(), SUB, h.deps());
+    h.setPrint(190);
+  }
+
+  it('a COVERED holding still fires its protective sell — the control the withheld cases are read against', async () => {
+    const h = harness({ verdict: 'miss', held: 100, refPrice: 200 });
+    const rule = await arm(h, 'CSCO', { onMiss: 'sell', sizing: { mode: 'pct_of_position', value: 100 } });
+    await driveToFire(h);
+    expect((await tickEarningsRules(ctx(), SUB, h.deps())).transitions).toContain(`${rule.ruleId}:fired`);
+    expect(h.calls.place.length).toBe(1);
+  });
+
+  it('an UNCOVERED holding of the identical shape places nothing and says why', async () => {
+    const h = harness({ verdict: 'miss', held: 100, refPrice: 200 });
+    const rule = await armUncovered(h, 'INTC', { onMiss: 'sell', sizing: { mode: 'pct_of_position', value: 100 } });
+    await driveToFire(h);
+    expect((await tickEarningsRules(ctx(), SUB, h.deps())).transitions).toContain(`${rule.ruleId}:no_action`);
+    expect(h.calls.place.length).toBe(0);
+    const closed = await getEventRule(pool as never, SUB, rule.ruleId);
+    expect(closed).toMatchObject({ status: 'no_action' });
+    expect(closed?.timeline.at(-1)?.detail).toContain('do not account for');
+  });
+
+  it('a BEAT on an uncovered holding is withheld too — ADR-159 refuses the entry that ADDS to it', async () => {
+    const h = harness({ verdict: 'beat', held: 100, refPrice: 200 });
+    const rule = await armUncovered(h, 'AMAT', { onBeat: 'buy', sizing: { mode: 'pct_of_position', value: 100 } });
+    await tickEarningsRules(ctx(), SUB, h.deps());
+    await tickEarningsRules(ctx(), SUB, h.deps());
+    h.setPrint(210);                                                      // +5%: the market agrees with the beat
+    expect((await tickEarningsRules(ctx(), SUB, h.deps())).transitions).toContain(`${rule.ruleId}:no_action`);
+    expect(h.calls.place.length).toBe(0);
+  });
+
+  it('a TRADING_CORE_SYMBOLS name places nothing even though its ledger fully covers it', async () => {
+    const h = harness({ verdict: 'miss', held: 100, refPrice: 200 });
+    // USO is the live book's real fence (USO:0) and this holding IS covered by a seeded engine fill,
+    // so only the ring-fence can be withholding it — neither gate may stand in for the other.
+    const rule = await arm(h, 'USO', { onMiss: 'sell', sizing: { mode: 'pct_of_position', value: 100 } });
+    const before = process.env.TRADING_CORE_SYMBOLS;
+    process.env.TRADING_CORE_SYMBOLS = 'USO:0';
+    try {
+      await driveToFire(h);
+      expect((await tickEarningsRules(ctx(), SUB, h.deps())).transitions).toContain(`${rule.ruleId}:no_action`);
+      expect(h.calls.place.length).toBe(0);
+      expect((await getEventRule(pool as never, SUB, rule.ruleId))?.timeline.at(-1)?.detail).toContain('ring-fenced');
+    } finally {
+      if (before === undefined) delete process.env.TRADING_CORE_SYMBOLS; else process.env.TRADING_CORE_SYMBOLS = before;
+    }
   });
 });
 

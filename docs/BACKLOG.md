@@ -2272,3 +2272,50 @@ a guard in the shape of `tests/unit/authorization-schema-recovery.spec.ts` - dis
 proves that after a failed first bootstrap the authorization tools are registered and a
 user-directory read succeeds on a later call. Proven red against today's code, which leaves them
 dead.
+
+### Event-plan EXITS are not ring-fenced, only the entry is
+
+`stepListed` in `src/app/trading-event-plans.ts` refuses to open a position in a ticker
+`TRADING_CORE_SYMBOLS` fences, which is what stops a fenced name from ever entering an event
+plan's book. The exits (`stepFilled`'s take-profit and stop, `stepExitsPlaced`'s time stop) are
+deliberately NOT fenced: they close the quantity the plan's own entry bought, and withholding them
+would strip a filled position of its protection — strictly worse than the exposure prevented. The
+residual is narrow but real: a plan that reached `filled` BEFORE the operator added its ticker to
+`TRADING_CORE_SYMBOLS` keeps running its exits against a name the fence now covers. The ADR-159
+`unmanaged` mark does not apply to this module at all — its `EventBroker` interface is
+`configured/getAccount/getOrder/cancelOrder` with no `getPositions`, so every quantity it sells
+comes from `entry.filledQty`/`exits.qty`, which the engine's ledger accounts for by construction.
+
+**Done when:** arming or fencing decides the question before a position exists — adding a symbol to
+`TRADING_CORE_SYMBOLS` while a plan on it is `filled` or `exits_placed` either hands the position
+to the operator explicitly (the plan closes and says the exits are now theirs to manage) or records
+on the plan timeline that its exits continue under the pre-fence mandate, rather than the current
+silence. A guard in the shape of the `ADR-159 sibling` block in
+`tests/unit/trading-event-plans.spec.ts` drives a plan to `filled`, fences its ticker, ticks, and
+asserts the chosen behaviour — proven red against today's code, which neither closes nor records.
+
+**Assessed and deliberately left alone:** `trading-pinned-lots.ts` and `trading-dated-orders.ts`
+ride the same `trading-events:<sub>` leg and place through the same `deps.place` seam, and neither
+reads the `unmanaged` mark or `TRADING_CORE_SYMBOLS`. They are not the same defect shape: both
+execute an order the OPERATOR authored (a protected lot is the operator's own buy with its own exit
+rules, explicitly subtracted from the autopilot's view by ADR-138 D3; a dated order is an operator
+decision minted now and placed at a time they chose). ADR-159 withholds where the engine trades a
+position it did not buy, not where the operator instructed a specific order.
+
+### Two trading specs default their DSN to the operator's LIVE database
+
+`tests/unit/trading-earnings-rules.spec.ts:37` and `tests/unit/trading-event-plans.spec.ts:21` both
+read `process.env.OSHAL_TEST_DSN || postgresql://oshal:oshal@127.0.0.1:${OSHAL_PG_PORT ?? '55433'}/oshal`
+— port 55433 is `oshal-local-db`, the deployment database. Running either without setting
+`OSHAL_TEST_DSN` writes synthetic signals, decisions, orders, event rules and event plans into the
+live book under a `spec-*` sub, and their `afterAll` cleanup is the only thing that removes them.
+`tests/unit/trading-engine-cost-basis-postgres.spec.ts` has the same shape through its `ADMIN_URL`.
+The ADR-159 specs added alongside this entry instead start a disposable `postgres:16-alpine` and
+remove it, which is the pattern to converge on.
+
+**Done when:** those three specs start their own disposable container the way
+`tests/unit/trading-dispatch-unmanaged-fire.spec.ts` and
+`tests/unit/trading-outer-dispatch-unmanaged.spec.ts` do, with no default that can resolve to a
+deployment database, and a CI-local gate greps `tests/unit/**` for a hard-coded 55433 (or any
+`oshal-local-db` host) and fails on a new one. Proven red against today's tree, where three specs
+match.
