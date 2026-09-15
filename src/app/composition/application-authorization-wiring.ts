@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Compose reviewed roster registration, delegated management and exact external business memberships.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: compose the scheduled-service activation authority beside the policy it reads, and refresh an application service principal to itself — it has no account or session to revalidate, and its liveness is the activation row the runner re-resolves on every tick.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Make schema readiness re-requestable and sequence its DDL. One eagerly created promise cached its own rejection for the life of the process, so a bootstrap that lost the boot-time pool race made every later authorization operation refuse forever while the controller still reported healthy.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Give the RETURNED readiness the same re-requestable shape. It was a plain promise derived once from the recovered thunk, so the four modules chaining off it - queued ticket provenance, the user directory, Jarvis briefings and Test Lab runs - still inherited the first bootstrap failure forever, and authenticated ticket creation threw for the life of the process.
  */
 /** Assemble the control plane without granting it authority over business records. */
 import type { Request } from 'express';
@@ -26,6 +27,7 @@ import { createApplicationPrincipalDirectory } from './application-principal-dir
 import type { AppAccessService, SwarmAppService } from '@/features/swarm-apps';
 import { LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import { createRetryableReady } from '@/shared/services/database';
 import { createChildLogger } from '@/shared/logger';
 import { configureApplicationExecutionPolicy } from '@/shared/application-authorization-execution';
 import { ensureRemoteExecutionSchema } from '@/features/application-remote-execution';
@@ -118,16 +120,7 @@ async function bootstrapAuthorizationSchemas(pool: AppContext['pool'], bootstrap
  * @param ctx Core services. @param bootstrap Core schema readiness. @returns Re-requestable readiness.
  */
 function createSchemaReady(ctx: AppContext, bootstrap: Promise<unknown>): () => Promise<unknown> {
-  let pending: Promise<void> | null = null;
-  return () => {
-    if (!pending) {
-      pending = bootstrapAuthorizationSchemas(ctx.pool, bootstrap).catch(error => {
-        pending = null;
-        throw error;
-      });
-    }
-    return pending;
-  };
+  return createRetryableReady(() => bootstrapAuthorizationSchemas(ctx.pool, bootstrap));
 }
 
 /** @description Wire one durable authority into UI, tools and package execution.
@@ -177,8 +170,18 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
   const authorizationTool = new AuthorizationToolRuntime(service);
   ctx.applicationAuthorization = runtime;
   ctx.authorizationTool = authorizationTool;
-  const registered = ready().then(() => registerAuthorizationTools(ctx.toolRegistryService, ctx.dynamicToolExecutorRegistry, service));
-  void registered.catch(error => logger.error({ err: error }, 'Authorization tool registration failed'));
+  // The readiness this wiring HANDS OUT, not the one it awaits internally. Derived once with
+  // `.then()`, it kept the first bootstrap failure even after the thunk above had recovered, and
+  // every module chaining off it stayed dead - including the queued-principal capture that
+  // authenticated ticket creation performs on every ticket. Registration is idempotent (it seeds
+  // code-owned tool metadata and re-registers fixed executors on each startup), so a retry after a
+  // failed attempt repeats it safely.
+  const registered = createRetryableReady(async () => {
+    await ready();
+    await registerAuthorizationTools(ctx.toolRegistryService, ctx.dynamicToolExecutorRegistry, service);
+  });
+  void registered().catch(error => logger.error({ err: error },
+    'Authorization tool registration failed; the next consumer of authorization readiness retries it'));
   return { service, runtime, remoteExecution, directory: { registrations: directory.registrations, roster: directory.roster }, memberships,
     refreshActor: actors.refreshActor, authorizationTool, isProtected, observePrincipal: directory.observePrincipal,
     resolveActor: (req: Request) => resolveActor(req), targetActor: actors.targetActor, ready: registered };

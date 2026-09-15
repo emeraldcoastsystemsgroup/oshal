@@ -12,10 +12,12 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Exported buildOwnerRlsPolicyStatements so lazy app-store DDL sites outside this directory (finance/payments/youtube/trading/tv-pairing) can apply tier-1 RLS at their chokepoints (A1.2 follow-up)
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Exported gucEnabled + wrapPoolWithGuc through the barrel so feature slices that mint their OWN pg Pool (pgvector-rag-engine) can identity-stamp it without a deep import - an unwrapped private pool is exactly how rag_chunks rows were written owner-less (RLS inert).
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Export the durable remote-task journal bootstrap through the shared database boundary.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Export createRetryableReady so a schema readiness that chains onto another readiness does not cache a boot-time rejection for the life of the process.
  */
 
 export { createOptionalPostgresPool, hasPostgresConfiguration } from './optional-postgres-pool';
 export { gucEnabled, wrapPoolWithGuc } from './guc-pool';
+export { createRetryableReady } from './retryable-ready';
 export {
   assertSchemaReady,
   isRuntimeDdlStatement,

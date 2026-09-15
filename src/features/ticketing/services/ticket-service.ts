@@ -14,6 +14,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): added findLatestTicketByMetadataKey delegation — the consolidation stage's open-vs-recurrence decision (newest ticket per incident key, any status; FR-C5)
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 FR-E4): VALID_TRANSITIONS allows backlog → complete — the opt-in self-resolve close for a fully-resolved alert incident that never left backlog (previously an Invalid state transition, forcing a fake promote before closing)
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Persist verified ticket-owner issuer provenance in reserved metadata so later background bot dispatch can sign the original identity namespace without accepting a caller-spoofed value.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Do not lose an already inserted ticket to a failed provenance capture. Capture is supplementary and its absence fails closed at dispatch, so it is logged and degraded rather than thrown back at a creation the store has already accepted.
  */
 
 import {
@@ -139,7 +140,17 @@ export class TicketService {
       status: resolvedStatus,
       metadata,
     });
-    await captureQueuedApplicationPrincipal(ticket.ticketId, ticket.ownerSub);
+    // Supplementary to the ticket, and the row above is already committed. Throwing here would
+    // fail an authenticated creation the store has accepted, and the retry would duplicate it.
+    // Degrading is safe because a missing capture fails CLOSED later: runWithQueuedApplicationPrincipal
+    // refuses a protected dispatch with authorization_queue_provenance_required rather than running
+    // it without a verified initiator. No authority is invented by not recording one.
+    try {
+      await captureQueuedApplicationPrincipal(ticket.ticketId, ticket.ownerSub);
+    } catch (error) {
+      logger.error({ err: error, ticketId: ticket.ticketId },
+        'Queued application principal not captured; the ticket stands and any protected dispatch for it refuses');
+    }
     logger.info({ ticketId: ticket.ticketId }, 'Ticket created');
     // Sanitized lifecycle broadcast (ADR-045 swarm operational graph, SSE-style consumers).
     // Ids/title/status only — the description deliberately never rides the bus.

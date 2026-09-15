@@ -2243,25 +2243,41 @@ because the route's `status !== 'escalated'` gate hides the defect.
 
 ### Downstream authorization readiness still caches a boot failure
 
-The authorization schema bootstrap itself is now re-requestable: a bootstrap that loses the pool
-acquire at boot is retried by the next authorization operation instead of refusing for the life of
-the process (`createSchemaReady` in
-`src/app/composition/application-authorization-wiring.ts`). The wiring's RETURNED `ready` is a
-different value and was deliberately left alone. It is `readySchemas().then(() =>
-registerAuthorizationTools(...))` - a plain promise, created once, and four modules chain off it:
+**Severity correction — the first version of this entry understated the blast radius.** It listed
+the consequences as "the authorization tools are never registered, Jarvis briefings and Test Lab
+run history never get their schema, and the user-directory routes refuse". It omitted the
+consequential one: **authenticated ticket creation throws for the entire life of the process.**
+`createQueuedApplicationPrincipalWiring` (`src/app/server.ts:1059`) builds the queued-principal
+store on this readiness; `TicketService.createTicket` called `captureQueuedApplicationPrincipal`
+unconditionally and without a `catch`
+([ticket-service.ts:142](../src/features/ticketing/services/ticket-service.ts)); and
+`PostgresQueuedApplicationPrincipalStore.capture` awaits that readiness directly. The global
+`createApplicationActorContext` middleware (`server.ts:1063`) binds an active actor on every
+authenticated request, so the early returns inside `captureQueuedApplicationPrincipal` do not
+apply to an ordinary authenticated creation. The capture runs AFTER the row is inserted, so the
+ticket is committed, the caller is told the request failed, and a retry duplicates it — while
+health checks stay green. Reproduced against disposable `postgres:16-alpine` in
+`tests/unit/authorization-readiness-consumers.spec.ts`: on `1f0978a0` both cases fail with
+`timeout exceeded when trying to connect`, the first of them raised out of `createTicket`.
+
+The cause is the defect `createSchemaReady` fixed, one level out. The bootstrap thunk is
+re-requestable, but the readiness the wiring RETURNED was `readySchemas().then(() =>
+registerAuthorizationTools(...))` — a plain promise, created once — and four modules chain off it:
 `createQueuedApplicationPrincipalWiring` and `createUserDirectoryRoutes` in
 `src/app/server.ts:1059,1144`, plus `jarvis-briefing-wiring.ts:69` and `test-lab-wiring.ts:78`,
-which each build their own schema on top of it. If the very first bootstrap attempt fails, those
-four inherit that one rejection permanently even though every authorization operation has since
-recovered - so the authorization tools are never registered, Jarvis briefings and Test Lab run
-history never get their schema, and the user-directory routes refuse, while the api reports
-healthy. Converting it means changing those four consumers and whatever chains off them, which is
-a wider change than the fix it would ride on.
+which each build their own schema on top of it. A failed first attempt was inherited by all four
+permanently, even though every authorization operation had since recovered.
 
-**Done when:** the wiring's returned readiness is re-requestable by the same memoized-thunk shape
-as `createSchemaReady`, every consumer of it asks per operation rather than capturing it once, and
-a guard in the shape of `tests/unit/authorization-schema-recovery.spec.ts` - disposable
-`postgres:16-alpine`, a real pool small enough to genuinely lose the acquire, no mocked pool -
-proves that after a failed first bootstrap the authorization tools are registered and a
-user-directory read succeeds on a later call. Proven red against today's code, which leaves them
-dead.
+**Remaining:** nothing on the readiness itself — the returned value is now
+`createRetryableReady(...)` (`src/shared/services/database/retryable-ready.ts`, the shape
+`createSchemaReady` and the ADR-157 activation wiring each wrote by hand), every consumer asks it
+per operation, and ticket creation logs and degrades rather than losing a committed row to a
+supplementary capture. What the guard does NOT cover: the user-directory and Jarvis-briefing
+routes are proven only at their readiness seam, not driven over HTTP, because no unit-level HTTP
+harness exists for them; and `test-lab-schedule-wiring.ts` still starts polling off the first
+readiness attempt, so a first-attempt failure leaves schedule polling stopped until restart even
+though schedule reads themselves now recover.
+
+**Done when:** a first-attempt bootstrap failure leaves no consumer permanently dead — covered for
+ticket creation and tool registration by `tests/unit/authorization-readiness-consumers.spec.ts`,
+and still open for Test Lab schedule polling above.

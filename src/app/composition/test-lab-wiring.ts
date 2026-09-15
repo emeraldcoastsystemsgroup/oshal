@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Scope selected-package visibility work while retaining every fresh identity and access check.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Verify the package runner image once per boot so browser recipes become runnable only after a real in-profile probe.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Arm lazy runner verification instead of probing at boot; a restart no longer starts a browser container.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Ask the authorization readiness per run-store operation. Chaining off it once inherited a boot-time bootstrap failure permanently, so run history stayed dead after authorization itself recovered.
  */
 import type { Request } from 'express';
 import type { AppContext } from './app-context';
@@ -16,6 +17,7 @@ import { PackageTestSandbox, type AppAccessService, type SwarmAppService, type A
 import type { AuthorizationActor } from '@/shared/application-authorization';
 import { isOperator } from '@/shared/middleware/authz';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import { createRetryableReady } from '@/shared/services/database';
 import { TestLabRunService } from '../routes/test-lab-run-service';
 import { PostgresTestLabRunStore } from '../routes/test-lab-run-store';
 import { ensureTestLabRunSchema } from '../routes/test-lab-run-schema';
@@ -23,7 +25,8 @@ import type { TestLabRouteOptions } from '../routes/test-lab-routes';
 import { createTestLabScheduleWiring, type TestLabScheduledActorPorts } from './test-lab-schedule-wiring';
 
 interface AuthorizationPorts extends TestLabScheduledActorPorts {
-  ready: Promise<unknown>;
+  /** Re-requestable authorization readiness, asked per operation rather than captured once. */
+  ready(): Promise<unknown>;
   resolveActor(req: Request): Promise<AuthorizationActor>;
   runtime: { protectedApp(name: string): boolean; canDiscover(name: string, actor: AuthorizationActor): Promise<boolean> };
 }
@@ -75,9 +78,13 @@ async function visibleCases(apps: SwarmAppService, access: AppAccessService, aut
 
 /** @description Share fresh policy across start, cancellation, history reads and in-flight execution checks. */
 export function createTestLabWiring(ctx: AppContext, apps: SwarmAppService, access: AppAccessService, authorization: AuthorizationPorts): TestLabRouteOptions {
-  const ready = authorization.ready.then(() => runWithSystemIdentity(() => ensureTestLabRunSchema(ctx.pool)));
-  // Store operations await readiness; retain a rejection handler before the first browser request.
-  void ready.catch(() => undefined);
+  const ready = createRetryableReady(async () => {
+    await authorization.ready();
+    await runWithSystemIdentity(() => ensureTestLabRunSchema(ctx.pool));
+  });
+  // Store operations ask readiness per call, so a failed first attempt is retried rather than
+  // served forever; retain a rejection handler before the first browser request.
+  void ready().catch(() => undefined);
   const executionAuth = (req: Request) => ({ serviceSecret: isOperator(req) ? process.env.SWARM_SERVICE_SECRET : undefined,
     authorization: req.headers.authorization, canRunSuites: isOperator(req) });
   const runContext = async (req: Request, appName?: string) => {

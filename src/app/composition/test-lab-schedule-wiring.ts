@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Resume administrator-owned local schedules through current exact-principal account and policy resolution.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Carry the saved package selector through fresh scheduled visibility resolution.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Ask the run-wiring readiness per schedule operation. Chaining off it once inherited a boot-time bootstrap failure permanently, so schedule reads stayed dead after the bootstrap itself recovered.
  */
 import type { AppContext } from './app-context';
 import type { AuthorizationActor } from '@/shared/application-authorization';
@@ -12,6 +13,7 @@ import type { SwarmAppService } from '@/features/swarm-apps';
 import { createChildLogger } from '@/shared/logger';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { registerShutdownHook } from '@/shared/services/shutdown-hooks';
+import { createRetryableReady } from '@/shared/services/database';
 import type { TestLabRunService } from '../routes/test-lab-run-service';
 import type { TestLabPrincipal } from '../routes/test-lab-run-types';
 import { TestLabScheduleService } from '../routes/test-lab-schedule-service';
@@ -38,19 +40,22 @@ export async function resolveTestLabScheduledActor(ports: TestLabScheduledActorP
 
 /** @description Start catalog scheduling only after schema readiness and stop it through the existing shutdown lifecycle. */
 export function createTestLabScheduleWiring(options: {
-  ctx: AppContext; apps: SwarmAppService; runs: TestLabRunService; ready: Promise<unknown>;
+  ctx: AppContext; apps: SwarmAppService; runs: TestLabRunService; ready(): Promise<unknown>;
   authorization: TestLabScheduledActorPorts; visible: (actor: AuthorizationActor, appName?: string) => Promise<Map<string, string>>;
 }): TestLabScheduleService {
   let stopping = false;
-  const ready = options.ready.then(() => runWithSystemIdentity(() => ensureTestLabScheduleSchema(options.ctx.pool)));
+  const ready = createRetryableReady(async () => {
+    await options.ready();
+    await runWithSystemIdentity(() => ensureTestLabScheduleSchema(options.ctx.pool));
+  });
   const service = new TestLabScheduleService({ store: new PostgresTestLabScheduleStore(options.ctx.pool, ready),
     runs: options.runs, catalog: options.apps.testLabCatalog,
     resolveScheduledContext: async (principal, appName) => {
-      await ready;
+      await ready();
       const actor = await resolveTestLabScheduledActor(options.authorization, principal);
       return { actor: { issuer: actor.issuer, sub: actor.sub }, visibleApps: await options.visible(actor, appName), auth: { canRunSuites: actor.isSwarmAdmin } };
     } });
-  void ready.then(() => { if (!stopping) service.startPolling(); }).catch(error => logger.error({ err: error }, 'Local Test Lab schedules unavailable'));
+  void ready().then(() => { if (!stopping) service.startPolling(); }).catch(error => logger.error({ err: error }, 'Local Test Lab schedules unavailable'));
   registerShutdownHook('test-lab-schedules', () => { stopping = true; service.stop(); });
   return service;
 }
