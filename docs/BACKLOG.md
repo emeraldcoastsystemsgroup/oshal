@@ -396,15 +396,54 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   engine.
 
 ### DB-backed alert specs borrow the operator's database
-- **Remaining:** `tests/unit/alert-incident-cutover.spec.ts` stands a live alert *consumer* on the
-  operator's production queue and `tests/unit/alert-incident-reopen.spec.ts` leaks incident rows into
-  it (BUG-16: all 26 `oshal_incident` rows are spec residue; 24 from the reopen spec). Give each spec
-  its own scratch database or schema with migrations 104-108 applied, or construct the receiver with
-  no sweep. Fix the `afterAll` hang at `alert-incident-cutover.spec.ts:119` in the same pass, and
-  delete the residue.
-- **Done when:** both specs pass with the stack up and with it down (loudly, per doctrine) without
-  writing a row visible to the running deployment, `oshal_incident` holds no `probe-target`/`cut-`
-  rows, and a `ci-local.sh` post-gate fails if synthetic residue reappears.
+- **The borrowing is already gone (2026-09-11, e9179047).** Both specs own a private PostgreSQL:
+  `tests/helpers/disposable-alert-postgres.ts` starts a per-run `postgres:16-alpine` container on a
+  random loopback port with a generated password and a tmpfs data directory, applies migrations
+  104-109 and 141 into it, and removes the container in teardown. `alert-incident-cutover.spec.ts`
+  also builds the receiver with `startPendingSweep: false` and asserts no `setInterval` was taken,
+  so no consumer stands on the deployment queue. Neither spec reads `DATABASE_URL`,
+  `TEST_DATABASE_URL`, `ALERT_PIPELINE_TEST_DSN` or `OSHAL_PG_PORT`, and
+  `tests/unit/alert-postgres-isolation.spec.ts` holds that shut. The `afterAll` hang was
+  `server?.close(cb)` with `server` still `undefined` — the callback never fires, so the hook sat
+  out its whole 60 s timeout on exactly the runs where setup had already failed; teardown now
+  guards the server and closes the fixture in a `finally`. Neither spec can skip: that, and the
+  absence of the hang shape, are now asserted at source level in the isolation guard.
+- **Built 2026-09-15 on `fix/alert-specs-own-database` (PR #480).** The standing gate the done-when asked for:
+  `scripts/ci/check-alert-residue.sh`, wired into `scripts/ci-local.sh` as the last gate
+  (`alert-residue`). It runs SELECTs only, so it is safe against a running stack, and it is
+  fail-closed — a database it could not query reports UNCHECKED (exit 2) rather than clean, because
+  a guard that passes without looking is the false-green recorded twice elsewhere in this file. A
+  deployment that never ran the consolidation migrations says so and passes. The three fixture
+  shapes are named once in the script so gate and guard cannot drift: `primary_target =
+  'probe-target'`, `primary_target LIKE 'cut-%'`, and `dedup_key LIKE 'zz-incident-reopen-%'` (which
+  catches a reopen row whose target column looks real), checked across `oshal_incident`,
+  `oshal_incident_member` and `oshal_alert_event`. Guard: `tests/unit/ci-local-alert-residue.spec.ts`
+  runs the real script in Git Bash against a real migrated PostgreSQL — a clean database passes,
+  genuine `oshal-local-*` incidents pass, each fixture shape fails and is named in the output,
+  member and event rows are counted alongside incidents, an unreachable database is UNCHECKED, an
+  unmigrated one says so, and `ci-local.sh` is checked to actually call the gate.
+- **The fail-closed claim now holds after the opening probe too (review of PR #480).** Only the
+  connectivity probe was fail-closed in the first pass: every later statement folded failure into a
+  benign answer, so a connection lost after the probe exited 0 as "the consolidation migrations have
+  not run here", and an unreadable `oshal_incident_member` / `oshal_alert_event` contributed 0 to the
+  total. Existence checks now carry a third "could not ask" outcome and every count must come back as
+  a number; anything else is UNCHECKED. Three guard cases judge it per statement — two take the
+  database away at an exact call behind a counting stand-in for the docker CLI (script, shell, SQL,
+  exit code and PostgreSQL all real), and one needs no stand-in at all: a real unprivileged role that
+  may read `oshal_incident` and is refused `oshal_incident_member`, which the gate must report as
+  UNCHECKED rather than count as zero.
+- **Remaining: the residue itself, which is an operator deletion and was deliberately left alone.**
+  Measured 2026-09-15 against `oshal-local-db`: 27 `oshal_incident` rows (24 carrying
+  `probe-target`, 3 carrying a `cut-…-container` run prefix), 5 `oshal_incident_member` rows and 1
+  `oshal_alert_event` row. 22 of the 27 are in state `open`, which is why every surface reading that
+  table counts them as live incidents. First seen spans 2026-08-06 to 2026-09-08 — all of it before
+  the disposable-fixture change landed, so nothing new has been written since. The `alert-residue`
+  gate is therefore RED on this box until they are removed. The query that finds them:
+  `SELECT incident_id, dedup_key, primary_target, state, first_seen FROM oshal_incident WHERE
+  primary_target = 'probe-target' OR primary_target LIKE 'cut-%' OR dedup_key LIKE
+  'zz-incident-reopen-%' ORDER BY first_seen;`
+- **Done when:** that query returns no rows against the deployment database, and a `ci-local.sh` run
+  records `GATE alert-residue: PASS`.
 
 ### Surface-bridge ops have no success-path log line
 - **Remaining:** `src/app/routes/jarvis-routes.ts` logs when surface ops are **dropped** for lack of

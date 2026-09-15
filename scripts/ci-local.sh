@@ -28,6 +28,7 @@
 # 21 | maintainer@emeraldcoastsystemsgroup.com   | Require pinned core/store compatibility in disposable exports and retain compiler diagnostics per run.
 # 22 | maintainer@emeraldcoastsystemsgroup.com   | Two false outcomes closed. (1) The 2026-09-09 run sat nine hours inside `rm -rf` of the previous night's ci-src export (a full node_modules), held the lock all night and wrote no outcome line: prepare_head_src and gate_secrets now purge through scripts/ci/ci-purge.sh - watchdog-bounded, robocopy-then-rm on Windows, one `purge: OK|FAIL` line, and a FAIL fails the gate instead of hanging the run. (2) `gitleaks detect` exits 0 when it skips paths it cannot read (2026-09-10: 5 of 5077 files unread, secret-scan PASS): gate_secrets now runs through scripts/ci/ci-secret-scan.sh, which counts the scanner's skipped/unread stderr lines and writes `unread=N of M exported files` into the verdict, failing on any N above zero.
 # 23 | maintainer@emeraldcoastsystemsgroup.com   | New `spec-database-default` gate: scripts/ci/check-spec-database-default.sh refuses a test file that can reach the operator LIVE Postgres by DEFAULT. 23 DB-backed specs ended their DSN expression in a loopback fallback on the stack published port (oshal-local-db, the real trading database), so a bare `npx vitest run tests/unit/trading-*.spec.ts` created and dropped schema and wrote order rows in production - it fired twice on 2026-09-14 from two lanes that had each been told in writing not to touch it. The specs now resolve through tests/helpers/spec-database-url.ts, which refuses an unpointed run; this gate is what keeps that true for the NEXT spec. Source hygiene, so it runs against GATE_SRC (committed HEAD in --head mode) next to repo-separation.
+# 24 | maintainer@emeraldcoastsystemsgroup.com   | New `alert-residue` post-gate: scripts/ci/check-alert-residue.sh fails when a fixture row from the alert integration guards is sitting in the DEPLOYMENT database. The two specs used to take whatever DSN the box handed them — here, the live database — and left 27 oshal_incident rows behind, one of which every surface reading that table still counts as a live incident. They now own a disposable PostgreSQL; this gate is what keeps that true after the next spec is written. SELECT-only, so it is safe against a running stack, and fail-closed: a database it could not query reports UNCHECKED, never clean.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -353,6 +354,17 @@ gate_unpushed_commits() {
   (cd "$REPO_DIR" && timeout 180 bash scripts/check-unpushed-commits.sh --fetch);
 }
 
+# POST-GATE: no fixture row from the alert integration guards may sit in the DEPLOYMENT database.
+# Those specs used to take whatever DSN the box offered, which here is the live database, and 27
+# oshal_incident rows in it are fixture rows — one of which every dashboard reading that table still
+# counts as a live incident. They now own a disposable PostgreSQL; this is the standing proof that
+# stays true. Reads only (SELECT), so it is safe against a running stack, and it is fail-closed: a
+# database it could not query reports UNCHECKED rather than clean. Runs against the REPO, not the
+# HEAD export — deployment state is not tree content.
+gate_alert_residue() {
+  (cd "$REPO_DIR" && timeout 180 bash scripts/ci/check-alert-residue.sh);
+}
+
 # BLOCKING (2026-07-24): the governance counters reached 0 (324 warnings burned down —
 # FSD deep imports rewritten to slice barrels, no-console converted to the pino logger or
 # justified-disabled, harness second-barrel lint-exempt). The gate now FAILS on any new
@@ -580,6 +592,7 @@ if [ "$SKIP_IMAGE" != "1" ]; then
   fi
   prune_scoped
 fi
+run_gate alert-residue gate_alert_residue
 
 if [ "${#FAILED_GATES[@]}" -eq 0 ]; then
   log "=== LOCAL CI: ALL GATES GREEN ==="
