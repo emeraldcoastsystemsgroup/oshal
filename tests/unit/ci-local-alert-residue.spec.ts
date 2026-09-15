@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for the ci-local alert-residue post-gate. The real gate script runs in Git Bash against a real migrated PostgreSQL — the same migrations the deployment runs — so what is proven here is the SQL and the exit code, not a description of them: a clean database passes, each of the three fixture shapes the alert integration guards write fails, a genuine deployment incident does not, a database the gate could not query is UNCHECKED rather than clean, and ci-local.sh actually calls it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cover the window the first pass left unproven: the gate's fail-closed promise was only tested at the opening connectivity probe, so a query that died AFTER it was nobody's regression. Three cases now judge it. Two lose the database mid-run behind a counting stand-in for the docker CLI — the only way to place a dropped connection at an exact statement — while everything else in them, script, shell, SQL, exit code and the PostgreSQL underneath, stays real. The third needs no stand-in at all: a genuine unprivileged role reads oshal_incident and is refused oshal_incident_member, which is a real query failure mid-run, and the gate must call that UNCHECKED rather than count it as zero.
  */
 
 import { spawnSync, execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, dirname, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { DisposableAlertPostgres } from '../helpers/disposable-alert-postgres';
@@ -67,6 +69,52 @@ async function insertIncident(dedupKey: string, primaryTarget: string): Promise<
     [dedupKey, primaryTarget],
   );
   return rows[0].incident_id;
+}
+
+/**
+ * Stand-in for the docker CLI, used only to time a lost connection. It hands the first
+ * OSHAL_ALERT_SHIM_PASS calls to the real binary and refuses everything after, which is
+ * the one thing a real container cannot be asked to do on cue.
+ */
+const DOCKER_SHIM = [
+  '#!/usr/bin/env bash',
+  'attempt=$(cat "$OSHAL_ALERT_SHIM_COUNTER" 2>/dev/null || echo 0)',
+  'attempt=$((attempt + 1))',
+  'printf %s "$attempt" > "$OSHAL_ALERT_SHIM_COUNTER"',
+  'if [ "$attempt" -gt "$OSHAL_ALERT_SHIM_PASS" ]; then',
+  '  echo "Error response from daemon: connection reset by peer" >&2',
+  '  exit 1',
+  'fi',
+  'exec "$OSHAL_ALERT_SHIM_REAL_DOCKER" "$@"',
+  '',
+].join('\n');
+
+let realDockerPath = '';
+
+/** Resolves docker the way the gate does — through Git Bash — so the shim can delegate to it. */
+function realDocker(): string {
+  if (!realDockerPath) {
+    realDockerPath = execFileSync(bash(), ['-c', 'command -v docker'], { encoding: 'utf8' }).trim();
+  }
+  if (!realDockerPath) throw new Error('docker must be on PATH: the alert-residue gate shells out to it');
+  return realDockerPath;
+}
+
+/**
+ * Runs the real gate against the real fixture database and takes the database away after
+ * `passedCalls` statements, so the verdict for a mid-run failure can be asserted per statement.
+ */
+function runGateLosingDatabaseAfter(passedCalls: number): GateRun {
+  const shimDir = mkdtempSync(resolve(tmpdir(), 'oshal-alert-residue-shim-'));
+  const counter = resolve(shimDir, 'calls').replaceAll('\\', '/');
+  writeFileSync(counter, '0');
+  writeFileSync(resolve(shimDir, 'docker'), DOCKER_SHIM, { mode: 0o755 });
+  return runGate({
+    PATH: `${shimDir}${delimiter}${process.env.PATH ?? ''}`,
+    OSHAL_ALERT_SHIM_COUNTER: counter,
+    OSHAL_ALERT_SHIM_PASS: String(passedCalls),
+    OSHAL_ALERT_SHIM_REAL_DOCKER: realDocker(),
+  });
 }
 
 beforeAll(async () => {
@@ -150,6 +198,45 @@ describe('ci-local alert-residue post-gate', () => {
     const run = runGate({ OSHAL_RESIDUE_DB_NAME: 'postgres' });
     expect(run.status).toBe(0);
     expect(run.stdout).toContain('oshal_incident is not present');
+  }, 60_000);
+
+  it('reports UNCHECKED when the database is lost between the probe and the table-existence check', async () => {
+    await reset();
+    const run = runGateLosingDatabaseAfter(1);
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain('oshal_incident existence check');
+    expect(run.stderr).toContain('nothing here says the deployment is clean');
+    // The false-green this closes: an unanswered existence check used to be announced
+    // as an unmigrated deployment, which reads as "nothing to find here" and exits 0.
+    expect(run.stdout).not.toContain('is not present');
+    expect(run.stdout).not.toContain('clean (');
+  }, 60_000);
+
+  it('reports UNCHECKED when a companion table check dies, rather than counting that table as zero', async () => {
+    await reset();
+    // Deliberately no residue rows: the incident count legitimately comes back 0, so the
+    // only thing standing between this run and a "clean" verdict is whether the gate is
+    // honest about the two companion tables it never managed to read.
+    const run = runGateLosingDatabaseAfter(3);
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain('oshal_incident_member existence check');
+    expect(run.stdout).not.toContain('clean (');
+  }, 60_000);
+
+  it('reports UNCHECKED when a residue count is genuinely refused, with nothing stood in for', async () => {
+    await reset();
+    // A real unprivileged role against the real database: it may read oshal_incident and
+    // is refused oshal_incident_member, so the failure the gate must survive is PostgreSQL's
+    // own, not a simulated one.
+    await pool.query('DROP ROLE IF EXISTS oshal_residue_partial_reader');
+    await pool.query('CREATE ROLE oshal_residue_partial_reader LOGIN');
+    await pool.query('GRANT USAGE ON SCHEMA public TO oshal_residue_partial_reader');
+    await pool.query('GRANT SELECT ON oshal_incident TO oshal_residue_partial_reader');
+    const run = runGate({ OSHAL_RESIDUE_DB_USER: 'oshal_residue_partial_reader' });
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain('oshal_incident_member count');
+    expect(run.stderr).toContain('permission denied');
+    expect(run.stdout).not.toContain('clean (');
   }, 60_000);
 
   it('is wired into ci-local.sh as a gate rather than only existing on disk', () => {

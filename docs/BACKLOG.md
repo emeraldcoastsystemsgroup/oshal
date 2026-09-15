@@ -225,7 +225,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   out its whole 60 s timeout on exactly the runs where setup had already failed; teardown now
   guards the server and closes the fixture in a `finally`. Neither spec can skip: that, and the
   absence of the hang shape, are now asserted at source level in the isolation guard.
-- **Built 2026-09-15 on `fix/alert-specs-own-database`.** The standing gate the done-when asked for:
+- **Built 2026-09-15 on `fix/alert-specs-own-database` (PR #480).** The standing gate the done-when asked for:
   `scripts/ci/check-alert-residue.sh`, wired into `scripts/ci-local.sh` as the last gate
   (`alert-residue`). It runs SELECTs only, so it is safe against a running stack, and it is
   fail-closed — a database it could not query reports UNCHECKED (exit 2) rather than clean, because
@@ -239,6 +239,16 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   genuine `oshal-local-*` incidents pass, each fixture shape fails and is named in the output,
   member and event rows are counted alongside incidents, an unreachable database is UNCHECKED, an
   unmigrated one says so, and `ci-local.sh` is checked to actually call the gate.
+- **The fail-closed claim now holds after the opening probe too (review of PR #480).** Only the
+  connectivity probe was fail-closed in the first pass: every later statement folded failure into a
+  benign answer, so a connection lost after the probe exited 0 as "the consolidation migrations have
+  not run here", and an unreadable `oshal_incident_member` / `oshal_alert_event` contributed 0 to the
+  total. Existence checks now carry a third "could not ask" outcome and every count must come back as
+  a number; anything else is UNCHECKED. Three guard cases judge it per statement — two take the
+  database away at an exact call behind a counting stand-in for the docker CLI (script, shell, SQL,
+  exit code and PostgreSQL all real), and one needs no stand-in at all: a real unprivileged role that
+  may read `oshal_incident` and is refused `oshal_incident_member`, which the gate must report as
+  UNCHECKED rather than count as zero.
 - **Remaining: the residue itself, which is an operator deletion and was deliberately left alone.**
   Measured 2026-09-15 against `oshal-local-db`: 27 `oshal_incident` rows (24 carrying
   `probe-target`, 3 carrying a `cut-…-container` run prefix), 5 `oshal_incident_member` rows and 1
