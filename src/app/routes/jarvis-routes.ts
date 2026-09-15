@@ -51,6 +51,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Decomposition: the per-thread chat-ticket + session-task registration moves to jarvis-thread-tickets.ts, taking this file from 804 code lines to under the 800-line threshold; the person-model recall hook is untouched.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Emitted surface ops log op count, names (custom:<name>) and the target app + its declared custom names at INFO on the success path, so a BUG-18 custom-name mismatch is diagnosable from the api log alone.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | No-hosted-brain honesty: the /ask catch runs describeJarvisAskFailure, so a turn whose user-brain ladder resolved to nothing on an unbrokered-harness bot records "Jarvis has no AI engine connected — add one under Settings → Connections → Bring Your Own LLM." with code NO_HOSTED_BRAIN, and /ask/result returns that code for the surface to speak. Every other failure keeps its own message and carries no code; the refusal, the ladder and the SEC-05 preflight are untouched.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted jarvis-speaker-profile-links.js in JARVIS_CLIENT_ASSETS: the Manage Voices → Ambient Recall bridge serves from the same authenticated /assets route as the other speaker siblings.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -358,6 +359,7 @@ const JARVIS_CLIENT_ASSETS = new Map([
   ['jarvis-speakers.css', 'text/css; charset=utf-8'],
   ['jarvis-speaker-capture.js', 'application/javascript; charset=utf-8'],
   ['jarvis-person-consent.js', 'application/javascript; charset=utf-8'],
+  ['jarvis-speaker-profile-links.js', 'application/javascript; charset=utf-8'],
 ]);
 
 /** Serve only the explicit Jarvis client assets; the parent router is authentication-gated. */

@@ -32,6 +32,7 @@
 # 25 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: forward OSHAL_APPLICATION_AUTHORIZATION_MODE (ADR-149). Without the passthrough the api silently ran the default `enforce` mode with zero approved assignments, so every package surface answered 403 to a signed-in operator; the documented `legacy` compatibility mode could not be set from .env at all.
 # 26 | maintainer@emeraldcoastsystemsgroup.com | Budget only the API's main, optional and RAG pools at the existing managed 8/2/2 defaults so ordinary concurrent reads fit the 24-connection application role; preserve explicit deployment overrides.
 # 27 | maintainer@emeraldcoastsystemsgroup.com | Forward the world series-store load knobs (WORLD_SERIES_READ_CONCURRENCY, WORLD_ROLLUP_CONCURRENCY, WORLD_PULSE_WINDOW_MS, WORLD_PULSE_WARN_FRACTION) to the api, which is where the world schedules dispatch. Unforwarded they would be the documented silent-env-var class: the operator turns the knob in .env, the container keeps the compiled default, and the series store keeps saturating.
+# 28 | maintainer@emeraldcoastsystemsgroup.com | Hot-swap bind mount for src/api/jarvis-speaker-profile-links.js (the Manage Voices → Ambient Recall bridge), beside the other Jarvis speaker siblings, so it updates without a rebuild.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -1517,6 +1518,7 @@ services:
       - ./src/api/jarvis-speakers.css:/app/src/api/jarvis-speakers.css:ro
       - ./src/api/jarvis-speaker-capture.js:/app/src/api/jarvis-speaker-capture.js:ro
       - ./src/api/jarvis-person-consent.js:/app/src/api/jarvis-person-consent.js:ro
+      - ./src/api/jarvis-speaker-profile-links.js:/app/src/api/jarvis-speaker-profile-links.js:ro
       # Mobile-responsive surface fixes — per-file mounts so we DON'T shadow the image's built
       # src/api/dist chat bundles (ui-chat-window.js etc.), which are NOT present on the host.
       - ./src/api/chat.html:/app/src/api/chat.html:ro

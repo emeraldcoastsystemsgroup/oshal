@@ -19,6 +19,7 @@
   2 | maintainer@emeraldcoastsystemsgroup.com | Compact the existing assistant controls and group task updates without changing conversation or delivery ownership.
   3 | maintainer@emeraldcoastsystemsgroup.com | Stop the hidden dashboard node animation while retaining the assistant orb and voice rendering.
   4 | maintainer@emeraldcoastsystemsgroup.com | A failed ask carrying code NO_HOSTED_BRAIN (no AI engine connected) is spoken as the server's actionable sentence instead of "Sorry, that didn't work"; askFailureLines decides both lines, every other failure keeps its message and the apology.
+  5 | maintainer@emeraldcoastsystemsgroup.com | Load and mount the Manage Voices → Ambient Recall bridge: every voice row in the Voice & Speakers panel opens that voice's profile page.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -555,6 +556,7 @@
 <script src="/api/jarvis/assets/jarvis-speakers.js"></script>
 <script src="/api/jarvis/assets/jarvis-speaker-capture.js"></script>
 <script src="/api/jarvis/assets/jarvis-person-consent.js"></script>
+<script src="/api/jarvis/assets/jarvis-speaker-profile-links.js"></script>
 <script src="/api/jarvis/assets/jarvis-package-tools.js"></script>
 <!-- Surface bridge: Jarvis is the cockpit's chat rail (#chatWorkspaceFrame), so the relay already
      routes the focused app surface's inbound events here. This picks the `context` snapshots out of
@@ -2573,6 +2575,10 @@ if (window.JarvisSpeakerCapture) {
 if (window.JarvisPersonConsent) {
   // ADR-100 Phase 2: self-wires a "Per-person insights" launcher next to Manage voices.
   window.JarvisPersonConsent.mount({ apiBase: '/api/jarvis/ambient/person' });
+}
+if (window.JarvisSpeakerProfileLinks) {
+  // Ambient Recall bridge: every voice row in Manage Voices opens that voice's profile page.
+  window.JarvisSpeakerProfileLinks.mount({ root: speakerPanelController?.element, profileBase: '/api/jarvis/ambient/person/' });
 }
 $('discussionBtn')?.setAttribute('aria-expanded', 'false');
 $('discussionBtn')?.addEventListener('click', openDiscussion);
