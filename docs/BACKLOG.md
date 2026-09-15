@@ -339,6 +339,26 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   spec proves a transient failure followed by a healthy database ends with the store persistent; and the
   same treatment covers all five stores that share this shape.
 
+### The purge watchdog cannot tell "no descendants" from "cannot look" (2026-09-15)
+- **Context:** `purge_tree_abandon` (`scripts/ci/ci-purge.sh`, added with the #468 purge fix) kills the
+  delete's native process tree with `taskkill //F //T //PID <winpid>` under Git Bash, and falls back to
+  enumerating descendants with `ps -eo pid=,ppid=` and killing them deepest-first. On this box that
+  fallback cannot run: Git Bash's `ps` rejects `-eo` (`ps: unknown option -- o`), verified by the
+  reviewer of #468 and by the lane.
+- **Remaining:** if `taskkill` itself fails against a live process (a permission edge case or a race)
+  AND the `ps -eo` enumeration returns nothing because it errored rather than because there was
+  nothing to find, the function falls through to `kill -KILL "$pid"` on the bash wrapper alone and
+  reports `killed pid <pid> (no descendant processes found)`. That sentence reads as a checked
+  absence; on Windows it is an inability to check. The gate still returns FAIL and exits non-zero, so
+  the fail-closed contract holds — what is wrong is the message, and in that narrow combination the
+  orphaned-native-delete the fix exists to prevent could recur unreported.
+- **Also open:** the POSIX descendants-then-parent branch has no coverage anywhere — it cannot run on
+  this box and there is no Linux runner guard for it.
+- **Done when:** the abandon path distinguishes "enumerated descendants and found none" from "could
+  not enumerate", and says which in its outcome line; a failed `taskkill` against a live process is
+  reported as a failure to abandon rather than a successful kill; and the POSIX branch is exercised
+  somewhere that can run it, or the entry records the decision not to.
+
 ## Security, tenancy, and trust boundaries
 
 ### The SEC/CORE/APP hardening-track identifiers have no definition anywhere in the repo
