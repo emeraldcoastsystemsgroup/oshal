@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Adopt existing local and verified provider accounts without conflating subjects or granting new operator roles.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Compose durable remote execution and scoped result authority behind schema readiness.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Compose reviewed roster registration, delegated management and exact external business memberships.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: compose the scheduled-service activation authority beside the policy it reads, and refresh an application service principal to itself — it has no account or session to revalidate, and its liveness is the activation row the runner re-resolves on every tick.
  */
 /** Assemble the control plane without granting it authority over business records. */
 import type { Request } from 'express';
@@ -28,6 +29,8 @@ import { createChildLogger } from '@/shared/logger';
 import { configureApplicationExecutionPolicy } from '@/shared/application-authorization-execution';
 import { ensureRemoteExecutionSchema } from '@/features/application-remote-execution';
 import { createApplicationRemoteExecutionWiring } from './application-remote-execution-wiring';
+import { createApplicationServiceActivationWiring } from '../application-service-activation-wiring';
+import { APPLICATION_SERVICE_PRINCIPAL_ISSUER } from '@/features/application-authorization';
 
 const logger = createChildLogger({ module: 'application-authorization-wiring' });
 function createActorPorts(ctx: AppContext, directory: ReturnType<typeof createApplicationPrincipalDirectory>, memberships: PostgresExternalTenantMembershipStore) {
@@ -40,6 +43,13 @@ function createActorPorts(ctx: AppContext, directory: ReturnType<typeof createAp
     return account ? { ...account, tenantIds: account.isActive ? await tenants(sub,issuer) : [] } : null;
   };
   const refreshActor = async (original: AuthorizationActor) => {
+      // ADR-157: an application service principal is minted by the kernel on activation, not by a
+      // login. There is no account or session to revalidate, and it never holds swarm administration
+      // or management scopes; what keeps it live is the activation row, which the runner re-resolves
+      // on every tick and which authorize() still evaluates against current assignments.
+      if (original.issuer === APPLICATION_SERVICE_PRINCIPAL_ISSUER) {
+        return { ...original, isSwarmAdmin: false, managementScopes: [] };
+      }
       const account = original.issuer === LOCAL_AUTH_PRINCIPAL_ISSUER ? await getSessionSnapshot(ctx.pool, original.sub) : null;
       if (original.issuer === LOCAL_AUTH_PRINCIPAL_ISSUER && account?.status !== 'active') return null;
       // Recheck account, tenant and administration stores for an already authenticated identity.
@@ -114,6 +124,15 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
     },
     protectedApp: isProtected,
     authorize: (actor, operation) => runtime.authorize(actor, operation),
+  });
+  createApplicationServiceActivationWiring({
+    pool: ctx.pool, ready, policy: store, getApps,
+    describeApp: app => {
+      const summary = service.getApp(app);
+      return summary ? { source: summary.source, catalogRevision: summary.catalogRevision, catalog: summary.catalog } : null;
+    },
+    authorize: (actor, operation) => runtime.authorize(actor, operation),
+    resolveActor: (req: Request) => resolveActor(req),
   });
   const authorizationTool = new AuthorizationToolRuntime(service);
   ctx.applicationAuthorization = runtime;
