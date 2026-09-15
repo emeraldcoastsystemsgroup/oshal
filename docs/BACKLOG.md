@@ -345,14 +345,11 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Proven:** a live design → refine → refine → apply (paper) → revert cycle updated ONE strategy row (same id; library 84 → 85 → 85 → 85 → 84 rows) through the model rail, and the paper book's active strategy read exactly as before the run — [studio-parity-proof.md](apps/trading/studio-parity-proof.md).
 - **Remaining:** Bot Forge edit-in-place for an existing pack, only if that follow-up is commissioned.
 - **Done when:** if Forge edit-in-place is commissioned, it re-emits the same pack rather than a duplicate.
+- **Commissioned (operator, 2026-09-15):** build Bot Forge edit-in-place. The done-when above now applies unconditionally: editing an existing pack re-emits the same pack, never a duplicate.
 
 ### Nightly tasks still launched from the ADR-115 archive
 - **Remaining:** make keepalive, recap, and signal launchers self-locating, repoint their actual Task Scheduler actions to this trunk, and explicitly retain or relocate the private Evidence-Nightly job. (Kalshi done 2026-09-04: `kalshi-forward-daily.cmd` cd's to `%~dp0..`, the task action names `C:\Projects\oshal`, and it test-ran from there with exit 0. Still on the archive path: JobHunterSwarmSync, OSHAL Claude token keepalive, OSHAL Signal Labeler, OSHAL-Evidence-Nightly.)
 - **Done when:** each movable task test-runs from `C:\Projects\oshal`, its scheduler action names that path, and Evidence-Nightly is documented at an intentional private location. See [ADR-115](adr/115-clean-trunk-branch-strategy.md).
-
-### Scheduled Local CI unattended proof
-- **Remaining:** inspect an unprompted 23:30 scheduler run; do not substitute a manual launch.
-- **Done when:** its log names `archive-ref=origin/main`, records the exact fetched SHA, and Task Scheduler's result equals the completed gate's exit code. See [ADR-090](adr/090-github-actions-to-local-ci.md).
 
 ### CI Playwright red-baseline retirement
 - **Remaining:** root-cause the specs outside the current green ratchet and separate product defects, fixture/auth defects, and intentionally unsupported cases.
@@ -553,6 +550,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   pasted on `/free-models` connects and `GET /api/connect/free-tier/rotation` shows the lane
   eligible; and the lane's row in `docs/governance/real-boundary-regression-audit.md` cites that
   dated evidence instead of "pending an operator token".
+- **Blocked on the provider (operator, 2026-09-15):** Hugging Face is not provisioning accounts - sign-in fails on the provider side. Do not re-ask until that changes.
 
 ### Deploy — the api process exits during the bot-recreate storm
 - **Remaining:** on the 2026-09-05 deploy of f59494b7, while `oshal-deploy.sh` recreated the 34 bots the api sat above 200% CPU, host-port HTTP timed out for about three minutes, and the process then exited (exit 1) on `terminating connection due to idle-in-transaction timeout` raised through process-crash-guards (api log 04:43:20Z; `docker events` shows die then start). Docker restarted it in the same container, it was healthy about 40 s later, and the gate reported DEPLOYED with the advisory scan counting 19 error lines — so a deploy currently carries roughly a minute of api downtime that only the container's RestartCount records. Which transaction idles through the storm is not yet identified.
@@ -794,10 +792,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### Versioned platform-credential distribution if redistribution returns
 - **Remaining:** keep the retired unordered credential pub/sub rail disabled. If platform credentials must again cross node-local storage boundaries, replace it with signed, audience-bound, monotonically versioned promotion/refresh events plus durable revocation tombstones and compare-and-set replay; a later operator allowlist change must not promote an earlier private-user credential.
 - **Done when:** a two-node restart/offline proof covers promote, refresh, revoke, duplicate, delayed, and out-of-order delivery; no pre-revocation event can resurrect a credential, a returning node converges to the tombstone, private credentials remain private across allowlist transitions, and neither payloads nor logs expose reusable secret material.
-
-### Biometric privileged-access module
-- **Remaining:** if commissioned, define pluggable face/voice enrollment and challenge providers whose signed result can satisfy a high-privilege endpoint condition, with a non-biometric fallback.
-- **Done when:** an enrolled user can unlock one protected bot/app, replay and cross-user challenges fail, and devices without camera/mic have a documented safe path.
+- **Needs a deeper dive (operator, 2026-09-15) - what this actually asks, plainly:** oshal owns some credentials of its own (platform API keys, not a user's). With more than one machine running bot nodes, those machines sometimes need the same key. The old system broadcast keys between machines and was switched off because it could not guarantee delivery order, so a key you had REVOKED could arrive late and quietly come back to life. The real question is: will this deployment ever run more than one machine that must share platform keys? On a single box the answer is no and this entry can close as not commissioned; with several nodes it has to be rebuilt safely. Not decided yet - explain it again before asking.
 
 ### Platform SaaS account migration (paused by operator)
 - **Remaining:** when unpaused, recreate platform-owned services under `maintainer@emeraldcoastsystemsgroup.com`, re-mint/re-consent credentials, and record the YouTube relinking flow; personal brokerage accounts remain out of scope.
@@ -1206,6 +1201,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### Finance package live verification
 - **Remaining:** configure Plaid Sandbox and Stripe test credentials, install the [`finance`](https://github.com/emeraldcoastsystemsgroup/oshal-applications/tree/main/finance) package, then exercise link/sync/brief and one test ACH payment.
 - **Done when:** the owning user sees grounded balances/holdings/spend, the payment audit/status reflect the test transfer, another user cannot read either, and no live-money key is present. See [ADR-048](adr/048-finance-aggregation-swarm.md).
+- **Blocked on the provider (operator, 2026-09-15):** Stripe is not provisioning accounts - sign-in fails on the provider side. Do not re-ask until that changes. Plaid is DONE: PLAID_ENV, PLAID_CLIENT_ID and PLAID_SECRET are set; only the Stripe test key remains.
 
 ### Finance post-v1 rails and governance
 - **Remaining:** separately decide real A2A payouts, live-money compliance, broker trade execution, Plaid production access, household labels/sharing, and scheduled forecast/alert scope.
