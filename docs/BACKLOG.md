@@ -710,6 +710,26 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   still serving afterwards; and a restart-count probe over a deploy window shows the api's
   `RestartCount` unchanged.
 
+### Post-deploy verification cannot pass with delegation signing on (2026-09-15)
+- **Remaining:** `scripts/lib/deploy-verify.sh` asks Jarvis through a PAT minted with the service secret, and
+  that path records no principal issuer by design (`cli-token-routes.ts`), so with signing on
+  `resolveDelegatedPrincipal` refuses with `User-bound delegation requires a verified principal issuer`
+  (`bot-node-client.ts`). Its ticket-dispatch check files a `task` ticket that routes to an inline bot (see
+  "Signed delegation refuses every ticket whose worker bot runs inline"). Both checks FAILED on the 2026-09-15
+  deploy, although every interactive login path stamps an issuer and the signing keys matched on all 34 bots.
+- **Done when:** with signing configured, the Jarvis check runs under an identity that carries a verified
+  issuer or reports "not verifiable from automation" as a result distinct from FAIL, the dispatch check targets
+  a ticket type whose worker is a dedicated bot node, and a spec proves each check passes under signing and
+  still fails on a real refusal.
+
+### The isolated-browser fixture fails a passing suite when the browser takes over 5 s to exit (2026-09-15)
+- **Remaining:** `tests/fixtures/isolated-browser.ts` bounds the owned browser's exit at `CLOSE_TIMEOUT_MS = 5000`
+  and throws `Owned fixture browser <pid> did not terminate after explicit cleanup` past it.
+  `tests/unit/jarvis-no-brain-browser.spec.ts` failed that way twice in a row on 2026-09-15 with both of its tests
+  passing, while two lanes ran on the box; the pid had exited when checked about a minute later.
+- **Done when:** browser suites that use the fixture pass five consecutive runs while two lanes run on the box,
+  and a browser that never exits still fails the suite loudly.
+
 ## Security, tenancy, and trust boundaries
 
 ### The SEC/CORE/APP hardening-track identifiers have no definition anywhere in the repo
@@ -830,11 +850,20 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   guard proves both against the real policy, and each of the five schedules above logs `Manifest
   service-route schedule completed` on the box.
 
-## Workflow, agent, and model runtime
+### Signed delegation refuses every ticket whose worker bot runs inline (2026-09-15)
+- **Remaining:** with `OSHAL_DELEGATION_SIGNING_KID` and `OSHAL_DELEGATION_SIGNING_PRIVATE_KEY` set on the
+  controller (live on this box since the 2026-09-15 deploy, with the matching public ring verified on all 34
+  bot nodes), `dispatch-manifest-worker.ts` throws `Signed HTTP delegation requires a dedicated bot-node
+  endpoint` for any worker registered with `container: 'oshal-api'`. 25 of the 60 bots in
+  `swarm-bot-registry-local.ts` are inline, including the core workers for `security-finding`
+  (security-analyst) and `workflow-build` (workflow-assistant). The deploy verifier's `task` ticket escalated
+  this way twice on 2026-09-15. `docs/security/http-delegation.md` expects legacy paths to fail once signing is
+  on, but nothing says which ticket types stop.
+- **Done when:** every core ticket type either routes to a dedicated bot node under signing or has a designed
+  signed inline path, the choice is recorded in `docs/security/http-delegation.md`, and a guard dispatches one
+  ticket per core ticket type with signing configured and fails if any of them is refused.
 
-### Jarvis must fail honestly when the operator has no hosted brain
-- **Remaining:** when `resolveUserLlmConnection` returns nothing and the bot's configured harness is an unbrokered CLI, the surface shows "Sorry, that didn't work" and the log shows a CLI-refusal — neither tells the operator the actual problem or the fix. Root-caused 2026-08-09: the operator's `any-llm` BYO row had disappeared, the operator is (by design) exempt from free-tier fallback, and SEC-05 preflight (correctly) refuses every CLI harness at bot nodes — so Jarvis had no admissible brain and said so in jargon. Restored by re-saving the BYO connection (gemini-2.5-flash over the existing `GEMINI_API_KEY`). Same honesty doctrine as the PR #54 voice fix.
-- **Done when:** that state produces a user-facing "Jarvis has no AI engine connected — add one under Settings → BYO LLM" (surface and TTS), a guard proves the message appears when resolution is empty and the harness is unbrokered, and the briefing shelf (which needs no live model) still renders instead of being dragged down with the ask path.
+## Workflow, agent, and model runtime
 
 ### Jarvis briefing preferences (operator ask, 2026-08-09)
 - **Source proof:** registered application sources, exact-user settings, announcement cadence, channel delivery and Kalshi producer adoption pass isolated PostgreSQL/HTTP/browser and package tests. [The contract](apps/jarvis-briefings.md) distinguishes announcement cadence from collection schedules.
@@ -1094,10 +1123,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### In-app help: per-surface affordances and first-run
 - **Remaining:** the reader still has to know to click Help. Add a per-surface `? Help` affordance on the `sat-ops` pattern that opens `/api/help?for=<surface>` from the screen itself, and honest empty states for the screens that look broken when they are not (Intelligent Processing's parked backlog is the worst offender — a parked row should say whether it is waiting for a person or was stopped on budget). Decide whether the first-run strip should stop suppressing itself on the full framework profile (`src/pages/cockpit/js/first-run.js`), which is why a new user currently gets no orientation at all on the cockpit carrying every surface.
 - **Done when:** every covered surface exposes a help affordance that lands on its own guide without the user navigating the ribbon; a parked Intelligent Processing row states its reason on-screen; and first-run behaviour on the full profile is either fixed or explicitly recorded as intended.
-
-### Notifications: show the effective credential tier per channel in the routing table
-- **Remaining:** the intro states both credential tiers per channel and is held to the senders by `tests/unit/notify-surface-tier-copy.spec.ts` ([BUG-14](operations/bug-log.md)). The routing table still cannot say which tier would carry a given choice for this user: SMS depends on whether the user connected their own Twilio, and `GET /api/notify/prefs` reports no per-channel tier.
-- **Done when:** each channel option in the routing table shows the account kind that would carry it for this user (their own account or the deployment's service), read from a per-channel tier the prefs route reports; the copy guard stays green.
 
 ### Shared response-renderer completion
 - **Remaining:** add safe `oshal:map` and `oshal:doc` components, wire Jarvis/concierge/orb consumers to the registry, and finish the live Gmail, delayed-worker lifecycle, actions/forms, voice, attribution, and transcript decisions in [the acceptance plan](backlog/jarvis-voice-and-visuals.md).
@@ -1705,10 +1730,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** the semantic leg returns the engine's nearest neighbours with no floor; the live proof returned "Can we order pizza tonight" as related to "volleyball" with the same flat RRF score as the true paraphrases. The count is unaffected, but the list reads as noise when few lines exist.
 - **Done when:** a similarity floor (or a rule that a hit must score on the vector leg, not only rank) drops the pizza line from the live-proof fixture while keeping the two volleyball paraphrases, and the exact count is unchanged.
 
-### Ambient Recall — Manage Voices bridge to profile pages
-- **Remaining:** profile pages live on the extension surface; the Jarvis Manage Voices panel (`jarvis-speakers.js`, over the file cap) has no link into them. A sibling script needs the four registration points (`JARVIS_CLIENT_ASSETS`, `jarvis.html` script + mount, the compose bind mount) and the wiring spec.
-- **Done when:** each voice row in Manage Voices opens `/api/jarvis/ambient/person/?tab=people&profile=<id>` and `tests/unit/jarvis-speaker-wiring.spec.ts` pins the four points.
-
 ### Lazy-DDL trigger and function guards must converge, not create-once
 - **Done (2026-09-14):** `tests/unit/lazy-ddl-guard-convergence.spec.ts` with `tests/helpers/lazy-ddl-guards.ts` enumerates every guard under `src/` that keys a trigger or function on its name alone (`IF NOT EXISTS … pg_trigger / pg_proc / information_schema.triggers / information_schema.routines`, `to_regproc … IS NULL`). The inventory is two guards, both in `person-model-schema.ts`: the consent trigger (converges on the tgtype DELETE bit) and the `ambient_speaker_consents_no_flip` function (create-once by design — `CREATE OR REPLACE` raises 42501 for the app role — so its CREATE statement and live body are pinned). A new, moved or removed guard, or a changed CREATE statement without a convergence decision, is red; an empty inventory is red; the scanner is self-tested on fixtures of every shape. Read-only psql against the dev box on 2026-09-14 returned exactly the pinned rendering: `CREATE TRIGGER ambient_speaker_consents_no_mutate BEFORE UPDATE ON public.ambient_speaker_consents FOR EACH ROW EXECUTE FUNCTION ambient_speaker_consents_no_flip()` (tgtype 19) and the pinned `prosrc` body.
 - **Remaining:** the real-boundary case added to `tests/unit/person-model-parity-postgres.spec.ts` (every known guard rendered on a real Postgres via `pg_get_triggerdef` / `prosrc` equals its pinned live definition) has not run: the host port is wedged and the Docker load gate stayed above 6 on 2026-09-14.
@@ -1726,10 +1747,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### `jarvis-routes.ts` is over the decomposition threshold
 - **Remaining:** the file counts 802 code lines (the Phase 2 change was net −2). CLAUDE.md requires a decomposition plan before any addition; the person-model hook was routed through the slice for that reason.
 - **Done when:** the file is below 800 code lines with the existing jarvis specs green, and the recall hook is unchanged.
-
-### Surface-glass spec is red on four page surfaces
-- **Remaining:** `tests/unit/surface-glass-assets.spec.ts` lists `src/pages/access`, `src/pages/app-loader`, `src/pages/jarvis-briefings` and `src/pages/users` as lacking the shared glass stylesheet (observed 2026-09-12 on `feat/store-compatibility-gate`; not introduced by the person-model work).
-- **Done when:** each page links the stylesheet or carries a justified exemption, and the spec is green in `ci-local.sh --head`.
 
 ### Ambient Recall — prosody tone via a sidecar model (optional, ADR-100 Phase 4)
 - **Remaining:** tone today is text-level (analyst inference). The ADR allows an acoustic sidecar writing the same tone column with a different `model` string.
