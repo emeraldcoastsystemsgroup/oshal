@@ -58,6 +58,29 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Cheaper substitute, already possible:** a detector instead of a constraint — the books-aware watchdog can alert on any book-less row and gives the same protection with no irreversibility.
 - **Done when:** the operator asks for it (or a book-less row actually appears, or a third live book is about to be enabled); the three plan defects above are fixed; the legacy-shaped book-less INSERT is REJECTED on the live schema; `git grep SCHWAB_ACCOUNT_NUMBER` hits only history; and the deploy refuses auto-rollback to any image predating the hardening, proven by a case whose anchor is computed from git.
 
+### Native background wake: the microphone-release invariants are unproven
+
+- **Found:** 2026-09-15, running the wake acceptance suite against deployed core `1f0978a0`.
+  `tests/jarvis-rich-response-native-wake.spec.ts` is **3 failed of 3**. All three fail at the same
+  first assertion - `window.__nativeWakeAudio.streams.length` is `0` rather than `1` and `#mic`
+  never gains the `live` class - so the post-wake command microphone is never opened and the three
+  release invariants (release after speech, release on the no-voice timeout, release on user
+  interruption and page close) have nothing to assert against. The page loads and the button
+  exists, so this is not a load failure.
+- **Why it went unnoticed:** the Run block in
+  [jarvis-native-background-wake.md](architecture/jarvis-native-background-wake.md) listed only
+  `jarvis-audio-lifecycle.spec.ts`, while the 07-11 baseline it records covered three Playwright
+  files. Following the documented command therefore cannot see this. The Run block is now corrected
+  to name both files.
+- **Not yet diagnosed:** `src/api/jarvis.html` has taken 15 commits since 2026-07-11 while the spec
+  has not been touched since a governance chore, so spec-drift against a moved page is at least as
+  likely as a runtime regression. Diagnose before changing either - the page is core and the
+  handler region is load-bearing for an always-on-microphone feature.
+- **Done when:** the three cases pass against the deployed page, OR the spec is retired with a
+  written reason and replaced by one that asserts the same three release invariants; and the
+  passing command is the one the Run block documents, so the next reader cannot miss it again.
+  Until then the wake path is not delivery-ready, and its doc says so.
+
 ### Trading DB specs race on schema bootstrap
 - **Remaining:** running the trading unit specs WITHOUT `--no-file-parallelism` fails three pre-existing specs (trading-books-schema, trading-event-plans, trading-pinned-lots) in `beforeAll` with `trigger "trg_trd_signals_book_fill" … already exists` — the trading schema bootstrap takes the no-lock path, so two concurrent bootstraps collide. Observed 2026-09-06. The dispatch golden-plan spec works around it locally with a single retry; the underlying files were outside that item's ownership.
 - **Done when:** the bootstrap takes an advisory lock (or tolerates the concurrent create) and the same ten-file trading set is green without `--no-file-parallelism`.
