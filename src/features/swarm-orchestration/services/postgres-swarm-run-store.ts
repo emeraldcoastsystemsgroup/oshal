@@ -4,11 +4,17 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added Postgres-backed swarm run store with in-memory fallback for durable orchestration tracking
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Re-attempt persistence instead of nulling the pool: the same shape that dropped the task, message and memory stores to in-memory for a whole process lifetime on the 2026-09-15 boot. Activation runs through the shared re-attemptable helper, the pool is kept so a retry has something to retry with, and the fallback is now a state the next operation can leave.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
-import { createOptionalPostgresPool, ensureSwarmRunStoreSchema } from '@/shared/services/database';
+import {
+  createOptionalPostgresPool,
+  createPersistenceActivation,
+  ensureSwarmRunStoreSchema,
+  type PersistenceActivation,
+} from '@/shared/services/database';
 import type { IntakeProvider } from '@/shared/types';
 import {
   InMemorySwarmRunStore,
@@ -39,10 +45,17 @@ interface SwarmRunRow {
 export class PostgresSwarmRunStore implements SwarmRunStore {
   private readonly fallbackStore = new InMemorySwarmRunStore();
   private persistentMode = false;
-  private readonly initPromise: Promise<void>;
+  private readonly activation: PersistenceActivation;
 
-  constructor(private pool: Pool | null = createOptionalPostgresPool('swarm-run-store')) {
-    this.initPromise = this.initializePersistence();
+  constructor(private readonly pool: Pool | null = createOptionalPostgresPool('swarm-run-store')) {
+    this.activation = createPersistenceActivation({
+      store: 'swarm-run-store',
+      pool: this.pool,
+      activate: ensureSwarmRunStoreSchema,
+    });
+    // Attempt activation at boot exactly as before. The difference is what a failure means:
+    // it is observed here rather than cached, and the next operation re-attempts it.
+    void this.activation.ready();
     logger.info({ hasPool: Boolean(this.pool) }, 'Postgres swarm run store initialized');
   }
 
@@ -159,31 +172,13 @@ export class PostgresSwarmRunStore implements SwarmRunStore {
   }
 
   /**
-   * @description Enables Postgres-backed persistence when the database is reachable and schema creation succeeds.
-   * @returns Promise resolved once persistence mode is determined
-   */
-  private async initializePersistence(): Promise<void> {
-    if (!this.pool) {
-      return;
-    }
-
-    try {
-      await ensureSwarmRunStoreSchema(this.pool);
-      this.persistentMode = true;
-      logger.info('Swarm run store persistence mode enabled (postgres)');
-    } catch (error) {
-      logger.error({ err: error }, 'Swarm run store persistence init failed; falling back to memory');
-      this.persistentMode = false;
-      this.pool = null;
-    }
-  }
-
-  /**
-   * @description Waits for asynchronous persistence initialization to complete.
-   * @returns Promise resolved when initialization has settled
+   * @description Settles persistence mode before an operation runs, re-attempting activation
+   * when an earlier attempt failed and its cooldown has elapsed. Never throws: a store that
+   * cannot reach Postgres answers from its in-memory fallback rather than refusing the caller.
+   * @returns Promise resolved once the current persistence mode has settled
    */
   private async awaitInitialization(): Promise<void> {
-    await this.initPromise;
+    this.persistentMode = await this.activation.ready();
   }
 
   /**

@@ -646,6 +646,26 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   where an operator sees it (health payload and the cockpit status surface), not only in a log line; a
   spec proves a transient failure followed by a healthy database ends with the store persistent; and the
   same treatment covers all five stores that share this shape.
+- **Largely closed (2026-09-15, branch `fix/persistence-init-retry`).** Activation moved to
+  `createPersistenceActivation` (`src/shared/services/database/persistence-activation.ts`), which wraps
+  the existing `createRetryableReady` memo: concurrent callers share one in-flight attempt, a failed
+  attempt is dropped so the next operation re-attempts it, and a cooldown
+  (`OSHAL_PERSISTENCE_RETRY_COOLDOWN_MS`, default 30s) keeps a genuinely down database from costing a
+  connect timeout per call. **The pool is kept rather than ended and nulled** - ending it was what left a
+  retry nothing to retry with. The memory fallback is deliberately retained, so the process still comes
+  up with no database; what changed is that it is now a state the next operation can leave. Six stores
+  carry the treatment: the three observed plus `postgres-subtask-lifecycle-store`,
+  `postgres-swarm-escalation-store` and `postgres-swarm-run-store`. Signal: a per-store persistence-mode
+  registry (`src/shared/observability/persistence-mode-registry.ts`) drives a new `persistence` leg on
+  `GET /api/readiness` that FAILS while a store with Postgres configured is serving from memory, and
+  `scripts/oshal-verify.sh` names the store, the attempt count and the reason. Guards:
+  `tests/unit/store-persistence-recovery.spec.ts` (disposable `postgres:16-alpine`, a real connection
+  shortage, recovery asserted by reading the row back out of Postgres) and
+  `tests/unit/persistence-mode-readiness.spec.ts`.
+- **Still open from the original criteria:** the cockpit status surface does not show degraded
+  persistence - only `/api/readiness` and `oshal-verify.sh` do. And the entry's "how often does this
+  happen" question is still unanswered: the registry makes the state visible from now on, but no
+  history of past boots was recovered.
 
 ### The Windows purge abandon can say it could not enumerate, but still cannot enumerate
 - **Context:** closing "The purge watchdog cannot tell 'no descendants' from 'cannot look'" gave

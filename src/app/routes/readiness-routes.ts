@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | GET /api/readiness (INSTALLER-GAPS G9 + G7): per-capability readiness, because /api/health is a liveness probe that reports {"status":"ok"} on a box with no engine, no voice and a missing bot. Legs: llm (active/forced provider vs the explicit OSHAL_NO_AI declaration — G2's "noop must never be silent"), bots (routing-critical heartbeats, scoped to the ACTIVE registry so a kernel-bundle box is not failed for bots it deliberately does not run), credentials (each critical bot's harness has a credential behind it — the G7 "starts, heartbeats, fails on first use" trap), voice tts/stt (configured, or explicitly not declared), db. Public like /api/health; coarse states only (ok|off|fail + a short detail), no secrets. Consumed by scripts/oshal-verify.sh; returns HTTP 503 when not ready so runbooks can curl it directly.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the `catalogs` leg (BACKLOG "The api can boot healthy with ZERO connector tools"). Live 2026-08-01: the api booted with `ENOMEM: not enough memory, scandir '/app/swarm-apps/connectors'`, registered ZERO connector tools, and BOTH /api/health and this endpoint said ready — the exact "liveness read as readiness" failure G9 exists to end, one layer up. A subsystem that reads a catalog at boot now records what it loaded (@/shared/observability catalog-load registry) and this leg FAILS when any catalog's source was unreadable or offered entries and produced none. An absent source stays `off`: a box that ships no connectors is a deployment shape, not a defect.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added the `persistence` leg (BACKLOG "One slow boot drops the task, message and memory stores to in-memory for the life of the process"). Live 2026-09-15: three stores lost a pool acquire inside the boot migration burst, fell back to in-memory storage, and the box reported healthy and ready for the rest of the process lifetime - the only signal was three ERROR lines in a boot log. A store that can fall back now records its mode (@/shared/observability persistence-mode registry) and this leg FAILS while a store with Postgres configured is serving from memory. A store with no Postgres configured stays `off`: a database-less box is a deployment shape, not a defect.
  */
 
 import * as fs from 'fs';
@@ -19,7 +20,14 @@ import {
   loadSwarmVoiceConfig,
   resolveGlobalConfigPath,
 } from '@/features/voice-providers';
-import { degradedCatalogs, listCatalogLoads, type CatalogLoadRecord } from '@/shared/observability';
+import {
+  degradedCatalogs,
+  degradedPersistence,
+  listCatalogLoads,
+  listPersistenceModes,
+  type CatalogLoadRecord,
+  type PersistenceModeRecord,
+} from '@/shared/observability';
 import { createChildLogger } from '@/shared/logger';
 import { listConfiguredProviders } from './provider-routes';
 
@@ -37,7 +45,7 @@ export interface ReadinessLeg {
 /** @description The full per-capability readiness report served at GET /api/readiness. */
 export interface ReadinessReport {
   ready: boolean;
-  /** One grep-able line, e.g. "llm=ok bots=fail credentials=ok voice.tts=off voice.stt=off db=ok". */
+  /** One grep-able line, e.g. "llm=ok bots=fail credentials=ok voice.tts=off voice.stt=off db=ok persistence=ok". */
   summary: string;
   /** Human-readable problem lines for every failing leg (empty when ready). */
   problems: string[];
@@ -49,6 +57,7 @@ export interface ReadinessReport {
     voiceTts: ReadinessLeg;
     voiceStt: ReadinessLeg;
     db: ReadinessLeg;
+    persistence: ReadinessLeg;
   };
   generatedAt: string;
 }
@@ -93,6 +102,10 @@ export interface ReadinessDeps {
   catalogLoads(): CatalogLoadRecord[];
   /** The subset that loaded nothing it was supposed to load. */
   degradedCatalogLoads(): CatalogLoadRecord[];
+  /** Every fallback-capable store's current storage mode (@/shared/observability). */
+  persistenceModes(): PersistenceModeRecord[];
+  /** The subset that has Postgres configured and is nevertheless serving from memory. */
+  degradedPersistenceModes(): PersistenceModeRecord[];
 }
 
 /** Provider-id → harness family, mirroring the bot-node execution fallback. */
@@ -212,6 +225,34 @@ function buildCatalogsLeg(loads: CatalogLoadRecord[], degraded: CatalogLoadRecor
   return { state: 'ok', detail: `${loaded} entries loaded across ${present.length} catalog source(s)` };
 }
 
+/**
+ * @description The `persistence` leg: a store that advertises durable storage and is serving
+ * from an in-memory Map loses every write on the next restart, and used to say so only in one
+ * boot-log ERROR line. Three shapes, deliberately: nothing recorded at all is `off` (no
+ * fallback-capable store has reported yet), a store with no Postgres configured is `off` (a
+ * database-less box is a deployment shape), and a configured store in memory is `fail` with the
+ * reason and the attempt count on the line.
+ * @param modes - Every fallback-capable store's current mode.
+ * @param degraded - The modes that mean "configured durable, serving from memory".
+ * @returns The leg.
+ */
+function buildPersistenceLeg(modes: PersistenceModeRecord[], degraded: PersistenceModeRecord[]): ReadinessLeg {
+  if (modes.length === 0) {
+    return { state: 'off', detail: 'no fallback-capable store has reported a persistence mode' };
+  }
+  if (degraded.length > 0) {
+    const lines = degraded.map((r) => (
+      `${r.store}: Postgres configured, serving from MEMORY after ${r.attempts} attempt(s) - ${r.detail ?? 'no detail'}`
+    ));
+    return { state: 'fail', detail: lines.join('; ') };
+  }
+  const persistent = modes.filter((r) => r.mode === 'persistent');
+  if (persistent.length === 0) {
+    return { state: 'off', detail: `no Postgres configured for any store (${modes.length} declared)` };
+  }
+  return { state: 'ok', detail: `${persistent.length}/${modes.length} store(s) persistent (postgres)` };
+}
+
 function buildVoiceLeg(kind: 'tts' | 'stt', status: VoiceSideStatus | null): ReadinessLeg {
   if (!status) return { state: 'off', detail: `${kind} provider unresolvable — voice off` };
   if (status.browser) return { state: 'off', detail: `${status.providerId} (client-side, no server dependency)` };
@@ -234,6 +275,7 @@ export async function buildReadinessReport(deps: ReadinessDeps): Promise<Readine
   const { leg: bots, expected } = await buildBotsLeg(deps);
   const credentials = buildCredentialsLeg(deps, expected);
   const catalogs = buildCatalogsLeg(deps.catalogLoads(), deps.degradedCatalogLoads());
+  const persistence = buildPersistenceLeg(deps.persistenceModes(), deps.degradedPersistenceModes());
   const [ttsStatus, sttStatus] = await Promise.all([deps.voiceStatus('tts'), deps.voiceStatus('stt')]);
   const voiceTts = buildVoiceLeg('tts', ttsStatus);
   const voiceStt = buildVoiceLeg('stt', sttStatus);
@@ -241,11 +283,12 @@ export async function buildReadinessReport(deps: ReadinessDeps): Promise<Readine
     ? { state: 'ok' as const, detail: 'postgres reachable' }
     : { state: 'fail' as const, detail: 'postgres unreachable' };
 
-  const legs = { llm, bots, credentials, catalogs, voiceTts, voiceStt, db };
+  const legs = { llm, bots, credentials, catalogs, voiceTts, voiceStt, db, persistence };
   const summary = [
     `llm=${llm.state}`, `bots=${bots.state}`, `credentials=${credentials.state}`,
     `catalogs=${catalogs.state}`,
     `voice.tts=${voiceTts.state}`, `voice.stt=${voiceStt.state}`, `db=${db.state}`,
+    `persistence=${persistence.state}`,
   ].join(' ');
   const problems = Object.entries(legs)
     .filter(([, leg]) => leg.state === 'fail')
@@ -356,6 +399,8 @@ export function createReadinessDeps(ctx: AppContext): ReadinessDeps {
     defaultHarness: () => PROVIDER_HARNESS[process.env.FORCE_LLM_PROVIDER || 'openai-codex'] || 'cline',
     catalogLoads: listCatalogLoads,
     degradedCatalogLoads: degradedCatalogs,
+    persistenceModes: listPersistenceModes,
+    degradedPersistenceModes: degradedPersistence,
     voiceStatus: probeVoiceSide,
     dbOk: async () => {
       try {

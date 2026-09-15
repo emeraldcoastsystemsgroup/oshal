@@ -4,11 +4,17 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added Postgres-backed subtask lifecycle store with in-memory fallback
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Re-attempt persistence instead of nulling the pool: the same shape that dropped the task, message and memory stores to in-memory for a whole process lifetime on the 2026-09-15 boot. Activation runs through the shared re-attemptable helper, the pool is kept so a retry has something to retry with, and the fallback is now a state the next operation can leave.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
-import { createOptionalPostgresPool, ensureSubtaskLifecycleSchema } from '@/shared/services/database';
+import {
+  createOptionalPostgresPool,
+  createPersistenceActivation,
+  ensureSubtaskLifecycleSchema,
+  type PersistenceActivation,
+} from '@/shared/services/database';
 import type { ParentWithSubtasks, TrackedSubtask } from './subtask-lifecycle-service';
 import type { DecomposedWorkUnit } from './ticket-decomposition-service';
 import { InMemorySubtaskLifecycleStore, type SubtaskLifecycleStore } from './subtask-lifecycle-store';
@@ -42,10 +48,17 @@ interface SubtaskRow {
 export class PostgresSubtaskLifecycleStore implements SubtaskLifecycleStore {
   private readonly fallbackStore = new InMemorySubtaskLifecycleStore();
   private persistentMode = false;
-  private readonly initPromise: Promise<void>;
+  private readonly activation: PersistenceActivation;
 
-  constructor(private pool: Pool | null = createOptionalPostgresPool('subtask-lifecycle-store')) {
-    this.initPromise = this.initializePersistence();
+  constructor(private readonly pool: Pool | null = createOptionalPostgresPool('subtask-lifecycle-store')) {
+    this.activation = createPersistenceActivation({
+      store: 'subtask-lifecycle-store',
+      pool: this.pool,
+      activate: ensureSubtaskLifecycleSchema,
+    });
+    // Attempt activation at boot exactly as before. The difference is what a failure means:
+    // it is observed here rather than cached, and the next operation re-attempts it.
+    void this.activation.ready();
     logger.info({ hasPool: Boolean(this.pool) }, 'Postgres subtask lifecycle store initialized');
   }
 
@@ -118,29 +131,13 @@ export class PostgresSubtaskLifecycleStore implements SubtaskLifecycleStore {
   }
 
   /**
-   * @description Initializes Postgres persistence when the database is reachable.
-   */
-  private async initializePersistence(): Promise<void> {
-    if (!this.pool) {
-      return;
-    }
-
-    try {
-      await ensureSubtaskLifecycleSchema(this.pool);
-      this.persistentMode = true;
-      logger.info('Subtask lifecycle store persistence mode enabled (postgres)');
-    } catch (error) {
-      logger.error({ err: error }, 'Subtask lifecycle store persistence init failed; falling back to memory');
-      this.persistentMode = false;
-      this.pool = null;
-    }
-  }
-
-  /**
-   * @description Waits for async persistence initialization.
+   * @description Settles persistence mode before an operation runs, re-attempting activation
+   * when an earlier attempt failed and its cooldown has elapsed. Never throws: a store that
+   * cannot reach Postgres answers from its in-memory fallback rather than refusing the caller.
+   * @returns Promise resolved once the current persistence mode has settled
    */
   private async awaitInitialization(): Promise<void> {
-    await this.initPromise;
+    this.persistentMode = await this.activation.ready();
   }
 
   /**

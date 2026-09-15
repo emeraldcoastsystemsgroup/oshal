@@ -138,6 +138,34 @@ ticket-store RLS entries at the top of this table. Red-proven on `1f0978a0`: bot
 Not covered: the user-directory and Jarvis-briefing routes are proven at their readiness seam only,
 not driven over HTTP.
 
+## Store persistence activation after a lost connection at boot (2026-09-15)
+
+`tests/unit/store-persistence-recovery.spec.ts` covers the boundary that failed on the 00:25:11Z api
+boot: the task store, the message store and the memory layer each lost a pool acquire inside the
+api's own migration and provisioning burst, fell back to an in-memory Map, ended and nulled their
+pools, and stayed non-persistent for the life of the process.
+
+The boundary runs for real. A disposable `postgres:16-alpine` on an ephemeral loopback port; the
+store's OWN private pool, built from the process environment by `createOptionalPostgresPool` exactly
+as it is in production; a real connection shortage (a non-superuser role with `CONNECTION LIMIT 1`
+whose one connection the test holds, so the store's connect is refused by PostgreSQL rather than by
+an injected error); the production GUC wrapper; and the real idempotent DDL. Recovery is asserted by
+reading the row back out of `chat_tasks` over a separate connection - a store that never recovered
+leaves no table at all. A second case repeats it for the injected-pool family
+(`PostgresSwarmEscalationStore` with a `max: 1` pool whose only client is held), and a third points
+the store at a closed port to prove the degrade still lets the process serve.
+
+The fixture role carries `BYPASSRLS`, which is the legacy single-role posture
+`buildOwnerRlsPolicyStatements` documents itself as inert under. That is deliberate: it keeps the
+case measuring the connection boundary instead of re-testing RLS, whose real companions are the
+ticket-store and authorization RLS entries above.
+
+`tests/unit/persistence-mode-readiness.spec.ts` is the scoped-double companion. Its
+`createPersistenceActivation` cases substitute the `activate` callback and the pool, because the
+variable there is the retry arithmetic (one shared in-flight attempt, a dropped failed attempt, the
+cooldown) and the reporting surface (`/api/readiness` `persistence` leg), not the database. It is
+NOT closure evidence for the database seam; the file above is.
+
 ## Rules for future fixes
 
 1. Name the failed boundary in the test header and name what remains doubled.

@@ -13,11 +13,18 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Exported gucEnabled + wrapPoolWithGuc through the barrel so feature slices that mint their OWN pg Pool (pgvector-rag-engine) can identity-stamp it without a deep import - an unwrapped private pool is exactly how rag_chunks rows were written owner-less (RLS inert).
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Export the durable remote-task journal bootstrap through the shared database boundary.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Export createRetryableReady so a schema readiness that chains onto another readiness does not cache a boot-time rejection for the life of the process.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Export createPersistenceActivation so a store that can fall back to in-memory storage re-attempts its Postgres activation instead of serving from memory for the life of the process after one transient boot failure.
  */
 
 export { createOptionalPostgresPool, hasPostgresConfiguration } from './optional-postgres-pool';
 export { gucEnabled, wrapPoolWithGuc } from './guc-pool';
 export { createRetryableReady } from './retryable-ready';
+export {
+  createPersistenceActivation,
+  persistenceRetryCooldownMs,
+  type PersistenceActivation,
+  type PersistenceActivationOptions,
+} from './persistence-activation';
 export {
   assertSchemaReady,
   isRuntimeDdlStatement,
