@@ -301,7 +301,7 @@ async function runJarvis(
  * corrected architecture (a bot in the framework, not an orchestrator outside it).
  */
 export async function runJarvisBot(
-  ctx: AppContext, sub: string, message: string, taskId: string, agentic = true,
+  ctx: AppContext, sub: string, message: string, taskId: string, agentic = true, userText?: string,
 ): Promise<{ answer: string; routed: AppRoute[]; handoffs: AppRoute[] }> {
   // ADR-127: which brain runs this turn — the caller's saved default, else the ladder (demo CLI
   // login for the operator, their own endpoint, their free tiers, this deployment's keys). A
@@ -323,7 +323,10 @@ export async function runJarvisBot(
   const request = {
     // Haven (ADR-079): every turn carries the caller's user-model hot core + relevant
     // owner-scoped long-tail memories, so Jarvis answers as if it knows them.
-    text: await withHavenContext(ctx.pool, sub, message),
+    // The long-tail search is given the user's OWN words when the caller has them: `message` here
+    // is the assembled prompt (tools + catalog + open work), and searching with all of it cost
+    // 100-127 s per turn on 2026-09-15 — longer than the whole decision budget.
+    text: await withHavenContext(ctx.pool, sub, message, userText ?? message),
     taskId,
     workspaceFolderId: taskId,
     agentId: JARVIS_AGENT_ID,

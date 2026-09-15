@@ -16,6 +16,8 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Advertise current-user package proposals through the authenticated panel with explicit approval and workspace metadata.
  *
  * @module jarvis-tool-catalog
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The typed access tools list their exact operations and targets only when the ask is about access. That JSON was 39,185 of the 71,817 characters in a live Jarvis prompt and rode every turn, pushing the app catalog, the tool proposals and the user's own question out of the node's untrusted-content window.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | assembleJarvisBotMessage: the turn's prompt leads with the user's words and repeats them last, so the ask survives the node's untrusted-content window no matter how large the context blocks grow.
  */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
@@ -144,9 +146,27 @@ export function buildToolsBlock(context: { message?: string; surface?: string; a
     'These are your ONLY shell tools; a script not listed here is off-limits even if you can see it.',
     'Ask which tool or account the user intends when context leaves multiple plausible choices. Preserve existing confirmation requirements.',
     ...lines,
-    ...typedAuthorizationLines(catalog, context.authorizationTools),
+    ...typedAuthorizationLines(catalog, context.authorizationTools, input),
     ...packageProposalLines(context.packageTools),
   ].join('\n');
+}
+
+/**
+ * @description Assemble what Jarvis sends the bot node for one turn. The user's words lead and are
+ * repeated last: the node keeps only the first MAX_UNTRUSTED_BLOCK_CHARS of a direct prompt
+ * (prompt-containment), and the context blocks alone reached 71,817 characters on 2026-09-15 —
+ * the operator's question sat in the final 41 and was cut off, so the model answered an empty
+ * prompt ("Ready. Jarvis is online.") while he waited. Leading with the question keeps the ask
+ * inside the window however large the context grows, and the tail repeat keeps it the most recent
+ * line the model sees. Never re-order this so the context blocks come first.
+ * @param ctxBlocks - Tools, catalog, open work and plan guidance; may be empty.
+ * @param userPart - Screen context, attachments and the user's message, already joined.
+ * @param message - The user's words alone, repeated as the closing line.
+ * @returns The assembled bot message.
+ */
+export function assembleJarvisBotMessage(ctxBlocks: string, userPart: string, message: string): string {
+  if (!ctxBlocks) return userPart;
+  return `${userPart}\n\n---\n\n${ctxBlocks}\n\n---\n\nThe user's message again (answer THIS):\n\n${message}`;
 }
 
 function packageProposalLines(tools: JarvisPackageToolDiscovery[] = []): string[] {
@@ -159,14 +179,27 @@ function packageProposalLines(tools: JarvisPackageToolDiscovery[] = []): string[
     ...tools.map(tool => '- ' + JSON.stringify(tool))];
 }
 
-function typedAuthorizationLines(catalog: ToolCatalog, available: AuthorizationToolDiscovery[] = []): string[] {
+function typedAuthorizationLines(
+  catalog: ToolCatalog, available: AuthorizationToolDiscovery[] = [], input = '',
+): string[] {
   const metadata = catalog.typedTools?.find((entry) => entry.name === AUTHORIZATION_TOOL);
   if (!metadata) return [];
   const tools = available.filter((tool) => tool.name === AUTHORIZATION_TOOL || tool.name === AUTHORIZATION_READ_TOOL);
   if (!tools.length) return [];
+  // The full operations/targets JSON is by far the largest thing in this prompt — 39,185 of 71,817
+  // characters in a live turn on 2026-09-15 — and the bot node keeps only the first
+  // MAX_UNTRUSTED_BLOCK_CHARS of the assembled message. Spending that budget on every turn pushed
+  // the tool proposals, the app catalog and the user's own question out of the window. The exact
+  // operations are listed when the ask is about access (the same keyword match the shell tools are
+  // ranked by); otherwise the tool is named with its size, so the model still knows it exists.
+  const asksAboutAccess = (metadata.keywords ?? []).some((word) => input.includes(word.toLowerCase()));
+  const detail = (tool: AuthorizationToolDiscovery): string => (asksAboutAccess
+    ? `- ${tool.name}: operations=${JSON.stringify(tool.operations)}; targets=${JSON.stringify(tool.targets)}`
+    : `- ${tool.name}: ${tool.operations.length} registered operations over ${tool.targets.length} targets`
+      + ' (the exact lists are given when the request is about access, permissions or grants)');
   return ['TYPED APPLICATION ACCESS TOOLS: call only the registered typed operation; do not construct a shell command.',
     `Keywords: ${metadata.keywords.join(', ')}. Use when: ${metadata.useWhen} Context: ${metadata.context}`,
-    ...tools.map((tool) => `- ${tool.name}: operations=${JSON.stringify(tool.operations)}; targets=${JSON.stringify(tool.targets)}`),
+    ...tools.map(detail),
     'Read operations use swarm_authorization_read when granted AUTO. Changes use the authenticated /access preview and apply flow.',
     'Only the user can approve the exact preview in Access Administration. Never claim an access change succeeded before an apply receipt.',
   ];

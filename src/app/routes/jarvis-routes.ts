@@ -116,7 +116,7 @@ import { visualSpecForDirectRequest } from './jarvis-visuals';
 import { visibleArtifactActions } from './artifact-action-visibility';
 import type { PickerVisibleApps } from './artifact-picker-routes';
 import { resolveJarvisArtifact, buildArtifactRoutingPrompt, resolveJarvisArtifactAnswer, type JarvisArtifactAction } from './jarvis-artifact-routing';
-import { buildToolsBlock, withImageDeliverableContract } from './jarvis-tool-catalog';
+import { assembleJarvisBotMessage, buildToolsBlock, withImageDeliverableContract } from './jarvis-tool-catalog';
 import { createJarvisPackageToolRoutes } from './jarvis-package-tool-routes';
 import { resolveJarvisPackageToolDirective } from './jarvis-package-tool-directives';
 import type { JarvisPackageToolDiscovery, JarvisPackageToolProposal, JarvisPackageToolService } from './jarvis-package-tool-service';
@@ -706,7 +706,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         const screenBlock = buildSurfaceContextPrompt(surfaceContext);
         const userPart = [screenBlock, attachments.hasAny ? attachments.promptBlock : '', message]
           .filter(Boolean).join('\n\n');
-        botMessage = ctxBlocks ? `${ctxBlocks}\n\n---\n\n${userPart}` : userPart;
+        botMessage = assembleJarvisBotMessage(ctxBlocks, userPart, message);
       }
     } catch (err) {
       logger.error({ err, sessionId }, 'jarvis: tool context unavailable');
@@ -792,7 +792,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         let answer: string;
         try {
           const raced = await Promise.race([
-            runJarvisBot(ctx, sub, botMessage, sessionId, true),
+            runJarvisBot(ctx, sub, botMessage, sessionId, true, message),
             new Promise<never>((_, rej) => setTimeout(() => rej(new Error('DECISION_TIMEOUT')), DECISION_TIMEOUT_MS)),
           ]);
           answer = raced.answer;
