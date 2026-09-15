@@ -2064,3 +2064,23 @@ Detail and evidence: [backlog/store-dependency-tier-migration.md](backlog/store-
   by hand - and `--apps` has no way to pull a package's optional extras. *Done when* bundles name
   only their top package (the installer resolves the rest from the manifest), `--apps` accepts a
   `--with-optional` passthrough, and `tests/unit/installer-scripts-parse.spec.ts` covers both.
+
+### The durable escalation store only ever sees swarm-run escalations (2026-09-15)
+
+**Context:** `swarm_escalations` has exactly one writer — `persistEscalationRecord`
+([swarm-ticket-lifecycle-helpers.ts](../src/features/swarm-orchestration/services/swarm-ticket-lifecycle-helpers.ts)),
+called only from `SwarmExecutionLifecycleService`, which needs a `runId`. An escalation raised
+outside a swarm run — a manifest-worker dispatch failure, an operator park, a queue DLQ
+transition — has no run id and so structurally cannot produce a row. On the operator box the table
+holds 100 rows whose newest is dated 2026-07-19, while tickets have escalated since. The cockpit
+now reads the reason from the transition record instead (`ticket_status_history`, mirrored on the
+ticket row as `metadata.lastStatusTransition`), so the operator-visible text is correct either way;
+what is unresolved is what the durable store is *for* now that it answers a strict subset of
+escalations.
+
+**Done when:** a written decision records whether `swarm_escalations` is the canonical escalation
+record — and therefore every escalating path writes one, run id or not — or a run-scoped
+attempt-state record that the cockpit should stop treating as its primary escalation lookup.
+Whichever it is, `PostgresSwarmEscalationStore` and the cockpit's `getTicketEscalations` lookup
+agree with it, and a guard proves an escalation raised by a non-run path lands wherever the
+decision says it belongs, proven red by removing that write.

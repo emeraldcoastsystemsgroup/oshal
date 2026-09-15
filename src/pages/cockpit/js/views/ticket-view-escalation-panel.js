@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted escalated-ticket panel rendering from the main cockpit ticket detail renderer to restore file-size compliance after escalation guidance work
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Render the escalation facts the system already records: the source chip, the recorded supporting message and the recommended next action now appear alongside the reason, the "nothing recorded" copy no longer blames the durable store for a reason that was never written to it, and the header/chips/reason/next-action blocks were split into helpers to keep the builder under the function-size cap
  */
 
 import { timeAgo } from '../utils/formatters.js';
@@ -16,14 +17,7 @@ import { timeAgo } from '../utils/formatters.js';
 export function buildEscalationPanelMarkup(ticket) {
   const escalation = ticket?.escalation || null;
   const guidance = buildEscalationGuidance(ticket, escalation);
-  const reason = String(escalation?.reason || '').trim() || 'No durable escalation reason is available for this ticket yet.';
-  const createdAt = String(escalation?.createdAt || '').trim();
-  const chips = [
-    escalation?.target ? `Target: ${formatEscalationLabel(escalation.target)}` : '',
-    escalation?.severity ? `Severity: ${formatEscalationLabel(escalation.severity)}` : '',
-    escalation?.retryClass ? `Class: ${formatEscalationLabel(escalation.retryClass)}` : '',
-    createdAt ? `Raised: ${timeAgo(createdAt)}` : '',
-  ].filter(Boolean);
+  const chips = buildEscalationChips(escalation);
   const attemptSummary = buildEscalationAttemptSummary(escalation?.attemptState);
 
   return `<div id="tvEscalationPanel" style="display:flex;flex-direction:column;gap:12px;padding:14px;border:1px solid color-mix(in srgb, var(--accent-primary) 45%, var(--glass-border));border-radius:var(--radius-lg);background:linear-gradient(180deg, rgba(59,130,246,0.12), rgba(15,23,42,0.12));box-shadow:0 10px 28px rgba(15,23,42,0.12)">
@@ -38,11 +32,9 @@ export function buildEscalationPanelMarkup(ticket) {
     </div>
     ${chips.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px">${chips.map((chip) => `<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:var(--radius-pill);background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.08);font-size:11px;color:var(--text-secondary)">${escapeHtml(chip)}</span>`).join('')}</div>` : ''}
     <div style="display:flex;flex-direction:column;gap:10px">
-      <div style="display:flex;flex-direction:column;gap:4px">
-        <strong style="font-size:12px;color:var(--text-secondary)">${escalation ? 'Why it escalated' : 'Escalation detail unavailable'}</strong>
-        <div style="padding:10px 12px;border-radius:var(--radius-md);background:rgba(15,23,42,0.18);border:1px solid rgba(255,255,255,0.08);font-size:12px;color:var(--text-primary);line-height:1.55">${escapeHtml(reason)}</div>
-      </div>
+      ${buildEscalationReasonSection(escalation)}
       ${attemptSummary ? `<div style="display:flex;flex-direction:column;gap:4px"><strong style="font-size:12px;color:var(--text-secondary)">Attempt snapshot</strong><div style="font-size:12px;color:var(--text-muted);line-height:1.5">${escapeHtml(attemptSummary)}</div></div>` : ''}
+      ${buildEscalationNextActionSection(escalation)}
       <div style="display:flex;flex-direction:column;gap:4px">
         <strong style="font-size:12px;color:var(--text-secondary)">Next steps</strong>
         <ol style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;color:var(--text-primary);font-size:12px;line-height:1.55">${guidance.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>
@@ -54,6 +46,63 @@ export function buildEscalationPanelMarkup(ticket) {
       <span style="font-size:11px;color:var(--text-muted)">De-escalating returns the ticket to the normal queue entry state so the swarm can pick it up again.</span>
     </div>
   </div>`;
+}
+
+/**
+ * @description Builds the summary chips for whichever escalation facts were recorded.
+ * A durable swarm escalation record carries target/retryClass; a recorded status
+ * transition carries source. Absent facts produce no chip rather than a blank one.
+ * @param {Record<string, unknown> | null} escalation - Escalation detail, or null.
+ * @returns {string[]} Chip labels in display order.
+ */
+function buildEscalationChips(escalation) {
+  const raisedAt = readText(escalation?.createdAt) || readText(escalation?.escalatedAt);
+
+  return [
+    escalation?.target ? `Target: ${formatEscalationLabel(escalation.target)}` : '',
+    escalation?.source ? `Source: ${formatEscalationLabel(escalation.source)}` : '',
+    escalation?.severity ? `Severity: ${formatEscalationLabel(escalation.severity)}` : '',
+    escalation?.retryClass ? `Class: ${formatEscalationLabel(escalation.retryClass)}` : '',
+    raisedAt ? `Raised: ${timeAgo(raisedAt)}` : '',
+  ].filter(Boolean);
+}
+
+/**
+ * @description Builds the "why it escalated" block. The heading turns on the reason
+ * itself, not on the presence of an escalation object, so a record that carries no
+ * reason still reads honestly instead of rendering an empty explanation.
+ * @param {Record<string, unknown> | null} escalation - Escalation detail, or null.
+ * @returns {string} Reason block HTML.
+ */
+function buildEscalationReasonSection(escalation) {
+  const reason = readText(escalation?.reason);
+  const message = readText(escalation?.message);
+  const supporting = message && message !== reason
+    ? `<div style="font-size:12px;color:var(--text-muted);line-height:1.5">Recorded detail: ${escapeHtml(message)}</div>`
+    : '';
+
+  return `<div style="display:flex;flex-direction:column;gap:4px">
+        <strong style="font-size:12px;color:var(--text-secondary)">${reason ? 'Why it escalated' : 'Escalation detail unavailable'}</strong>
+        <div style="padding:10px 12px;border-radius:var(--radius-md);background:rgba(15,23,42,0.18);border:1px solid rgba(255,255,255,0.08);font-size:12px;color:var(--text-primary);line-height:1.55">${escapeHtml(reason || 'No escalation reason was recorded for this ticket.')}</div>
+        ${supporting}
+      </div>`;
+}
+
+/**
+ * @description Builds the recommended-next-action block from the action the escalating
+ * path recorded. Nothing is rendered when no next action was recorded — the generic
+ * next steps below it already cover that case.
+ * @param {Record<string, unknown> | null} escalation - Escalation detail, or null.
+ * @returns {string} Next-action block HTML, or an empty string.
+ */
+function buildEscalationNextActionSection(escalation) {
+  const nextAction = readText(escalation?.nextAction);
+  if (!nextAction) return '';
+
+  return `<div style="display:flex;flex-direction:column;gap:4px">
+        <strong style="font-size:12px;color:var(--text-secondary)">Recommended next action</strong>
+        <div style="font-size:12px;color:var(--text-primary);line-height:1.55">${escapeHtml(formatEscalationLabel(nextAction))}</div>
+      </div>`;
 }
 
 function buildEscalationGuidance(ticket, escalation) {
@@ -114,6 +163,10 @@ function formatEscalationLabel(value) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
+}
+
+function readText(value) {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function escapeHtml(value) {
