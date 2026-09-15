@@ -127,6 +127,8 @@ export const AMBIENT_SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/person-model-surface.spec.ts' },
       { level: 'unit', path: 'tests/unit/person-model-recall-guard.spec.ts' },
       { level: 'integration', path: 'tests/unit/person-model-parity-postgres.spec.ts' },
+      { level: 'unit', path: 'tests/unit/person-model-maintenance-runtime.spec.ts' },
+      { level: 'unit', path: 'tests/unit/lazy-ddl-guard-convergence.spec.ts' },
     ],
     steps: [
       { id: 'surface', app: APP, label: 'Surface follows the cockpit theme', run: (cookie) => surface(cookie) },

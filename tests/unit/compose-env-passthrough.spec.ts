@@ -9,6 +9,7 @@
  * 2026-08-17 13:45:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the Entra/local identity bridge and hybrid-pilot switches to the controller API only; setting a migration posture in the CRM droplet env must reach auth composition without propagating identity-policy flags to worker bots.
  * 2026-08-26 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_JSON_BODY_LIMIT (body-limits.ts global JSON cap) — the gsquared lead-import 413 showed the documented tuning knob was never forwarded to the controller container.
  * 2026-09-14 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the four marketing-suite knobs the api reads (sender, GitHub traffic token, Google scope override, Switchboard executor). All four failed silently: GOOGLE_CONNECT_SCOPES sat in .env with no compose entry, so the Search Console scope the scorecard needs never reached the container.
+ * 2026-09-14 22:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the two ADR-100 maintenance knobs (first-pass delay + jitter): unforwarded, the runtime runs on its compiled-in defaults and an operator tuning them in .env is silently ignored.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -70,6 +71,11 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   { name: 'GITHUB_TRAFFIC_TOKEN', readBy: 'marketing-engine marketing-ops-routes ingest — GitHub traffic source' },
   { name: 'GOOGLE_CONNECT_SCOPES', readBy: 'connector-provider-registry Google scopes override (webmasters.readonly for Search Console)' },
   { name: 'SWITCHBOARD_PUBLISH_EXECUTOR', readBy: 'switchboard switchboard-calendar-routes — the scheduled-publish executor arm' },
+  // 2026-09-14, ADR-100 maintenance: the first retention pass is scheduled a bounded delay after
+  // boot. Unforwarded, the code runs on its compiled-in defaults and an operator tuning the delay
+  // in .env is silently ignored — the exact class this spec exists for.
+  { name: 'PERSON_MODEL_MAINTENANCE_INITIAL_DELAY_MS', readBy: 'ambient-enrichment-runtime readMaintenanceInitialDelay — the first pass delay after boot' },
+  { name: 'PERSON_MODEL_MAINTENANCE_JITTER_MS', readBy: 'ambient-enrichment-runtime readMaintenanceInitialDelay — the first pass jitter' },
 ];
 
 // This list is CURATED, not exhaustive, and that is a deliberate trade rather than laziness:
