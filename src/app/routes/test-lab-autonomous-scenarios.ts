@@ -8,6 +8,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Register package tool activation, current authorization and execution boundary tests.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register bot initialization, specialist context and briefing behavior suites with read-only discovery and explicit runner prerequisites.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register the BUG-20 guards on the isolated nightly regression scenario: the alert replay-idempotency and consolidateLanded suites on disposable PostgreSQL.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Register the local CI export-purge and partial-secret-scan guards (Git Bash runs of the production script pieces) on the isolated nightly regression scenario.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -53,6 +54,8 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/nightly-isolated-runner.spec.ts' },
     { level: 'integration', path: 'tests/unit/ci-local-scheduled-ref.spec.ts' },
     { level: 'integration', path: 'tests/unit/ci-local-run-log.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ci-local-purge.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ci-local-secret-scan.spec.ts' },
     { level: 'unit', path: 'tests/unit/ci-gate-streak.spec.ts' },
   ],
   steps: [{ id: 'runner', app: 'test-lab', label: 'Local isolated runner', run: async () => ({
