@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — GOLDEN DISPATCH PLAN characterization for the trading-schedule-dispatch decomposition (zero-behavior-change proof). Written and made green against the UNSPLIT module first; the split tree must reproduce it byte-for-byte. Drives ONE real `dispatchTradingSchedule` fire per configuration — (a) the PAPER scan sleeve (exits → breakdown → 2b technical sells → 2c benches → 2d entries), (b) the PAPER rotation sleeve (rotateSleeve with the entry guard refusing a gap-down leader) and (c) the legacy LIVE book under the double opt-in with TRADING_CAPITAL_CAP_USD armed (refused without the opt-in; then the same rotation fire sized off the CAPPED snapshot: capAccount's LEAST(env, book cap) headroom math, confirm=true on every order, requestId `auto-live-…`, the daily-equity store keeping the UNCAPPED truth while the equity-HWM store sees the capped equity) — against the REAL Postgres stores (books, signals, decisions, orders, peaks, daily-equity, equity-HWM, rotation-state, pinned lots) with the venue adapter (placeOrder THROWS — no venue call is possible), market data, the multi-timeframe scan, reconcile and placeDecisionOrder doubled OUTSIDE that boundary. Asserts the explicit ORDERED plan from the placeDecisionOrder recorder (requestId shape minus the minute bucket, confirm flag, book ref), the persisted signal→decision rows joined back by the recorder's decision_id (never by created_at — sub-ms ties reorder), that freeStaleSells cancels the stop-hit name's stale working sell but never a `<sub>:lot-…` client_order_id, and that a leg-module log line still carries module 'trading-schedule-dispatch'. Fails loud when the DB is down (the trading-books-schema.spec.ts shape), and afterAll fails loud when any spec row is left behind (a renamed table/column must not leak rows into the operator DB silently).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Residue-proof + load-proof: the two rotation fires (two full rotations with the real 6s settle and 1.5s cancel wait) got 180s budgets after a 60s budget timed out on a busy box; every fire's promise is tracked so afterAll AWAITS an abandoned run (bounded by SETTLE_MS) before it deletes, so the cleanup assertion can no longer race a still-writing fire; beforeAll sweeps the residue of earlier `spec-golden-` runs first (the sub now carries the run start time, so a sub younger than STALE_MS — a concurrent instance of this spec — is never swept), so rows a killed run left behind are cleared on the next run instead of accumulating in the operator DB; and the schema bootstrap retries once past the repo-wide concurrent-CREATE trigger race.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 - seed the engine's OWN filled buys for every fixture position (seedEngineFills), so the golden book is one the engine actually bought. Without them the fixture describes a book of hand-bought shares, which the engine now monitors instead of managing: every stop, take-profit, cap trim, rotation drop-out sell and beta-core top-up in the plan below would be withheld and the characterization would assert the withheld plan rather than the managed one. Each seeded fill is the venue average to the share, so the wash-sale veto stays inert and the plan is unchanged. The plan asserted here is therefore also the proof that a COVERED book's plan survives ADR-159 end to end.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Pool } from 'pg';
@@ -204,6 +205,11 @@ beforeAll(async () => {
   await seedWorkingOrders(SUB_SCAN, 'paper');
   await seedWorkingOrders(SUB_ROT, 'paper');
   await seedWorkingOrders(SUB_LIVE, 'live');
+  // ADR-159: the engine only manages what its own fills account for, so the fixture book has to be
+  // one the engine bought. Seeded AFTER the working orders (same FK chain, terminal status).
+  await seedEngineFills(SUB_SCAN, 'paper');
+  await seedEngineFills(SUB_ROT, 'paper');
+  await seedEngineFills(SUB_LIVE, 'live');
 }, 120_000);
 
 afterAll(async () => {
@@ -292,6 +298,29 @@ async function seedWorkingOrders(sub: string, mode: 'paper' | 'live'): Promise<v
       `INSERT INTO oshal_trading_orders (user_sub, mode, book_id, decision_id, broker, broker_order_id, client_order_id, symbol, side, qty, order_type, limit_price, status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'limit',$11,'pending')`,
       [sub, mode, book.bookId, dec.decision_id, mode === 'live' ? 'schwab' : 'alpaca', r.brokerId, r.clientId, r.sym, r.side, r.qty, r.px]);
+  }
+}
+
+/** Seed the engine's OWN filled BUY for every fixture position, exactly covering its quantity at the
+ *  venue's own average price (ADR-159). Exact coverage is what makes each position ACCOUNTED, so the
+ *  engine manages it; equal-to-the-venue prices keep the wash-sale veto inert, so the plan below is
+ *  the plan the unsplit module produced. A partial fill here would withhold that name's whole plan. */
+async function seedEngineFills(sub: string, mode: 'paper' | 'live'): Promise<void> {
+  const book = legacyBook(sub, mode);
+  for (const p of h.POSITIONS) {
+    const sig = (await pool.query(
+      `INSERT INTO oshal_trading_signals (user_sub, mode, book_id, source, title, body, symbols, indicators, content_hash)
+         VALUES ($1,$2,$3,'spec-seed',$4,'seed',$5,'{}',$6) RETURNING signal_id`,
+      [sub, mode, book.bookId, `${p.symbol} engine buy`, [p.symbol], crypto.randomUUID()])).rows[0];
+    const dec = (await pool.query(
+      `INSERT INTO oshal_trading_decisions (user_sub, mode, book_id, signal_ids, agent_id, action, symbol, side, qty, order_type, confidence, rationale, indicators, guardrails)
+         VALUES ($1,$2,$3,$4::uuid[],'spec-seed','buy',$5,'buy',$6,'market',1,'seeded engine fill','{}','{}') RETURNING decision_id`,
+      [sub, mode, book.bookId, [sig.signal_id], p.symbol, p.qty])).rows[0];
+    await pool.query(
+      `INSERT INTO oshal_trading_orders (user_sub, mode, book_id, decision_id, broker, broker_order_id, client_order_id, symbol, side, qty, order_type, status, filled_qty, filled_avg_price)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'buy',$9,'market','filled',$9,$10)`,
+      [sub, mode, book.bookId, dec.decision_id, mode === 'live' ? 'schwab' : 'alpaca',
+        `brk-fill-${sub}-${p.symbol}`, `${sub}:seed-fill-${p.symbol}`, p.symbol, p.qty, p.avgEntryPrice]);
   }
 }
 

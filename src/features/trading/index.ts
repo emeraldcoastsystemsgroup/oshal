@@ -69,7 +69,7 @@ export { prefilterHeadline, buildReaderPrompt, parseReaderVerdicts } from './ser
 
 // Portfolio money-manager (sizing, exposure caps, stop-loss/take-profit/trailing, daily-loss breaker).
 export type { RiskPosture, RiskPolicy, PolicyOverride, ExitOrder, SizingResult, NameStrength } from './services/portfolio';
-export { RISK_POLICIES, riskPolicy, sectorOf, exitsToRun, trailingExits, nextPeaks, sizeEntry, rotationBenches, rebalanceTrims, drawdownHaltTriggered, dipExits, symbolBlocklist } from './services/portfolio';
+export { RISK_POLICIES, riskPolicy, sectorOf, exitsToRun, trailingExits, nextPeaks, sizeEntry, rotationBenches, rebalanceTrims, drawdownHaltTriggered, dipExits, symbolBlocklist, unmanagedSymbols } from './services/portfolio';
 
 // Sector tilt — "lean harder on <sector>" as a rank multiplier (TRADING_SECTOR_TILT), so a lean is a
 // dial that can be turned back down rather than percentages baked into TRADING_CORE_SYMBOLS.
