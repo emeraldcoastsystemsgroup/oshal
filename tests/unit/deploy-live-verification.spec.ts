@@ -3,10 +3,11 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards the post-deploy live verification. On 2026-09-15 a deploy printed DEPLOYED while Jarvis answered nothing and an operator ticket escalated on manifest_worker_dispatch_failed: every existing gate measures containers, none measured the product. Two boundaries are crossed for real here — the actual scripts/lib/deploy-verify.sh executed by the real Git Bash with a stubbed docker binary (ordering, loudness, the skip switch, the exact remedy text), and the actual probe checks run by the real Node against a real loopback HTTP server speaking the api's contracts (verdicts, cleanup, and no secret in the output) — in ONE process, because this host's firewall refuses a cross-process connection to a Node listener. What is NOT crossed, and is stated rather than implied: the real api, the real queue manager and the real Jarvis bot. Only a deploy reaches those, which is why the deploy is where this runs.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards the post-deploy live verification. On 2026-09-15 a deploy printed DEPLOYED while Jarvis answered nothing and an operator ticket escalated on manifest_worker_dispatch_failed: every existing gate measures containers, none measured the product. Two boundaries are crossed for real here — the actual scripts/lib/deploy-verify.sh executed by the real Git Bash with a stubbed docker binary (ordering, loudness, the skip switch, the exact remedy text), and the actual probe checks run by the real Node against a real loopback HTTP server speaking the api's contracts (verdicts, cleanup, and no secret in the output) — in ONE process, because this host's firewall refuses a cross-process connection to a Node listener. What is NOT crossed, and is stated rather than implied: the real api, the real queue manager and the real Jarvis bot. Only a deploy reaches those, which is why the deploy is where this runs. 
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the cleanup itself, in both directions. The Jarvis check used to close its thread and leave the chat-ticket, the chat_tasks row and its chat_messages behind on every deploy - and leave the row WITHOUT closing anything when the ask was refused, which is the path this gate exists to hit. So: the pass path must delete the thread's ticket and its task, the refused path must still delete the task it caused to be written, and a cleanup step that fails must report at error level naming what was left behind while the already-decided verdict survives untouched. Plus the runbook honesty the deploy's no-rollback policy depends on: what a deploy spends, and the manual rollback for the one failure class exit 4 does not cure.
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -148,6 +149,25 @@ describe('scripts/lib/deploy-verify.sh — the three checks a deploy is not fini
     expect(runbook).toContain('scripts/lib/deploy-verify.sh');
   });
 
+  it('is honest in the runbook about the cost it spends and the rollback it does NOT do', () => {
+    const runbook = readFileSync(path.resolve('docs/runbooks/deploy-parity.md'), 'utf8');
+    // Every deploy now buys a real LLM turn and a real dispatch. That has to be a conscious trade.
+    expect(runbook, 'a deploy that spends real money must say so').toMatch(/real LLM call|real Jarvis turn/);
+    expect(runbook).toContain('one real ticket dispatch');
+    // Two sequential checks at the default budget can add ~10 minutes before failing closed.
+    expect(runbook).toMatch(/OSHAL_VERIFY_BUDGET_MS[\s\S]{0,400}?5 \+ 5 minutes/);
+    // exit 4 leaves the new image running. The runbook must not imply a rollback that never happens,
+    // and must hand over the manual one for the failure class no-rollback does not cure.
+    expect(runbook).toMatch(/leaves that broken image live and serving/);
+    expect(runbook).toContain('docker tag oshal-bot:deploy-rollback oshal-bot:latest');
+    expect(runbook).toContain('bash scripts/deploy-parity-check.sh');
+    // The cleanup claim has to match what the probe actually does.
+    expect(runbook).toContain('DELETE /api/tasks/<sessionId>');
+    expect(runbook).toContain('CLEANUP FAILED');
+    expect(runbook, 'the old "one chat row per deploy, by design" claim is no longer true')
+      .not.toMatch(/one chat row per deploy/);
+  });
+
   it('is syntactically valid bash', () => {
     for (const file of [LIB, DEPLOY]) {
       const parsed = spawnSync(BASH, ['--noprofile', '--norc', '-n', file], { encoding: 'utf8', timeout: 10_000 });
@@ -265,6 +285,80 @@ describe('scripts/operations/deploy-live-verification.js — verdicts and cleanu
     expect(verdict.detail).toContain('Jarvis answered');
     expect(requests).toContain('POST /api/jarvis/thread/close');
     expect(requests).toContain('DELETE /api/cli-tokens/pat-1');
+  });
+
+  /* ── Cleanup: a deploy must leave the board and the database as it found them ──────────
+   * POST /api/jarvis/ask registers the thread as a `chat_tasks` row (ensureSessionTask) and opens a
+   * chat-ticket for it, returning that ticket's id. /thread/close only marks the ticket complete, so
+   * closing alone leaves a chat row, a board card and the thread's chat_messages behind on EVERY
+   * deploy. Nothing is reused between runs, so none of this meets the bookmarked-thread refusal. */
+  const ASK_WITH_TICKET: Reply = { status: 202, body: { jobId: 'job-1', chatTicketId: 'chat-ticket-1' } };
+  const ANSWERED: Reply = { status: 200, body: { status: 'done', answer: 'ready' } };
+
+  /** Capture stderr for one case: cleanup reports at error level, and stdout stays the verdict. */
+  async function withErrorLog(run: () => Promise<{ ok: boolean; code: number; detail: string }>) {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const verdict = await run();
+      return { verdict, errors: spy.mock.calls.map((call) => String(call[0])) };
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it('deletes the thread it opened — the chat-ticket AND the chat_tasks row, not just a close', async () => {
+    replies = { 'POST /api/cli-tokens': MINT, 'POST /api/jarvis/ask': ASK_WITH_TICKET, 'GET /api/jarvis/ask/result': ANSWERED };
+    const { verdict, errors } = await withErrorLog(() => probe.runCheck('jarvis'));
+    expect(verdict, verdict.detail).toMatchObject({ ok: true, code: 0 });
+    expect(requests).toContain('POST /api/jarvis/thread/close');
+    expect(requests).toContain('DELETE /api/tickets/chat-ticket-1');
+    const taskDelete = requests.find((route) => route.startsWith('DELETE /api/tasks/'));
+    expect(taskDelete, 'the chat_tasks row this ask wrote must be deleted, not left for the operator').toBeDefined();
+    expect(taskDelete).toMatch(/^DELETE \/api\/tasks\/deploy-verify-/);
+    expect(errors, 'a clean run must report no leak').toEqual([]);
+  });
+
+  it('still deletes the row a REFUSED ask wrote — the path this gate exists to hit', async () => {
+    // ensureSessionTask writes the row BEFORE the ownership gate, so a refused thread sits at
+    // status 'created'. Returning early without cleanup leaked one row per FAILED verification.
+    replies = { 'POST /api/cli-tokens': MINT, 'POST /api/jarvis/ask': { status: 404, body: { error: 'session_not_found' } } };
+    const verdict = await probe.runCheck('jarvis');
+    expect(verdict.code).toBe(1);
+    expect(verdict.detail).toContain('session_not_found');
+    expect(requests.some((route) => route.startsWith('DELETE /api/tasks/deploy-verify-'))).toBe(true);
+  });
+
+  it('reports a failed thread cleanup at error level, and the verdict survives it untouched', async () => {
+    replies = {
+      'POST /api/cli-tokens': MINT,
+      'POST /api/jarvis/ask': ASK_WITH_TICKET,
+      'GET /api/jarvis/ask/result': ANSWERED,
+      'DELETE /api/tasks/': { status: 500, body: { error: 'task_delete_failed' } },
+    };
+    const { verdict, errors } = await withErrorLog(() => probe.runCheck('jarvis'));
+    // Cleanup runs after the verdict is decided; it must never be able to rewrite one.
+    expect(verdict, verdict.detail).toMatchObject({ ok: true, code: 0 });
+    expect(verdict.detail).toContain('Jarvis answered');
+    const leak = errors.find((line) => line.startsWith('CLEANUP FAILED:'));
+    expect(leak, 'a cleanup that failed silently accumulates a row per deploy with nothing in the log').toBeDefined();
+    expect(leak).toContain('HTTP 500');
+    expect(leak).toContain('task_delete_failed');
+    expect(leak, 'the report has to name what was left behind, not just that something failed').toContain('chat_messages');
+  });
+
+  it('reports a failed synthetic-ticket delete at error level, and the verdict survives it untouched', async () => {
+    replies = {
+      'POST /api/cli-tokens': MINT,
+      'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } },
+      'GET /api/tickets/': [{ status: 200, body: { status: 'approved' } }, { status: 200, body: { status: 'complete' } }],
+      'DELETE /api/tickets/': { status: 500, body: { error: 'Failed to delete ticket' } },
+    };
+    const { verdict, errors } = await withErrorLog(() => probe.runCheck('ticket'));
+    expect(verdict, verdict.detail).toMatchObject({ ok: true, code: 0 });
+    const leak = errors.find((line) => line.startsWith('CLEANUP FAILED:'));
+    expect(leak, 'a leftover synthetic ticket must never accumulate invisibly').toBeDefined();
+    expect(leak).toContain('DELETE /api/tickets/ticket-1');
+    expect(leak).toContain('ticket-1 is still on the board');
   });
 
   it.each([

@@ -4,7 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The loopback half of the post-deploy live verification (scripts/lib/deploy-verify.sh): ask Jarvis one fixed question as the operator, and put one synthetic ticket through the queue, on a stack that just reported DEPLOYED. Both halves failed on 2026-09-15 behind a deploy that reported success. Statuses and safe bodies only - never the token, the secret or the operator subject.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Read every knob at call time and export runCheck, so the guard can drive the real checks in-process against a real loopback server. The CLI shape is unchanged; the reason is that this host's firewall refuses a cross-process connection to a Node listener (curl reproduces it), so a spawned probe could only ever be tested against a doubled fetch.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Read every knob at call time and export runCheck, so the guard can drive the real checks in-process against a real loopback server. The CLI shape is unchanged; the reason is that this host's firewall refuses a cross-process connection to a Node listener (curl reproduces it), so a spawned probe could only ever be tested against a doubled fetch. 
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Clean up what the check writes, and say so out loud when it cannot. The Jarvis half used to close its thread and leave the rest: POST /api/jarvis/ask registers the thread as a chat_tasks row (ensureSessionTask) and opens a chat-ticket, and /thread/close only marks that ticket complete - so every deploy left a chat row, a board card and its chat_messages behind forever, and a REFUSED ask leaked the row without even closing the thread (the row is written before the ownership gate; a refused thread sits at status 'created'). The ask response already carries chatTicketId, so the thread's ticket is deleted by id and the session task by DELETE /api/tasks/:taskId, which removes the row and its messages. Nothing is reused, so the bookmarked-thread refusal is not in play. Every cleanup step that does not succeed - here and on the synthetic ticket's delete - now reports at error level naming exactly what was left behind, on stderr so stdout stays the single verdict line. Cleanup runs after the verdict is decided and can never change it.
  */
 // Runs INSIDE the api container on loopback, one check per invocation:
 //   node deploy-live-verification.js jarvis   - ask Jarvis a fixed question as the operator
@@ -63,22 +64,74 @@ async function call(cfg, path, init = {}) {
 }
 
 /**
- * @description Ask Jarvis one fixed question on a fresh thread and require a real answer, then close
- * the thread so the operator's board does not keep a verification card open.
+ * @description Report one cleanup step that did not succeed. Cleanup runs only after the verdict is
+ * already decided, so it can never turn a PASS into a FAIL - but a step that failed silently would
+ * leave a row on the operator's box on every deploy with nothing in the run log to say so. This
+ * writes at error level on stderr, which deploy-verify.sh merges into the run log (it runs the probe
+ * with 2>&1), so stdout stays the single verdict line the CLI contract promises.
+ * @param cfg - Resolved configuration.
+ * @param path - The API path whose call was supposed to remove the state.
+ * @param init - fetch init, exactly as `call` takes it.
+ * @param leaked - What is still on the box, in plain words, so the leak is actionable.
+ * @returns true when the request returned 2xx; false when anything else happened.
+ */
+async function cleanUp(cfg, path, init, leaked) {
+  const outcome = await call(cfg, path, init).then(
+    ({ status, body }) => (status >= 200 && status < 300 ? null : `HTTP ${status}${body.error ? ` ${body.error}` : ''}`),
+    (error) => (error instanceof Error ? error.message : String(error)),
+  );
+  if (outcome === null) return true;
+  console.error(`CLEANUP FAILED: ${init.method || 'GET'} ${path} -> ${outcome}; ${leaked}`);
+  return false;
+}
+
+/**
+ * @description Remove everything one verification ask wrote. POST /api/jarvis/ask registers the
+ * thread as a `chat_tasks` row and opens a chat-ticket for it, and /thread/close only completes that
+ * ticket - so closing alone leaves a chat row, a board card and the thread's chat_messages behind on
+ * every deploy. The thread id is fresh each run and never reused, so none of this meets the
+ * bookmarked-thread refusal. Each step is independent: a failure of one still attempts the rest, and
+ * no step can throw into the caller's finally and rewrite an already-decided verdict.
+ * @param cfg - Resolved configuration.
+ * @param token - The operator bearer token.
+ * @param sessionId - The thread id this run created.
+ * @param chatTicketId - The chat-ticket the ask opened, when the ask got far enough to return one.
+ * @returns Resolves once every cleanup step has been attempted and any failure reported.
+ */
+async function cleanUpThread(cfg, token, sessionId, chatTicketId) {
+  const thread = encodeURIComponent(sessionId);
+  await cleanUp(cfg, '/api/jarvis/thread/close', { method: 'POST', token, body: JSON.stringify({ sessionId }) },
+    `the chat-ticket for thread ${sessionId} may still be open on the Chat board`);
+  if (chatTicketId) {
+    await cleanUp(cfg, `/api/tickets/${encodeURIComponent(chatTicketId)}`, { method: 'DELETE', token },
+      `chat ticket ${chatTicketId} is still on the board`);
+  }
+  await cleanUp(cfg, `/api/tasks/${thread}`, { method: 'DELETE', token },
+    `the chat_tasks row ${sessionId} and its chat_messages may still be in the database`);
+}
+
+/**
+ * @description Ask Jarvis one fixed question on a fresh thread and require a real answer, then remove
+ * the thread entirely - its chat-ticket and its `chat_tasks` row - so a deploy leaves the operator's
+ * board and database exactly as it found them. The cleanup covers a REFUSED ask too: the ask writes
+ * the thread's row before the ownership gate runs, so an early return used to leak one row per
+ * failed verification, which is the path this gate exists to hit.
  * @param cfg - Resolved configuration.
  * @param token - The operator bearer token.
  * @returns { ok, detail } - ok only when the poll returns status 'done' with answer text.
  */
 async function askJarvis(cfg, token) {
   const sessionId = `deploy-verify-${crypto.randomUUID()}`;
-  const ask = await call(cfg, '/api/jarvis/ask', { method: 'POST', token, body: JSON.stringify({ message: cfg.question, sessionId }) });
-  if (!ask.body.jobId) {
-    return { ok: false, detail: `POST /api/jarvis/ask returned HTTP ${ask.status}${ask.body.error ? ` ${ask.body.error}` : ''} and no jobId` };
-  }
-  const started = Date.now();
-  const deadline = started + cfg.budgetMs;
-  let last = 'pending';
+  let chatTicketId;
   try {
+    const ask = await call(cfg, '/api/jarvis/ask', { method: 'POST', token, body: JSON.stringify({ message: cfg.question, sessionId }) });
+    chatTicketId = ask.body.chatTicketId;
+    if (!ask.body.jobId) {
+      return { ok: false, detail: `POST /api/jarvis/ask returned HTTP ${ask.status}${ask.body.error ? ` ${ask.body.error}` : ''} and no jobId` };
+    }
+    const started = Date.now();
+    const deadline = started + cfg.budgetMs;
+    let last = 'pending';
     while (Date.now() < deadline) {
       await sleep(cfg.pollMs);
       const poll = await call(cfg, `/api/jarvis/ask/result?jobId=${encodeURIComponent(ask.body.jobId)}`, { token });
@@ -91,7 +144,7 @@ async function askJarvis(cfg, token) {
     }
     return { ok: false, detail: `Jarvis never answered within ${Math.round(cfg.budgetMs / 1000)}s (last status '${last}')` };
   } finally {
-    await call(cfg, '/api/jarvis/thread/close', { method: 'POST', token, body: JSON.stringify({ sessionId }) }).catch(() => ({}));
+    await cleanUpThread(cfg, token, sessionId, chatTicketId);
   }
 }
 
@@ -145,8 +198,13 @@ async function pushTicket(cfg, token) {
     if (cfg.failedStates.has(status)) return { ok: false, detail: `ticket ${ticketId} (${cfg.ticketType}) was dispatched and landed in '${status}'` };
     return { ok: true, detail: `ticket ${ticketId} (${cfg.ticketType}) moved '${cfg.queuedState}' -> '${status}'` };
   } finally {
+    // The cancel is a courtesy that stops work on a ticket nobody wants worked; it leaves nothing
+    // behind when the delete below succeeds, so it is not reported. The DELETE is the step that
+    // actually removes the row, and a silent failure there accumulates synthetic tickets on the
+    // operator's board invisibly - so that one says so at error level and names what was left.
     await call(cfg, `/api/tickets/${ticketId}/cancel`, { method: 'PUT', token, body: JSON.stringify({}) }).catch(() => ({}));
-    await call(cfg, `/api/tickets/${ticketId}`, { method: 'DELETE', token }).catch(() => ({}));
+    await cleanUp(cfg, `/api/tickets/${ticketId}`, { method: 'DELETE', token },
+      `synthetic ${cfg.ticketType} ticket ${ticketId} is still on the board`);
   }
 }
 

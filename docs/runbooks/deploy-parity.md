@@ -99,6 +99,33 @@ the named check, then re-verify without redeploying:
 bash -c 'source scripts/lib/deploy-verify.sh && oshal_deploy_post_verify'
 ```
 
+#### The gap: exit 4 leaves a bad image running, including when the image is the cause
+
+Be clear about what this policy does and does not cover. The no-rollback rule is right for the
+failure it was built for — a stripped `oshal_bot` grant is the boot-time provisioner's doing and has
+nothing to do with which image is running, so rolling back would cure nothing. But the policy is
+**blanket**, and the other case is real: if the image you just deployed is *itself* what broke Jarvis
+or ticket dispatch — a genuine regression, which is precisely what this gate exists to catch — the
+run reports exit 4 and **leaves that broken image live and serving**, even though a rollback would
+have cured it.
+
+It is blanket on purpose. The gate observes that the product is down; it cannot attribute *why*, and
+an automatic revert of the operator's running box on an unattributed product failure is a worse
+default than a loud refusal — it would fire on every stripped-grant boot, which is the common case.
+
+So **recovering from an image-caused break is a manual rollback, and nothing does it for you.** The
+pre-deploy image is still tagged from that run:
+
+```bash
+docker tag oshal-bot:deploy-rollback oshal-bot:latest   # the image the deploy anchored at preflight
+bash scripts/oshal-up.sh                                # ordered bring-up onto it (api, then bots)
+bash scripts/deploy-parity-check.sh                     # proves api + bots actually landed on it
+```
+
+Then re-run the verification above against the restored image. If it passes, the image you deployed
+was the cause and the change needs fixing before it ships again; if it still fails, the cause is on
+the box, not in the image, and `exit 4` was already telling you where to look.
+
 ### The one skip switch
 
 ```bash
@@ -118,7 +145,43 @@ quietly skipping.
 `OSHAL_VERIFY_DB_CONTAINER` / `OSHAL_VERIFY_API_CONTAINER` / `OSHAL_VERIFY_DB_USER` /
 `OSHAL_VERIFY_DB_NAME` name the containers and role; `OSHAL_VERIFY_TICKET_TYPE` picks the synthetic
 ticket's workflow (`task`); `OSHAL_VERIFY_BUDGET_MS` (default 300000) bounds both polls;
-`OSHAL_VERIFY_QUESTION` sets the Jarvis question. Each Jarvis check leaves one closed
-`deploy-verify-*` thread behind — one chat row per deploy, by design, because reusing a thread would
-re-introduce the bookmarked-thread refusal documented in
-[jarvis-couldnt-do-that-just-now.md](./jarvis-couldnt-do-that-just-now.md).
+`OSHAL_VERIFY_QUESTION` sets the Jarvis question.
+
+### What a deploy leaves behind
+
+Nothing on the board, and nothing in `chat_tasks`. Both checks remove what they wrote:
+
+| Check | Writes | Removed by |
+|---|---|---|
+| `jarvis-ask` | a `deploy-verify-*` thread — a `chat_tasks` row, its `chat_messages`, and the chat-ticket the ask opens | `POST /api/jarvis/thread/close`, then `DELETE /api/tickets/<chatTicketId>` (the id comes back on the ask itself), then `DELETE /api/tasks/<sessionId>`, which takes the row and its messages |
+| `ticket-dispatch` | one synthetic `task` ticket | `PUT /api/tickets/<id>/cancel`, then `DELETE /api/tickets/<id>` |
+
+The thread id is **fresh every run and never reused**, so none of this meets the bookmarked-thread
+refusal in [jarvis-couldnt-do-that-just-now.md](./jarvis-couldnt-do-that-just-now.md) — that refusal
+is about *appending to* a thread from a different issuer, and nothing here appends to an old one. A
+refused ask is cleaned up too: `ensureSessionTask` writes the thread's row *before* the ownership
+gate, so a failed check would otherwise leak a row on exactly the deploys this gate is built to fail.
+
+A cleanup step that does not return 2xx prints `CLEANUP FAILED: <request> -> <outcome>; <what was
+left behind>` into the run log. It cannot change the check's verdict — cleanup runs after the verdict
+is decided — so `grep 'CLEANUP FAILED' "$RUN_LOG"` is the only way a leak becomes visible. Act on it:
+each line names the row or card still on the box.
+
+**The one thing deliberately kept** is the cost ledger. The `oshal_cost_events` row for the Jarvis
+call has no foreign key to `chat_tasks` and is not deleted — it is the record of real spend, and
+deleting it would understate what the box costs.
+
+### What a deploy spends
+
+These checks are not free, and that is inherent to proving the product works rather than the stack:
+
+- **one real Jarvis turn** against the live brain — a real LLM call on the operator's account, billed
+  and recorded in the `oshal_cost_events` ledger like any other ask (the thread's `chat_tasks` rollup
+  row goes with the thread when it is cleaned up; the per-event ledger row is what survives); and
+- **one real ticket dispatch** — a synthetic `task` ticket genuinely picked up by the queue manager
+  and handed to `manifest-worker`, which may itself spend before the ticket is cancelled and deleted.
+
+**Worst case a deploy gets ~10 minutes slower before failing.** The two checks run sequentially and
+each polls to `OSHAL_VERIFY_BUDGET_MS` (default 300000 ms), so a Jarvis that never answers followed by
+a ticket that never moves is 5 + 5 minutes before the run fails closed with exit 4. Lower
+`OSHAL_VERIFY_BUDGET_MS` on a box where that matters more than the diagnosis.
