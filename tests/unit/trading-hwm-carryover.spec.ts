@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-134 PR1 safety-store guards on the REAL database: pre-existing HWM rows were re-keyed IN PLACE (values byte-unchanged — a fresh row would re-baseline the drawdown breaker), a halted synthetic book STAYS halted through the book-keyed read, and book isolation holds on the peaks store (book A's prune/upsert can never touch book B's peaks — wrong trailing exits otherwise).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
@@ -12,9 +13,9 @@ import { ensureEquityGuardTable, evaluateEquityGuard } from '../../src/app/tradi
 import { ensurePeaksTable, loadPeaks, savePeaks } from '../../src/app/trading-peaks-store';
 import { ensureLegacyBooks, legacyBook, legacyBookId } from '../../src/app/trading-books-store';
 import { RISK_POLICIES } from '../../src/features/trading';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-const DSN = process.env.OSHAL_TEST_DSN
-  || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-adr134h-${RUN}`;
 

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-134 Schwab account-pin retirement. The hazard it pins: an UNBOUND Schwab reader used to take SCHWAB_ACCOUNT_NUMBER "else the FIRST account the venue enumerates", and this operator's connected login enumerates THREE real accounts (a legacy live book, a margin account and a cash IRA) - so which real-money account was read and traded was decided by enumeration order. Proven here: selectSchwabAccount uses a single enumerated account, REFUSES two-or-more unbound (naming the count and the remedy), matches a bound book exactly regardless of enumeration order, and the same refusal reaches BOTH a read path (getAccount) and an order path (placeOrder, which never issues its POST) through a real fetch seam. Against the live Postgres: loadLegacyBook falls back to the pure constructor only when the ROW is absent and RETHROWS book_binding_undecryptable rather than degrading into an unbound book (the swallow that used to live in resolveBook), and resolveBook inherits that. Finally a source pin that nothing in src/, scripts/, the compose file or .env.example reads the env pin any more.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Pool } from 'pg';
@@ -16,10 +17,10 @@ import {
 } from '../../src/app/trading-books-store';
 import { ensureAccountsSchema } from '../../src/app/trading-accounts-store';
 import { resolveBook } from '../../src/app/routes/trading-routes-helpers';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
 const REPO = path.resolve(__dirname, '../..');
-const DSN = process.env.OSHAL_TEST_DSN
-  || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB_ROWLESS = `spec-schwabpin-${RUN}-rowless`;
 const SUB_BROKEN = `spec-schwabpin-${RUN}-broken`;

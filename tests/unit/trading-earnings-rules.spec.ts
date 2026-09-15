@@ -7,6 +7,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fix round 3 guards: a sell whose position exceeds what ONE guardrail-capped order may carry is sold in tranches with distinct requestIds and distinct decision rows (and, when the tranche bound is reached, ends saying how many shares remain exposed) — the previous behaviour placed 264 of 1000 shares and called itself `fired`; an UNKNOWN place failure is bounded at TRADING_EARNINGS_RULE_MAX_PLACE_ATTEMPTS and then terminal (it used to re-submit every tick to expiry, and the engine deletes its reservation each time, so on a venue with no client-order-id that is a duplicate-fill path); a 5xx that keeps deferring stands down on TRADING_EARNINGS_RULE_STALE_HOURS instead of trading a day-old verdict; and both "noted once across two ticks" assertions now RE-READ the row (they previously filtered a snapshot captured before the second tick and could not fail).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fix round 2 guards: the fired order is sized so the ENGINE's own notional check passes — the persisted decision row is fed to the REAL guardrailViolation (not restated arithmetic) and a price sweep proves it across the whole cap-bound band, which is what the previous sizing (off the last print, under a higher limit) failed at every cap-bound buy; and a transient 5xx from the order rail defers instead of disarming — the rule stays classified, retries under the SAME requestId, and reuses/reprices its ONE decision row rather than fanning the journal out. Plus: the TRADING_HALT pin asserts the absence of a READ (process.env.TRADING_HALT), not of the string, so a comment cannot turn it red.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D5 earnings-reaction rules against the live oshal Postgres (real FORCE-RLS table, real partial unique index, real signals/decisions ledger rows). Drives the whole state machine with EDGAR, the document read, the analyst and the venue doubled at their seams: armed → detected → classified → fired; expiry never fires (and never polls); a miss sells with the rationale carrying the verdict, the numbers read and the filing URL; a beat buys the sized fraction; the notional ceiling is enforced BY THIS MODULE (the engine skips its notional test for a 0 refPrice, and never reads TRADING_HALT — both pinned from the engine source, which is why both guards live here and are exercised here); TRADING_HALT blocks the order; a position sold out from under a beat ends no_action, not a fresh entry; a disagreeing print waits then stands down; unclear never trades; the flag off does nothing at all. Plus the fundamentals CIK cache: a failed first fetch is NOT cached forever. Run with --no-file-parallelism (concurrent schema bootstrap races).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Pool } from 'pg';
@@ -29,12 +30,13 @@ import { ensureTradingSchema, TradingError, guardrails } from '../../src/app/tra
 import { guardrailViolation } from '../../src/app/routes/trading-routes-helpers';
 import type { AppContext } from '../../src/app/composition/app-context';
 import type { OrderResult, Position } from '../../src/features/trading';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
 // Every case here drives a multi-tick state machine against the LIVE Postgres; the 5 s default is a
 // flake, not a signal (the same tick costs milliseconds in production).
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 120_000 });
 
-const DSN = process.env.OSHAL_TEST_DSN || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-erule-${RUN}`;
 let pool: Pool;

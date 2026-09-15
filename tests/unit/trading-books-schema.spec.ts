@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-134 PR1 schema guards against the REAL oshal Postgres (fail-loud when the stack is down, per the alert-incident-cutover precedent): dual-rail convergence + double-run idempotence, TS↔SQL legacy-book-id bijection, zero NULL book_ids after backfill on user-bearing rows, the straggler-writer trigger filling a legacy-shaped INSERT, cross-user account binding refused at the core store AND the composite FK, and the flag-off dispatch hard-skip rules (foreign bookId → logged no-op; unresolvable bookId under the flag → skip, never legacy fallback).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
@@ -20,9 +21,9 @@ import { ensureDailyEquityTable } from '../../src/app/trading-daily-equity-store
 import { ensureRotationStateTable } from '../../src/app/trading-rotation-store';
 import { dispatchTradingSchedule } from '../../src/app/trading-schedule-dispatch';
 import type { AppContext } from '../../src/app/composition/app-context';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-const DSN = process.env.OSHAL_TEST_DSN
-  || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB_A = `spec-adr134-${RUN}-a`;
 const SUB_B = `spec-adr134-${RUN}-b`;

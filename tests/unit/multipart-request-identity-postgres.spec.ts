@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for multipart uploads losing the RLS request identity (docs/BACKLOG.md, 2026-09-14). Each core multer route whose post-upload handler writes through the GUC pool is driven over REAL loopback HTTP with its REAL router and REAL multer; the multipart body is written in 64 KB chunks with gaps so the parser finishes on a LATER socket chunk than the one the identity middleware ran on. The boundary that failed runs for real end to end: the server.ts identity middleware shape (runWithRequestIdentity -> next), multer streaming, the production GUC pool wrapper, and PostgreSQL row-level security evaluated for the real NOBYPASSRLS enforcing role (oshal_app) under OSHAL_DB_GUC_STRICT=deny. The fixture database is created and dropped by this spec on a loopback cluster; the operator's `oshal` database is never written. Doubled, and outside the boundary: the domain service each handler calls (RAG ingest, the knowledge-memory record, the swarm-app loader, the ambient receipt store and diarization orchestrator, the agent-profile repository). Each double performs the handler's owner-scoped write as a real INSERT through the real GUC pool into a FORCE-RLS probe table carrying the live owner-or-operator policy, and the probe's defaults record the identity PostgreSQL itself saw.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -28,10 +29,10 @@ import { createSwarmAppRoutes } from '@/app/routes/swarm-app-routes';
 import { createAmbientSpeakerRoutes, type AmbientSpeakerRouteOptions } from '@/app/routes/ambient-speaker-routes';
 import { createAgentProfileRoutes } from '@/app/routes/agent-profile-routes';
 import { AgentProfileController, AgentProfileService } from '@/features/agent-profile';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-/** Same convention as the other enforcing-role specs: the local stack's cluster on 55433. */
-const ADMIN_DSN = process.env.OSHAL_TEST_DSN
-  || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+/** Same convention as the other enforcing-role specs: a cluster the run names, never a default. */
+const ADMIN_DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const ENFORCING_ROLE = 'oshal_app';
 const FIXTURE_DB = `oshal_multipart_identity_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 const OWNER = 'auth0|multipart-owner';
