@@ -137,7 +137,7 @@ describe('authorization schema readiness after a lost pool acquire', () => {
       // overrides release() to run a RESET on the still-checked-out client and hand it back when
       // that query returns, so a client the previous bootstrap has finished with is still out of
       // the pool while the next one checks its own client in. Concurrent bootstraps put four
-      // working clients out at once and measure five here.
+      // working clients out at once and measure four here.
       expect(peak).toBeLessThanOrEqual(2);
     } finally {
       await pool.end();
