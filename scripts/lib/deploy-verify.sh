@@ -58,7 +58,7 @@ oshal_verify_bot_role_grant() {
   fi
   oshal_verify_fail bot-role-grant "$role cannot SELECT $table (psql answered: ${answer:-<nothing>})" \
     "MSYS_NO_PATHCONV=1 docker cp $grant_sql $db:/tmp/bot-role-grants.sql" \
-    "docker exec $db psql -U $db_user -d $db_name -f /tmp/bot-role-grants.sql" \
+    "MSYS_NO_PATHCONV=1 docker exec $db psql -U $db_user -d $db_name -f /tmp/bot-role-grants.sql" \
     "Every Jarvis ask answers 503 authorization_bot_posture_unavailable until that runs." \
     "It is stripped again on the NEXT api boot: scripts/governance/provision-app-role.mjs re-converges" \
     "$role to an exact allowlist that omits this table. The permanent fix is core PR #459."
@@ -80,7 +80,11 @@ oshal_verify_stage_probe() {
 oshal_verify_run_probe() {
   local api="${OSHAL_VERIFY_API_CONTAINER:-oshal-local-api}"
   local dest="${OSHAL_VERIFY_PROBE_DEST:-/tmp/oshal-deploy-live-verification.js}"
-  docker exec "$api" node "$dest" "$1" 2>&1
+  # $dest is an absolute CONTAINER path. Passed to docker.exe from MSYS it is rewritten to
+  # the Windows temp path, node resolves that against /app, and every probe dies with
+  # MODULE_NOT_FOUND before it can reach the product. Staging above already guards its cp;
+  # this call needs the same guard, and a grep for "/tmp/" cannot see it behind $dest.
+  MSYS_NO_PATHCONV=1 docker exec "$api" node "$dest" "$1" 2>&1
 }
 
 # (2) Jarvis must answer a fixed question AS THE OPERATOR on a fresh thread.
