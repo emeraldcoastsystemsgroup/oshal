@@ -6,12 +6,18 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — in-memory message store for dev/testing
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added optional Postgres-backed persistence with fallback mode for restart-safe message history
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Close the owned Postgres pool when persistence initialization fails before falling back to memory
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Re-attempt persistence instead of ending the pool and nulling it: one lost acquire during the boot migration burst made message history non-persistent for the whole process lifetime. Activation now runs through the shared re-attemptable helper, the pool is kept so a retry has something to retry with, and the memory fallback is a state the next operation can leave.
  */
 
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
-import { createOptionalPostgresPool, ensureConversationStoreSchema } from '@/shared/services/database';
+import {
+  createOptionalPostgresPool,
+  createPersistenceActivation,
+  ensureConversationStoreSchema,
+  type PersistenceActivation,
+} from '@/shared/services/database';
 import type { CreateMessageInput, StoredMessage } from '@/shared/types';
 import type { IMessageStore } from '../types';
 
@@ -35,16 +41,23 @@ interface MessageRow {
 export class InMemoryMessageStore implements IMessageStore {
   private readonly messages: Map<string, StoredMessage>;
   private readonly taskIndex: Map<string, string[]>;
-  private pool: Pool | null;
+  private readonly pool: Pool | null;
   private persistentMode: boolean;
-  private readonly initPromise: Promise<void>;
+  private readonly activation: PersistenceActivation;
 
   constructor() {
     this.messages = new Map();
     this.taskIndex = new Map();
     this.pool = createOptionalPostgresPool('message-store');
     this.persistentMode = false;
-    this.initPromise = this.initializePersistence();
+    this.activation = createPersistenceActivation({
+      store: 'message-store',
+      pool: this.pool,
+      activate: ensureConversationStoreSchema,
+    });
+    // Attempt activation at boot exactly as before. The difference is what a failure means:
+    // it is observed here rather than cached, and the next operation re-attempts it.
+    void this.activation.ready();
     logger.info({ hasPool: Boolean(this.pool) }, 'Message store initialized');
   }
 
@@ -167,34 +180,12 @@ export class InMemoryMessageStore implements IMessageStore {
   }
 
   /**
-   * @description Initialize Postgres persistence when available.
-   */
-  private async initializePersistence(): Promise<void> {
-    if (!this.pool) {
-      return;
-    }
-    const candidatePool = this.pool;
-    try {
-      await ensureConversationStoreSchema(candidatePool);
-      this.persistentMode = true;
-      logger.info('Message store persistence mode enabled (postgres)');
-    } catch (error) {
-      logger.error({ err: error }, 'Message store persistence init failed; falling back to memory');
-      this.persistentMode = false;
-      try {
-        await candidatePool.end();
-      } catch (cleanupError) {
-        logger.warn({ err: cleanupError }, 'Failed to close message store Postgres pool after persistence init failure');
-      }
-      this.pool = null;
-    }
-  }
-
-  /**
-   * @description Await asynchronous initialization.
+   * @description Settle persistence mode before an operation runs, re-attempting activation
+   * when an earlier attempt failed and its cooldown has elapsed. Never throws: a store that
+   * cannot reach Postgres answers from memory rather than refusing the caller.
    */
   private async awaitInitialization(): Promise<void> {
-    await this.initPromise;
+    this.persistentMode = await this.activation.ready();
   }
 
   /**

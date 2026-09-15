@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for INSTALLER-GAPS G9 + G7 + G2 (readiness legs): a silent FORCE_LLM_PROVIDER=noop must FAIL the llm leg unless OSHAL_NO_AI is declared; a routing-critical bot whose harness has no credential must FAIL the credentials leg BY NAME (the "starts, heartbeats, fails on first use" trap); a missing heartbeat fails the bots leg; voice fails only when declared-but-unconfigured; and the summary line stays in the exact `leg=state` token format scripts/oshal-verify.sh greps — that summary IS the shell contract, so this spec pins it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Moved with the `catalogs` leg instead of being left behind by it. The leg shipped and this spec did not: ReadinessDeps grew catalogLoads/degradedCatalogLoads, the fixture did not, and all 11 cases died on `deps.catalogLoads is not a function` — the feature landing without its guard, which is the thing guard-per-fix exists to stop. The fixture now wires the REAL @/shared/observability registry (reset per test, seeded through the real recordCatalogLoad) rather than stubbing the leg away, so these cases exercise the same code path production does; the shell-contract summary assertion carries the new token; and a catalog-less boot is asserted RED here too, not only in catalog-load-readiness.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Moved with the `persistence` leg: ReadinessDeps grew persistenceModes/degradedPersistenceModes, so the fixture wires the REAL @/shared/observability persistence-mode registry (reset per test, seeded through the real recordPersistenceMode) rather than stubbing the leg away, and the shell-contract summary assertion carries the new token.
  */
 
 import { beforeEach, describe, it, expect } from 'vitest';
@@ -16,9 +17,13 @@ import {
 } from '@/app/routes/readiness-routes';
 import {
   degradedCatalogs,
+  degradedPersistence,
   listCatalogLoads,
+  listPersistenceModes,
   recordCatalogLoad,
+  recordPersistenceMode,
   resetCatalogLoads,
+  resetPersistenceModes,
 } from '@/shared/observability';
 
 const VOICE_OFF: VoiceSideStatus = { providerId: 'gemini-tts', configured: false, declared: false, browser: false };
@@ -39,9 +44,20 @@ function seedHealthyCatalog(): void {
   });
 }
 
+/**
+ * A healthy durable store, recorded through the REAL registry the stores write to. Seeded for
+ * the same reason the catalog is: the leg is exercised rather than stubbed away, and an empty
+ * registry is a different (and separately reachable) state.
+ */
+function seedPersistentStore(): void {
+  recordPersistenceMode({ store: 'task-store', mode: 'persistent', attempts: 1 });
+}
+
 beforeEach(() => {
   resetCatalogLoads();
   seedHealthyCatalog();
+  resetPersistenceModes();
+  seedPersistentStore();
 });
 
 function deps(overrides: Partial<ReadinessDeps> = {}): ReadinessDeps {
@@ -60,6 +76,8 @@ function deps(overrides: Partial<ReadinessDeps> = {}): ReadinessDeps {
     dbOk: async () => true,
     catalogLoads: listCatalogLoads,
     degradedCatalogLoads: degradedCatalogs,
+    persistenceModes: listPersistenceModes,
+    degradedPersistenceModes: degradedPersistence,
     ...overrides,
   };
 }
@@ -69,7 +87,7 @@ describe('buildReadinessReport (INSTALLER-GAPS G9/G7/G2)', () => {
     const r = await buildReadinessReport(deps());
     expect(r.ready).toBe(true);
     expect(r.problems).toEqual([]);
-    expect(r.summary).toBe('llm=ok bots=ok credentials=ok catalogs=ok voice.tts=off voice.stt=off db=ok');
+    expect(r.summary).toBe('llm=ok bots=ok credentials=ok catalogs=ok voice.tts=off voice.stt=off db=ok persistence=ok');
   });
 
   it('G2: FORCE_LLM_PROVIDER=noop without the OSHAL_NO_AI declaration FAILS the llm leg', async () => {

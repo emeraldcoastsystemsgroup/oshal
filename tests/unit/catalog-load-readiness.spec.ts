@@ -12,7 +12,9 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   degradedCatalogs,
+  degradedPersistence,
   listCatalogLoads,
+  listPersistenceModes,
   readCatalogDir,
   recordCatalogLoad,
   resetCatalogLoads,
@@ -34,6 +36,8 @@ function greenDeps(overrides: Partial<ReadinessDeps> = {}): ReadinessDeps {
     dbOk: async () => true,
     catalogLoads: listCatalogLoads,
     degradedCatalogLoads: degradedCatalogs,
+    persistenceModes: listPersistenceModes,
+    degradedPersistenceModes: degradedPersistence,
     ...overrides,
   };
 }
