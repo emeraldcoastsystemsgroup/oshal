@@ -2097,36 +2097,53 @@ Whichever it is, `PostgresSwarmEscalationStore` and the cockpit's `getTicketEsca
 agree with it, and a guard proves an escalation raised by a non-run path lands wherever the
 decision says it belongs, proven red by removing that write.
 
-### A vehicle is an owned record with a computed stage (ADR-160) (2026-09-15)
+### A vehicle record, and the medium it runs in as a parameter (ADR-160) (2026-09-15)
 
-**Context:** [ADR-160](adr/160-a-vehicle-is-an-owned-record-with-a-computed-stage.md). Two vehicles are
-fully specified and neither can be developed: the 300 mm marine explorer exists as
+**Context:** [ADR-160](adr/160-a-vehicle-record-and-the-medium-as-a-parameter.md). Two vehicles are fully
+specified and neither can be developed or moved: the 300 mm marine explorer exists as
 [a design study document](research/autonomous-explorer-design-study.md) whose engines were carved into the
 `ocean-lab` store package while the vehicle itself was not, and the Floater solar dynastat exists as a
-committed `aero-lab/reference-design/` folder holding one `export_build_files.py` run that cannot report that
-it has gone stale against its own package's open real-chain gate. Both packages own no tables — neither has a
-`migrations/` directory — so nothing persists and no object can carry a stage. The shipped `embodied` B16
-designer (`engine/design/`, the drone and the Desk-6 arm, **Open in CAD Studio** per printed part) is the
-pattern; its own gap is that the designs are generated on request and never stored. Store-repo work in
-`ocean-lab` and `aero-lab`; no core code.
+committed `aero-lab/reference-design/` folder holding one `export_build_files.py` run that cannot report it
+has gone stale. Neither `ocean-lab` nor `aero-lab` has a `migrations/` directory, so nothing persists and no
+object can carry a stage. The operator then added interchangeability — run an aircraft in the water module
+and the reverse, and *"want the boat fall to the ground"*. Verified before costing: the medium is already an
+argument in most force models (`aeropolar.wing_polar` takes `rho_kgm3`/`mu_Pas` and `vehicle/energy.py:563`
+feeds it from the atmosphere; `rotor-types.ts` L69–72 and `bemt-solver.ts` L563/L711 take density and
+kinematic viscosity with seawater only a preset; `panel-method.ts:239` contains no viscosity at all;
+`embodied_worker.py:223` reads the controller's gravity from the model). The assumption lives in presets, in
+`marine/services/power-budget.ts:70` (a second hardcoded `SEAWATER_DENSITY_KGM3`), in
+`embodied/src-routes/engine/physics/mjcf.ts:115` (gravity from a module constant, no `density`, no
+`viscosity`), and in validity envelopes declared nowhere but `aeropolar`'s per-point `valid` flag. Store-repo
+work in `ocean-lab`, `aero-lab` and `embodied`; no core code.
 
 **Done when:**
-- **S1** — `ocean-lab` carries its first migration (vehicle records, owner RLS), the explorer seed vector as a
-  committed fixture, the limit rows taken from the study's "What is not true" section, and an **Explorer** tile.
-  Changing the wing stop angle or the tether length and evaluating moves the five-row sea-state table, the
-  occurrence-weighted mean, the km/day and the km/year; the stage badge recomputes on read and drops when the
-  vector changes; the open limits are listed on the surface. No geometry, no parts, no CAD in this slice.
-- **S2** — the explorer's parts model and its geometry as CAD Studio programs, one per watertight part, with
-  **Open in CAD Studio** each and a generated design document; the displacement budget closes against the sizing
-  computed at that mass or the stage refuses to advance; `fabricable` requires every declared output current and
-  passed by its own validator.
-- **S3** — the Floater is a record in `aero-lab` with its existing export run stored as the first evaluation and
-  `BOM_v2`'s mass delta as a budget check. The check is expected red on first run (real parts are 274 g heavier
-  than the certified ledger); the reference-design folder is linked as the dated artifact of one run.
-- **S4** — a cross-package read-only test fails when the record shape or the stage function drifts between labs,
-  and a regression asserts the engine at today's version still reproduces the study's published figures from the
-  seed within a stated tolerance. The store's package-separation guard is not weakened: the shared rows travel as
-  data, never as an imported runtime (consistent with the one-parts-model entry above, which this consumes rather
-  than duplicates).
+- **S1 — the boat falls.** The medium record exists (id, gravity vector, density, dynamic viscosity, an
+  optional field with its gradient, a free surface or none, validity bounds and a refusal outside them) with
+  three implementations — vacuum, air behind `aerosim.env`, seawater; the MJCF `<option>` is fed from the
+  chosen medium instead of `G_MPS2`; the explorer hull is one solid from its published envelope and all-up mass.
+  In air it falls at g. In seawater it **refuses by name** rather than producing a plausible float, and that
+  refusal is a test case, not a note.
+- **S2 — the Explorer record.** `ocean-lab` carries its first migration (vehicle records, owner RLS), the
+  explorer seed vector as a committed fixture, the limit rows from the study's "What is not true" section, and
+  an **Explorer** tile. Changing the wing stop angle or the tether length and evaluating moves the five-row
+  sea-state table, the occurrence-weighted mean, the km/day and the km/year; the stage recomputes on read and
+  drops when the vector changes; the open limits and the runs S1 recorded are listed.
+- **S3 — parts and geometry.** The explorer's parts model and each watertight part as a CAD Studio program
+  with **Open in CAD Studio**, emitting the portable-object shape (identity and provenance, geometry, mass
+  properties with provenance, a named attachment frame, force-model requirements). The displacement budget
+  closes against the sizing computed at that mass or the stage refuses to advance.
+- **S4 — the Floater record.** `aero-lab` stores the existing export run as the first evaluation, with
+  `BOM_v2`'s mass delta as a budget check (expected red on first run: real parts are 274 g heavier than the
+  certified ledger) and its force models' validity envelopes declared.
+- **S5 — the guards.** Cross-package read-only tests fail when the record shape, the stage function, the
+  medium shape or the portable-object shape drifts between labs; a regression asserts the engine at today's
+  version still reproduces the study's published figures from the seed within a stated tolerance; there is one
+  case per named refusal (`medium_property_unavailable`, `model_not_valid_in_medium`). An undeclared validity
+  envelope fails closed — refusing every medium but the model's default — rather than defaulting
+  permissive. The store's package-separation guard is not weakened: shared shapes travel as data, never as an
+  imported runtime (consistent with the one-parts-model entry above, which this consumes rather than
+  duplicates).
 - Every surface that renders a stage renders with it that `fabricable` means the files are complete and
-  self-consistent, not that the machine is safe to build, fly or wet. No slice buys, builds or tests hardware.
+  self-consistent, not that the machine is safe to build, fly or wet; and every run result carries its medium id
+  and engine fingerprints or is not displayed. No slice buys, builds or tests hardware, and none attempts
+  free-surface hydrodynamics, added mass, cavitation, or aerodynamics inside the physics plant.
