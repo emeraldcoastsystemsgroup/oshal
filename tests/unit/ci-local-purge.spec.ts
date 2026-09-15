@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Run the nightly's export purge in Git Bash on a synthetic node_modules-shaped tree, prove its watchdog fails loud with an outcome line instead of hanging (the 2026-09-09 run sat nine hours in rm -rf and wrote nothing), and pin that ci-local.sh purges both of its exports through it rather than a bare rm -rf.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Cover the watchdog's abandon with a delete whose work is a NATIVE child that outlives its bash wrapper, the shape of robocopy.exe under `timeout`. The existing timeout case overrides the primitive with a bash `sleep`, so it proves the watchdog unblocks but cannot see an orphaned native process: against the old `kill "$pid"` the child was still running (and still deleting) after the FAIL line. The new case asserts the child is gone, and its heartbeat frozen, shortly after purge_tree returns.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Judge the abandon's three outcomes separately, because the one thing it could not do was tell them apart: found descendants, enumerated and genuinely none, and could not enumerate at all were two messages for three facts, and on this box - where Git Bash's ps rejects `-eo` - the third was printed as the second. The walk itself is driven over a fixture process table so the POSIX descendants-then-parent branch is exercised on any box (it kills real spawned processes, and its deepest-first order is asserted), while the real reader is judged against the platform it is actually running on. Reverting either could-not-look branch turns these cases red, which is the property that makes them a guard rather than a description.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -93,15 +94,18 @@ interface PurgeRun {
   elapsedMs: number;
 }
 
+/** @description Source the production helper in Git Bash and run an arbitrary probe body against it. */
+function runShell(body: string, args: string[] = []): PurgeRun {
+  const probe = join(SCRATCH, `probe-${Date.now()}-${Math.random().toString(16).slice(2)}.sh`);
+  writeFileSync(probe, `#!/usr/bin/env bash\nset -uo pipefail\nsource "$1"\n${body}\n`, { encoding: 'utf8' });
+  const started = Date.now();
+  const result = spawnSync(BASH, [posix(probe), HELPER, ...args], { encoding: 'utf8', timeout: 90_000 });
+  return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}`, elapsedMs: Date.now() - started };
+}
+
 /** @description Source the production helper in Git Bash and purge one path, optionally overriding the delete primitive first. */
 function runPurge(target: string, limitSeconds: number, override = ''): PurgeRun {
-  const probe = join(SCRATCH, `probe-${Date.now()}-${Math.random().toString(16).slice(2)}.sh`);
-  writeFileSync(probe, `#!/usr/bin/env bash\nset -uo pipefail\nsource "$1"\n${override}\npurge_tree "$2" "$3"\n`);
-  const started = Date.now();
-  const result = spawnSync(BASH, [probe.replaceAll('\\', '/'), HELPER, target.replaceAll('\\', '/'), String(limitSeconds)], {
-    encoding: 'utf8', timeout: 60_000,
-  });
-  return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}`, elapsedMs: Date.now() - started };
+  return runShell(`${override}\npurge_tree "$2" "$3"`, [posix(target), String(limitSeconds)]);
 }
 
 /** @description Extract one shell function body from ci-local.sh so the pin reads the production text, not a copy. */
@@ -191,6 +195,154 @@ describe('ci-local export purge (scripts/ci/ci-purge.sh)', () => {
       expect(run.output).toContain('purge: REFUSED');
     }
   });
+});
+
+/**
+ * The defect these cases exist for: the abandon printed one sentence - "no descendant processes
+ * found" - for two unrelated facts, an enumeration that ran and found nothing and an enumeration
+ * that could not run at all. On this box only the second is ever true, because Git Bash's ps
+ * rejects `-eo` outright, so every Windows abandon that fell past taskkill claimed an absence it
+ * had never checked. The three outcomes are judged one at a time below.
+ */
+describe('purge abandon: found, none, and could-not-look are three different answers', () => {
+  // The process table is read through one overridable function, so the POSIX descendants-then-parent
+  // walk above it can be driven from a fixture on a box whose own ps cannot produce one.
+  const FIXTURE_TABLE = "purge_tree_process_table() { printf '100 1\\n200 100\\n300 200\\n400 100\\n500 7777\\n'; }";
+  // Skipping the taskkill branch is how a Windows box is made to take the POSIX path: on Linux
+  // there is no taskkill at all, and here there is no Windows pid to hand it.
+  const NO_TASKKILL = 'purge_tree_winpid() { return 1; }';
+
+  it('walks the fixture table deepest-first and excludes processes that are not descendants', () => {
+    const run = runShell([
+      FIXTURE_TABLE,
+      'purge_tree_descendants 100',
+      'echo "rc=$?"',
+      `echo "list=[$(printf '%s' "$PURGE_DESCENDANTS" | tr '\\n' ',')]"`,
+    ].join('\n'));
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain('rc=0');
+    // 300 is a grandchild and must be killed before its parent 200; 500 hangs off an unrelated pid.
+    expect(run.output).toContain('list=[300,200,400]');
+  }, 30_000);
+
+  it('kills the descendants it names, and names how many - the "found" outcome', () => {
+    const stuck = join(SCRATCH, 'found-descendants-export');
+    mkdirSync(stuck, { recursive: true });
+    writeFileSync(join(stuck, 'f.js'), 'x');
+    const pidFile = posix(join(SCRATCH, 'found-descendants.pid'));
+    // A real child of the delete wrapper, reported to the walk through the fixture reader. The
+    // kill that follows is the production one, against a process that genuinely exists.
+    const body = [
+      NO_TASKKILL,
+      `purge_tree_delete() { exec >/dev/null 2>&1; sleep 30 & printf '%s %s\\n' "$!" "$BASHPID" > "${pidFile}"; sleep 30; }`,
+      `purge_tree_process_table() { [ -s "${pidFile}" ] || return 2; cat "${pidFile}"; }`,
+      'purge_tree "$2" "$3"',
+      'echo "purge_rc=$?"',
+      `child="$(cut -d' ' -f1 "${pidFile}")"`,
+      'echo "child=$child"',
+      'if kill -0 "$child" 2>/dev/null; then echo CHILD_ALIVE; else echo CHILD_DEAD; fi',
+    ].join('\n');
+    const run = runShell(body, [posix(stuck), '2']);
+    expect(run.output).toContain('purge_rc=1');
+    expect(run.output, 'the enumerated descendant survived the abandon').toContain('CHILD_DEAD');
+    expect(run.output).toMatch(/purge: FAIL .*found-descendants-export \(timeout after 2s; killed 1 descendant process\(es\) of pid \d+;/);
+    expect(run.output).not.toContain('UNCHECKED');
+  }, 60_000);
+
+  it('says it enumerated and found nothing only when it actually enumerated - the "none" outcome', () => {
+    const stuck = join(SCRATCH, 'no-descendants-export');
+    mkdirSync(stuck, { recursive: true });
+    writeFileSync(join(stuck, 'f.js'), 'x');
+    const body = [
+      NO_TASKKILL,
+      // A readable table in which the delete wrapper has no children at all.
+      "purge_tree_process_table() { printf '1 0\\n2 1\\n'; }",
+      'purge_tree_delete() { exec >/dev/null 2>&1; sleep 20; }',
+      'purge_tree "$2" "$3"',
+      'echo "purge_rc=$?"',
+    ].join('\n');
+    const run = runShell(body, [posix(stuck), '2']);
+    expect(run.output).toContain('purge_rc=1');
+    expect(run.output).toMatch(/killed pid \d+ \(enumerated its descendants and found none\)/);
+    expect(run.output).not.toContain('UNCHECKED');
+  }, 60_000);
+
+  it('reports UNCHECKED rather than a clean kill when the descendants cannot be enumerated at all', () => {
+    const stuck = join(SCRATCH, 'unenumerable-export');
+    mkdirSync(stuck, { recursive: true });
+    writeFileSync(join(stuck, 'f.js'), 'x');
+    const body = [
+      NO_TASKKILL,
+      // Exactly what Git Bash's own ps does here: refuse. Stated explicitly so the case means the
+      // same thing on a Linux runner, where the real reader would have answered.
+      'purge_tree_process_table() { return 2; }',
+      'purge_tree_delete() { exec >/dev/null 2>&1; sleep 20; }',
+      'purge_tree "$2" "$3"',
+      'echo "purge_rc=$?"',
+    ].join('\n');
+    const run = runShell(body, [posix(stuck), '2']);
+    expect(run.output).toContain('purge_rc=1');
+    expect(run.output).toContain('UNCHECKED');
+    expect(run.output).toContain('could not be enumerated');
+    expect(run.output).toContain('a native delete may still be running');
+    // The false-green this closes: an inability to look used to be printed as a checked absence.
+    expect(run.output, 'an unenumerable abandon must never claim it looked').not.toContain('found none');
+    expect(run.output).not.toContain('no descendant processes found');
+    expect(existsSync(stuck), 'the abandoned tree must still be left for the operator').toBe(true);
+  }, 60_000);
+
+  it('reports a taskkill refused against a still-running delete as a failure to abandon, not a kill', () => {
+    const stuck = join(SCRATCH, 'taskkill-refused-export');
+    mkdirSync(stuck, { recursive: true });
+    writeFileSync(join(stuck, 'f.js'), 'x');
+    const body = [
+      // `command -v` finds a function, so this stands in for a taskkill that refuses - the
+      // permission edge case and the race, which are the two ways it fails in the field.
+      'taskkill() { return 1; }',
+      'purge_tree_winpid() { printf 4242; }',
+      // The table stays unreadable, as it is on this box, so nothing else can answer instead.
+      'purge_tree_process_table() { return 2; }',
+      'purge_tree_delete() { exec >/dev/null 2>&1; sleep 20; }',
+      'purge_tree "$2" "$3"',
+      'echo "purge_rc=$?"',
+    ].join('\n');
+    const run = runShell(body, [posix(stuck), '2']);
+    expect(run.output).toContain('purge_rc=1');
+    expect(run.output).toContain('UNCHECKED');
+    expect(run.output).toContain('taskkill /T was refused for live windows pid 4242');
+    expect(run.output, 'a refused taskkill must not be printed as a successful tree kill').not.toContain('(taskkill /T)');
+    expect(run.output).not.toContain('found none');
+  }, 60_000);
+
+  it('judges the real process-table reader on the platform it is running on, and never lets a refusal read as an empty list', () => {
+    const run = runShell([
+      'purge_tree_process_table >/dev/null 2>&1',
+      'echo "table_rc=$?"',
+      'sleep 5 & child=$!',
+      'purge_tree_descendants "$$"',
+      'echo "walk_rc=$?"',
+      `echo "child=$child list=[$(printf '%s' "$PURGE_DESCENDANTS" | tr '\\n' ',')]"`,
+      'kill "$child" 2>/dev/null',
+      'exit 0',
+    ].join('\n'));
+    expect(run.status, run.output).toBe(0);
+    const walkRc = /walk_rc=(\d+)/.exec(run.output)?.[1];
+    if (process.platform === 'win32') {
+      // Git Bash's ps answers `ps: unknown option -- o` and prints nothing. The contract on this
+      // box is that the reader SAYS it could not look (2), never that it looked and found nobody.
+      expect(run.output, `expected the MSYS ps to refuse -eo: ${run.output}`).toContain('table_rc=2');
+      expect(walkRc, 'an unreadable table must propagate as could-not-look, not as an empty list').toBe('2');
+      expect(run.output).toContain('list=[]');
+    } else {
+      // A POSIX runner: the branch that cannot execute on Windows runs for real here, against a
+      // process this probe genuinely spawned.
+      expect(run.output, `expected a usable POSIX process table: ${run.output}`).toContain('table_rc=0');
+      expect(walkRc).toBe('0');
+      const child = /child=(\d+)/.exec(run.output)?.[1];
+      expect(child, run.output).toBeTruthy();
+      expect(run.output, 'the real walk missed a real child of this shell').toMatch(new RegExp(`list=\\[[^\\]]*\\b${child}\\b`));
+    }
+  }, 30_000);
 });
 
 describe('ci-local.sh purges its exports through the bounded helper', () => {
