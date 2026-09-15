@@ -169,25 +169,38 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ### Monitoring overlay does not survive an ungraceful engine stop (BUG-21 tail)
 - **Remaining:** BUG-21 closed 2026-08-14 (#213) — the overlay is started by `scripts/oshal-up.sh`
-  and guarded by `scripts/monitoring-liveness-check.sh`, and both work. But it recorded the exit 255
-  as "unexplained rather than diagnosed", and on 2026-09-13 that tail recurred with a reproducible
-  trigger. After the Docker engine stopped ungracefully, `oshal-local-prometheus` and
-  `oshal-local-alertmanager` each recorded exit **255** and were NOT restarted, while every container
-  recording exit **0** (`oshal-local-api`, `oshal-local-cadvisor`, all forty bots) came back normally.
-  All four inspected carry the same `restart: unless-stopped` and all finished at the same instant
-  (2026-09-14T00:19:02Z); Prometheus's own log shows routine TSDB compaction right up to the stop, so
-  it was killed, not crashed. Net effect: the fleet auto-restarts **monitored by nothing** and
-  `docker ps` looks correct the whole time, until a human runs `oshal-up.sh`. The exit-code
-  correlation is observational — WHY 255 defeats `unless-stopped` here is still undiagnosed and is
-  the first thing to establish. Note the stack watchdog does not cover this: it probes engine, api
-  and bot heartbeats, not the overlay (and is currently paused by operator request).
+  and guarded by `scripts/monitoring-liveness-check.sh`, and both work. What was missing is anything
+  that RUNS the strict check when nobody is watching. `scripts/monitoring-liveness-watch.sh` is that
+  runner (windowless launcher `scripts/monitoring-liveness-watch-hidden.vbs`, registration
+  `scripts/register-monitoring-liveness-task.ps1`): it observes only — it never starts the Docker
+  engine and never starts a container, because Docker must not start by itself on this box — it
+  confirms a failure across consecutive runs before speaking, and it routes a confirmed failure to
+  the alert rail this repo already has (`oshal-send-alert.js`: Telegram then Gmail) with a re-alert
+  window so a standing outage does not mail an identical line every five minutes. Left to do:
+  register the task **from `C:\Projects\oshal`** — deliberately not done in the change that added it,
+  because the scripts only reach that checkout when the PR merges and registering a task against a
+  scratch clone is exactly the ADR-115 archive mistake — then inspect one unprompted run; and run the
+  engine-kill reproduction, which **remains unrun** (no lane may stop the engine on the operator's
+  box). Note the stack watchdog still does not cover the overlay: it probes engine, api and bot
+  heartbeats, and is paused by operator request.
 - **Done when:** an ungraceful engine stop (the stack up, then the Docker VM killed) followed by an
   engine start brings Prometheus and Alertmanager back WITHOUT `oshal-up.sh` — or, if Docker's
   restart behaviour cannot be changed, something that is not a human notices within one scrape
-  interval and says so. `monitoring-liveness-check.sh --strict` is already the assertion; what is
-  missing is anything that RUNS it when nobody is watching. A regression guard must cross the
-  restart boundary (stop the engine for real, restart, assert without the bring-up script) — a
-  compose-config or mocked-docker test is not closure evidence for this failure.
+  interval and says so. For the second half that now means: `OSHAL Monitoring Liveness` is registered
+  against `C:\Projects\oshal`, `%LOCALAPPDATA%\oshal\monitoring-liveness-watch.log` carries at least
+  one unprompted dated judgement, and one confirmed failure has been received by a person on the
+  Telegram/Gmail rail. A regression guard must cross the restart boundary (stop the engine for real,
+  restart, assert without the bring-up script) — a compose-config or mocked-docker test is not
+  closure evidence for this failure, and the guard that shipped
+  (`tests/unit/monitoring-liveness-watch.spec.ts`) explicitly does not claim it.
+- **Observed 2026-09-14 — first occurrence.** After the Docker engine stopped ungracefully,
+  `oshal-local-prometheus` and `oshal-local-alertmanager` each recorded exit **255** and were NOT
+  restarted, while every container recording exit **0** (`oshal-local-api`, `oshal-local-cadvisor`,
+  all forty bots) came back normally. All four inspected carry the same `restart: unless-stopped` and
+  all finished at the same instant (2026-09-14T00:19:02Z); Prometheus's own log shows routine TSDB
+  compaction right up to the stop, so it was killed, not crashed. Net effect: the fleet auto-restarts
+  **monitored by nothing** and `docker ps` looks correct the whole time, until a human runs
+  `oshal-up.sh`.
 - **Observed again 2026-09-14 — a second occurrence the same night, and on a third container.** The
   Docker engine went down under host memory starvation and was relaunched at ~03:52Z (session
   ddb0aed5 recorded the engine pipe absent at 03:51Z). Every container auto-started out of order and
@@ -211,6 +224,33 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   2026-08-07 (`scripts/oshal-stack-watchdog.ps1`, pause file under `%LOCALAPPDATA%\oshal\`) because
   Docker must not start by itself, so anything that closes this has to observe without starting the
   engine.
+- **Read 2026-09-15 — the timings that are still on disk do not support the exit-code account.** The
+  engine is 29.6.2 and `docker info` reports `LiveRestoreEnabled=false`. None of the four overlay
+  containers has been recreated since 2026-08-01/2026-08-14, so `.State.FinishedAt` still holds that
+  night's value: `oshal-local-prometheus` 2026-09-14T03:25:25.143854959Z and
+  `oshal-local-alertmanager` 2026-09-14T03:25:25.137944056Z, against `oshal-local-cadvisor`
+  2026-09-14T03:54:35.866757648Z and `oshal-local-docker-proxy` 2026-09-14T03:54:35.752332275Z. So
+  the two that did not come back had already been stopped for about **29 minutes** when the rest of
+  the stack stopped, and they emitted nothing between 03:21:30Z and their next start at 04:11:08Z;
+  the two that did come back were still running when the engine went down and restarted on their own
+  at 03:54:49Z and 03:55:22Z, no human involved. Their last lines before the stop show the VM already
+  failing underneath them: Prometheus got `502 Bad Gateway` from the daemon at 03:21:27Z, and
+  Alertmanager could not read its bind-mounted token file — `input/output error` — at 03:21:29Z.
+  Docker documents `unless-stopped` as "similar to `always`, except that when the container is
+  stopped (manually or otherwise), it isn't restarted even after Docker daemon restarts", and
+  documents the exit code as an input to `on-failure` only. On that reading the two monitoring
+  containers did what the policy says: they were already stopped when the daemon came back, and no
+  exit code was consulted. **What this does not establish.** (1) The exit codes recorded that night
+  are gone — all four have been started since and each now reports `.State.ExitCode` 0 next to the
+  older `.State.FinishedAt`, so only the timings can be re-checked, not the 255 readings. (2) What
+  stopped Prometheus and Alertmanager at 03:25:25Z is unknown. (3) `oshal-local-api` does not fit
+  this account at all: it was recorded finishing at 03:54:35Z alongside the containers that DID
+  restart, and it still did not come back; that container has since been recreated
+  (2026-09-15T00:25:05Z), so its record is gone too. The next occurrence has to be read BEFORE
+  anything is started, and has to capture `.State.Error` as well as
+  `.State.ExitCode`/`.State.FinishedAt`/`.RestartCount` for every container, plus the dockerd log for
+  that window from `%LOCALAPPDATA%\Docker\log\vm\` — it rotates by size and that night's window was
+  already gone by 2026-09-15.
 
 ### DB-backed alert specs borrow the operator's database
 - **Remaining:** `tests/unit/alert-incident-cutover.spec.ts` stands a live alert *consumer* on the

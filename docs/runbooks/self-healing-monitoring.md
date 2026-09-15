@@ -150,9 +150,24 @@ restarting, despite `restart: unless-stopped`, while every container that record
 exit 0 came back on its own. `docker ps` shows what is running, not what is
 missing, so the fleet can auto-restart monitored by nothing until a human looks.
 Observed 2026-09-14 twice in one night; the api showed the same exit-255 symptom on
-the second. Why exit 255 is treated as final is undiagnosed — see BUG-21 in
-[../operations/bug-log.md](../operations/bug-log.md) and the BUG-21 tail entry in
-[../BACKLOG.md](../BACKLOG.md).
+the second.
+
+What the surviving state says about the second occurrence, read 2026-09-15:
+Prometheus and Alertmanager had already stopped at 03:25:25Z, about 29 minutes
+before cAdvisor and the docker proxy stopped at 03:54:35Z — and those two, same
+overlay and same policy, restarted by themselves at 03:54:49Z and 03:55:22Z. Docker
+documents `unless-stopped` as not restarting a container that was already stopped
+when the daemon restarts, and consults the exit code only for `on-failure`, so on
+that night's timings the two monitoring containers behaved as the policy is written.
+What stopped them half an hour earlier, and why the api did not come back although
+it stopped with the containers that did, is still open. The exit codes from that
+night are no longer readable — a started container reports `.State.ExitCode` 0. If
+you find the overlay down again, read `.State.Error`, `.State.ExitCode`,
+`.State.FinishedAt` and `.RestartCount` for every container **before** starting
+anything, and copy the dockerd log for that window out of
+`%LOCALAPPDATA%\Docker\log\vm\` — it rotates by size and does not keep a night.
+See BUG-21 in [../operations/bug-log.md](../operations/bug-log.md) and the BUG-21
+tail entry in [../BACKLOG.md](../BACKLOG.md).
 
 Do not infer the answer from `docker ps`; assert it:
 
@@ -163,6 +178,42 @@ bash scripts/monitoring-liveness-check.sh --strict
 It fails loudly when Prometheus is unreachable, has discovered no targets, or any
 discovered target is down, and names the ones that are. `bash scripts/oshal-up.sh`
 brings the overlay back as part of the ordered bring-up.
+
+### Running that check when nobody is watching
+
+`scripts/monitoring-liveness-watch.sh` runs the strict check unattended and reports
+a confirmed failure on the alert rail the rest of the box already uses
+(`oshal-send-alert.js`: Telegram first, then Gmail from inside the api container).
+It **observes only** — it never starts the Docker engine and never starts a
+container, because Docker must not start by itself on this box, which is also why
+`scripts/oshal-stack-watchdog.ps1` is paused. With the engine absent it logs that
+and exits 0: an engine that is not answering is a different fault with a different
+owner, and there is no alert rail without the api container anyway.
+
+It alerts only after `MONITORING_WATCH_CONFIRM_RUNS` consecutive failures (default
+3, so a single miss during a deploy or a container recreate does not mail anyone),
+and it re-alerts at most once per `MONITORING_WATCH_REALERT_MINUTES` (default 60) so
+a standing outage does not become wallpaper — the BUG-22 lesson from the nightly CI
+mail. Recovery is announced once. Its exit status is the strict check's own, so
+Task Scheduler's Last Result is the real answer. Log and streak state live beside
+every other unattended oshal task, in `%LOCALAPPDATA%\oshal\`:
+
+```bash
+bash scripts/monitoring-liveness-watch.sh          # run it by hand
+cat "$LOCALAPPDATA/oshal/monitoring-liveness-watch.log"
+```
+
+Register it as a five-minute scheduled task **from the checkout you want watched** —
+the registration derives the launcher path from its own location, which is what
+keeps a task from ending up judging the ADR-115 archive:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/register-monitoring-liveness-task.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/register-monitoring-liveness-task.ps1
+```
+
+`-DryRun` prints the exact action without touching Task Scheduler; `-Remove` deletes
+the task. Guard: `tests/unit/monitoring-liveness-watch.spec.ts`.
 
 ## The bootstrap caveat (important)
 
