@@ -206,6 +206,45 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** running the trading unit specs WITHOUT `--no-file-parallelism` fails three pre-existing specs (trading-books-schema, trading-event-plans, trading-pinned-lots) in `beforeAll` with `trigger "trg_trd_signals_book_fill" … already exists` — the trading schema bootstrap takes the no-lock path, so two concurrent bootstraps collide. Observed 2026-09-06. The dispatch golden-plan spec works around it locally with a single retry; the underlying files were outside that item's ownership.
 - **Done when:** the bootstrap takes an advisory lock (or tolerates the concurrent create) and the same ten-file trading set is green without `--no-file-parallelism`.
 
+### The DB-backed unit specs need a disposable PostgreSQL to run against
+- **What changed:** 23 `tests/unit/*.spec.ts` resolved their DSN with a fallback onto the local
+  stack's published Postgres port — `oshal-local-db`, the operator's LIVE trading database — so an
+  unpointed `npx vitest run tests/unit/trading-*.spec.ts` created and dropped schema and wrote order
+  rows in production. They now resolve through `tests/helpers/spec-database-url.ts`, which REFUSES an
+  unpointed run and names the variable to set, and the `spec-database-default` gate in
+  `scripts/ci-local.sh` keeps that true for the next spec.
+- **Remaining:** those 23 specs therefore execute only when a run points them at a database. Nothing
+  in the repo does that yet, so the local-CI `unit` gate cannot execute them (it was already FAIL on
+  the 2026-09-14 and 2026-09-13 scheduled runs, for unrelated reasons). The rail to reuse is
+  `tests/helpers/disposable-alert-postgres.ts` — a per-run container on a random loopback port with
+  migrations applied — or the ephemeral `oshal-ci-pg` the e2e gate already starts. Whether the whole
+  set survives on a bare cluster is unmeasured: several of them expect the enforcing `oshal_app`
+  role, and `trading-engine-cost-basis-postgres.spec.ts` needs an admin role that can create
+  databases. Measure before wiring, and never point the variable at the published port.
+- **Also open, same class:** `tests/unit/trading-watchdog-books.spec.ts` still defaults
+  `OSHAL_TEST_DB_CONTAINER` to `'oshal-local-db'` — the live container by name rather than by port,
+  which the port-shaped gate does not see.
+- **Residue left behind, measured 2026-09-15 read-only after deleting the 24 orphan books:** 42
+  `spec-%` rows remain in the live trading database — `oshal_trading_event_plans` 10,
+  `oshal_trading_signals` 9, `oshal_trading_decisions` 8, `oshal_trading_pinned_lots` 5,
+  `oshal_trading_orders` 4, `oshal_trading_dated_orders` 4, `oshal_trading_accounts` 1, and the one
+  `oshal_trading_books` row (`spec-settle-60e074b1`) that still has orders and so fell outside the
+  authorised delete. All of it is `spec-%`-owned, so no user-scoped surface reads it. Survey with:
+
+  ```sql
+  SELECT 'books' t, count(*) FROM oshal_trading_books WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'orders', count(*) FROM oshal_trading_orders WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'event_plans', count(*) FROM oshal_trading_event_plans WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'signals', count(*) FROM oshal_trading_signals WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'decisions', count(*) FROM oshal_trading_decisions WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'pinned_lots', count(*) FROM oshal_trading_pinned_lots WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'dated_orders', count(*) FROM oshal_trading_dated_orders WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'accounts', count(*) FROM oshal_trading_accounts WHERE user_sub LIKE 'spec-%';
+  ```
+
+- **Done when:** the 23 specs run green against a database the run provisions and destroys, the
+  local-CI `unit` gate executes them there rather than skipping or refusing, the watchdog spec names
+  its container the same way, and the survey above returns zero rows.
 ### Codeless k8s install — first live-cluster proof (ADR-129)
 - **Remaining:** run `oshal-install.sh --mode 4` (or `-Kubernetes`) end-to-end on a real second machine — the dev laptop is excluded on purpose (Docker Desktop k8s beside the 44-container swarm is the documented OOM pairing). Then publish the OCI chart (`bash scripts/publish-chart.sh` + the one-time GHCR visibility flip) so the installer's OCI-first path goes live.
 - **Done when:** a fresh box reaches `/welcome` in a browser via the NodePort with only kubectl+helm+the installer present, a model connects through the wizard and a jarvis turn answers, and `helm show chart oci://ghcr.io/emeraldcoastsystemsgroup/charts/oshal` succeeds anonymously.

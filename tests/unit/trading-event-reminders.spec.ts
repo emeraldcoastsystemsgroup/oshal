@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D6 COTP reminders against the REAL oshal Postgres (fail-loud when the stack is down): the FORCE-RLS reminders table with UNIQUE (plan_id, key); config accessors (URL https-only → Schwab client login root, hour clamped 9–16, days parsed/deduped); trading-day step-back (a Monday pricing's T-1 is the Friday); a DST-safe schedule (a March pricing date keeps 9:00 ET across the switch); reminder text derived from the computed deadline ('today'/'in N days' + the formatted ET instant — the fixed 'Deadline today' string is gone); the tick fires T-3/T-1/T-0 each exactly once at/after the ET hour with the schwab.com link, is idempotent across ticks, keeps already-sent keys sent after a pricing-date edit while later due instants recompute, records EXPIRED (no delivery) for a window the leg only saw after it closed (asleep box over a weekend), never fires for a cancelled plan, and a throwing delivery seam neither throws nor re-fires. Plus the compose passthrough pin for the four new env vars and the hook-contract pins. Run with --no-file-parallelism.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review round 2: a LATE reminder's wording is pinned to the fire-time clock (the stale 'N trading days away' is gone); a weekend pricing date is refused at the input; ensureEventRemindersSchema is proven memoized (zero statements on a repeat call — the leg fires every minute and walked every plan); and the kernel-wiring block (H1-H5 in trading-event-plans.ts) fails loud until the integrator applies the hooks, so the feature cannot ship dark with every other spec green.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Review round 3: every DB case gets its OWN owner (the injected clock moves backwards between cases, so one shared sub meant another case's plans could expire on this case's tick and the assertions had to filter by planId to survive); a hung delivery seam is proven not to stall the tick (TRADING_EVENT_NOTIFY_TIMEOUT_MS bounds it, the claim row stands, the other plan on the same tick still fires); the compose pin covers that fifth env var; and the H4 hook now has to pass the injectable seam (alertNotifierFrom(deps)) — pinned as H4b, because the seam-less form makes the plan module's own spec write real jarvis_tasks rows and build the real notification router.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
@@ -26,8 +27,9 @@ import type { ScheduleRecord } from '../../src/features/scheduling';
 import { ensureBooksSchema, ensureLegacyBooks, legacyBook } from '../../src/app/trading-books-store';
 import { ensureTradingSchema, TradingError } from '../../src/app/trading-engine';
 import type { AppContext } from '../../src/app/composition/app-context';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-const DSN = process.env.OSHAL_TEST_DSN || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-evtr-${RUN}`;
 /** Every owner this run created, cleaned in afterAll. */

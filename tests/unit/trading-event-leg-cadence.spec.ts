@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D4 follow-up guards for the per-minute trading-events leg. (1) isFullTick is stateless + minute-aligned (ET minute % TRADING_EVENTS_FULL_TICK_MINUTES); scheduleFireInstant judges the schedule's DUE minute, not the poll clock. (2) legWindowFromCron derives the dated-order window from the leg cron — the v1 '*\/5 9-16' yields the hand-typed v1 window, the default yields 07:00–19:59. (3) migrateEventLegSchedules against the REAL Redis schedule store (oshal-local-redis, a spec-unique key prefix, cleaned up after): a v1-cron leg is rewritten in place (same id, executionCount/lastRunAt preserved, timezone set) and its next-run ZSET score is re-indexed to the new cron's next minute; a paused leg stays paused and un-indexed; a current leg and a foreign taskType are untouched; a second run migrates 0. (4) against the live Postgres: an armed plan does NOT step on a non-full fire and DOES step on a full fire of dispatchTradingEventSchedule. (5) source pins: the runtime wires the migration before runner.start, the dispatch keeps tickDatedOrders outside the full branch and catches a plans failure. Run with --no-file-parallelism.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
@@ -20,10 +21,11 @@ import {
 import { ensureBooksSchema, ensureLegacyBooks, legacyBook } from '../../src/app/trading-books-store';
 import { ensureTradingSchema } from '../../src/app/trading-engine';
 import type { AppContext } from '../../src/app/composition/app-context';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-cadence-${RUN}`;
-const DSN = process.env.OSHAL_TEST_DSN || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const REDIS_URL = process.env.OSHAL_TEST_REDIS_URL || `redis://127.0.0.1:${process.env.OSHAL_REDIS_PORT ?? '16379'}`;
 const PREFIX = `oshal:scheduler-spec-${RUN}`;
 const V1_CRON = '*/5 9-16 * * 1-5';

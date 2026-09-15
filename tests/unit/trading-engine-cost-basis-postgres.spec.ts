@@ -6,16 +6,16 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Cross the real boundary of the wash-sale veto. withEngineCostBasis catches ANY error and returns the positions unchanged, so a wrong column name or a broken book filter would make the fix silently inert in production while every pure test stayed green - the stop-losses would keep firing and nothing would say why. This drives the real SQL against a real PostgreSQL and the real oshal_trading_orders schema, inside a transaction that is always rolled back.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | engineRealizedForBook against the real schema: prices a live sell on the live book's own fill, keyed by order id, ignores a rejected row, and reads nothing from the paper book on the same symbol.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 at the same real boundary: the `unmanaged` mark is what withholds every order decision for a position, so the query that decides it has to be exercised against the real oshal_trading_orders schema - a wrong column or a broken book filter would otherwise mark a whole covered book unmanaged and silently strip its protective exits. Asserts the mark on a venue quantity the ledger only partly covers and its ABSENCE on a covered one.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { Client } from 'pg';
 import { withEngineCostBasis, engineRealizedForBook } from '../../src/app/trading-engine-cost-basis';
 import type { Position, TradingBook } from '../../src/features/trading';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-const ADMIN_URL = process.env.TRADING_TEST_ADMIN_URL
-  ?? process.env.OWNERSHIP_TEST_ADMIN_URL
-  ?? 'postgresql://oshal:oshal-dev@127.0.0.1:55433/oshal';
+const ADMIN_URL = specDatabaseUrl(['TRADING_TEST_ADMIN_URL', 'OWNERSHIP_TEST_ADMIN_URL']);
 
 const SUB = `cost-basis-spec-${process.pid}-${Date.now()}`;
 const LIVE = '00000000-0000-4000-8000-00000000c0b1';

@@ -4,15 +4,20 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard applyLockedSchema's privilege tolerance across the REAL owner/app role split. The defect was structural: one transaction, so the first owner-only statement rolled back every statement before it and skipped every statement after it — on the remote-task journal that silently dropped the immutability trigger and five tables' owner-RLS policies while the app served traffic. Both roles are real here on purpose. A mocked pool cannot raise 42501, cannot roll back to a savepoint, and would pass against the broken implementation.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { applyLockedSchema, SCHEMA_LOCK_KEYS } from '@/shared/services/database/schema-lock';
+import { specDatabaseUrl, specDatabaseHost } from '../helpers/spec-database-url';
 
-const HOST = `127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}`;
+/** Every DSN below is derived from the ONE database the run named; there is no default. */
+const OWNER_VARS = ['SCHEMA_LOCK_OWNER_DSN', 'OSHAL_TEST_DSN'];
 /** Schema OWNER (superuser) — the role the migrator runs as. */
-const OWNER_DSN = process.env.SCHEMA_LOCK_OWNER_DSN ?? `postgresql://oshal:oshal@${HOST}/oshal`;
+const OWNER_DSN = specDatabaseUrl(OWNER_VARS);
+/** The same cluster, so the throwaway role below is created where the owner actually is. */
+const HOST = specDatabaseHost(OWNER_VARS);
 
 /** Unique per run so a parallel run cannot collide on the fixture object names. */
 const TAG = `slpt_${process.pid.toString(36)}`;
