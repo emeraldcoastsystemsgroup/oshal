@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted shared ticket-view helper utilities so the cockpit ticket surface can stay under the file cap while adding project reassignment controls
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserved canonical /app/workspace paths in cockpit detail views while mapping them back onto code-server /workspace links for operator navigation
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added selectEscalationDetail so an empty durable swarm_escalations lookup can no longer erase the escalation reason the ticket payload already carries from the recorded status transition
  */
 
 import { getStatusLabel } from '../utils/formatters.js';
@@ -245,4 +246,27 @@ export function extractErrorMessage(error) {
     return error.message;
   }
   return String(error || 'Unknown error');
+}
+
+/**
+ * @description Chooses which escalation record the detail panel should render.
+ * A durable swarm escalation record is the richer of the two (it carries target,
+ * retry class and the verification attempt snapshot) so it wins when it names a
+ * reason. Otherwise the detail the escalating transition recorded is used — an
+ * escalation raised outside a swarm run never produces a durable record, and a
+ * null durable lookup must not erase the reason the transition did record.
+ * @param {Record<string, unknown> | null | undefined} recordedDetail - Escalation detail from the ticket payload.
+ * @param {Record<string, unknown> | null | undefined} durableRecord - Record from the durable escalation store.
+ * @returns {Record<string, unknown> | null} The record to render, or null when neither exists.
+ */
+export function selectEscalationDetail(recordedDetail, durableRecord) {
+  const durableReason = typeof durableRecord?.reason === 'string' ? durableRecord.reason.trim() : '';
+  if (durableReason) {
+    return durableRecord;
+  }
+  const recordedReason = typeof recordedDetail?.reason === 'string' ? recordedDetail.reason.trim() : '';
+  if (recordedReason) {
+    return recordedDetail;
+  }
+  return durableRecord || recordedDetail || null;
 }

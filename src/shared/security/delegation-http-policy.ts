@@ -5,10 +5,18 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Centralized the controller-to-bot HTTP delegation header, exact scope, identity defaults, and key-material rollout detection so issuer and verifier cannot drift.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Define the exact bot execution method/path and the durable API audience used by route-bound workload delegations.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Name the controller signing keys once and describe an unconfigured controller in words an operator can act on. A protected dispatch fails closed when no recorded delegation can be minted, and the only evidence was the opaque code `authorization_recorded_delegation_required` — nothing said which configuration was absent.
  */
 
 /** Header carrying the private Ed25519 delegation media type; never an OIDC bearer token. */
 export const DELEGATION_HTTP_HEADER = 'x-oshal-delegation-token';
+/** Controller-only environment keys holding the private signing material, named in one place. */
+export const DELEGATION_SIGNING_ENV_KEYS = Object.freeze([
+  'OSHAL_DELEGATION_SIGNING_KID',
+  'OSHAL_DELEGATION_SIGNING_PRIVATE_KEY',
+] as const);
+/** Bot-node environment key holding the public verification ring. */
+export const DELEGATION_PUBLIC_KEY_ENV_KEY = 'OSHAL_DELEGATION_PUBLIC_KEYS';
 /** Default controller token issuer for one trusted oshal control plane. */
 export const DEFAULT_DELEGATION_ISSUER = 'urn:oshal:controller';
 /** Default bot-node HTTP audience. */
@@ -80,8 +88,24 @@ export function workloadDelegationAudienceFromEnvironment(
 export function hasDelegationSigningConfiguration(
   env: DelegationEnvironment = process.env,
 ): boolean {
-  return hasValue(env.OSHAL_DELEGATION_SIGNING_PRIVATE_KEY)
-    || hasValue(env.OSHAL_DELEGATION_SIGNING_KID);
+  return DELEGATION_SIGNING_ENV_KEYS.some(key => hasValue(env[key]));
+}
+
+/**
+ * @description States, in words an operator can act on, that this controller holds no private
+ * signing material. Compose passes these keys through unconditionally, so on a controller that
+ * never configured them they are present and empty — indistinguishable from absent here, and
+ * equally unable to mint a recorded delegation.
+ * @param env - Controller environment.
+ * @returns A sanitized sentence naming the unset keys, or null when signing material is present.
+ */
+export function describeUnconfiguredDelegationSigning(
+  env: DelegationEnvironment = process.env,
+): string | null {
+  if (hasDelegationSigningConfiguration(env)) return null;
+  return 'this controller holds no delegation signing material, so no recorded delegation can be '
+    + `minted for a protected application dispatch — set ${DELEGATION_SIGNING_ENV_KEYS.join(' and ')} `
+    + `on the controller and the matching ${DELEGATION_PUBLIC_KEY_ENV_KEY} on every bot node`;
 }
 
 /**
@@ -93,7 +117,7 @@ export function hasDelegationSigningConfiguration(
 export function hasDelegationVerificationConfiguration(
   env: DelegationEnvironment = process.env,
 ): boolean {
-  return hasValue(env.OSHAL_DELEGATION_PUBLIC_KEYS)
+  return hasValue(env[DELEGATION_PUBLIC_KEY_ENV_KEY])
     || hasValue(env.OSHAL_DELEGATION_SIGNING_PRIVATE_KEY);
 }
 

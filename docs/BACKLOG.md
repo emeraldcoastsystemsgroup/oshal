@@ -307,11 +307,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 
 ### The nightly can wedge for hours deleting its own previous export
-- **Remaining:** the 2026-09-09 23:30 run never got past `head-src`. That gate's first line, `rm -rf "$GATE_SRC"`, was deleting the `ci-src` export (a full `node_modules`) left behind by the previous night's failed run, and sat there from 00:00:50 until it was killed at ~10:00 — **9 hours, 16 CPU-seconds in total, and no progress across a 20-second sample**. It was not a file lock: an exclusive open on a file inside that tree succeeded, and no running process referenced the path. `robocopy /MIR` from an empty directory then purged the same tree in **39 seconds**. `prepare_head_src` bounds only `npm ci` with a timeout — the `rm -rf` and the `git archive | tar` after it are unbounded — so one hung delete held `ci-local.lock` all night and the run produced no outcome line and no alert at all. It will recur: every run that fails after `npm ci` leaves a `node_modules` export for the next run to delete. The cause of the hang is **not established**; MSYS `rm` against a deep `node_modules` tree is the leading candidate, not a finding.
-- **Done when:** the purge in `prepare_head_src` (and the `ci-scan-src` purge in `gate_secrets`) is timeout-bounded and fails loud instead of hanging; it uses a delete that clears a real `node_modules` export on this box in minutes (robocopy mirror-from-empty did it in 39 s); and a run that inherits a leftover export from a failed run reaches its gates and writes an outcome line.
+- **Built 2026-09-14 on `fix/ci-local-secret-scan-and-purge`.** The 2026-09-09 23:30 run never got past `head-src`: its first line, `rm -rf "$GATE_SRC"`, was deleting the `ci-src` export (a full `node_modules`) left by the previous night's failed run and sat there from 00:00:50 until it was killed at ~10:00 — 9 hours, 16 CPU-seconds, no progress across a 20-second sample, no file lock, no process on the path — so one hung delete held `ci-local.lock` all night and the run wrote no outcome line and no alert. Every run leaves such an export for the next one to delete. The cause of the hang is not established (MSYS `rm` over a deep `node_modules` tree is the leading candidate, not a finding). Now `prepare_head_src` and `gate_secrets` purge through `scripts/ci/ci-purge.sh` (`purge_tree`): the delete runs in the background under a watchdog (`CI_PURGE_TIMEOUT_SECONDS`, default 600) and ends in exactly one `purge: OK|FAIL|REFUSED` line written through `log`, so it lands in `ci-local.log`; a FAIL fails the gate (`|| return 1`), `run_gate` records it, and the run continues to `secret-scan`, `unpushed-commits` and its outcome line instead of holding the lock. On Windows the primitive is `robocopy /MIR` from an empty directory (the 39 s measurement) followed by `rm -rf` on the emptied shell; elsewhere `rm -rf`; each native call is itself `timeout`-bounded. Abandoning a delete ends the native process tree rather than the bash wrapper that spawned it (`taskkill /T` on the wrapper's Windows pid under Git Bash, descendants-then-parent elsewhere, plain `kill` as the last resort) and the FAIL line names what it killed: signalling the wrapper alone left the delete running unsupervised, free to race a manual cleanup or the next run's purge of the same well-known path — measured on a 26,180-file synthetic export with a 2 s limit, where `purge: FAIL ... the tree is still present` was printed with `Robocopy.exe` still in `tasklist` and the tree still shrinking afterwards (24,121 files at return, 23,058 eight seconds later). Guard: `tests/unit/ci-local-purge.spec.ts` runs the helper in Git Bash on a synthetic 364-directory / 1,092-file tree (one `purge: OK` line, tree gone), proves the watchdog path (`purge: FAIL ... (timeout after 1s; ...`, exit 1, returned in under 15 s, tree left in place for the operator), the abandon of a delete whose work is a native child that outlives its bash wrapper (the child's pid is gone and its heartbeat frozen within seconds of `purge_tree` returning — red against the wrapper-only `kill`), the returned-but-still-present path, the refusal of `/`, a drive root and `$HOME`, and pins that both gates call `purge_tree ... || return 1` with no bare `rm -rf` on either export.
+- **Remaining:** the `git archive | tar` export step after the purge is still unbounded (only `npm ci` carries its own timeout); it was outside this entry's done-when and is untouched.
+- **Done when:** met for the purge — bounded and fail-loud (helper + spec timeout case); clears a real `node_modules` export on this box in minutes (measured on the real leftover `ci-src` from the 2026-09-14 00:15 run — `%LOCALAPPDATA%\oshal\ci-src`, 36,048 files / 4,719 directories counted by `find` immediately before the purge, then one `purge: OK ... (70s)` line, rc=0, path gone); a run that inherits a leftover export reaches its gates and writes an outcome line (a purge FAIL is a `head-src` gate FAIL, which today already continues to the remaining gates and the outcome line).
 ### `secret-scan` reports PASS even when gitleaks could not read part of the tree
-- **Remaining:** `gitleaks detect` exits **0** when it fails to read files, so `gate_secrets` records a PASS having scanned less than the tree. Measured 2026-09-10 against `origin/main`: 5 of 5077 exported files logged `could not read file: ... cannot allocate memory` and the gate still passed. Memory pressure is the trigger seen so far, but the exit code says nothing about read failures in general (permissions, a path the scanner cannot open), so a clean `secret-scan` is not evidence the tree is clean. This is the false-green twin of the false-red already recorded in the host-contention entry above: that one is about a red night that is not about the code, this one is about a green night that did not look at everything. The scanner's own stderr already names every unread path, so the signal exists and is simply discarded.
-- **Done when:** `gate_secrets` fails (or loudly degrades to a named non-pass outcome) when gitleaks reports any unreadable path, rather than inheriting its exit code alone; a run with a deliberately unreadable file in the export is shown not to pass; and the count of unread paths appears in the gate's log line so a partial scan is visible without opening the scanner output.
+- **Built 2026-09-14 on `fix/ci-local-secret-scan-and-purge`.** `gitleaks detect` exits 0 when it fails to read files (measured 2026-09-10 against `origin/main`: 5 of 5077 exported files logged `could not read file: ... cannot allocate memory` and the gate passed; reproduced 2026-09-14 in the installed `zricethezav/gitleaks` v8.30.1 image, which writes `WRN skipping file: permission denied path=...` / `WRN skipping directory error="permission denied" path=...` and exits 0). `gate_secrets` now runs the unchanged scanner invocation (`gitleaks_container_scan`) through `scripts/ci/ci-secret-scan.sh` → `run_secret_scan`, which keeps the scanner's stderr (still replayed into the run log), counts its skipped/unread lines (`could not read file`, `skipping file`, `skipping directory`, `permission denied`, `cannot allocate memory`, matched case-insensitively after stripping the color codes the image emits without a tty) and writes one verdict line — `secret-scan: PASS unread=0 of M exported files (scanner rc=0)` or `secret-scan: FAIL unread=N of M exported files (scanner rc=0) - gitleaks skipped paths it could not read; a partial scan is not a clean scan` — failing the gate on any N above zero and on any non-zero scanner rc. Guard: `tests/unit/ci-local-secret-scan.spec.ts` runs the production `gate_secrets` body in Git Bash against a disposable git repository with a stand-in `docker` first on PATH that replays the image's exact stderr and exits 0: red on `origin/main` (the gate returned 0 on two skipped paths), green now (`FAIL unread=2 of 3 exported files`; `FAIL unread=1 of 3` for the 2026-09-10 wording); a clean scan still passes with `unread=0`; findings still fail with `scanner rc=1`; `ci-scan-src` is purged on every path; the production scanner arguments (`--network none`, `:/scan:ro`, `--no-git --config=/scan/.gitleaks.toml --redact`) are pinned.
+- **Done when:** met — the gate fails on any unreadable path rather than inheriting the exit code; a run with a deliberately unreadable path is shown not to pass (the stand-in replays the real wording because Windows cannot make a file unreadable to the root-running scanner container); the unread count is in the gate's log line.
 ### Publish gate: refuse model-attribution trailers at push time
 - **Built 2026-09-14 on `fix/publish-gate-attribution`.** `scripts/publish-gate.sh` check 5b refuses a
   push whose commits carry model attribution in the MESSAGE: a `-by:` trailer (`Co-Authored-By` in any
@@ -376,6 +377,26 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   where an operator sees it (health payload and the cockpit status surface), not only in a log line; a
   spec proves a transient failure followed by a healthy database ends with the store persistent; and the
   same treatment covers all five stores that share this shape.
+
+### The purge watchdog cannot tell "no descendants" from "cannot look" (2026-09-15)
+- **Context:** `purge_tree_abandon` (`scripts/ci/ci-purge.sh`, added with the #468 purge fix) kills the
+  delete's native process tree with `taskkill //F //T //PID <winpid>` under Git Bash, and falls back to
+  enumerating descendants with `ps -eo pid=,ppid=` and killing them deepest-first. On this box that
+  fallback cannot run: Git Bash's `ps` rejects `-eo` (`ps: unknown option -- o`), verified by the
+  reviewer of #468 and by the lane.
+- **Remaining:** if `taskkill` itself fails against a live process (a permission edge case or a race)
+  AND the `ps -eo` enumeration returns nothing because it errored rather than because there was
+  nothing to find, the function falls through to `kill -KILL "$pid"` on the bash wrapper alone and
+  reports `killed pid <pid> (no descendant processes found)`. That sentence reads as a checked
+  absence; on Windows it is an inability to check. The gate still returns FAIL and exits non-zero, so
+  the fail-closed contract holds — what is wrong is the message, and in that narrow combination the
+  orphaned-native-delete the fix exists to prevent could recur unreported.
+- **Also open:** the POSIX descendants-then-parent branch has no coverage anywhere — it cannot run on
+  this box and there is no Linux runner guard for it.
+- **Done when:** the abandon path distinguishes "enumerated descendants and found none" from "could
+  not enumerate", and says which in its outcome line; a failed `taskkill` against a live process is
+  reported as a failure to abandon rather than a successful kill; and the POSIX branch is exercised
+  somewhere that can run it, or the entry records the decision not to.
 
 ## Security, tenancy, and trust boundaries
 
@@ -572,32 +593,44 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** model provider-native embedded tools beside framework-registry and harness-native tools with per-agent policy and audit semantics.
 - **Done when:** an agent can enable/disable a named embedded tool, denied use fails at execution, and the run trace identifies the tier and provider operation.
 
-### A queued bot dispatch has no recorded-delegation issuer, so the ADR-149 remote path always refuses (2026-09-15)
+### A protected dispatch refuses on a controller with no delegation signing material (2026-09-15)
 - **Observed:** the operator asked a trading question at 00:51:01Z; it became ticket
   `aaa86e48-eaca-4977-b77f-bbffed0a6ca2` (`task`, title "yes but how much did we make or loose") and
   `dispatch-manifest-worker` failed with `authorization_recorded_delegation_required`. The ticket is
   sitting `escalated` in the cockpit with no answer. One occurrence in 24 h — the only dispatch that
-  reached this path in that window.
-- **Mechanism:** `BotNodeClient.prepareRemoteDispatch`
-  (`src/features/agent-management/services/bot-node-client.ts:411-418`) asks the application
-  remote-execution authority to `prepare()` the dispatch and then throws
-  `authorization_recorded_delegation_required` when `prepared && !this.recordedDelegationIssuer`. The
-  issuer is an optional constructor option (line 318), and **no construction site supplies it**: all
-  five `new BotNodeClient(...)` calls under `src/app` (composition-root.ts:180,
-  extensions/swarm/index.ts:689 and :801, ambient-enrichment-runtime.ts:101,
-  home-schedule-dispatch.ts:36) pass only an endpoint resolver. So whenever an authority IS registered
-  and returns a prepared execution, the dispatch cannot proceed — one half of the ADR-149 remote path
-  is wired and the other is not.
-- **Not established:** which dispatches reach a non-null `prepare()` (the rarity suggests most do not),
-  and whether the issuer was meant to be constructed here or injected by the feature that registers the
-  authority. Read
-  [remote application execution](security/remote-application-execution.md) before choosing.
-- **Done when:** a queued dispatch that the authority prepares completes with a recorded delegation
-  under the asking user's authority, or is refused for a reason that names what the operator must do;
-  the operator's question above (or an equivalent re-ask) returns an answer instead of escalating; a
-  spec drives the prepared path through the real client and proves both the success and the refusal
-  shapes; and the five construction sites either all supply an issuer or the option stops being
-  optional so a missing one is a compile error rather than a run-time throw.
+  reached this path in that window. `ticket_status_history` names `workerBot: communications-bot`,
+  `workerAgentId b0000000-0000-0000-0000-000000000001`.
+- **Mechanism, corrected against the code and the running box.** The refusal is thrown in exactly one
+  place, `BotNodeClient.prepareRemoteDispatch`, when the authority returned a prepared execution and
+  the client holds no recorded issuer. The missing constructor option is **not** the determinant: the
+  constructor derives a recorded issuer from the controller environment whenever
+  `hasDelegationSigningConfiguration` is true, so `new BotNodeClient(resolver)` is a complete
+  construction on a configured controller. What is missing on this box is the signing material itself.
+  `docker exec oshal-local-api` reading `/proc/1/environ` shows `OSHAL_DELEGATION_SIGNING_KID` and
+  `OSHAL_DELEGATION_SIGNING_PRIVATE_KEY` present and **empty** (no `BEGIN` anywhere in that environ);
+  compose passes both through unconditionally (`docker-compose.oshal-local.yml:877-878`), the host
+  `.env` sets neither, and `.env.example:794-795` carries them commented out. Meanwhile
+  `createApplicationRemoteExecutionWiring` registers the authority unconditionally with lazy signing,
+  so the controller looks healthy until a protected dispatch asks it to mint. `prepare()` returns null
+  unless the target bot's owning package is `protected`, which is why one dispatch in 24 h reached it.
+- **Shipped in this change (PR "A queued dispatch carries a recorded delegation instead of refusing"):**
+  the refusal keeps the stable code as its first token and now names the unset keys and what to set,
+  so the escalation metadata a ticket carries is actionable; it logs the agent, package and prepared
+  execution at ERROR; and boot logs ERROR once when the authority is registered on a controller with
+  no signing material. Guards: a spec drives the real client constructed the way production
+  constructs it — endpoint resolver plus controller environment, no injected issuer — and proves both
+  shapes, a configured environment minting a real Ed25519 delegation the fixture authority verifies
+  before dispatch, and the live empty-key shape refusing with both key names in the message. The
+  refusal case was red on the message before the change.
+- **Still open, and it is the half that answers the operator's question:** nothing here provisions a
+  signing keypair. Making a prepared dispatch complete on this box needs an Ed25519 key on the
+  controller and the matching `OSHAL_DELEGATION_PUBLIC_KEYS` ring on every bot node — operator-local
+  secret material, not something an agent mints. The fix is also not deployed and no re-ask has been
+  run. The boot ERROR is a log, not a gate: boot is deliberately not failed, because an existing
+  deployment running only unprotected packages would stop starting.
+- **Done when:** the controller holds a signing keypair and every bot node the matching public ring;
+  the operator's question above (or an equivalent re-ask) returns an answer instead of escalating; and
+  a live protected dispatch is observed completing with a recorded delegation.
 
 ## Connectors, channels, and external systems
 
@@ -1255,12 +1288,31 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   gives an index scan), the newest `world_metrics` chunk holds 3.1 M rows / 681 MB and `world_items`
   1.76 M rows / 2.3 GB, the Docker VM one-minute load was 29 on 8 CPUs, and `app_world-ticker-pulse` logged
   `Schedule dispatch timed out — abandoning to unblock the runner` six times in ten minutes. The 18:10Z
-  watchdog note in the coordination thread recorded the same timeouts under a different load spike. Not
-  measured: whether the 19 sessions are one pulse's fan-out or overlapping pulses.
-- **Done when:** the pulse's per-entity reads run under a bounded concurrency, or through a rollup read
-  that does not scan per entity; the ticker pulse completes inside its window on this box with the full
-  name set; and the pulse log records the entity count and wall time, so a regression is visible without
-  `pg_stat_activity`.
+  watchdog note in the coordination thread recorded the same timeouts under a different load spike.
+- **Root cause, established from source:** one pulse touches **184 entities** (`DEFAULT_UNIVERSE`'s 159
+  symbols plus the 25 `MARKET_SUBJECTS`, `world-schedule-dispatch.ts` `dispatchWorldSchedule`) and rolls
+  features up for every one of them, four indexed aggregates each. The only bound was a compiled-in
+  `FEATURE_ROLLUP_CONCURRENCY = 8` inside a single `mapPool`, and `schedule-service.ts:320-327`
+  **abandons** a dispatch that overruns rather than cancelling it — "the underlying promise is left to
+  settle on its own" — so an overrunning pulse keeps its fan-out running while the next one starts.
+  Each rolled-up entity holds one statement open at a time, so one fire puts at most 8 aggregates on the
+  store and N overlapping fires put 8N. Still not measured: whether the 19 sessions were two fires plus
+  other readers or three fires — the source establishes only that nothing bounded the sum, which is the
+  defect either way.
+- **Fixed (PR, not yet deployed):** (a) a process-wide bounded gate in front of every world series read
+  (`src/features/world-data/world-series-gate.ts`, `WORLD_SERIES_READ_CONCURRENCY`, default 4) — it holds
+  across overlapping fires, which a per-run limit structurally cannot; (b) identical in-flight reads
+  (same entity, metric, window) coalesce onto one statement; (c) the rollup's whole-day sentiment
+  windows read `world_metrics_daily`, which carries `source`, instead of scanning the stream per source —
+  read-only `EXPLAIN (ANALYZE)` on the live store: 786 ms planning + 366 ms execution for the 24 h stream
+  read and 810 + 651 for the 168 h one, against 245 + 16 and 303 + 20 for the same answers off the head;
+  (d) the pulse logs entity count, statements issued, statements coalesced and wall time at INFO and
+  WARNs above a configured fraction of its window (`WORLD_PULSE_WINDOW_MS`, `WORLD_PULSE_WARN_FRACTION`).
+  Guards: `tests/unit/world-series-read-gate.spec.ts` (proven red with the gate bypassed — max in-flight
+  12 against a bound of 3, and four sentiment statements for two answers).
+- **Done when:** the ticker pulse completes inside its window on this box with the full name set, with
+  the World app re-enabled after the fix deploys, and the pulse's own `elapsedMs` / `seriesStatements`
+  record shows it — the one remaining item, and it is the coordinator's after deploy.
 
 ## Application-package follow-ups
 
@@ -1945,6 +1997,38 @@ gaussians subsampled in about 6 s).
 - A regression test imports a PLY above the gate and one below it and proves the api keeps answering
   `/health` throughout.
 
+**Written, not deployed (2026-09-14).** Both halves are open as PRs and neither is on the box.
+
+- **Core — [PR #473](https://github.com/emeraldcoastsystemsgroup/oshal/pull/473):** `import-limits.ts` resolves `OSHAL_SPACES_PLY_MAX_BYTES` (default 50 MiB)
+  and `OSHAL_SPACES_PLY_WORKER_HEAP_MB` (default 1024) from the environment at the point of use, so
+  no limit is a literal anywhere; `ply-convert-host.ts` / `ply-convert-worker.ts` run the conversion
+  in a `node:worker_threads` Worker under `resourceLimits`; `ImportReconstructionProvider` refuses a
+  `.ply` over the gate and turns a worker death (out of memory, parse throw, silent exit) into a
+  `ReconstructionError` whose message the service writes onto the failed row. `.splat` passthrough
+  unchanged. `tests/unit/spatial-import-event-loop.spec.ts` is red on the on-thread provider (`loop
+  held 404 ms while the on-thread conversion takes 346 ms`) and green after;
+  `tests/unit/spatial-import-worker.spec.ts` kills a real Worker under a 24 MB cap and reads the
+  reason off the failed row.
+- **Store — [oshal-applications PR #206](https://github.com/emeraldcoastsystemsgroup/oshal-applications/pull/206):** `spaces` 0.9.0 gates the `.ply` **while the part streams** — a multer
+  storage engine stops writing at the first chunk past `resolvePlyImportLimits().plyMaxBytes` and the
+  lane answers 413 naming the limit, so an oversized capture is never fully received, written or
+  parsed. `tests/ply-import-off-loop.core.test.js` drives the compiled packaged router over real
+  loopback HTTP beside a real `/health` route with the framework's real limits and conversion engine.
+  Both halves are red before their fix and green after: the gate case fails `201 !== 413` on the
+  un-gated route (an 11 MB `.ply` accepted whole), and the loop case fails `/health worst round trip
+  346 ms against a 438 ms on-thread conversion` when the kernel provider is put back on the main
+  thread.
+
+**Still open:**
+- The core PR has to merge and **deploy before** the store package is updated on a box — the route
+  imports `resolvePlyImportLimits` from the pinned `spatial-mapping` kernel skill, which an older core
+  does not export. Until both land the live lane is still ungated.
+- Neither the 117 MB nor the 44 MB capture from the incident has been re-imported against the fix; the
+  proofs above run generated fixtures either side of a 4 MB test gate.
+- The store guard is a `*.core.test.js`, so it runs only where a framework checkout is present
+  (`OSHAL_CORE_DIR`), the same convention as the package's `upload-identity.core.test.js`; the
+  bare-checkout store CI glob does not reach it.
+
 ### Store dependency tiers: manifests converted; catalog mirror and live proof open (2026-09-14)
 
 **Context:** the core reads `dependencies` as `required` / `optional` tiers and the installer, loader
@@ -2031,3 +2115,82 @@ Detail and evidence: [backlog/store-dependency-tier-migration.md](backlog/store-
   by hand - and `--apps` has no way to pull a package's optional extras. *Done when* bundles name
   only their top package (the installer resolves the rest from the manifest), `--apps` accepts a
   `--with-optional` passthrough, and `tests/unit/installer-scripts-parse.spec.ts` covers both.
+
+### The durable escalation store only ever sees swarm-run escalations (2026-09-15)
+
+**Context:** `swarm_escalations` has exactly one writer — `persistEscalationRecord`
+([swarm-ticket-lifecycle-helpers.ts](../src/features/swarm-orchestration/services/swarm-ticket-lifecycle-helpers.ts)),
+called only from `SwarmExecutionLifecycleService`, which needs a `runId`. An escalation raised
+outside a swarm run — a manifest-worker dispatch failure, an operator park, a queue DLQ
+transition — has no run id and so structurally cannot produce a row. On the operator box the table
+holds 100 rows whose newest is dated 2026-07-19, while tickets have escalated since. The cockpit
+now reads the reason from the transition record instead (`ticket_status_history`, mirrored on the
+ticket row as `metadata.lastStatusTransition`), so the operator-visible text is correct either way;
+what is unresolved is what the durable store is *for* now that it answers a strict subset of
+escalations.
+
+**Done when:** a written decision records whether `swarm_escalations` is the canonical escalation
+record — and therefore every escalating path writes one, run id or not — or a run-scoped
+attempt-state record that the cockpit should stop treating as its primary escalation lookup.
+Whichever it is, `PostgresSwarmEscalationStore` and the cockpit's `getTicketEscalations` lookup
+agree with it, and a guard proves an escalation raised by a non-run path lands wherever the
+decision says it belongs, proven red by removing that write.
+
+### A vehicle record, and the medium it runs in as a parameter (ADR-160) (2026-09-15)
+
+**Context:** [ADR-160](adr/160-a-vehicle-record-and-the-medium-as-a-parameter.md). Two vehicles are fully
+specified and neither can be developed or moved: the 300 mm marine explorer exists as
+[a design study document](research/autonomous-explorer-design-study.md) whose engines were carved into the
+`ocean-lab` store package while the vehicle itself was not, and the Floater solar dynastat exists as a
+committed `aero-lab/reference-design/` folder holding one `export_build_files.py` run that cannot report it
+has gone stale. Neither `ocean-lab` nor `aero-lab` has a `migrations/` directory, so nothing persists and no
+object can carry a stage. The operator then added interchangeability — run an aircraft in the water module
+and the reverse, and *"want the boat fall to the ground"*. Verified before costing: the medium is already an
+argument in most force models (`aeropolar.wing_polar` takes `rho_kgm3`/`mu_Pas`, and
+`vehicle/aerosurface.py` `evaluate()` L720–721 sets both from the `AtmoSample` and passes them through
+`coefficients()` L504 → `_polar_for_bin()` L417 → `aeropolar.wing_polar` L447/L460; `rotor-types.ts`
+L69–72 and `bemt-solver.ts` L563/L711 take density and kinematic viscosity with seawater only a preset;
+`panel-method.ts:239` contains no viscosity at all; `embodied_worker.py:223` reads the controller's
+gravity from the model). The assumption lives in presets, in
+`marine/services/power-budget.ts:70` (a second hardcoded `SEAWATER_DENSITY_KGM3`), in
+`embodied/src-routes/engine/physics/mjcf.ts:115` (gravity from a module constant, no `density`, no
+`viscosity`) with the same literal again in `arm-mjcf.ts:135`, and in validity envelopes declared
+nowhere but `aeropolar`'s per-point `valid` flag — which cannot catch a medium swap, because water's
+lower kinematic viscosity moves Reynolds *up*, away from the floor that flag enforces, so an air
+surrogate answers a water run and reports `valid = True`. Store-repo
+work in `ocean-lab`, `aero-lab` and `embodied`; no core code.
+
+**Done when:**
+- **S1 — the boat falls.** The medium record exists (id, gravity vector, density, dynamic viscosity, an
+  optional field with its gradient, a free surface or none, validity bounds and a refusal outside them) with
+  three implementations — vacuum, air behind `aerosim.env`, seawater; the MJCF `<option>` is fed from the
+  chosen medium instead of `G_MPS2`; the explorer hull is one solid from its published envelope and all-up mass.
+  In air it falls at g. In seawater it **refuses by name** rather than producing a plausible float, and that
+  refusal is a test case, not a note. Because D3 forbids a cross-package runtime import, these media are a
+  third TypeScript location: their property values must therefore be one committed data row per medium,
+  shared as data and pinned by the S5 drift test, not a third and fourth independent answer to "what is
+  seawater" — the defect this entry diagnoses one level down.
+- **S2 — the Explorer record.** `ocean-lab` carries its first migration (vehicle records, owner RLS), the
+  explorer seed vector as a committed fixture, the limit rows from the study's "What is not true" section, and
+  an **Explorer** tile. Changing the wing stop angle or the tether length and evaluating moves the five-row
+  sea-state table, the occurrence-weighted mean, the km/day and the km/year; the stage recomputes on read and
+  drops when the vector changes; the open limits and the runs S1 recorded are listed.
+- **S3 — parts and geometry.** The explorer's parts model and each watertight part as a CAD Studio program
+  with **Open in CAD Studio**, emitting the portable-object shape (identity and provenance, geometry, mass
+  properties with provenance, a named attachment frame, force-model requirements). The displacement budget
+  closes against the sizing computed at that mass or the stage refuses to advance.
+- **S4 — the Floater record.** `aero-lab` stores the existing export run as the first evaluation, with
+  `BOM_v2`'s mass delta as a budget check (expected red on first run: real parts are 274 g heavier than the
+  certified ledger) and its force models' validity envelopes declared.
+- **S5 — the guards.** Cross-package read-only tests fail when the record shape, the stage function, the
+  medium shape, the medium property values or the portable-object shape drift between labs; a regression asserts the engine at today's
+  version still reproduces the study's published figures from the seed within a stated tolerance; there is one
+  case per named refusal (`medium_property_unavailable`, `model_not_valid_in_medium`). An undeclared validity
+  envelope fails closed — refusing every medium but the model's default — rather than defaulting
+  permissive. The store's package-separation guard is not weakened: shared shapes travel as data, never as an
+  imported runtime (consistent with the one-parts-model entry above, which this consumes rather than
+  duplicates).
+- Every surface that renders a stage renders with it that `fabricable` means the files are complete and
+  self-consistent, not that the machine is safe to build, fly or wet; and every run result carries its medium id
+  and engine fingerprints or is not displayed. No slice buys, builds or tests hardware, and none attempts
+  free-surface hydrodynamics, added mass, cavitation, or aerodynamics inside the physics plant.
