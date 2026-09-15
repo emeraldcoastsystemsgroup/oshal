@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Run the nightly's export purge in Git Bash on a synthetic node_modules-shaped tree, prove its watchdog fails loud with an outcome line instead of hanging (the 2026-09-09 run sat nine hours in rm -rf and wrote nothing), and pin that ci-local.sh purges both of its exports through it rather than a bare rm -rf.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Cover the watchdog's abandon with a delete whose work is a NATIVE child that outlives its bash wrapper, the shape of robocopy.exe under `timeout`. The existing timeout case overrides the primitive with a bash `sleep`, so it proves the watchdog unblocks but cannot see an orphaned native process: against the old `kill "$pid"` the child was still running (and still deleting) after the FAIL line. The new case asserts the child is gone, and its heartbeat frozen, shortly after purge_tree returns.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -43,6 +44,47 @@ function synthesizeTree(root: string, depth: number): void {
   for (let i = 0; i < 3; i++) writeFileSync(join(root, `f${i}.js`), 'x');
   if (depth === 0) return;
   for (const name of ['a', 'b', 'c']) synthesizeTree(join(root, name), depth - 1);
+}
+
+/**
+ * The native half of the delete stand-in: a child process that keeps working after its bash parent
+ * is signalled, the way robocopy.exe does. It records its own pid, then a rising heartbeat.
+ */
+const NATIVE_CHILD_SOURCE = [
+  "const fs = require('node:fs');",
+  'const [, , pidFile, beatFile] = process.argv;',
+  "fs.writeFileSync(beatFile, '0');",
+  'fs.writeFileSync(pidFile, String(process.pid));',
+  'let beats = 0;',
+  'const timer = setInterval(() => fs.writeFileSync(beatFile, String(++beats)), 200);',
+  'setTimeout(() => clearInterval(timer), 25000);',
+  '',
+].join('\n');
+
+/** @description Whether a process id is still running. Signal 0 only probes; it delivers nothing. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** @description Poll until the pid is gone, and report whether it outlived the budget. Blocks without a timer so the check stays inside the synchronous test body. */
+function outlivesAbandon(pid: number, budgetMs: number): boolean {
+  const deadline = Date.now() + budgetMs;
+  const idle = new Int32Array(new SharedArrayBuffer(4));
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return false;
+    Atomics.wait(idle, 0, 0, 100);
+  }
+  return isAlive(pid);
+}
+
+/** @description Spell a Windows path the way the Git Bash probe needs it. */
+function posix(path: string): string {
+  return path.replaceAll('\\', '/');
 }
 
 interface PurgeRun {
@@ -100,6 +142,39 @@ describe('ci-local export purge (scripts/ci/ci-purge.sh)', () => {
     expect(run.elapsedMs).toBeLessThan(15_000);
     expect(existsSync(stuck), 'the abandoned tree must be left for the operator, never reported gone').toBe(true);
   }, 30_000);
+
+  it('kills the delete process tree on abandon, so a native child cannot keep deleting past the FAIL line', () => {
+    const stuck = join(SCRATCH, 'native-child-export');
+    mkdirSync(stuck, { recursive: true });
+    writeFileSync(join(stuck, 'f.js'), 'x');
+    const childScript = join(SCRATCH, 'native-child.js');
+    const pidFile = join(SCRATCH, 'native-child.pid');
+    const beatFile = join(SCRATCH, 'native-child.beat');
+    writeFileSync(childScript, NATIVE_CHILD_SOURCE);
+    // The real primitive is a bash wrapper whose work is native (robocopy.exe / rm.exe under
+    // `timeout`), and signalling the wrapper does not reach it: measured on a 26,180-file
+    // export, where Robocopy.exe was still in tasklist and the tree still shrinking (24,121
+    // files at return, 23,058 eight seconds later) after the FAIL line.
+    const override = `purge_tree_delete() { exec >/dev/null 2>&1; node "${posix(childScript)}" "${posix(pidFile)}" "${posix(beatFile)}" & sleep 25; }`;
+    const run = runPurge(stuck, 3, override);
+    expect(run.status, run.output).toBe(1);
+    expect(existsSync(pidFile), `the native delete child never started: ${run.output}`).toBe(true);
+    const childPid = Number(readFileSync(pidFile, 'utf8').trim());
+    expect(Number.isInteger(childPid) && childPid > 0, `unusable child pid: ${run.output}`).toBe(true);
+    const beatAtAbandon = readFileSync(beatFile, 'utf8').trim();
+    const survived = outlivesAbandon(childPid, 5_000);
+    const beatAfterAbandon = readFileSync(beatFile, 'utf8').trim();
+    if (survived) {
+      try {
+        process.kill(childPid, 'SIGKILL');
+      } catch {
+        /* it exited between the poll and the cleanup */
+      }
+    }
+    expect(survived, 'the native delete child outlived the abandon - the watchdog reached the bash wrapper only').toBe(false);
+    expect(beatAfterAbandon, 'the abandoned delete was still working after purge_tree returned').toBe(beatAtAbandon);
+    expect(run.output, 'the outcome line must name what the abandon killed').toMatch(/purge: FAIL .*native-child-export \(timeout after 3s; killed /);
+  }, 60_000);
 
   it('reports a delete that returned but left the tree behind as FAIL', () => {
     const stubborn = join(SCRATCH, 'stubborn-export');
