@@ -313,6 +313,31 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** closed-PR refs `refs/pull/N/head` still reach the old commits (verified on core #426 and #430 after the push) and old SHAs stay viewable at `/commit/<sha>` until GitHub garbage-collects. Only GitHub Support can purge unreachable objects; nothing on any branch carries the attribution and the contributors graph is computed from `main`.
 - **Done when:** either a support request is filed for the three repos and a sample old SHA returns 404 while `git ls-remote origin 'refs/pull/*/head'` no longer reaches an attributed commit, or the operator records here that the residue is accepted.
 
+### One slow boot drops the task, message and memory stores to in-memory for the life of the process (2026-09-15)
+- **Observed on the 00:25:11Z api boot** (deploy of `aba0e31f`, a clean deploy that reported healthy in
+  28 s): three stores logged `persistence init failed; falling back to memory` at ERROR within the same
+  second — `in-memory-task-store`, the message store and the memory layer — each on
+  `Connection terminated due to connection timeout` from `gucConnect`
+  (`shared/services/database/guc-pool.js:172`) inside `applyLockedSchema`, while the api's own migration
+  and ADR-076 provisioning burst was still finishing against the same Postgres.
+- **Why it does not heal:** `initializePersistence`
+  (`src/entities/task/services/in-memory-task-store.ts:258`, and the same shape in
+  `src/entities/message/services/in-memory-message-store.ts:182` and
+  `src/features/memory/services/memory-layer-service.ts:274`) catches the failure, sets
+  `persistentMode = false`, **ends the pool and nulls it**, and never retries. One transient timeout at
+  boot therefore means A2A task state, message history and the memory layer are non-persistent until
+  someone restarts the container — and the only signal is three ERROR lines in a boot log nobody reads.
+  Two sibling stores (`postgres-subtask-lifecycle-store`, `postgres-swarm-escalation-store`) carry the
+  same shape and were not observed failing tonight.
+- **Not established:** how often this happens (this container's log does not reach earlier boots), and
+  whether the timeout is pool contention with the migration burst or a connection cap.
+- **Done when:** a store that cannot reach Postgres at boot either retries with backoff until it
+  succeeds or fails the boot, rather than silently serving from memory for the process lifetime; if the
+  fallback is kept deliberately for a named deployment mode, the process reports degraded persistence
+  where an operator sees it (health payload and the cockpit status surface), not only in a log line; a
+  spec proves a transient failure followed by a healthy database ends with the store persistent; and the
+  same treatment covers all five stores that share this shape.
+
 ## Security, tenancy, and trust boundaries
 
 ### The SEC/CORE/APP hardening-track identifiers have no definition anywhere in the repo
