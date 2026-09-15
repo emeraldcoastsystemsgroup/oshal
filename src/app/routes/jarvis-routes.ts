@@ -50,6 +50,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2/3: the deterministic ambient hook now answers open asks, weekly trends and person connections through the person-model front door (detectPersonModelIntent / answerPersonModelIntent); recall phrasing is unchanged. Net -2 code lines on this over-cap file.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Decomposition: the per-thread chat-ticket + session-task registration moves to jarvis-thread-tickets.ts, taking this file from 804 code lines to under the 800-line threshold; the person-model recall hook is untouched.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Emitted surface ops log op count, names (custom:<name>) and the target app + its declared custom names at INFO on the success path, so a BUG-18 custom-name mismatch is diagnosable from the api log alone.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted jarvis-speaker-profile-links.js in JARVIS_CLIENT_ASSETS: the Manage Voices → Ambient Recall bridge serves from the same authenticated /assets route as the other speaker siblings.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -353,6 +354,7 @@ const JARVIS_CLIENT_ASSETS = new Map([
   ['jarvis-speakers.css', 'text/css; charset=utf-8'],
   ['jarvis-speaker-capture.js', 'application/javascript; charset=utf-8'],
   ['jarvis-person-consent.js', 'application/javascript; charset=utf-8'],
+  ['jarvis-speaker-profile-links.js', 'application/javascript; charset=utf-8'],
 ]);
 
 /** Serve only the explicit Jarvis client assets; the parent router is authentication-gated. */
