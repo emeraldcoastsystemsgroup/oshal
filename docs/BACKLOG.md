@@ -157,23 +157,91 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   selectors, logs the delta and uses the baseline, so production behaviour is unchanged while real
   traffic validates it.
 
-### Boot-time schema bootstraps fail open, and one of them costs a feature
+### Boot-time schema bootstraps fail open - and the one I called a functional loss was NOT one
 
-- **Measured on the 2026-09-15 00:23Z deploy:** 27 error-level lines on the api's first boot, about
-  ten of them `* schema bootstrap failed` - ticket (x3), venture rebaseline, tv_token_revocations,
-  social_content_drafts, person-model, linkedin-assistant, `ensureInboxSchema`, `ensureFeedsSchema` -
-  plus two `DB access with NO request identity DENIED (OSHAL_DB_GUC_STRICT=deny)`.
-- **Most are fail-open by design** ("relying on SQL migrations", "revocation stays fail-open") and
-  are noise in the honest sense. **One is a real functional loss:** `oshal_cli_tokens schema
-  bootstrap failed - PAT auth unavailable until it exists`.
-- **Same shape as the authorization boot race** that was fixed by memoising a retrying thunk
-  (`application-authorization-wiring.ts`): many concurrent bootstraps, each holding a client, against
-  a small pool while 83 manifests load. The fix pattern already exists in-repo; this is whether the
-  other bootstraps should adopt it or whether fail-open is genuinely correct for each.
-- **Done when:** PAT auth is available after a cold boot without manual intervention, proven by a
-  check that exercises a PAT rather than reading the log; and each remaining fail-open bootstrap is
-  either converted to the retrying-thunk pattern or has a one-line note saying why fail-open is
-  right for it, so the next reader does not have to re-derive the answer ten times.
+- ⛔ **CORRECTION, 2026-09-15, same day this entry was filed.** The first version of this entry
+  said *"One is a real functional loss: `oshal_cli_tokens schema bootstrap failed - PAT auth
+  unavailable until it exists`"*. **That is false.** It was written by believing a log line, which
+  is precisely the defect class the rest of this file is about. Disproved by an adversarial
+  investigation:
+  - `oshal_cli_tokens` has existed since **2026-07-12** and holds **286 rows**. Migration
+    `100-cli-token-base-schema.sql` creates the table, index, RLS and policy as the bootstrap
+    superuser **before** `exec node dist/app/server.js` - so the table is present before the code
+    that re-asserts it ever runs.
+  - **15 PATs authenticated successfully inside the very process whose boot logged the failure**
+    (`last_used_at` is written only after a successful lookup).
+  - A live probe minted, used and revoked a PAT: 200 / 200 / 401.
+  - The bootstrap in `createCliTokenRoutes` is **fire-and-forget and nothing awaits it**; the PAT
+    auth middleware is constructed separately (`server.ts:757`) and queries the table directly.
+  So the failure could not have caused a functional loss, and none occurred.
+- **What is actually wrong, and it is worth fixing:** the catch block hardcodes
+  `PAT auth unavailable until it exists` - **a consequence it never verified.** An error handler
+  that asserts an impact it has not checked is the same defect as a refusal that will not name its
+  cause; it sent me, and would send the next reader, after a bug that does not exist.
+- **The second real issue:** the bootstrap issues 8 idempotent statements
+  (`cli-token-routes.ts:83-109`), each taking its own 5 s pool acquire through `gucQuery`, against a
+  pool of 8 while 83 manifests load. That is the contention, and it is why it fails on a cold boot.
+- **Still true and unexamined:** about ten `* schema bootstrap failed` lines on a cold boot - ticket
+  (x3), venture rebaseline, tv_token_revocations, social_content_drafts, person-model,
+  linkedin-assistant, `ensureInboxSchema`, `ensureFeedsSchema` - plus two `DB access with NO request
+  identity DENIED (OSHAL_DB_GUC_STRICT=deny)`. **Each needs its own check before anyone claims an
+  impact for it**; do not repeat this entry's original mistake across the other nine.
+- ⛔ **Do NOT "fix" this with a verify-first early return.** `assertSchemaReady` runs `hasTable` as
+  one query plus `hasColumn` as one query **per column** - with the 7 required columns that is 8 pool
+  acquires, identical to the DDL it would replace - and its requirements are columns-only, so it
+  would silently retire the RLS/policy self-heal on a FORCE-RLS credential table.
+- **Done when:** the bootstrap takes one advisory-locked client (a `lockKey`; `47110008` is free)
+  instead of 8 separate acquires, keeping the per-boot RLS/policy re-assert; the catch **re-probes
+  and branches** - table present -> warn that PAT auth is unaffected, absent -> the error wording,
+  unverifiable -> name the uncertainty; and a spec forces the DDL to fail and asserts the log level
+  and wording for each branch. A fixture claiming to prove PAT authentication must connect as a
+  **non-superuser** role with the ADR-076 grants - `postgres`/`oshal` bypass FORCE RLS (measured:
+  309 rows vs 0), so it cannot prove the policy boundary otherwise.
+
+### The ONNX runtime installs process-global rethrow handlers that make any stray rejection fatal (2026-09-15)
+
+- **Root-caused 2026-09-15 with probes on the real api image. The board's stated mechanism was
+  WRONG and is corrected here.** The board said "an abort inside the WASM during inference is not
+  caught (the try/catch covers model LOADING only)". **False** -
+  `src/features/rag/services/local-embedding-service.ts:51-61` already wraps the inference loop, and
+  a probe proved an ORT wasm error IS caught by an ordinary try/catch around the awaited call. The
+  abort function throws a normal `WebAssembly.RuntimeError`; it does not call `process.exit`.
+- **The actual cause:** `Dockerfile.oshal:216-225` shims `onnxruntime-node` -> `onnxruntime-web` on
+  musl, and onnxruntime-web's Emscripten Node shell installs two **process-global** handlers the
+  moment the wasm initialises - `process.on('unhandledRejection', t => { throw t })` and
+  `process.on('uncaughtException', t => { if (!(t instanceof ExitStatus)) throw t })`. They are
+  appended **behind** oshal's own guards (`installProcessCrashGuards`, `server.ts:1939`). From that
+  instant **any** unhandled rejection anywhere in the controller - not just in the RAG lane - is
+  converted to an uncaught exception and rethrown from inside the handler, which is fatal.
+- **Measured signature:** exit code **7**, **548,627 bytes** of minified bundle on stderr (the
+  "offending source line" is line 6 of a 547 KB file), and the process dies **before** oshal's 250 ms
+  flush and its `process.on('exit')` hook run - so the api destroys its own evidence as it goes.
+- **Live state:** the running api logged `Local embedding model ready` with `RAG_LOCAL_EMBEDDINGS`
+  unset, so it is carrying those handlers now.
+- **Fix (additive, one file):** in `load()`, snapshot `process.listeners('unhandledRejection')` and
+  `('uncaughtException')` before the dynamic `import("@xenova/transformers")`, and after
+  `mod.pipeline(...)` resolves **and in the catch** remove any listener not in the snapshot whose
+  source matches `/throw t/` - a failing `InferenceSession.create` registers the pair too, and the
+  api is serving during the 4-5 s load window, so do not strip indiscriminately. Registration is
+  once-per-process, so one strip is sufficient.
+- ⛔ **The obvious guard does NOT work** - proved by execution, not reading. A test child that
+  forces wasm init directly never calls `load()`, so the strip never runs and the case is
+  permanently red; and on a Windows host `@xenova/transformers` resolves to the **native**
+  `onnxruntime-node`, so cases that do not run in the image are vacuous - they pass with the fix,
+  without it, and with the strip deleted.
+- **Done when:** the strip is an exported helper so a test child can reproduce the defect and apply
+  the fix in one process; a **host** case installs the real crash guards, registers the pair via a
+  failing `InferenceSession.create(new Uint8Array([1,2,3,4,5,6,7,8]))`, calls the helper, raises a
+  stray rejection and asserts exit 0 with stderr under 8 KB (red on today's tree at exit 7 and
+  >500 KB); and an **image** case runs the real `load()` under `docker exec` on `oshal-bot:latest`
+  asserting post-load listener counts equal pre-load and `embed(['x'])` still returns 384 dims - the
+  image probe is mandatory, because `Dockerfile.oshal:216-225` is where the defect is created.
+- **Mitigation if the box is actively crashing before this lands:** `RAG_LOCAL_EMBEDDINGS=0` plus an
+  api bounce - `isEnabled()` short-circuits before wasm init. Cost: RAG drops to BM25 and
+  person-model projection defers. Not a fix.
+- ⛔ **Not the defect:** "an uncatchable in-process WASM abort" and "move embedding to a worker".
+  The branch `docs/embedding-abort-kills-api` carries the wrong mechanism in its text; correct it
+  before opening that PR or the next reader adds a try/catch that is already there.
 
 ### There is no test-coverage measurement
 
