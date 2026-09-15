@@ -5,6 +5,7 @@
   -----------------------------------------------------------------------------
   1 | maintainer@emeraldcoastsystemsgroup.com   | Data-model explorer: an operator surface to navigate every database oshal runs - Postgres tables and views with their foreign keys, owners and row-level-security scope; objects shared across applications; the app integration map; and the time-series, SQLite, graph, vector and cache stores. Reads /api/admin/data-model (operator-only); the page itself explains the requirement to anyone else.
   2 | maintainer@emeraldcoastsystemsgroup.com   | Export control in the header: copy the current view as Mermaid, or download it as SVG or scoped JSON.
+  3 | maintainer@emeraldcoastsystemsgroup.com   | Load the shared glass sheet after the page's own stylesheet, as the other page surfaces do: the explorer landed without it and turned the surface-glass specs red for the whole unit suite.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -16,6 +17,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Data model explorer</title>
   <link rel="stylesheet" href="/data-model/data-model.css">
+  <!-- Shared semantic cards follow the selected portal finish without changing page layout. -->
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css">
 </head>
 <body>
   <div class="dm-shell">

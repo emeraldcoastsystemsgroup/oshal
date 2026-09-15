@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Browser guard for the data-model explorer: real Chromium against the real page files, the real route + operator gate and the real service over fixture ports (a temp source tree with a core migration and one store package). Proves the graph renders, the tabs and URL deep links drive it, the detail panel navigates FKs, search opens a table, the stores view shows every card, and a non-operator gets the operator-only explanation instead of data. Browser console errors fail the suite.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Export guards at the real boundary: the Mermaid block copied for the view on screen names exactly the tables Chromium drew and reaches the clipboard, the SVG and JSON downloads are real files with the drawn scope inside them, and a non-operator - who never got a snapshot - is told there is nothing to export instead of being handed an empty one.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Shared glass finish at the served boundary: Chromium must load /shared/ui/css/surface-glass.css from the real static mount AFTER the page's own data-model.css, and --oshal-glass-bg (defined only by that sheet) must resolve on :root. The page shipped without the link and the source-level glass specs went red; this case runs inside `npm run test:data-model`, the command the explorer's own work runs.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -193,6 +194,18 @@ describe('data-model explorer in the browser', { timeout: 60_000 }, () => {
     await page.waitForSelector('#exportNote:not([hidden])');
     expect(await page.locator('#exportNote').textContent()).toContain('has not loaded');
     expect(await page.locator('#exportPreview').isHidden()).toBe(true);
+    await page.context().close();
+  });
+
+  it('carries the shared glass finish, loaded after the explorer stylesheet', async () => {
+    const page = await open('the-operator');
+    await page.waitForSelector('#graph g.node');
+    const sheets = await page.evaluate(() => Array.from(document.styleSheets, (s) => (s.href ? new URL(s.href).pathname : '')));
+    expect(sheets).toContain('/data-model/data-model.css');
+    expect(sheets.indexOf('/shared/ui/css/surface-glass.css')).toBeGreaterThan(sheets.indexOf('/data-model/data-model.css'));
+    // Only surface-glass.css defines this token, so it resolves only if the served sheet actually applied.
+    const glassToken = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--oshal-glass-bg').trim());
+    expect(glassToken).not.toBe('');
     await page.context().close();
   });
 
