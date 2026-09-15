@@ -141,6 +141,12 @@ The guiding model is:
   - functional SPEC (target, not as-built): noise gate → consolidation → bundling → dispatch gates
     for the intelligent-processing self-healing intake, mined from the retired SRE platform's
     production-proven behavior and its documented traps (ADR-069 §2a source); done-when in BACKLOG
+- [operating-fluency-spec.md](./operating-fluency-spec.md)
+  - functional SPEC (proposed, not as-built): why work stalls without anything breaking —
+    125 refusal reason codes with no surface that aggregates them, and 45 catch blocks that
+    return a bare false. Stages a durable refusal store (the ADR-125 treatment, one layer up),
+    separates "denied" from "could not determine", makes a refusal carry its remedy, and only
+    then makes concierge coverage a manifest contract; pressure points P1-P8 carry done-when
 - [connectors-and-graph-architecture.md](./connectors-and-graph-architecture.md)
   - connector runtime + personal knowledge graph architecture
 - [connectors-tenant-isolation.md](./connectors-tenant-isolation.md)
