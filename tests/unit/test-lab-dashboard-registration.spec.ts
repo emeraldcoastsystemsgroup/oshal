@@ -2,6 +2,7 @@
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify actual dashboard coverage is registered and read-only readiness preserves unavailable/refused outcomes.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin the briefing settings client readiness step and the briefing asset suite in the registration.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin the two no-hosted-brain honesty suites (route-level integration and Chromium browser) in the registration.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
@@ -15,6 +16,8 @@ it('registers daily dashboard once with browser, Home lifecycle and HTTP asset c
   expect(registered[0].regressionTests).toEqual(expect.arrayContaining([
     { level: 'browser', path: 'tests/unit/jarvis-dashboard-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/jarvis-legacy-thread-browser.spec.ts' },
+    { level: 'browser', path: 'tests/unit/jarvis-no-brain-browser.spec.ts' },
+    { level: 'integration', path: 'tests/unit/jarvis-no-hosted-brain-honesty.spec.ts' },
     { level: 'browser', path: 'tests/unit/app-home-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/app-home-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-dashboard-assets.spec.ts' },

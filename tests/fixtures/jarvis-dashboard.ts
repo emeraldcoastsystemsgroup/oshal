@@ -5,8 +5,9 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Serve unchanged Jarvis markup and real client assets over isolated synthetic HTTP for dashboard proofs.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Let a case refuse chosen thread ids (or every ask) with the server's real session_not_found contract, so the page's roll-to-a-fresh-thread resend is proven at the HTTP boundary.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Optional real Jarvis router: a case can hand the page's ask traffic to the shipped route (mounted after the synthetic task/read routes, ahead of the synthetic conversation routes) so a failure the server produces is proven all the way to what the page renders and speaks. The read routes now register before conversation; the two sets share no path, so existing cases see no change.
  */
-import express, { type Express } from 'express';
+import express, { type Express, type RequestHandler } from 'express';
 import { resolve } from 'node:path';
 import { mkdtemp, writeFile, unlink, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -100,8 +101,17 @@ function dashboardReadRoutes(app: Express) {
   app.get('/api/jarvis/visuals/c94fc97a-2497-4eeb-8b89-0214e8f4629e', (_req, res) => res.type('svg').send('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#243854"/><text x="30" y="90" fill="white">Fixture visual</text></svg>'));
 }
 
-/** @description Start a disposable HTTP origin with real page/modules and synthetic service ports. @returns Fixture and explicit cleanup. */
-export async function startJarvisDashboardFixture() {
+/** Options for {@link startJarvisDashboardFixture}. */
+export interface DashboardFixtureOptions {
+  /** A real Jarvis router, already behind its identity rail, that answers the page's `/api/jarvis` ask
+   *  traffic instead of the synthetic conversation routes. Synthetic task and read routes still win. */
+  jarvisRouter?: RequestHandler;
+}
+
+/** @description Start a disposable HTTP origin with real page/modules and synthetic service ports.
+ * @param options - Optional real router for the ask path; omitted, every service port is synthetic.
+ * @returns Fixture and explicit cleanup. */
+export async function startJarvisDashboardFixture(options: DashboardFixtureOptions = {}) {
   const state = dashboardState(), app = express(); app.use(express.json());
   app.use('/cockpit/css/themes', express.static(resolve('src/pages/cockpit/css/themes')));
   attachJarvisBrowserAssets(app);
@@ -110,7 +120,9 @@ export async function startJarvisDashboardFixture() {
     res.sendFile(resolve('src/api/jarvis.html'));
   });
   app.get('/fixture-home', (_req, res) => res.send('<!doctype html><html data-theme="workspace"><body style="margin:0"><iframe title="Jarvis" allow="microphone; camera" src="/api/jarvis/?layout=compact" style="display:block;border:0;width:100%;height:100vh"></iframe></body></html>'));
-  dashboardTaskRoutes(app, state); dashboardConversationRoutes(app, state); dashboardReadRoutes(app);
+  dashboardTaskRoutes(app, state); dashboardReadRoutes(app);
+  if (options.jarvisRouter) app.use('/api/jarvis', options.jarvisRouter);
+  dashboardConversationRoutes(app, state);
   app.use((_req, res) => res.status(404).json({ error: 'fixture_unavailable' }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(done => server.once('listening', done));

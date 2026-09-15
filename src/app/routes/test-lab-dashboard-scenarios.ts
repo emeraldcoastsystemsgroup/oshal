@@ -3,6 +3,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register compact Home/Jarvis asset readiness and the actual navigation, browser and lifecycle regression suites.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Reuse the shared fixed-asset readiness reader with Profile and Access.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Read the briefing settings client through the real route on the running box (the baked image answered it as a JSON 404 the browser refused to run) and link the asset/roll-to-fresh-thread regression suites.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Link the no-hosted-brain honesty suites: the route-level guard over the real router and execution chokepoint, and the Chromium guard that the page writes and speaks the no-engine sentence while the briefing shelf still lists its row.
  */
 import type { Scenario } from './test-lab-scenarios';
 import { assetReadiness } from './test-lab-asset-readiness';
@@ -13,6 +14,8 @@ export const DASHBOARD_SCENARIOS: Scenario[] = [{
   regressionTests: [
     { level: 'browser', path: 'tests/unit/jarvis-dashboard-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/jarvis-legacy-thread-browser.spec.ts' },
+    { level: 'browser', path: 'tests/unit/jarvis-no-brain-browser.spec.ts' },
+    { level: 'integration', path: 'tests/unit/jarvis-no-hosted-brain-honesty.spec.ts' },
     { level: 'browser', path: 'tests/unit/app-home-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/app-home-plan.spec.ts' },
     { level: 'unit', path: 'tests/unit/app-home-customization.spec.ts' },

@@ -118,6 +118,13 @@
 
   let channels = ['email', 'sms', 'telegram', 'none'];
   let defaultChannel = 'none';
+  // Per channel, whose account would carry it for you — read from the route, never guessed here.
+  let tiers = {};
+  const ACCOUNT_KIND = {
+    own: 'your own account',
+    deployment: 'this deployment\'s service',
+    unavailable: 'unavailable, no account can send it yet',
+  };
 
   function say(text, bad) {
     $status.textContent = text;
@@ -136,13 +143,23 @@
     return Number.isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
   }
 
+  /**
+   * One channel option's label: the channel, and the account that would carry it for you (the
+   * route's per-channel tier). A tier the route did not report is left unsaid, not invented.
+   */
+  function channelLabel(c) {
+    if (c === 'none') return 'none (mute this topic)';
+    const kind = Object.prototype.hasOwnProperty.call(ACCOUNT_KIND, tiers[c]) ? ACCOUNT_KIND[tiers[c]] : '';
+    return kind ? c + ' — ' + kind : c;
+  }
+
   /** A <select> of the channel list the API returned (never a hardcoded list). */
   function channelSelect(selected) {
     const sel = document.createElement('select');
     for (const c of channels) {
       const opt = document.createElement('option');
       opt.value = c;
-      opt.textContent = c === 'none' ? 'none (mute this topic)' : c;
+      opt.textContent = channelLabel(c);
       if (c === selected) opt.selected = true;
       sel.appendChild(opt);
     }
@@ -356,6 +373,7 @@
     }
     channels = Array.isArray(data && data.channels) && data.channels.length ? data.channels : channels;
     defaultChannel = (data && data.defaultChannel) || 'none';
+    tiers = data && data.tiers && typeof data.tiers === 'object' ? data.tiers : {};
     bannerText();
 
     // Rebuild the "add" channel picker from the server's list.
@@ -363,7 +381,7 @@
     for (const c of channels) {
       const opt = document.createElement('option');
       opt.value = c;
-      opt.textContent = c === 'none' ? 'none (mute this topic)' : c;
+      opt.textContent = channelLabel(c);
       $newChannel.appendChild(opt);
     }
 

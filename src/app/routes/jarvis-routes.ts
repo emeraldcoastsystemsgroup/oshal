@@ -50,7 +50,8 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2/3: the deterministic ambient hook now answers open asks, weekly trends and person connections through the person-model front door (detectPersonModelIntent / answerPersonModelIntent); recall phrasing is unchanged. Net -2 code lines on this over-cap file.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Decomposition: the per-thread chat-ticket + session-task registration moves to jarvis-thread-tickets.ts, taking this file from 804 code lines to under the 800-line threshold; the person-model recall hook is untouched.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Emitted surface ops log op count, names (custom:<name>) and the target app + its declared custom names at INFO on the success path, so a BUG-18 custom-name mismatch is diagnosable from the api log alone.
- * 19 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted jarvis-speaker-profile-links.js in JARVIS_CLIENT_ASSETS: the Manage Voices → Ambient Recall bridge serves from the same authenticated /assets route as the other speaker siblings.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | No-hosted-brain honesty: the /ask catch runs describeJarvisAskFailure, so a turn whose user-brain ladder resolved to nothing on an unbrokered-harness bot records "Jarvis has no AI engine connected — add one under Settings → Connections → Bring Your Own LLM." with code NO_HOSTED_BRAIN, and /ask/result returns that code for the surface to speak. Every other failure keeps its own message and carries no code; the refusal, the ladder and the SEC-05 preflight are untouched.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted jarvis-speaker-profile-links.js in JARVIS_CLIENT_ASSETS: the Manage Voices → Ambient Recall bridge serves from the same authenticated /assets route as the other speaker siblings.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -137,6 +138,7 @@ import {
   storedFiles,
 } from './jarvis-task-store';
 import { threadTicketKey, ensureSessionTask, ensureThreadChatTicket, closeThreadChatTicket } from './jarvis-thread-tickets';
+import { describeJarvisAskFailure } from './jarvis-no-brain-notice';
 
 // ── Re-exports: keep the public surface the unit tests + external importers resolve from here. ──
 export {
@@ -259,6 +261,9 @@ interface AskJob {
     packageToolProposal?: JarvisPackageToolProposal;
   };
   error?: string;
+  // Machine code for a failure the surface answers specifically (today only NO_HOSTED_BRAIN): it lets
+  // the page SPEAK what is wrong instead of a contentless apology. Absent for ordinary failures.
+  code?: string;
   createdAt: number;
   finishedAt?: number;
 }
@@ -919,10 +924,14 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
           },
         });
       } catch (err) {
-        logger.error({ err }, 'jarvis ask failed');
+        // No admissible brain is not a mystery failure: the operator needs the Settings pointer, not
+        // whichever string reached this catch. Every other failure keeps its own message.
+        const failure = describeJarvisAskFailure(err);
+        logger.error({ err, code: failure.code ?? null }, 'jarvis ask failed');
         await markJarvisSessionTaskStatus(ctx, sessionId, 'failed');
         const j = askJobs.get(jobId);
-        askJobs.set(jobId, { sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'error', error: (err as Error).message, createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now() });
+        askJobs.set(jobId, { sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'error', error: failure.message,
+          ...(failure.code ? { code: failure.code } : {}), createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now() });
       }
     });
     res.status(202).json({ jobId, sessionId, chatTicketId });
@@ -953,7 +962,10 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     if (!job || job.sub !== sub || job.issuer !== resultIssuer(req)
       || !await canReadJarvisSession(ctx, sub, job.issuer, job.taskId, () => resultActor(req))) { res.json({ status: 'expired' }); return; }
     if (job.status === 'pending') { res.json({ status: 'pending', label: job.label }); return; }
-    if (job.status === 'error') { res.json({ status: 'error', error: job.error, label: job.label, taskId: job.taskId }); return; }
+    if (job.status === 'error') {
+      res.json({ status: 'error', error: job.error, ...(job.code ? { code: job.code } : {}), label: job.label, taskId: job.taskId });
+      return;
+    }
     const { packageToolProposal: pendingProposal, ...result } = job.result ?? {};
     const packageToolProposal = pendingProposal && packageTools ? await packageTools.readProposal(await resultActor(req), pendingProposal.id) : undefined;
     res.json({ status: 'done', label: job.label, taskId: job.taskId, ...result, ...(packageToolProposal ? { packageToolProposal } : {}) });

@@ -67,6 +67,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Registered the data-model explorer card (DATA_MODEL_SCENARIOS): a read-only operator step over /api/admin/data-model with its unit, integration and browser suites. Guard: tests/unit/data-model-test-lab-registration.spec.ts.
  * ---------------------------------------------------------------------------
  * Appearance | maintainer@emeraldcoastsystemsgroup.com | Register the read-only Workspace asset check and linked actual browser proof.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Registered the Notifications per-channel account tier card (NOTIFICATION_SCENARIOS): a read-only step over GET /api/notify/prefs with its route, page and sender suites. Guard: tests/unit/test-lab-notification-registration.spec.ts.
  * @module test-lab-scenarios
  */
 
@@ -80,6 +81,7 @@ import { AUTHORIZATION_SCENARIOS } from './test-lab-authorization-scenarios';
 import { AUTONOMOUS_SCENARIOS } from './test-lab-autonomous-scenarios';
 import { AMBIENT_SCENARIOS } from './test-lab-ambient-scenarios';
 import { DATA_MODEL_SCENARIOS } from './test-lab-data-model-scenarios';
+import { NOTIFICATION_SCENARIOS } from './test-lab-notification-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 
 const SELF_PORT = process.env.PORT || '5000';
@@ -240,6 +242,7 @@ export const SCENARIOS: Scenario[] = [
   ...AUTONOMOUS_SCENARIOS,
   ...AMBIENT_SCENARIOS,
   ...DATA_MODEL_SCENARIOS,
+  ...NOTIFICATION_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,
