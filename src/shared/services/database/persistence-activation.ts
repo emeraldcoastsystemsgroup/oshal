@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | BACKLOG "One slow boot drops the task, message and memory stores to in-memory for the life of the process": share the one shape a store's Postgres activation may be asked for again, so a transient boot failure degrades the next operation rather than the whole process lifetime.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Own the kept pool's idle-client errors. Keeping the pool is what makes a retry possible, and it also means this module is now the holder of a long-lived pg Pool: with no 'error' listener, an idle client whose connection dies is rethrown by EventEmitter as an uncaught exception and takes the api process down. Surfaced by the recovery guard, which raised two 'Connection terminated unexpectedly' exceptions when the fixture database went away under a recovered pool.
  */
 
 import type { Pool } from 'pg';
@@ -99,6 +100,18 @@ export function createPersistenceActivation(options: PersistenceActivationOption
     logger.info({ store }, 'Store persistence not configured; serving from memory by deployment shape');
     return { ready: async () => false, persistent: () => false };
   }
+
+  // Keeping the pool means owning its idle-client errors. `pg` emits 'error' on the Pool when an
+  // IDLE client's connection dies - a database restart, a network blip - after it has already
+  // discarded that client; the next acquire opens a fresh connection. With no listener,
+  // EventEmitter rethrows it as an uncaught exception and takes the process down, which is the
+  // bill for keeping a pool alive rather than ending it.
+  pool.on('error', error => {
+    logger.error(
+      { err: error, store },
+      'Idle Postgres client for this store errored; the pool has discarded it and the next operation opens a fresh connection',
+    );
+  });
 
   let persistent = false;
   let attempts = 0;

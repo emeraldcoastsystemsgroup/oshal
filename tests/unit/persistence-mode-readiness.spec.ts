@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the reporting surface for BACKLOG "One slow boot drops the task, message and memory stores to in-memory for the life of the process": a store serving from memory must be visible where an operator looks, and the activation must share one in-flight attempt, drop a failed one, and respect its cooldown.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The pool double records its listeners, so the subscription to the KEPT pool's idle-client errors is asserted rather than assumed - an unhandled pg Pool 'error' is an uncaught exception, and keeping the pool is what put this module in its path.
  */
 /**
  * What this file guards, and what it does NOT.
@@ -38,8 +39,20 @@ import {
 } from '@/shared/observability';
 import { buildReadinessReport, type ReadinessDeps } from '@/app/routes/readiness-routes';
 
-/** The activation only passes the pool to `activate`; nothing here touches a database. */
-const POOL = {} as Pool;
+/**
+ * The activation passes the pool to `activate` and subscribes to its 'error' event; nothing here
+ * touches a database. Recording the listeners is what lets the last case assert the subscription.
+ */
+function fakePool(): { pool: Pool; listeners: Map<string, Array<(error: unknown) => void>> } {
+  const listeners = new Map<string, Array<(error: unknown) => void>>();
+  const pool = {
+    on(event: string, handler: (error: unknown) => void) {
+      listeners.set(event, [...(listeners.get(event) ?? []), handler]);
+      return pool;
+    },
+  } as unknown as Pool;
+  return { pool, listeners };
+}
 
 /** A ReadinessDeps whose every other leg is deliberately green, so `persistence` is the variable. */
 function greenDeps(overrides: Partial<ReadinessDeps> = {}): ReadinessDeps {
@@ -81,7 +94,7 @@ describe('persistence activation', () => {
     let release = (): void => undefined;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const activation = createPersistenceActivation({
-      store: 'concurrent-store', pool: POOL, retryCooldownMs: 0,
+      store: 'concurrent-store', pool: fakePool().pool, retryCooldownMs: 0,
       activate: async () => { started += 1; await gate; },
     });
     const callers = [activation.ready(), activation.ready(), activation.ready()];
@@ -95,7 +108,7 @@ describe('persistence activation', () => {
   it('drops a FAILED attempt so the next caller retries, and records the store as memory meanwhile', async () => {
     let attempts = 0;
     const activation = createPersistenceActivation({
-      store: 'retrying-store', pool: POOL, retryCooldownMs: 0,
+      store: 'retrying-store', pool: fakePool().pool, retryCooldownMs: 0,
       activate: async () => {
         attempts += 1;
         if (attempts === 1) throw new Error('Connection terminated due to connection timeout');
@@ -118,13 +131,24 @@ describe('persistence activation', () => {
   it('holds off a retry for the cooldown, so a down database costs one connect attempt per window', async () => {
     let attempts = 0;
     const activation = createPersistenceActivation({
-      store: 'cooling-store', pool: POOL, retryCooldownMs: 60_000,
+      store: 'cooling-store', pool: fakePool().pool, retryCooldownMs: 60_000,
       activate: async () => { attempts += 1; throw new Error('ECONNREFUSED'); },
     });
     expect(await activation.ready()).toBe(false);
     expect(await activation.ready()).toBe(false);
     expect(await activation.ready()).toBe(false);
     expect(attempts).toBe(1);
+  });
+
+  it('subscribes to the kept pool so one idle-client error cannot take the process down', () => {
+    // `pg` emits 'error' on the Pool when an idle client's connection dies. Ending the pool used
+    // to make that unreachable for a degraded store; keeping it is what makes a retry possible,
+    // so this module has to own the event or EventEmitter rethrows it as an uncaught exception.
+    const { pool, listeners } = fakePool();
+    createPersistenceActivation({ store: 'kept-pool-store', pool, activate: async () => undefined });
+    const handlers = listeners.get('error') ?? [];
+    expect(handlers).toHaveLength(1);
+    expect(() => handlers[0]?.(new Error('Connection terminated unexpectedly'))).not.toThrow();
   });
 
   it('never retries, and is never degraded, when no Postgres is configured for the store', async () => {
