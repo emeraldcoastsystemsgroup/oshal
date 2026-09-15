@@ -6,9 +6,20 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted shared ticket-view helper utilities so the cockpit ticket surface can stay under the file cap while adding project reassignment controls
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserved canonical /app/workspace paths in cockpit detail views while mapping them back onto code-server /workspace links for operator navigation
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added selectEscalationDetail so an empty durable swarm_escalations lookup can no longer erase the escalation reason the ticket payload already carries from the recorded status transition
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | selectEscalationDetail preferred any durable record that named a reason, with nothing testing that the record belonged to the escalation on screen. The durable lookup is by ticket id and returns the ticket's newest record, so a ticket that escalated, de-escalated and escalated again explained its current escalation with a reason from the run that had already closed. Date the durable record against the current escalation and drop one written before it, so an escalation that recorded nothing says so instead of borrowing an old answer.
  */
 
 import { getStatusLabel } from '../utils/formatters.js';
+
+// A durable swarm_escalations row is written immediately BEFORE the status transition it
+// causes, so a record that genuinely explains the escalation on screen still predates it.
+// Measured over all 24 escalated-ticket/newest-record pairs on the operator's database:
+// same-run records lead their transition by 8-59 ms and never trail it, while the closest
+// leftover from a run that had already closed predates the current escalation by 13.6 s
+// and the other seven by 11 hours to 1.4 days. One second sits ~17x above the largest real
+// lead and ~13x below the smallest stale gap, so it absorbs the write ordering without
+// ever reaching back into a run that is over.
+const DURABLE_RECORD_WRITE_LEAD_MS = 1000;
 
 /**
  * @description Valid cockpit ticket lifecycle transitions keyed by canonical internal state.
@@ -252,21 +263,80 @@ export function extractErrorMessage(error) {
  * @description Chooses which escalation record the detail panel should render.
  * A durable swarm escalation record is the richer of the two (it carries target,
  * retry class and the verification attempt snapshot) so it wins when it names a
- * reason. Otherwise the detail the escalating transition recorded is used — an
- * escalation raised outside a swarm run never produces a durable record, and a
- * null durable lookup must not erase the reason the transition did record.
+ * reason — but only when it belongs to the escalation on screen. That lookup is by
+ * ticket id and returns the ticket's NEWEST record, so a ticket that escalated, was
+ * de-escalated and escalated again still has the closed run's record to hand. A record
+ * written before the current escalation is therefore dropped before precedence is
+ * applied, and what remains follows the original rule: the durable record when it names
+ * a reason, otherwise the detail the escalating transition recorded — an escalation
+ * raised outside a swarm run never produces a durable record, and a null durable lookup
+ * must not erase the reason the transition did record. When dropping a stale record
+ * leaves nothing, "no reason was recorded" is the honest answer; the old reason
+ * presented as the current one is the dishonest one.
  * @param {Record<string, unknown> | null | undefined} recordedDetail - Escalation detail from the ticket payload.
  * @param {Record<string, unknown> | null | undefined} durableRecord - Record from the durable escalation store.
- * @returns {Record<string, unknown> | null} The record to render, or null when neither exists.
+ * @param {string | null | undefined} escalatedAt - When the ticket's current escalation was recorded.
+ * @returns {Record<string, unknown> | null} The record to render, or null when none applies.
  */
-export function selectEscalationDetail(recordedDetail, durableRecord) {
-  const durableReason = typeof durableRecord?.reason === 'string' ? durableRecord.reason.trim() : '';
-  if (durableReason) {
-    return durableRecord;
+export function selectEscalationDetail(recordedDetail, durableRecord, escalatedAt) {
+  const escalatedAtMs = readEscalationTimestamp(recordedDetail, escalatedAt);
+  const currentDurable = precedesEscalation(durableRecord, escalatedAtMs) ? null : durableRecord;
+
+  if (readEscalationReason(currentDurable)) {
+    return currentDurable;
   }
-  const recordedReason = typeof recordedDetail?.reason === 'string' ? recordedDetail.reason.trim() : '';
-  if (recordedReason) {
+  if (readEscalationReason(recordedDetail)) {
     return recordedDetail;
   }
-  return durableRecord || recordedDetail || null;
+  return currentDurable || recordedDetail || null;
+}
+
+/**
+ * @description Reads a trimmed reason string off either escalation record shape.
+ * @param {Record<string, unknown> | null | undefined} record - Escalation record.
+ * @returns {string} The reason, or '' when the record names none.
+ */
+function readEscalationReason(record) {
+  return typeof record?.reason === 'string' ? record.reason.trim() : '';
+}
+
+/**
+ * @description Resolves when the ticket's current escalation was recorded. The payload's
+ * `escalatedAt` answers even when that escalation recorded no reason — which is exactly
+ * the case a leftover record hides behind. The recorded detail carries the same
+ * transition's date and stands in for callers that pass no `escalatedAt`.
+ * @param {Record<string, unknown> | null | undefined} recordedDetail - Escalation detail from the ticket payload.
+ * @param {string | null | undefined} escalatedAt - When the ticket's current escalation was recorded.
+ * @returns {number} Epoch milliseconds, or 0 when the escalation cannot be dated.
+ */
+function readEscalationTimestamp(recordedDetail, escalatedAt) {
+  return parseTimestamp(escalatedAt) || parseTimestamp(recordedDetail?.createdAt);
+}
+
+/**
+ * @description Tests whether a durable record was written before the current escalation,
+ * allowing for the record being written just ahead of the transition it causes. An
+ * undatable record or an undatable escalation is not evidence of staleness, so either
+ * leaves the record in play and preserves the behaviour callers had before dates were
+ * compared at all.
+ * @param {Record<string, unknown> | null | undefined} durableRecord - Record from the durable escalation store.
+ * @param {number} escalatedAtMs - Epoch milliseconds the current escalation was recorded, or 0.
+ * @returns {boolean} True when the record was written for an earlier run.
+ */
+function precedesEscalation(durableRecord, escalatedAtMs) {
+  const durableAt = parseTimestamp(durableRecord?.createdAt);
+  if (!durableAt || !escalatedAtMs) {
+    return false;
+  }
+  return durableAt < escalatedAtMs - DURABLE_RECORD_WRITE_LEAD_MS;
+}
+
+/**
+ * @description Parses a recorded timestamp into epoch milliseconds.
+ * @param {unknown} value - Timestamp candidate.
+ * @returns {number} Epoch milliseconds, or 0 when the value is not a usable date.
+ */
+function parseTimestamp(value) {
+  const parsed = typeof value === 'string' ? Date.parse(value.trim()) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
 }
