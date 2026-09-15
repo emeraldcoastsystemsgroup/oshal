@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The engine's OWN average cost per position, replayed from its own filled orders, so a stop-loss can tell a real loss from a wash-sale artifact. Schwab reports the wash-sale-adjusted basis; on 2026-09-14 the live book stop-lossed 10 names and all 10 were within 5% of what the engine had actually paid (two were up). Book-scoped by (user_sub, book_id) because the paper and live books trade the same symbols at different fills — replaying them together produces a basis neither book ever had. Trusted only when the replayed quantity equals the venue quantity.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159: a long the ledger does not cover is now MARKED `unmanaged` instead of being returned unchanged, and the attachment log line carries the count. The engine reads the venue's positions, so a share bought by hand lands in the armed book and acquires an engine decision measured against a basis the engine never paid. The mark is what lets every order-decision path withhold for it while exposure, capital and drawdown keep counting it. A failed read still degrades to "no engine basis" and marks NOTHING, so a database blip cannot silently unmanage a whole book.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Price realized P&L on the engine's own cost: replayEngineRealized (pure, per sell, same average-cost reset-on-flat replay) and engineRealizedForBook (book-scoped read). The stored realized_pnl uses the venue's wash-sale-adjusted average and counts each disallowed loss twice (-6,451.61 against -1,540.50 of actual cash on the live book's flat names); reports read this instead. A sell the ledger cannot cover gets no figure rather than a guessed one. No decision path reads realized P&L, and none changes here.
  */
 
@@ -85,15 +86,20 @@ export function engineCostBasisFor(replay: EngineCostReplay, venueQty: number): 
  *
  * Reads THIS book's filled orders only — `(user_sub, book_id)`, the same key every other book-scoped
  * trading store uses (ADR-134) — because replaying the paper and live books together yields a basis
- * neither book ever had. Positions the engine cannot fully account for are returned unchanged. A
- * failed read degrades to "no engine basis" and logs, so the stop decision falls back to the venue
- * rather than the autopilot losing a fire.
+ * neither book ever had.
+ *
+ * ADR-159: a long the ledger does NOT cover is marked `unmanaged` rather than returned unchanged.
+ * That mark is the single definition of "the engine cannot account for this" — no second heuristic,
+ * no second source of truth — and every order-decision path reads it. A failed read degrades to "no
+ * engine basis" and marks nothing, so the stop decision falls back to the venue exactly as it does
+ * today rather than a database blip silently unmanaging the whole book.
  *
  * @param ctx - App context (pool).
  * @param sub - Owner sub.
  * @param bookOrMode - The book, or the legacy mode (normalizes to its legacy book).
  * @param positions - Venue positions for this book.
- * @returns The positions, with `engineAvgCost` set where the engine's ledger covers them.
+ * @returns The positions, with `engineAvgCost` set on every long the engine's ledger covers and
+ * `unmanaged: true` on every long it does not.
  */
 export async function withEngineCostBasis(
   ctx: Pick<AppContext, 'pool'>, sub: string, bookOrMode: TradingBook | TradingMode, positions: Position[],
@@ -122,14 +128,22 @@ export async function withEngineCostBasis(
     bySymbol.set(r.symbol, list);
   }
   let covered = 0;
+  let unmanaged = 0;
   const out = positions.map((p) => {
     if (!(p.qty > 0)) return p;
     const basis = engineCostBasisFor(replayEngineCost(bySymbol.get(p.symbol.toUpperCase()) ?? []), p.qty);
-    if (basis === undefined) return p;
+    // No basis = the engine's own fills do not account for this quantity (shares bought outside it,
+    // or a ledger that no longer explains the holding). ADR-159: monitored, never managed.
+    if (basis === undefined) {
+      unmanaged += 1;
+      return { ...p, unmanaged: true };
+    }
     covered += 1;
     return { ...p, engineAvgCost: basis };
   });
-  logger.info({ bookId: book.bookId, longs: longs.length, covered, ms: Date.now() - started }, 'engine cost basis attached');
+  // `unmanaged` rides this line so a ledger-drift bug that wrongly unmanages a covered position is
+  // visible in the stream instead of silently costing the book its protective exits.
+  logger.info({ bookId: book.bookId, longs: longs.length, covered, unmanaged, ms: Date.now() - started }, 'engine cost basis attached');
   return out;
 }
 

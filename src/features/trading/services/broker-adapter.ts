@@ -30,6 +30,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Futures extension (ADR-116): add 'tradovate' (the intended live futures rail) and 'paper' (the built-in vendor-neutral paper simulator) to BrokerProviderType so PaperFuturesBrokerAdapter can implement this same contract for the futures asset class. Equities rails and equity-only order semantics are unchanged; the futures adapter carries its own multiplier/short handling.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | TradingBook (ADR-134 multi-account books): the account-scoped book contract every ledger write, guard, and adapter binding keys on. Legacy books carry refs 'paper'/'live' so derived id text stays byte-identical; NULL binding fields mean today's legacy resolution exactly.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Cash-account settlement (ADR-134 D8): BrokerAccount gains optional accountType ('cash'|'margin'), settledCash and unsettledCash — the venue's own settlement facts, surfaced by the adapters that expose them (Schwab); TradingBook gains optional accountType (from the bound account's discovered type) and settlementPolicy (the per-book refuse|warn override). All optional so every existing literal keeps compiling and paper/margin behavior is byte-identical.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Add Position.unmanaged (ADR-159): the engine manages only what it can account for from its own filled orders. withEngineCostBasis sets it on every long its ledger does not fully cover - a share bought outside the engine, or a holding whose history the ledger no longer explains. The flag is what the order-decision paths read; its absence is never inferred from a missing engineAvgCost, so a position that never passed through the attachment (the strategy-lab replay) keeps today's behaviour.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add Position.engineAvgCost: the engine's own replayed average cost, present only when its ledger accounts for the whole venue quantity. avgEntryPrice stays exactly what the venue reports; Schwab's is the wash-sale-adjusted basis.
  *
  * @module broker-adapter
@@ -188,6 +189,18 @@ export interface Position {
    * engine's money never took. Consumed only as a veto on stop-losses (see `exitsToRun`).
    */
   engineAvgCost?: number;
+  /**
+   * ADR-159 - the engine cannot account for this position from its OWN filled orders, so it is
+   * monitored but not managed: no stop, no take-profit, no trailing exit, no rebalance trim and no
+   * entry that adds to it. Set by `withEngineCostBasis` on every long whose quantity the engine's
+   * book-scoped ledger does not exactly cover (shares bought outside the engine, or a holding the
+   * ledger no longer explains); partial coverage counts as uncovered, because selling 100 shares on
+   * a 40-share basis is the same defect in a different shape. Its market value still counts toward
+   * exposure, capital and drawdown - it is real money at the venue, and hiding it would understate
+   * risk. Absent on a position the attachment never saw, which keeps that position's behaviour as
+   * it is today.
+   */
+  unmanaged?: boolean;
 }
 
 /** Account equity time-series for the performance/vs-market view. */

@@ -22,6 +22,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | symbolBlocklist (TRADING_SYMBOL_BLOCKLIST): operator standing exclusions the engine can never buy — "drop MRNA" said repeatedly had no enforceable home; the engine re-bought whatever ranked. Exits deliberately unaffected.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | PolicyOverride param on riskPolicy (ADR-095 Strategy Library apply-to-profile): an applied lab strategy's posture beats both env postures, and its takeProfitPct (including an explicit null = posture default) beats TRADING_TAKE_PROFIT_PCT. No override → behavior unchanged.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SECTOR entries for the 19 regime-reweight names (universe 140 → 159): new 'materials' bucket (mining/chemicals/steel get their own cap headroom, not riding under 'consumer' industrials) and new 'storage' bucket for the memory/NAND pool — MU and SKHY MOVE into it from 'tech'/'other' so storage crowding is capped as one trade, not hidden under tech headroom.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — exitsToRun, trailingExits and rebalanceTrims emit NOTHING for a position marked `unmanaged` (the engine's own filled orders do not account for the quantity held), and unmanagedSymbols exposes that same rule to the dispatch legs. The engine reads the VENUE's positions, so a share bought by hand is picked up and traded against a basis the engine never paid. Withholding only ever REMOVES a decision from the plan; a position without the mark is byte-identical to today, which keeps the strategy-lab replay and every other caller that never runs the attachment unchanged. Exposure, capital and drawdown deliberately keep counting the position — it is real money at the venue.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Veto a stop-loss that exists only because the venue reports a wash-sale-adjusted basis (washSaleStopVetoed). On 2026-09-14 the live book stop-lossed 10 names and all 10 were within 5% of what the engine had paid - CRM read -5.07% while trading +3.24% above its own buy. The veto can only SUPPRESS a stop the venue basis already wanted; it never creates one, and take-profit, trailing and cap trims are unchanged.
  *
  * @module portfolio
@@ -163,6 +164,18 @@ export const SECTOR: Record<string, string> = Object.fromEntries([
 /** @description The sector for a symbol (default universe), or 'other'. */
 export function sectorOf(symbol: string): string { return SECTOR[symbol.toUpperCase()] || 'other'; }
 
+/**
+ * @description The UPPERCASE symbols of the open longs the engine cannot account for from its own
+ * filled orders (ADR-159), so the dispatch legs that place orders outside this module read the same
+ * single rule the exit functions do rather than re-deriving it. The mark itself is attached by
+ * `withEngineCostBasis`; this never infers it.
+ * @param positions - Current positions.
+ * @returns The unmanaged held symbols (empty when every long is accounted for).
+ */
+export function unmanagedSymbols(positions: Position[]): Set<string> {
+  return new Set(positions.filter((p) => p.qty > 0 && p.unmanaged === true).map((p) => p.symbol.toUpperCase()));
+}
+
 /** A protective exit the manager wants to take right now. */
 export interface ExitOrder { symbol: string; qty: number; reason: 'stop_loss' | 'take_profit' | 'trailing_stop' | 'rotation' | 'cap_trim' | 'ext_dip'; pnlPct: number; }
 
@@ -201,6 +214,9 @@ export interface NameStrength { score: number; action: 'buy' | 'sell' | 'hold'; 
 /**
  * @description Protective exits across open longs: sell anything down past stop-loss or up past
  * take-profit. This is the standing "manage the money" loop, run every cycle before new entries.
+ *
+ * ADR-159: a position marked `unmanaged` gets NO exit. Its stop would be measured against a basis
+ * the engine never paid, so the honest answer is to leave it alone and say so on the row.
  * @param positions - Current open positions.
  * @param policy - Active risk policy.
  * @returns The exits to place (whole-share sells).
@@ -209,6 +225,7 @@ export function exitsToRun(positions: Position[], policy: RiskPolicy, stopMult =
   const exits: ExitOrder[] = [];
   for (const p of positions) {
     if (!(p.qty > 0)) continue; // v1 manages long book only
+    if (p.unmanaged) continue;  // ADR-159: no engine basis for this quantity → no engine decision
     const cost = p.avgEntryPrice * p.qty;
     if (!(cost > 0)) continue;
     const pnlPct = (p.unrealizedPl / cost) * 100;
@@ -274,6 +291,9 @@ export function nextPeaks(positions: Position[], peaks: Map<string, number>): Ma
  * @description Trailing-stop exits: a winner ARMS once it is up trailArmPct from entry, then is sold
  * if it gives back trailGivebackPct from its peak. Locks in gains on a reversal (the news-crash after
  * a run-up) while leaving room for normal wiggle — adds sell trades without micro-churn.
+ *
+ * ADR-159: a position marked `unmanaged` never trails — the gain it would be locking in is measured
+ * from an entry price the engine did not pay.
  * @param positions - Current open positions (need currentPrice + avgEntryPrice).
  * @param peaks - The rolled-forward peak per symbol (see nextPeaks).
  * @param policy - Active risk policy.
@@ -283,6 +303,7 @@ export function trailingExits(positions: Position[], peaks: Map<string, number>,
   const exits: ExitOrder[] = [];
   for (const p of positions) {
     if (!(p.qty > 0) || !(p.avgEntryPrice > 0)) continue;
+    if (p.unmanaged) continue;  // ADR-159: no engine basis for this quantity → no engine decision
     const cur = p.currentPrice ?? 0;
     if (!(cur > 0)) continue; // no live price → can't trail this fire
     const sym = p.symbol.toUpperCase();
@@ -304,6 +325,9 @@ export function trailingExits(positions: Position[], peaks: Map<string, number>,
  * ENTRY (sizeEntry), so a name that pyramided (the pre-market working-order bug) or simply ran up could
  * sit well over its cap indefinitely — concentration risk the exits never addressed. Partial sell of
  * just the excess shares; leaves the capped core in place. Needs currentPrice to value + price the trim.
+ *
+ * ADR-159: a position marked `unmanaged` is never trimmed. Its market value still counts toward the
+ * cap base through `equity`, so the OTHER names' trims are unchanged — only its own is withheld.
  * @param positions - Current open positions.
  * @param equity - Account equity (the cap base).
  * @param policy - Active risk policy.
@@ -315,6 +339,7 @@ export function rebalanceTrims(positions: Position[], equity: number, policy: Ri
   const trims: ExitOrder[] = [];
   for (const p of positions) {
     if (!(p.qty > 0)) continue;
+    if (p.unmanaged) continue;  // ADR-159: no engine basis for this quantity → no engine decision
     const price = p.currentPrice ?? p.avgEntryPrice;
     if (!(price > 0)) continue;
     const mktVal = p.marketValue > 0 ? p.marketValue : p.qty * price;

@@ -899,14 +899,21 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   against −$9,697.53 stored by the venue; the 4 sells with no engine basis are all USO. The paper
   book — no wash-sale adjustments — agrees within ~5 % (−$6,797.57 against −$7,181.90), which is what
   shows the live gap is the venue’s adjusted basis rather than a replay defect.
-- **Done when:** a long position with no `engineAvgCost` is marked unmanaged and `exitsToRun`,
-  `trailingExits` and `rebalanceTrims` (`src/features/trading/services/portfolio.ts:208, 282, 312`)
-  emit nothing for it while remaining unchanged for a covered position, proven red-before-green by a
-  spec that also covers the partially-covered case; the autopilot entry path does not add to an
-  unmanaged holding; exposure and capital still count it; the cost-basis log line carries the
-  unmanaged count; the trading surface shows the flag and the reason on the row and in place of an
-  exit that will not fire; and on the box the operator sees USO flagged with no engine order emitted
-  for it after a deploy.
+- **Core — done:** `withEngineCostBasis` marks every long its own filled orders do not cover
+  `Position.unmanaged` (partial coverage counts as uncovered) and carries the count on the
+  `engine cost basis attached` line; `runAutopilot` applies the mark ONCE, right after the
+  protected-lot overlay, so the core leg, the exits and the rotation all read it; `exitsToRun`,
+  `trailingExits` and `rebalanceTrims` emit nothing for a marked position and are unchanged for a
+  covered one; the beta-core top-up and both rotation paths withhold their buy, their trim and their
+  drop-out sell for one, reserving the withheld buy's dollars so no other name's order can grow.
+  Exposure, capital, the per-name/sector/deployed caps and the daily-loss halt still count it. Guards:
+  `tests/unit/trading-unmanaged-positions.spec.ts`, `tests/unit/trading-unmanaged-entry-paths.spec.ts`,
+  the `unmanaged` cases in `tests/unit/trading-engine-cost-basis-postgres.spec.ts`, and the golden
+  dispatch plan, whose fixture now seeds the engine's own covering fills (without them the same fire
+  withholds 4 of its 6 orders, which is the integrated proof that the rule only ever removes orders).
+- **Done when:** the trading surface shows the flag and the reason on the row and in place of an exit
+  that will not fire; and on the box the operator sees USO flagged with no engine order emitted for it
+  after a deploy.
 ## Video, character, and creative automation
 
 ### Video Series conductor live acceptance

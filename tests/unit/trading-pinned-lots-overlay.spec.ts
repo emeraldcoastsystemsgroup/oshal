@@ -60,13 +60,18 @@ describe('source guards — the hooks exist where they must', () => {
   const engine = readFileSync(path.resolve(__dirname, '../../src/app/trading-engine.ts'), 'utf8');
 
   it('the dispatcher applies the overlay right after the positions read, fail-closed, before any consumer', () => {
-    const overlay = dispatch.indexOf('const positions = subtractPinnedLots(positionsRead.positions, pinnedRead.m);');
+    const overlay = dispatch.indexOf('const overlaid = subtractPinnedLots(positionsRead.positions, pinnedRead.m);');
     expect(overlay).toBeGreaterThan(0);
     expect(dispatch.slice(0, overlay)).toMatch(/if \(!pinnedRead\.ok\) \{[\s\S]{0,400}return \{ scanned: 0/);
+    // ADR-159 threads the overlaid array through the cost-basis mark; `positions` — what every leg
+    // reads — is that marked array, so the overlay still precedes every consumer.
+    const marked = dispatch.indexOf('const positions = await withEngineCostBasis(ctx, sub, book, overlaid);');
+    expect(marked, 'the unmanaged mark must be applied to the OVERLAID array').toBeGreaterThan(overlay);
     for (const consumer of ['ensureCore(ctx, sub, book, account, positions', 'computeExits(ctx, sub, book, positions', 'rotateSleeve(ctx, sub, book, account, positions']) {
-      expect(dispatch.indexOf(consumer), `${consumer} must run AFTER the overlay`).toBeGreaterThan(overlay);
+      expect(dispatch.indexOf(consumer), `${consumer} must run AFTER the overlay`).toBeGreaterThan(marked);
     }
     expect(dispatch).not.toMatch(/const positions = positionsRead\.positions;/);
+    expect(dispatch).not.toMatch(/const overlaid = positionsRead\.positions;/);
   });
   it('freeStaleSells never cancels a protected lot\'s exit orders', () => {
     expect(dispatch).toMatch(/SELECT broker_order_id, symbol, client_order_id FROM oshal_trading_orders/);
