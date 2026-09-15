@@ -1216,12 +1216,31 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   gives an index scan), the newest `world_metrics` chunk holds 3.1 M rows / 681 MB and `world_items`
   1.76 M rows / 2.3 GB, the Docker VM one-minute load was 29 on 8 CPUs, and `app_world-ticker-pulse` logged
   `Schedule dispatch timed out — abandoning to unblock the runner` six times in ten minutes. The 18:10Z
-  watchdog note in the coordination thread recorded the same timeouts under a different load spike. Not
-  measured: whether the 19 sessions are one pulse's fan-out or overlapping pulses.
-- **Done when:** the pulse's per-entity reads run under a bounded concurrency, or through a rollup read
-  that does not scan per entity; the ticker pulse completes inside its window on this box with the full
-  name set; and the pulse log records the entity count and wall time, so a regression is visible without
-  `pg_stat_activity`.
+  watchdog note in the coordination thread recorded the same timeouts under a different load spike.
+- **Root cause, established from source:** one pulse touches **184 entities** (`DEFAULT_UNIVERSE`'s 159
+  symbols plus the 25 `MARKET_SUBJECTS`, `world-schedule-dispatch.ts` `dispatchWorldSchedule`) and rolls
+  features up for every one of them, four indexed aggregates each. The only bound was a compiled-in
+  `FEATURE_ROLLUP_CONCURRENCY = 8` inside a single `mapPool`, and `schedule-service.ts:320-327`
+  **abandons** a dispatch that overruns rather than cancelling it — "the underlying promise is left to
+  settle on its own" — so an overrunning pulse keeps its fan-out running while the next one starts.
+  Each rolled-up entity holds one statement open at a time, so one fire puts at most 8 aggregates on the
+  store and N overlapping fires put 8N. Still not measured: whether the 19 sessions were two fires plus
+  other readers or three fires — the source establishes only that nothing bounded the sum, which is the
+  defect either way.
+- **Fixed (PR, not yet deployed):** (a) a process-wide bounded gate in front of every world series read
+  (`src/features/world-data/world-series-gate.ts`, `WORLD_SERIES_READ_CONCURRENCY`, default 4) — it holds
+  across overlapping fires, which a per-run limit structurally cannot; (b) identical in-flight reads
+  (same entity, metric, window) coalesce onto one statement; (c) the rollup's whole-day sentiment
+  windows read `world_metrics_daily`, which carries `source`, instead of scanning the stream per source —
+  read-only `EXPLAIN (ANALYZE)` on the live store: 786 ms planning + 366 ms execution for the 24 h stream
+  read and 810 + 651 for the 168 h one, against 245 + 16 and 303 + 20 for the same answers off the head;
+  (d) the pulse logs entity count, statements issued, statements coalesced and wall time at INFO and
+  WARNs above a configured fraction of its window (`WORLD_PULSE_WINDOW_MS`, `WORLD_PULSE_WARN_FRACTION`).
+  Guards: `tests/unit/world-series-read-gate.spec.ts` (proven red with the gate bypassed — max in-flight
+  12 against a bound of 3, and four sentiment statements for two answers).
+- **Done when:** the ticker pulse completes inside its window on this box with the full name set, with
+  the World app re-enabled after the fix deploys, and the pulse's own `elapsedMs` / `seriesStatements`
+  record shows it — the one remaining item, and it is the coordinator's after deploy.
 
 ## Application-package follow-ups
 
