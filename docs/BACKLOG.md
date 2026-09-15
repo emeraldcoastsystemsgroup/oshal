@@ -533,6 +533,33 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** model provider-native embedded tools beside framework-registry and harness-native tools with per-agent policy and audit semantics.
 - **Done when:** an agent can enable/disable a named embedded tool, denied use fails at execution, and the run trace identifies the tier and provider operation.
 
+### A queued bot dispatch has no recorded-delegation issuer, so the ADR-149 remote path always refuses (2026-09-15)
+- **Observed:** the operator asked a trading question at 00:51:01Z; it became ticket
+  `aaa86e48-eaca-4977-b77f-bbffed0a6ca2` (`task`, title "yes but how much did we make or loose") and
+  `dispatch-manifest-worker` failed with `authorization_recorded_delegation_required`. The ticket is
+  sitting `escalated` in the cockpit with no answer. One occurrence in 24 h — the only dispatch that
+  reached this path in that window.
+- **Mechanism:** `BotNodeClient.prepareRemoteDispatch`
+  (`src/features/agent-management/services/bot-node-client.ts:411-418`) asks the application
+  remote-execution authority to `prepare()` the dispatch and then throws
+  `authorization_recorded_delegation_required` when `prepared && !this.recordedDelegationIssuer`. The
+  issuer is an optional constructor option (line 318), and **no construction site supplies it**: all
+  five `new BotNodeClient(...)` calls under `src/app` (composition-root.ts:180,
+  extensions/swarm/index.ts:689 and :801, ambient-enrichment-runtime.ts:101,
+  home-schedule-dispatch.ts:36) pass only an endpoint resolver. So whenever an authority IS registered
+  and returns a prepared execution, the dispatch cannot proceed — one half of the ADR-149 remote path
+  is wired and the other is not.
+- **Not established:** which dispatches reach a non-null `prepare()` (the rarity suggests most do not),
+  and whether the issuer was meant to be constructed here or injected by the feature that registers the
+  authority. Read
+  [remote application execution](security/remote-application-execution.md) before choosing.
+- **Done when:** a queued dispatch that the authority prepares completes with a recorded delegation
+  under the asking user's authority, or is refused for a reason that names what the operator must do;
+  the operator's question above (or an equivalent re-ask) returns an answer instead of escalating; a
+  spec drives the prepared path through the real client and proves both the success and the refusal
+  shapes; and the five construction sites either all supply an issuer or the option stops being
+  optional so a missing one is a compile error rather than a run-time throw.
+
 ## Connectors, channels, and external systems
 
 ### Connector OAuth started from a themed subdomain dies at the callback
@@ -1565,6 +1592,16 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   381 MB free at 01:37 UTC, and the Docker VM's one-minute load was 22 at 02:22 and 133 at 02:36
   on 8 CPUs while other lanes held their own rebuilds. Until those cases run, the browser profile
   is proven only against mocked boundaries and must not be described as working.
+- **Deployed half verified 2026-09-15 00:35Z** (image `651c503a44c4`, the `aba0e31f` deploy): the two
+  shared fixtures the `harness:core-test-fixtures` prerequisite needs are IN the running image at
+  `/app/tests/fixtures/` (isolated-browser.ts 4,624 B, stl-viewer.ts 8,654 B) and load through the
+  image’s own tsx exactly as the runner probe loads them (`require("tsx/cjs")` then the fixture;
+  exports `closeOwnedBrowser, launchIsolatedBrowser, observeBrowserExit`). That is the staging and
+  probe mechanism only. The three store cases that declare the prerequisite (cad-studio
+  surface-lifecycle, embodied surface-browser, scan-to-print surface-freshness) still report
+  `pending` on the HOST batch runner by design — it supplies disposable offline fixtures only — so
+  the sealed-sandbox run remains the open proof, and the Test Lab route refuses a service identity
+  under ADR-149, which is why it needs the operator’s signed-in session.
 - **Run it with:** `npx vitest run tests/unit/package-test-sandbox.spec.ts -t "browser profile|browser environment"`
   from the core checkout, with Docker up and `oshal-bot:latest` present, when the Docker VM's
   one-minute load is below 6 (read it with `docker exec oshal-local-api cut -d' ' -f1-3 /proc/loadavg`).
