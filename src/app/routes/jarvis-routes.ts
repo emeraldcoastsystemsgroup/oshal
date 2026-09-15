@@ -15,6 +15,7 @@
  *   - jarvis-tool-catalog.ts        — the auto tool-feed + the image-deliverable contract.
  *   - jarvis-overview.ts            — the Command Center glance panels.
  *   - jarvis-task-store.ts          — the durable jarvis_tasks store + turn persistence.
+ *   - jarvis-thread-tickets.ts      — the per-thread chat-ticket + session-task registration.
  *
  * The public symbols those siblings own are RE-EXPORTED from here so existing importers and the unit
  * tests keep resolving them from `jarvis-routes` unchanged.
@@ -47,6 +48,8 @@
  *
  * @module jarvis-routes
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2/3: the deterministic ambient hook now answers open asks, weekly trends and person connections through the person-model front door (detectPersonModelIntent / answerPersonModelIntent); recall phrasing is unchanged. Net -2 code lines on this over-cap file.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Decomposition: the per-thread chat-ticket + session-task registration moves to jarvis-thread-tickets.ts, taking this file from 804 code lines to under the 800-line threshold; the person-model recall hook is untouched.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Emitted surface ops log op count, names (custom:<name>) and the target app + its declared custom names at INFO on the success path, so a BUG-18 custom-name mismatch is diagnosable from the api log alone.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -62,7 +65,6 @@ import {
   rejectLegacyServiceIdentityForUserRead,
 } from '@/features/security';
 import type { AppContext } from '@/app/composition/app-context';
-import type { InternalTicket } from '@/entities/ticket';
 import {
   VisualResponseService,
   inferVisualSpec,
@@ -118,7 +120,6 @@ import { resolveJarvisPackageToolDirective } from './jarvis-package-tool-directi
 import type { JarvisPackageToolDiscovery, JarvisPackageToolProposal, JarvisPackageToolService } from './jarvis-package-tool-service';
 import { getApplicationAuthorizationActor, runWithApplicationAuthorizationActor } from '@/shared/application-authorization-context';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
-import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY, readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import { runWithRemoteExecutionResults } from '@/shared/remote-execution-results';
 import { persistProtectedResultTask } from './protected-result-persistence';
 import { canReadJarvisSession, filterJarvisResultRows, hasProtectedJarvisSource } from './jarvis-result-access';
@@ -134,6 +135,7 @@ import {
   storedVisual,
   storedFiles,
 } from './jarvis-task-store';
+import { threadTicketKey, ensureSessionTask, ensureThreadChatTicket, closeThreadChatTicket } from './jarvis-thread-tickets';
 
 // ── Re-exports: keep the public surface the unit tests + external importers resolve from here. ──
 export {
@@ -195,6 +197,11 @@ function registerLegacyReadContainment(router: Router): void {
  *  owner the queue manager resolves by call-out — Jarvis never names a bot. */
 function ticketTypeForHandoff(h: Pick<HandoffDirective, 'platform'>): string {
   return h.platform ? 'oshal-dev' : 'task';
+}
+
+/** The identifier a surface actually matches on: `custom:<name>` for a custom op, else the op. */
+function describeSurfaceOp(op: SurfaceDirectiveOp): string {
+  return op.op === 'custom' ? `custom:${op.name}` : op.op;
 }
 
 /** Caller's sub: independently authenticated user first, verified SEC-01 delegation second, then
@@ -327,110 +334,9 @@ export function purgeJarvisAskJobsForOwner(userSub: string): number {
   return deleted;
 }
 
-/**
- * Open chat-ticket per conversation thread (sessionId → ticketId). A direct Jarvis chat thread gets
- * ONE workflow-less `chat`-ticket in the "Chat" queue (targeted at jarvis), opened on its first turn
- * and kept `in_process` until the user closes it (POST /thread/close). In-memory like askJobs — a
- * controller restart forgets the mapping (worst case: a new chat-ticket opens for an old thread).
- */
-const threadTickets = new Map<string, string>();
+/** Per-thread weather clarification state (city/ZIP follow-ups), keyed like the chat-ticket map. */
 const PENDING_WEATHER_TTL_MS = 10 * 60 * 1000;
 const pendingWeatherClarifications = new Map<string, { request: string; createdAt: number }>();
-
-/** Keep in-memory chat-ticket ownership explicit; a client-supplied session id is not globally unique. */
-function threadTicketKey(ownerSub: string, sessionId: string): string {
-  return `${ownerSub}\u0000${getApplicationAuthorizationActor()?.issuer ?? ''}\u0000${sessionId}`;
-}
-
-/**
- * @description Registers the Jarvis thread (sessionId) as a `chat_tasks` row. The chat-ticket link
- * (ticket_task_links) AND conversation persistence (chat_messages) both FK-reference this task id;
- * without it every persistence write fails (observed live: history never saved). Idempotent + best-effort.
- */
-async function ensureSessionTask(ctx: AppContext, sub: string, issuer: string | null, sessionId: string, message: string): Promise<boolean> {
-  try {
-    if (await getJarvisBriefingDelivery()?.service.isProducerSession(sessionId)) return false;
-    const existing = await ctx.taskStore.get(sessionId);
-    if (existing) return existing.ownerSub === sub && (readOwnerPrincipalIssuer(existing.metadata) === issuer
-      || !issuer && !ctx.applicationAuthorization);
-    const created = await ctx.taskStore.create({
-      taskId: sessionId,
-      title: (message.split('\n')[0] || message).slice(0, 90) || 'Jarvis chat',
-      processingMode: 'agentic',
-      agentId: JARVIS_AGENT_ID,
-      ownerSub: sub, // per-owner budget attribution (Phase 2)
-      metadata: { origin: 'jarvis-chat', ...(issuer ? { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: issuer } : {}) },
-    });
-    // `create` returns an existing row when a concurrent caller wins the task-id race. Re-check the
-    // returned owner so a guessed session id can never become a cross-tenant append channel.
-    return Boolean(created && created.ownerSub === sub && (readOwnerPrincipalIssuer(created.metadata) === issuer
-      || !issuer && !ctx.applicationAuthorization));
-  } catch (err) {
-    logger.warn({ err, sessionId }, 'jarvis: ensureSessionTask failed (non-fatal)');
-    return false;
-  }
-}
-
-/**
- * @description Opens the thread's chat-ticket on its first turn (idempotent per sessionId). Fast —
- * a single insert — and never throws: a failure just means no board card, never a blocked chat.
- * @returns The chat-ticket id, or null if it couldn't be opened.
- */
-async function ensureThreadChatTicket(
-  ctx: AppContext, sub: string, sessionId: string, message: string,
-): Promise<string | null> {
-  const key = threadTicketKey(sub, sessionId);
-  const existing = threadTickets.get(key);
-  if (existing) return existing;
-  const durableTicketId = await findOpenThreadChatTicket(ctx, sub, sessionId);
-  if (durableTicketId) {
-    threadTickets.set(key, durableTicketId);
-    return durableTicketId;
-  }
-  try {
-    const firstLine = message.split('\n')[0]?.trim() || message;   // raw request leads the payload
-    const ticket = await ctx.ticketService.openChatTicket({
-      taskId: sessionId, ownerSub: sub, agentId: JARVIS_AGENT_ID, text: firstLine, targetBot: 'jarvis',
-    });
-    threadTickets.set(key, ticket.ticketId);
-    return ticket.ticketId;
-  } catch (err) {
-    logger.warn({ err, sessionId }, 'jarvis chat-ticket open failed (non-fatal)');
-    return null;
-  }
-}
-
-async function findOpenThreadChatTicket(ctx: AppContext, sub: string, sessionId: string): Promise<string | null> {
-  try {
-    const tickets = await ctx.ticketService.listTickets({ ownerSub: sub, ticketType: 'chat', limit: 500 });
-    const matches = tickets
-      .filter((ticket) => isOpenThreadChatTicket(ticket, sessionId))
-      .sort((left, right) => ticketUpdatedAtMs(right) - ticketUpdatedAtMs(left));
-    return matches[0]?.ticketId ?? null;
-  } catch (err) {
-    logger.warn({ err, sessionId }, 'jarvis durable chat-ticket lookup failed (non-fatal)');
-    return null;
-  }
-}
-
-function isOpenThreadChatTicket(ticket: InternalTicket, sessionId: string): boolean {
-  if (ticket.status !== 'in_process' || ticket.ticketType !== 'chat') {
-    return false;
-  }
-  const metadata = ticketMetadata(ticket);
-  return metadata.taskId === sessionId
-    && (metadata.kind === 'chat-thread' || metadata.origin === 'bot-chat' || metadata.targetBot === 'jarvis');
-}
-
-function ticketMetadata(ticket: InternalTicket): Record<string, unknown> {
-  return ticket.metadata && typeof ticket.metadata === 'object'
-    ? ticket.metadata as Record<string, unknown>
-    : {};
-}
-
-function ticketUpdatedAtMs(ticket: InternalTicket): number {
-  return Date.parse(ticket.updatedAt || ticket.createdAt || '') || 0;
-}
 
 const JARVIS_CLIENT_ASSETS = new Map([
   ['jarvis-dashboard.js', 'application/javascript; charset=utf-8'],
@@ -966,6 +872,16 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         const artifactReply = await resolveJarvisArtifactAnswer(stripPlanDirective(surface.cleanAnswer), artifactSelection, req, sub, artifactActions, artifactVisibleApps);
         const cleanAnswer = artifactReply.cleanAnswer;
         if (artifactReply.hadDirective) surfaceOps = [];
+        if (surfaceOps.length && surfaceContext) {
+          // The success-path twin of the "dropped" warning above. BUG-18 (a well-formed `custom` op
+          // whose name no surface handles) was only provable from a bot container's raw reply,
+          // because the clean answer and the persisted turn both have the fence stripped. Naming
+          // the emitted ops beside the names the surface declared makes that mismatch one grep.
+          logger.info({
+            sessionId, app: surfaceContext.app, screen: surfaceContext.surface, ops: surfaceOps.length,
+            opNames: surfaceOps.map(describeSurfaceOp), declaredCustomOps: (surfaceContext.customOps ?? []).map((op) => op.name),
+          }, 'jarvis: surface ops returned to the surface');
+        }
         const dispatched = !artifactSelection && !artifactReply.hadDirective && handoffs.length ? await dispatchHandoffs(ctx, sub, sessionId, handoffs) : [];
         const directAnswerSource = `jarvis-answer:${jobId}`;
         // An explicit "show me a diagram" request wins; otherwise the deterministic default picker
@@ -1016,14 +932,10 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     const sessionId = String((req.body as { sessionId?: string })?.sessionId || '').trim();
-    const key = sessionId ? threadTicketKey(sub, sessionId) : '';
-    if (key) pendingWeatherClarifications.delete(key);
-    const ticketId = key ? threadTickets.get(key) : undefined;
-    if (!ticketId) { res.json({ ok: true, closed: false }); return; }
+    if (!sessionId) { res.json({ ok: true, closed: false }); return; }
+    pendingWeatherClarifications.delete(threadTicketKey(sub, sessionId));
     try {
-      await ctx.ticketService.updateStatus(ticketId, 'complete' as never);
-      threadTickets.delete(key);
-      res.json({ ok: true, closed: true });
+      res.json({ ok: true, closed: await closeThreadChatTicket(ctx, sub, sessionId) });
     } catch (err) {
       logger.error({ err, sessionId }, 'jarvis thread close failed');
       res.status(500).json({ error: (err as Error).message });
