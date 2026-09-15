@@ -1,6 +1,6 @@
 # Telegram channel — message your swarm
 
-Talk to your Open Swarm assistant from a Telegram chat. An inbound message runs on the accountable
+Talk to your oshal assistant from a Telegram chat. An inbound message runs on the accountable
 Jarvis bot with **your** connectors and cost tracking — Telegram is just the surface.
 
 ## What runs where

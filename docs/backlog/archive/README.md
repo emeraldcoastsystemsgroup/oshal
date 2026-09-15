@@ -3,6 +3,13 @@
 This directory preserves completion narratives removed from the active
 [cross-cutting backlog](../../BACKLOG.md). Files here are historical evidence, not work queues.
 
+**Naming in these files is historical.** Archived entries quote the product names in use when
+they were written, including the retired standalone forms "Open Swarm" / "OpenSwarm". The
+sanctioned names are **oshal** and **open swarm oshal** — "open swarm" never stands alone
+([CLAUDE.md](../../../CLAUDE.md) "Naming"). Archived text is left as written: rewriting a
+completion record falsifies the record it exists to preserve. See
+[the naming disposition register](../../business/product-naming-disposition.md).
+
 An item moves here only after its done-when condition has been verified. Partially completed items
 stay in the active backlog, reduced to the exact residual action and acceptance evidence. Prefer
 the relevant ADR, as-built feature documentation, release notes, and tests for durable technical

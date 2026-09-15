@@ -7,6 +7,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — generates the weekly "oshal report" post from the platform's own ledgers plus the strategy journal, replacing a hand-written page that silently went a week stale.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Public-posture consistency (2026-09-06 review): the books section and the footer render the shared enabledOnly() view — ENABLED books plus a total over exactly those — matching the journal clause's rule; the page was naming a disabled account (the cash IRA) the journal row deliberately omitted, and quoting an "all books" total that counted it. Each bullet composes the shared renderBookMove instead of slicing the ref off renderBookLine's output, so a change to that module's prefix can no longer truncate the public page.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Per-book rendering (ADR-134 D2 #7): the equity read goes through scripts/lib/trading-book-report.js and groups by book instead of mode='paper', a "The books" section lists every book's week move plus an all-books total, and the footer names which books are paper vs live. Live-book dollars are percent-only unless OSHAL_REPORT_LIVE_DOLLARS=true (this page is public). The paper week-move sentence is derived from the 'paper' series so its bytes are unchanged. Both per-book reads fail LOUD (BOOKS_READ_FAIL on stderr) rather than yielding a silent empty books[]: an unlogged fallback would drop the books section AND the week-move sentence with no trace, which is the report-lies failure this section exists to prevent.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The published lede called the product "Open Swarm" — the standalone form the 2026-07-24 naming directive retired ("open swarm" never stands alone; the sanctioned forms are "oshal" and "open swarm oshal"). Fixed HERE rather than in the generated page, because the weekly pipeline overwrites the artifact and a hand-edited page would silently revert on the next run.
  */
 /*
  * site-oshal-report.js — generate the weekly oshal report post for the site.
@@ -221,7 +222,7 @@ ${ticketRows.map((r) => li(`<strong>${num(r.n)}</strong> ${esc(r.ticket_type)}`)
   const postureNote = liveRefs.length
     ? ` (paper: ${esc(paperRefs.join(', ') || 'none')}; live: ${esc(liveRefs.join(', '))}, shown as percent${LIVE_DOLLARS ? ' and dollars' : ' only'})`
     : '';
-  const lede = `A weekly, numbers-first status on the Open Swarm build — every figure below is pulled from the platform's own ledgers, not estimated: the ticket store, the per-call cost table the bots write as they work, the trading equity store, and the app-store git history. The narrative comes from the platform's own strategy journal, which the nightly pipeline writes to whether the week was eventful or quiet.`;
+  const lede = `A weekly, numbers-first status on the oshal build — every figure below is pulled from the platform's own ledgers, not estimated: the ticket store, the per-call cost table the bots write as they work, the trading equity store, and the app-store git history. The narrative comes from the platform's own strategy journal, which the nightly pipeline writes to whether the week was eventful or quiet.`;
 
   const html = `<!doctype html>
 <html lang="en">

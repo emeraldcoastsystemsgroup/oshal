@@ -283,7 +283,7 @@ The default. The swarm binds `0.0.0.0:35457`, the installer opens the Windows Fi
 
 ### Different network: over your own Headscale tailnet
 
-Open Swarm can run its own [Headscale](infra/headscale/) control server — a self-hosted Tailscale
+oshal can run its own [Headscale](infra/headscale/) control server — a self-hosted Tailscale
 coordinator. Nothing goes through anyone else's cloud.
 
 **On the swarm machine**, once:

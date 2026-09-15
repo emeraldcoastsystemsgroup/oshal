@@ -31,6 +31,10 @@ Positioning, go-to-market, and pitch material. The engineering-facing "why OSHAL
   detail: [../architecture/native-compiled-kernel.md](../architecture/native-compiled-kernel.md);
   deck: [../assets/oshal/native-kernel-deck.pptx](../assets/oshal/native-kernel-deck.pptx).
 - [oshal-capabilities-brief.md](./oshal-capabilities-brief.md) — capabilities brief.
+- [product-naming-disposition.md](./product-naming-disposition.md) — the disposition register
+  for retired product names: the four-class rule (infrastructure identifier, acronym expansion,
+  current copy, historical record), what was rewritten, and what is deliberately retained as
+  historical evidence and where it is marked.
 - [oshal-as-is-to-be-delivery.md](./oshal-as-is-to-be-delivery.md) — as-is / to-be state and
   delivery plan.
 
