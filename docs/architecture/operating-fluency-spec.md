@@ -1,7 +1,9 @@
 # Operating fluency — refusal as an event, and a concierge on every surface
 
-> **Status:** Proposed — diagnosis measured 2026-09-14 against the trunk; no code changed by this
-> document. Roadmap stages carry done-when criteria and are intended to be taken one at a time.
+> **Status:** Partly built — diagnosis measured 2026-09-14 against the trunk. **Stage 2 / P2 is
+> DONE** (`tests/unit/access-check-undetermined.spec.ts`, proven red against the original defect);
+> every other stage is still proposed. Roadmap stages carry done-when criteria and are intended to
+> be taken one at a time.
 >
 > **Builds on:** [ADR-125](../adr/125-operations-stream-event-to-action-pipeline.md) (alerts got a
 > durable memory), [ADR-122](../adr/122-model-is-untrusted-principal.md) (why the gates exist),
@@ -86,7 +88,7 @@ run against real infrastructure; **contract** means a unit or manifest-level ass
 | # | claim | proof today | what closes it | done-when |
 |---|---|---|---|---|
 | P1 | A refusal is discoverable without shell access | none — 125 codes, 0 aggregating surfaces | a durable refusal store plus one read surface | a query answers "every refusal in the last 24h, by code, actor, package and target" and the cockpit renders it |
-| P2 | An access check denies only when access is actually denied | none — 2 access checks return `false` on a thrown error | separate "denied" from "could not determine"; log and propagate the latter | a spec that makes the store throw proves the caller receives an error, not `false`; both call sites covered |
+| P2 **DONE** | An access check reports a fault instead of reporting it as a denial | `tests/unit/access-check-undetermined.spec.ts` — 14 cases, proven red against the original `catch { return false; }` | separate "denied" from "could not determine" and report the latter at ERROR; the fail-closed return stays (see Stage 2 for why propagating would break the stream callback) | a store that throws returns the same fail-closed value as a denial AND logs, while a genuine denial stays quiet; both call sites covered |
 | P3 | A refusal names its remedy | one code (`authorization_recorded_delegation_required`, `8ae6a57b`) | extend the message contract to every code that is operator-remediable | a guard enumerates operator-remediable codes and fails when one carries no remedy text |
 | P4 | Refusals do not strand work | none — observed stranding at `escalated` and at `chat_tasks.status='created'` | a reaper or a terminal state with a reason | a spec drives a refused dispatch end-to-end and asserts the ticket reaches a terminal state carrying the reason |
 | P5 | Cheaper per-step routing is real | capture lane built; the cross-framework benchmark does not yet include an oshal leg | wire the oshal leg to a real dispatch and read `chat_tasks` token columns | the benchmark reports oshal alongside the others from measured rows, at stated n |
@@ -94,7 +96,7 @@ run against real infrastructure; **contract** means a unit or manifest-level ass
 | P7 | The platform is reachable over MCP | **false** — consumer only, no server surface, MCP executors gated to one runtime | either build the server surface or retire the claim | the claim appears nowhere until a server surface exists |
 | P8 | Every application has a concierge | 5 of 10 kernel manifests declare one; **26 of 61** store packages declare none | a manifest-level requirement plus a coverage gate | the repo-separation style check fails a package that registers a surface and declares no concierge |
 
-**P1, P2 and P4 are the fluency blockers.** P3 is the multiplier. P7 is a copy correction, not
+**P1 and P4 are the remaining fluency blockers** (P2 is closed). P3 is the multiplier. P7 is a copy correction, not
 engineering. P5 and P6 are marketing debts that do not block operation.
 
 ## Roadmap
@@ -117,14 +119,32 @@ Give refusals what ADR-125 gave alerts. Reuse that pipeline's shape rather than 
   it back from the store as the enforcing role — not a mocked store (integration-boundary
   corollary, CLAUDE.md).
 
-### Stage 2 — A denial is not an error (Track A)
+### Stage 2 — A denial is not an error (Track A) — DONE
 
 - Split "denied" from "could not determine" in the two access checks, then sweep the remaining
   bare-return catches on decision paths.
-- A could-not-determine logs at ERROR with the stack and surfaces as a 5xx, never as a 403/404.
-- **Done when:** P2's spec is green for both access-check call sites.
-- **Guard:** a store that throws; assert the caller receives an error. This is the regression test
-  for the three-day Jarvis outage and must fail if that shape returns.
+- **Corrected while building this stage.** The original prescription here read "a
+  could-not-determine logs at ERROR with the stack and surfaces as a 5xx, never as a 403/404."
+  Reading the call sites showed the 5xx half is not safe as written:
+  `callerCanReadStoredTaskResult` is registered with `streamManager` as the **per-event**
+  callback (`stream-routes.ts:95,112`), so throwing lands as an unhandled rejection once per
+  streamed event rather than a clean 5xx. `canReadJarvisSession` has six call sites that render
+  `false` as an empty list. **The defect was the silence, not the denial** — fail-closed is the
+  correct security posture and is preserved unchanged. What was missing is that a thrown
+  store/authority error was indistinguishable from a real refusal, with nothing logged.
+- **Shipped:** every catch in `jarvis-result-access.ts` and `protected-result-access.ts` keeps its
+  fail-closed return and logs at ERROR with the error, its stack and the task being decided.
+  Turning a denial into a 5xx is a separate, larger change and is not required to close P2.
+- **Done when:** P2's spec is green for both access-check call sites. — `tests/unit/access-check-undetermined.spec.ts`, 14 cases.
+- **Guard:** a store that throws. Asserts the pair that matters — the fail-closed return is
+  preserved AND the undetermined case is reported while a genuine denial stays quiet. Proven red
+  by reinstating the original `catch { return false; }`: 3 cases fail (the "REPORTS it" half)
+  while the 11 fail-closed assertions stay green, which is what shows the fix changes reporting
+  and not what is allowed.
+- **Not touched:** `canReadProtectedResult` in `@/shared/protected-results` has the same catch
+  shape, but there a throw from `assertResultAccess` *is* the denial mechanism, so catch-and-deny
+  is the intended contract. Distinguishing infrastructure faults from denials there needs a typed
+  error on the authority ports — a separate change.
 
 ### Stage 3 — A refusal carries its remedy (Track A)
 
