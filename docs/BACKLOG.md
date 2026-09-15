@@ -581,6 +581,35 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   reported as a failure to abandon rather than a successful kill; and the POSIX branch is exercised
   somewhere that can run it, or the entry records the decision not to.
 
+### An abort inside the local embedding runtime takes the whole api process down (2026-09-15)
+- **Observed:** the api container restarted three times in 45 minutes on a loaded box (01:47:33Z,
+  02:26:47Z, 02:33:08Z). For the last two the container log ends the same way: the entire
+  `onnxruntime-web/dist/ort-web.node.js` bundle dumped to stderr followed by Emscripten `Aborted(`
+  markers, then the process is gone and Docker restarts it. Nothing else is logged — no error object,
+  no module name, no indication of which caller was embedding.
+- **The path:** the alpine image shims `onnxruntime-node` to `onnxruntime-web`, stated in
+  `src/features/rag/services/local-embedding-service.ts:83` ("glibc natives fail on musl; with
+  gcompat they SEGFAULT") and single-threaded there because ort-web's threaded WASM needs a browser
+  Worker. `localEmbeddings.embed()` is reached from `src/features/rag/services/rag-service.ts:213`
+  and `src/features/person-model/services/semantic-projection.ts:58`. The service's own try/catch
+  wraps MODEL LOADING (it sets `unavailable` and degrades RAG to lexical); an abort raised inside the
+  WASM runtime during inference is not contained by it, and the process dies.
+- **Not the cause, checked:** `runMaintenancePass`
+  (`src/app/ambient-enrichment-runtime.ts:165`) performs two SQL purges and does not embed, so the
+  person-model maintenance first-pass deployed on 2026-09-15 is not implicated. The 01:47 restart's
+  window does not retain the same signature, so it is not established to be the same crash.
+- **Why it matters beyond RAG:** when the api dies, every schedule, Jarvis, and the trading surface go
+  with it, and on the restart the governed provisioner strips the bot grants and the authorization
+  bootstrap re-runs its connection race. One WASM abort therefore cascades into an outage the
+  operator experiences as "Jarvis is down again".
+- **Done when:** an abort or crash inside the embedding backend cannot terminate the api process —
+  the inference runs somewhere the failure is containable (a worker thread or child process with its
+  own memory budget), or the abort is trapped and the service degrades the way a failed model load
+  already does; the log names the caller and the input size that triggered it instead of dumping the
+  bundle; a guard drives an embedding backend that aborts mid-inference and proves the process is
+  still serving afterwards; and a restart-count probe over a deploy window shows the api's
+  `RestartCount` unchanged.
+
 ## Security, tenancy, and trust boundaries
 
 ### The SEC/CORE/APP hardening-track identifiers have no definition anywhere in the repo
