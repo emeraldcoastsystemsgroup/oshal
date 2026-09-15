@@ -442,6 +442,20 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   readiness to-do. Slices: S1 kernel contract (manifest `runsAs`/`requires`, activation table, service
   principal, runner, routes), S2 the Scheduled services panel + readiness + guide, S3 the five packages
   declare, S4 Jarvis. Status per slice is kept here as each lands.
+- **S1 landed 2026-09-14 (kernel contract).** The manifest declares `runsAs` (system | user) and `requires`,
+  and the loader refuses a permission the app's own imported catalog does not define. Migration 144 adds
+  `oshal_application_service_activations` (owner-or-operator RLS; a system row belongs to no person).
+  A system activation mints `{ sub: 'service:<app>', issuer: 'oshal:application-service' }` and grants it
+  exactly the declared permissions as assignments tagged `service-activation:<id>`, so deactivation revokes
+  precisely those. The runner resolves the activation for the instance it is dispatching: no activation skips
+  at INFO with `Manifest service-route schedule skipped: not activated` and no ERROR, a user activation runs
+  as that person with `userSub` pinned on their own `app-route:{app}-{id}:{sub}` instance, and a run-time
+  denial suspends the activation with the decision's reason. `GET /api/swarm/apps/:name/services`,
+  `POST …/services/:id/activate` (system = swarm admin only; user = the caller for themselves, authorized
+  now) and `DELETE …/services/:id/activation` sit behind requiresAuth, and the same response carries the
+  ADR-145 readiness answer (`ready`, `awaitingActivation`) the S2 panel renders. **S2-S4 remain**, so the
+  five schedules on the box skip visibly rather than run until their packages declare (S3) and an
+  administrator activates them.
 - **Done when:** a protected app's manifest schedule executes under a recorded principal that
   `authorize()` accepts for `kind: 'jobs'`, an app that principal is not assigned to is still refused, a unit
   guard proves both against the real policy, and each of the five schedules above logs `Manifest
