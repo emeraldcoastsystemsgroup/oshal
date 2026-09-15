@@ -533,32 +533,44 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** model provider-native embedded tools beside framework-registry and harness-native tools with per-agent policy and audit semantics.
 - **Done when:** an agent can enable/disable a named embedded tool, denied use fails at execution, and the run trace identifies the tier and provider operation.
 
-### A queued bot dispatch has no recorded-delegation issuer, so the ADR-149 remote path always refuses (2026-09-15)
+### A protected dispatch refuses on a controller with no delegation signing material (2026-09-15)
 - **Observed:** the operator asked a trading question at 00:51:01Z; it became ticket
   `aaa86e48-eaca-4977-b77f-bbffed0a6ca2` (`task`, title "yes but how much did we make or loose") and
   `dispatch-manifest-worker` failed with `authorization_recorded_delegation_required`. The ticket is
   sitting `escalated` in the cockpit with no answer. One occurrence in 24 h — the only dispatch that
-  reached this path in that window.
-- **Mechanism:** `BotNodeClient.prepareRemoteDispatch`
-  (`src/features/agent-management/services/bot-node-client.ts:411-418`) asks the application
-  remote-execution authority to `prepare()` the dispatch and then throws
-  `authorization_recorded_delegation_required` when `prepared && !this.recordedDelegationIssuer`. The
-  issuer is an optional constructor option (line 318), and **no construction site supplies it**: all
-  five `new BotNodeClient(...)` calls under `src/app` (composition-root.ts:180,
-  extensions/swarm/index.ts:689 and :801, ambient-enrichment-runtime.ts:101,
-  home-schedule-dispatch.ts:36) pass only an endpoint resolver. So whenever an authority IS registered
-  and returns a prepared execution, the dispatch cannot proceed — one half of the ADR-149 remote path
-  is wired and the other is not.
-- **Not established:** which dispatches reach a non-null `prepare()` (the rarity suggests most do not),
-  and whether the issuer was meant to be constructed here or injected by the feature that registers the
-  authority. Read
-  [remote application execution](security/remote-application-execution.md) before choosing.
-- **Done when:** a queued dispatch that the authority prepares completes with a recorded delegation
-  under the asking user's authority, or is refused for a reason that names what the operator must do;
-  the operator's question above (or an equivalent re-ask) returns an answer instead of escalating; a
-  spec drives the prepared path through the real client and proves both the success and the refusal
-  shapes; and the five construction sites either all supply an issuer or the option stops being
-  optional so a missing one is a compile error rather than a run-time throw.
+  reached this path in that window. `ticket_status_history` names `workerBot: communications-bot`,
+  `workerAgentId b0000000-0000-0000-0000-000000000001`.
+- **Mechanism, corrected against the code and the running box.** The refusal is thrown in exactly one
+  place, `BotNodeClient.prepareRemoteDispatch`, when the authority returned a prepared execution and
+  the client holds no recorded issuer. The missing constructor option is **not** the determinant: the
+  constructor derives a recorded issuer from the controller environment whenever
+  `hasDelegationSigningConfiguration` is true, so `new BotNodeClient(resolver)` is a complete
+  construction on a configured controller. What is missing on this box is the signing material itself.
+  `docker exec oshal-local-api` reading `/proc/1/environ` shows `OSHAL_DELEGATION_SIGNING_KID` and
+  `OSHAL_DELEGATION_SIGNING_PRIVATE_KEY` present and **empty** (no `BEGIN` anywhere in that environ);
+  compose passes both through unconditionally (`docker-compose.oshal-local.yml:877-878`), the host
+  `.env` sets neither, and `.env.example:794-795` carries them commented out. Meanwhile
+  `createApplicationRemoteExecutionWiring` registers the authority unconditionally with lazy signing,
+  so the controller looks healthy until a protected dispatch asks it to mint. `prepare()` returns null
+  unless the target bot's owning package is `protected`, which is why one dispatch in 24 h reached it.
+- **Shipped in this change (PR "A queued dispatch carries a recorded delegation instead of refusing"):**
+  the refusal keeps the stable code as its first token and now names the unset keys and what to set,
+  so the escalation metadata a ticket carries is actionable; it logs the agent, package and prepared
+  execution at ERROR; and boot logs ERROR once when the authority is registered on a controller with
+  no signing material. Guards: a spec drives the real client constructed the way production
+  constructs it — endpoint resolver plus controller environment, no injected issuer — and proves both
+  shapes, a configured environment minting a real Ed25519 delegation the fixture authority verifies
+  before dispatch, and the live empty-key shape refusing with both key names in the message. The
+  refusal case was red on the message before the change.
+- **Still open, and it is the half that answers the operator's question:** nothing here provisions a
+  signing keypair. Making a prepared dispatch complete on this box needs an Ed25519 key on the
+  controller and the matching `OSHAL_DELEGATION_PUBLIC_KEYS` ring on every bot node — operator-local
+  secret material, not something an agent mints. The fix is also not deployed and no re-ask has been
+  run. The boot ERROR is a log, not a gate: boot is deliberately not failed, because an existing
+  deployment running only unprotected packages would stop starting.
+- **Done when:** the controller holds a signing keypair and every bot node the matching public ring;
+  the operator's question above (or an equivalent re-ask) returns an answer instead of escalating; and
+  a live protected dispatch is observed completing with a recorded delegation.
 
 ## Connectors, channels, and external systems
 
