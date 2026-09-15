@@ -27,6 +27,7 @@
  * Home customization | Codex | Add stable metric catalogs and related-item identities for configurable Home.
  * 22 | maintainer@emeraldcoastsystemsgroup.com | Declare read-only user-context installation smokes with a clearable caller PAT prerequisite.
  * 23 | maintainer@emeraldcoastsystemsgroup.com | manifest.dependencies gains the required/optional tiers (SwarmAppDependencyLists); the legacy flat apps/tools/connectors form stays valid and reads as all-required. Consumers read it through @/shared/app-dependencies, never the raw keys.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: a service-route schedule declares its principal class and its needs — `runsAs` (system | user) is the package's PROPOSAL, granting nothing until a person activates it, and `requires` names permissions from this app's own imported authorization catalog. Both optional and additive: a manifest that omits them loads exactly as before and its schedule is unclassified until an administrator classifies it at activation.
  */
 
 import type { BriefingDeclaration } from '@/shared/briefings';
@@ -472,6 +473,17 @@ export interface SwarmAppPromptScheduleDeclaration extends SwarmAppScheduleDecla
  */
 export interface SwarmAppServiceRouteScheduleDeclaration extends SwarmAppScheduleDeclarationBase {
   target: 'service-route';
+  /** ADR-157: the principal class this package PROPOSES for the job. 'system' asks for the
+   *  application's own service principal and can only be activated by a swarm administrator;
+   *  'user' runs as the person who activated it, for themselves. Declaring a class grants
+   *  nothing — a package cannot escalate itself. Omitted = unclassified: an administrator
+   *  chooses the class at activation, and that choice is recorded with the activation. */
+  runsAs?: 'system' | 'user';
+  /** ADR-157: permission names from THIS app's imported authorization catalog (ADR-149 §4).
+   *  The loader refuses a name the catalog does not define. For a user service the activating
+   *  person must currently hold them; for a system service the activation grants exactly them
+   *  to the service principal, and deactivation revokes exactly them. */
+  requires?: string[];
   /** Concrete canonical path beneath one routes[] mount whose auth mode is exactly `service`. */
   route: string;
   /** Named export in the owning routes[].module invoked by the scheduler. */

@@ -6,10 +6,15 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Read actor-bound previews before approval and writer-lock acquisition.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: an assignment may carry `grantSource`, the provenance of a kernel-written grant (today only `service-activation:<id>`). `source` stays the app's installation source because matchingAssignments binds on it; the tag is what lets a deactivation revoke exactly the assignments its activation created.
  */
 import type { AuthorizationActor, AuthorizationChange, AuthorizationPreview, AuthorizationReceipt } from '@/shared/application-authorization';
 export interface AuthorizationAssignment {
   id: string; app: string; source: string; catalogRevision: string;
+  /** ADR-157 provenance of a kernel-written grant, e.g. `service-activation:<activation id>`.
+   *  Absent on every assignment an administrator made through /access. Never an authority: it
+   *  identifies which act created the row so exactly that act can undo it. */
+  grantSource?: string;
   targetSub?: string; targetIssuer?: string; tenantId?: string;
   group?: { issuer: string; tenantId: string; id: string };
   role?: string; permission?: string; deny: boolean; expiresAt?: string;

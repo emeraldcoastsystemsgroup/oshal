@@ -99,8 +99,14 @@ schedules:
 - The **service principal** of an application is the actor `{ sub: 'service:<app>', issuer:
   'oshal:application-service' }` (per tenant when tenancy is in force). It is minted on first system
   activation, never holds `isOperator`, and receives its permissions as ordinary assignments in
-  `oshal_authorization_assignments` with `source = 'service-activation:<activation id>'`, so `authorize()`
-  needs no new path and deactivation revokes exactly the assignments the activation created.
+  `oshal_authorization_assignments` tagged `grantSource = 'service-activation:<activation id>'`, so
+  deactivation revokes exactly the assignments the activation created. (As built: the assignment's
+  `source` column stays the application's installation source, because that is what binds an
+  assignment to its registration in `matchingAssignments`; the activation tag is a separate field.
+  The evaluator gains exactly one narrow rule for this shape — a non-deny assignment naming a single
+  catalog permission grants that permission at scope `own` and raises the tier only to what the
+  permission itself declares. The management API cannot create such a row, because a `grant` change
+  requires a role, so the rule is inert for every assignment an administrator made.)
 - A **user activation** creates the per-user schedule instance `app:{name}-{scheduleId}:{sub}` (the existing
   mechanism) and records the activator's `(sub, issuer)`; deactivation deletes the instance and closes the row.
 
@@ -211,7 +217,7 @@ Jarvis never activates a system service.
 
 | Slice | Content | Proof |
 |---|---|---|
-| S1 — kernel contract | manifest `runsAs`/`requires` validation; migration 143 `oshal_application_service_activations`; service principal + source-tagged assignments; runner: skip-when-inactive, per-user instances with the person as actor, suspension on denial; routes `GET /api/swarm/apps/:name/services`, `POST …/services/:id/activate`, `DELETE …/services/:id/activation` (swarm-admin gate for system, self for user) | loader refuses an undefined permission; a real-Postgres spec activates a system service and proves the service principal passes `authorize()` for exactly the declared permission and fails another; a user activation runs as that person and a second user cannot deactivate it; a non-admin activating `system` gets 403; an inactive schedule logs `skipped` at INFO; a denied tick suspends |
+| S1 — kernel contract | manifest `runsAs`/`requires` validation; migration 144 `oshal_application_service_activations`; service principal + source-tagged assignments; runner: skip-when-inactive, per-user instances with the person as actor, suspension on denial; routes `GET /api/swarm/apps/:name/services`, `POST …/services/:id/activate`, `DELETE …/services/:id/activation` (swarm-admin gate for system, self for user) | loader refuses an undefined permission; a real-Postgres spec activates a system service and proves the service principal passes `authorize()` for exactly the declared permission and fails another; a user activation runs as that person and a second user cannot deactivate it; a non-admin activating `system` gets 403; an inactive schedule logs `skipped` at INFO; a denied tick suspends |
 | S2 — surfaces | the Scheduled services panel on the setup dashboard; the readiness to-do; the shared component; the `/access` link; operator guide "Activating scheduled services" | browser spec for the panel states; the signed-in click-through on the box |
 | S3 — packages | `runsAs`/`requires` on the five schedules above (store, then private) | the packages' Test Lab catalogs register the activation cases |
 | S4 — Jarvis | the authorization tool learns the two questions above | known-answer spec |
