@@ -81,6 +81,127 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   passing command is the one the Run block documents, so the next reader cannot miss it again.
   Until then the wake path is not delivery-ready, and its doc says so.
 
+### Refusal visibility: the substrate for P1, P3 and P4
+
+- **Found 2026-09-14, measured:** **125** distinct refusal reason codes in `src/**` and **zero**
+  surfaces that aggregate them. A refusal is a return value and, at best, a log line - not a row,
+  not replayable, not countable. The operator cannot ask "what did the platform decline to do
+  today, and what would unblock it?" Full diagnosis and a six-stage roadmap in
+  [operating-fluency-spec.md](architecture/operating-fluency-spec.md).
+- **Closed so far:** P2 (#491, access checks report instead of denying in silence) and the same
+  defect family at the bot posture guard (#496). Both keep their fail-closed returns unchanged;
+  only the reporting changed.
+- **Remaining - P1 (Stage 1), the blocker:** one durable `refusals` store (code, actor, owning
+  package, target agent/route, prepared execution id, remedy text, timestamp) under the same RLS
+  contract as every other table, one recording chokepoint, and `GET /api/ops/refusals` auth-gated
+  and caller-scoped. Reuse the ADR-125 alert-pipeline shape rather than inventing one - this is
+  exactly that problem one layer up.
+- **Remaining - P3 (Stage 3), the multiplier:** enumerate the operator-remediable subset of the 125
+  codes (not all are; some are correct hard denials) and make each name what is unset and what to
+  set, with the setting names in one exported constant so check and message cannot drift. `8ae6a57b`
+  did this for exactly one code and is the pattern.
+- **Remaining - P4 (Stage 2 tail):** refused work strands. Observed at `escalated` and at
+  `chat_tasks.status='created'`. Needs a terminal state carrying the reason, or a reaper.
+- **Done when:** a query answers "every refusal in the last 24 h by code, actor, package and
+  target" and the cockpit renders it; the five 09-10 schedule refusals appear in it without a
+  `docker exec`; a guard enumerates the remediable codes and fails when one carries no remedy; and
+  a spec drives a refused dispatch end-to-end and asserts the ticket reaches a terminal state with
+  its reason. Guards must cross the real boundary - a real store under the enforcing role, not a
+  mocked one.
+
+### Concierge and tool coverage is not a contract (P8) - and its first done-when was wrong
+
+- **Measured 2026-09-14 across the store repo:** **26 of 61** packages declare no concierge at all,
+  and only **25 of 61** declare a top-level `tools:` block (of those 25, all set `defaultAuthMode`
+  and 23 set `routingTags`, so the mechanism is well-formed wherever it is used). **36 of 61
+  packages expose no tools to Jarvis.** The rail is built and correct; adoption is not enforced.
+- **The original done-when in the spec was wrong and is corrected there.** It said "a
+  repo-separation-style check fails a package that registers a surface and declares no concierge".
+  Repo-separation scans the **core** repo; these packages live in `oshal-applications`, so a core
+  CI gate cannot see them. The real enforcement point is load-time manifest validation in
+  `swarm-app-loader.ts`.
+- **Which makes this a migration, not a gate.** Switching on load-time validation would refuse 26
+  currently-working packages. It needs a deprecation path: warn-on-load first, a backfill pass in
+  the store repo, then fail-closed - and the store-side backfill is per-package work that does not
+  touch core.
+- **Sequencing:** do not start this before the refusal store. A concierge that cannot see refusals
+  can only apologise, which is the current behaviour and the reason adding concierges has not made
+  the environment feel more fluent.
+- **Done when:** a package that registers a cockpit surface and declares no concierge fails to
+  load; the gate is green with no allowlist; a spec proves it goes red per violation shape; and the
+  backfill landed in the store repo rather than being waived.
+
+### Jarvis fast-lane: the deterministic shortcut is hardcoded to three intents
+
+- **Measured 2026-09-14:** `detectProviderBoundHandoff` (288 lines of hand-written regex in core)
+  recognises exactly three things - weather, priority inbox, read-only Walmart catalog. On a hit,
+  `buildToolsBlock` is never called and the turn is answered with no model tokens. On a miss, every
+  turn carries the full tool block (44 catalogued scripts, a 10.4 KB catalog) plus the whole app
+  catalog, which "rides EVERY model turn". `buildToolsBlock` already SCORES tools against the
+  message and surface but only **sorts** - nothing is ever cut.
+- **Why it matters more than it looks:** the native background-wake path lands on the same `/ask`
+  route, so a spoken request is answered immediately only when one of those three intents matches.
+  Voice makes the slow lane the product; typing merely tolerates it.
+- **Two changes, OPPOSITE failure modes - they cannot share a gate.** Cutting the tool block fails
+  by dropping a tool the model needed, so it gates on **recall**. Widening the fast lane fails by
+  firing the wrong deterministic handler with the model bypassed entirely, so it gates on
+  **precision** - and that failure is worse than the status quo.
+- **Proving it must be off-core.** `buildToolsBlock` is exported, so a harness can import the real
+  selector read-only and race candidates implemented entirely in the harness - zero core delta.
+  Shape it like [`bench/`](../bench/README.md), which exists to convert an asserted claim into a
+  measured one and reports `not-run` rather than inventing a number. Start with a synthetic corpus;
+  ground truth must be the RECORDED invocation, never a model's guess.
+- **Done when:** the harness reports, per candidate selector, recall, false-match count and real
+  input-token delta, with a binary `regressions == 0` gate (average improvement with one regression
+  is the thing that burns you); and any core change ships behind a shadow step that computes both
+  selectors, logs the delta and uses the baseline, so production behaviour is unchanged while real
+  traffic validates it.
+
+### Boot-time schema bootstraps fail open, and one of them costs a feature
+
+- **Measured on the 2026-09-15 00:23Z deploy:** 27 error-level lines on the api's first boot, about
+  ten of them `* schema bootstrap failed` - ticket (x3), venture rebaseline, tv_token_revocations,
+  social_content_drafts, person-model, linkedin-assistant, `ensureInboxSchema`, `ensureFeedsSchema` -
+  plus two `DB access with NO request identity DENIED (OSHAL_DB_GUC_STRICT=deny)`.
+- **Most are fail-open by design** ("relying on SQL migrations", "revocation stays fail-open") and
+  are noise in the honest sense. **One is a real functional loss:** `oshal_cli_tokens schema
+  bootstrap failed - PAT auth unavailable until it exists`.
+- **Same shape as the authorization boot race** that was fixed by memoising a retrying thunk
+  (`application-authorization-wiring.ts`): many concurrent bootstraps, each holding a client, against
+  a small pool while 83 manifests load. The fix pattern already exists in-repo; this is whether the
+  other bootstraps should adopt it or whether fail-open is genuinely correct for each.
+- **Done when:** PAT auth is available after a cold boot without manual intervention, proven by a
+  check that exercises a PAT rather than reading the log; and each remaining fail-open bootstrap is
+  either converted to the retrying-thunk pattern or has a one-line note saying why fail-open is
+  right for it, so the next reader does not have to re-derive the answer ten times.
+
+### There is no test-coverage measurement
+
+- **Found 2026-09-14:** no coverage provider installed (`@vitest/coverage-v8` absent), no
+  `coverage` script, no thresholds. Coverage has never been measured here, so any figure quoted
+  would be invented. What exists is a file ratio - 890 `tests/unit/*.spec.ts` plus 7 colocated
+  `src/**/*.test.ts` against 1,499 source files - which says nothing about which lines run. Two of
+  those source files were security decision paths with zero specs until 2026-09-15.
+- **Remaining:** add `@vitest/coverage-v8`, a `test:coverage` script and v8 provider config.
+- **Scope the first threshold narrowly** - `src/app/routes/**` and `src/shared/**`, not the whole
+  tree - so it is a gate that can actually be held rather than a number that decorates a README.
+- **Done when:** the number is generated by a command rather than asserted in prose (house rule),
+  the threshold fails the run when breached, and the scope it covers is stated wherever the figure
+  appears.
+
+### Benchmark and cost claims are still un-earned (P5, P6)
+
+- **P5 - the cross-framework benchmark measures competitors, not us.** `bench/` runs the same task
+  on the same free model across vanilla/langgraph/crewai and records real tokens, but the oshal leg
+  is not wired: it reports `not-run`. So the cheaper-routing claim remains asserted.
+- **P6 - the cost figure is small-n.** `$1.30` against a `$4.05` median for incident RCA are real
+  `chat_tasks` rows, one workload, one corpus. Directionally strong; not a benchmark.
+- **Neither blocks operation** - both block a slide. Do not publish the determinism/cost head-to-head
+  until measured.
+- **Done when:** `run_oshal` POSTs to the real dispatch and reads `chat_tasks` input/output token
+  columns so the benchmark reports oshal alongside the others at a stated n; the cost claim covers
+  more than one ticket type with its n and limits kept in the same sentence as the number.
+
 ### Trading DB specs race on schema bootstrap
 - **Remaining:** running the trading unit specs WITHOUT `--no-file-parallelism` fails three pre-existing specs (trading-books-schema, trading-event-plans, trading-pinned-lots) in `beforeAll` with `trigger "trg_trd_signals_book_fill" … already exists` — the trading schema bootstrap takes the no-lock path, so two concurrent bootstraps collide. Observed 2026-09-06. The dispatch golden-plan spec works around it locally with a single retry; the underlying files were outside that item's ownership.
 - **Done when:** the bootstrap takes an advisory lock (or tolerates the concurrent create) and the same ten-file trading set is green without `--no-file-parallelism`.
@@ -996,14 +1117,21 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   against −$9,697.53 stored by the venue; the 4 sells with no engine basis are all USO. The paper
   book — no wash-sale adjustments — agrees within ~5 % (−$6,797.57 against −$7,181.90), which is what
   shows the live gap is the venue’s adjusted basis rather than a replay defect.
-- **Done when:** a long position with no `engineAvgCost` is marked unmanaged and `exitsToRun`,
-  `trailingExits` and `rebalanceTrims` (`src/features/trading/services/portfolio.ts:208, 282, 312`)
-  emit nothing for it while remaining unchanged for a covered position, proven red-before-green by a
-  spec that also covers the partially-covered case; the autopilot entry path does not add to an
-  unmanaged holding; exposure and capital still count it; the cost-basis log line carries the
-  unmanaged count; the trading surface shows the flag and the reason on the row and in place of an
-  exit that will not fire; and on the box the operator sees USO flagged with no engine order emitted
-  for it after a deploy.
+- **Core — done:** `withEngineCostBasis` marks every long its own filled orders do not cover
+  `Position.unmanaged` (partial coverage counts as uncovered) and carries the count on the
+  `engine cost basis attached` line; `runAutopilot` applies the mark ONCE, right after the
+  protected-lot overlay, so the core leg, the exits and the rotation all read it; `exitsToRun`,
+  `trailingExits` and `rebalanceTrims` emit nothing for a marked position and are unchanged for a
+  covered one; the beta-core top-up and both rotation paths withhold their buy, their trim and their
+  drop-out sell for one, reserving the withheld buy's dollars so no other name's order can grow.
+  Exposure, capital, the per-name/sector/deployed caps and the daily-loss halt still count it. Guards:
+  `tests/unit/trading-unmanaged-positions.spec.ts`, `tests/unit/trading-unmanaged-entry-paths.spec.ts`,
+  the `unmanaged` cases in `tests/unit/trading-engine-cost-basis-postgres.spec.ts`, and the golden
+  dispatch plan, whose fixture now seeds the engine's own covering fills (without them the same fire
+  withholds 4 of its 6 orders, which is the integrated proof that the rule only ever removes orders).
+- **Done when:** the trading surface shows the flag and the reason on the row and in place of an exit
+  that will not fire; and on the box the operator sees USO flagged with no engine order emitted for it
+  after a deploy.
 ## Video, character, and creative automation
 
 ### Video Series conductor live acceptance
@@ -2281,3 +2409,50 @@ though schedule reads themselves now recover.
 **Done when:** a first-attempt bootstrap failure leaves no consumer permanently dead — covered for
 ticket creation and tool registration by `tests/unit/authorization-readiness-consumers.spec.ts`,
 and still open for Test Lab schedule polling above.
+
+### Event-plan EXITS are not ring-fenced, only the entry is
+
+`stepListed` in `src/app/trading-event-plans.ts` refuses to open a position in a ticker
+`TRADING_CORE_SYMBOLS` fences, which is what stops a fenced name from ever entering an event
+plan's book. The exits (`stepFilled`'s take-profit and stop, `stepExitsPlaced`'s time stop) are
+deliberately NOT fenced: they close the quantity the plan's own entry bought, and withholding them
+would strip a filled position of its protection — strictly worse than the exposure prevented. The
+residual is narrow but real: a plan that reached `filled` BEFORE the operator added its ticker to
+`TRADING_CORE_SYMBOLS` keeps running its exits against a name the fence now covers. The ADR-159
+`unmanaged` mark does not apply to this module at all — its `EventBroker` interface is
+`configured/getAccount/getOrder/cancelOrder` with no `getPositions`, so every quantity it sells
+comes from `entry.filledQty`/`exits.qty`, which the engine's ledger accounts for by construction.
+
+**Done when:** arming or fencing decides the question before a position exists — adding a symbol to
+`TRADING_CORE_SYMBOLS` while a plan on it is `filled` or `exits_placed` either hands the position
+to the operator explicitly (the plan closes and says the exits are now theirs to manage) or records
+on the plan timeline that its exits continue under the pre-fence mandate, rather than the current
+silence. A guard in the shape of the `ADR-159 sibling` block in
+`tests/unit/trading-event-plans.spec.ts` drives a plan to `filled`, fences its ticker, ticks, and
+asserts the chosen behaviour — proven red against today's code, which neither closes nor records.
+
+**Assessed and deliberately left alone:** `trading-pinned-lots.ts` and `trading-dated-orders.ts`
+ride the same `trading-events:<sub>` leg and place through the same `deps.place` seam, and neither
+reads the `unmanaged` mark or `TRADING_CORE_SYMBOLS`. They are not the same defect shape: both
+execute an order the OPERATOR authored (a protected lot is the operator's own buy with its own exit
+rules, explicitly subtracted from the autopilot's view by ADR-138 D3; a dated order is an operator
+decision minted now and placed at a time they chose). ADR-159 withholds where the engine trades a
+position it did not buy, not where the operator instructed a specific order.
+
+### Two trading specs default their DSN to the operator's LIVE database
+
+`tests/unit/trading-earnings-rules.spec.ts:37` and `tests/unit/trading-event-plans.spec.ts:21` both
+read `process.env.OSHAL_TEST_DSN || postgresql://oshal:oshal@127.0.0.1:${OSHAL_PG_PORT ?? '55433'}/oshal`
+— port 55433 is `oshal-local-db`, the deployment database. Running either without setting
+`OSHAL_TEST_DSN` writes synthetic signals, decisions, orders, event rules and event plans into the
+live book under a `spec-*` sub, and their `afterAll` cleanup is the only thing that removes them.
+`tests/unit/trading-engine-cost-basis-postgres.spec.ts` has the same shape through its `ADMIN_URL`.
+The ADR-159 specs added alongside this entry instead start a disposable `postgres:16-alpine` and
+remove it, which is the pattern to converge on.
+
+**Done when:** those three specs start their own disposable container the way
+`tests/unit/trading-dispatch-unmanaged-fire.spec.ts` and
+`tests/unit/trading-outer-dispatch-unmanaged.spec.ts` do, with no default that can resolve to a
+deployment database, and a CI-local gate greps `tests/unit/**` for a hard-coded 55433 (or any
+`oshal-local-db` host) and fails on a new one. Proven red against today's tree, where three specs
+match.

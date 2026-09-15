@@ -23,6 +23,9 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | PolicyOverride param on riskPolicy (ADR-095 Strategy Library apply-to-profile): an applied lab strategy's posture beats both env postures, and its takeProfitPct (including an explicit null = posture default) beats TRADING_TAKE_PROFIT_PCT. No override → behavior unchanged.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SECTOR entries for the 19 regime-reweight names (universe 140 → 159): new 'materials' bucket (mining/chemicals/steel get their own cap headroom, not riding under 'consumer' industrials) and new 'storage' bucket for the memory/NAND pool — MU and SKHY MOVE into it from 'tech'/'other' so storage crowding is capped as one trade, not hidden under tech headroom.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Veto a stop-loss that exists only because the venue reports a wash-sale-adjusted basis (washSaleStopVetoed). On 2026-09-14 the live book stop-lossed 10 names and all 10 were within 5% of what the engine had paid - CRM read -5.07% while trading +3.24% above its own buy. The veto can only SUPPRESS a stop the venue basis already wanted; it never creates one, and take-profit, trailing and cap trims are unchanged.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — exitsToRun, trailingExits and rebalanceTrims emit NOTHING for a position marked `unmanaged` (the engine's own filled orders do not account for the quantity held), and unmanagedSymbols exposes that same rule to the dispatch legs. The engine reads the VENUE's positions, so a share bought by hand is picked up and traded against a basis the engine never paid. Withholding only ever REMOVES a decision from the plan; a position without the mark is byte-identical to today, which keeps the strategy-lab replay and every other caller that never runs the attachment unchanged. Exposure, capital and drawdown deliberately keep counting the position — it is real money at the venue.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 2 — rotationBenches withholds the bench SELL for a position marked `unmanaged`, the fourth sell rule in this file and the one SEQ 9 missed. The mark is applied to `cold` only, never to `held` or `heldSyms`: those decide which names count as already-held, and a withheld name dropped from them would resurface as a hot BENCH CANDIDATE the caller then buys. Filtering `cold` can only shorten the returned list.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 3 — dipExits withholds the extended-hours dip sell for a position marked `unmanaged`: the fifth sell rule in this file, and the one SEQ 9 and SEQ 10 both missed. It is also the one that mattered most, because computeExits RETURNS on it off-hours before exitsToRun, trailingExits and rebalanceTrims are ever reached — so on every pre/post-market fire the only exit rule that ran was the only one still ungated, and a hand-bought share printing TRADING_EXT_DIP_SELL_PCT under its prior regular close was sold out in full against a basis the engine never paid. The rule is close-anchored rather than basis-anchored, but the ORDER it emits is still a full-position sell of a quantity the engine cannot account for. Filtering can only shorten the returned list; a position without the mark is byte-identical to before.
  *
  * @module portfolio
  */
@@ -163,6 +166,18 @@ export const SECTOR: Record<string, string> = Object.fromEntries([
 /** @description The sector for a symbol (default universe), or 'other'. */
 export function sectorOf(symbol: string): string { return SECTOR[symbol.toUpperCase()] || 'other'; }
 
+/**
+ * @description The UPPERCASE symbols of the open longs the engine cannot account for from its own
+ * filled orders (ADR-159), so the dispatch legs that place orders outside this module read the same
+ * single rule the exit functions do rather than re-deriving it. The mark itself is attached by
+ * `withEngineCostBasis`; this never infers it.
+ * @param positions - Current positions.
+ * @returns The unmanaged held symbols (empty when every long is accounted for).
+ */
+export function unmanagedSymbols(positions: Position[]): Set<string> {
+  return new Set(positions.filter((p) => p.qty > 0 && p.unmanaged === true).map((p) => p.symbol.toUpperCase()));
+}
+
 /** A protective exit the manager wants to take right now. */
 export interface ExitOrder { symbol: string; qty: number; reason: 'stop_loss' | 'take_profit' | 'trailing_stop' | 'rotation' | 'cap_trim' | 'ext_dip'; pnlPct: number; }
 
@@ -174,6 +189,10 @@ export interface ExitOrder { symbol: string; qty: number; reason: 'stop_loss' | 
  * a full protective exit. Backtested over every session night since inception (6 windows, 108
  * name-nights): +$461 vs holding to the next open, zero negative windows; caught the 07-07
  * pre-market AMD/MU crash for +$426. Pure — the dispatch supplies prior closes.
+ *
+ * ADR-159: a position marked `unmanaged` is never dipped out. Off-hours this is the ONLY exit rule
+ * that runs, so it is also the only one whose withholding keeps a hand-bought holding unmanaged
+ * through a pre/post-market fire.
  * @param positions - Current open longs (need currentPrice).
  * @param priorClose - Symbol → last regular-session close (the dip anchor).
  * @param dipPct - Trigger: percent below the close (e.g. 0.5).
@@ -183,6 +202,7 @@ export function dipExits(positions: Position[], priorClose: Map<string, number>,
   const exits: ExitOrder[] = [];
   for (const p of positions) {
     if (!(p.qty > 0)) continue;
+    if (p.unmanaged) continue;  // ADR-159: no engine basis for this quantity → no engine decision
     const cur = p.currentPrice ?? 0;
     const ref = priorClose.get(p.symbol.toUpperCase()) ?? 0;
     if (!(cur > 0) || !(ref > 0)) continue;
@@ -201,6 +221,9 @@ export interface NameStrength { score: number; action: 'buy' | 'sell' | 'hold'; 
 /**
  * @description Protective exits across open longs: sell anything down past stop-loss or up past
  * take-profit. This is the standing "manage the money" loop, run every cycle before new entries.
+ *
+ * ADR-159: a position marked `unmanaged` gets NO exit. Its stop would be measured against a basis
+ * the engine never paid, so the honest answer is to leave it alone and say so on the row.
  * @param positions - Current open positions.
  * @param policy - Active risk policy.
  * @returns The exits to place (whole-share sells).
@@ -209,6 +232,7 @@ export function exitsToRun(positions: Position[], policy: RiskPolicy, stopMult =
   const exits: ExitOrder[] = [];
   for (const p of positions) {
     if (!(p.qty > 0)) continue; // v1 manages long book only
+    if (p.unmanaged) continue;  // ADR-159: no engine basis for this quantity → no engine decision
     const cost = p.avgEntryPrice * p.qty;
     if (!(cost > 0)) continue;
     const pnlPct = (p.unrealizedPl / cost) * 100;
@@ -274,6 +298,9 @@ export function nextPeaks(positions: Position[], peaks: Map<string, number>): Ma
  * @description Trailing-stop exits: a winner ARMS once it is up trailArmPct from entry, then is sold
  * if it gives back trailGivebackPct from its peak. Locks in gains on a reversal (the news-crash after
  * a run-up) while leaving room for normal wiggle — adds sell trades without micro-churn.
+ *
+ * ADR-159: a position marked `unmanaged` never trails — the gain it would be locking in is measured
+ * from an entry price the engine did not pay.
  * @param positions - Current open positions (need currentPrice + avgEntryPrice).
  * @param peaks - The rolled-forward peak per symbol (see nextPeaks).
  * @param policy - Active risk policy.
@@ -283,6 +310,7 @@ export function trailingExits(positions: Position[], peaks: Map<string, number>,
   const exits: ExitOrder[] = [];
   for (const p of positions) {
     if (!(p.qty > 0) || !(p.avgEntryPrice > 0)) continue;
+    if (p.unmanaged) continue;  // ADR-159: no engine basis for this quantity → no engine decision
     const cur = p.currentPrice ?? 0;
     if (!(cur > 0)) continue; // no live price → can't trail this fire
     const sym = p.symbol.toUpperCase();
@@ -304,6 +332,9 @@ export function trailingExits(positions: Position[], peaks: Map<string, number>,
  * ENTRY (sizeEntry), so a name that pyramided (the pre-market working-order bug) or simply ran up could
  * sit well over its cap indefinitely — concentration risk the exits never addressed. Partial sell of
  * just the excess shares; leaves the capped core in place. Needs currentPrice to value + price the trim.
+ *
+ * ADR-159: a position marked `unmanaged` is never trimmed. Its market value still counts toward the
+ * cap base through `equity`, so the OTHER names' trims are unchanged — only its own is withheld.
  * @param positions - Current open positions.
  * @param equity - Account equity (the cap base).
  * @param policy - Active risk policy.
@@ -315,6 +346,7 @@ export function rebalanceTrims(positions: Position[], equity: number, policy: Ri
   const trims: ExitOrder[] = [];
   for (const p of positions) {
     if (!(p.qty > 0)) continue;
+    if (p.unmanaged) continue;  // ADR-159: no engine basis for this quantity → no engine decision
     const price = p.currentPrice ?? p.avgEntryPrice;
     if (!(price > 0)) continue;
     const mktVal = p.marketValue > 0 ? p.marketValue : p.qty * price;
@@ -341,6 +373,9 @@ const ROTATION_MARGIN = 0.25;  // the hot hand must beat the cold starter by thi
  * and beating the cold name by ROTATION_MARGIN), bench the cold name to free its capital. The caller's
  * entry step then starts the hot name in the freed slot. Coldest benched first; churn-capped per fire.
  * This is what moves the money to the hot hand instead of riding a cold starter down to its stop.
+ *
+ * ADR-159: a position marked `unmanaged` is never benched. It still counts as held (so the hot bench
+ * cannot contain it) and still occupies its slot; it simply never becomes a sell.
  * @param positions - Current open positions.
  * @param strength - Per-symbol current strength (score + action) from the scan.
  * @param policy - Active risk policy (maxPositions bounds the per-fire swap count).
@@ -360,7 +395,12 @@ export function rotationBenches(positions: Position[], strength: Map<string, Nam
   if (bestAvail < ROTATION_HOT) return []; // nobody hot enough on the bench to swap anyone for
 
   // Cold held names that a much-hotter candidate clearly beats, coldest first.
+  // ADR-159: a position marked `unmanaged` is never benched — a bench IS a sell, and the engine has no
+  // basis for this quantity. Withheld HERE and not from `held`/`heldSyms` above: those decide which
+  // names count as already-held, so removing it there would expose the same name as a BENCH CANDIDATE
+  // the caller then BUYS. Dropping it only from `cold` can shorten this list, never lengthen it.
   const cold = held
+    .filter((p) => !p.unmanaged)
     .map((p) => ({ p, score: strength.get(p.symbol.toUpperCase())?.score ?? -Infinity }))
     .filter((x) => x.score < ROTATION_COLD && bestAvail - x.score >= ROTATION_MARGIN)
     .sort((a, b) => a.score - b.score);

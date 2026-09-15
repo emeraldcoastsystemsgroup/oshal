@@ -13,6 +13,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — decomposition of trading-schedule-dispatch.ts (890 code lines) along its section seams: CoreConfig/coreConfig, the core buy/trim decision mappers, CORE_BAND_PCT, CoreTrade/coreTradePlan, sizingPrice and ensureCore move here unchanged (same exported names/signatures the unit specs and the store's strategy-lab route import through the entry barrel). Env names unchanged: TRADING_CORE_SYMBOLS, TRADING_CORE_TARGET_PCT. Golden-plan guard: tests/unit/trading-dispatch-golden-plan.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — ensureCore withholds BOTH of its decisions for a core holding the engine cannot account for from its own filled orders: no top-up that adds to it, and no trim that sells shares whose basis is unknowable. The withheld BUY dollars are still counted into the returned `spent`, so the sleeve reserves exactly what it reserves today and withholding here can never hand another leg cash it would not otherwise have had. Every core symbol whose holding IS accounted for behaves exactly as before.
  *
  * @module trading-dispatch-core
  */
@@ -177,6 +178,11 @@ export async function sizingPrice(mode: TradingMode, sub: string, symbol: string
  * @returns Cash committed to core BUYS this fire, so the sleeve reserves it and can't over-deploy the
  *   same dollars. Trims are not netted off — their proceeds are unsettled this fire.
  *   Exported for the unit spec (venue-routed sizing — live prices come from the executing venue).
+ *
+ *   ADR-159: a core holding the engine cannot account for from its own fills is monitored, not
+ *   managed — neither topped up nor trimmed. The withheld top-up's dollars are still counted into the
+ *   return value, so the sleeve's cash reservation is exactly what it is today and the withholding
+ *   cannot enlarge any other leg's order.
  */
 export async function ensureCore(
   ctx: AppContext, sub: string, bookOrMode: TradingBook | TradingMode, account: BrokerAccount, positions: Position[],
@@ -200,6 +206,14 @@ export async function ensureCore(
     const px = await sizingPrice(mode, sub, sym);
     if (!px || px <= 0) continue;
     const plan = coreTradePlan(symPct, equity, cur, heldQty, px, cashLeft);
+    // ADR-159 — the engine manages only what it can account for. Reserving the withheld BUY notional
+    // keeps `spent` identical to today's, so a withheld top-up frees no cash for any other leg.
+    if (plan.action !== 'hold' && held.some((p) => p.qty > 0 && p.unmanaged === true)) {
+      logger.info({ sub, mode, symbol: sym, withheld: plan.action, qty: plan.qty },
+        'beta-core decision WITHHELD — the engine cannot account for this holding from its own fills');
+      if (plan.action === 'buy') { spent += plan.qty * px; cashLeft -= plan.qty * px; }
+      continue;
+    }
     if (plan.action === 'trim') {
       await placeManaged(ctx, sub, book, coreTrimDecision(sym, plan.qty, px, symPct), orders, errors, 'core-trim');
     } else if (plan.action === 'buy') {

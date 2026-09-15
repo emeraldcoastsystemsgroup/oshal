@@ -14,6 +14,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — decomposition of trading-schedule-dispatch.ts (890 code lines) along its section seams: MAX_ORDERS_PER_RUN, computeExits, popCatcherConfig and placeEntries move here unchanged; the runAutopilot 2a-pop block becomes placePopCatches (same statements, same order, `book.enabled` read through `book`). Env names unchanged: TRADING_MAX_ORDERS_PER_RUN, TRADING_EXT_DIP_SELL_PCT, TRADING_EXT_SIZE_MULT, TRADING_POP_CATCHER, TRADING_POP_TRANCHE_PCT, TRADING_POP_MAX, TRADING_POP_THRESHOLD. Golden-plan guard: tests/unit/trading-dispatch-golden-plan.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attach the engine's own cost basis (withEngineCostBasis, book-scoped) before the hard stop/take-profit rule, so a wash-sale artifact cannot trigger a stop-loss. Trailing and cap trims still read the positions exactly as before.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — the cost-basis attachment moves UP to runAutopilot, which now marks the book ONCE (right after the protected-lot overlay) and hands the same marked positions to the core leg, this one and the rotation leg. Attaching it here reached only the stop/take-profit rule, so trailing and cap trims could not see an unmanaged position and the entry legs ran before it existed. computeExits therefore requires positions that already carry the mark; all three exit rules now read that same array, which is what makes `unmanaged` withhold every exit rather than only the stop. A covered position's plan is unchanged: the marked array differs from the raw one only by the two optional fields.
  *
  * @module trading-dispatch-exits-entries
  */
@@ -25,7 +26,6 @@ import {
 } from '@/features/trading';
 import { legacyBook } from './trading-books-store';
 import { ensurePeaksTable, loadPeaks, savePeaks } from './trading-peaks-store';
-import { withEngineCostBasis } from './trading-engine-cost-basis';
 import { recordGateBlocks } from './trading-gate-block-store';
 import type { WorldIntelligenceService } from '@/features/world-data';
 import { readWorldSignalsBatch, worldRankEnabled } from './trading-world-signals';
@@ -61,7 +61,9 @@ function popCatcherConfig(): { enabled: boolean; tranchePct: number; maxPosition
  * @param ctx - App context (pool).
  * @param sub - Owner sub.
  * @param bookOrMode - The book (or legacy mode).
- * @param positions - Current positions (already overlaid by the pinned-lot subtraction).
+ * @param positions - Current positions, already overlaid by the pinned-lot subtraction AND marked by
+ *  `withEngineCostBasis` (ADR-159): they carry the engine's own cost basis where its ledger covers
+ *  them and `unmanaged` where it does not. The caller attaches it once per fire.
  * @param policy - Active risk policy.
  * @param equity - Account equity (cap-trim base).
  * @param extHours - True in pre/post-market: only the close-anchored dip rule runs.
@@ -91,13 +93,14 @@ export async function computeExits(ctx: AppContext, sub: string, bookOrMode: Tra
   }
   const stopMult = 1;
   const bySym = new Map<string, ExitOrder>();
-  // The engine's own cost, where its ledger covers the whole position, lets exitsToRun veto a stop
-  // that exists only because the venue reports a wash-sale-adjusted basis. It can suppress a stop,
-  // never create one; trailing and cap trims read the positions exactly as before.
-  const costed = await withEngineCostBasis(ctx, sub, book, positions);
+  // The positions arrive MARKED (withEngineCostBasis, applied once by the caller): the engine's own
+  // cost where its ledger covers the whole position — which lets exitsToRun veto a stop that exists
+  // only because the venue reports a wash-sale-adjusted basis — and `unmanaged` where it does not,
+  // which withholds all three rules for that name (ADR-159). Both directions only ever SUPPRESS an
+  // exit the venue basis already wanted; neither can create one.
   // Order = priority: a full stop/TP wins over trailing, and any full exit wins over a partial cap trim
   // (no point trimming a name we're about to flatten this fire).
-  for (const e of [...exitsToRun(costed, policy, stopMult), ...trailingExits(positions, peaks, policy, stopMult), ...rebalanceTrims(positions, equity, policy)]) {
+  for (const e of [...exitsToRun(positions, policy, stopMult), ...trailingExits(positions, peaks, policy, stopMult), ...rebalanceTrims(positions, equity, policy)]) {
     const k = e.symbol.toUpperCase();
     if (!bySym.has(k)) bySym.set(k, e);
   }

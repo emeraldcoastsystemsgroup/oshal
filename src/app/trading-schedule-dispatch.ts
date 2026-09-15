@@ -45,6 +45,8 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Sector lean becomes a knob: rotateSleeve now runs rankUniverse through applySectorTilt(TRADING_SECTOR_TILT) so "lean harder on materials" is a dial over the ranking instead of percentages hand-baked into TRADING_CORE_SYMBOLS (which pinned capital in ETFs that sit outside the ranked universe and so never rotate out). Unset/empty tilt → byte-identical ranking. All logic lives in features/trading/services/sector-tilt.ts; this file is past the 800-line decomposition threshold and takes only the import + call.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | DECOMPOSITION (zero behavior change) — the 890-code-line monolith is carved along its own section seams into four kernel legs: trading-dispatch-world-gate.ts (world-sentiment gate + earnings blackout), trading-dispatch-rail.ts (bookBinding, persistDecision/placeManaged, loadInFlight, the decision mappers, capAccount), trading-dispatch-core.ts (coreConfig/coreTradePlan/sizingPrice/ensureCore) and trading-dispatch-rotation.ts (rotationConfig/rankUniverse/rotateSleeve/rotateBlendSleeve), plus trading-dispatch-exits-entries.ts (computeExits/placeEntries and the 2a-pop block as placePopCatches). This entry keeps runAutopilot, freeStaleSells, logRunTicket, dispatchTradingSchedule and the ScheduleService handle byte-identical, and re-exports the pre-split public surface (loadInFlight/InFlight, coreConfig/CoreConfig, coreTradePlan/CoreTrade, sizingPrice, ensureCore, rotationConfig, rankUniverse) so every importer compiles unchanged. History for the moved code stays in SEQ 1-19 above. Every leg logs as module 'trading-schedule-dispatch' (the watchdog contract). Guards: tests/unit/trading-dispatch-golden-plan.spec.ts (real-Postgres golden plan, written against the unsplit file), tests/unit/trading-dispatch-decomposition.spec.ts.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | The autopilot's legacy-book branches resolve through loadLegacyBook (the DB row, which carries the account binding) instead of the pure constructor. Required by the Schwab account-pin retirement: an UNBOUND reader now refuses rather than guessing among the login's enumerated accounts, and this fire drives protective exits, so an unbound legacy live book here would have silenced them.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — mark the book ONCE per fire, immediately after the protected-lot overlay and before any leg reads it: withEngineCostBasis now sets `unmanaged` on every long the engine's own filled orders do not cover, and every leg (core top-up, protective exits, rotation) receives the marked array. It used to be attached inside computeExits, which reached only the stop/take-profit rule and ran AFTER the core leg had already traded. The operator bought shares outside the engine and the engine managed them against a basis it never paid; from here the engine withholds every order decision for such a position while exposure, capital and drawdown keep counting it.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 2 — the two SCAN-sleeve sell legs were left reading the book through the plain quantity map (`held`), which carries no mark: the 2a short-timeframe breakdown exit could still sell a holding the engine cannot account for, and unlike 2b/2c/2d it runs on EVERY fire rather than only when rotation does not own the sleeve — so the one leg that was always live was the one still trading hand-bought shares. Both 2a and 2b now read `unmanagedSymbols(positions)` beside `held`. `held` itself is deliberately unchanged: it is also placeEntries' dedup guard, so removing a withheld name from it would let the engine BUY what it just refused to manage. A withheld name is likewise NOT added to `exiting`, so it keeps consuming its maxPositions slot and its exposure exactly as today — withholding can only remove an order, never free capital for another target. Guard: tests/unit/trading-dispatch-unmanaged-fire.spec.ts drives a full dispatchTradingSchedule fire over a book with one uncovered position and asserts no order of any kind for it.
  *
  * @module trading-schedule-dispatch
  */
@@ -53,7 +55,7 @@ import type { AppContext } from './composition-root';
 import type { ScheduleRecord, ScheduleDispatchResult, ScheduleService } from '@/features/scheduling';
 import {
   getBrokerAdapter, getBrokerReader, marketDataConfigured, tradableSessionDetailed, multiTimeframeScan, DEFAULT_UNIVERSE,
-  isShortTermBreakdown, riskPolicy, rotationBenches, etSessionDate,
+  isShortTermBreakdown, riskPolicy, rotationBenches, etSessionDate, unmanagedSymbols,
   type TradingMode, type TradingBook, type BrokerAccount, type NameStrength,
 } from '@/features/trading';
 import { ensureTradingSchema } from './trading-engine';
@@ -85,6 +87,7 @@ import { earningsBlackout, EARNINGS_BLACKOUT_DAYS } from './trading-dispatch-wor
 import { coreConfig, ensureCore } from './trading-dispatch-core';
 import { rotationConfig, rotateSleeve, rotateBlendSleeve } from './trading-dispatch-rotation';
 import { computeExits, placeEntries, placePopCatches } from './trading-dispatch-exits-entries';
+import { withEngineCostBasis } from './trading-engine-cost-basis';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'trading-schedule-dispatch' });
@@ -209,8 +212,15 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
     logger.warn({ sub, mode, err: pinnedRead.err }, 'autopilot fire: protected-lot ledger read FAILED — engine could sell pinned shares; skipping this fire');
     return { scanned: 0, entries: 0, exits: 0, orders: [], errors: [{ symbol: '*', error: 'protected-lot ledger read failed' }], posture: policy.posture };
   }
-  const positions = subtractPinnedLots(positionsRead.positions, pinnedRead.m);
+  const overlaid = subtractPinnedLots(positionsRead.positions, pinnedRead.m);
   if (pinnedRead.m.size) logger.info({ sub, mode, pinned: [...pinnedRead.m.entries()] }, 'protected lots subtracted from the autopilot view');
+  // ADR-159 — THE MARK, applied ONCE and before any leg reads the book: `unmanaged` on every long the
+  // engine's own filled orders do not cover (a share bought outside the engine, or a holding whose
+  // history the ledger no longer explains), plus the engine's own cost basis where they do. Every leg
+  // below takes THIS array, so the core top-up, the protective exits and the rotation all withhold for
+  // the same position. A failed ledger read marks nothing and logs, so the fire behaves exactly as it
+  // does today rather than losing every stop in the book to a database blip.
+  const positions = await withEngineCostBasis(ctx, sub, book, overlaid);
   // Snapshot the REAL equity for the honest day-P&L baseline (latest-per-ET-day ≈ that day's close)
   // BEFORE the sizing cap — the store is the truth source for recaps/guards and must never carry the
   // capped sizing fiction (07-07: capped paper equity=20000 was recorded and poisoned the day P&L).
@@ -312,13 +322,26 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
   const strategyParams = await loadStrategyParams(ctx.pool);
   const scan = await multiTimeframeScan(symbols.filter((s) => !coreSet.has(s.toUpperCase())), algoMasses, strategyParams);
   const held = new Map(positions.map((p) => [p.symbol.toUpperCase(), p.qty]));
+  // ADR-159 — `held` is a QUANTITY map and deliberately keeps every long, unmanaged ones included:
+  // it is also the entry leg's dedup guard (placeEntries refuses a name with qty > 0), so dropping a
+  // withheld name from it would let the engine BUY what it just refused to manage. The mark therefore
+  // rides beside it, and the scan legs below read this set instead of re-deriving the rule.
+  const unaccounted = unmanagedSymbols(positions);
+  if (unaccounted.size) {
+    logger.info({ sub, mode, unmanaged: [...unaccounted] },
+      'scan sleeve WITHHELD — the engine cannot account for these holdings from its own fills; monitored, not managed');
+  }
 
   // 2a) Short-timeframe breakdown — a held name crashing on 5Min+1Hour even if the regime is up
   //     (the news-driven intraday selloff the regime-weighted score is too slow to flag).
   const breakdowns = new Set<string>();
   for (const [sym, qty] of held) {
     const d = scan.get(sym);
-    if (qty > 0 && d && !exiting.has(sym) && !coreSet.has(sym) && isShortTermBreakdown(d)) breakdowns.add(sym);
+    // ADR-159: withheld BEFORE the set is built, so the name is neither sold nor has its stale working
+    // sell canceled by the freeStaleSells below. It is deliberately NOT added to `exiting`: the entry
+    // leg's `remaining` keeps counting the position against maxPositions and its exposure, exactly as
+    // it does today, so withholding here can only remove an order and never free a slot for another.
+    if (qty > 0 && d && !exiting.has(sym) && !coreSet.has(sym) && !unaccounted.has(sym) && isShortTermBreakdown(d)) breakdowns.add(sym);
   }
   if (breakdowns.size) {
     // Same stale-sell release as the protective exits above — a breakdown sell must never be
@@ -344,7 +367,9 @@ async function runAutopilot(ctx: AppContext, sub: string, bookOrMode: TradingBoo
     // 2b) Technical sells (weighted decision) not already exiting → close the long.
     for (const d of scan.values()) {
       const sym = d.symbol.toUpperCase();
-      if (d.action === 'sell' && (held.get(sym) || 0) > 0 && !exiting.has(sym) && !coreSet.has(sym)) {
+      // ADR-159: same contract as 2a — a technical close is still an engine order, and the engine has
+      // no basis for this quantity. Not added to `exiting` for the same reason.
+      if (d.action === 'sell' && (held.get(sym) || 0) > 0 && !exiting.has(sym) && !coreSet.has(sym) && !unaccounted.has(sym)) {
         await placeManaged(ctx, sub, book, scanDecision(d, 'sell', held.get(sym) as number), orders, errors);
         exiting.add(sym);
       }
