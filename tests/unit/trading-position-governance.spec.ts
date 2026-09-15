@@ -3,13 +3,15 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the FIFTH state. A holding whose shares all sit in protected lots is dropped by subtractPinnedLots before anything governs it, so it reached no answer at all and a surface read it as NOT KNOWN - a deliberately protected position shown as unexamined, which is this module's own failure inverted. The boundary is driven, not described: the REAL subtraction decides which symbols vanish, and the cases assert the constructor is the only answer available for those and that a partial pin is NOT one of them. The wording is asserted to say the lots still work their own exits, because `exitsApply: false` on its own would read as unprotected, and to say how the state ENDS, because it is a setting and not a finding.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the readout the trading surface paints from ADR-159. The three cases that matter are the three the operator cannot otherwise tell apart: a holding the engine cannot account for (no order of any kind), a holding the operator ring-fenced himself (a setting, not a finding), and a holding NOBODY LOOKED AT because the ledger read failed - which must never read as "managed". The live-book shape is pinned by name: USO is 0 buys / 4 sells and is also TRADING_CORE_SYMBOLS=USO:0, so it carries BOTH reasons and the readout has to say both. The withholding rules asserted here are read off the order paths themselves (trading-schedule-dispatch.ts:253 filters every exit for a fenced symbol; ensureCore skips only an unmanaged one), so a change to either is meant to turn this red.
  */
 
 import { describe, expect, it } from 'vitest';
 import type { Position } from '../../src/features/trading/services/broker-adapter';
 import type { CoreConfig } from '../../src/app/trading-dispatch-core';
-import { positionGovernance, positionGovernanceBySymbol } from '../../src/app/trading-position-governance';
+import { pinnedInFullGovernance, positionGovernance, positionGovernanceBySymbol } from '../../src/app/trading-position-governance';
+import { subtractPinnedLots } from '../../src/app/trading-pinned-lots';
 
 /** A book with nothing ring-fenced. */
 const noFence: CoreConfig = { symbols: [], targetPct: 0, perSymbolPct: new Map() };
@@ -146,5 +148,56 @@ describe('the trading surface readout of what the engine will not trade (ADR-159
     expect(book.ANET.reasons).toEqual([]);
     expect(book.USO.reasons.map((r) => r.kind)).toEqual(['unaccounted', 'ring-fenced']);
     expect(book.SKHY.reasons.map((r) => r.kind)).toEqual(['ring-fenced']);
+  });
+});
+
+/**
+ * The fifth state. `subtractPinnedLots` drops a symbol whose residual is zero, so a fully pinned
+ * holding never reaches `positionGovernance` at all - and before this state existed the surface's
+ * fallback called that "not known", which is false twice over: somebody did look, and the answer is
+ * benign. These cases drive the REAL subtraction so the premise is a fact rather than a claim.
+ */
+describe('a holding held entirely in protected lots is a state of its own, not an unread one', () => {
+  const venue = (symbol: string, qty: number): Position => ({
+    symbol, qty, avgEntryPrice: 10, currentPrice: 11, marketValue: qty * 11, unrealizedPl: qty,
+  });
+
+  it('the subtraction really does drop it, which is why no governance answer can reach it', () => {
+    const positions = [venue('USO', 400), venue('ANET', 100)];
+    const visible = subtractPinnedLots(positions, new Map([['USO', 400], ['ANET', 40]]));
+    expect(visible.map((p) => p.symbol), 'USO is gone; ANET keeps its residual').toEqual(['ANET']);
+    expect(visible[0].qty).toBe(60);
+    expect(positionGovernanceBySymbol(visible, noFence).USO, 'so the book answer has no USO entry').toBeUndefined();
+  });
+
+  it('a pin that covers MORE than the venue reports still drops the symbol', () => {
+    expect(subtractPinnedLots([venue('USO', 400)], new Map([['USO', 500]]))).toEqual([]);
+  });
+
+  it('states it in the operator\'s words, naming the quantity and how the state ends', () => {
+    const [reason] = pinnedInFullGovernance('USO', 400).reasons;
+    expect(reason.kind).toBe('pinned-in-full');
+    expect(reason.label).toBe('protected lots');
+    expect(reason.detail).toContain('All 400 USO');
+    expect(reason.detail, 'a setting, not a finding - say how it ends').toContain('returns to the autopilot when its lots are released');
+    expect(reason.detail).toContain('setting, not a finding');
+  });
+
+  it('never reads as unprotected: the detail says each lot works the exits it was opened with', () => {
+    const g = pinnedInFullGovernance('USO', 400);
+    expect(g.exitsApply, 'the AUTOPILOT emits nothing for it').toBe(false);
+    expect(g.ordersApply).toBe(false);
+    expect(g.reasons[0].detail).toContain('not unprotected');
+    expect(g.reasons[0].detail).toContain('works the exits it was opened with');
+  });
+
+  it('is NOT the unread state - that bucket keeps its own meaning', () => {
+    const g = pinnedInFullGovernance('uso', 400);
+    expect(g.symbol, 'upper-cased like every other answer').toBe('USO');
+    expect(g.reasons.map((r) => r.kind)).toEqual(['pinned-in-full']);
+    expect(g.reasons.map((r) => r.label)).not.toContain('not known');
+    // The genuinely unread position still answers not known - this separates two things that shared
+    // a bucket, it does not empty the bucket.
+    expect(kinds(held('ABT', 134, 'unread'), noFence)).toEqual(['accountability-unknown']);
   });
 });
