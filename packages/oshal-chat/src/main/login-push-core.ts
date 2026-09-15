@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A, node half: the Electron-free logic behind "Log in + push" — which vendor login files are pushable, where the swarm accepts them, the vendor shapes we accept, the plain-http rule for the destination, how a finished browser login is detected (the vendor CLI writes its file), and how the swarm's answer is classified. Kept pure so core's vitest guards it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the ESPN Fantasy target and its pure halves — cookie-pair extraction from a jar listing and the connector's import body. Kept here, beside the vendor logins, so both live under the same vitest guard; ESPN is deliberately NOT folded into PushableLogin, because it is a connector credential rather than a vendor CLI file and shares none of the file-shape logic. A connector answer names the account in `account`, so that is accepted alongside `email`.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ESPN loginUrl now opens ESPN's own sign-in entry (`/login`, returnURL back to the Fantasy home) instead of the Fantasy home page. On the home page the first control a user reaches for — the person icon's Log In — does nothing in the node's Electron window, and the one that works sat in a side card; `/login` puts the MyDisney email + password form up with no click, and signing in or dismissing it returns the window to the Fantasy home the old entry opened on. Pinned by tests/unit/node-espn-cookie-login.spec.ts; `npm run test:espn-login` holds live ESPN to it.
  */
 
 /** The two vendor logins the swarm can adopt (codex via platform promotion, claude via ADR-137 A). */
@@ -52,8 +53,17 @@ export const ESPN_TARGET = {
   label: 'ESPN Fantasy',
   /** The connector's token-paste endpoint: `email` carries the SWID, `token` the espn_s2. */
   importPath: '/api/connect/espn-fantasy/token',
-  /** Where the user signs in. A real page in a real window — this node never handles the password. */
-  loginUrl: 'https://www.espn.com/fantasy/',
+  /**
+   * Where the user signs in. A real page in a real window — this node never handles the password.
+   *
+   * ESPN's own sign-in entry, not the Fantasy home page. On the home page the person icon's Log In
+   * does nothing inside this Electron window (reproduced 2026-09-09), and the control that works
+   * sits in a side card a first-time user has to hunt for. `/login` opens the MyDisney email +
+   * password form with no click, and both signing in and dismissing the form send the window to
+   * `returnURL`, the Fantasy home page the old entry opened on. `npm run test:espn-login` loads
+   * this exact URL live, so ESPN moving the entry fails a run instead of the button.
+   */
+  loginUrl: 'https://www.espn.com/login?returnURL=https%3A%2F%2Fwww.espn.com%2Ffantasy%2F',
   /** Cookie jar to read from, and the domain that owns the pair. */
   cookieDomain: '.espn.com',
   /**

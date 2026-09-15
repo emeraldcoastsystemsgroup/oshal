@@ -4,8 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ESPN "Log in + push" capture: exactly two cookies are read out of a jar full of them, a half-signed-in jar yields nothing rather than half a credential, the SWID normalises to the braced form the fantasy API expects, the body splits back into the same pair the Sports Edge package reads, the destination is the connector route under the same plain-http rule as a vendor login, and the connector's own success shape classifies as adopted.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pins the sign-in window's entry URL to ESPN's own `/login` page with a returnURL back to the Fantasy home (BACKLOG: the window used to open the Fantasy home, whose first control a user reaches for is dead in the node's window), and holds the package to keeping the live check (`npm run test:espn-login`) that loads that URL in a real window on a fresh profile.
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   ESPN_TARGET,
@@ -85,5 +88,31 @@ describe('@oshal/chat ESPN Fantasy cookie capture', () => {
     expect(classifyPushResponse(401, {})).toMatchObject({ needsSignIn: true });
     expect(classifyPushResponse(404, { error: 'not a token connector' }))
       .toMatchObject({ ok: false, reason: 'not a token connector' });
+  });
+
+  it('OPENS ON ESPN’S OWN SIGN-IN FORM, not on a page whose first control is dead', () => {
+    // The window used to open the Fantasy home page. There the person icon's Log In does nothing in
+    // the node's window, and the control that works sits in a side card a first-time user has to
+    // find. ESPN's /login page puts the MyDisney form up with no click.
+    expect(ESPN_TARGET.loginUrl).toBe('https://www.espn.com/login?returnURL=https%3A%2F%2Fwww.espn.com%2Ffantasy%2F');
+    const entry = new URL(ESPN_TARGET.loginUrl);
+    expect(entry.origin).toBe('https://www.espn.com');
+    expect(entry.pathname).toBe('/login');
+    // That page sends the window to returnURL after a sign-in and after the form is dismissed. It only
+    // honours an absolute http(s) value; anything else is ignored and the window lands on the espn.com
+    // front page instead of back on Fantasy.
+    const back = new URL(entry.searchParams.get('returnURL') ?? 'about:blank');
+    expect(back.href).toBe('https://www.espn.com/fantasy/');
+    // The pair is read from the .espn.com jar, so the return must not leave that domain.
+    expect(`.${back.hostname}`.endsWith(ESPN_TARGET.cookieDomain)).toBe(true);
+  });
+
+  it('keeps the live window check that goes red when ESPN moves the entry', () => {
+    // The pin above only proves nobody edited the constant. The runner loads this URL in a real
+    // window on a fresh profile and fails unless a visible sign-in form appears — delete it and an
+    // ESPN change is back to breaking the button instead of a test.
+    const manifest = JSON.parse(readFileSync(resolve(__dirname, '../../packages/oshal-chat/package.json'), 'utf8'));
+    expect(manifest.scripts['test:espn-login']).toBe('npm run build && node scripts/start-electron.js dist/main/espn-login-boundary.js');
+    expect(existsSync(resolve(__dirname, '../../packages/oshal-chat/src/main/espn-login-boundary.ts'))).toBe(true);
   });
 });
