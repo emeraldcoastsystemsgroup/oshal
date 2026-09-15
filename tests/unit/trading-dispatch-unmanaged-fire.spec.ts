@@ -85,10 +85,25 @@ const h = vi.hoisted(() => {
   ];
   const ACCOUNT: BrokerAccount = { cash: 40_000, buyingPower: 40_000, equity: 100_000, currency: 'USD' };
 
+  /* ── extended-hours dip fixture ─────────────────────────────────────────────────────────────
+   * Off-hours the engine runs ONE exit rule — the close-anchored dip — so the fire needs a position
+   * printing under its own prior regular close. Every fixture close series ENDS at the symbol's PRICE,
+   * so a position marked below that price is exactly that far under its close. The markdown applies to
+   * the pre/post fires ONLY: a 'regular' fire reads the untouched positions, which is what keeps every
+   * case above byte-identical to the fixture they were written against.
+   */
+  const clock: { session: 'pre' | 'regular' | 'post' } = { session: 'regular' };
+  /** The dipping pair: an UNCOVERED hand-bought holding and its COVERED twin, both 2.3% under the close. */
+  const EXT_DIP = { uncovered: 'USTP', covered: 'MSTP', price: 86, qty: 50 };
+  const sessionPositions = (): Position[] => POSITIONS.map((p) => {
+    if (clock.session === 'regular' || (p.symbol !== EXT_DIP.uncovered && p.symbol !== EXT_DIP.covered)) return { ...p };
+    return { ...p, currentPrice: EXT_DIP.price, marketValue: p.qty * EXT_DIP.price, unrealizedPl: p.qty * (EXT_DIP.price - p.avgEntryPrice) };
+  });
+
   const rec = { orders: [] as Array<{ decisionId: string; symbol: string; side: string; qty: number }>, canceled: [] as string[] };
   const broker = {
     mode: () => 'paper', configured: () => true,
-    getPositions: async () => POSITIONS.map((p) => ({ ...p })),
+    getPositions: async () => sessionPositions(),
     getAccount: async () => ({ ...ACCOUNT }),
     cancelOrder: async (id: string) => { rec.canceled.push(id); },
     placeOrder: async () => { throw new Error('spec: every order must route through placeDecisionOrder (recorded)'); },
@@ -103,7 +118,7 @@ const h = vi.hoisted(() => {
     closesForTimeframe: async (s: string, _t: unknown, n = 60) => closesOf(s.toUpperCase()).slice(-n),
     barsBatch: async (syms: string[]) => new Map(syms.map((s) => [s.toUpperCase(), closesOf(s.toUpperCase())])),
   };
-  return { saved, PRICE, SCAN, POSITIONS, ACCOUNT, UNCOVERED, closesOf, rec, broker, source };
+  return { saved, PRICE, SCAN, POSITIONS, ACCOUNT, UNCOVERED, closesOf, rec, broker, source, clock, EXT_DIP };
 });
 
 vi.mock('@/features/trading', async (importOriginal) => {
@@ -121,7 +136,7 @@ vi.mock('@/features/trading', async (importOriginal) => {
     getBrokerAdapter: () => h.broker,
     getBrokerReader: () => h.broker,
     marketDataConfigured: () => true,
-    tradableSessionDetailed: async () => ({ session: 'regular', reason: 'ok', blind: false }),
+    tradableSessionDetailed: async () => ({ session: h.clock.session, reason: 'ok', blind: false }),
     multiTimeframeScan: async (symbols: string[]) => {
       const want = new Set(symbols.map((s) => s.toUpperCase()));
       return new Map(h.SCAN.filter((d) => want.has(d.symbol)).map((d) => [d.symbol, { ...d, perTimeframe: d.perTimeframe.map((v) => ({ ...v })) }]));
@@ -230,17 +245,20 @@ async function seedEngineFills(sub: string, symbols: string[]): Promise<void> {
  * @description Fire the trading schedule for `sub` and return the ordered plan it placed.
  * @param sub - The owner sub whose legacy paper book fires.
  * @param rotation - Whether TRADING_SLEEVE_ROTATION is armed for this fire.
+ * @param session - The venue session this fire reports ('pre'/'post' make it an extended-hours fire).
  * @returns The ordered list of placed orders.
  */
-async function fire(sub: string, rotation: boolean): Promise<PlacedOrder[]> {
+async function fire(sub: string, rotation: boolean, session: 'pre' | 'regular' | 'post' = 'regular'): Promise<PlacedOrder[]> {
   h.rec.orders.length = 0; h.rec.canceled.length = 0; tickets.length = 0;
   if (rotation) process.env.TRADING_SLEEVE_ROTATION = 'true'; else delete process.env.TRADING_SLEEVE_ROTATION;
+  h.clock.session = session;
   try {
     await dispatchTradingSchedule(ctx(), {
       id: `spec-adr159-${sub}`, taskType: `trading-autopilot:${sub}`, taskData: { userSub: sub, mode: 'paper', universe: UNIVERSE },
     } as never);
   } finally {
     delete process.env.TRADING_SLEEVE_ROTATION;
+    h.clock.session = 'regular';
   }
   const out: PlacedOrder[] = [];
   for (const o of h.rec.orders) {
@@ -311,6 +329,22 @@ describe('a full autopilot fire places NO order for a position the engine cannot
     expect(plan.some((o) => o.source === 'gravity-rotation'), 'rotation actually traded this fire').toBe(true);
     expect(byLeg(plan, h.UNCOVERED), 'an unaccounted holding gets NO order of any kind')
       .toEqual({ USTP: [], UBRK: [], USEL: [], UCLD: [], UBUY: [] });
+  }, 240_000);
+
+  it('extended hours: the close-anchored dip rule withholds too — the only exit that runs off-hours', async () => {
+    const plan = await fire(SUB_HALF, false, 'pre');
+    // Off-hours computeExits RETURNS on the dip rule alone: no stop, no trailing, no cap trim and no
+    // entries run at all. So the covered twin's dip sell is the whole proof this fire reached the leg —
+    // without it a pre-market fire that simply did nothing would satisfy the withholding assertion below.
+    expect(forSymbol(plan, h.EXT_DIP.covered), 'the covered twin prints under its close and IS sold out')
+      .toEqual([`sell ${h.EXT_DIP.qty}`]);
+    expect(byLeg(plan, h.UNCOVERED), 'an unaccounted holding gets NO order of any kind off-hours')
+      .toEqual({ USTP: [], UBRK: [], USEL: [], UCLD: [], UBUY: [] });
+    // ...and the withheld name is genuinely dip-eligible in this very fire: the identical pre-market fire
+    // over the book that DOES account for it sells it, so the empty plan above is the mark and nothing else.
+    const covered = await fire(SUB_FULL, false, 'pre');
+    expect(forSymbol(covered, h.EXT_DIP.uncovered), 'the same holding IS sold once the engine can account for it')
+      .toEqual([`sell ${h.EXT_DIP.qty}`]);
   }, 240_000);
 });
 

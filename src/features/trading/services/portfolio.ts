@@ -25,6 +25,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Veto a stop-loss that exists only because the venue reports a wash-sale-adjusted basis (washSaleStopVetoed). On 2026-09-14 the live book stop-lossed 10 names and all 10 were within 5% of what the engine had paid - CRM read -5.07% while trading +3.24% above its own buy. The veto can only SUPPRESS a stop the venue basis already wanted; it never creates one, and take-profit, trailing and cap trims are unchanged.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — exitsToRun, trailingExits and rebalanceTrims emit NOTHING for a position marked `unmanaged` (the engine's own filled orders do not account for the quantity held), and unmanagedSymbols exposes that same rule to the dispatch legs. The engine reads the VENUE's positions, so a share bought by hand is picked up and traded against a basis the engine never paid. Withholding only ever REMOVES a decision from the plan; a position without the mark is byte-identical to today, which keeps the strategy-lab replay and every other caller that never runs the attachment unchanged. Exposure, capital and drawdown deliberately keep counting the position — it is real money at the venue.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 2 — rotationBenches withholds the bench SELL for a position marked `unmanaged`, the fourth sell rule in this file and the one SEQ 9 missed. The mark is applied to `cold` only, never to `held` or `heldSyms`: those decide which names count as already-held, and a withheld name dropped from them would resurface as a hot BENCH CANDIDATE the caller then buys. Filtering `cold` can only shorten the returned list.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 3 — dipExits withholds the extended-hours dip sell for a position marked `unmanaged`: the fifth sell rule in this file, and the one SEQ 9 and SEQ 10 both missed. It is also the one that mattered most, because computeExits RETURNS on it off-hours before exitsToRun, trailingExits and rebalanceTrims are ever reached — so on every pre/post-market fire the only exit rule that ran was the only one still ungated, and a hand-bought share printing TRADING_EXT_DIP_SELL_PCT under its prior regular close was sold out in full against a basis the engine never paid. The rule is close-anchored rather than basis-anchored, but the ORDER it emits is still a full-position sell of a quantity the engine cannot account for. Filtering can only shorten the returned list; a position without the mark is byte-identical to before.
  *
  * @module portfolio
  */
@@ -188,6 +189,10 @@ export interface ExitOrder { symbol: string; qty: number; reason: 'stop_loss' | 
  * a full protective exit. Backtested over every session night since inception (6 windows, 108
  * name-nights): +$461 vs holding to the next open, zero negative windows; caught the 07-07
  * pre-market AMD/MU crash for +$426. Pure — the dispatch supplies prior closes.
+ *
+ * ADR-159: a position marked `unmanaged` is never dipped out. Off-hours this is the ONLY exit rule
+ * that runs, so it is also the only one whose withholding keeps a hand-bought holding unmanaged
+ * through a pre/post-market fire.
  * @param positions - Current open longs (need currentPrice).
  * @param priorClose - Symbol → last regular-session close (the dip anchor).
  * @param dipPct - Trigger: percent below the close (e.g. 0.5).
@@ -197,6 +202,7 @@ export function dipExits(positions: Position[], priorClose: Map<string, number>,
   const exits: ExitOrder[] = [];
   for (const p of positions) {
     if (!(p.qty > 0)) continue;
+    if (p.unmanaged) continue;  // ADR-159: no engine basis for this quantity → no engine decision
     const cur = p.currentPrice ?? 0;
     const ref = priorClose.get(p.symbol.toUpperCase()) ?? 0;
     if (!(cur > 0) || !(ref > 0)) continue;
