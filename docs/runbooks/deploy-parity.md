@@ -64,3 +64,61 @@ bash scripts/oshal-up.sh
 
 Root cause is usually a `:latest` retag between recreates — see the deploy notes in
 [CLAUDE.md](../../CLAUDE.md) ("api+bots share dist — recreate BOTH from the SAME build").
+
+## Post-deploy live verification — a deploy is not finished until Jarvis answers and a ticket moves
+
+**Library:** [`scripts/lib/deploy-verify.sh`](../../scripts/lib/deploy-verify.sh) ·
+**loopback probe:** [`scripts/operations/deploy-live-verification.js`](../../scripts/operations/deploy-live-verification.js) ·
+**guard:** `tests/unit/deploy-live-verification.spec.ts`
+
+Every other gate in `scripts/oshal-deploy.sh` measures the **stack**: containers healthy, image
+parity clean, `/health` 200, zero unhealthy. On 2026-09-15 all of them were green, the run printed
+`DEPLOYED`, and the **product** was down in two places at once — Jarvis answered nothing, and a
+ticket the operator raised at 00:51Z escalated with `manifest_worker_dispatch_failed` /
+`authorization_recorded_delegation_required` in its status-history metadata instead of being
+worked. These three checks run last, after the health/parity/census gates, and their verdict
+decides whether `DEPLOYED` is printed at all.
+
+| Check | What it asserts | Why |
+|---|---|---|
+| `bot-role-grant` | `has_table_privilege('oshal_bot','public.oshal_authorization_applications','SELECT')` is true | `scripts/governance/provision-app-role.mjs` re-converges `oshal_bot` to an exact allowlist on every api boot, and that allowlist does not contain this table — so migration 140's grants are stripped at boot and **every** Jarvis ask answers `503 authorization_bot_posture_unavailable` until someone re-applies them by hand. |
+| `jarvis-ask` | Jarvis answers one fixed question **as the operator**, on a fresh thread | The reasoning rail is the product. A time-boxed PAT is minted inside the api container with the service secret already in its environment, used on loopback, and revoked by id; the thread is closed afterwards. The token and the operator subject are never printed. |
+| `ticket-dispatch` | one synthetic `task` ticket leaves `approved` without landing in `escalated`/`dead_letter`/`failed` | `task` is a built-in `manifest-worker` workflow, so it exercises the exact dispatch path that failed, on every box, with no manifest-registration race. The ticket is cancelled and deleted whatever the verdict. |
+
+Each check prints one `VERIFY PASS` / `VERIFY FAIL` line; a failure prints the remedy underneath it,
+including the exact re-apply command for the missing grant.
+
+### Exit 4: deployed and serving, but the product is down
+
+A verification failure is **exit 4** and is deliberately **not** rolled back. The new image is
+already live and serving; returning to the previous one would add a version surprise to a product
+outage, and the previous image is not the cause of a stripped grant or an undispatched ticket. Fix
+the named check, then re-verify without redeploying:
+
+```bash
+bash -c 'source scripts/lib/deploy-verify.sh && oshal_deploy_post_verify'
+```
+
+### The one skip switch
+
+```bash
+OSHAL_DEPLOY_SKIP_LIVE_VERIFY=1 bash scripts/oshal-deploy.sh
+```
+
+`OSHAL_DEPLOY_SKIP_LIVE_VERIFY=1` is the **only** switch that skips these checks, and it exists for
+one case: a deployment that carries no operator identity to ask Jarvis a question as (empty
+`OSHAL_OPERATOR_SUBS`). There is deliberately no per-check switch — three separate skips is how a
+gate rots. A skipped run says so out loud and calls itself `UNVERIFIED as a product`.
+
+If the api container is missing the helper, the deploy **refuses at preflight** (exit 2) rather than
+quietly skipping.
+
+### Tuning knobs (defaults are what a deploy uses)
+
+`OSHAL_VERIFY_DB_CONTAINER` / `OSHAL_VERIFY_API_CONTAINER` / `OSHAL_VERIFY_DB_USER` /
+`OSHAL_VERIFY_DB_NAME` name the containers and role; `OSHAL_VERIFY_TICKET_TYPE` picks the synthetic
+ticket's workflow (`task`); `OSHAL_VERIFY_BUDGET_MS` (default 300000) bounds both polls;
+`OSHAL_VERIFY_QUESTION` sets the Jarvis question. Each Jarvis check leaves one closed
+`deploy-verify-*` thread behind — one chat row per deploy, by design, because reusing a thread would
+re-introduce the bookmarked-thread refusal documented in
+[jarvis-couldnt-do-that-just-now.md](./jarvis-couldnt-do-that-just-now.md).
