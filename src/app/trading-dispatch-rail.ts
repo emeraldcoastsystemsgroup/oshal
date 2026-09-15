@@ -13,6 +13,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — decomposition of trading-schedule-dispatch.ts (890 code lines) along its section seams: bookBinding, the RunOrder/RunSummary/DecisionInput shapes, persistDecision + placeManaged (the signal → decision → placeDecisionOrder provenance chain), IN_FLIGHT_STATUSES + loadInFlight, the exit/scan/breakdown decision mappers and capAccount move here unchanged. Env names unchanged: TRADING_CAPITAL_CAP_USD. Golden-plan guard: tests/unit/trading-dispatch-golden-plan.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 D8 tail — capAccount now routes through settledBuyingPower, so every autopilot sizing read (the dispatcher's opening snapshot and both rotation post-sell re-reads) spends only SETTLED cash on a cash-type book; before this an autonomous BUY that needed unsettled proceeds was sized off total cash and then refused 422 settlement_blocked at the engine. The cap body moves unchanged into the private capToCapital and the clamp runs on its CAPPED output: the cap derives the position value as equity − cash, so clamping first would count unsettled sale proceeds as positions and cut the cap headroom by that amount (a capped cash book's rotation would lose the headroom its own sale freed). Margin books, typeless paper books and policy 'off' are untouched. Guard: tests/unit/trading-settlement-autopilot-clamp.spec.ts.
  *
  * @module trading-dispatch-rail
  */
@@ -23,6 +24,7 @@ import type { MtfDecision, TradingMode, TradingBook, BrokerAccount, ExitOrder } 
 import { guardrails, placeDecisionOrder } from './trading-engine';
 import { legacyBook } from './trading-books-store';
 import { WORLD_SENT_MIN_POINTS, type WorldSent } from './trading-dispatch-world-gate';
+import { settledBuyingPower } from './trading-settlement';
 
 /** Agent id stamped on autopilot-authored decisions/signals (deterministic engine, no LLM). */
 const AUTOPILOT_AGENT = 'mtf-autopilot';
@@ -202,6 +204,24 @@ export function breakdownDecision(d: MtfDecision, qty: number): DecisionInput {
 }
 
 /**
+ * @description The account snapshot every autopilot sizing path reads: the capital cap first
+ * (capToCapital — live books only), then ADR-134 D8's settled-cash clamp (settledBuyingPower —
+ * cash-type books only) applied to the CAPPED snapshot. It runs on the dispatcher's opening snapshot
+ * and on both rotation post-sell re-reads, so an autonomous BUY on a cash book is sized against
+ * settled cash rather than refused at the engine for needing unsettled proceeds.
+ * ORDER MATTERS: the cap measures positions as equity − cash from the venue's TOTAL cash. Clamping
+ * first would count unsettled sale proceeds as positions and shrink the cap headroom by exactly that
+ * amount, so a capped cash book's rotation could not deploy the headroom its own sale freed.
+ * Margin books, typeless paper books and policy 'off' come back exactly as capToCapital returns them.
+ * @param account - The real broker account snapshot.
+ * @param book - The book being run.
+ * @returns The capped, settlement-clamped snapshot.
+ */
+export function capAccount(account: BrokerAccount, book: TradingBook): BrokerAccount {
+  return settledBuyingPower(capToCapital(account, book), book);
+}
+
+/**
  * @description Cap the account snapshot to TRADING_CAPITAL_CAP_USD so the strategy sizes as if the
  * account were that small — e.g. run a 10K book on a 50K account. Equity (the % sizing base) is capped
  * to the cap; cash/buyingPower are capped to the HEADROOM left under the cap after the current position
@@ -214,10 +234,10 @@ export function breakdownDecision(d: MtfDecision, qty: number): DecisionInput {
  * NOTE: because equity is pinned at the cap while the real account exceeds it, the account-level
  * daily-loss breaker is muted at the capped scale; per-position stops (trailing/backstop) stay active.
  * @param account - The real broker account snapshot.
- * @param mode - The book being run; the cap applies to 'live' only.
+ * @param book - The book being run; the cap applies to 'live' only.
  * @returns The capped snapshot (or the original for paper / when no cap is set).
  */
-export function capAccount(account: BrokerAccount, book: TradingBook): BrokerAccount {
+function capToCapital(account: BrokerAccount, book: TradingBook): BrokerAccount {
   if (book.kind !== 'live') return account;
   // ADR-134: effective cap = LEAST(env fleet floor, the book's own cap); nulls fall through.
   const envCap = Number(process.env.TRADING_CAPITAL_CAP_USD) || 0;
