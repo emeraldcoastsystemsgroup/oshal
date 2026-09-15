@@ -27,6 +27,7 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Repaired the extracted TicketView footer methods and class closure so cockpit ticket rendering parses correctly again
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Normalized escalated ticket detail inputs so activity payload external ids and raw statuses drive de-escalation guidance and durable escalation lookups correctly
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Default the status filter to "active" (hide closed) so the general cockpit no longer opens onto a wall of complete/cancelled tickets; "active" now excludes BOTH complete and cancelled; sync the dropdown to the default and add a Cancelled filter option so closed work stays reachable on demand
+ * 24 | maintainer@emeraldcoastsystemsgroup.com   | The durable escalation lookup added in entry 12 assigned its result unconditionally, so an empty swarm_escalations result overwrote the escalation detail the activity payload now carries from the recorded status transition. Route both through selectEscalationDetail: the durable record still wins when it names a reason, an empty lookup no longer erases one.
  */
 
 import { ApiClient } from '../api-client.js';
@@ -40,6 +41,7 @@ import {
   extractErrorMessage,
   getTicketStateGroup,
   normalizeWorkflowState,
+  selectEscalationDetail,
   stateLabel,
   ticketMatchesSearch,
 } from './ticket-view-helpers.js';
@@ -684,7 +686,8 @@ export class TicketView {
       }
       const normalizedTicket = this._norm(ticket);
       if (this._normalizeWorkflowState(normalizedTicket.rawStatus || normalizedTicket.state) === 'escalated') {
-        normalizedTicket.escalation = await this._loadTicketEscalation(normalizedTicket);
+        const durableEscalation = await this._loadTicketEscalation(normalizedTicket);
+        normalizedTicket.escalation = selectEscalationDetail(normalizedTicket.escalation, durableEscalation);
       }
       const timeline = payload.timeline || [];
       const costData = payload.cost || {};

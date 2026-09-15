@@ -7,9 +7,11 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added external ticket identifiers to activity payloads so escalated cockpit tickets can look up durable swarm escalation records while keeping bot cost rollups intact
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Expanded ticket activity fallback aggregation to include every linked task so MOCK_OIDC localhost rollups show all contributing bots even when direct Postgres cost queries are unavailable
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Fixed cockpit ticket activity workspace wiring so artifact browsing points at the shared root ticket workspace instead of task-scoped linked task IDs
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Escalated tickets now carry the escalation reason the transition recorded. The cockpit read the durable swarm_escalations store only, so an escalation raised outside a swarm run (a dispatch failure, an operator park) rendered as "no reason available" while ticket_status_history held reason/source/severity/nextAction all along. The payload projects that recorded detail instead of duplicating the fact into a second store.
  */
 
 import type { Request, Response } from 'express';
+import { deriveTicketEscalationDetail, type TicketEscalationDetail } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
 import { canAccessResource } from '@/shared/middleware/authz';
 import type { AppContext } from '../composition-root';
@@ -51,6 +53,10 @@ import { getActiveRegistry } from '../extensions/swarm/swarm-bot-registry';
 const SWARM_BOT_REGISTRY = getActiveRegistry();
 
 const logger = createChildLogger({ module: 'cockpit-ticket-activity-route' });
+
+// Enough rows to reach the escalating transition past the trailing churn a parked
+// ticket accumulates, without pulling a full audit trail into a detail render.
+const ESCALATION_HISTORY_LOOKBACK = 25;
 
 /**
  * @description Creates the cockpit ticket activity route handler.
@@ -128,6 +134,7 @@ async function buildInternalTicketActivityPayload(
     : [];
   const workspaceId = selectWorkspaceId(workspaceLinks.length > 0 ? workspaceLinks : inheritedWorkspaceLinks);
   const cockpitState = mapOshalTicketStateToCockpitState(runtimeStatus || internalTicket.status);
+  const escalation = await readRecordedEscalationDetail(ctx, ticketId, internalTicket, runtimeStatus);
   const workspaceLookupId = await resolveRootWorkspaceTicketId(ctx, internalTicket);
   const workspacePath = await resolveWorkspaceDisplayPath(ctx, workspaceId, linkedTask, workspaceLookupId);
   const directOwnUsage = await readDirectTicketUsageSummary(ctx, ticketId);
@@ -194,6 +201,7 @@ async function buildInternalTicketActivityPayload(
       workspaceSlug: ticketProject.workspaceSlug,
       workspaceTaskId: workspaceLookupId || undefined,
       workspacePath,
+      escalation,
     },
     cost: {
       ticketId: internalTicket.ticketId,
@@ -214,6 +222,42 @@ async function buildInternalTicketActivityPayload(
     timeline: mergedTimeline,
     messageCount: (messages.length > 0 ? messages.length : workItems.length) + childRollup.entries.length,
   };
+}
+
+/**
+ * @description Reads back the escalation detail an escalated ticket already recorded.
+ * Only escalated tickets are looked up, and only the reason the escalating path wrote
+ * is surfaced — nothing is synthesized, so a ticket with no recorded reason still
+ * reports none. The durable swarm_escalations store stays the richer record when a
+ * swarm run produced one; the cockpit prefers it and falls back to this.
+ * @param ctx - Application context.
+ * @param ticketId - Internal ticket identifier.
+ * @param internalTicket - The loaded ticket row.
+ * @param runtimeStatus - Status derived from work items, when one was derived.
+ * @returns The recorded escalation detail, or null.
+ */
+async function readRecordedEscalationDetail(
+  ctx: AppContext,
+  ticketId: string,
+  internalTicket: any,
+  runtimeStatus: string | null | undefined,
+): Promise<TicketEscalationDetail | null> {
+  const status = readOptionalString(runtimeStatus) || readOptionalString(internalTicket?.status) || '';
+  if (status !== 'escalated') {
+    return null;
+  }
+
+  let history: Awaited<ReturnType<AppContext['ticketService']['getStatusHistory']>> = [];
+  try {
+    history = await ctx.ticketService.getStatusHistory(ticketId, ESCALATION_HISTORY_LOOKBACK);
+  } catch (error) {
+    logger.error(
+      { err: error, ticketId },
+      'Escalation status-history lookup failed; falling back to the ticket row transition mirror',
+    );
+  }
+
+  return deriveTicketEscalationDetail(history, readRecord(internalTicket?.metadata));
 }
 
 async function buildFallbackTaskActivityPayload(
