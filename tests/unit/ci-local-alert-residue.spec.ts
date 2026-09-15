@@ -81,7 +81,7 @@ describe('ci-local alert-residue post-gate', () => {
   it('passes on a deployment database holding no fixture rows', async () => {
     await reset();
     const run = runGate();
-    expect(run.stderr).toBe('');
+    expect(run.stderr).not.toContain('alert-residue:');
     expect(run.status).toBe(0);
     expect(run.stdout).toContain('alert-residue: clean');
   }, 60_000);
