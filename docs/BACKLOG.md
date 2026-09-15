@@ -2097,6 +2097,65 @@ Whichever it is, `PostgresSwarmEscalationStore` and the cockpit's `getTicketEsca
 agree with it, and a guard proves an escalation raised by a non-run path lands wherever the
 decision says it belongs, proven red by removing that write.
 
+### A vehicle record, and the medium it runs in as a parameter (ADR-160) (2026-09-15)
+
+**Context:** [ADR-160](adr/160-a-vehicle-record-and-the-medium-as-a-parameter.md). Two vehicles are fully
+specified and neither can be developed or moved: the 300 mm marine explorer exists as
+[a design study document](research/autonomous-explorer-design-study.md) whose engines were carved into the
+`ocean-lab` store package while the vehicle itself was not, and the Floater solar dynastat exists as a
+committed `aero-lab/reference-design/` folder holding one `export_build_files.py` run that cannot report it
+has gone stale. Neither `ocean-lab` nor `aero-lab` has a `migrations/` directory, so nothing persists and no
+object can carry a stage. The operator then added interchangeability — run an aircraft in the water module
+and the reverse, and *"want the boat fall to the ground"*. Verified before costing: the medium is already an
+argument in most force models (`aeropolar.wing_polar` takes `rho_kgm3`/`mu_Pas`, and
+`vehicle/aerosurface.py` `evaluate()` L720–721 sets both from the `AtmoSample` and passes them through
+`coefficients()` L504 → `_polar_for_bin()` L417 → `aeropolar.wing_polar` L447/L460; `rotor-types.ts`
+L69–72 and `bemt-solver.ts` L563/L711 take density and kinematic viscosity with seawater only a preset;
+`panel-method.ts:239` contains no viscosity at all; `embodied_worker.py:223` reads the controller's
+gravity from the model). The assumption lives in presets, in
+`marine/services/power-budget.ts:70` (a second hardcoded `SEAWATER_DENSITY_KGM3`), in
+`embodied/src-routes/engine/physics/mjcf.ts:115` (gravity from a module constant, no `density`, no
+`viscosity`) with the same literal again in `arm-mjcf.ts:135`, and in validity envelopes declared
+nowhere but `aeropolar`'s per-point `valid` flag — which cannot catch a medium swap, because water's
+lower kinematic viscosity moves Reynolds *up*, away from the floor that flag enforces, so an air
+surrogate answers a water run and reports `valid = True`. Store-repo
+work in `ocean-lab`, `aero-lab` and `embodied`; no core code.
+
+**Done when:**
+- **S1 — the boat falls.** The medium record exists (id, gravity vector, density, dynamic viscosity, an
+  optional field with its gradient, a free surface or none, validity bounds and a refusal outside them) with
+  three implementations — vacuum, air behind `aerosim.env`, seawater; the MJCF `<option>` is fed from the
+  chosen medium instead of `G_MPS2`; the explorer hull is one solid from its published envelope and all-up mass.
+  In air it falls at g. In seawater it **refuses by name** rather than producing a plausible float, and that
+  refusal is a test case, not a note. Because D3 forbids a cross-package runtime import, these media are a
+  third TypeScript location: their property values must therefore be one committed data row per medium,
+  shared as data and pinned by the S5 drift test, not a third and fourth independent answer to "what is
+  seawater" — the defect this entry diagnoses one level down.
+- **S2 — the Explorer record.** `ocean-lab` carries its first migration (vehicle records, owner RLS), the
+  explorer seed vector as a committed fixture, the limit rows from the study's "What is not true" section, and
+  an **Explorer** tile. Changing the wing stop angle or the tether length and evaluating moves the five-row
+  sea-state table, the occurrence-weighted mean, the km/day and the km/year; the stage recomputes on read and
+  drops when the vector changes; the open limits and the runs S1 recorded are listed.
+- **S3 — parts and geometry.** The explorer's parts model and each watertight part as a CAD Studio program
+  with **Open in CAD Studio**, emitting the portable-object shape (identity and provenance, geometry, mass
+  properties with provenance, a named attachment frame, force-model requirements). The displacement budget
+  closes against the sizing computed at that mass or the stage refuses to advance.
+- **S4 — the Floater record.** `aero-lab` stores the existing export run as the first evaluation, with
+  `BOM_v2`'s mass delta as a budget check (expected red on first run: real parts are 274 g heavier than the
+  certified ledger) and its force models' validity envelopes declared.
+- **S5 — the guards.** Cross-package read-only tests fail when the record shape, the stage function, the
+  medium shape, the medium property values or the portable-object shape drift between labs; a regression asserts the engine at today's
+  version still reproduces the study's published figures from the seed within a stated tolerance; there is one
+  case per named refusal (`medium_property_unavailable`, `model_not_valid_in_medium`). An undeclared validity
+  envelope fails closed — refusing every medium but the model's default — rather than defaulting
+  permissive. The store's package-separation guard is not weakened: shared shapes travel as data, never as an
+  imported runtime (consistent with the one-parts-model entry above, which this consumes rather than
+  duplicates).
+- Every surface that renders a stage renders with it that `fabricable` means the files are complete and
+  self-consistent, not that the machine is safe to build, fly or wet; and every run result carries its medium id
+  and engine fingerprints or is not displayed. No slice buys, builds or tests hardware, and none attempts
+  free-surface hydrodynamics, added mass, cavitation, or aerodynamics inside the physics plant.
+
 ### The ticket-row escalation mirror outlives the escalation it describes (2026-09-15)
 
 **Context:** every ticket carries `metadata.lastStatusTransition`, a mirror of its most recent
