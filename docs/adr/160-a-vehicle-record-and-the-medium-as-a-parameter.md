@@ -107,11 +107,16 @@ before costing it:
   down: *"the ISA table ends there, and a silently extrapolated density is exactly the kind of
   confident fiction this project exists to keep out of the loop."*
 - **The aircraft polar does not assume air.** `aerosim/aeropolar.py` takes `rho_kgm3` and `mu_Pas` as
-  explicit arguments and validates them positive (≈ L1083–1145); `vehicle/energy.py:563` passes
-  `rho_kgm3=float(atmo.rho_kgm3)` — density flows from the environment into the force model already.
-  The same module also carries a "Reynolds honesty policy": it returns a number **and a per-point
-  `valid` flag**, and the selector will only ever pick a valid point. That is a validity envelope,
-  already implemented, for one axis.
+  explicit arguments and validates them positive (≈ L1083–1145), and the environment feeds them:
+  `vehicle/aerosurface.py` `evaluate(…, atmo: AtmoSample, …)` sets `rho_kgm3 = float(atmo.rho_kgm3)`
+  and `mu_Pas = float(atmo.mu_Pas)` (L720–721), passes both into `coefficients()` (L504) →
+  `_polar_for_bin()` (L417) → `aeropolar.wing_polar(…, rho_kgm3=rho_kgm3, …)` (L447, L460), and then
+  computes `dynamic_pressure_Pa = 0.5 * rho_kgm3 * airspeed_ms ** 2` from the same number. Density
+  flows from the environment into the force model already. The polar module also carries a "Reynolds
+  honesty policy": it returns a number **and a per-point `valid` flag** over a hard band
+  `RE_FLOOR = 30_000` to `RE_CEIL = 5.0e6`, and the selector will only ever pick a valid point. That
+  is a validity envelope, already implemented, for one axis — and D7 explains why one axis is not
+  enough.
 - **Ocean Lab's rotor lane does not assume water.** `rotor-types.ts` L69–72 declares
   `densityKgM3` and `kinematicViscosityM2S` on the flow condition; `bemt-solver.ts` uses
   `flow.densityKgM3` in the dynamic-pressure terms (L563, L711) and `flow.kinematicViscosityM2S` for
@@ -131,10 +136,15 @@ narrower and nameable:
    `SEAWATER_DENSITY_KGM3 = 1025` and L70 multiplies by that constant directly. Inside one package,
    one module takes the medium as an argument and its sibling bakes it in — and the constant is
    defined twice, in `rotor-presets.ts` and again here.
-3. **In the plant generator.** `embodied/src-routes/engine/physics/mjcf.ts:115` emits
+3. **In the plant generators — both of them.**
+   `embodied/src-routes/engine/physics/mjcf.ts:115` emits
    `<option timestep="…" gravity="0 0 -${G_MPS2}" integrator="implicitfast"/>` from a module constant
    `G_MPS2 = 9.81`, and emits **no `density` and no `viscosity` at all**. The drone flies in a vacuum
-   at fixed Earth gravity, and nothing says so.
+   at fixed Earth gravity, and nothing says so. `arm-mjcf.ts:135` writes `gravity="0 0 -9.81"` again,
+   this time as a bare literal in `ARM_PREAMBLE` rather than through the constant. The arm is not a
+   vehicle and is out of scope for D7's runs, but it is listed here because it is the same literal
+   spreading to a second generator — evidence that the assumption accretes, which is the argument
+   D9 turns on. Nothing in this ADR asks the arm to change.
 4. **In the validity envelopes**, which are declared nowhere except aeropolar's Reynolds flag.
 
 That is the honest cost picture, and it is much better than the ask implies. Interchangeable physics
@@ -356,9 +366,21 @@ requires, and gets exactly those. Two refusals, both by name:
   model, and added mass is absent. **A model that silently returns air numbers in water is worse than
   a refusal**, so the envelope is declared by the model author, not inferred by the caller.
 
-The mechanism is a generalisation, not an invention: `aeropolar` already returns a value **and a
-per-point `valid` flag**, and its selector only picks valid points. D7 extends that from one axis
-(Reynolds) to the medium as a whole.
+**And the existing guard cannot catch it — it would report `valid = True`.** The polar's only
+self-check is Reynolds, over the band `RE_FLOOR = 30_000` to `RE_CEIL = 5.0e6`. Seawater's kinematic
+viscosity (`1.05e-6` m²/s in ocean-lab's own constant) is roughly an order of magnitude below air's
+at sea level, so the same speed and chord give a **higher** Reynolds number in water — moving the
+point *away* from the floor the flag exists to enforce. Taking the Floater's own wing (0.52 m² over a
+2.5 m span, cruising 4.00 m/s) as arithmetic rather than an engine run: roughly 5.6×10⁴ in air and
+roughly 7.9×10⁵ in water, both comfortably inside the band. The point is certified valid, and a
+NeuralFoil **air** surrogate answers it. A large or fast enough craft would overshoot `RE_CEIL` and
+be caught, but only by accident — a Reynolds guard has no concept of which fluid produced the
+Reynolds number. So `model_not_valid_in_medium` is necessary rather than tidy: it covers a failure
+mode nothing here detects today.
+
+The mechanism, though, is a generalisation rather than an invention: `aeropolar` already returns a
+value **and a per-point `valid` flag**, and its selector only picks valid points. D7 extends that
+shape from one axis to the medium as a whole.
 
 **The acceptance case, by name: put the boat in air and it falls.** It is the cheapest possible proof
 because the substrate is already there — `mjcf.ts:115` writes gravity into the scene from a module
@@ -471,15 +493,26 @@ Nothing below is built. Store-repo work in `ocean-lab`, `aero-lab` and `embodied
 
 | Slice | What lands | What the operator opens, and does | Cost |
 |---|---|---|---|
-| **S1 — the boat falls** | The medium record (D7) with three implementations — vacuum, air behind `aerosim.env`, seawater; the MJCF `<option>` fed from the chosen medium instead of `G_MPS2`; the explorer hull as one solid from its published envelope and mass; the two named refusals | `/cockpit/?app=embodied`: choose a medium, drop the hull. In **air** it falls at g. In **seawater** it refuses by name rather than pretending to float | **Small.** One record, one generator change, one body. No solver is written |
+| **S1 — the boat falls** | The medium record (D7) with three implementations — vacuum, air behind `aerosim.env`, seawater; the MJCF `<option>` fed from the chosen medium instead of `G_MPS2`; the explorer hull as one solid from its published envelope and mass; the two named refusals. **The property values travel as data, not as a fourth copy** — see the note below the table | `/cockpit/?app=embodied`: choose a medium, drop the hull. In **air** it falls at g. In **seawater** it refuses by name rather than pretending to float | **Small.** One record, one generator change, one body. No solver is written |
 | **S2 — the Explorer record** | The vehicle record and computed stage in `ocean-lab` (its first migration, owner RLS), the explorer seed vector as a committed fixture, the limit rows, an **Explorer** tile, and the run table S1 fills | `/cockpit/?app=ocean-lab` → **Explorer**. Change the wing stop angle or tether length, evaluate, and watch the five-row sea-state table, the occurrence-weighted mean, km/day and km/year move; the stage badge drops to `sized`; the open limits and the recorded runs list underneath | Small–medium. One migration, one surface, the evaluate path wired to engines that already exist |
 | **S3 — the explorer's parts and geometry** | The parts model and each watertight part as a CAD Studio program, with **Open in CAD Studio** each — the B16 pattern, second machine, different lab — plus the portable-object shape (D8) on what it emits | The same tile: a parts table with masses and prices, a displacement budget that closes or refuses, **Open in CAD Studio** per part, a generated design document. Stage reaches `parts-complete`, then `fabricable` when every part exports clean | **Largest slice.** Eleven part programs written against the kernel's feature contract and validated |
 | **S4 — the Floater record** | The Floater as a record in `aero-lab`: its first migration, the existing `export_build_files.py` run stored as the first evaluation, `BOM_v2`'s mass delta as a budget check that must close, its force models' validity envelopes declared | `/cockpit/?app=aero-lab`: the Floater as a saved vehicle with a stage, its reference-design folder linked as the dated artifact of one run rather than mistaken for the design | Medium, mostly bookkeeping over a generator that already runs. The budget check is expected **red on first run** — that is the 274 g, and it is the point |
-| **S5 — the guards** | Cross-package read-only drift tests over the record shape, the stage function, the medium shape and the portable-object shape; the study-reproduction regression against the seed; a case per named refusal in D7 | Nothing to open — this is what stops three labs describing a vehicle, a medium or a part three ways | Small |
+| **S5 — the guards** | Cross-package read-only drift tests over the record shape, the stage function, the medium shape **and the medium property values**, and the portable-object shape; the study-reproduction regression against the seed; a case per named refusal in D7 | Nothing to open — this is what stops three labs describing a vehicle, a medium or a part three ways | Small |
+
+**A note S1 cannot skip.** D3 forbids a cross-package runtime import, so S1's air and seawater media
+are implemented inside `embodied` — a third TypeScript location, distinct from aero-lab's Python
+`aerosim.env` and ocean-lab's rotor and marine code. Written naively that adds a third and a fourth
+independent answer to "what is seawater", which is precisely the defect this ADR names when it points
+at `SEAWATER_DENSITY_KGM3` being defined twice inside one package. The existing machinery is the
+answer and S1 must use it: **the medium's property values are one committed data row per medium,
+shared across packages as data exactly as D3 requires, with the S5 drift test failing when a lab's
+copy disagrees.** An implementation is allowed to differ in what it can *answer* — aero-lab resolves
+density by altitude and ocean-lab by depth — but not in what seawater's density *is*.
 
 Not in scope of any slice: hardware, a tank test, a wind tunnel, a structural solver, free-surface
-hydrodynamics, added mass, cavitation, aerodynamics inside the physics plant, the shared parts-model
-rows themselves (their own backlog entry), and any claim that a `fabricable` vehicle is safe.
+hydrodynamics, added mass, cavitation, aerodynamics inside the physics plant, the arm's own generator,
+the shared parts-model rows themselves (their own backlog entry), and any claim that a `fabricable`
+vehicle is safe.
 
 ## Reconstruction accuracy should be measured against public scan datasets
 
