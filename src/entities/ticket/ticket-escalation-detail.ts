@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Derive the operator-facing escalation detail from the transition record every escalation already writes (a ticket_status_history row, mirrored onto the ticket row as metadata.lastStatusTransition) so a cockpit escalation panel can show the recorded reason without a second durable store carrying the same fact
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Read back WHEN the ticket's current escalation was recorded, separately from whether it recorded a reason. A ticket that escalates, is de-escalated and escalates again leaves an older durable swarm record behind, and a reader can only tell that record apart from a current one by dating it against the escalation on screen.
  */
 
 import type { TicketStatusHistoryRecord, TicketStatusMetadata } from './ticket-store';
@@ -50,6 +51,27 @@ export function deriveTicketEscalationDetail(
   }
 
   return buildDetail(readLastStatusTransition(ticketMetadata), 'ticket-metadata', '');
+}
+
+/**
+ * @description Reads when the ticket's CURRENT escalation was recorded — the timestamp of
+ * the newest transition that landed on `escalated`, whether or not that transition named
+ * a reason. `deriveTicketEscalationDetail` deliberately returns null for an escalation
+ * that recorded nothing, which leaves a reader with no way to date it; this answers the
+ * date separately, so a record from a second store can be tested for belonging to it.
+ * @param history - Status history rows for the ticket, in any order.
+ * @param ticketMetadata - The ticket row's metadata object, if available.
+ * @returns ISO timestamp of the current escalation, or '' when no escalation is recorded.
+ */
+export function readTicketEscalatedAt(
+  history: readonly TicketStatusHistoryRecord[] | null | undefined,
+  ticketMetadata: TicketStatusMetadata | null | undefined,
+): string {
+  const fromHistory = readText(selectLatestEscalationRow(history)?.createdAt);
+  if (fromHistory) {
+    return fromHistory;
+  }
+  return readText(readLastStatusTransition(ticketMetadata)?.escalatedAt);
 }
 
 /**
