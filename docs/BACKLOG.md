@@ -886,6 +886,27 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   failed instead of failing the run, and two consecutive nightly assessments record their per-algo
   detail with no `too many requests.` line.
 
+### Trading — the engine manages positions it did not buy (ADR-159, 2026-09-15)
+- **Decided by the operator 2026-09-15:** *"yes i bought some shares on the outside. if it cant be
+  accounted for then it shouldnt be managed only monitored and fleged as unmanaged."* Recorded as
+  [ADR-159](adr/159-the-engine-manages-only-what-it-can-account-for.md).
+- **Today:** the engine manages whatever the VENUE reports it holds. `withEngineCostBasis`
+  (`src/app/trading-engine-cost-basis.ts:98`) attaches `engineAvgCost` only when the engine’s own
+  filled orders fully cover the quantity; a position it cannot cover is returned unchanged and the
+  exit path measures it against the venue’s average price. The only ring-fence is a per-symbol
+  `TRADING_CORE_SYMBOLS=SYM:0` the operator has to set before buying.
+- **Evidence (30 days to 2026-09-15, live book, 219 sells):** −$33.03 on the engine’s own fills
+  against −$9,697.53 stored by the venue; the 4 sells with no engine basis are all USO. The paper
+  book — no wash-sale adjustments — agrees within ~5 % (−$6,797.57 against −$7,181.90), which is what
+  shows the live gap is the venue’s adjusted basis rather than a replay defect.
+- **Done when:** a long position with no `engineAvgCost` is marked unmanaged and `exitsToRun`,
+  `trailingExits` and `rebalanceTrims` (`src/features/trading/services/portfolio.ts:208, 282, 312`)
+  emit nothing for it while remaining unchanged for a covered position, proven red-before-green by a
+  spec that also covers the partially-covered case; the autopilot entry path does not add to an
+  unmanaged holding; exposure and capital still count it; the cost-basis log line carries the
+  unmanaged count; the trading surface shows the flag and the reason on the row and in place of an
+  exit that will not fire; and on the box the operator sees USO flagged with no engine order emitted
+  for it after a deploy.
 ## Video, character, and creative automation
 
 ### Video Series conductor live acceptance
