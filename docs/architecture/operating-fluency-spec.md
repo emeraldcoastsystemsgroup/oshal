@@ -93,11 +93,10 @@ run against real infrastructure; **contract** means a unit or manifest-level ass
 | P4 | Refusals do not strand work | none — observed stranding at `escalated` and at `chat_tasks.status='created'` | a reaper or a terminal state with a reason | a spec drives a refused dispatch end-to-end and asserts the ticket reaches a terminal state carrying the reason |
 | P5 | Cheaper per-step routing is real | capture lane built; the cross-framework benchmark does not yet include an oshal leg | wire the oshal leg to a real dispatch and read `chat_tasks` token columns | the benchmark reports oshal alongside the others from measured rows, at stated n |
 | P6 | One bot with an embedded gate beats a review pipeline | `$1.30` vs `$4.05` from real cost rows, small n | repeat across more than one workload | a documented n, more than one ticket type, the honest limits kept |
-| P7 | The platform is reachable over MCP | **false** — consumer only, no server surface, MCP executors gated to one runtime | either build the server surface or retire the claim | the claim appears nowhere until a server surface exists |
+| P7 **DONE** | Published claims match the tree | the MCP claim was never on a surface — swept `docs/` + `README.md` 2026-09-15, every hit is a legitimate ADR reference to MCP servers as tools, so there was nothing to retire. The licence claim WAS wrong: `WHY_OSHAL.md` said MIT where `LICENSE` and `package.json` say AGPL-3.0-or-later | correct the licence row; leave MCP alone | corrected 2026-09-15; `grep -rn '\bMIT\b' docs/*.md README.md` returns no oshal licence claim |
 | P8 | Every application has a concierge | 5 of 10 kernel manifests declare one; **26 of 61** store packages declare none | a manifest-level requirement plus a coverage gate | the repo-separation style check fails a package that registers a surface and declares no concierge |
 
-**P1 and P4 are the remaining fluency blockers** (P2 is closed). P3 is the multiplier. P7 is a copy correction, not
-engineering. P5 and P6 are marketing debts that do not block operation.
+**P1 and P4 are the remaining fluency blockers** (P2 and P7 are closed). P3 is the multiplier. P5 and P6 are marketing debts that do not block operation.
 
 ## Roadmap
 
