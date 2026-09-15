@@ -11,6 +11,7 @@
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | SEQ 3 preferred `$REPO_ROOT/node_modules` when present, which in an agent worktree is normally a JUNCTION back to the main checkout. Linking a link makes tsc resolve @types through a doubly-indirect path and emit ~36 spurious TS2742 "inferred type cannot be named without a reference to ../../../node_modules/@types/qs ... likely not portable" errors, so the newly-loud gate BLOCKED a push whose HEAD typechecks clean — SEQ 3 traded a silent skip for a false positive. Measured on the same commit: link-to-link 36 errors, direct link to the real directory 0. Now a linked worktree always resolves the main checkout's real node_modules and only falls back to its own. Found immediately because SEQ 3 made the gate loud, which is the argument for loud gates.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | The publish gate now runs with --pre-push and inherits this hook's stdin, where git writes one ref-update line per pushed ref. Without it the gate could only judge HEAD's unpublished commits, and a push BY SHA - the shared checkout's private-index recipe - publishes commits HEAD never reaches; the gate's new model-attribution check needs exactly the pushed set. Nothing else in this hook reads stdin.
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | The gate was PERMANENTLY RED from every clone, and in one night three lanes pushed past it with OSHAL_SKIP_PREPUSH_VERIFY=1 - each correctly judging the failure pre-existing, each re-verifying by hand. A fail-closed gate that teaches everyone to skip it is worse than no gate. Cause: tsconfig sets "declaration": true, so tsc does declaration-emit checking even under --noEmit, and that has to NAME the file every inferred type comes from. node_modules is a LINK in this tree BY DESIGN (you cannot npm install on every push), so tsc resolved the link to its realpath and the only name it could give @types/qs was thirteen ../ back out to the real checkout - TS2742 "cannot be named ... likely not portable" against createApplicationAuthorizationWiring, which returns an express request adapter. SEQ 5 read this signature as link-TO-link; it is not. Measured 2026-09-15 on origin/main 7adc2f02 with a PROVEN single junction straight to the real directory: 1 error, exit 2. The verification tsc now passes --preserveSymlinks, so it names node_modules where it sits in the tree - the layout the real checkout has - and the gate answers the question it is actually asking. It cannot mask a real error: the real node_modules holds ZERO symlinks outside .bin (swept 2026-09-15, 660 packages), so this hook's own link is the only thing the flag can act on; measured against the real @types, the flag is a no-op when node_modules is a real directory (0 errors either way) and a GENUINE TS2742 raised by a transitively nested real package is still reported under it, as are ordinary type errors. Rejected the alternative of switching declaration checking off in the verification run, which would have dropped a whole real diagnostic class - that is the masking this avoids. Guarded by tests/unit/pre-push-preserve-symlinks.spec.ts, which runs the real tsc through a real link.
+# 8 | maintainer@emeraldcoastsystemsgroup.com   | The verification tree took MINUTES to build. Cause: MSYS's default winsymlinks makes `ln -s` SUCCEED by deep-copying - measured 2026-09-15, a 160-file directory produced 2.3 MB of real files and no link - so the hook, which tried `ln -s` first, copied the whole node_modules on every push and never reached the junction that costs nothing, because nothing had "failed". A copy is also the wrong thing to typecheck: it is a snapshot, not the installed tree. Junction first under MSYS, symlink elsewhere, and a copy is refused outright. The link is now PROVEN rather than trusted, because on Windows both mechanisms report success while producing nothing usable: `mklink /J` creates a junction to a MISSING directory and exits 0, and a `cmd //c mklink` whose arguments MSYS re-quotes drops through to an interactive cmd that prints its banner and exits 0 having created nothing - so every attempt is now followed by a read THROUGH the destination, anything unreadable is removed, and the symlink path is accepted only when the result is genuinely a link. That proof is what found the `cmd //c` attempt never working on this box at all, so it is REMOVED rather than kept as a first attempt every push had to pay for. Separately, a SHARED CLONE junctions node_modules back to the main checkout and git-common-dir names the clone, so the linked-worktree branch (SEQ 3/5) could not spot it and the hook linked a link; the candidate is now resolved through any link with realpath first, which gives the verification tree a STABLE target in a shared-clone layout - it does not depend on every hop of somebody else's link chain still pointing where it did. THAT RESOLUTION DOES NOT FIX OR EXPLAIN TS2742, and the first draft of this entry said it did, which is the same wrong-cause mistake SEQ 5 made and SEQ 7 corrected. Measured 2026-09-15 on unmodified origin/main a4f6d4d4, archived into a verification tree whose node_modules this hook's own link_node_modules linked as a SINGLE DIRECT junction straight to the real directory - exactly what this realpath resolution produces, and proven a link rather than a copy by writing into the target and reading it back through: `npx tsc -p tsconfig.json --noEmit --pretty false` exits 2 with exactly one TS2742 (createApplicationAuthorizationWiring, @types/qs); the same tree and the same single junction with --preserveSymlinks exits 0; and with a deliberate TS2322 injected under that same flag it exits 2 and reports the TS2322, so the flag is not blinding the gate. TS2742 comes from tsconfig's "declaration": true making tsc do declaration-emit checking even under --noEmit, which must NAME the file every inferred type comes from and cannot do that through ANY link, direct or nested. SEQ 7's --preserveSymlinks is the fix for it; this change neither helps nor hinders it, and the two compose. Guarded by tests/unit/pre-push-verification-tree.spec.ts, which writes a file into the TARGET after linking and requires it to appear through the destination - the only test that tells a junction from a deep copy, since -d reports both as a plain directory.
 # =============================================================================
 #
 # Exports committed HEAD to a scratch tree and typechecks THAT. Rule 0a: one worktree, one index,
@@ -81,10 +82,14 @@ fi
 # gate that skips itself is not a gate.
 # Prefer the MAIN checkout's node_modules whenever we are in a linked worktree, even if this
 # worktree has one of its own — an agent worktree's node_modules is almost always a junction back
-# to the main checkout, and linking a link makes tsc emit ~36 spurious TS2742 "cannot be named
-# without a reference to ../../../node_modules/@types/qs, likely not portable" errors. Those are an
-# artifact of the doubly-indirect path, not real type errors, and they blocked a push whose HEAD
-# typechecks clean. Resolving to the real directory yields zero. (See Change Log 5.)
+# to the main checkout, and the real directory is the STABLE target: a chain of links is only as
+# good as every hop still pointing where it did when the worktree was made.
+# This is NOT what answers the TS2742 "cannot be named without a reference to
+# ../../../node_modules/@types/qs, likely not portable" errors Change Log 5 blamed on the
+# doubly-indirect path. Change Log 7 measured that reading and retracted it: TS2742 is raised
+# through a SINGLE DIRECT junction too, because declaration-emit checking has to name the file an
+# inferred type comes from and cannot do that through ANY link. --preserveSymlinks on the tsc line
+# below is the fix. (Change Log 5, corrected by 7 and 8.)
 NODE_MODULES=""
 COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 MAIN_ROOT="${COMMON_DIR%/.git}"
@@ -93,6 +98,24 @@ if [ -n "$MAIN_ROOT" ] && [ "$MAIN_ROOT" != "$REPO_ROOT" ] && [ -d "$MAIN_ROOT/n
   echo "pre-push: linked worktree — using the main checkout's node_modules ($MAIN_ROOT)" >&2
 elif [ -d "$REPO_ROOT/node_modules" ]; then
   NODE_MODULES="$REPO_ROOT/node_modules"
+fi
+
+# A SHARED CLONE (how parallel agents work here now) junctions its node_modules back to the main
+# checkout, and git-common-dir points at the clone itself, so the linked-worktree branch above
+# cannot spot it and we would link a link. Resolve whatever we picked to its real directory first:
+# realpath follows a Windows junction here and is a no-op for a plain directory, so the
+# verification tree points at the INSTALLED directory rather than at another tree's link — the
+# stable target in a shared-clone layout, and one hop instead of two to read every file through.
+# It does NOT fix or explain the TS2742 this gate used to raise. Measured on unmodified origin/main
+# a4f6d4d4: a single direct junction to the real directory — what this resolution produces — still
+# exits 2 with one TS2742; --preserveSymlinks on the tsc line below is what makes it 0.
+# (Change Log 7 and 8.)
+if [ -n "$NODE_MODULES" ]; then
+  REAL_NODE_MODULES="$(realpath "$NODE_MODULES" 2>/dev/null || true)"
+  if [ -n "$REAL_NODE_MODULES" ] && [ -d "$REAL_NODE_MODULES" ] && [ "$REAL_NODE_MODULES" != "$NODE_MODULES" ]; then
+    echo "pre-push: node_modules is a link — verifying against its real directory ($REAL_NODE_MODULES)" >&2
+    NODE_MODULES="$REAL_NODE_MODULES"
+  fi
 fi
 
 if [ -z "$NODE_MODULES" ]; then
@@ -105,17 +128,56 @@ if [ -z "$NODE_MODULES" ]; then
   exit 1
 fi
 
-# MSYS/Windows refuses symlinks under some configurations; a directory junction is equivalent here
-# and costs nothing. Only if BOTH mechanisms fail do we block.
-if ! ln -s "$NODE_MODULES" "$VERIFY_DIR/node_modules" 2>/dev/null; then
-  if ! MSYS_NO_PATHCONV=1 cmd //c mklink /J "$(cygpath -w "$VERIFY_DIR")\\node_modules" "$(cygpath -w "$NODE_MODULES")" >/dev/null 2>&1; then
-    echo "" >&2
-    echo "✗ pre-push BLOCKED — could not link node_modules into the verification tree." >&2
-    echo "  Neither 'ln -s' nor 'mklink /J' worked, so committed HEAD cannot be typechecked." >&2
-    echo "  Override (rare, and you own what lands): OSHAL_SKIP_PREPUSH_VERIFY=1 git push" >&2
-    echo "" >&2
-    exit 1
-  fi
+# A junction and a symlink are equivalent here, but WHICH IS TRIED FIRST matters on Windows: MSYS's
+# default winsymlinks makes ln -s SUCCEED by deep-copying the target, so trying it first copied the
+# whole node_modules into the verification tree on every push (minutes of I/O) and never reached the
+# junction fallback, because it had not "failed". Measured 2026-09-15: ln -s on a 160-file directory
+# produced 2.3 MB of real files and no link. Junction first under MSYS, plain symlink elsewhere, and
+# block only when BOTH mechanisms fail. A copy is never accepted: it would verify a stale tree.
+link_node_modules() {
+  # The link is PROVEN, never trusted: on Windows both mechanisms can report success while
+  # producing nothing usable. `ln -s` under MSYS's default winsymlinks SUCCEEDS by deep-copying
+  # (measured 2026-09-15: a 160-file directory became 2.3 MB of real files and no link), and a
+  # `cmd //c mklink` whose arguments are re-quoted by the shell can drop through to an interactive
+  # cmd that prints its banner and exits 0 without creating anything. Either would leave the
+  # verification tree unable to resolve a single import, so every attempt is followed by a read
+  # THROUGH the link and anything that is not a working link is removed.
+  _nm_reads() { [ -d "$VERIFY_DIR/node_modules" ] && [ -n "$(ls -A "$VERIFY_DIR/node_modules" 2>/dev/null | head -n 1)" ]; }
+  _nm_reset() { rm -rf "$VERIFY_DIR/node_modules" 2>/dev/null || true; }
+  [ -d "$NODE_MODULES" ] || return 1
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      # A junction costs nothing and is what we want, and powershell is the one invocation that
+      # actually creates one from MSYS bash. `MSYS_NO_PATHCONV=1 cmd //c mklink /J` used to be
+      # tried first here and NEVER worked on this box: MSYS re-quotes the arguments, cmd drops
+      # through to its interactive banner and exits 0 having created nothing, so every push paid
+      # for a guaranteed-to-fail cmd.exe before reaching this line. Removed, not reordered — a
+      # fallback that has never once succeeded is cost, not cover. The read-through proof below
+      # is what caught it and stays regardless: mklink /J also exits 0 for a junction to a
+      # MISSING directory, so a success code is never evidence of a usable link.
+      powershell -NoProfile -Command "cmd /c mklink /J \"$(cygpath -w "$VERIFY_DIR")\\node_modules\" \"$(cygpath -w "$NODE_MODULES")\"" >/dev/null 2>&1 || true
+      _nm_reads && return 0
+      _nm_reset
+      # Last resort: a real symlink, accepted only when it is genuinely a link AND readable, so a
+      # deep copy is refused rather than silently typechecked against a snapshot.
+      ln -s "$NODE_MODULES" "$VERIFY_DIR/node_modules" 2>/dev/null || true
+      if [ -L "$VERIFY_DIR/node_modules" ] && _nm_reads; then return 0; fi
+      _nm_reset
+      return 1 ;;
+    *)
+      ln -s "$NODE_MODULES" "$VERIFY_DIR/node_modules" 2>/dev/null || true
+      if [ -L "$VERIFY_DIR/node_modules" ] && _nm_reads; then return 0; fi
+      _nm_reset
+      return 1 ;;
+  esac
+}
+if ! link_node_modules; then
+  echo "" >&2
+  echo "✗ pre-push BLOCKED — could not link node_modules into the verification tree." >&2
+  echo "  Neither a directory junction nor a real symlink worked, so committed HEAD cannot be typechecked." >&2
+  echo "  Override (rare, and you own what lands): OSHAL_SKIP_PREPUSH_VERIFY=1 git push" >&2
+  echo "" >&2
+  exit 1
 fi
 
 # --preserveSymlinks is what makes this tree answer the question the gate is actually asking.
