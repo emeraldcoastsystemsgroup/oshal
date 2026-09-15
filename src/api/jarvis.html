@@ -18,6 +18,7 @@
   1 | maintainer@emeraldcoastsystemsgroup.com | Present live package tool proposals only on the primary transient result surface, outside conversation history.
   2 | maintainer@emeraldcoastsystemsgroup.com | Compact the existing assistant controls and group task updates without changing conversation or delivery ownership.
   3 | maintainer@emeraldcoastsystemsgroup.com | Stop the hidden dashboard node animation while retaining the assistant orb and voice rendering.
+  4 | maintainer@emeraldcoastsystemsgroup.com | A failed ask carrying code NO_HOSTED_BRAIN (no AI engine connected) is spoken as the server's actionable sentence instead of "Sorry, that didn't work"; askFailureLines decides both lines, every other failure keeps its message and the apology.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -1506,8 +1507,9 @@ async function handleInput(text) {
     seenDone.add(j0.jobId);   // handled inline here — keep the shelf from re-announcing it
     const d = await waitForResult(j0.jobId);
     if (d.status === 'error') {
-      bubble.innerHTML = `<span class="err">${esc(d.error || "That didn't work.")}</span>`;
-      speak("Sorry, that didn't work.");
+      const failure = askFailureLines(d);
+      bubble.innerHTML = `<span class="err">${esc(failure.text)}</span>`;
+      speak(failure.speech);
     } else {
       // Only the live request may dispatch. History/shelf replay never enters this branch.
       if (d.artifactAction && !dispatchedArtifactJobs.has(j0.jobId)) {
@@ -1547,6 +1549,20 @@ async function handleInput(text) {
   }
 }
 
+/* What a failed turn TELLS the operator, written and spoken. "Sorry, that didn't work" is the right
+   apology for a turn that genuinely broke and the wrong one for an account with no AI engine
+   connected: the operator repeats the question, hears the same shrug, and never learns the fix is
+   one saved endpoint. The server marks that state with code NO_HOSTED_BRAIN and sends the
+   actionable sentence, so the spoken line says the same thing (arrows and the dash read as pauses,
+   which a speech engine would otherwise voice as noise). Every other failure is unchanged. */
+function askFailureLines(result){
+  const r=result||{};
+  const text=String(r.error||'').trim();
+  if(r.code==='NO_HOSTED_BRAIN'&&text){
+    return { text, speech: text.replace(/\s*→\s*/g, ', ').replace(/\s+—\s+(\S)/g, (_, c) => '. '+c.toUpperCase()) };
+  }
+  return { text: text || "That didn't work.", speech: "Sorry, that didn't work." };
+}
 /* Poll one job to completion. Async because a tool-using turn can outlast Cloudflare's ~100s edge
    timeout if a connection is held open; returns the final {status:'done'|'error', ...} payload. */
 async function waitForResult(jobId) {
