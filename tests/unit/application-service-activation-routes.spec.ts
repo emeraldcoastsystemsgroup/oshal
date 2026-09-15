@@ -15,6 +15,7 @@ import { setApplicationServiceActivations } from '@/app/application-service-acti
 import {
   ApplicationServiceActivationService, MemoryApplicationServiceActivationStore, MemoryAuthorizationStore,
 } from '@/features/application-authorization';
+import type { ApplicationServiceDeclaration } from '@/features/application-authorization';
 import type { AuthorizationActor } from '@/shared/application-authorization';
 
 const APP = 'metrics-app';
@@ -32,6 +33,7 @@ let server: Server;
 let base: string;
 let activations: MemoryApplicationServiceActivationStore;
 let registered: string[];
+let declarations: ApplicationServiceDeclaration[];
 
 /** @description Call the routes as one fixture identity; an unknown one is refused at the mount. */
 async function call(method: string, path: string, user: string, body?: unknown): Promise<{ status: number; body: any }> {
@@ -65,14 +67,15 @@ afterAll(async () => {
 
 beforeEach(() => {
   registered = [];
+  declarations = [{
+    app: APP, id: LOCAL_ID, scheduleId: SCHEDULE_ID, cron: '15 6 * * *',
+    description: 'Pull yesterday\'s channel metrics into the scorecard.', requires: [], queue: APP,
+  }];
   activations = new MemoryApplicationServiceActivationStore();
   const service = new ApplicationServiceActivationService({
     activations, policy: new MemoryAuthorizationStore(),
     describeApp: () => ({ source: 'fixture-store', catalogRevision: 'rev-1', catalog: null }),
-    declaredServices: async () => [{
-      app: APP, id: LOCAL_ID, scheduleId: SCHEDULE_ID, cron: '15 6 * * *',
-      description: 'Pull yesterday\'s channel metrics into the scorecard.', requires: [], queue: APP,
-    }],
+    declaredServices: async () => declarations,
     authorize: async () => ({ allowed: true, reason: 'authorization_allowed', decisionId: 'fixture', revision: 1, app: APP, grants: [] }),
     registerUserInstance: async input => { registered.push(input.userSub); },
     removeUserInstance: async input => { registered = registered.filter(sub => sub !== input.userSub); },
@@ -98,6 +101,21 @@ describe('ADR-157 scheduled services routes', () => {
     expect(listed.status).toBe(200);
     expect(listed.body.services).toHaveLength(1);
     expect(listed.body.services[0]).toMatchObject({ id: LOCAL_ID, state: 'not-activated', userCount: 0, activeForCaller: false });
+    // The kernel's own ADR-145 to-do: a path a setup dashboard probes in the viewer's own session.
+    expect(listed.body.readiness).toEqual({
+      app: APP, label: 'Scheduled services', path: `/api/swarm/apps/${APP}/services`,
+      readyPointer: '/ready', detailPointer: '/readyDetail',
+    });
+  });
+
+  it('reports an unactivated system service as an ADR-145 readiness to-do', async () => {
+    declarations = [{ ...declarations[0], runsAs: 'system' }];
+    const waiting = await call('GET', `/${APP}/services`, 'admin');
+    expect(waiting.body).toMatchObject({ ready: false, awaitingActivation: 1 });
+    expect(waiting.body.readyDetail).toContain('await activation');
+    await call('POST', `/${APP}/services/${SCHEDULE_ID}/activate`, 'admin', { runsAs: 'system' });
+    const settled = await call('GET', `/${APP}/services`, 'admin');
+    expect(settled.body).toMatchObject({ ready: true, awaitingActivation: 0 });
   });
 
   it('gives a non-administrator 403 for a system service and an administrator the activation', async () => {

@@ -3,9 +3,8 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: one row per activated scheduled application service. Nothing runs by declaration; this table is what says a person turned a declared job on, under which principal class, with which permissions, and when it was revoked or suspended.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: one row per activated scheduled application service. Nothing runs by declaration; this table is what says a person turned a declared job on, under which principal class, with which permissions, and when it was revoked or suspended. No top-level BEGIN;/COMMIT;: the migration runner wraps each file and its app_migrations history INSERT in one transaction on one client, and every statement here is transaction-safe.
  */
-BEGIN;
 CREATE TABLE IF NOT EXISTS oshal_application_service_activations (
   id TEXT PRIMARY KEY,
   app TEXT NOT NULL,
@@ -62,4 +61,3 @@ BEGIN
       );
   END IF;
 END $$;
-COMMIT;

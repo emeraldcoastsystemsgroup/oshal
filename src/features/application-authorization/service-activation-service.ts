@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: activate, deactivate and resolve scheduled application services. A system service is classified and turned on by a swarm administrator and runs as the application's own principal; a user service is turned on by a person, for themselves, and only after they are authorized for what it needs RIGHT NOW. Nothing here bypasses authorize(); it records what a person did.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: the services view carries the ADR-145 to-do descriptor for itself — a path and RFC 6901 pointers a setup dashboard probes in the viewer's own session — so "N scheduled services awaiting activation" is a readiness fact the kernel states, not a string a surface invents.
  *
  * @module service-activation-service
  */
@@ -55,6 +56,19 @@ export interface ApplicationServiceState {
   activeForCaller: boolean;
 }
 
+/**
+ * An ADR-145 readiness to-do, shaped exactly like the per-user probes a package declares: a path
+ * to GET in the viewer's own session and RFC 6901 pointers into the response. This one points at
+ * the services endpoint itself, because the kernel — not the package — owns this fact.
+ */
+export interface ApplicationServicesReadiness {
+  app: string;
+  label: string;
+  path: string;
+  readyPointer: string;
+  detailPointer: string;
+}
+
 /** The services view, shaped so an ADR-145 readiness probe can point straight at it. */
 export interface ApplicationServicesView {
   app: string;
@@ -63,6 +77,8 @@ export interface ApplicationServicesView {
   ready: boolean;
   readyDetail: string;
   awaitingActivation: number;
+  /** The to-do a setup dashboard renders while ready is false. */
+  readiness: ApplicationServicesReadiness;
 }
 
 /** Composition-injected ports. The service owns no transport and no scheduler of its own. */
@@ -109,6 +125,10 @@ export class ApplicationServiceActivationService {
       readyDetail: awaitingActivation === 0
         ? 'Every system service this application declares is activated.'
         : `${awaitingActivation} scheduled service(s) await activation by a swarm administrator.`,
+      readiness: {
+        app, label: 'Scheduled services', path: `/api/swarm/apps/${encodeURIComponent(app)}/services`,
+        readyPointer: '/ready', detailPointer: '/readyDetail',
+      },
     };
   }
 

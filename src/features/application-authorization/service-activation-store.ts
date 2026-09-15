@@ -8,8 +8,7 @@
  * @module service-activation-store
  */
 import type { Pool } from 'pg';
-import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
-import { buildOwnerRlsPolicyStatements } from '@/shared/services/database/owner-rls-policy';
+import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import type {
   ApplicationServiceActivation,
