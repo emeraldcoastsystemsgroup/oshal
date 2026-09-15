@@ -406,9 +406,27 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** run the existing migration-117 disposable-PostgreSQL proof through the protected promotion job and retain its result. The corrected provenance ledger, connection-scoped broker, two-owner/operator fixture, and real-Pool live spec are implemented locally, but an unexecuted live spec is not RLS evidence.
 - **Done when:** the durable-memory ledger has the same real-boundary evidence already recorded for ticket/store gateways, aliased module resolution, and built-image artifacts, and the audit contains no unresolved local boundary.
 
-### Legacy product-name archival disposition
-- **Remaining:** classify old names under `docs/archive`, top-level `archive`, and release collateral as intentionally historical or rewrite them; regenerate current evidence still using retired names.
-- **Done when:** current docs/evidence use sanctioned naming and every retained legacy occurrence is clearly marked historical.
+### Installer and chat-channel strings still use the retired standalone product name
+- **Remaining:** the docs/evidence half of the naming disposition is closed — the register is
+  [docs/business/product-naming-disposition.md](business/product-naming-disposition.md). What it
+  deliberately left alone is shipped user-facing product behaviour, where the standalone form
+  "Open Swarm" is still what a user sees: the installer window title (`installer/install.ps1`), the
+  Desktop shortcut name and description, the "look for the Open Swarm window" and "Open Swarm
+  folder" messages (`installer/lib/install-node.ps1`), the join-code and port-reuse messages
+  (`installer/lib/common.ps1`), the Windows firewall rule name `Open Swarm cockpit (<port>)`
+  (`installer/lib/install-swarm.ps1`), the node launcher's console title
+  (`installer/Open-Swarm-Node.cmd`), and two Telegram replies — "an Open Swarm account" and
+  "Welcome to Open Swarm" (`src/app/routes/chat-channel-routes.ts`). These are not prose edits: a
+  shortcut name and a firewall rule name are identities an already-installed box carries, so
+  changing them needs an upgrade path decision (rename in place, or leave existing installs alone)
+  rather than a find-and-replace. The `.bat`/`.cmd` filenames and the `oswarm`/`openswarm`
+  infrastructure identifiers stay as they are — CLAUDE.md grandfathers identifiers.
+- **Done when:** every user-visible string in `installer/` and `src/app/routes/chat-channel-routes.ts`
+  reads "oshal" or "open swarm oshal"; a decision is recorded for the shortcut and firewall-rule
+  names on boxes installed under the old names; `tests/unit/node-installer.spec.ts` and
+  `tests/unit/installer-scripts-parse.spec.ts` are extended so a standalone "Open Swarm" in an
+  installer script or a chat-channel reply fails the unit suite; and the register above is updated
+  to move these rows out of "Out of scope here".
 
 ### Nightly gate has a twelve-night failure streak
 - **Remaining:** the scheduled task `OSHAL Local CI` (daily 23:30, `ci-local-hidden.vbs` → `ci-local.sh --scheduled`) runs unattended, propagates its exit code, and emails the operator — all of that works. It has simply reported FAILED every night from 2026-08-02 to 2026-08-13 with `unit`, `e2e-green` and `trivy` red each time (BUG-22), so a newly-red guard inside it is invisible. Drive each of the three to green or quarantine it with a dated entry naming what is deferred and why: `unit` (BUG-15/16/17 plus the DB-backed specs — read BUG-16 before running the suite against a live stack), `e2e-green`, `trivy` (a CVE-budget decision, not a code fix). **Do not "fix" this by adding a `push:`/`pull_request:` trigger** — manual-only hosted CI is deliberate and `scripts/check-workflow-triggers.js` enforces it.

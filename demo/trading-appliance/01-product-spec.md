@@ -1,6 +1,13 @@
 # OpenSwarm TradeBox — Product Specification
 *(working title; "OSHAL Trading Appliance" internally)*
 
+> **Historical document — kept as authored.** This is the superseded buyer-facing draft; the
+> current spec is [SPEC.md](./SPEC.md). The product and platform names it uses — "OpenSwarm
+> TradeBox", "OSHAL / Open Swarm" — are the working names of the day and are **retired**: the
+> sanctioned forms are **oshal** and **open swarm oshal** ("open swarm" never stands alone), per
+> [CLAUDE.md](../../CLAUDE.md) "Naming". The text below is deliberately not rewritten, because a
+> draft is evidence of what was proposed at the time.
+
 **One sentence:** a quiet mini-PC you plug in at home that runs a transparent, deterministic
 algorithmic-trading engine plus a local AI copilot against **your own brokerage account** — your
 API keys never leave your house, the AI grind costs $0 in tokens, and the $20/month ChatGPT or

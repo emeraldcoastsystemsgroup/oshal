@@ -10,7 +10,7 @@ CHANGE LOG
   | requires the exact observable OSHAL_ENVELOPE_DEK_FAILURE=shared-hkdf break-glass.
 -->
 
-This is a point-in-time, no-spin posture map for the OSHAL / Open Swarm harness.
+This is a point-in-time, no-spin posture map for the oshal harness.
 Status values:
 
 - CLOSED: a control is in force today, on by default.

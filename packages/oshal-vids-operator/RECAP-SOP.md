@@ -38,7 +38,7 @@ it before using it (see "Hard rules": day P/L must reconcile with equity change)
 
 1. **the operator INTRO** — talking-head; introduces himself + the transparency mission, hands into
    the sting. Script (~20-40 words, brisk): *"I'm the operator, a digital representative of OSHAL
-   Autonomous Trading. I work with the open swarm to give you full transparency into our
+   Autonomous Trading. I work with the oshal swarm to give you full transparency into our
    implementation of autonomous, intelligent investing. Let's take a look at today's report."*
 2. **OSHAL sting** — the electric-blue OSHAL logo animation + music bed (`_build-intro.js`).
 3. **the operator OVERVIEW** — talking-head; the day's REAL numbers (from `deck-data.json`), ENDING with

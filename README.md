@@ -1,4 +1,4 @@
-# oshal — Open Swarm
+# oshal — open swarm oshal
 
 **A secure, self-hosted agent swarm — installed in one command, ready for a suite of intelligent apps.** Hosted/BYO inference, schema-bounded account operations, your own data, your own machines.
 

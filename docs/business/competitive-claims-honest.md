@@ -1,7 +1,7 @@
 # Competitive claims — the honest, adversarially-verified record (2026-07-17)
 
 This document exists so nobody — human or bot — re-argues settled ground. On 2026-07-17 we ran a
-113-agent adversarial research study whose explicit job was to **refute Open Swarm's own two loudest
+113-agent adversarial research study whose explicit job was to **refute oshal's own two loudest
 differentiators**, defaulting to "refuted" whenever a competitor plausibly ships the capability.
 Both fell. This file records what died, what survived, what is *real in our own code* (so we don't
 under-sell it either), and how to talk about it. If the public site (`site/oswarm.ai/index.html`,
@@ -12,7 +12,7 @@ under-sell it either), and how to talk about it. If the public site (`site/oswar
 - The word **"exclusive" is retired** on two axes. The features are real; the "only we do it" framing
   was false.
 - Our real, unrefuted position is a **category** claim, not a feature score: **hosted AI products
-  (ChatGPT, Claude, Zapier) are harnesses that build one-offs; Open Swarm is an application backbone
+  (ChatGPT, Claude, Zapier) are harnesses that build one-offs; oshal is an application backbone
   you own and extend.** A definition can't be refuted by a competitor's doc link.
 - The differentiator that survives *and* is genuinely uncommon is the **self-healing red/blue loop**:
   the platform patches its own source, redeploys, tests the patch against a baseline, and auto-reverts
@@ -40,7 +40,7 @@ over-swing back:
 
 | Claim | Why it stands | Honest caveat |
 |---|---|---|
-| **Runtime / harness-layer neutrality** (not "model routing") | The refuted row conceded *model* routing to n8n — a category error. n8n's Model Selector swaps the **model** inside its one agent runtime; Open Swarm routes across **independently-built agent runtimes** — Cline, Claude Code CLI, Codex CLI, Gemini CLI (`HarnessType` + `HARNESS_FACTORIES`, `provider-runtime.ts`), each with its own tools, auth, and loop, normalized behind one envelope and dispatched per bot/phase. No competitor productizes routing across agent runtimes. | Anyone *can* script a CLI call (n8n Execute Command, a LangGraph node). The claim is **first-class, productized** cross-runtime routing — a "how/where-it-lives" claim, **not** "impossible elsewhere." |
+| **Runtime / harness-layer neutrality** (not "model routing") | The refuted row conceded *model* routing to n8n — a category error. n8n's Model Selector swaps the **model** inside its one agent runtime; oshal routes across **independently-built agent runtimes** — Cline, Claude Code CLI, Codex CLI, Gemini CLI (`HarnessType` + `HARNESS_FACTORIES`, `provider-runtime.ts`), each with its own tools, auth, and loop, normalized behind one envelope and dispatched per bot/phase. No competitor productizes routing across agent runtimes. | Anyone *can* script a CLI call (n8n Execute Command, a LangGraph node). The claim is **first-class, productized** cross-runtime routing — a "how/where-it-lives" claim, **not** "impossible elsewhere." |
 | **Codepacking — one-harness bounded review→gate** | The "reviewed/gated cluster" row was refuted on review+gate *capability*, but never addressed codepacking: collapsing a workflow into ONE harness one-shot — continuous context, rotated perspective, no inter-agent handoff (`codex-packer.yaml`). CrewAI/LangGraph/AG2/Bedrock all **hand off between separate-context agents**. | Single-context multi-perspective is the old Self-Refine / Reflexion pattern — not novel as a *technique*. The novelty is that it's a **harness-level packing primitive** (vendor-neutral). Call it "bounded / repeatable," never "deterministic." |
 
 Both are **architecture / packaging** claims a competitor's doc link can't refute — the same shape as
@@ -96,7 +96,7 @@ study first.
 ## How to talk about it (the pitch that survives)
 
 1. **Category, not feature** (unrefutable): harness vs application backbone. Competitors organize
-   independent threads and build one-offs; Open Swarm starts you on a running application — auth,
+   independent threads and build one-offs; oshal starts you on a running application — auth,
    per-user isolation, connector spine, ribbon, bot mesh already standing — and you extend that.
 2. **Own-your-stack properties** (architectural, defensible): self-host, your data + keys, safety gates
    on by default, live-proof audit trail.
@@ -105,7 +105,7 @@ study first.
 4. **The determinism story we have NOT yet earned** (roadmap, do not claim): everyone can run agent
    clusters — the open question is the *bill* and the *reliability*. Independent reports put CrewAI
    hierarchical at +30–50% token overhead and a LangGraph supervisor loop at 47 iterations / $180 on
-   one request. If we instrument a head-to-head (same task; Open Swarm vs CrewAI hierarchical vs
+   one request. If we instrument a head-to-head (same task; oshal vs CrewAI hierarchical vs
    LangGraph supervisor; count tokens, dollars, rounds, whether the gate held), that becomes a claim
    nobody can refute with a doc link. **Not tested yet — do not put it on the site until it is.**
 
