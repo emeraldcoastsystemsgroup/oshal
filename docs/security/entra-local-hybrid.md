@@ -1,6 +1,7 @@
 # Entra/local hybrid login — operator guide
 
-ADRs: [117-local-auth-invited-users.md](../adr/117-local-auth-invited-users.md),
+ADRs: [158-entra-local-identity-bridge.md](../adr/158-entra-local-identity-bridge.md) — the
+decision record for this composition; [117-local-auth-invited-users.md](../adr/117-local-auth-invited-users.md),
 [126-multi-provider-oidc-login.md](../adr/126-multi-provider-oidc-login.md)
 
 On a [LOCAL_AUTH](local-auth.md) deployment, invited-user password login stays the wall. This
@@ -158,11 +159,15 @@ added multi-provider OIDC login (Google/Microsoft/Outlook.com, chooser page) but
 here."* This hybrid/bridge composition is what closes that gap — it reuses ADR-126's
 `microsoft-secondary-only` provider machinery (`resolveMicrosoftSecondaryLoginProvider` in
 [oidc-providers.ts](../../src/shared/middleware/oidc-providers.ts)) inside a new middleware layer
-that sits in front of, not instead of, the ADR-117 local-auth set. No dedicated ADR exists yet for
-the hybrid/bridge composition itself; the design intent lives in the change-log headers of
+that sits in front of, not instead of, the ADR-117 local-auth set.
+[ADR-158](../adr/158-entra-local-identity-bridge.md) is the decision record for the
+hybrid/bridge composition itself — why the canonical subject is the local one, why the
+allowlist gates only the first link, why an invited account keeps its password invite after
+linking, and why there is no unlink or expiry rail. This guide stays the how-to; the ADR is
+the why. The implementation lives in
 [application-auth.ts](../../src/app/middleware/application-auth.ts) and
-[entra-local-identity-bridge.ts](../../src/app/middleware/entra-local-identity-bridge.ts) and in
-`.env.example`.
+[entra-local-identity-bridge.ts](../../src/app/middleware/entra-local-identity-bridge.ts),
+with the flags in `.env.example`.
 
 ## Guards
 

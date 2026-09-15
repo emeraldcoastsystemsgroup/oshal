@@ -78,6 +78,14 @@ provider and dispatches every request to exactly one of them.**
   `OSHAL_OPERATOR_EMAILS` (email-based, covers both); anything keyed on
   `OSHAL_OPERATOR_SUBS` needs the new sub added deliberately. Cross-provider account linking
   is future work if ever wanted.
+- **2026-08-17 composition (the one place that linking DID become wanted):** on a
+  `LOCAL_AUTH` (ADR-117) box, an opt-in bridge maps a verified tenant-bound Entra identity
+  onto the canonical `local-…` subject an invited account already has, so the fork described
+  above does not happen there — see
+  [ADR-158](158-entra-local-identity-bridge.md) and its operator guide
+  [docs/security/entra-local-hybrid.md](../security/entra-local-hybrid.md). It consumes this
+  ADR's `microsoft-secondary-only` provider unchanged; nothing in the multi-provider dispatch
+  above is altered by it.
 - Instance count is hosts × providers — discovery is lazy and per-host behavior is
   unchanged, but a pathological provider list would multiply; the registry is a closed set
   by design.
