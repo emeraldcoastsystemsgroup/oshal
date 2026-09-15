@@ -115,6 +115,50 @@ root token, no PVC — it loses everything on restart. Real deployments set
 `infra.vault.inCluster: false` and point `VAULT_ADDR`/`VAULT_TOKEN` at a real
 Vault.
 
+## Durability boundary
+
+This chart is the **single-box product**, the same posture as a default
+`docker compose up`: every workload runs one replica, each stateful service keeps
+its data on one ReadWriteOnce claim from the cluster's default StorageClass, the
+credentials are compose's committed dev values, and nothing backs anything up.
+That is fine for one person's box. It is **not** a shared-tenant posture, and the
+chart does not try to become one: it stops at the boundaries below, and what lies
+past them is yours to run.
+
+What persists, by the claim name `kubectl -n <ns> get pvc` shows:
+
+| Volume (PVC) | Holds |
+|---|---|
+| `data-oshal-db-0` | Postgres: tickets, agents, the cost ledger |
+| `data-oshal-tsdb-0` | TimescaleDB: trading + world series |
+| `data-oshal-chromadb-0` | Chroma: RAG + swarm memory |
+| `data-oshal-redis-0` | Redis append-only file: the swarm mesh |
+| `data-oshal-arangodb-0` | ArangoDB: the graph tier |
+| `oshal-workspace` | the shared workspace, including staged store packages |
+| `oshal-api-output` | the api's `/app/output`, where its seeded config lives |
+| `models-oshal-ollama-0` | pulled local models (only with `infra.ollama.inCluster: true`) |
+| `oshal-relay-state` | the tailnet relay's node state (only with `relay.enabled: true`) |
+
+Vault has no claim at all: `server -dev` keeps everything in memory.
+
+| Out of scope here | Boundary switch | The tenant supplies, in the `api.envSecret` Secret |
+|---|---|---|
+| Durable Postgres: replication, backups, point-in-time restore | `infra.postgres.inCluster: false` | `DATABASE_URL`, `BOOTSTRAP_DATABASE_URL`, `BOT_DATABASE_URL`; chart-declared bots take theirs from `swarm.botDatabaseUrl` |
+| Durable Timescale for the trading + world series | `infra.tsdb.inCluster: false` | `TSDB_URL` |
+| A real Vault: persistent storage, sealing, a token that is not the dev root | `infra.vault.inCluster: false` | `VAULT_ADDR`, `VAULT_TOKEN` |
+| Backup and restore of `oshal-workspace`, `data-oshal-chromadb-0` and every other claim above | none: the chart ships no backup job, snapshot or restore path | nothing: these are ordinary PVCs, so protecting them belongs to whatever backs up volumes on your cluster |
+
+Turning a switch off removes that in-cluster workload and withholds exactly the
+env listed, so the Secret's value is the one the api reads. The chart has to
+withhold it rather than merely allow an override, because an explicit container
+`env` entry beats `envFrom`. From there the managed service's own durability
+(replicas, backups, restore drills) is the operator's, not the chart's.
+
+On the [Terraform](../../terraform/README.md) tenant path the module forwards only
+the Postgres switch (`postgres_in_cluster`, with the URLs through
+`api_extra_secret_env`). Moving Timescale or Vault out of the cluster there needs
+their switches added to the module first.
+
 ## Dynamic bots — apps bring their own
 
 An installed app can declare a bot that needs its own node. Under compose the
