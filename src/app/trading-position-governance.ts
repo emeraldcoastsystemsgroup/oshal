@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A FIFTH state: a holding whose shares all sit in protected lots (ADR-138). `subtractPinnedLots` drops such a symbol before anything costs or governs it - the autopilot's view of the book simply does not contain it - so it never reaches `positionGovernance`, and a surface keying off that output alone read it as an answer nobody gave. That is the inversion of the failure this module exists to prevent: a deliberately protected position looking unexamined. The reason is knowable, benign and complete, so it gets its own kind and its own words HERE, beside the other four, rather than being written a second time in whichever surface noticed the gap - one vocabulary for "what will the engine do with this position" is the whole point of the module. The caller supplies it for the symbols core's OWN subtraction dropped; nothing re-derives which those are.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 made the engine withhold every order for a position its own filled orders cannot account for, and TRADING_CORE_SYMBOLS has always withheld for a ring-fenced name. Both facts were invisible on the surface: the operator could see a holding sitting with no stop and no exit and had no way to tell the silence was deliberate. This module is the ONE place that turns the marks the engine already attaches (`unmanaged` / `engineAvgCost`, from withEngineCostBasis) and the operator's own ring-fence (coreConfig) into a readable answer for a surface. It DECIDES nothing and reads no database: it restates, in the operator's words, what the order paths already do, which is what stops the surface growing a second definition of "unmanaged" that can drift away from the engine's. Deliberately outside the dispatch graph - nothing that emits an order imports it.
  */
 
@@ -17,6 +18,9 @@ export type PositionGovernanceKind =
   | 'ring-fenced'
   /** Named in TRADING_CORE_SYMBOLS at a real target: no sleeve exit, but the core rebalances it. */
   | 'core-holding'
+  /** Every share held sits in a protected lot (ADR-138), so the autopilot's view of the book has
+   *  no such position to govern. A SETTING, like the ring-fence - not a finding. */
+  | 'pinned-in-full'
   /** The engine's own ledger could not be read, so its answer for this position is NOT KNOWN. */
   | 'accountability-unknown';
 
@@ -91,6 +95,21 @@ function coreHoldingReason(symbol: string, targetPct: number, alsoUnaccounted: b
       `${symbol} is a beta-core holding in TRADING_CORE_SYMBOLS at a ${targetPct}% target, so no sleeve `
       + 'exit runs on it: no stop-loss, no take-profit, no trailing exit, no rotation or rebalance trim. '
       + rebalance,
+  };
+}
+
+/** The operator's own protected lots, holding the WHOLE position: the autopilot never sees it. */
+function pinnedInFullReason(symbol: string, qty: number): PositionGovernanceReason {
+  return {
+    kind: 'pinned-in-full',
+    label: 'protected lots',
+    detail:
+      `All ${qty} ${symbol} held here sit in protected lots, so the autopilot sees none of this `
+      + 'position and emits nothing for it: no stop-loss, no take-profit, no trailing exit, no rotation '
+      + 'or rebalance trim, and no entry that adds to it. The shares are not unprotected - each lot '
+      + 'works the exits it was opened with, and those are real orders resting at the venue. This is a '
+      + 'setting, not a finding: it is what pinning a lot does. The position returns to the autopilot '
+      + 'when its lots are released.',
   };
 }
 
@@ -187,6 +206,33 @@ export function positionGovernance(p: Position, core: CoreConfig): PositionGover
     ordersApply: ordersApplyTo(fenced, targetPct, unaccounted, accountabilityKnown),
     reasons,
   };
+}
+
+/**
+ * @description The engine's posture toward a holding whose shares ALL sit in protected lots.
+ *
+ * This one cannot come out of `positionGovernance`, and the reason is structural rather than an
+ * oversight: `subtractPinnedLots` drops a symbol whose residual is zero BEFORE anything costs or
+ * governs the book, so the position never arrives. A caller that only keyed off `positionGovernance`
+ * therefore had no entry for it at all and read it as an answer nobody gave - which is false, and is
+ * exactly the ADR-159 failure inverted: a position deliberately protected, shown as unexamined.
+ *
+ * The caller decides WHICH symbols these are by reading `subtractPinnedLots`'s own output - a symbol
+ * the venue reports and that subtraction dropped - so the residual rule still has one implementation.
+ * What it must not do is write these words itself; that is the second definition this module exists
+ * to prevent.
+ *
+ * `exitsApply` / `ordersApply` are `false` because the AUTOPILOT emits nothing for the position. That
+ * is not a claim it is unprotected: the protected-lot leg works each lot's own exits, which the detail
+ * says in the open, and it is a different path with its own orders at the venue.
+ *
+ * @param symbol - The held symbol; upper-cased here, as every other answer is.
+ * @param qty - The quantity the VENUE reports, which is the whole position - all of it is pinned.
+ * @returns The engine's posture, carrying the single `pinned-in-full` reason.
+ */
+export function pinnedInFullGovernance(symbol: string, qty: number): PositionGovernance {
+  const sym = symbol.toUpperCase();
+  return { symbol: sym, exitsApply: false, ordersApply: false, reasons: [pinnedInFullReason(sym, qty)] };
 }
 
 /**
