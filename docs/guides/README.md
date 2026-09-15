@@ -36,6 +36,7 @@ the URL is authoritative — bookmark it and you land in the same place every ti
 | Change my theme, provider, model, or notifications | [Settings](./settings.md) |
 | Search my data, trace a run's cost, set a budget, export or delete my data, or rescue a stuck ticket | [Platform tools](./platform-tools.md) |
 | Put oshal on my desktop, phone, or TV | [Get oshal on your devices](./devices.md) |
+| Design a robot arm, a part, a circuit, a prop or a blade — and see it in 3-D | [The maker labs](./maker-labs.md) |
 | See whether the Kalshi scan is winning, read its record, and cross-reference the ledger | [Kalshi](./kalshi.md) |
 | Connect my ESPN league and set the lineup with the best chance of winning this week | [Fantasy football](./fantasy-football.md) |
 

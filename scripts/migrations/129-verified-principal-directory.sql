@@ -4,8 +4,8 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add verified provider-qualified inventory without importing ambiguous historical subjects or changing accounts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Drop the top-level BEGIN;/COMMIT; pair: the migration runner wraps each file and its app_migrations history INSERT in one transaction on one client, so the file-level COMMIT ended that transaction early and left the history row outside it. Every statement here runs inside a transaction block, so no no-transaction pragma is needed.
  */
-BEGIN;
 CREATE TABLE IF NOT EXISTS oshal_verified_principals (
   issuer TEXT NOT NULL, user_sub TEXT NOT NULL, provider TEXT NOT NULL,
   email TEXT, email_verified BOOLEAN NOT NULL DEFAULT FALSE, display_name TEXT,
@@ -18,4 +18,3 @@ ALTER TABLE oshal_verified_principals FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS verified_principal_control_plane ON oshal_verified_principals;
 CREATE POLICY verified_principal_control_plane ON oshal_verified_principals
   USING (current_setting('oshal.is_operator',true)='on') WITH CHECK(current_setting('oshal.is_operator',true)='on');
-COMMIT;

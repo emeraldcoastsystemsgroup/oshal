@@ -4,8 +4,8 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Persist disabled-by-default exact-owner local Test Lab schedules and durable batch leases.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Drop the top-level BEGIN;/COMMIT; pair: the migration runner wraps each file and its app_migrations history INSERT in one transaction on one client, so the file-level COMMIT ended that transaction early and left the history row outside it. Every statement here runs inside a transaction block, so no no-transaction pragma is needed.
  */
-BEGIN;
 CREATE TABLE IF NOT EXISTS oshal_test_lab_schedules (
   id UUID PRIMARY KEY, issuer TEXT NOT NULL, user_sub TEXT NOT NULL, app_name TEXT NOT NULL,
   levels JSONB NOT NULL, cadence TEXT NOT NULL CHECK(cadence IN ('hourly','daily','weekly')),
@@ -31,4 +31,3 @@ ALTER TABLE oshal_test_lab_schedule_batches FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS test_lab_schedule_control ON oshal_test_lab_schedule_batches;
 CREATE POLICY test_lab_schedule_control ON oshal_test_lab_schedule_batches USING(current_setting('oshal.is_operator',true)='on')
   WITH CHECK(current_setting('oshal.is_operator',true)='on');
-COMMIT;

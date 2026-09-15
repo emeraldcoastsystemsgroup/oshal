@@ -4,9 +4,9 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Drop the top-level BEGIN;/COMMIT; pair: the migration runner wraps each file and its app_migrations history INSERT in one transaction on one client, so the file-level COMMIT ended that transaction early and left the history row outside it. Every statement here runs inside a transaction block, so no no-transaction pragma is needed.
  */
 -- ADR-149 application authorization control plane. Apply as schema owner; no business-data grants.
-BEGIN;
 CREATE TABLE IF NOT EXISTS oshal_authorization_state (singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton), revision BIGINT NOT NULL DEFAULT 0 CHECK(revision>=0));
 INSERT INTO oshal_authorization_state(singleton,revision) VALUES(TRUE,0) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS oshal_authorization_assignments (id TEXT PRIMARY KEY, payload JSONB NOT NULL);
@@ -25,4 +25,3 @@ BEGIN
   END LOOP;
 END
 $policy$;
-COMMIT;
