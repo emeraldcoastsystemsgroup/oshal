@@ -191,3 +191,56 @@ describe('the state machine — armed → priced → listed → entry → fill �
     expect(dr.manualSteps.join(' ')).toMatch(/Conditional Offer to Purchase/);
   });
 });
+
+describe('TRADING_CORE_SYMBOLS is honoured at the event-plan ENTRY (ADR-159 sibling)', () => {
+  const book = legacyBook(SUB, 'paper');
+  const edgar: EdgarHit[] = [
+    { form: 'S-1', date: '2026-09-15', url: 'https://www.sec.gov/x/s1.htm', displayName: 'Anthropic PBC', cik: '1' },
+    { form: '424B4', date: '2026-10-19', url: 'https://www.sec.gov/x/424b4.htm', displayName: 'Anthropic PBC', cik: '1' },
+  ];
+
+  /** Arm a plan and tick it until it reaches a status the entry step decides — `entry_placed` when the
+   *  ticker is free to trade, `cancelled` when the ring-fence refuses it. */
+  async function driveToEntry(name: string): Promise<{ planId: string; status: string; placed: number }> {
+    const venue = fakeVenue();
+    const clock = new Date('2026-10-20T14:00:00Z');
+    const deps: EventPlanDeps = {
+      now: () => clock, session: async () => 'regular', edgarSearch: async () => edgar,
+      fetchText: async () => 'The initial public offering price is $50.00 per share ... under the symbol “ANTH”',
+      broker: venue.broker as unknown as EventPlanDeps['broker'],
+      latestTrade: async () => ({ price: 61, asOf: clock }),
+      place: venue.place as unknown as EventPlanDeps['place'],
+    };
+    const plan = await createEventPlan(pool as never, SUB, { book, name, params: normalizeEventPlanParams({ issuer: 'Anthropic', sizePctOfEquity: 10 }) });
+    await armEventPlan(pool as never, SUB, plan.planId);
+    let status = 'armed';
+    for (let i = 0; i < 6 && !['entry_placed', 'cancelled', 'error', 'missed'].includes(status); i += 1) {
+      await tickEventPlans(ctx(), SUB, deps);
+      status = (await getEventPlan(pool as never, SUB, plan.planId))!.status;
+    }
+    return { planId: plan.planId, status, placed: venue.orders.size };
+  }
+
+  it('an unfenced ticker still places its entry — the control the refusal is read against', async () => {
+    const prev = process.env.TRADING_CORE_SYMBOLS;
+    delete process.env.TRADING_CORE_SYMBOLS;
+    try {
+      const out = await driveToEntry('fence-control');
+      expect(out.status).toBe('entry_placed');
+      expect(out.placed).toBe(1);
+    } finally { if (prev === undefined) delete process.env.TRADING_CORE_SYMBOLS; else process.env.TRADING_CORE_SYMBOLS = prev; }
+  });
+
+  it('a ring-fenced ticker is cancelled at the entry and NO order is placed', async () => {
+    const prev = process.env.TRADING_CORE_SYMBOLS;
+    process.env.TRADING_CORE_SYMBOLS = 'ANTH:0';
+    try {
+      const out = await driveToEntry('fence-refused');
+      expect(out.status).toBe('cancelled');
+      expect(out.placed).toBe(0);
+      const p = (await getEventPlan(pool as never, SUB, out.planId))!;
+      expect(p.timeline.at(-1)).toMatchObject({ event: 'ring_fenced' });
+      expect(p.timeline.at(-1)?.detail).toContain('TRADING_CORE_SYMBOLS');
+    } finally { if (prev === undefined) delete process.env.TRADING_CORE_SYMBOLS; else process.env.TRADING_CORE_SYMBOLS = prev; }
+  });
+});
