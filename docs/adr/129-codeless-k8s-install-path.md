@@ -205,6 +205,11 @@ consent) turns the behavioral test red by actually downloading a binary.
   the in-cluster tier ships dev-parity credentials, single replicas, and no
   backup story — fine for a single-box swarm, replaced by managed services and
   Secrets for a shared tenant.
+  The chart README's [Durability boundary](../../deploy/helm/oshal/README.md#durability-boundary)
+  declares the durability half of that (durable Postgres and Timescale, a real
+  Vault, volume backup) out of scope for the single-box product, each with the
+  switch or layer where a shared tenant takes over; guard:
+  `tests/unit/chart-durability-boundary.spec.ts`, which renders the real chart.
 - Template-level proof (helm lint + render matrix + real-tarball fallback fetch)
   ran on the dev box; a live cluster install was deliberately **not** run there —
   Docker Desktop k8s beside the 44-container swarm is the documented OOM pairing.
