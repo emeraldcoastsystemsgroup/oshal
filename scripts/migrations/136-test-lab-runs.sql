@@ -4,8 +4,8 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Retain exact-principal versioned Test Lab runs with cancellation and crash leases.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Drop the top-level BEGIN;/COMMIT; pair: the migration runner wraps each file and its app_migrations history INSERT in one transaction on one client, so the file-level COMMIT ended that transaction early and left the history row outside it. Every statement here runs inside a transaction block, so no no-transaction pragma is needed.
  */
-BEGIN;
 CREATE TABLE IF NOT EXISTS oshal_test_lab_runs (
   id UUID PRIMARY KEY, issuer TEXT NOT NULL, user_sub TEXT NOT NULL, request_id UUID NOT NULL,
   app_name TEXT NOT NULL, case_id TEXT NOT NULL, state TEXT NOT NULL,
@@ -23,4 +23,3 @@ ALTER TABLE oshal_test_lab_runs FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS test_lab_control_plane ON oshal_test_lab_runs;
 CREATE POLICY test_lab_control_plane ON oshal_test_lab_runs
   USING(current_setting('oshal.is_operator',true)='on') WITH CHECK(current_setting('oshal.is_operator',true)='on');
-COMMIT;
