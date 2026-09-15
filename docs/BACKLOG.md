@@ -2217,3 +2217,28 @@ it by escalating a ticket with a reason, de-escalating it with no metadata, and 
 mirror no longer reports `status: 'escalated'` — proven red against today's code, which returns
 the stale reason. The guard asserts on the mirror directly rather than through the cockpit route,
 because the route's `status !== 'escalated'` gate hides the defect.
+
+### Downstream authorization readiness still caches a boot failure
+
+The authorization schema bootstrap itself is now re-requestable: a bootstrap that loses the pool
+acquire at boot is retried by the next authorization operation instead of refusing for the life of
+the process (`createSchemaReady` in
+`src/app/composition/application-authorization-wiring.ts`). The wiring's RETURNED `ready` is a
+different value and was deliberately left alone. It is `readySchemas().then(() =>
+registerAuthorizationTools(...))` - a plain promise, created once, and four modules chain off it:
+`createQueuedApplicationPrincipalWiring` and `createUserDirectoryRoutes` in
+`src/app/server.ts:1059,1144`, plus `jarvis-briefing-wiring.ts:69` and `test-lab-wiring.ts:78`,
+which each build their own schema on top of it. If the very first bootstrap attempt fails, those
+four inherit that one rejection permanently even though every authorization operation has since
+recovered - so the authorization tools are never registered, Jarvis briefings and Test Lab run
+history never get their schema, and the user-directory routes refuse, while the api reports
+healthy. Converting it means changing those four consumers and whatever chains off them, which is
+a wider change than the fix it would ride on.
+
+**Done when:** the wiring's returned readiness is re-requestable by the same memoized-thunk shape
+as `createSchemaReady`, every consumer of it asks per operation rather than capturing it once, and
+a guard in the shape of `tests/unit/authorization-schema-recovery.spec.ts` - disposable
+`postgres:16-alpine`, a real pool small enough to genuinely lose the acquire, no mocked pool -
+proves that after a failed first bootstrap the authorization tools are registered and a
+user-directory read succeeds on a later call. Proven red against today's code, which leaves them
+dead.

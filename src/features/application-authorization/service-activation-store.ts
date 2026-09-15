@@ -102,9 +102,9 @@ function toActivation(row: ActivationRow): ApplicationServiceActivation {
  */
 export class PostgresApplicationServiceActivationStore implements ApplicationServiceActivationStore {
   /** @description Hold the controller pool and the schema readiness barrier.
-   * @param pool - Controller database. @param ready - Activation schema readiness.
+   * @param pool - Controller database. @param ready - Activation schema readiness, re-requested per operation.
    */
-  constructor(private readonly pool: Pool, private readonly ready: Promise<unknown> = Promise.resolve()) {}
+  constructor(private readonly pool: Pool, private readonly ready: () => Promise<unknown> = () => Promise.resolve()) {}
 
   /** @description Read every live activation of one application.
    * @param app - Installed application name. @returns Its activations, newest first.
@@ -157,7 +157,7 @@ export class PostgresApplicationServiceActivationStore implements ApplicationSer
    * @param activation - Fully resolved record. @returns Completion after the insert.
    */
   async insert(activation: ApplicationServiceActivation): Promise<void> {
-    await this.ready;
+    await this.ready();
     await runWithSystemIdentity(() => this.pool.query(
       `INSERT INTO ${TABLE} (id, app, schedule_id, runs_as, target_sub, target_issuer, tenant_id,
         requires, catalog_revision, activated_by_sub, activated_by_issuer, activated_at)
@@ -174,7 +174,7 @@ export class PostgresApplicationServiceActivationStore implements ApplicationSer
    * @returns True when a live row was closed.
    */
   async revoke(id: string, by: { sub: string; issuer: string }, at: string): Promise<boolean> {
-    await this.ready;
+    await this.ready();
     const result = await runWithSystemIdentity(() => this.pool.query(
       `UPDATE ${TABLE} SET revoked_by_sub=$2, revoked_by_issuer=$3, revoked_at=$4
        WHERE id=$1 AND revoked_at IS NULL`, [id, by.sub, by.issuer, at]));
@@ -186,7 +186,7 @@ export class PostgresApplicationServiceActivationStore implements ApplicationSer
    * @param at - ISO suspension time. @returns Completion after the update.
    */
   async suspend(id: string, reason: string, at: string): Promise<void> {
-    await this.ready;
+    await this.ready();
     await runWithSystemIdentity(() => this.pool.query(
       `UPDATE ${TABLE} SET suspended_reason=$2, suspended_at=$3 WHERE id=$1 AND revoked_at IS NULL`,
       [id, reason, at]));
@@ -194,7 +194,7 @@ export class PostgresApplicationServiceActivationStore implements ApplicationSer
 
   /** @description Run one parameterised read against the activation table. */
   private async query(where: string, values: unknown[]): Promise<ActivationRow[]> {
-    await this.ready;
+    await this.ready();
     const result = await runWithSystemIdentity(() => this.pool.query<ActivationRow>(
       `SELECT ${COLUMNS} FROM ${TABLE} ${where}`, values));
     return result.rows;

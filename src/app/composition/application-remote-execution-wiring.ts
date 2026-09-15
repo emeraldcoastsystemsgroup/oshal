@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Compose durable remote authority from current principal, package and existing controller signing services.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Report at boot when the authority is registered on a controller holding no signing material. Registration is unconditional and signing is lazy, so that controller looked healthy and refused every protected package dispatch instead.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Take schema readiness as a re-requestable thunk so a bootstrap that failed at boot is retried by the next remote-execution call instead of refusing for the life of the process.
  */
 import { createPrivateKey, createPublicKey } from 'node:crypto';
 import type { Pool } from 'pg';
@@ -59,14 +60,14 @@ function reportUnconfiguredDelegationSigning(env: NodeJS.ProcessEnv): void {
 }
 
 /** @description Register one controller authority while leaving signing keys lazy until protected dispatch.
- * @param pool Controller pool. @param ready Required schemas. @param runtime Current package generation and policy.
+ * @param pool Controller pool. @param ready Re-requestable required schemas. @param runtime Current package generation and policy.
  * @param refreshActor Existing verified account refresh. @param env Controller configuration. @returns The shared authority.
  */
-export function createApplicationRemoteExecutionWiring(pool: Pool, ready: Promise<unknown>, runtime: ApplicationAuthorizationRuntime,
+export function createApplicationRemoteExecutionWiring(pool: Pool, ready: () => Promise<unknown>, runtime: ApplicationAuthorizationRuntime,
   refreshActor: (actor: AuthorizationActor) => Promise<AuthorizationActor | null>, env: NodeJS.ProcessEnv = process.env) {
   const authority = new ApplicationRemoteExecutionService(new PostgresRemoteExecutionStore(pool, ready), {
     ...lazySigning(env), tokenIssuer: delegationIssuerFromEnvironment(env), dispatchAudience: delegationAudienceFromEnvironment(env),
-    owner: async (kind, id) => { await ready; return readApplicationExecutionOwnership(pool, { kind, id, mode: applicationAuthorizationMode(env) }); },
+    owner: async (kind, id) => { await ready(); return readApplicationExecutionOwnership(pool, { kind, id, mode: applicationAuthorizationMode(env) }); },
     snapshot: app => runtime.snapshot(app), refreshActor,
     authorize: (actor, operation) => runtime.authorize(actor, operation),
     effective: (actor, app, tenantId) => runtime.service.effective(actor, { app, tenantId }),
@@ -77,7 +78,7 @@ export function createApplicationRemoteExecutionWiring(pool: Pool, ready: Promis
     assertResultAccess: (id, actor, binding) => authority.assertResultAccess(id, actor, binding),
     assertTaskResultAccess: (id, actor) => authority.assertTaskResultAccess(id, actor),
     hasTaskResults: id => authority.hasTaskResults(id),
-    isProtectedAgent: async id => { await ready;
+    isProtectedAgent: async id => { await ready();
       return Boolean((await readApplicationExecutionOwnership(pool, { kind: 'bots', id, mode: applicationAuthorizationMode(env) }))?.protected);
     },
   });

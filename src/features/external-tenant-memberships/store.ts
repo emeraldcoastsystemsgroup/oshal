@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Persist exact external memberships with shared revision locking and atomic authorization history.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Take schema readiness as a re-requestable thunk so a bootstrap that failed at boot is retried by the next membership read instead of refusing for the life of the process.
  */
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
@@ -15,8 +16,8 @@ import { requireMembershipFreshness, requireMembershipPreview } from './validati
 
 /** @description PostgreSQL adapter with no account/provider callbacks while retaining the shared policy writer lock. */
 export class PostgresExternalTenantMembershipStore implements ExternalTenantMembershipStore {
-  /** @description Use the normal control-plane pool after schema readiness. @param pool Wrapped runtime pool. @param ready Existing migration/bootstrap readiness. */
-  constructor(private readonly pool: Pool, private readonly ready: Promise<unknown> = Promise.resolve()) {}
+  /** @description Use the normal control-plane pool after schema readiness. @param pool Wrapped runtime pool. @param ready Existing migration/bootstrap readiness, re-requested per operation. */
+  constructor(private readonly pool: Pool, private readonly ready: () => Promise<unknown> = () => Promise.resolve()) {}
   /** @description Read inventory without acquiring the writer lock. @returns Consistent global revision, tenants and explicit memberships. */
   async catalog(): Promise<ExternalTenantMembershipCatalog> {
     return this.transaction(false, async (client, revision) => {
@@ -30,14 +31,14 @@ export class PostgresExternalTenantMembershipStore implements ExternalTenantMemb
    * @param sub Verified subject. @param issuer Verified namespace. @returns Current business tenant IDs.
    */
   async tenantIds(sub: string, issuer: string): Promise<string[]> {
-    await this.ready;
+    await this.ready();
     return runWithSystemIdentity(async () => (await this.pool.query<{ tenant_id: string }>(
       'SELECT tenant_id::text FROM oshal_external_tenant_memberships WHERE issuer=$1 AND user_sub=$2 ORDER BY tenant_id', [issuer,sub],
     )).rows.map(row => row.tenant_id));
   }
   /** @description Load provenance before identity refresh without a writer lock. @param id Opaque preview ID. @returns Stored preview or null. */
   async readPreview(id: string): Promise<StoredMembershipPreview | null> {
-    await this.ready; return runWithSystemIdentity(() => readPreview(this.pool, id));
+    await this.ready(); return runWithSystemIdentity(() => readPreview(this.pool, id));
   }
   /** @description Save only at the reviewed global revision while the selected tenant exists.
    * @param preview Server-produced owned preview. @param now Current service clock, evaluated after lock acquisition. @returns Completion.
@@ -66,7 +67,7 @@ export class PostgresExternalTenantMembershipStore implements ExternalTenantMemb
     });
   }
   private async transaction<T>(write: boolean, operation: (client: PoolClient, revision: number) => Promise<T>): Promise<T> {
-    await this.ready;
+    await this.ready();
     return runWithSystemIdentity(async () => {
       const client = await this.pool.connect();
       try {

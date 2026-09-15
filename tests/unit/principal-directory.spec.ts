@@ -61,7 +61,7 @@ beforeEach(async () => {
   await owner.query('TRUNCATE oshal_verified_principals,oshal_external_identity_links,oshal_local_users');
   env = { OIDC_ISSUER_URL: google,OIDC_CLIENT_ID: 'fixture-google',OIDC_CLIENT_SECRET: 'fixture',
     MICROSOFT_LOGIN: 'true',MICROSOFT_TENANT_ID: tenant,MICROSOFT_OIDC_CLIENT_ID: 'fixture-microsoft',MICROSOFT_OIDC_CLIENT_SECRET: 'fixture' };
-  directory = createApplicationPrincipalDirectory(runtime,Promise.resolve(),env);
+  directory = createApplicationPrincipalDirectory(runtime,() => Promise.resolve(),env);
 });
 afterAll(async () => { if (runtime) await runtime.end(); if (owner) await owner.end(); if (started) docker(['rm','--force',container]); vi.unstubAllEnvs(); });
 
@@ -92,7 +92,7 @@ function registerObservationCases() {
     ].sort());
     expect((await owner.query('SELECT password_hash,status FROM oshal_local_users')).rows).toEqual([{ password_hash: 'unchanged-hash',status: 'active' }]);
     expect((await runtime.query('SELECT * FROM oshal_verified_principals')).rows).toEqual([]);
-    const restarted = createApplicationPrincipalDirectory(runtime,Promise.resolve(),env);
+    const restarted = createApplicationPrincipalDirectory(runtime,() => Promise.resolve(),env);
     expect((await restarted.inventory(admin)).users).toHaveLength(3);
   });
 }
