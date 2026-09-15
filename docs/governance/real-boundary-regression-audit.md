@@ -25,6 +25,7 @@ provider claim still needs a separate live acceptance run.
 | `tests/unit/trading-watchdog-books.spec.ts` (ADR-134 D3.7 per-book beats) | None for the decision logic — the PowerShell functions are dot-sourced from the real script | REAL: `powershell.exe` 5.1 executing the shipped functions, the live Redis schedule store (seeded active/paused legs, cleaned up), the live Postgres roster read, and the cutover gate executed under `bash` with stubbed `docker`/`schtasks` for each refuse branch | Green 2026-09-06 |
 | `tests/unit/trading-book-report-scripts.spec.ts` (ADR-134 D2 #7 per-book reports) | None for the SQL — it is the shipped module's own text | REAL: the live Postgres as the enforcing `oshal_app` role (self-validated: `current_user`, not superuser, not RLS-bypassing) with and without the operator GUC, plus real CLI runs of all three report scripts over seeded two-live-book data | Green 2026-09-06 |
 | `tests/unit/trading-watchdog-checks.spec.ts` (ADR-134 D3.7 watchdog checks) | Scoped doubles: the Log/Raise sinks, and a stubbed exec wrapper in the core-hold case | REAL: the shipped PowerShell parsed and executed by `powershell.exe`, a real never-answering HTTP server for the wedge/deadline cases, and the pure check module itself — every threshold, alert key and message is mutation-proven | Green 2026-09-07 |
+| `tests/unit/world-series-read-gate.spec.ts` (the market-hours pulse saturating the world series store) | Scoped double: the pg client. It records how many series reads it is asked to answer at once and returns canned rows; it says nothing about PostgreSQL's own behaviour under that load | REAL: the service's own `rollupFeatures`, its real statement text and the real process-wide gate — the measured quantity is the number of concurrent statements the pulse ISSUES, which is the quantity that saturated the store. Proven red before green by bypassing the gate (max in-flight 12 against a bound of 3; four sentiment statements for two answers). The read-cost half is separately evidenced by read-only `EXPLAIN (ANALYZE)` on the live `oshal_ts`: 786 ms planning + 366 ms execution on the stream vs 245 + 16 on the daily head | Statement-issuing boundary covered; the live companion is the pulse's own `seriesStatements`/`elapsedMs` record on the box after deploy, still to be taken |
 | `tests/unit/multipart-request-identity-postgres.spec.ts` (multipart uploads losing the RLS request identity) | Scoped doubles OUTSIDE the boundary: the sign-in rail, and the domain service each post-upload handler calls (RAG ingest, the knowledge-memory record, the swarm-app loader, the ambient receipt store and diarization orchestrator, the agent-profile repository). Each double performs the handler's owner-scoped write as a real INSERT through the real GUC pool | REAL: loopback HTTP with the body streamed in 64 KB chunks with gaps, the four production routers and their multer parsers, the server.ts identity-middleware shape, the production GUC pool, and PostgreSQL FORCE RLS (the live owner-or-operator policy) evaluated for `oshal_app` in a throwaway database the spec creates and drops (self-validated: `current_user`, not superuser, not RLS-bypassing, and an identity-less write is refused). Red on all four routes before the fix and when the helper's re-bind is removed. Not evidence that each domain table's own policy is correct | Green 2026-09-14 |
 
 ## Configurable Home (2026-09-09)
@@ -110,6 +111,32 @@ case first, "expected 200 to be 403"), and dropping the `swarm_roles` snapshot c
 `isOperatorIdentity` turned 2 of 4 red ("expected 403 to be 200") while leaving the anonymous and
 non-operator refusals green. This is not evidence for RLS: `swarm_roles` deliberately has no row
 policy — the route is the gate — and the spec asserts exactly that gate.
+
+## Authorization readiness handed to downstream consumers (2026-09-15)
+
+`tests/unit/authorization-readiness-consumers.spec.ts` closes the gap left by
+`tests/unit/authorization-schema-recovery.spec.ts`: the bootstrap thunk recovers, but the readiness
+the wiring RETURNS was derived from it once, so a first-attempt failure was inherited permanently
+by everything chaining off it - including the queued-principal capture that
+`TicketService.createTicket` performs on every authenticated ticket.
+
+The defective boundary is a pool acquire lost under real contention, and it runs for real: a
+disposable `postgres:16-alpine` container, a genuine `pg` Pool with `max: 1` and a 500 ms acquire
+timeout whose only client the test holds, the production GUC wrapper, and the real locked-DDL
+bootstraps. The failure is a real `timeout exceeded when trying to connect` raised out of
+`applyLockedSchema`, not an injected error, and recovery is asserted by reading the tables the
+retry had to create and the `oshal_queued_application_principals` row the retry had to insert.
+
+The scoped doubles are all OUTSIDE that boundary: the tool catalog and dynamic executor registry
+(recorded call counts, so "the tools registered on the retry" is an assertion rather than a mock
+return), the `SwarmAppService`/`AppAccessService` ports, and the ticket row store. The ticket store
+is doubled deliberately - ticket persistence is not what fails here, and substituting it is what
+makes the case assert on the capture that follows the insert. Its real companions are the
+ticket-store RLS entries at the top of this table. Red-proven on `1f0978a0`: both cases fail with
+`timeout exceeded when trying to connect`, the first raised out of `createTicket`.
+
+Not covered: the user-directory and Jarvis-briefing routes are proven at their readiness seam only,
+not driven over HTTP.
 
 ## Rules for future fixes
 

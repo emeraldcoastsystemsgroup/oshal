@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — a reconnect must drop the memoised needs_reconnect answer. Crosses the real seam that broke: the real upsertConnection against the live Postgres, the real cache module, and the real /liveness handler.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 
 /**
@@ -27,12 +28,10 @@ import { createConnectorLivenessRoutes, type LivenessDeps } from '@/app/routes/c
 import { getCachedLiveness, resetConnectorLivenessCacheForTesting } from '@/app/routes/connector-liveness-cache';
 import { upsertConnection, ensureTenancySchema, type ConnectionRow } from '@/app/routes/connector-tenancy';
 import { ensureConnectionsSchema } from '@/app/routes/connectors-routes';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-/** The published Postgres of the local stack (docker-compose maps 127.0.0.1:55433 to 5432). */
-const CONNECTION_STRING =
-  process.env.CONNECTOR_TEST_DATABASE_URL
-  ?? process.env.DATABASE_URL
-  ?? 'postgres://oshal:oshal@127.0.0.1:55433/oshal';
+/** A PostgreSQL the run names. This spec writes connection rows, so it has no default. */
+const CONNECTION_STRING = specDatabaseUrl(['CONNECTOR_TEST_DATABASE_URL', 'DATABASE_URL']);
 
 /** Every row this run writes carries this prefix, so cleanup can never touch another run's data. */
 const RUN = `zz-liveness-inv-${process.pid}-${Date.now()}`;

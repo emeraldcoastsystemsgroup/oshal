@@ -58,10 +58,193 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Cheaper substitute, already possible:** a detector instead of a constraint — the books-aware watchdog can alert on any book-less row and gives the same protection with no irreversibility.
 - **Done when:** the operator asks for it (or a book-less row actually appears, or a third live book is about to be enabled); the three plan defects above are fixed; the legacy-shaped book-less INSERT is REJECTED on the live schema; `git grep SCHWAB_ACCOUNT_NUMBER` hits only history; and the deploy refuses auto-rollback to any image predating the hardening, proven by a case whose anchor is computed from git.
 
+### Native background wake: the microphone-release invariants are unproven
+
+- **Found:** 2026-09-15, running the wake acceptance suite against deployed core `1f0978a0`.
+  `tests/jarvis-rich-response-native-wake.spec.ts` is **3 failed of 3**. All three fail at the same
+  first assertion - `window.__nativeWakeAudio.streams.length` is `0` rather than `1` and `#mic`
+  never gains the `live` class - so the post-wake command microphone is never opened and the three
+  release invariants (release after speech, release on the no-voice timeout, release on user
+  interruption and page close) have nothing to assert against. The page loads and the button
+  exists, so this is not a load failure.
+- **Why it went unnoticed:** the Run block in
+  [jarvis-native-background-wake.md](architecture/jarvis-native-background-wake.md) listed only
+  `jarvis-audio-lifecycle.spec.ts`, while the 07-11 baseline it records covered three Playwright
+  files. Following the documented command therefore cannot see this. The Run block is now corrected
+  to name both files.
+- **Not yet diagnosed:** `src/api/jarvis.html` has taken 15 commits since 2026-07-11 while the spec
+  has not been touched since a governance chore, so spec-drift against a moved page is at least as
+  likely as a runtime regression. Diagnose before changing either - the page is core and the
+  handler region is load-bearing for an always-on-microphone feature.
+- **Done when:** the three cases pass against the deployed page, OR the spec is retired with a
+  written reason and replaced by one that asserts the same three release invariants; and the
+  passing command is the one the Run block documents, so the next reader cannot miss it again.
+  Until then the wake path is not delivery-ready, and its doc says so.
+
+### Refusal visibility: the substrate for P1, P3 and P4
+
+- **Found 2026-09-14, measured:** **125** distinct refusal reason codes in `src/**` and **zero**
+  surfaces that aggregate them. A refusal is a return value and, at best, a log line - not a row,
+  not replayable, not countable. The operator cannot ask "what did the platform decline to do
+  today, and what would unblock it?" Full diagnosis and a six-stage roadmap in
+  [operating-fluency-spec.md](architecture/operating-fluency-spec.md).
+- **Closed so far:** P2 (#491, access checks report instead of denying in silence) and the same
+  defect family at the bot posture guard (#496). Both keep their fail-closed returns unchanged;
+  only the reporting changed.
+- **Remaining - P1 (Stage 1), the blocker:** one durable `refusals` store (code, actor, owning
+  package, target agent/route, prepared execution id, remedy text, timestamp) under the same RLS
+  contract as every other table, one recording chokepoint, and `GET /api/ops/refusals` auth-gated
+  and caller-scoped. Reuse the ADR-125 alert-pipeline shape rather than inventing one - this is
+  exactly that problem one layer up.
+- **Remaining - P3 (Stage 3), the multiplier:** enumerate the operator-remediable subset of the 125
+  codes (not all are; some are correct hard denials) and make each name what is unset and what to
+  set, with the setting names in one exported constant so check and message cannot drift. `8ae6a57b`
+  did this for exactly one code and is the pattern.
+- **Remaining - P4 (Stage 2 tail):** refused work strands. Observed at `escalated` and at
+  `chat_tasks.status='created'`. Needs a terminal state carrying the reason, or a reaper.
+- **Done when:** a query answers "every refusal in the last 24 h by code, actor, package and
+  target" and the cockpit renders it; the five 09-10 schedule refusals appear in it without a
+  `docker exec`; a guard enumerates the remediable codes and fails when one carries no remedy; and
+  a spec drives a refused dispatch end-to-end and asserts the ticket reaches a terminal state with
+  its reason. Guards must cross the real boundary - a real store under the enforcing role, not a
+  mocked one.
+
+### Concierge and tool coverage is not a contract (P8) - and its first done-when was wrong
+
+- **Measured 2026-09-14 across the store repo:** **26 of 61** packages declare no concierge at all,
+  and only **25 of 61** declare a top-level `tools:` block (of those 25, all set `defaultAuthMode`
+  and 23 set `routingTags`, so the mechanism is well-formed wherever it is used). **36 of 61
+  packages expose no tools to Jarvis.** The rail is built and correct; adoption is not enforced.
+- **The original done-when in the spec was wrong and is corrected there.** It said "a
+  repo-separation-style check fails a package that registers a surface and declares no concierge".
+  Repo-separation scans the **core** repo; these packages live in `oshal-applications`, so a core
+  CI gate cannot see them. The real enforcement point is load-time manifest validation in
+  `swarm-app-loader.ts`.
+- **Which makes this a migration, not a gate.** Switching on load-time validation would refuse 26
+  currently-working packages. It needs a deprecation path: warn-on-load first, a backfill pass in
+  the store repo, then fail-closed - and the store-side backfill is per-package work that does not
+  touch core.
+- **Sequencing:** do not start this before the refusal store. A concierge that cannot see refusals
+  can only apologise, which is the current behaviour and the reason adding concierges has not made
+  the environment feel more fluent.
+- **Done when:** a package that registers a cockpit surface and declares no concierge fails to
+  load; the gate is green with no allowlist; a spec proves it goes red per violation shape; and the
+  backfill landed in the store repo rather than being waived.
+
+### Jarvis fast-lane: the deterministic shortcut is hardcoded to three intents
+
+- **Measured 2026-09-14:** `detectProviderBoundHandoff` (288 lines of hand-written regex in core)
+  recognises exactly three things - weather, priority inbox, read-only Walmart catalog. On a hit,
+  `buildToolsBlock` is never called and the turn is answered with no model tokens. On a miss, every
+  turn carries the full tool block (44 catalogued scripts, a 10.4 KB catalog) plus the whole app
+  catalog, which "rides EVERY model turn". `buildToolsBlock` already SCORES tools against the
+  message and surface but only **sorts** - nothing is ever cut.
+- **Why it matters more than it looks:** the native background-wake path lands on the same `/ask`
+  route, so a spoken request is answered immediately only when one of those three intents matches.
+  Voice makes the slow lane the product; typing merely tolerates it.
+- **Two changes, OPPOSITE failure modes - they cannot share a gate.** Cutting the tool block fails
+  by dropping a tool the model needed, so it gates on **recall**. Widening the fast lane fails by
+  firing the wrong deterministic handler with the model bypassed entirely, so it gates on
+  **precision** - and that failure is worse than the status quo.
+- **Proving it must be off-core.** `buildToolsBlock` is exported, so a harness can import the real
+  selector read-only and race candidates implemented entirely in the harness - zero core delta.
+  Shape it like [`bench/`](../bench/README.md), which exists to convert an asserted claim into a
+  measured one and reports `not-run` rather than inventing a number. Start with a synthetic corpus;
+  ground truth must be the RECORDED invocation, never a model's guess.
+- **Done when:** the harness reports, per candidate selector, recall, false-match count and real
+  input-token delta, with a binary `regressions == 0` gate (average improvement with one regression
+  is the thing that burns you); and any core change ships behind a shadow step that computes both
+  selectors, logs the delta and uses the baseline, so production behaviour is unchanged while real
+  traffic validates it.
+
+### Boot-time schema bootstraps fail open, and one of them costs a feature
+
+- **Measured on the 2026-09-15 00:23Z deploy:** 27 error-level lines on the api's first boot, about
+  ten of them `* schema bootstrap failed` - ticket (x3), venture rebaseline, tv_token_revocations,
+  social_content_drafts, person-model, linkedin-assistant, `ensureInboxSchema`, `ensureFeedsSchema` -
+  plus two `DB access with NO request identity DENIED (OSHAL_DB_GUC_STRICT=deny)`.
+- **Most are fail-open by design** ("relying on SQL migrations", "revocation stays fail-open") and
+  are noise in the honest sense. **One is a real functional loss:** `oshal_cli_tokens schema
+  bootstrap failed - PAT auth unavailable until it exists`.
+- **Same shape as the authorization boot race** that was fixed by memoising a retrying thunk
+  (`application-authorization-wiring.ts`): many concurrent bootstraps, each holding a client, against
+  a small pool while 83 manifests load. The fix pattern already exists in-repo; this is whether the
+  other bootstraps should adopt it or whether fail-open is genuinely correct for each.
+- **Done when:** PAT auth is available after a cold boot without manual intervention, proven by a
+  check that exercises a PAT rather than reading the log; and each remaining fail-open bootstrap is
+  either converted to the retrying-thunk pattern or has a one-line note saying why fail-open is
+  right for it, so the next reader does not have to re-derive the answer ten times.
+
+### There is no test-coverage measurement
+
+- **Found 2026-09-14:** no coverage provider installed (`@vitest/coverage-v8` absent), no
+  `coverage` script, no thresholds. Coverage has never been measured here, so any figure quoted
+  would be invented. What exists is a file ratio - 890 `tests/unit/*.spec.ts` plus 7 colocated
+  `src/**/*.test.ts` against 1,499 source files - which says nothing about which lines run. Two of
+  those source files were security decision paths with zero specs until 2026-09-15.
+- **Remaining:** add `@vitest/coverage-v8`, a `test:coverage` script and v8 provider config.
+- **Scope the first threshold narrowly** - `src/app/routes/**` and `src/shared/**`, not the whole
+  tree - so it is a gate that can actually be held rather than a number that decorates a README.
+- **Done when:** the number is generated by a command rather than asserted in prose (house rule),
+  the threshold fails the run when breached, and the scope it covers is stated wherever the figure
+  appears.
+
+### Benchmark and cost claims are still un-earned (P5, P6)
+
+- **P5 - the cross-framework benchmark measures competitors, not us.** `bench/` runs the same task
+  on the same free model across vanilla/langgraph/crewai and records real tokens, but the oshal leg
+  is not wired: it reports `not-run`. So the cheaper-routing claim remains asserted.
+- **P6 - the cost figure is small-n.** `$1.30` against a `$4.05` median for incident RCA are real
+  `chat_tasks` rows, one workload, one corpus. Directionally strong; not a benchmark.
+- **Neither blocks operation** - both block a slide. Do not publish the determinism/cost head-to-head
+  until measured.
+- **Done when:** `run_oshal` POSTs to the real dispatch and reads `chat_tasks` input/output token
+  columns so the benchmark reports oshal alongside the others at a stated n; the cost claim covers
+  more than one ticket type with its n and limits kept in the same sentence as the number.
+
 ### Trading DB specs race on schema bootstrap
 - **Remaining:** running the trading unit specs WITHOUT `--no-file-parallelism` fails three pre-existing specs (trading-books-schema, trading-event-plans, trading-pinned-lots) in `beforeAll` with `trigger "trg_trd_signals_book_fill" … already exists` — the trading schema bootstrap takes the no-lock path, so two concurrent bootstraps collide. Observed 2026-09-06. The dispatch golden-plan spec works around it locally with a single retry; the underlying files were outside that item's ownership.
 - **Done when:** the bootstrap takes an advisory lock (or tolerates the concurrent create) and the same ten-file trading set is green without `--no-file-parallelism`.
 
+### The DB-backed unit specs need a disposable PostgreSQL to run against
+- **What changed:** 23 `tests/unit/*.spec.ts` resolved their DSN with a fallback onto the local
+  stack's published Postgres port — `oshal-local-db`, the operator's LIVE trading database — so an
+  unpointed `npx vitest run tests/unit/trading-*.spec.ts` created and dropped schema and wrote order
+  rows in production. They now resolve through `tests/helpers/spec-database-url.ts`, which REFUSES an
+  unpointed run and names the variable to set, and the `spec-database-default` gate in
+  `scripts/ci-local.sh` keeps that true for the next spec.
+- **Remaining:** those 23 specs therefore execute only when a run points them at a database. Nothing
+  in the repo does that yet, so the local-CI `unit` gate cannot execute them (it was already FAIL on
+  the 2026-09-14 and 2026-09-13 scheduled runs, for unrelated reasons). The rail to reuse is
+  `tests/helpers/disposable-alert-postgres.ts` — a per-run container on a random loopback port with
+  migrations applied — or the ephemeral `oshal-ci-pg` the e2e gate already starts. Whether the whole
+  set survives on a bare cluster is unmeasured: several of them expect the enforcing `oshal_app`
+  role, and `trading-engine-cost-basis-postgres.spec.ts` needs an admin role that can create
+  databases. Measure before wiring, and never point the variable at the published port.
+- **Also open, same class:** `tests/unit/trading-watchdog-books.spec.ts` still defaults
+  `OSHAL_TEST_DB_CONTAINER` to `'oshal-local-db'` — the live container by name rather than by port,
+  which the port-shaped gate does not see.
+- **Residue left behind, measured 2026-09-15 read-only after deleting the 24 orphan books:** 42
+  `spec-%` rows remain in the live trading database — `oshal_trading_event_plans` 10,
+  `oshal_trading_signals` 9, `oshal_trading_decisions` 8, `oshal_trading_pinned_lots` 5,
+  `oshal_trading_orders` 4, `oshal_trading_dated_orders` 4, `oshal_trading_accounts` 1, and the one
+  `oshal_trading_books` row (`spec-settle-60e074b1`) that still has orders and so fell outside the
+  authorised delete. All of it is `spec-%`-owned, so no user-scoped surface reads it. Survey with:
+
+  ```sql
+  SELECT 'books' t, count(*) FROM oshal_trading_books WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'orders', count(*) FROM oshal_trading_orders WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'event_plans', count(*) FROM oshal_trading_event_plans WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'signals', count(*) FROM oshal_trading_signals WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'decisions', count(*) FROM oshal_trading_decisions WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'pinned_lots', count(*) FROM oshal_trading_pinned_lots WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'dated_orders', count(*) FROM oshal_trading_dated_orders WHERE user_sub LIKE 'spec-%'
+  UNION ALL SELECT 'accounts', count(*) FROM oshal_trading_accounts WHERE user_sub LIKE 'spec-%';
+  ```
+
+- **Done when:** the 23 specs run green against a database the run provisions and destroys, the
+  local-CI `unit` gate executes them there rather than skipping or refusing, the watchdog spec names
+  its container the same way, and the survey above returns zero rows.
 ### Codeless k8s install — first live-cluster proof (ADR-129)
 - **Remaining:** run `oshal-install.sh --mode 4` (or `-Kubernetes`) end-to-end on a real second machine — the dev laptop is excluded on purpose (Docker Desktop k8s beside the 44-container swarm is the documented OOM pairing). Then publish the OCI chart (`bash scripts/publish-chart.sh` + the one-time GHCR visibility flip) so the installer's OCI-first path goes live.
 - **Done when:** a fresh box reaches `/welcome` in a browser via the NodePort with only kubectl+helm+the installer present, a model connects through the wizard and a jarvis turn answers, and `helm show chart oci://ghcr.io/emeraldcoastsystemsgroup/charts/oshal` succeeds anonymously.
@@ -213,15 +396,54 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   engine.
 
 ### DB-backed alert specs borrow the operator's database
-- **Remaining:** `tests/unit/alert-incident-cutover.spec.ts` stands a live alert *consumer* on the
-  operator's production queue and `tests/unit/alert-incident-reopen.spec.ts` leaks incident rows into
-  it (BUG-16: all 26 `oshal_incident` rows are spec residue; 24 from the reopen spec). Give each spec
-  its own scratch database or schema with migrations 104-108 applied, or construct the receiver with
-  no sweep. Fix the `afterAll` hang at `alert-incident-cutover.spec.ts:119` in the same pass, and
-  delete the residue.
-- **Done when:** both specs pass with the stack up and with it down (loudly, per doctrine) without
-  writing a row visible to the running deployment, `oshal_incident` holds no `probe-target`/`cut-`
-  rows, and a `ci-local.sh` post-gate fails if synthetic residue reappears.
+- **The borrowing is already gone (2026-09-11, e9179047).** Both specs own a private PostgreSQL:
+  `tests/helpers/disposable-alert-postgres.ts` starts a per-run `postgres:16-alpine` container on a
+  random loopback port with a generated password and a tmpfs data directory, applies migrations
+  104-109 and 141 into it, and removes the container in teardown. `alert-incident-cutover.spec.ts`
+  also builds the receiver with `startPendingSweep: false` and asserts no `setInterval` was taken,
+  so no consumer stands on the deployment queue. Neither spec reads `DATABASE_URL`,
+  `TEST_DATABASE_URL`, `ALERT_PIPELINE_TEST_DSN` or `OSHAL_PG_PORT`, and
+  `tests/unit/alert-postgres-isolation.spec.ts` holds that shut. The `afterAll` hang was
+  `server?.close(cb)` with `server` still `undefined` — the callback never fires, so the hook sat
+  out its whole 60 s timeout on exactly the runs where setup had already failed; teardown now
+  guards the server and closes the fixture in a `finally`. Neither spec can skip: that, and the
+  absence of the hang shape, are now asserted at source level in the isolation guard.
+- **Built 2026-09-15 on `fix/alert-specs-own-database` (PR #480).** The standing gate the done-when asked for:
+  `scripts/ci/check-alert-residue.sh`, wired into `scripts/ci-local.sh` as the last gate
+  (`alert-residue`). It runs SELECTs only, so it is safe against a running stack, and it is
+  fail-closed — a database it could not query reports UNCHECKED (exit 2) rather than clean, because
+  a guard that passes without looking is the false-green recorded twice elsewhere in this file. A
+  deployment that never ran the consolidation migrations says so and passes. The three fixture
+  shapes are named once in the script so gate and guard cannot drift: `primary_target =
+  'probe-target'`, `primary_target LIKE 'cut-%'`, and `dedup_key LIKE 'zz-incident-reopen-%'` (which
+  catches a reopen row whose target column looks real), checked across `oshal_incident`,
+  `oshal_incident_member` and `oshal_alert_event`. Guard: `tests/unit/ci-local-alert-residue.spec.ts`
+  runs the real script in Git Bash against a real migrated PostgreSQL — a clean database passes,
+  genuine `oshal-local-*` incidents pass, each fixture shape fails and is named in the output,
+  member and event rows are counted alongside incidents, an unreachable database is UNCHECKED, an
+  unmigrated one says so, and `ci-local.sh` is checked to actually call the gate.
+- **The fail-closed claim now holds after the opening probe too (review of PR #480).** Only the
+  connectivity probe was fail-closed in the first pass: every later statement folded failure into a
+  benign answer, so a connection lost after the probe exited 0 as "the consolidation migrations have
+  not run here", and an unreadable `oshal_incident_member` / `oshal_alert_event` contributed 0 to the
+  total. Existence checks now carry a third "could not ask" outcome and every count must come back as
+  a number; anything else is UNCHECKED. Three guard cases judge it per statement — two take the
+  database away at an exact call behind a counting stand-in for the docker CLI (script, shell, SQL,
+  exit code and PostgreSQL all real), and one needs no stand-in at all: a real unprivileged role that
+  may read `oshal_incident` and is refused `oshal_incident_member`, which the gate must report as
+  UNCHECKED rather than count as zero.
+- **Remaining: the residue itself, which is an operator deletion and was deliberately left alone.**
+  Measured 2026-09-15 against `oshal-local-db`: 27 `oshal_incident` rows (24 carrying
+  `probe-target`, 3 carrying a `cut-…-container` run prefix), 5 `oshal_incident_member` rows and 1
+  `oshal_alert_event` row. 22 of the 27 are in state `open`, which is why every surface reading that
+  table counts them as live incidents. First seen spans 2026-08-06 to 2026-09-08 — all of it before
+  the disposable-fixture change landed, so nothing new has been written since. The `alert-residue`
+  gate is therefore RED on this box until they are removed. The query that finds them:
+  `SELECT incident_id, dedup_key, primary_target, state, first_seen FROM oshal_incident WHERE
+  primary_target = 'probe-target' OR primary_target LIKE 'cut-%' OR dedup_key LIKE
+  'zz-incident-reopen-%' ORDER BY first_seen;`
+- **Done when:** that query returns no rows against the deployment database, and a `ci-local.sh` run
+  records `GATE alert-residue: PASS`.
 
 ### Surface-bridge ops have no success-path log line
 - **Remaining:** `src/app/routes/jarvis-routes.ts` logs when surface ops are **dropped** for lack of
@@ -268,11 +490,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 
 ### The nightly can wedge for hours deleting its own previous export
-- **Remaining:** the 2026-09-09 23:30 run never got past `head-src`. That gate's first line, `rm -rf "$GATE_SRC"`, was deleting the `ci-src` export (a full `node_modules`) left behind by the previous night's failed run, and sat there from 00:00:50 until it was killed at ~10:00 — **9 hours, 16 CPU-seconds in total, and no progress across a 20-second sample**. It was not a file lock: an exclusive open on a file inside that tree succeeded, and no running process referenced the path. `robocopy /MIR` from an empty directory then purged the same tree in **39 seconds**. `prepare_head_src` bounds only `npm ci` with a timeout — the `rm -rf` and the `git archive | tar` after it are unbounded — so one hung delete held `ci-local.lock` all night and the run produced no outcome line and no alert at all. It will recur: every run that fails after `npm ci` leaves a `node_modules` export for the next run to delete. The cause of the hang is **not established**; MSYS `rm` against a deep `node_modules` tree is the leading candidate, not a finding.
-- **Done when:** the purge in `prepare_head_src` (and the `ci-scan-src` purge in `gate_secrets`) is timeout-bounded and fails loud instead of hanging; it uses a delete that clears a real `node_modules` export on this box in minutes (robocopy mirror-from-empty did it in 39 s); and a run that inherits a leftover export from a failed run reaches its gates and writes an outcome line.
+- **Built 2026-09-14 on `fix/ci-local-secret-scan-and-purge`.** The 2026-09-09 23:30 run never got past `head-src`: its first line, `rm -rf "$GATE_SRC"`, was deleting the `ci-src` export (a full `node_modules`) left by the previous night's failed run and sat there from 00:00:50 until it was killed at ~10:00 — 9 hours, 16 CPU-seconds, no progress across a 20-second sample, no file lock, no process on the path — so one hung delete held `ci-local.lock` all night and the run wrote no outcome line and no alert. Every run leaves such an export for the next one to delete. The cause of the hang is not established (MSYS `rm` over a deep `node_modules` tree is the leading candidate, not a finding). Now `prepare_head_src` and `gate_secrets` purge through `scripts/ci/ci-purge.sh` (`purge_tree`): the delete runs in the background under a watchdog (`CI_PURGE_TIMEOUT_SECONDS`, default 600) and ends in exactly one `purge: OK|FAIL|REFUSED` line written through `log`, so it lands in `ci-local.log`; a FAIL fails the gate (`|| return 1`), `run_gate` records it, and the run continues to `secret-scan`, `unpushed-commits` and its outcome line instead of holding the lock. On Windows the primitive is `robocopy /MIR` from an empty directory (the 39 s measurement) followed by `rm -rf` on the emptied shell; elsewhere `rm -rf`; each native call is itself `timeout`-bounded. Abandoning a delete ends the native process tree rather than the bash wrapper that spawned it (`taskkill /T` on the wrapper's Windows pid under Git Bash, descendants-then-parent elsewhere, plain `kill` as the last resort) and the FAIL line names what it killed: signalling the wrapper alone left the delete running unsupervised, free to race a manual cleanup or the next run's purge of the same well-known path — measured on a 26,180-file synthetic export with a 2 s limit, where `purge: FAIL ... the tree is still present` was printed with `Robocopy.exe` still in `tasklist` and the tree still shrinking afterwards (24,121 files at return, 23,058 eight seconds later). Guard: `tests/unit/ci-local-purge.spec.ts` runs the helper in Git Bash on a synthetic 364-directory / 1,092-file tree (one `purge: OK` line, tree gone), proves the watchdog path (`purge: FAIL ... (timeout after 1s; ...`, exit 1, returned in under 15 s, tree left in place for the operator), the abandon of a delete whose work is a native child that outlives its bash wrapper (the child's pid is gone and its heartbeat frozen within seconds of `purge_tree` returning — red against the wrapper-only `kill`), the returned-but-still-present path, the refusal of `/`, a drive root and `$HOME`, and pins that both gates call `purge_tree ... || return 1` with no bare `rm -rf` on either export.
+- **Remaining:** the `git archive | tar` export step after the purge is still unbounded (only `npm ci` carries its own timeout); it was outside this entry's done-when and is untouched.
+- **Done when:** met for the purge — bounded and fail-loud (helper + spec timeout case); clears a real `node_modules` export on this box in minutes (measured on the real leftover `ci-src` from the 2026-09-14 00:15 run — `%LOCALAPPDATA%\oshal\ci-src`, 36,048 files / 4,719 directories counted by `find` immediately before the purge, then one `purge: OK ... (70s)` line, rc=0, path gone); a run that inherits a leftover export reaches its gates and writes an outcome line (a purge FAIL is a `head-src` gate FAIL, which today already continues to the remaining gates and the outcome line).
 ### `secret-scan` reports PASS even when gitleaks could not read part of the tree
-- **Remaining:** `gitleaks detect` exits **0** when it fails to read files, so `gate_secrets` records a PASS having scanned less than the tree. Measured 2026-09-10 against `origin/main`: 5 of 5077 exported files logged `could not read file: ... cannot allocate memory` and the gate still passed. Memory pressure is the trigger seen so far, but the exit code says nothing about read failures in general (permissions, a path the scanner cannot open), so a clean `secret-scan` is not evidence the tree is clean. This is the false-green twin of the false-red already recorded in the host-contention entry above: that one is about a red night that is not about the code, this one is about a green night that did not look at everything. The scanner's own stderr already names every unread path, so the signal exists and is simply discarded.
-- **Done when:** `gate_secrets` fails (or loudly degrades to a named non-pass outcome) when gitleaks reports any unreadable path, rather than inheriting its exit code alone; a run with a deliberately unreadable file in the export is shown not to pass; and the count of unread paths appears in the gate's log line so a partial scan is visible without opening the scanner output.
+- **Built 2026-09-14 on `fix/ci-local-secret-scan-and-purge`.** `gitleaks detect` exits 0 when it fails to read files (measured 2026-09-10 against `origin/main`: 5 of 5077 exported files logged `could not read file: ... cannot allocate memory` and the gate passed; reproduced 2026-09-14 in the installed `zricethezav/gitleaks` v8.30.1 image, which writes `WRN skipping file: permission denied path=...` / `WRN skipping directory error="permission denied" path=...` and exits 0). `gate_secrets` now runs the unchanged scanner invocation (`gitleaks_container_scan`) through `scripts/ci/ci-secret-scan.sh` → `run_secret_scan`, which keeps the scanner's stderr (still replayed into the run log), counts its skipped/unread lines (`could not read file`, `skipping file`, `skipping directory`, `permission denied`, `cannot allocate memory`, matched case-insensitively after stripping the color codes the image emits without a tty) and writes one verdict line — `secret-scan: PASS unread=0 of M exported files (scanner rc=0)` or `secret-scan: FAIL unread=N of M exported files (scanner rc=0) - gitleaks skipped paths it could not read; a partial scan is not a clean scan` — failing the gate on any N above zero and on any non-zero scanner rc. Guard: `tests/unit/ci-local-secret-scan.spec.ts` runs the production `gate_secrets` body in Git Bash against a disposable git repository with a stand-in `docker` first on PATH that replays the image's exact stderr and exits 0: red on `origin/main` (the gate returned 0 on two skipped paths), green now (`FAIL unread=2 of 3 exported files`; `FAIL unread=1 of 3` for the 2026-09-10 wording); a clean scan still passes with `unread=0`; findings still fail with `scanner rc=1`; `ci-scan-src` is purged on every path; the production scanner arguments (`--network none`, `:/scan:ro`, `--no-git --config=/scan/.gitleaks.toml --redact`) are pinned.
+- **Done when:** met — the gate fails on any unreadable path rather than inheriting the exit code; a run with a deliberately unreadable path is shown not to pass (the stand-in replays the real wording because Windows cannot make a file unreadable to the root-running scanner container); the unread count is in the gate's log line.
 ### Publish gate: refuse model-attribution trailers at push time
 - **Built 2026-09-14 on `fix/publish-gate-attribution`.** `scripts/publish-gate.sh` check 5b refuses a
   push whose commits carry model attribution in the MESSAGE: a `-by:` trailer (`Co-Authored-By` in any
@@ -337,6 +560,26 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   where an operator sees it (health payload and the cockpit status surface), not only in a log line; a
   spec proves a transient failure followed by a healthy database ends with the store persistent; and the
   same treatment covers all five stores that share this shape.
+
+### The purge watchdog cannot tell "no descendants" from "cannot look" (2026-09-15)
+- **Context:** `purge_tree_abandon` (`scripts/ci/ci-purge.sh`, added with the #468 purge fix) kills the
+  delete's native process tree with `taskkill //F //T //PID <winpid>` under Git Bash, and falls back to
+  enumerating descendants with `ps -eo pid=,ppid=` and killing them deepest-first. On this box that
+  fallback cannot run: Git Bash's `ps` rejects `-eo` (`ps: unknown option -- o`), verified by the
+  reviewer of #468 and by the lane.
+- **Remaining:** if `taskkill` itself fails against a live process (a permission edge case or a race)
+  AND the `ps -eo` enumeration returns nothing because it errored rather than because there was
+  nothing to find, the function falls through to `kill -KILL "$pid"` on the bash wrapper alone and
+  reports `killed pid <pid> (no descendant processes found)`. That sentence reads as a checked
+  absence; on Windows it is an inability to check. The gate still returns FAIL and exits non-zero, so
+  the fail-closed contract holds — what is wrong is the message, and in that narrow combination the
+  orphaned-native-delete the fix exists to prevent could recur unreported.
+- **Also open:** the POSIX descendants-then-parent branch has no coverage anywhere — it cannot run on
+  this box and there is no Linux runner guard for it.
+- **Done when:** the abandon path distinguishes "enumerated descendants and found none" from "could
+  not enumerate", and says which in its outcome line; a failed `taskkill` against a live process is
+  reported as a failure to abandon rather than a successful kill; and the POSIX branch is exercised
+  somewhere that can run it, or the entry records the decision not to.
 
 ## Security, tenancy, and trust boundaries
 
@@ -442,6 +685,20 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   readiness to-do. Slices: S1 kernel contract (manifest `runsAs`/`requires`, activation table, service
   principal, runner, routes), S2 the Scheduled services panel + readiness + guide, S3 the five packages
   declare, S4 Jarvis. Status per slice is kept here as each lands.
+- **S1 landed 2026-09-14 (kernel contract).** The manifest declares `runsAs` (system | user) and `requires`,
+  and the loader refuses a permission the app's own imported catalog does not define. Migration 144 adds
+  `oshal_application_service_activations` (owner-or-operator RLS; a system row belongs to no person).
+  A system activation mints `{ sub: 'service:<app>', issuer: 'oshal:application-service' }` and grants it
+  exactly the declared permissions as assignments tagged `service-activation:<id>`, so deactivation revokes
+  precisely those. The runner resolves the activation for the instance it is dispatching: no activation skips
+  at INFO with `Manifest service-route schedule skipped: not activated` and no ERROR, a user activation runs
+  as that person with `userSub` pinned on their own `app-route:{app}-{id}:{sub}` instance, and a run-time
+  denial suspends the activation with the decision's reason. `GET /api/swarm/apps/:name/services`,
+  `POST …/services/:id/activate` (system = swarm admin only; user = the caller for themselves, authorized
+  now) and `DELETE …/services/:id/activation` sit behind requiresAuth, and the same response carries the
+  ADR-145 readiness answer (`ready`, `awaitingActivation`) the S2 panel renders. **S2-S4 remain**, so the
+  five schedules on the box skip visibly rather than run until their packages declare (S3) and an
+  administrator activates them.
 - **Done when:** a protected app's manifest schedule executes under a recorded principal that
   `authorize()` accepts for `kind: 'jobs'`, an app that principal is not assigned to is still refused, a unit
   guard proves both against the real policy, and each of the five schedules above logs `Manifest
@@ -533,32 +790,44 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** model provider-native embedded tools beside framework-registry and harness-native tools with per-agent policy and audit semantics.
 - **Done when:** an agent can enable/disable a named embedded tool, denied use fails at execution, and the run trace identifies the tier and provider operation.
 
-### A queued bot dispatch has no recorded-delegation issuer, so the ADR-149 remote path always refuses (2026-09-15)
+### A protected dispatch refuses on a controller with no delegation signing material (2026-09-15)
 - **Observed:** the operator asked a trading question at 00:51:01Z; it became ticket
   `aaa86e48-eaca-4977-b77f-bbffed0a6ca2` (`task`, title "yes but how much did we make or loose") and
   `dispatch-manifest-worker` failed with `authorization_recorded_delegation_required`. The ticket is
   sitting `escalated` in the cockpit with no answer. One occurrence in 24 h — the only dispatch that
-  reached this path in that window.
-- **Mechanism:** `BotNodeClient.prepareRemoteDispatch`
-  (`src/features/agent-management/services/bot-node-client.ts:411-418`) asks the application
-  remote-execution authority to `prepare()` the dispatch and then throws
-  `authorization_recorded_delegation_required` when `prepared && !this.recordedDelegationIssuer`. The
-  issuer is an optional constructor option (line 318), and **no construction site supplies it**: all
-  five `new BotNodeClient(...)` calls under `src/app` (composition-root.ts:180,
-  extensions/swarm/index.ts:689 and :801, ambient-enrichment-runtime.ts:101,
-  home-schedule-dispatch.ts:36) pass only an endpoint resolver. So whenever an authority IS registered
-  and returns a prepared execution, the dispatch cannot proceed — one half of the ADR-149 remote path
-  is wired and the other is not.
-- **Not established:** which dispatches reach a non-null `prepare()` (the rarity suggests most do not),
-  and whether the issuer was meant to be constructed here or injected by the feature that registers the
-  authority. Read
-  [remote application execution](security/remote-application-execution.md) before choosing.
-- **Done when:** a queued dispatch that the authority prepares completes with a recorded delegation
-  under the asking user's authority, or is refused for a reason that names what the operator must do;
-  the operator's question above (or an equivalent re-ask) returns an answer instead of escalating; a
-  spec drives the prepared path through the real client and proves both the success and the refusal
-  shapes; and the five construction sites either all supply an issuer or the option stops being
-  optional so a missing one is a compile error rather than a run-time throw.
+  reached this path in that window. `ticket_status_history` names `workerBot: communications-bot`,
+  `workerAgentId b0000000-0000-0000-0000-000000000001`.
+- **Mechanism, corrected against the code and the running box.** The refusal is thrown in exactly one
+  place, `BotNodeClient.prepareRemoteDispatch`, when the authority returned a prepared execution and
+  the client holds no recorded issuer. The missing constructor option is **not** the determinant: the
+  constructor derives a recorded issuer from the controller environment whenever
+  `hasDelegationSigningConfiguration` is true, so `new BotNodeClient(resolver)` is a complete
+  construction on a configured controller. What is missing on this box is the signing material itself.
+  `docker exec oshal-local-api` reading `/proc/1/environ` shows `OSHAL_DELEGATION_SIGNING_KID` and
+  `OSHAL_DELEGATION_SIGNING_PRIVATE_KEY` present and **empty** (no `BEGIN` anywhere in that environ);
+  compose passes both through unconditionally (`docker-compose.oshal-local.yml:877-878`), the host
+  `.env` sets neither, and `.env.example:794-795` carries them commented out. Meanwhile
+  `createApplicationRemoteExecutionWiring` registers the authority unconditionally with lazy signing,
+  so the controller looks healthy until a protected dispatch asks it to mint. `prepare()` returns null
+  unless the target bot's owning package is `protected`, which is why one dispatch in 24 h reached it.
+- **Shipped in this change (PR "A queued dispatch carries a recorded delegation instead of refusing"):**
+  the refusal keeps the stable code as its first token and now names the unset keys and what to set,
+  so the escalation metadata a ticket carries is actionable; it logs the agent, package and prepared
+  execution at ERROR; and boot logs ERROR once when the authority is registered on a controller with
+  no signing material. Guards: a spec drives the real client constructed the way production
+  constructs it — endpoint resolver plus controller environment, no injected issuer — and proves both
+  shapes, a configured environment minting a real Ed25519 delegation the fixture authority verifies
+  before dispatch, and the live empty-key shape refusing with both key names in the message. The
+  refusal case was red on the message before the change.
+- **Still open, and it is the half that answers the operator's question:** nothing here provisions a
+  signing keypair. Making a prepared dispatch complete on this box needs an Ed25519 key on the
+  controller and the matching `OSHAL_DELEGATION_PUBLIC_KEYS` ring on every bot node — operator-local
+  secret material, not something an agent mints. The fix is also not deployed and no re-ask has been
+  run. The boot ERROR is a log, not a gate: boot is deliberately not failed, because an existing
+  deployment running only unprotected packages would stop starting.
+- **Done when:** the controller holds a signing keypair and every bot node the matching public ring;
+  the operator's question above (or an equivalent re-ask) returns an answer instead of escalating; and
+  a live protected dispatch is observed completing with a recorded delegation.
 
 ## Connectors, channels, and external systems
 
@@ -926,14 +1195,21 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   against −$9,697.53 stored by the venue; the 4 sells with no engine basis are all USO. The paper
   book — no wash-sale adjustments — agrees within ~5 % (−$6,797.57 against −$7,181.90), which is what
   shows the live gap is the venue’s adjusted basis rather than a replay defect.
-- **Done when:** a long position with no `engineAvgCost` is marked unmanaged and `exitsToRun`,
-  `trailingExits` and `rebalanceTrims` (`src/features/trading/services/portfolio.ts:208, 282, 312`)
-  emit nothing for it while remaining unchanged for a covered position, proven red-before-green by a
-  spec that also covers the partially-covered case; the autopilot entry path does not add to an
-  unmanaged holding; exposure and capital still count it; the cost-basis log line carries the
-  unmanaged count; the trading surface shows the flag and the reason on the row and in place of an
-  exit that will not fire; and on the box the operator sees USO flagged with no engine order emitted
-  for it after a deploy.
+- **Core — done:** `withEngineCostBasis` marks every long its own filled orders do not cover
+  `Position.unmanaged` (partial coverage counts as uncovered) and carries the count on the
+  `engine cost basis attached` line; `runAutopilot` applies the mark ONCE, right after the
+  protected-lot overlay, so the core leg, the exits and the rotation all read it; `exitsToRun`,
+  `trailingExits` and `rebalanceTrims` emit nothing for a marked position and are unchanged for a
+  covered one; the beta-core top-up and both rotation paths withhold their buy, their trim and their
+  drop-out sell for one, reserving the withheld buy's dollars so no other name's order can grow.
+  Exposure, capital, the per-name/sector/deployed caps and the daily-loss halt still count it. Guards:
+  `tests/unit/trading-unmanaged-positions.spec.ts`, `tests/unit/trading-unmanaged-entry-paths.spec.ts`,
+  the `unmanaged` cases in `tests/unit/trading-engine-cost-basis-postgres.spec.ts`, and the golden
+  dispatch plan, whose fixture now seeds the engine's own covering fills (without them the same fire
+  withholds 4 of its 6 orders, which is the integrated proof that the rule only ever removes orders).
+- **Done when:** the trading surface shows the flag and the reason on the row and in place of an exit
+  that will not fire; and on the box the operator sees USO flagged with no engine order emitted for it
+  after a deploy.
 ## Video, character, and creative automation
 
 ### Video Series conductor live acceptance
@@ -1216,12 +1492,31 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   gives an index scan), the newest `world_metrics` chunk holds 3.1 M rows / 681 MB and `world_items`
   1.76 M rows / 2.3 GB, the Docker VM one-minute load was 29 on 8 CPUs, and `app_world-ticker-pulse` logged
   `Schedule dispatch timed out — abandoning to unblock the runner` six times in ten minutes. The 18:10Z
-  watchdog note in the coordination thread recorded the same timeouts under a different load spike. Not
-  measured: whether the 19 sessions are one pulse's fan-out or overlapping pulses.
-- **Done when:** the pulse's per-entity reads run under a bounded concurrency, or through a rollup read
-  that does not scan per entity; the ticker pulse completes inside its window on this box with the full
-  name set; and the pulse log records the entity count and wall time, so a regression is visible without
-  `pg_stat_activity`.
+  watchdog note in the coordination thread recorded the same timeouts under a different load spike.
+- **Root cause, established from source:** one pulse touches **184 entities** (`DEFAULT_UNIVERSE`'s 159
+  symbols plus the 25 `MARKET_SUBJECTS`, `world-schedule-dispatch.ts` `dispatchWorldSchedule`) and rolls
+  features up for every one of them, four indexed aggregates each. The only bound was a compiled-in
+  `FEATURE_ROLLUP_CONCURRENCY = 8` inside a single `mapPool`, and `schedule-service.ts:320-327`
+  **abandons** a dispatch that overruns rather than cancelling it — "the underlying promise is left to
+  settle on its own" — so an overrunning pulse keeps its fan-out running while the next one starts.
+  Each rolled-up entity holds one statement open at a time, so one fire puts at most 8 aggregates on the
+  store and N overlapping fires put 8N. Still not measured: whether the 19 sessions were two fires plus
+  other readers or three fires — the source establishes only that nothing bounded the sum, which is the
+  defect either way.
+- **Fixed (PR, not yet deployed):** (a) a process-wide bounded gate in front of every world series read
+  (`src/features/world-data/world-series-gate.ts`, `WORLD_SERIES_READ_CONCURRENCY`, default 4) — it holds
+  across overlapping fires, which a per-run limit structurally cannot; (b) identical in-flight reads
+  (same entity, metric, window) coalesce onto one statement; (c) the rollup's whole-day sentiment
+  windows read `world_metrics_daily`, which carries `source`, instead of scanning the stream per source —
+  read-only `EXPLAIN (ANALYZE)` on the live store: 786 ms planning + 366 ms execution for the 24 h stream
+  read and 810 + 651 for the 168 h one, against 245 + 16 and 303 + 20 for the same answers off the head;
+  (d) the pulse logs entity count, statements issued, statements coalesced and wall time at INFO and
+  WARNs above a configured fraction of its window (`WORLD_PULSE_WINDOW_MS`, `WORLD_PULSE_WARN_FRACTION`).
+  Guards: `tests/unit/world-series-read-gate.spec.ts` (proven red with the gate bypassed — max in-flight
+  12 against a bound of 3, and four sentiment statements for two answers).
+- **Done when:** the ticker pulse completes inside its window on this box with the full name set, with
+  the World app re-enabled after the fix deploys, and the pulse's own `elapsedMs` / `seriesStatements`
+  record shows it — the one remaining item, and it is the coordinator's after deploy.
 
 ## Application-package follow-ups
 
@@ -1906,6 +2201,38 @@ gaussians subsampled in about 6 s).
 - A regression test imports a PLY above the gate and one below it and proves the api keeps answering
   `/health` throughout.
 
+**Written, not deployed (2026-09-14).** Both halves are open as PRs and neither is on the box.
+
+- **Core — [PR #473](https://github.com/emeraldcoastsystemsgroup/oshal/pull/473):** `import-limits.ts` resolves `OSHAL_SPACES_PLY_MAX_BYTES` (default 50 MiB)
+  and `OSHAL_SPACES_PLY_WORKER_HEAP_MB` (default 1024) from the environment at the point of use, so
+  no limit is a literal anywhere; `ply-convert-host.ts` / `ply-convert-worker.ts` run the conversion
+  in a `node:worker_threads` Worker under `resourceLimits`; `ImportReconstructionProvider` refuses a
+  `.ply` over the gate and turns a worker death (out of memory, parse throw, silent exit) into a
+  `ReconstructionError` whose message the service writes onto the failed row. `.splat` passthrough
+  unchanged. `tests/unit/spatial-import-event-loop.spec.ts` is red on the on-thread provider (`loop
+  held 404 ms while the on-thread conversion takes 346 ms`) and green after;
+  `tests/unit/spatial-import-worker.spec.ts` kills a real Worker under a 24 MB cap and reads the
+  reason off the failed row.
+- **Store — [oshal-applications PR #206](https://github.com/emeraldcoastsystemsgroup/oshal-applications/pull/206):** `spaces` 0.9.0 gates the `.ply` **while the part streams** — a multer
+  storage engine stops writing at the first chunk past `resolvePlyImportLimits().plyMaxBytes` and the
+  lane answers 413 naming the limit, so an oversized capture is never fully received, written or
+  parsed. `tests/ply-import-off-loop.core.test.js` drives the compiled packaged router over real
+  loopback HTTP beside a real `/health` route with the framework's real limits and conversion engine.
+  Both halves are red before their fix and green after: the gate case fails `201 !== 413` on the
+  un-gated route (an 11 MB `.ply` accepted whole), and the loop case fails `/health worst round trip
+  346 ms against a 438 ms on-thread conversion` when the kernel provider is put back on the main
+  thread.
+
+**Still open:**
+- The core PR has to merge and **deploy before** the store package is updated on a box — the route
+  imports `resolvePlyImportLimits` from the pinned `spatial-mapping` kernel skill, which an older core
+  does not export. Until both land the live lane is still ungated.
+- Neither the 117 MB nor the 44 MB capture from the incident has been re-imported against the fix; the
+  proofs above run generated fixtures either side of a 4 MB test gate.
+- The store guard is a `*.core.test.js`, so it runs only where a framework checkout is present
+  (`OSHAL_CORE_DIR`), the same convention as the package's `upload-identity.core.test.js`; the
+  bare-checkout store CI glob does not reach it.
+
 ### Store dependency tiers: manifests converted; catalog mirror and live proof open (2026-09-14)
 
 **Context:** the core reads `dependencies` as `required` / `optional` tiers and the installer, loader
@@ -1992,3 +2319,218 @@ Detail and evidence: [backlog/store-dependency-tier-migration.md](backlog/store-
   by hand - and `--apps` has no way to pull a package's optional extras. *Done when* bundles name
   only their top package (the installer resolves the rest from the manifest), `--apps` accepts a
   `--with-optional` passthrough, and `tests/unit/installer-scripts-parse.spec.ts` covers both.
+
+### The durable escalation store only ever sees swarm-run escalations (2026-09-15)
+
+**Context:** `swarm_escalations` has exactly one writer — `persistEscalationRecord`
+([swarm-ticket-lifecycle-helpers.ts](../src/features/swarm-orchestration/services/swarm-ticket-lifecycle-helpers.ts)),
+called only from `SwarmExecutionLifecycleService`, which needs a `runId`. An escalation raised
+outside a swarm run — a manifest-worker dispatch failure, an operator park, a queue DLQ
+transition — has no run id and so structurally cannot produce a row. On the operator box the table
+holds 100 rows whose newest is dated 2026-07-19, while tickets have escalated since. The cockpit
+now reads the reason from the transition record instead (`ticket_status_history`, mirrored on the
+ticket row as `metadata.lastStatusTransition`), so the operator-visible text is correct either way;
+what is unresolved is what the durable store is *for* now that it answers a strict subset of
+escalations.
+
+**Done when:** a written decision records whether `swarm_escalations` is the canonical escalation
+record — and therefore every escalating path writes one, run id or not — or a run-scoped
+attempt-state record that the cockpit should stop treating as its primary escalation lookup.
+Whichever it is, `PostgresSwarmEscalationStore` and the cockpit's `getTicketEscalations` lookup
+agree with it, and a guard proves an escalation raised by a non-run path lands wherever the
+decision says it belongs, proven red by removing that write.
+
+### A vehicle record, and the medium it runs in as a parameter (ADR-160) (2026-09-15)
+
+**Context:** [ADR-160](adr/160-a-vehicle-record-and-the-medium-as-a-parameter.md). Two vehicles are fully
+specified and neither can be developed or moved: the 300 mm marine explorer exists as
+[a design study document](research/autonomous-explorer-design-study.md) whose engines were carved into the
+`ocean-lab` store package while the vehicle itself was not, and the Floater solar dynastat exists as a
+committed `aero-lab/reference-design/` folder holding one `export_build_files.py` run that cannot report it
+has gone stale. Neither `ocean-lab` nor `aero-lab` has a `migrations/` directory, so nothing persists and no
+object can carry a stage. The operator then added interchangeability — run an aircraft in the water module
+and the reverse, and *"want the boat fall to the ground"*. Verified before costing: the medium is already an
+argument in most force models (`aeropolar.wing_polar` takes `rho_kgm3`/`mu_Pas`, and
+`vehicle/aerosurface.py` `evaluate()` L720–721 sets both from the `AtmoSample` and passes them through
+`coefficients()` L504 → `_polar_for_bin()` L417 → `aeropolar.wing_polar` L447/L460; `rotor-types.ts`
+L69–72 and `bemt-solver.ts` L563/L711 take density and kinematic viscosity with seawater only a preset;
+`panel-method.ts:239` contains no viscosity at all; `embodied_worker.py:223` reads the controller's
+gravity from the model). The assumption lives in presets, in
+`marine/services/power-budget.ts:70` (a second hardcoded `SEAWATER_DENSITY_KGM3`), in
+`embodied/src-routes/engine/physics/mjcf.ts:115` (gravity from a module constant, no `density`, no
+`viscosity`) with the same literal again in `arm-mjcf.ts:135`, and in validity envelopes declared
+nowhere but `aeropolar`'s per-point `valid` flag — which cannot catch a medium swap, because water's
+lower kinematic viscosity moves Reynolds *up*, away from the floor that flag enforces, so an air
+surrogate answers a water run and reports `valid = True`. Store-repo
+work in `ocean-lab`, `aero-lab` and `embodied`; no core code.
+
+**Done when:**
+- **S1 — the boat falls.** The medium record exists (id, gravity vector, density, dynamic viscosity, an
+  optional field with its gradient, a free surface or none, validity bounds and a refusal outside them) with
+  three implementations — vacuum, air behind `aerosim.env`, seawater; the MJCF `<option>` is fed from the
+  chosen medium instead of `G_MPS2`; the explorer hull is one solid from its published envelope and all-up mass.
+  In air it falls at g. In seawater it **refuses by name** rather than producing a plausible float, and that
+  refusal is a test case, not a note. Because D3 forbids a cross-package runtime import, these media are a
+  third TypeScript location: their property values must therefore be one committed data row per medium,
+  shared as data and pinned by the S5 drift test, not a third and fourth independent answer to "what is
+  seawater" — the defect this entry diagnoses one level down.
+- **S2 — the Explorer record.** `ocean-lab` carries its first migration (vehicle records, owner RLS), the
+  explorer seed vector as a committed fixture, the limit rows from the study's "What is not true" section, and
+  an **Explorer** tile. Changing the wing stop angle or the tether length and evaluating moves the five-row
+  sea-state table, the occurrence-weighted mean, the km/day and the km/year; the stage recomputes on read and
+  drops when the vector changes; the open limits and the runs S1 recorded are listed.
+- **S3 — parts and geometry.** The explorer's parts model and each watertight part as a CAD Studio program
+  with **Open in CAD Studio**, emitting the portable-object shape (identity and provenance, geometry, mass
+  properties with provenance, a named attachment frame, force-model requirements). The displacement budget
+  closes against the sizing computed at that mass or the stage refuses to advance.
+- **S4 — the Floater record.** `aero-lab` stores the existing export run as the first evaluation, with
+  `BOM_v2`'s mass delta as a budget check (expected red on first run: real parts are 274 g heavier than the
+  certified ledger) and its force models' validity envelopes declared.
+- **S5 — the guards.** Cross-package read-only tests fail when the record shape, the stage function, the
+  medium shape, the medium property values or the portable-object shape drift between labs; a regression asserts the engine at today's
+  version still reproduces the study's published figures from the seed within a stated tolerance; there is one
+  case per named refusal (`medium_property_unavailable`, `model_not_valid_in_medium`). An undeclared validity
+  envelope fails closed — refusing every medium but the model's default — rather than defaulting
+  permissive. The store's package-separation guard is not weakened: shared shapes travel as data, never as an
+  imported runtime (consistent with the one-parts-model entry above, which this consumes rather than
+  duplicates).
+- Every surface that renders a stage renders with it that `fabricable` means the files are complete and
+  self-consistent, not that the machine is safe to build, fly or wet; and every run result carries its medium id
+  and engine fingerprints or is not displayed. No slice buys, builds or tests hardware, and none attempts
+  free-surface hydrodynamics, added mass, cavitation, or aerodynamics inside the physics plant.
+
+### The ticket-row escalation mirror outlives the escalation it describes (2026-09-15)
+
+**Context:** every ticket carries `metadata.lastStatusTransition`, a mirror of its most recent
+status transition, and `deriveTicketEscalationDetail` falls back to it when the append-only
+history cannot answer. Two rules combine so that the mirror is not replaced when a ticket leaves
+`escalated`: `buildTicketRowStatusMetadataPatch` returns `null` for empty transition metadata
+([ticket-status-row-metadata.ts:28](../src/entities/ticket/ticket-status-row-metadata.ts)), and
+`buildStatusTransitionMetadata` returns the caller's metadata unchanged for any target other than
+`escalated` or `dead_letter`
+([ticket-service.ts:489](../src/features/ticketing/services/ticket-service.ts)) — so a
+de-escalation raised with no metadata, which is what the cockpit's status route sends, writes a
+history row but leaves the escalation mirror in place on the ticket row.
+
+**Live instance:** ticket `104b11e1-cb27-450c-922e-0fbbd4dac4ec` on the operator box is
+`status='cancelled'`; its newest transition is `escalated → cancelled` at
+`2026-07-24 00:52:31.680879+00` carrying `reason='wrong_id_space'`, and the ticket row's
+`updated_at` is that same instant — yet `metadata.lastStatusTransition.status` still reads
+`escalated` with `reason='browser_submission_dispatch_failed'` and
+`escalatedAt='2026-07-24T00:45:53.950Z'`, and the row's top-level `reason` / `statusSource` /
+`nextAction` are likewise the escalation's. The ticket row was written by the cancelling call
+through the no-patch arm of `updateStatus`, while the history row for the same transition
+carries a reason — so the two came from different calls. What issued them is not established:
+the `wrong_id_space` text appears nowhere in the tree, and `recordStatusHistory` is a public
+store method any caller can use.
+
+**Why nothing is visibly wrong today:** the cockpit never reaches the mirror unless the ticket's
+live status is `escalated` — `readRecordedEscalation` returns `{ detail: null, escalatedAt: '' }`
+for every other status
+([cockpit-ticket-activity-route.ts](../src/app/routes/cockpit-ticket-activity-route.ts)) — and an
+escalation raised through `TicketService` is backstopped with `reason: 'unspecified_escalation'`,
+so a re-escalated ticket is answered by its history row before the mirror is consulted. The shape
+occurs on this database; it is currently unrenderable, not impossible. It becomes operator-facing
+the moment a ticket is escalated by a path that writes a history row without a reason — which
+has happened: 4,745 of the 5,153 all-time `→ escalated` history rows carry `metadata = {}`.
+4,712 of those belong to one ticket (`1d7763ce-b657-461f-9667-ce667effe2cb`) over ~20 hours of
+`system` escalate/de-escalate churn on 2026-06-21/22; the remaining 33 are single rows, 10 of
+which land inside 131 ms at `2026-06-22 14:27:24.243–.374` across 10 distinct tickets. What
+produced either group is not established — do not repeat a characterisation of them as a seed or
+a backfill without evidence.
+
+**Done when:** a transition that leaves `escalated` replaces or clears the ticket row's
+escalation mirror even when it carries no metadata, so `deriveTicketEscalationDetail` cannot
+return a reason belonging to an escalation the ticket is no longer in; and a unit guard proves
+it by escalating a ticket with a reason, de-escalating it with no metadata, and asserting the
+mirror no longer reports `status: 'escalated'` — proven red against today's code, which returns
+the stale reason. The guard asserts on the mirror directly rather than through the cockpit route,
+because the route's `status !== 'escalated'` gate hides the defect.
+
+### Downstream authorization readiness still caches a boot failure
+
+**Severity correction — the first version of this entry understated the blast radius.** It listed
+the consequences as "the authorization tools are never registered, Jarvis briefings and Test Lab
+run history never get their schema, and the user-directory routes refuse". It omitted the
+consequential one: **authenticated ticket creation throws for the entire life of the process.**
+`createQueuedApplicationPrincipalWiring` (`src/app/server.ts:1059`) builds the queued-principal
+store on this readiness; `TicketService.createTicket` called `captureQueuedApplicationPrincipal`
+unconditionally and without a `catch`
+([ticket-service.ts:142](../src/features/ticketing/services/ticket-service.ts)); and
+`PostgresQueuedApplicationPrincipalStore.capture` awaits that readiness directly. The global
+`createApplicationActorContext` middleware (`server.ts:1063`) binds an active actor on every
+authenticated request, so the early returns inside `captureQueuedApplicationPrincipal` do not
+apply to an ordinary authenticated creation. The capture runs AFTER the row is inserted, so the
+ticket is committed, the caller is told the request failed, and a retry duplicates it — while
+health checks stay green. Reproduced against disposable `postgres:16-alpine` in
+`tests/unit/authorization-readiness-consumers.spec.ts`: on `1f0978a0` both cases fail with
+`timeout exceeded when trying to connect`, the first of them raised out of `createTicket`.
+
+The cause is the defect `createSchemaReady` fixed, one level out. The bootstrap thunk is
+re-requestable, but the readiness the wiring RETURNED was `readySchemas().then(() =>
+registerAuthorizationTools(...))` — a plain promise, created once — and four modules chain off it:
+`createQueuedApplicationPrincipalWiring` and `createUserDirectoryRoutes` in
+`src/app/server.ts:1059,1144`, plus `jarvis-briefing-wiring.ts:69` and `test-lab-wiring.ts:78`,
+which each build their own schema on top of it. A failed first attempt was inherited by all four
+permanently, even though every authorization operation had since recovered.
+
+**Remaining:** nothing on the readiness itself (PR #498) — the returned value is now
+`createRetryableReady(...)` (`src/shared/services/database/retryable-ready.ts`, the shape
+`createSchemaReady` and the ADR-157 activation wiring each wrote by hand), every consumer asks it
+per operation, and ticket creation logs and degrades rather than losing a committed row to a
+supplementary capture. What the guard does NOT cover: the user-directory and Jarvis-briefing
+routes are proven only at their readiness seam, not driven over HTTP, because no unit-level HTTP
+harness exists for them; and `test-lab-schedule-wiring.ts` still starts polling off the first
+readiness attempt, so a first-attempt failure leaves schedule polling stopped until restart even
+though schedule reads themselves now recover.
+
+**Done when:** a first-attempt bootstrap failure leaves no consumer permanently dead — covered for
+ticket creation and tool registration by `tests/unit/authorization-readiness-consumers.spec.ts`,
+and still open for Test Lab schedule polling above.
+
+### Event-plan EXITS are not ring-fenced, only the entry is
+
+`stepListed` in `src/app/trading-event-plans.ts` refuses to open a position in a ticker
+`TRADING_CORE_SYMBOLS` fences, which is what stops a fenced name from ever entering an event
+plan's book. The exits (`stepFilled`'s take-profit and stop, `stepExitsPlaced`'s time stop) are
+deliberately NOT fenced: they close the quantity the plan's own entry bought, and withholding them
+would strip a filled position of its protection — strictly worse than the exposure prevented. The
+residual is narrow but real: a plan that reached `filled` BEFORE the operator added its ticker to
+`TRADING_CORE_SYMBOLS` keeps running its exits against a name the fence now covers. The ADR-159
+`unmanaged` mark does not apply to this module at all — its `EventBroker` interface is
+`configured/getAccount/getOrder/cancelOrder` with no `getPositions`, so every quantity it sells
+comes from `entry.filledQty`/`exits.qty`, which the engine's ledger accounts for by construction.
+
+**Done when:** arming or fencing decides the question before a position exists — adding a symbol to
+`TRADING_CORE_SYMBOLS` while a plan on it is `filled` or `exits_placed` either hands the position
+to the operator explicitly (the plan closes and says the exits are now theirs to manage) or records
+on the plan timeline that its exits continue under the pre-fence mandate, rather than the current
+silence. A guard in the shape of the `ADR-159 sibling` block in
+`tests/unit/trading-event-plans.spec.ts` drives a plan to `filled`, fences its ticker, ticks, and
+asserts the chosen behaviour — proven red against today's code, which neither closes nor records.
+
+**Assessed and deliberately left alone:** `trading-pinned-lots.ts` and `trading-dated-orders.ts`
+ride the same `trading-events:<sub>` leg and place through the same `deps.place` seam, and neither
+reads the `unmanaged` mark or `TRADING_CORE_SYMBOLS`. They are not the same defect shape: both
+execute an order the OPERATOR authored (a protected lot is the operator's own buy with its own exit
+rules, explicitly subtracted from the autopilot's view by ADR-138 D3; a dated order is an operator
+decision minted now and placed at a time they chose). ADR-159 withholds where the engine trades a
+position it did not buy, not where the operator instructed a specific order.
+
+### Two trading specs default their DSN to the operator's LIVE database
+
+`tests/unit/trading-earnings-rules.spec.ts:37` and `tests/unit/trading-event-plans.spec.ts:21` both
+read `process.env.OSHAL_TEST_DSN || postgresql://oshal:oshal@127.0.0.1:${OSHAL_PG_PORT ?? '55433'}/oshal`
+— port 55433 is `oshal-local-db`, the deployment database. Running either without setting
+`OSHAL_TEST_DSN` writes synthetic signals, decisions, orders, event rules and event plans into the
+live book under a `spec-*` sub, and their `afterAll` cleanup is the only thing that removes them.
+`tests/unit/trading-engine-cost-basis-postgres.spec.ts` has the same shape through its `ADMIN_URL`.
+The ADR-159 specs added alongside this entry instead start a disposable `postgres:16-alpine` and
+remove it, which is the pattern to converge on.
+
+**Done when:** those three specs start their own disposable container the way
+`tests/unit/trading-dispatch-unmanaged-fire.spec.ts` and
+`tests/unit/trading-outer-dispatch-unmanaged.spec.ts` do, with no default that can resolve to a
+deployment database, and a CI-local gate greps `tests/unit/**` for a hard-coded 55433 (or any
+`oshal-local-db` host) and fails on a new one. Proven red against today's tree, where three specs
+match.

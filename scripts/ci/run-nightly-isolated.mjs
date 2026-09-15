@@ -7,6 +7,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Retain truthful local nightly fixture results without using deployment credentials or calling live endpoints.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Document the fixed runner API and its evidence boundaries for scheduler callers.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | BUG-20 guards join the fixed isolated set: a re-drained alert event changes the world once, and consolidateLanded applies each effect once, both on disposable PostgreSQL.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | The local CI export-purge and partial-secret-scan guards join the fixed isolated set: both run production pieces of scripts/ci-local.sh in Git Bash against disposable trees and a stand-in scanner.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
@@ -25,6 +26,8 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/nightly-isolated-runner.spec.ts',
   'tests/unit/ci-local-scheduled-ref.spec.ts',
   'tests/unit/ci-local-run-log.spec.ts',
+  'tests/unit/ci-local-purge.spec.ts',
+  'tests/unit/ci-local-secret-scan.spec.ts',
   'tests/unit/ci-gate-streak.spec.ts',
 ]);
 

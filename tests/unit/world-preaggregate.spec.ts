@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the world read HEAD: the pre-aggregated mean must equal the raw-stream mean, the window must stay day-aligned, and materialized_only must stay false (an unmaterialized head with materialized_only=true returns ZERO rows, which the trading gate reads as "no coverage").
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The rollup's sentiment window splits: a WHOLE number of days now reads the head (which buckets by source, so it can answer the per-source question), and only a genuinely sub-day window scans the stream. The old "keep the rollup on the raw stream" assertion pinned the read that saturated oshal-local-tsdb on 2026-09-14 — it was written when a 24h window was treated as sub-day, and the head's day alignment is the same one metricAvg already serves the trading gate through.
  */
 
 /**
@@ -64,13 +65,37 @@ describe('world pre-aggregate — the mean must survive pre-aggregation', () => 
     },
   );
 
-  it('keeps the sub-day rollup window on the raw stream', () => {
-    // perSourceSentimentHours serves rollupFeatures' 24h/168h windows — below day granularity, so it
-    // must NOT be moved onto the daily head, which cannot answer an hours-scale window.
-    const sql = sqlOf('perSourceSentimentHours');
+  it('keeps a genuinely sub-day window on the raw stream', () => {
+    // The head buckets by day and cannot answer an hours-scale window at all, so this read is the
+    // only place a sub-day window can be served from.
+    const sql = sqlOf('perSourceSentimentStream');
     expect(sql).toContain('FROM world_metrics');
     expect(sql).not.toContain(METRICS_DAILY_VIEW);
     expect(sql, 'must stay an hours-scale window').toContain("' hours')::interval");
+  });
+
+  it('answers a WHOLE-day rollup window from the head, per source', () => {
+    // 2026-09-14: the rollup's 24h/168h windows are whole days, and the head buckets by
+    // (day, entity, metric, SOURCE) — so it can answer the per-source question without the stream
+    // scan that put 19 concurrent sessions on the series store. Measured read-only on the live box:
+    // 786ms planning + 366ms execution on the stream vs 245 + 16 on the head.
+    const sql = sqlOf('perSourceSentimentDays');
+    expect(sql, 'must read the pre-aggregated head').toContain(METRICS_DAILY_VIEW);
+    expect(sql, 'must weight by observation count').toMatch(/sum\(sum_v\)\s*\/\s*NULLIF\(sum\(cnt\), 0\)/);
+    expect(sql, 'must not average the buckets — that is a mean-of-means').not.toMatch(/avg\(/);
+    expect(sql, 'the head must still be grouped by source').toContain('GROUP BY source');
+    expect(sql, 'must use the aligned window').toContain("date_trunc('day', now())");
+  });
+
+  it('routes the rollup window by whether it is a whole number of days', () => {
+    // The dispatcher itself carries no SQL; what matters is that a whole-day window goes to the
+    // head and anything else falls through to the stream.
+    const start = serviceSrc.indexOf('async perSourceSentimentHours(');
+    expect(start, 'perSourceSentimentHours not found in the service').toBeGreaterThan(-1);
+    const body = serviceSrc.slice(start, serviceSrc.indexOf('async perSourceSentimentDays('));
+    expect(body).toMatch(/hours\s*%\s*24\s*===\s*0/);
+    expect(body).toContain('this.perSourceSentimentDays(entity, hours / 24)');
+    expect(body).toContain('this.perSourceSentimentStream(entity, hours)');
   });
 });
 

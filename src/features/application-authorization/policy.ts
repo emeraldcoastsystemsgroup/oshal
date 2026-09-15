@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep reserved management roles outside business-role and grant evaluation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: a non-deny assignment naming ONE catalog permission grants exactly that permission at the narrowest scope, raising the tier only to what the permission itself declares. The management API cannot create such a row (parseAuthorizationChange refuses grant+permission), so this is inert for every assignment an administrator made; the only writer is an ADR-157 service activation, and revoking the activation removes the row.
  */
 /** Shared deterministic permission semantics; business adapters remain authoritative over records. */
 import { createHash } from 'node:crypto';
@@ -71,10 +72,31 @@ export function resolveGrantSet(app: RegisteredAuthorizationApp, rows: Authoriza
     if (TIER_ORDER.indexOf(role.tier) > TIER_ORDER.indexOf(tier)) tier = role.tier;
     grants.push(...role.grants);
   }
+  for (const row of directPermissionGrants(app, rows)) {
+    const declaration = app.catalog!.permissions[row.permission!];
+    if (TIER_ORDER.indexOf(declaration.minimumTier) > TIER_ORDER.indexOf(tier)) tier = declaration.minimumTier;
+    grants.push({ permission: row.permission!, scope: 'own' });
+  }
   if (explicitTier && TIER_ORDER.indexOf(explicitTier) < TIER_ORDER.indexOf(tier)) tier = explicitTier;
   if (app.access && !app.access.supported.includes(tier)) tier = 'deny';
   return { tier: denied ? 'deny' : tier, roles, denied, grants: grants.filter(grant => !rows.some(row => row.deny && row.permission === grant.permission)) };
 }
+/**
+ * @description ADR-157: the assignments that grant one named catalog permission directly, with no
+ * role behind them. A package role stays the way a PERSON is granted rights; this narrow shape
+ * exists so an application service principal can hold exactly the permissions its activation
+ * declared — no more, at the narrowest scope, and only names the catalog defines.
+ * @param app - The registered application whose catalog bounds the grant.
+ * @param rows - The assignments already matched to this actor, tenant and catalog revision.
+ * @returns The permission-only, non-deny assignments the catalog recognises.
+ */
+function directPermissionGrants(app: RegisteredAuthorizationApp, rows: AuthorizationAssignment[]): AuthorizationAssignment[] {
+  if (!app.catalog) return [];
+  const catalog = app.catalog;
+  return rows.filter(row => !row.deny && !row.role && typeof row.permission === 'string'
+    && Object.prototype.hasOwnProperty.call(catalog.permissions, row.permission));
+}
+
 export function resolveOperationPermissions(app: RegisteredAuthorizationApp, input: AuthorizationOperation): string[] | null {
   if (!app.catalog) return [];
   if (input.permission) return Object.prototype.hasOwnProperty.call(app.catalog.permissions, input.permission) ? [input.permission] : null;

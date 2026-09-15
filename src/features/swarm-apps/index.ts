@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-141 application-group types, validators and resolvers.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Export registered installation verification reports and the shared portable formatter.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Export the ADR-149 rail-tile discoverability resolver, its per-person port and the lock shape a synthesised ribbon item may carry.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Export SwarmAppServiceRouteScheduleDeclaration so the ADR-157 activation wiring can narrow a manifest's schedules to the deterministic ones before reading runsAs/requires.
  */
 
 export type {
@@ -40,6 +41,7 @@ export type {
   SwarmApplicationRecord,
   SwarmApplicationSummary,
   SwarmAppScheduleDeclaration,
+  SwarmAppServiceRouteScheduleDeclaration,
   ManifestScheduleRegistrar,
   ManifestScheduleDeregistrar,
   ManifestRouteMounter,

@@ -115,11 +115,11 @@ it('atomically preserves concurrent aggregate links and detects foreign-owner li
 });
 
 it('captures queued authority once, preserves directory timestamps across restart and applies forced RLS', async () => {
-  const store = new PostgresQueuedApplicationPrincipalStore(database.runtime, Promise.resolve());
+  const store = new PostgresQueuedApplicationPrincipalStore(database.runtime, () => Promise.resolve());
   const actor = { ...fixture.actor, directory: [{ issuer: 'https://directory.fixture', tenantId: 'tenant', groups: ['g'],
     observedAt: new Date(fixture.now - 30_000).toISOString(), complete: true }], allowedPermissions: ['fixture-app:bot.execute'] };
   await store.capture('queued-ticket', actor); await store.capture('queued-ticket', fixture.admin);
-  expect(await new PostgresQueuedApplicationPrincipalStore(database.runtime, Promise.resolve()).read('queued-ticket')).toEqual(actor);
+  expect(await new PostgresQueuedApplicationPrincipalStore(database.runtime, () => Promise.resolve()).read('queued-ticket')).toEqual(actor);
   await runWithRequestIdentity({ sub: actor.sub, principalIssuer: actor.issuer, isOperator: false }, async () => {
     expect((await database.runtime.query('SELECT * FROM oshal_queued_application_principals')).rowCount).toBe(0);
     expect((await database.runtime.query("UPDATE oshal_queued_application_principals SET actor='{}'")).rowCount).toBe(0);

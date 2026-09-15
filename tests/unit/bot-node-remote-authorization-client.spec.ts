@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove recorded controller signing precedes HTTP dispatch and result authority cannot be supplied by a worker.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Cover the construction shape production actually uses — an endpoint resolver and the controller environment, with no injected issuer — for both outcomes: signing material configured records a real delegation and dispatches; compose-supplied empty keys refuse with a message naming them. The previous cases injected an issuer, so neither the env-derived success nor the live refusal was proven.
  */
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
@@ -12,6 +13,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { BotNodeClient, type BotNodeRequest } from '@/features/agent-management';
 import type { ApplicationRemoteExecutionAuthority } from '@/shared/application-remote-execution';
 import { createDelegationTokenVerifier, createRecordedDelegationTokenIssuer } from '@/shared/security/delegation-token';
+import { describeUnconfiguredDelegationSigning } from '@/shared/security/delegation-http-policy';
 import { delegationRequestBodySha256 } from '@/shared/security/delegation-request-binding';
 import { runWithApplicationAuthorizationActor } from '@/shared/application-authorization-context';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
@@ -23,8 +25,11 @@ const actor = { sub: 'alice', issuer: 'https://controller.fixture.test', isActiv
 const request: BotNodeRequest = { agentId: 'fixture-bot', taskId: 'fixture-task', workspaceFolderId: 'fixture-workspace',
   text: 'Authorized known facts', userSub: actor.sub, direct: true, agenticMode: false };
 const key = generateKeyPairSync('ed25519');
-const signer = createRecordedDelegationTokenIssuer({ env: { OSHAL_DELEGATION_SIGNING_KID: 'fixture',
-  OSHAL_DELEGATION_SIGNING_PRIVATE_KEY: key.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() } });
+const signingEnv = { OSHAL_DELEGATION_SIGNING_KID: 'fixture',
+  OSHAL_DELEGATION_SIGNING_PRIVATE_KEY: key.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() };
+// A controller that never configured signing still receives both keys from compose, empty.
+const unconfiguredEnv = { OSHAL_DELEGATION_SIGNING_KID: '', OSHAL_DELEGATION_SIGNING_PRIVATE_KEY: '' };
+const signer = createRecordedDelegationTokenIssuer({ env: signingEnv });
 const verifier = createDelegationTokenVerifier({ env: { OSHAL_DELEGATION_PUBLIC_KEYS: JSON.stringify({
   fixture: key.publicKey.export({ type: 'spki', format: 'pem' }).toString() }) } });
 let server: Server, endpoint: string, executionId: string, events: string[], received: Record<string, unknown>[];
@@ -89,6 +94,30 @@ it('does not dispatch when durable binding or recorded signing is unavailable', 
   failBind = true; await expect(execute()).rejects.toThrow('durable unavailable'); expect(received).toEqual([]);
   const client = new BotNodeClient(() => endpoint, 5000, { delegationIssuer: { issue: grant => signer.issue(grant).token }, remoteExecutionAuthority: authority });
   await expect(execute(client)).rejects.toThrow('authorization_recorded_delegation_required'); expect(received).toEqual([]);
+});
+
+it('records a delegation from controller signing configuration alone, the shape production constructs', async () => {
+  // No recordedDelegationIssuer option: every live construction site passes an endpoint resolver only.
+  const client = new BotNodeClient(() => endpoint, 5000, { env: signingEnv, remoteExecutionAuthority: authority });
+  const result = await execute(client);
+  expect(events).toEqual(['prepare', 'bind', 'http', 'result-check']);
+  expect(result.applicationExecutionId).toBe(executionId);
+  expect(received[0]).toMatchObject({ applicationExecutionId: executionId, userSub: actor.sub });
+});
+
+it('names the unset controller signing configuration when a prepared dispatch cannot be recorded', async () => {
+  const client = new BotNodeClient(() => endpoint, 5000, { env: unconfiguredEnv, remoteExecutionAuthority: authority });
+  const refusal = await execute(client).then(() => null, (caught: Error) => caught);
+  expect(refusal?.message).toMatch(/^authorization_recorded_delegation_required: /);
+  expect(refusal?.message).toContain('OSHAL_DELEGATION_SIGNING_KID');
+  expect(refusal?.message).toContain('OSHAL_DELEGATION_SIGNING_PRIVATE_KEY');
+  expect(received).toEqual([]); expect(authority.bind).not.toHaveBeenCalled();
+});
+
+it('treats compose-supplied empty signing keys as unconfigured, and configured keys as sufficient', () => {
+  expect(describeUnconfiguredDelegationSigning(signingEnv)).toBeNull();
+  expect(describeUnconfiguredDelegationSigning(unconfiguredEnv)).toContain('OSHAL_DELEGATION_SIGNING_KID');
+  expect(describeUnconfiguredDelegationSigning({})).toContain('OSHAL_DELEGATION_SIGNING_PRIVATE_KEY');
 });
 
 it('refuses caller-supplied execution references before preparation or network use', async () => {

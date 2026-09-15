@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-138 D3 lot state machine against the REAL oshal Postgres (fail-loud when down) with injected venue fakes: intent → the entry order fills (ledger row + venue truth) → open → exits placed as TP LIMIT GTC + STOP GTC 'pinned-lot' decisions on the lot's book → the take-profit fills → the stop is CANCELLED and the lot closes with P&L; pinnedQtyBySymbol counts only held lots; a trailing-stop variant places TRAILING_STOP; release cancels working exits; the FORCE-RLS table exists.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
@@ -17,8 +18,9 @@ import { ensureBooksSchema, ensureLegacyBooks, legacyBook } from '../../src/app/
 import { ensureTradingSchema } from '../../src/app/trading-engine';
 import type { AppContext } from '../../src/app/composition/app-context';
 import type { OrderResult } from '../../src/features/trading';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-const DSN = process.env.OSHAL_TEST_DSN || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-lot-${RUN}`;
 let pool: Pool;

@@ -4,16 +4,15 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the apply reaper's run-ledger join against the REAL schema. Migration 118 declares apply_runs.ticket_id TEXT while tickets.ticket_id is UUID, so the uncast LATERAL join raised `operator does not exist: text = uuid` on every sweep. The reaper catches and logs, so it degraded silently to "0 reaped" — orphan recovery never ran, and only a deploy's log scan found it. This must execute against a live database: the defect lives entirely in Postgres type resolution and every mock of the pool returns whatever the test author expects.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { REHYDRATE_APPLY_TICKETS_SQL, STALE_APPLY_TICKETS_SQL } from '@/app/apply-enqueue';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-const DSN =
-  process.env.APPLY_LEDGER_TEST_DSN ??
-  process.env.TEST_DATABASE_URL ??
-  `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['APPLY_LEDGER_TEST_DSN', 'TEST_DATABASE_URL']);
 
 /** Strips the password out of a DSN so a connection failure message is safe to print. */
 function safeDsn(dsn: string): string {
