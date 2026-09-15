@@ -7,7 +7,8 @@
  * a fixed in-process server operation, Telegram via the slice's TelegramTransport which WARN-no-ops
  * until the BotFather token lands) and mounts the self-scoped routes:
  *
- *   GET  /api/notify/prefs     — the caller's saved per-topic routing + their default channel
+ *   GET  /api/notify/prefs     — the caller's saved per-topic routing, their default channel, and
+ *                                the account tier that would carry each channel for them
  *   POST /api/notify/prefs     — save one topic card (full replace)
  *   POST /api/notify/test      — confirm-gated real send over the caller's resolved channel
  *   POST /api/notify/operator  — OPERATOR-only, confirm-gated ad-hoc alert over the deployment
@@ -29,6 +30,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added buildOperatorEmailRail (operator Gmail via the connector broker → NOTIFY_EMAIL_TO; undefined => email transport no-ops) and POST /api/notify/alert — operator + confirm:true-gated severity-routed alert via notifyBySeverity, injecting the email rail so critical/error levels can reach an inbox. Fails loud (502) when no configured transport delivered.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Welcome-wizard notifications opt-in support: (1) smsSender falls back to the DEPLOYMENT's Twilio (env SID/token/from via TwilioSmsTransport, destination overridden to pref.phone — the same env-injection trick telegramSender uses) when the user has no personal Twilio connection, so a family user who just types their number can get texts; the user's own connected Twilio still wins. (2) NEW voiceSender — the per-user 'voice' channel (migration 099): TwilioVoiceTransport over env creds with TWILIO_TO_NUMBER overridden to pref.phone. (3) Sender factories exported for the unit specs.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: replace the per-user Twilio child-process/whole-environment carrier with the fixed server-side SMS operation, and pass only each deployment transport's exact credential fields instead of cloning process.env.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Per-channel credential tier: every sender now answers tier(userSub) — 'own' (the user's own connected account), 'deployment' (this deployment's notification service) or 'unavailable' — and its available()/send() branch on that same answer, so what is reported is what sends. GET /prefs returns it as `tiers` so the Notifications routing table can say, per channel option, whose account would carry it for this user (SMS flips on whether they connected their own Twilio). buildNotificationSenders(pool) is the one sender set the router and the report share.
  *
  * @module notify-routes
  */
@@ -82,11 +84,26 @@ async function twilioReady(pool: AppContext['pool'], userSub: string): Promise<b
   return r.rows.length > 0;
 }
 
+/**
+ * Whose account would carry a channel for one user: 'own' = their own connected account (their Gmail,
+ * their Twilio), 'deployment' = this deployment's notification service, 'unavailable' = neither exists,
+ * so nothing can send it yet. The destination (their number, their chat) is always their own.
+ */
+export type NotifyChannelTier = 'own' | 'deployment' | 'unavailable';
+
+/** A per-user sender that can also say, without sending, which account tier its send would use. */
+export interface TieredChannelSender extends UserChannelSender {
+  /** The tier `send` would use for this user right now. Side-effect free; available()/send() branch on it. */
+  tier(userSub: string): Promise<NotifyChannelTier>;
+}
+
 /** Email sender: the user's OWN Gmail, to their own address (token via the connector broker). */
-function emailSender(pool: AppContext['pool']): UserChannelSender {
+function emailSender(pool: AppContext['pool']): TieredChannelSender {
+  const tier = async (userSub: string): Promise<NotifyChannelTier> => ((await gmailReady(pool, userSub)) ? 'own' : 'unavailable');
   return {
     channel: 'email',
-    async available(userSub) { return gmailReady(pool, userSub); },
+    tier,
+    async available(userSub) { return (await tier(userSub)) === 'own'; },
     async send(userSub, _pref, message) {
       const token = await getValidAccessToken(pool, userSub, 'google');
       if (!token) { logger.info({ userSub }, 'notify email skipped — no valid google token'); return { delivered: false, error: 'no-google-token' }; }
@@ -128,19 +145,23 @@ function deploymentTwilioEnv(to: string): NodeJS.ProcessEnv {
  * trick telegramSender uses for the chat id. Without the fallback a family user had to
  * register their own Twilio account just to get a text.
  */
-export function smsSender(pool: AppContext['pool']): UserChannelSender {
+export function smsSender(pool: AppContext['pool']): TieredChannelSender {
+  const tier = async (userSub: string): Promise<NotifyChannelTier> => {
+    if (await twilioReady(pool, userSub)) return 'own';
+    return envTwilioConfigured() ? 'deployment' : 'unavailable';
+  };
   return {
     channel: 'sms',
+    tier,
     async available(userSub, pref) {
       if (!pref?.phone) { logger.info({ userSub }, 'notify sms skipped — no destination phone saved in prefs'); return false; }
-      if (await twilioReady(pool, userSub)) return true;
-      if (envTwilioConfigured()) return true;
+      if ((await tier(userSub)) !== 'unavailable') return true;
       logger.info({ userSub }, 'notify sms skipped — no connected Twilio account and no deployment Twilio env (clean skip, nothing spawned)');
       return false;
     },
     async send(userSub, pref, message) {
       const body = (message.shortText || message.subject).slice(0, 640);
-      if (!(await twilioReady(pool, userSub))) {
+      if ((await tier(userSub)) !== 'own') {
         // Deployment-Twilio fallback: env creds, per-user destination.
         const t = new TwilioSmsTransport({ env: deploymentTwilioEnv(pref?.phone || '') });
         const r = await t.send({ text: body });
@@ -160,12 +181,14 @@ export function smsSender(pool: AppContext['pool']): UserChannelSender {
  * tier (nobody registers a personal Twilio to receive a call), so this is env-creds-only
  * with the destination injected per user, mirroring the telegram chat-id override.
  */
-export function voiceSender(): UserChannelSender {
+export function voiceSender(): TieredChannelSender {
+  const tier = async (): Promise<NotifyChannelTier> => (envTwilioConfigured() ? 'deployment' : 'unavailable');
   return {
     channel: 'voice',
+    tier,
     async available(userSub, pref) {
       if (!pref?.phone) { logger.info({ userSub }, 'notify voice skipped — no destination phone saved in prefs'); return false; }
-      if (!envTwilioConfigured()) { logger.info({ userSub }, 'notify voice skipped — deployment Twilio env not configured'); return false; }
+      if ((await tier()) === 'unavailable') { logger.info({ userSub }, 'notify voice skipped — deployment Twilio env not configured'); return false; }
       return true;
     },
     async send(userSub, pref, message) {
@@ -178,11 +201,13 @@ export function voiceSender(): UserChannelSender {
 }
 
 /** Telegram sender: registered now, WARN-no-op until TELEGRAM_BOT_TOKEN lands (per plan of record). */
-function telegramSender(): UserChannelSender {
+function telegramSender(): TieredChannelSender {
+  const tier = async (): Promise<NotifyChannelTier> => ((process.env.TELEGRAM_BOT_TOKEN || '').trim() ? 'deployment' : 'unavailable');
   return {
     channel: 'telegram',
+    tier,
     async available(userSub, pref) {
-      if (!(process.env.TELEGRAM_BOT_TOKEN || '').trim()) {
+      if ((await tier()) === 'unavailable') {
         logger.warn({ userSub }, 'telegram channel selected but TELEGRAM_BOT_TOKEN is not configured (BotFather token pending) — no-op');
         return false;
       }
@@ -206,19 +231,44 @@ function telegramSender(): UserChannelSender {
   };
 }
 
+/** The production per-user senders, keyed by the channel each carries. */
+export type NotificationSenders = Record<Exclude<NotifyChannel, 'none'>, TieredChannelSender>;
+
 /**
- * @description Build the production NotificationRouter over this app context: the three
- * per-user senders + the spec default channel (email when the user has a Gmail-send
- * connection, else none). Producers (career digest siblings, alerts) call this once and
- * reuse the instance.
+ * @description Build the production per-user senders. One set serves both the router that sends
+ * and the per-channel tier report, so the tier a user is shown is the branch their send takes.
+ * @param pool - App context pool (connection probes + the connector broker).
+ * @returns The email, sms, voice and telegram senders.
+ */
+export function buildNotificationSenders(pool: AppContext['pool']): NotificationSenders {
+  return { email: emailSender(pool), sms: smsSender(pool), voice: voiceSender(), telegram: telegramSender() };
+}
+
+/**
+ * @description Report, for every sendable channel, which account tier would carry it for this user.
+ * Reads each sender's own tier(), never a re-derivation, so the report cannot drift from the send.
+ * @param senders - The sender set the caller's router dispatches through.
+ * @param userSub - The authenticated user the tiers are for.
+ * @returns Channel → 'own' | 'deployment' | 'unavailable' ('none' carries nothing and is absent).
+ */
+export async function channelTiers(senders: NotificationSenders, userSub: string): Promise<Record<string, NotifyChannelTier>> {
+  const entries = await Promise.all(Object.entries(senders).map(async ([channel, sender]) => [channel, await sender.tier(userSub)] as const));
+  return Object.fromEntries(entries);
+}
+
+/**
+ * @description Build the production NotificationRouter over this app context: the per-user
+ * senders + the spec default channel (email when the user has a Gmail-send connection, else
+ * none). Producers (career digest siblings, alerts) call this once and reuse the instance.
  * @param ctx - App context (pool).
+ * @param senders - The sender set to dispatch through; defaults to a fresh production set.
  * @returns A ready NotificationRouter.
  */
-export function buildNotificationRouter(ctx: AppContext): NotificationRouter {
+export function buildNotificationRouter(ctx: AppContext, senders: NotificationSenders = buildNotificationSenders(ctx.pool)): NotificationRouter {
   const pool = ctx.pool;
   return new NotificationRouter({
     pool,
-    senders: { email: emailSender(pool), sms: smsSender(pool), voice: voiceSender(), telegram: telegramSender() },
+    senders,
     defaultChannel: async (userSub) => ((await gmailReady(pool, userSub)) ? 'email' : 'none'),
   });
 }
@@ -267,9 +317,10 @@ function parsePrefBody(userSub: string, body: Record<string, unknown>): Omit<Use
 }
 
 /**
- * @description Create the /api/notify router: self-scoped pref read/save + a confirm-gated
- * test send. Every route sits behind the passed requiresAuth (the sanctioned pattern —
- * routes are anonymous-callable by default in this app, so the guard is explicit).
+ * @description Create the /api/notify router: self-scoped pref read (with the per-channel account
+ * tier) and save + a confirm-gated test send. Every route sits behind the passed requiresAuth
+ * (the sanctioned pattern — routes are anonymous-callable by default in this app, so the guard
+ * is explicit).
  * @param ctx - App context (pool).
  * @param requiresAuth - OIDC auth middleware from server.ts.
  * @returns Router to mount at /api/notify.
@@ -277,14 +328,15 @@ function parsePrefBody(userSub: string, body: Record<string, unknown>): Omit<Use
 export function createNotifyRoutes(ctx: AppContext, requiresAuth: RequestHandler): Router {
   const router = Router();
   const pool = ctx.pool;
-  const notifier = buildNotificationRouter(ctx);
+  const senders = buildNotificationSenders(pool);
+  const notifier = buildNotificationRouter(ctx, senders);
 
   router.get('/prefs', requiresAuth, async (req: Request, res: Response) => {
     const userSub = callerSub(req);
     if (!userSub) { res.status(401).json({ error: 'unauthorized' }); return; }
     try {
-      const [prefs, emailReady] = await Promise.all([listUserPrefs(pool, userSub), gmailReady(pool, userSub)]);
-      res.json({ prefs, defaultChannel: emailReady ? 'email' : 'none', channels: NOTIFY_CHANNELS });
+      const [prefs, emailReady, tiers] = await Promise.all([listUserPrefs(pool, userSub), gmailReady(pool, userSub), channelTiers(senders, userSub)]);
+      res.json({ prefs, defaultChannel: emailReady ? 'email' : 'none', channels: NOTIFY_CHANNELS, tiers });
     } catch (err) {
       logger.error({ err, stack: (err as Error).stack, userSub }, 'notify prefs read failed');
       res.status(500).json({ error: 'prefs read failed' });
