@@ -647,25 +647,29 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   spec proves a transient failure followed by a healthy database ends with the store persistent; and the
   same treatment covers all five stores that share this shape.
 
-### The purge watchdog cannot tell "no descendants" from "cannot look" (2026-09-15)
-- **Context:** `purge_tree_abandon` (`scripts/ci/ci-purge.sh`, added with the #468 purge fix) kills the
-  delete's native process tree with `taskkill //F //T //PID <winpid>` under Git Bash, and falls back to
-  enumerating descendants with `ps -eo pid=,ppid=` and killing them deepest-first. On this box that
-  fallback cannot run: Git Bash's `ps` rejects `-eo` (`ps: unknown option -- o`), verified by the
-  reviewer of #468 and by the lane.
-- **Remaining:** if `taskkill` itself fails against a live process (a permission edge case or a race)
-  AND the `ps -eo` enumeration returns nothing because it errored rather than because there was
-  nothing to find, the function falls through to `kill -KILL "$pid"` on the bash wrapper alone and
-  reports `killed pid <pid> (no descendant processes found)`. That sentence reads as a checked
-  absence; on Windows it is an inability to check. The gate still returns FAIL and exits non-zero, so
-  the fail-closed contract holds — what is wrong is the message, and in that narrow combination the
-  orphaned-native-delete the fix exists to prevent could recur unreported.
-- **Also open:** the POSIX descendants-then-parent branch has no coverage anywhere — it cannot run on
-  this box and there is no Linux runner guard for it.
-- **Done when:** the abandon path distinguishes "enumerated descendants and found none" from "could
-  not enumerate", and says which in its outcome line; a failed `taskkill` against a live process is
-  reported as a failure to abandon rather than a successful kill; and the POSIX branch is exercised
-  somewhere that can run it, or the entry records the decision not to.
+### The Windows purge abandon can say it could not enumerate, but still cannot enumerate
+- **Context:** closing "The purge watchdog cannot tell 'no descendants' from 'cannot look'" gave
+  `purge_tree_abandon` (`scripts/ci/ci-purge.sh`) three outcomes and a distinct UNCHECKED exit, so an
+  inability to look is no longer printed as a checked absence. What it did not do is give Windows a
+  working enumerator: `ps -eo pid=,ppid=` still answers `ps: unknown option -- o` and exits 1 here
+  (re-run 2026-09-15), so when `taskkill /T` is unavailable or refused the abandon reports UNCHECKED
+  rather than a descendant list. That is the honest answer, not a complete one.
+- **The material that was deliberately not used, and what was measured of it (2026-09-15):** Git Bash's
+  bare `ps` prints `PID PPID PGID WINPID ... COMMAND`, and it does list NATIVE children — a
+  `node.exe` under `/usr/bin/timeout` under a backgrounded wrapper appeared with its parent's pid,
+  which is the exact shape of `robocopy.exe` / `rm.exe` under `timeout` that the orphaned-delete
+  defect is about. So a Windows table reader is buildable from output this box already produces; it
+  was left out of the closing change as scope its done-when did not ask for. Not measured: whether a
+  native process that spawns its own native grandchild outside the MSYS tree is listed — check that
+  before relying on bare `ps` alone rather than `tasklist` parented by WINPID.
+- **Why it is narrow:** `taskkill /T` is tried first and does the work on every observed Windows
+  abandon; this fallback matters only when it is absent or refused. Nothing here weakens fail-closed —
+  a timed-out purge is FAIL either way.
+- **Done when:** on Windows `purge_tree_process_table` answers with a usable table instead of refusing,
+  the abandon kills the delete's native descendants deepest-first, its UNCHECKED exit is reached only
+  when that reader genuinely cannot answer, and a case in `tests/unit/ci-local-purge.spec.ts` drives a
+  real native grandchild through it — with the existing mutation property preserved: collapsing the
+  could-not-look branch must still turn cases red.
 
 ### An abort inside the local embedding runtime takes the whole api process down (2026-09-15)
 - **Observed:** the api container restarted three times in 45 minutes on a loaded box (01:47:33Z,
