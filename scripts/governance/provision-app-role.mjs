@@ -11,6 +11,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Check effective MAINTAIN privileges on PostgreSQL 17 and later while preserving PostgreSQL 16 ACL verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Approve the derived application-execution-ownership helper (migration 142): a fourth SECURITY DEFINER helper, and the second one oshal_bot may execute. The bot ACL check verifies an explicit set of bot helpers instead of one hard-coded signature, and the helper count message follows the approved set.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -23,6 +24,12 @@ const EXPECTED_HELPERS = new Set([
   'oshal_is_tenant_member(text)',
   'oshal_owns_task(text)',
   'oshal_owns_ticket(uuid)',
+  'oshal_application_execution_claims(text,text,text,boolean)',
+]);
+/** The derived helpers oshal_bot may execute. Every other function stays private to the bot. */
+const BOT_HELPERS = new Set([
+  'oshal_owns_ticket(uuid)',
+  'oshal_application_execution_claims(text,text,text,boolean)',
 ]);
 const FINAL_PHASE_BEGIN = '-- OSHAL_FINAL_PHASE_BEGIN';
 const FINAL_PHASE_END = '-- OSHAL_FINAL_PHASE_END';
@@ -228,7 +235,7 @@ async function bootstrapPosture(client) {
 
 function assertHelpers(rows, bootstrapRole, phase) {
   if (phase === 'final' && rows.length !== EXPECTED_HELPERS.size) {
-    fail(`final provisioning requires exactly three approved helpers; found ${rows.length}`);
+    fail(`final provisioning requires exactly ${EXPECTED_HELPERS.size} approved helpers; found ${rows.length}`);
   }
   if (phase === 'pre-migration' && rows.length > EXPECTED_HELPERS.size) {
     fail(`pre-migration provisioning found too many approved-name helpers: ${rows.length}`);
@@ -385,10 +392,10 @@ async function verifyBotAcl(client) {
      WHERE n.nspname = 'public'
      ORDER BY signature
   `);
-  let botHelperSeen = false;
+  const botHelpersSeen = new Set();
   for (const fn of functions.rows) {
-    const expected = fn.signature === 'oshal_owns_ticket(uuid)';
-    botHelperSeen ||= expected;
+    const expected = BOT_HELPERS.has(fn.signature);
+    if (expected) botHelpersSeen.add(fn.signature);
     if (fn.has_direct_execute !== expected) {
       fail(`unexpected direct oshal_bot function privilege on public.${fn.signature}`);
     }
@@ -396,7 +403,8 @@ async function verifyBotAcl(client) {
       fail(`unexpected effective oshal_bot function privilege on public.${fn.signature}`);
     }
   }
-  if (!botHelperSeen) fail('bot ACL contract function is missing: public.oshal_owns_ticket(uuid)');
+  const missingBotHelpers = [...BOT_HELPERS].filter((signature) => !botHelpersSeen.has(signature));
+  if (missingBotHelpers.length) fail(`bot ACL contract function is missing: ${missingBotHelpers.map((s) => `public.${s}`).join(', ')}`);
 }
 
 async function verifyPosture(client, bootstrap, phase) {
@@ -527,7 +535,7 @@ async function verifyPosture(client, bootstrap, phase) {
      WHERE n.nspname = 'public'
        AND (
          p.prosecdef
-         OR p.proname IN ('oshal_is_tenant_member', 'oshal_owns_task', 'oshal_owns_ticket')
+         OR p.proname IN ('oshal_is_tenant_member', 'oshal_owns_task', 'oshal_owns_ticket', 'oshal_application_execution_claims')
        )
      ORDER BY signature
   `);

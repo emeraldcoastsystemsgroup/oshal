@@ -5,13 +5,16 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for the silent Jarvis outage of 2026-09-11..14: `swarm_applications.agent_ids` is UUID[] (migration 022) but the ownership reader binds the executable name as text, so `$1=ANY(agent_ids)` raised `operator does not exist: text = uuid` for every kind:'bots' read. readApplicationExecutionOwnership converted that to ApplicationOwnershipUnavailableError, canReadProtectedResult swallowed it to `false`, and POST /api/jarvis/ask answered 404 session_not_found with nothing logged. This crosses the real boundary that failed: the real reader against a real PostgreSQL carrying the real UUID[] column, never a doubled query.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the ambiguous-association arbitration: twelve live agent ids are claimed by more than one application because `agent_ids` is an association column, and the ownership read refused every one of them (docs/operations/agent-id-ownership-collisions.md). The reader now arbitrates with the loader-stamped `agents.metadata.manifestApp`. These cases carry the real `agents` table from migration 001 alongside the real UUID[] column, so the stamp, its absence, a stamp naming no application, an inactive agent and the unarbitrable `tools` path are all exercised against real PostgreSQL rather than a doubled query.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | BUG-25: run the same reader as a real oshal_bot login role holding exactly the governed contract (statements executed verbatim from docs/governance/app-role-provisioning.sql): it answers what the controller answers, the bot-side posture guard runs, the tables stay denied (42501), a missing helper grant fails closed, and a malformed question raises instead of reading as unprotected. Apply migration 142 in the real schema.
  */
 
 import type { Pool } from 'pg';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Pool as PgPool } from 'pg';
 import { readApplicationExecutionOwnership, ApplicationOwnershipUnavailableError } from '@/app/application-execution-ownership';
+import { readProtectedBotApplication } from '@/app/bot-node-application-authorization';
 import { DisposableAlertPostgres } from '../helpers/disposable-alert-postgres';
 
 const database = new DisposableAlertPostgres();
@@ -37,6 +40,8 @@ async function applyRealSchema(target: Pool): Promise<void> {
   await target.query(readFileSync(resolve(__dirname, '../../scripts/migrations/001-multi-agent-foundation.sql'), 'utf8'));
   await target.query(`CREATE TABLE IF NOT EXISTS oshal_authorization_applications (app_name TEXT PRIMARY KEY,
     protected BOOLEAN NOT NULL, agent_ids TEXT[] NOT NULL DEFAULT '{}', tool_names TEXT[] NOT NULL DEFAULT '{}')`);
+  // The reader resolves claims through the derived helper; apply the real migration, not a copy.
+  await target.query(readFileSync(resolve(__dirname, '../../scripts/migrations/142-application-execution-claims-helper.sql'), 'utf8'));
 }
 
 /** Stamp agents exactly as `upsertManifestBot` does: one scalar `manifestApp` inside metadata. */
@@ -158,5 +163,82 @@ describe('arbitrating an agent id that more than one application associates', ()
   it('still resolves a uniquely claimed tool name through the TEXT[] column', async () => {
     expect(await readApplicationExecutionOwnership(pool, { kind: 'tools', id: TOOL_NAME, mode: 'enforce' }))
       .toEqual({ app: 'jarvis', protected: false });
+  });
+});
+
+/** The governed bot contract, verbatim - the test grants oshal_bot exactly what production does and nothing more. */
+const GOVERNED_SQL = readFileSync(resolve(__dirname, '../../docs/governance/app-role-provisioning.sql'), 'utf8');
+
+/**
+ * @description Pull the statements from the governed provisioning SQL that decide what the ownership
+ * reader can do as oshal_bot: schema usage, the agents column grant, and the helper's REVOKE/GRANT.
+ * Executing them verbatim ties this guard to the contract file: drop the helper grant there and the
+ * bot-role cases below go red.
+ * @returns Statements in contract order.
+ */
+function governedBotStatements(): string[] {
+  const patterns = [
+    /GRANT USAGE ON SCHEMA public TO oshal_app, oshal_bot;/,
+    /GRANT SELECT \([^)]*\)\s+ON TABLE public\.agents TO oshal_bot;/,
+    /REVOKE EXECUTE ON FUNCTION public\.oshal_application_execution_claims\(text, text, text, boolean\) FROM PUBLIC, oshal_bot;/,
+    /GRANT EXECUTE ON FUNCTION public\.oshal_application_execution_claims\(text, text, text, boolean\) TO oshal_app, oshal_bot;/,
+  ];
+  return patterns.map((pattern) => {
+    const match = pattern.exec(GOVERNED_SQL);
+    if (!match) throw new Error(`governed bot contract statement not found: ${pattern}`);
+    return match[0];
+  });
+}
+
+describe('the bot node reads ownership as oshal_bot under the governed contract (BUG-25)', () => {
+  let bot: Pool;
+
+  beforeAll(async () => {
+    await pool.query("CREATE ROLE oshal_app NOLOGIN");
+    await pool.query("CREATE ROLE oshal_bot LOGIN PASSWORD 'fixture-only' NOSUPERUSER NOBYPASSRLS NOINHERIT");
+    await pool.query('REVOKE ALL ON SCHEMA public FROM PUBLIC');
+    const statements = governedBotStatements();
+    // The fixture builds agents from migration 001 only; later migrations add columns the governed grant names.
+    // Add any it lacks rather than trimming the grant, so the statement below runs exactly as production runs it.
+    const governedAgentColumns = /GRANT SELECT \(([^)]*)\)/.exec(statements[1])![1].split(',').map((column) => column.trim());
+    for (const column of governedAgentColumns) await pool.query(`ALTER TABLE agents ADD COLUMN IF NOT EXISTS ${column} text`);
+    for (const statement of statements) await pool.query(statement);
+    const { host, port, database: name } = pool.options as { host: string; port: number; database: string };
+    bot = new PgPool({ host, port, database: name, user: 'oshal_bot', password: 'fixture-only', max: 2, connectionTimeoutMillis: 2000 });
+  }, 60_000);
+
+  afterAll(async () => { await bot?.end(); });
+
+  it('resolves the same answers the controller does, including the loader-stamped arbitration', async () => {
+    for (const id of [JARVIS_AGENT_ID, PROTECTED_AGENT_ID, SHARED_OWNED_ID, SHARED_KERNEL_ID]) {
+      const asBot = await readApplicationExecutionOwnership(bot, { kind: 'bots', id, mode: 'enforce' });
+      expect(asBot).toEqual(await readApplicationExecutionOwnership(pool, { kind: 'bots', id, mode: 'enforce' }));
+    }
+  });
+
+  it('lets the bot-side posture guard run: an unprotected bot executes, a protected one is named', async () => {
+    await expect(readProtectedBotApplication(bot, JARVIS_AGENT_ID, JARVIS_AGENT_ID)).resolves.toBeNull();
+    await expect(readProtectedBotApplication(bot, JARVIS_AGENT_ID, PROTECTED_AGENT_ID)).resolves.toBe('guarded-pkg');
+  });
+
+  it('keeps the tables themselves outside the bot contract', async () => {
+    await expect(bot.query('SELECT app_name FROM oshal_authorization_applications LIMIT 1')).rejects.toMatchObject({ code: '42501' });
+    await expect(bot.query('SELECT name FROM swarm_applications LIMIT 1')).rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('fails closed when the helper grant is missing - the regression this guards', async () => {
+    await pool.query('REVOKE EXECUTE ON FUNCTION oshal_application_execution_claims(text, text, text, boolean) FROM oshal_bot');
+    try {
+      await expect(readApplicationExecutionOwnership(bot, { kind: 'bots', id: JARVIS_AGENT_ID, mode: 'enforce' }))
+        .rejects.toBeInstanceOf(ApplicationOwnershipUnavailableError);
+      await expect(readProtectedBotApplication(bot, JARVIS_AGENT_ID, JARVIS_AGENT_ID)).rejects.toMatchObject({ code: 'authorization_bot_posture_unavailable' });
+    } finally {
+      await pool.query('GRANT EXECUTE ON FUNCTION oshal_application_execution_claims(text, text, text, boolean) TO oshal_bot');
+    }
+  });
+
+  it('refuses a malformed question instead of answering "no owner", which would read as unprotected', async () => {
+    await expect(bot.query("SELECT * FROM oshal_application_execution_claims('agents', 'x', NULL, true)")).rejects.toMatchObject({ code: '22023' });
+    await expect(bot.query("SELECT * FROM oshal_application_execution_claims('bots', '', NULL, true)")).rejects.toMatchObject({ code: '22023' });
   });
 });

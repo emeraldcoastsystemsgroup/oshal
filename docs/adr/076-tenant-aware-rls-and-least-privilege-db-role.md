@@ -149,3 +149,22 @@ policies can remain in place harmlessly.
 - New owner-bearing tables must be added to migration 060's lists (or a successor)
   or they ship unprotected — a posture test should assert coverage.
 - (2026-07-05) The `/api/governance/posture` release gate codifies the as-built deviation: `OSHAL_SCHEMA_BOOTSTRAP=auto` with a non-superuser, non-BYPASSRLS runtime role is compliant (informational advisory only, since the owner is FORCE-RLS-scoped); `validate-only` remains the hardened target, and superuser + non-validate-only stays a blocker.
+
+## Amendment — derived helpers are the bot contract's only functions (2026-09-14, pending operator approval)
+
+The worker role `oshal_bot` executes **derived** `SECURITY DEFINER` helpers only: they answer one
+question about a row the bot may act on and expose nothing else. `oshal_owns_ticket(uuid)` was the
+first. `oshal_application_execution_claims(kind, id, app, enforce)` (migration 142) is the second:
+it tells a bot node which application claims a bot or tool and whether that application is
+protected, which is the ADR-149 posture check a bot runs before accepting any execution.
+
+- The bot is given the decision, never the tables behind it: `oshal_authorization_applications`
+  and `swarm_applications` stay outside the bot contract, and `oshal_is_tenant_member` stays
+  private to `oshal_app`.
+- The governed provisioner approves exactly four helpers and verifies an explicit set of bot
+  helpers on every boot; adding a fifth, or letting the bot execute another, is an amendment here.
+- A helper whose empty answer would read as "allowed" must raise on a malformed question instead.
+
+Why: the posture check ran as `oshal_bot` against tables the contract deliberately withholds, so
+every bot execution failed closed (BUG-25 in [the bug log](../operations/bug-log.md)). Granting the
+tables directly was tried and is reverted by the provisioner on each boot, as designed.
