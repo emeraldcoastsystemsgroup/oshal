@@ -1946,6 +1946,38 @@ gaussians subsampled in about 6 s).
 - A regression test imports a PLY above the gate and one below it and proves the api keeps answering
   `/health` throughout.
 
+**Written, not deployed (2026-09-14).** Both halves are open as PRs and neither is on the box.
+
+- **Core — [PR #473](https://github.com/emeraldcoastsystemsgroup/oshal/pull/473):** `import-limits.ts` resolves `OSHAL_SPACES_PLY_MAX_BYTES` (default 50 MiB)
+  and `OSHAL_SPACES_PLY_WORKER_HEAP_MB` (default 1024) from the environment at the point of use, so
+  no limit is a literal anywhere; `ply-convert-host.ts` / `ply-convert-worker.ts` run the conversion
+  in a `node:worker_threads` Worker under `resourceLimits`; `ImportReconstructionProvider` refuses a
+  `.ply` over the gate and turns a worker death (out of memory, parse throw, silent exit) into a
+  `ReconstructionError` whose message the service writes onto the failed row. `.splat` passthrough
+  unchanged. `tests/unit/spatial-import-event-loop.spec.ts` is red on the on-thread provider (`loop
+  held 404 ms while the on-thread conversion takes 346 ms`) and green after;
+  `tests/unit/spatial-import-worker.spec.ts` kills a real Worker under a 24 MB cap and reads the
+  reason off the failed row.
+- **Store — [oshal-applications PR #206](https://github.com/emeraldcoastsystemsgroup/oshal-applications/pull/206):** `spaces` 0.9.0 gates the `.ply` **while the part streams** — a multer
+  storage engine stops writing at the first chunk past `resolvePlyImportLimits().plyMaxBytes` and the
+  lane answers 413 naming the limit, so an oversized capture is never fully received, written or
+  parsed. `tests/ply-import-off-loop.core.test.js` drives the compiled packaged router over real
+  loopback HTTP beside a real `/health` route with the framework's real limits and conversion engine.
+  Both halves are red before their fix and green after: the gate case fails `201 !== 413` on the
+  un-gated route (an 11 MB `.ply` accepted whole), and the loop case fails `/health worst round trip
+  346 ms against a 438 ms on-thread conversion` when the kernel provider is put back on the main
+  thread.
+
+**Still open:**
+- The core PR has to merge and **deploy before** the store package is updated on a box — the route
+  imports `resolvePlyImportLimits` from the pinned `spatial-mapping` kernel skill, which an older core
+  does not export. Until both land the live lane is still ungated.
+- Neither the 117 MB nor the 44 MB capture from the incident has been re-imported against the fix; the
+  proofs above run generated fixtures either side of a 4 MB test gate.
+- The store guard is a `*.core.test.js`, so it runs only where a framework checkout is present
+  (`OSHAL_CORE_DIR`), the same convention as the package's `upload-identity.core.test.js`; the
+  bare-checkout store CI glob does not reach it.
+
 ### Store dependency tiers: manifests converted; catalog mirror and live proof open (2026-09-14)
 
 **Context:** the core reads `dependencies` as `required` / `optional` tiers and the installer, loader
