@@ -2096,3 +2096,37 @@ attempt-state record that the cockpit should stop treating as its primary escala
 Whichever it is, `PostgresSwarmEscalationStore` and the cockpit's `getTicketEscalations` lookup
 agree with it, and a guard proves an escalation raised by a non-run path lands wherever the
 decision says it belongs, proven red by removing that write.
+
+### A vehicle is an owned record with a computed stage (ADR-160) (2026-09-15)
+
+**Context:** [ADR-160](adr/160-a-vehicle-is-an-owned-record-with-a-computed-stage.md). Two vehicles are
+fully specified and neither can be developed: the 300 mm marine explorer exists as
+[a design study document](research/autonomous-explorer-design-study.md) whose engines were carved into the
+`ocean-lab` store package while the vehicle itself was not, and the Floater solar dynastat exists as a
+committed `aero-lab/reference-design/` folder holding one `export_build_files.py` run that cannot report that
+it has gone stale against its own package's open real-chain gate. Both packages own no tables — neither has a
+`migrations/` directory — so nothing persists and no object can carry a stage. The shipped `embodied` B16
+designer (`engine/design/`, the drone and the Desk-6 arm, **Open in CAD Studio** per printed part) is the
+pattern; its own gap is that the designs are generated on request and never stored. Store-repo work in
+`ocean-lab` and `aero-lab`; no core code.
+
+**Done when:**
+- **S1** — `ocean-lab` carries its first migration (vehicle records, owner RLS), the explorer seed vector as a
+  committed fixture, the limit rows taken from the study's "What is not true" section, and an **Explorer** tile.
+  Changing the wing stop angle or the tether length and evaluating moves the five-row sea-state table, the
+  occurrence-weighted mean, the km/day and the km/year; the stage badge recomputes on read and drops when the
+  vector changes; the open limits are listed on the surface. No geometry, no parts, no CAD in this slice.
+- **S2** — the explorer's parts model and its geometry as CAD Studio programs, one per watertight part, with
+  **Open in CAD Studio** each and a generated design document; the displacement budget closes against the sizing
+  computed at that mass or the stage refuses to advance; `fabricable` requires every declared output current and
+  passed by its own validator.
+- **S3** — the Floater is a record in `aero-lab` with its existing export run stored as the first evaluation and
+  `BOM_v2`'s mass delta as a budget check. The check is expected red on first run (real parts are 274 g heavier
+  than the certified ledger); the reference-design folder is linked as the dated artifact of one run.
+- **S4** — a cross-package read-only test fails when the record shape or the stage function drifts between labs,
+  and a regression asserts the engine at today's version still reproduces the study's published figures from the
+  seed within a stated tolerance. The store's package-separation guard is not weakened: the shared rows travel as
+  data, never as an imported runtime (consistent with the one-parts-model entry above, which this consumes rather
+  than duplicates).
+- Every surface that renders a stage renders with it that `fabricable` means the files are complete and
+  self-consistent, not that the machine is safe to build, fly or wet. No slice buys, builds or tests hardware.
