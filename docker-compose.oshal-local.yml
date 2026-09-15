@@ -31,6 +31,7 @@
 # 24 | maintainer@emeraldcoastsystemsgroup.com   | Supply the API bootstrap provisioner with the same least-privilege bot DSN as workers, preserving separate app and owner credentials.
 # 25 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: forward OSHAL_APPLICATION_AUTHORIZATION_MODE (ADR-149). Without the passthrough the api silently ran the default `enforce` mode with zero approved assignments, so every package surface answered 403 to a signed-in operator; the documented `legacy` compatibility mode could not be set from .env at all.
 # 26 | maintainer@emeraldcoastsystemsgroup.com | Budget only the API's main, optional and RAG pools at the existing managed 8/2/2 defaults so ordinary concurrent reads fit the 24-connection application role; preserve explicit deployment overrides.
+# 27 | maintainer@emeraldcoastsystemsgroup.com | Forward the world series-store load knobs (WORLD_SERIES_READ_CONCURRENCY, WORLD_ROLLUP_CONCURRENCY, WORLD_PULSE_WINDOW_MS, WORLD_PULSE_WARN_FRACTION) to the api, which is where the world schedules dispatch. Unforwarded they would be the documented silent-env-var class: the operator turns the knob in .env, the container keeps the compiled default, and the series store keeps saturating.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -1084,6 +1085,18 @@ services:
       # cost); lower = cheaper, 0 = all-lean.
       WORLD_CLASSIFY_DISABLED: ${WORLD_CLASSIFY_DISABLED:-false}
       WORLD_PULSE_DEEP_SLICE: ${WORLD_PULSE_DEEP_SLICE:-2}
+      # SERIES-STORE load controls (2026-09-14). The pulse rolls features up for 184 entities, four
+      # indexed aggregates each, and a fire the scheduler abandons keeps running while the next one
+      # starts — 19 concurrent aggregates put oshal-local-tsdb at 282% CPU and timed the pulse out six
+      # times in ten minutes. WORLD_SERIES_READ_CONCURRENCY is the PROCESS-WIDE statement cap (it holds
+      # across overlapping fires; identical in-flight reads coalesce onto one statement).
+      # WORLD_ROLLUP_CONCURRENCY is the per-fire entity fan-out.
+      WORLD_SERIES_READ_CONCURRENCY: ${WORLD_SERIES_READ_CONCURRENCY:-4}
+      WORLD_ROLLUP_CONCURRENCY: ${WORLD_ROLLUP_CONCURRENCY:-4}
+      # The pulse's window (its cron cadence) and the fraction of it above which a completed pulse is
+      # logged as an overrun — the warning that precedes fires stacking.
+      WORLD_PULSE_WINDOW_MS: ${WORLD_PULSE_WINDOW_MS:-300000}
+      WORLD_PULSE_WARN_FRACTION: ${WORLD_PULSE_WARN_FRACTION:-0.8}
       # GLOBAL classify-call ceiling (the 2026-06-29 burn guard): max LLM classify calls per clock hour /
       # UTC day across ALL world paths (per-subject ingest + firehose deep-dive + backtests). Exhausted →
       # lexicon fallback until the window rolls; denials are logged once per window and counted in the
