@@ -21,6 +21,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Validate explicit user smoke prerequisites against read-only PAT probes and the closest session-authenticated route.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Validate package-owned tool declarations through the shared tool contract before activation.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Validate dependencies (required/optional tiers or the legacy flat form) through the shared CLI/runtime contract, fail-closed at load.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | ADR-157 S1: move the whole schedule contract (prompt + service-route rules, the static-JSON walker, probeBelongsToRoute and containsFixtureInterpolation) into manifest-schedule-validation.ts — this file was 836 code lines, past its 800 budget — and hand that validator the imported authorization catalog so a service schedule's `requires` is checked against the permissions the app actually defines.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -49,6 +50,7 @@ import { loadPackageTestCatalog } from '@/shared/package-testing';
 import { readAppDependencies } from '@/shared/app-dependencies';
 import { validateGroupManifest, validateReadinessDeclarations, validateGuestSeedDeclaration, validateSummaryDeclaration } from './swarm-app-group';
 import { validateAppIntegrations } from './app-integrations';
+import { containsFixtureInterpolation, probeBelongsToRoute, validateScheduleDeclarations } from './manifest-schedule-validation';
 import {
   SWARM_APP_BOT_HARNESS_TYPES,
   SWARM_APP_BOT_SPECIAL_API_TYPES,
@@ -82,9 +84,6 @@ const SMOKE_AUTH_MODES = ['service', 'pat', 'public'] as const;
 const MAX_SMOKE_FIXTURE_BYTES = 64 * 1024;
 const DEFAULT_TAKEOUT_SLICE_BYTES = 64 * 1024 * 1024;
 const MAX_TAKEOUT_SLICE_BYTES = 128 * 1024 * 1024;
-const MAX_SERVICE_SCHEDULE_BODY_BYTES = 16 * 1024;
-const MAX_SERVICE_SCHEDULE_JSON_DEPTH = 8;
-const MAX_SERVICE_SCHEDULE_JSON_ENTRIES = 256;
 
 /** @description Validate the complete ADR-118 access declaration at the trust boundary. */
 function validateAppAccess(manifest: SwarmAppManifest, absPath: string): void {
@@ -395,171 +394,6 @@ function validateRouteDeclarations(manifest: SwarmAppManifest, absPath: string):
   }
 }
 
-/** @description Whether a concrete probe path falls on a route's segment boundary. */
-function probeBelongsToRoute(probePath: string, mountPath: string): boolean {
-  const mount = mountPath.length > 1 ? mountPath.replace(/\/+$/, '') : mountPath;
-  return probePath === mount || probePath.startsWith(`${mount}/`);
-}
-
-/** @description Whether a deterministic service target is one concrete canonical local path. */
-function isCanonicalServiceSchedulePath(value: string): boolean {
-  return (
-    value.length <= 512 &&
-    /^\/api\/[^/]+/.test(value) &&
-    !/[?#\\\s]/.test(value) &&
-    !value.includes('//') &&
-    !/%(?:2e|2f|5c)/i.test(value) &&
-    !value.split('/').some((segment) => segment === '.' || segment === '..')
-  );
-}
-
-/** @description Reject non-JSON values, dangerous keys, and excessive static-body complexity. */
-function validateStaticScheduleJson(value: unknown, at: string, depth = 0, budget = { entries: 0 }): void {
-  if (depth > MAX_SERVICE_SCHEDULE_JSON_DEPTH) {
-    throw new Error(`${at} exceeds the ${MAX_SERVICE_SCHEDULE_JSON_DEPTH}-level JSON depth limit`);
-  }
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new Error(`${at} contains a non-finite number`);
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const [index, entry] of value.entries()) {
-      budget.entries += 1;
-      if (budget.entries > MAX_SERVICE_SCHEDULE_JSON_ENTRIES) throw new Error(`${at} has too many JSON entries`);
-      validateStaticScheduleJson(entry, `${at}[${index}]`, depth + 1, budget);
-    }
-    return;
-  }
-  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) {
-    throw new Error(`${at} must contain only plain JSON values`);
-  }
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    budget.entries += 1;
-    if (budget.entries > MAX_SERVICE_SCHEDULE_JSON_ENTRIES) throw new Error(`${at} has too many JSON entries`);
-    if (!key || key.length > 128 || /[\u0000-\u001f\u007f]/.test(key) || ['__proto__', 'prototype', 'constructor'].includes(key)) {
-      throw new Error(`${at} contains an unsafe JSON key`);
-    }
-    validateStaticScheduleJson(entry, `${at}.${key}`, depth + 1, budget);
-  }
-}
-
-/**
- * @description Validate recurring manifest jobs at the package trust boundary. Prompt schedules
- * retain the established contract. A service-route schedule is deliberately narrower: framework
- * scope only, a named compiled export, static JSON only, and an exact path owned by an
- * auth:`service` route.
- */
-function validateScheduleDeclarations(manifest: SwarmAppManifest, absPath: string): void {
-  if (manifest.schedules === undefined) return;
-  if (!Array.isArray(manifest.schedules) || manifest.schedules.length === 0) {
-    throw new Error(`Manifest ${absPath}: schedules, when present, must be a non-empty array`);
-  }
-  const ids = new Set<string>();
-  for (const [index, value] of manifest.schedules.entries()) {
-    const at = `schedules[${index}]`;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      throw new Error(`Manifest ${absPath}: ${at} must be an object`);
-    }
-    const schedule = value as unknown as Record<string, unknown>;
-    const id = typeof schedule.id === 'string' ? schedule.id.trim() : '';
-    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) {
-      throw new Error(`Manifest ${absPath}: ${at}.id must be a lowercase slug`);
-    }
-    if (ids.has(id)) throw new Error(`Manifest ${absPath}: duplicate schedule id "${id}"`);
-    ids.add(id);
-
-    const cron = typeof schedule.cron === 'string' ? schedule.cron.trim() : '';
-    if (cron.split(/\s+/).length !== 5) {
-      throw new Error(`Manifest ${absPath}: ${at}.cron must be a standard five-field cron expression`);
-    }
-    try {
-      CronExpressionParser.parse(cron, { currentDate: new Date('2026-01-01T00:00:00.000Z') }).next();
-    } catch {
-      throw new Error(`Manifest ${absPath}: ${at}.cron is invalid`);
-    }
-    if (schedule.enabled !== undefined && typeof schedule.enabled !== 'boolean') {
-      throw new Error(`Manifest ${absPath}: ${at}.enabled, when present, must be a boolean`);
-    }
-    if (schedule.description !== undefined && (typeof schedule.description !== 'string' || !schedule.description.trim())) {
-      throw new Error(`Manifest ${absPath}: ${at}.description, when present, must be a non-empty string`);
-    }
-
-    const target = schedule.target === undefined ? 'prompt' : schedule.target;
-    if (target !== 'prompt' && target !== 'service-route') {
-      throw new Error(`Manifest ${absPath}: ${at}.target must be prompt or service-route`);
-    }
-    if (target === 'prompt') {
-      const unknown = Object.keys(schedule).filter(
-        (key) => !['id', 'cron', 'target', 'prompt', 'targetAgent', 'scope', 'requiresConnection', 'description', 'enabled'].includes(key),
-      );
-      if (unknown.length > 0) throw new Error(`Manifest ${absPath}: ${at} has unknown field(s): ${unknown.join(', ')}`);
-      if (typeof schedule.prompt !== 'string' || !schedule.prompt.trim()) {
-        throw new Error(`Manifest ${absPath}: ${at}.prompt must be a non-empty string`);
-      }
-      if (schedule.targetAgent !== undefined && (typeof schedule.targetAgent !== 'string' || !schedule.targetAgent.trim())) {
-        throw new Error(`Manifest ${absPath}: ${at}.targetAgent, when present, must be a non-empty string`);
-      }
-      if (schedule.scope !== undefined && schedule.scope !== 'framework' && schedule.scope !== 'per-user') {
-        throw new Error(`Manifest ${absPath}: ${at}.scope must be framework or per-user`);
-      }
-      if (schedule.requiresConnection !== undefined && (typeof schedule.requiresConnection !== 'string' || !schedule.requiresConnection.trim())) {
-        throw new Error(`Manifest ${absPath}: ${at}.requiresConnection, when present, must be a non-empty string`);
-      }
-      continue;
-    }
-
-    const unknown = Object.keys(schedule).filter(
-      (key) => !['id', 'cron', 'target', 'route', 'handler', 'body', 'scope', 'description', 'enabled'].includes(key),
-    );
-    if (unknown.length > 0) throw new Error(`Manifest ${absPath}: ${at} has unknown field(s): ${unknown.join(', ')}`);
-    if (schedule.scope !== undefined && schedule.scope !== 'framework') {
-      throw new Error(`Manifest ${absPath}: ${at}.scope must be framework for service-route targets`);
-    }
-    const routePath = typeof schedule.route === 'string' ? schedule.route : '';
-    if (!isCanonicalServiceSchedulePath(routePath)) {
-      throw new Error(`Manifest ${absPath}: ${at}.route must be a concrete canonical /api/... path`);
-    }
-    const owner = (manifest.routes ?? [])
-      .filter((route) => probeBelongsToRoute(routePath, route.mountPath))
-      .sort((a, b) => b.mountPath.length - a.mountPath.length)[0];
-    if (!owner) {
-      throw new Error(`Manifest ${absPath}: ${at}.route "${routePath}" is not owned by routes[].mountPath`);
-    }
-    if (resolveRouteAuthMode(owner) !== 'service') {
-      throw new Error(`Manifest ${absPath}: ${at}.route must belong to a route whose auth mode is exactly service`);
-    }
-    if (typeof schedule.handler !== 'string' || !/^[A-Za-z_$][A-Za-z0-9_$]{0,127}$/.test(schedule.handler)) {
-      throw new Error(`Manifest ${absPath}: ${at}.handler must be a named JavaScript export`);
-    }
-    const body = schedule.body === undefined ? {} : schedule.body;
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      throw new Error(`Manifest ${absPath}: ${at}.body, when present, must be a static JSON object`);
-    }
-    validateStaticScheduleJson(body, `Manifest ${absPath}: ${at}.body`);
-    if (containsFixtureInterpolation(body)) {
-      throw new Error(`Manifest ${absPath}: ${at}.body contains interpolation syntax; scheduled bodies are static and cannot reference secrets`);
-    }
-    if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_SERVICE_SCHEDULE_BODY_BYTES) {
-      throw new Error(`Manifest ${absPath}: ${at}.body exceeds ${MAX_SERVICE_SCHEDULE_BODY_BYTES} bytes`);
-    }
-  }
-}
-
-/** @description Reject templating syntax anywhere in a parsed JSON fixture. */
-function containsFixtureInterpolation(value: unknown): boolean {
-  if (typeof value === 'string') {
-    return /\$\{[^}]+\}|\{\{[^}]+\}\}|<%[\s\S]*?%>|%[A-Za-z_][A-Za-z0-9_]*%/.test(value);
-  }
-  if (Array.isArray(value)) return value.some(containsFixtureInterpolation);
-  if (value && typeof value === 'object') {
-    return Object.entries(value).some(
-      ([key, entry]) => containsFixtureInterpolation(key) || containsFixtureInterpolation(entry),
-    );
-  }
-  return false;
-}
-
 /** @description Resolve and validate a package-local JSON fixture without following a symlink out. */
 function validateSmokeFixture(absPath: string, at: string, fixturePath: string): void {
   if (path.isAbsolute(fixturePath) || !fixturePath.trim() || path.extname(fixturePath).toLowerCase() !== '.json') {
@@ -836,7 +670,7 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   // ADR-118: access is an authorization contract, so its entire shape and closed vocabulary
   // fail at load. Omission is deliberate rollout compatibility and keeps current behavior.
   validateAppAccess(manifest, absPath);
-  loadApplicationAuthorization(path.dirname(absPath), manifest);
+  const authorizationCatalog = loadApplicationAuthorization(path.dirname(absPath), manifest);
   validatePackageTools(manifest);
   loadPackageTestCatalog(path.dirname(absPath), manifest);
 
@@ -933,7 +767,7 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   // ADR-085 D2: routes[] auth. Fail closed — auth is opt-in per route in this codebase, so a
   // package route must never become anonymous-callable through a typo or an omission.
   validateRouteDeclarations(manifest, absPath);
-  validateScheduleDeclarations(manifest, absPath);
+  validateScheduleDeclarations(manifest, absPath, authorizationCatalog);
   validateTakeoutDeclarations(manifest, absPath);
   validateSmokeDeclarations(manifest, absPath);
   if (manifest.briefings !== undefined) {
