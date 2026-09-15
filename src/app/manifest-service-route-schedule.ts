@@ -15,8 +15,9 @@
  *
  * @module manifest-service-route-schedule
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-157: a protected application's tick runs under the activation a person made — the service principal for a system service, the activating person (userSub pinned) for a user service — and skips at INFO when nothing is activated instead of failing with authorization_execution_identity_required once a cadence. Per-user instances dispatch through the same registered handler; the owner comes from the schedule record, never from the task-type suffix.
  */
-import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
+import { baseServiceRouteTaskType, runActivatedServiceTick } from './manifest-service-route-activation';
 
 import fs from 'fs';
 import path from 'path';
@@ -159,7 +160,7 @@ export class ManifestServiceRouteScheduleRegistry implements ManifestServiceRout
 
   /** Dispatch one due job to the exact active compiled handler. */
   async dispatch(schedule: ScheduleRecord): Promise<ScheduleDispatchResult> {
-    const target = this.targets.get(schedule.taskType);
+    const target = this.targets.get(baseServiceRouteTaskType(schedule.taskType));
     if (!target) return failure(schedule, 'No active manifest service-route target');
     if (
       schedule.taskData.kind !== MANIFEST_SERVICE_ROUTE_TASK_KIND ||
@@ -169,12 +170,16 @@ export class ManifestServiceRouteScheduleRegistry implements ManifestServiceRout
     }
 
     try {
-      const result = await runWithApplicationExecution({ app: target.appName, kind: 'jobs', operation: target.scheduleId }, () => Promise.resolve(target.handler(target.packageContext, {
-        scheduleId: target.scheduleId,
-        scheduledAtIso: new Date().toISOString(),
-        body: target.body,
-      })));
-      const normalized = validateResult(result, target);
+      const outcome = await runActivatedServiceTick(
+        { app: target.appName, scheduleId: target.scheduleId, ownerSub: schedule.ownerSub ?? null },
+        () => Promise.resolve(target.handler(target.packageContext, {
+          scheduleId: target.scheduleId,
+          scheduledAtIso: new Date().toISOString(),
+          body: target.body,
+        })),
+      );
+      if (!outcome.ran) return skipped(schedule, target, outcome.reason, outcome.detail);
+      const normalized = validateResult(outcome.result, target);
       logger.info(
         { app: target.appName, scheduleId: schedule.id, route: target.route, reportedSummary: Boolean(normalized.summary) },
         'Manifest service-route schedule completed',
@@ -185,6 +190,21 @@ export class ManifestServiceRouteScheduleRegistry implements ManifestServiceRout
       return failure(schedule, 'Package service-route handler failed');
     }
   }
+}
+
+/**
+ * @description ADR-157: a declared-but-inactive service is a visible to-do, not an error. The tick
+ * is reported as not run — so it never counts as an execution — and logged once at INFO with the
+ * reason a person can act on. A denial has already been logged and has suspended the activation.
+ */
+function skipped(schedule: ScheduleRecord, target: RegisteredTarget, reason: string, detail?: string): ScheduleDispatchResult {
+  logger.info(
+    { app: target.appName, scheduleId: schedule.id, route: target.route, reason, detail },
+    reason === 'not-activated'
+      ? 'Manifest service-route schedule skipped: not activated'
+      : 'Manifest service-route schedule skipped: activation suspended',
+  );
+  return { success: false, scheduleId: schedule.id, error: `skipped: ${reason}` };
 }
 
 /** @description Recursively freeze the validated static body handed to package code. */

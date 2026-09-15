@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D6 S-1 alert rail against the REAL oshal Postgres (fail-loud when the stack is down): announceEventAlert lands a `done` jarvis_tasks row under the owner whose result carries the EDGAR URL and routes ONE notification on the 'trading-events' topic through an injected router; the shelf id carries the FULL planId + an owner hash so two owners' plans can never share a row (jarvis_tasks.id is a global PK with ON CONFLICT DO UPDATE) and a retry is idempotent; a throwing router never fails the caller; alertFirstS1 is claim-first (one `s1_alerted` timeline event, one delivery, however many times the hook is reached; a throwing seam still leaves the claim); the S-1 text names the FILING date, never "today"; normalizePricingDate refuses 2026-02-30 and garbage. Run with --no-file-parallelism (concurrent schema bootstrap races). The outward transports themselves are covered by notification-fanout / notification-prefs-router specs.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review round 2: normalizePricingDate also refuses a WEEKEND date (the reminder leg runs weekdays only, so a Saturday pricing date gave a T-0 whose due minute could never be reached).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Review round 3: the outward hop is now proven BOUNDED (a router that never resolves costs one deadline, not the tick — announceEventAlert returns notified:null and the shelf row still lands, and alertFirstS1 with a hanging seam still returns having claimed), notifyTimeoutMs config is pinned (env → clamped → 20s default), and alertNotifierFrom is pinned as the seam the state-machine hook passes: a deps bag carrying `notify` wins, anything else falls back to the real two-rail announce. That resolver is what keeps the design's injectable notify seam without the plan module's EventPlanDeps having to change before the hook can land.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
@@ -22,8 +23,9 @@ import { ensureBooksSchema, ensureLegacyBooks, legacyBook } from '../../src/app/
 import { ensureTradingSchema } from '../../src/app/trading-engine';
 import type { AppContext } from '../../src/app/composition/app-context';
 import type { NotifyOutcome } from '../../src/features/notifications';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-const DSN = process.env.OSHAL_TEST_DSN || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-evta-${RUN}`;
 const SUB_B = `spec-evtb-${RUN}`;

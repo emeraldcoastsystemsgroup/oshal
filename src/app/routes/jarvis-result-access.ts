@@ -4,11 +4,15 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard Jarvis cached and durable result sources using exact issuer identity and current protected execution lineage.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Report an access check that could not be DETERMINED instead of silently answering "denied". Every guard here still fails closed  the returns are unchanged  but a thrown store/authority error used to be indistinguishable from a real denial with nothing logged, which is how a Jarvis ownership fault read as an empty history for three days. Each catch now logs at ERROR with the error, its stack and the task it was deciding.
  */
+import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '../composition-root';
 import type { AuthorizationActor } from '@/shared/application-authorization';
 import { canReadProtectedResult, hasProtectedTaskResults, PROTECTED_RESULT_EXECUTIONS } from '@/shared/protected-results';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
+
+const logger = createChildLogger({ module: 'jarvis-result-access' });
 
 /** @description Durable Jarvis work row with its authoritative result and conversation references. */
 export interface JarvisResultRow {
@@ -32,7 +36,12 @@ export async function canReadJarvisSession(ctx: AppContext, sub: string, issuer:
     const storedIssuer = readOwnerPrincipalIssuer(task.metadata);
     if (storedIssuer ? storedIssuer !== issuer : Boolean(issuer && ctx.applicationAuthorization)) return false;
     return canReadProtectedResult(task, resolveActor);
-  } catch { return false; }
+  } catch (err) {
+    // Fail closed, but never silently: a thrown store/authority error is NOT a denial, and a
+    // caller that renders `false` as an empty history would otherwise hide a real outage.
+    logger.error({ err, taskId }, 'jarvis session access undetermined; failing closed');
+    return false;
+  }
 }
 
 /**
@@ -56,7 +65,11 @@ export async function filterJarvisResultRows<T extends JarvisResultRow>(ctx: App
         if (!await canReadProtectedResult(task ?? { taskId, ownerSub: sub }, resolveActor)) { readable = false; break; }
       }
       if (readable) allowed.push(row);
-    } catch { /* Unavailable authority never reveals a cached result. */ }
+    } catch (err) {
+      // Unavailable authority never reveals a cached result, so the row stays dropped. Logged
+      // because a shelf that quietly shrinks looks identical to one the caller may not read.
+      logger.error({ err, rowId: row.id }, 'jarvis result row access undetermined; row withheld');
+    }
   }
   return allowed;
 }
@@ -75,5 +88,10 @@ export async function hasProtectedJarvisSource(ctx: AppContext, taskIds: readonl
       if (task?.metadata && Object.prototype.hasOwnProperty.call(task.metadata, PROTECTED_RESULT_EXECUTIONS)) return true;
     }
     return false;
-  } catch { return true; }
+  } catch (err) {
+    // Classification failed, so the source is treated as protected. That is the safe answer and
+    // it is kept; the log is what distinguishes it from a source genuinely found to be protected.
+    logger.error({ err, taskIds }, 'jarvis protected-source classification undetermined; treating as protected');
+    return true;
+  }
 }

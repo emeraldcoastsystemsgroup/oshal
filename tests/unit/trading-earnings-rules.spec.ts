@@ -7,6 +7,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fix round 3 guards: a sell whose position exceeds what ONE guardrail-capped order may carry is sold in tranches with distinct requestIds and distinct decision rows (and, when the tranche bound is reached, ends saying how many shares remain exposed) — the previous behaviour placed 264 of 1000 shares and called itself `fired`; an UNKNOWN place failure is bounded at TRADING_EARNINGS_RULE_MAX_PLACE_ATTEMPTS and then terminal (it used to re-submit every tick to expiry, and the engine deletes its reservation each time, so on a venue with no client-order-id that is a duplicate-fill path); a 5xx that keeps deferring stands down on TRADING_EARNINGS_RULE_STALE_HOURS instead of trading a day-old verdict; and both "noted once across two ticks" assertions now RE-READ the row (they previously filtered a snapshot captured before the second tick and could not fail).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fix round 2 guards: the fired order is sized so the ENGINE's own notional check passes — the persisted decision row is fed to the REAL guardrailViolation (not restated arithmetic) and a price sweep proves it across the whole cap-bound band, which is what the previous sizing (off the last print, under a higher limit) failed at every cap-bound buy; and a transient 5xx from the order rail defers instead of disarming — the rule stays classified, retries under the SAME requestId, and reuses/reprices its ONE decision row rather than fanning the journal out. Plus: the TRADING_HALT pin asserts the absence of a READ (process.env.TRADING_HALT), not of the string, so a comment cannot turn it red.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D5 earnings-reaction rules against the live oshal Postgres (real FORCE-RLS table, real partial unique index, real signals/decisions ledger rows). Drives the whole state machine with EDGAR, the document read, the analyst and the venue doubled at their seams: armed → detected → classified → fired; expiry never fires (and never polls); a miss sells with the rationale carrying the verdict, the numbers read and the filing URL; a beat buys the sized fraction; the notional ceiling is enforced BY THIS MODULE (the engine skips its notional test for a 0 refPrice, and never reads TRADING_HALT — both pinned from the engine source, which is why both guards live here and are exercised here); TRADING_HALT blocks the order; a position sold out from under a beat ends no_action, not a fresh entry; a disagreeing print waits then stands down; unclear never trades; the flag off does nothing at all. Plus the fundamentals CIK cache: a failed first fetch is NOT cached forever. Run with --no-file-parallelism (concurrent schema bootstrap races).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Pool } from 'pg';
@@ -29,12 +30,13 @@ import { ensureTradingSchema, TradingError, guardrails } from '../../src/app/tra
 import { guardrailViolation } from '../../src/app/routes/trading-routes-helpers';
 import type { AppContext } from '../../src/app/composition/app-context';
 import type { OrderResult, Position } from '../../src/features/trading';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
 // Every case here drives a multi-tick state machine against the LIVE Postgres; the 5 s default is a
 // flake, not a signal (the same tick costs milliseconds in production).
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 120_000 });
 
-const DSN = process.env.OSHAL_TEST_DSN || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-erule-${RUN}`;
 let pool: Pool;
@@ -120,9 +122,40 @@ function harness(opts: { held?: number; refPrice?: number; verdict?: string; sub
   return { deps, calls, positions, setPrint: (p) => { print = p; }, setRefusal: (e) => { refuse = e; }, setNow: (d) => { now = d; }, setVenue: (o) => { venue = o; } };
 }
 
+/**
+ * Cover the harness's fake position with the engine's OWN filled BUY, so the holding is ACCOUNTED.
+ *
+ * ADR-159 withholds every order for a position this book's filled orders cannot explain, and these
+ * rules only ever act on a name the engine bought — so a fixture with no ledger behind its position
+ * was describing a hand-bought holding the engine must NOT trade. Prior seeds for the symbol are
+ * cleared first: the replay trusts a basis only when the replayed quantity equals the venue quantity,
+ * so a second case reusing a symbol would otherwise over-cover it and read as unaccounted again.
+ * @param symbol - The held symbol to cover.
+ * @param qty - The venue quantity to cover exactly.
+ * @returns Nothing.
+ */
+async function coverWithEngineFill(symbol: string, qty: number): Promise<void> {
+  await pool.query('DELETE FROM oshal_trading_orders WHERE user_sub=$1 AND book_id=$2 AND symbol=$3', [SUB, book.bookId, symbol]);
+  const sig = (await pool.query(
+    `INSERT INTO oshal_trading_signals (user_sub, mode, book_id, source, title, body, symbols, indicators, content_hash)
+       VALUES ($1,'paper',$2,'spec-seed',$3,'seed',$4,'{}',$5) RETURNING signal_id`,
+    [SUB, book.bookId, `${symbol} engine buy`, [symbol], crypto.randomUUID()])).rows[0];
+  const dec = (await pool.query(
+    `INSERT INTO oshal_trading_decisions (user_sub, mode, book_id, signal_ids, agent_id, action, symbol, side, qty, order_type, confidence, rationale, indicators, guardrails)
+       VALUES ($1,'paper',$2,$3::uuid[],'spec-seed','buy',$4,'buy',$5,'market',1,'seeded engine fill','{}','{}') RETURNING decision_id`,
+    [SUB, book.bookId, [sig.signal_id], symbol, qty])).rows[0];
+  await pool.query(
+    `INSERT INTO oshal_trading_orders (user_sub, mode, book_id, decision_id, broker, broker_order_id, client_order_id, symbol, side, qty, order_type, status, filled_qty, filled_avg_price)
+       VALUES ($1,'paper',$2,$3,'alpaca',$4,$5,$6,'buy',$7,'market','filled',$7,100)`,
+    [SUB, book.bookId, dec.decision_id, `brk-seed-${symbol}-${crypto.randomUUID().slice(0, 8)}`, `${SUB}:seed-${symbol}-${crypto.randomUUID().slice(0, 8)}`, symbol, qty]);
+}
+
 /** Arm a rule for one symbol and point the harness's fake position at it. */
 async function arm(h: Harness, symbol: string, over: Record<string, unknown> = {}): Promise<EventRuleRow> {
   if (h.positions[0]) h.positions[0].symbol = symbol;
+  // The engine bought what it manages (ADR-159) — cover the fixture's holding unless the case is
+  // explicitly about an unaccounted one, which seeds nothing and says so.
+  if (h.positions[0] && h.positions[0].qty > 0) await coverWithEngineFill(symbol, h.positions[0].qty);
   const rule = normalizeEventRule({ symbol, expiresAt: EXPIRES, expectedAt: EXPECTED, ...over });
   return createEventRule(pool as never, SUB, { book, rule });
 }
@@ -486,6 +519,68 @@ describe('the state machine — armed → detected → classified → fired, thr
     await tickEarningsRules(ctx(), SUB, h.deps());
     expect(h.calls.place.length).toBe(1);
     expect((await getEventRule(pool as never, SUB, rule.ruleId))?.timeline.at(-1)?.detail).toContain('book_disabled');
+  });
+});
+
+describe('ADR-159 — the watcher places no order for a holding the engine cannot account for', () => {
+  /** Arm exactly as `arm` does, then STRIP the covering fill: the holding becomes one the operator
+   *  bought by hand, which is what the engine reads off the venue and must never manage. */
+  async function armUncovered(h: Harness, symbol: string, over: Record<string, unknown> = {}): Promise<EventRuleRow> {
+    const rule = await arm(h, symbol, over);
+    await pool.query('DELETE FROM oshal_trading_orders WHERE user_sub=$1 AND book_id=$2 AND symbol=$3', [SUB, book.bookId, symbol]);
+    return rule;
+  }
+  /** Drive a rule to the point of firing: detected → classified → a print that agrees with the miss. */
+  async function driveToFire(h: Harness): Promise<void> {
+    await tickEarningsRules(ctx(), SUB, h.deps());
+    await tickEarningsRules(ctx(), SUB, h.deps());
+    h.setPrint(190);
+  }
+
+  it('a COVERED holding still fires its protective sell — the control the withheld cases are read against', async () => {
+    const h = harness({ verdict: 'miss', held: 100, refPrice: 200 });
+    const rule = await arm(h, 'CSCO', { onMiss: 'sell', sizing: { mode: 'pct_of_position', value: 100 } });
+    await driveToFire(h);
+    expect((await tickEarningsRules(ctx(), SUB, h.deps())).transitions).toContain(`${rule.ruleId}:fired`);
+    expect(h.calls.place.length).toBe(1);
+  });
+
+  it('an UNCOVERED holding of the identical shape places nothing and says why', async () => {
+    const h = harness({ verdict: 'miss', held: 100, refPrice: 200 });
+    const rule = await armUncovered(h, 'INTC', { onMiss: 'sell', sizing: { mode: 'pct_of_position', value: 100 } });
+    await driveToFire(h);
+    expect((await tickEarningsRules(ctx(), SUB, h.deps())).transitions).toContain(`${rule.ruleId}:no_action`);
+    expect(h.calls.place.length).toBe(0);
+    const closed = await getEventRule(pool as never, SUB, rule.ruleId);
+    expect(closed).toMatchObject({ status: 'no_action' });
+    expect(closed?.timeline.at(-1)?.detail).toContain('do not account for');
+  });
+
+  it('a BEAT on an uncovered holding is withheld too — ADR-159 refuses the entry that ADDS to it', async () => {
+    const h = harness({ verdict: 'beat', held: 100, refPrice: 200 });
+    const rule = await armUncovered(h, 'AMAT', { onBeat: 'buy', sizing: { mode: 'pct_of_position', value: 100 } });
+    await tickEarningsRules(ctx(), SUB, h.deps());
+    await tickEarningsRules(ctx(), SUB, h.deps());
+    h.setPrint(210);                                                      // +5%: the market agrees with the beat
+    expect((await tickEarningsRules(ctx(), SUB, h.deps())).transitions).toContain(`${rule.ruleId}:no_action`);
+    expect(h.calls.place.length).toBe(0);
+  });
+
+  it('a TRADING_CORE_SYMBOLS name places nothing even though its ledger fully covers it', async () => {
+    const h = harness({ verdict: 'miss', held: 100, refPrice: 200 });
+    // USO is the live book's real fence (USO:0) and this holding IS covered by a seeded engine fill,
+    // so only the ring-fence can be withholding it — neither gate may stand in for the other.
+    const rule = await arm(h, 'USO', { onMiss: 'sell', sizing: { mode: 'pct_of_position', value: 100 } });
+    const before = process.env.TRADING_CORE_SYMBOLS;
+    process.env.TRADING_CORE_SYMBOLS = 'USO:0';
+    try {
+      await driveToFire(h);
+      expect((await tickEarningsRules(ctx(), SUB, h.deps())).transitions).toContain(`${rule.ruleId}:no_action`);
+      expect(h.calls.place.length).toBe(0);
+      expect((await getEventRule(pool as never, SUB, rule.ruleId))?.timeline.at(-1)?.detail).toContain('ring-fenced');
+    } finally {
+      if (before === undefined) delete process.env.TRADING_CORE_SYMBOLS; else process.env.TRADING_CORE_SYMBOLS = before;
+    }
   });
 });
 

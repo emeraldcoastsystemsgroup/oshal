@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serialize per-execution start, phase challenges and completion without global policy locks.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Take schema readiness as a re-requestable thunk so a bootstrap that failed at boot is retried by the next execution read instead of refusing for the life of the process.
  */
 import type { Pool } from 'pg';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -12,14 +13,14 @@ import { RemoteExecutionError, type RemoteExecutionRecord, type RemoteExecutionS
 /** @description PostgreSQL authority for exact immutable execution provenance and one-time phase challenges. */
 export class PostgresRemoteExecutionStore implements RemoteExecutionStore {
   /** @description Bind the controller pool and schema readiness.
-   * @param pool Controller pool. @param ready Required schema readiness. @returns The repository instance.
+   * @param pool Controller pool. @param ready Required schema readiness, re-requested per operation. @returns The repository instance.
    */
-  constructor(private readonly pool: Pool, private readonly ready: Promise<unknown> = Promise.resolve()) {}
+  constructor(private readonly pool: Pool, private readonly ready: () => Promise<unknown> = () => Promise.resolve()) {}
   /** @description Record a prepared execution without overwriting any existing reference.
    * @param record Controller-created provenance. @returns Durable insertion completion.
    */
   async insert(record: RemoteExecutionRecord): Promise<void> {
-    await this.ready;
+    await this.ready();
     await runWithSystemIdentity(() => this.pool.query('INSERT INTO oshal_application_remote_executions(execution_id,payload) VALUES($1,$2)',
       [record.binding.executionId, record]));
   }
@@ -27,7 +28,7 @@ export class PostgresRemoteExecutionStore implements RemoteExecutionStore {
    * @param executionId Opaque reference. @returns Stored provenance or null.
    */
   async read(executionId: string): Promise<RemoteExecutionRecord | null> {
-    await this.ready;
+    await this.ready();
     const result = await runWithSystemIdentity(() => this.pool.query('SELECT payload FROM oshal_application_remote_executions WHERE execution_id=$1', [executionId]));
     return result.rows[0]?.payload ?? null;
   }
@@ -35,7 +36,7 @@ export class PostgresRemoteExecutionStore implements RemoteExecutionStore {
    * @param taskId Stored task ID. @returns Matching records that can have produced output.
    */
   async byTask(taskId: string): Promise<RemoteExecutionRecord[]> {
-    await this.ready;
+    await this.ready();
     const result = await runWithSystemIdentity(() => this.pool.query(`SELECT payload FROM oshal_application_remote_executions
       WHERE (payload->'binding'->>'taskId'=$1 OR payload->'binding'->>'workspaceId'=$1 OR payload->'resultTaskIds' ? $1)
         AND (payload->>'status' IN ('completed','revoked') OR jsonb_array_length(COALESCE(payload->'resultTaskIds','[]'::jsonb))>0)
@@ -46,7 +47,7 @@ export class PostgresRemoteExecutionStore implements RemoteExecutionStore {
    * @param executionId Opaque reference. @param operation Mutation on an isolated snapshot. @returns Winning operation result.
    */
   async update<T>(executionId: string, operation: (record: RemoteExecutionRecord) => Promise<T>): Promise<T> {
-    await this.ready;
+    await this.ready();
     const original = await this.read(executionId);
     if (!original) throw new RemoteExecutionError('remote_execution_unavailable');
     const record = structuredClone(original);

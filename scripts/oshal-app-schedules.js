@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pre-install validation for prompt and deterministic service-route manifest schedules, mirroring the runtime trust boundary without executing package code.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-157: accept and shape-check the activation declaration (`runsAs`, `requires`) so a package that classifies its services passes pre-install instead of failing on unknown fields. Whether a required permission EXISTS is checked at load against the app's imported catalog — this validator never reads one.
  */
 
 'use strict';
@@ -13,6 +14,7 @@ const { CronExpressionParser } = require('cron-parser');
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_DEPTH = 8;
 const MAX_ENTRIES = 256;
+const MAX_REQUIRES = 16;
 
 function belongsTo(path, mountPath) {
   const mount = mountPath.length > 1 ? mountPath.replace(/\/+$/, '') : mountPath;
@@ -60,6 +62,25 @@ function validateJson(value, at, errors, depth = 0, budget = { entries: 0 }) {
   }
 }
 
+/** ADR-157: shape-check the proposed principal class and the permissions the service needs. */
+function validateActivationDeclaration(schedule, at, errors) {
+  if (schedule.runsAs !== undefined && schedule.runsAs !== 'system' && schedule.runsAs !== 'user') {
+    errors.push(`${at}.runsAs must be system or user`);
+  }
+  if (schedule.requires === undefined) return;
+  if (!Array.isArray(schedule.requires) || schedule.requires.length === 0) {
+    errors.push(`${at}.requires must be a non-empty array of permission names`);
+    return;
+  }
+  if (schedule.requires.length > MAX_REQUIRES) errors.push(`${at}.requires may name at most ${MAX_REQUIRES} permissions`);
+  const seen = new Set();
+  for (const entry of schedule.requires) {
+    if (typeof entry !== 'string' || !entry.trim()) { errors.push(`${at}.requires entries must be non-empty permission names`); continue; }
+    if (seen.has(entry)) errors.push(`${at}.requires names "${entry}" twice`);
+    seen.add(entry);
+  }
+}
+
 /** Validate schedules without loading any package module. */
 function validateScheduleDeclarations(manifest) {
   const errors = [];
@@ -91,9 +112,10 @@ function validateScheduleDeclarations(manifest) {
       return;
     }
     if (target !== 'service-route') { errors.push(`${at}.target must be prompt or service-route`); return; }
-    const unknown = Object.keys(schedule).filter((key) => !['id', 'cron', 'target', 'route', 'handler', 'body', 'scope', 'description', 'enabled'].includes(key));
+    const unknown = Object.keys(schedule).filter((key) => !['id', 'cron', 'target', 'route', 'handler', 'body', 'scope', 'description', 'enabled', 'runsAs', 'requires'].includes(key));
     if (unknown.length) errors.push(`${at} has unknown field(s): ${unknown.join(', ')}`);
     if (schedule.scope !== undefined && schedule.scope !== 'framework') errors.push(`${at}.scope must be framework for service-route targets`);
+    validateActivationDeclaration(schedule, at, errors);
     if (!canonicalRoute(schedule.route)) { errors.push(`${at}.route must be a concrete canonical /api/... path`); return; }
     const owner = (manifest.routes || []).filter((route) => route && typeof route.mountPath === 'string' && belongsTo(schedule.route, route.mountPath))
       .sort((a, b) => b.mountPath.length - a.mountPath.length)[0];

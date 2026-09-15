@@ -38,12 +38,12 @@ export class JarvisBriefingService {
    * @description Bind durable controls to the shared runtime pool and trusted read-only authority ports.
    * @param pool - Runtime database pool, normally configured with at least two connections.
    * @param ports - Current recipient and permission reads; unavailable reads fail closed within two seconds.
-   * @param ready - Bootstrap completion required before database access.
+   * @param ready - Re-requestable bootstrap readiness, asked before each database access.
    */
-  constructor(private readonly pool: Pool, private readonly ports: BriefingPorts, private readonly ready: Promise<unknown> = Promise.resolve()) {}
+  constructor(private readonly pool: Pool, private readonly ports: BriefingPorts, private readonly ready: () => Promise<unknown> = () => Promise.resolve()) {}
 
   private async transaction<T>(operation: (client: PoolClient) => Promise<T>, needsAuthority = false): Promise<T> {
-    await this.ready;
+    await this.ready();
     return needsAuthority ? runBriefingTransaction(this.pool, operation) : runBriefingControlTransaction(this.pool, operation);
   }
   private async lock(client: PoolClient, actor: AuthorizationActor, sourceId: string) {
@@ -77,7 +77,7 @@ export class JarvisBriefingService {
    * @returns Current authorized briefing rows and ordinary tasks, newest first.
    */
   async listTasks(sub: string, actor: AuthorizationActor | null, limit: number) {
-    await this.ready;
+    await this.ready();
     const visible = [];
     let cursor: { cursor_time: string; id: string } | undefined;
     while (visible.length < limit) {
@@ -182,7 +182,7 @@ export class JarvisBriefingService {
    * @returns Undefined for ordinary tasks, false for suppressed sources, or the committed insertion result.
    */
   async publish(sub: string, sessionId: string, write: (client: PoolClient, issuer: string, sourceId: string) => Promise<boolean>): Promise<boolean | undefined> {
-    await this.ready;
+    await this.ready();
     const found = await runWithSystemIdentity(() => this.pool.query<SourceRow>('SELECT * FROM jarvis_briefing_sources WHERE session_id=$1', [sessionId]));
     if (!found.rows[0]) return undefined;
     const initialSource = this.active.get(found.rows[0].source_id);

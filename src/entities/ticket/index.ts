@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Exported trusted provider-to-internal-ticket projection contracts
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | FSD deep-import burn-down: surfaced TicketTypeSchema/TicketType, buildTicketRowStatusMetadataPatch, and the ticket-store status-record contracts consumers were deep-importing
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Surfaced deriveTicketEscalationDetail/TicketEscalationDetail so route layers can read back the escalation reason a transition recorded
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Surfaced readTicketEscalatedAt so the cockpit activity route can date a ticket's current escalation even when that escalation recorded no reason
  */
 
 export {
@@ -98,5 +99,6 @@ export { TicketTypeSchema, type TicketType } from './types';
 export { buildTicketRowStatusMetadataPatch } from './ticket-status-row-metadata';
 export {
   deriveTicketEscalationDetail,
+  readTicketEscalatedAt,
   type TicketEscalationDetail,
 } from './ticket-escalation-detail';

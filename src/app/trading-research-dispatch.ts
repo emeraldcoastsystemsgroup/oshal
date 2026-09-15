@@ -23,6 +23,8 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Protect the book: analyze HELD names with fresh news before buy-hunting so the analyst can sell them on materially negative headlines (the news-driven exit). Previously only the most news-heavy names were analyzed, always hunting buys — held positions never got a protective look.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Trading engine extraction (ADR-085 pre-carve): import repoint only — analyzeAndRecordDecision/placeDecisionOrder/ensureTradingSchema/SignalRow now come from app/trading-engine.ts instead of the carvable route surface. Zero behavior change.
  *
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 reaches the research/fast brain. This dispatcher closes any `held` quantity the analyst calls a sell and honoured NEITHER the unmanaged mark NOR TRADING_CORE_SYMBOLS, so it sat outside the closure PR #486 drove through dispatchTradingSchedule/runAutopilot — a separate ScheduleService branch reading the same book. Two gates, both of which can only REMOVE a decision: (a) positions run through withEngineCostBasis once per fire and the sell branch of analyzeSymbol withholds for a long the ledger cannot account for; (b) the universe drops TRADING_CORE_SYMBOLS names before news is even fetched, which matters concretely because SKHY — ring-fenced as SKHY:0 — is in DEFAULT_UNIVERSE and this leg was free to trade it on a headline. The withhold is in the sell branch and NOT on `held`: `held` is also the buy branch's "already holding" guard, so clearing a withheld name from it would invert a refusal-to-sell into a buy.
+ *
  * @module trading-research-dispatch
  */
 
@@ -30,10 +32,12 @@ import type { AppContext } from './composition-root';
 import type { ScheduleRecord, ScheduleDispatchResult } from '@/features/scheduling';
 import {
   getBrokerAdapter, marketDataConfigured, tradableSession, recentNews, fundamentalsSummary,
-  latestPrice, riskPolicy, sizeEntry, DEFAULT_UNIVERSE,
+  latestPrice, riskPolicy, sizeEntry, DEFAULT_UNIVERSE, unmanagedSymbols,
   type Position, type BrokerAccount, type TradingMode, type NewsItem,
 } from '@/features/trading';
 import { analyzeAndRecordDecision, placeDecisionOrder, ensureTradingSchema, type SignalRow } from './trading-engine';
+import { withEngineCostBasis } from './trading-engine-cost-basis';
+import { coreConfig } from './trading-dispatch-core';
 import { loadInFlight } from './trading-schedule-dispatch';
 import { createWorldIntelligenceService, type WorldIntelligenceService } from '@/features/world-data';
 import { readWorldSignals, worldSignalsEnabled } from './trading-world-signals';
@@ -130,6 +134,14 @@ async function analyzeSymbol(
     await setDecisionQty(ctx.pool, decisionId, qty);
   } else { // sell
     if (held <= 0) return { symbol, action: 'sell', placed: false, note: 'no position to close' };
+    // ADR-159 — the engine reads the VENUE's positions, so a share bought by hand lands in this book
+    // and the analyst would close it against a basis the engine never paid. `positions` carries the
+    // mark applied once per fire by the dispatcher; this reads the SAME rule the autopilot legs do.
+    // Gated here and not on `held` above: `held` is also the buy branch's "already holding" guard, so
+    // clearing a withheld name from it would turn a refusal-to-sell into a BUY.
+    if (unmanagedSymbols(positions).has(decision.symbol.toUpperCase())) {
+      return { symbol, action: 'sell', placed: false, note: 'withheld — the engine cannot account for this holding from its own fills' };
+    }
     await setDecisionQty(ctx.pool, decisionId, held);
   }
   const requestId = `research-${new Date().toISOString().slice(0, 16)}-${decision.symbol}-${decision.action}`;
@@ -147,7 +159,13 @@ export async function dispatchTradingResearch(ctx: AppContext, schedule: Schedul
   const td = schedule.taskData as Record<string, unknown>;
   const sub = String(td.userSub || '');
   const mode: TradingMode = String(td.mode || 'paper').toLowerCase() === 'live' ? 'live' : 'paper';
-  const universe = Array.isArray(td.universe) && td.universe.length ? (td.universe as unknown[]).map((s) => String(s).toUpperCase()) : DEFAULT_UNIVERSE;
+  const requested = Array.isArray(td.universe) && td.universe.length ? (td.universe as unknown[]).map((s) => String(s).toUpperCase()) : DEFAULT_UNIVERSE;
+  // TRADING_CORE_SYMBOLS — the operator's ring-fence, read HERE and not only in the autopilot. A `:0`
+  // name is held, never bought and never sleeve-sold; SKHY (ring-fenced as SKHY:0) is in
+  // DEFAULT_UNIVERSE, so this leg was free to trade a fenced name on a headline. Filtering the
+  // universe can only ever REMOVE a decision — it is the same shape the autopilot's scan uses.
+  const coreSet = new Set(coreConfig().symbols);
+  const universe = requested.filter((s) => !coreSet.has(s));
   const fast = schedule.taskType.startsWith('trading-fast');
   const sinceMinutes = fast ? 3 : 20;
   const maxCalls = fast ? MAX_ANALYST_CALLS.fast : MAX_ANALYST_CALLS.research;
@@ -175,7 +193,16 @@ export async function dispatchTradingResearch(ctx: AppContext, schedule: Schedul
       (bySymbol.get(s) ?? bySymbol.set(s, []).get(s)!).push(n);
     }
     const broker = getBrokerAdapter(mode, sub);
-    const [positions, accountRaw] = await Promise.all([broker.getPositions().catch(() => [] as Position[]), broker.getAccount().catch(() => null)]);
+    const [venuePositions, accountRaw] = await Promise.all([broker.getPositions().catch(() => [] as Position[]), broker.getAccount().catch(() => null)]);
+    // ADR-159 — THE MARK, applied ONCE per fire and before any symbol is analyzed: `unmanaged` on
+    // every long this book's own filled orders do not cover. A failed ledger read marks nothing, so
+    // a database blip cannot silently unmanage the book; the fire behaves exactly as it does today.
+    const positions = await withEngineCostBasis(ctx, sub, mode, venuePositions);
+    const withheld = unmanagedSymbols(positions);
+    if (withheld.size) {
+      logger.info({ sub, mode, unmanaged: [...withheld] },
+        'research book WITHHELD — the engine cannot account for these holdings from its own fills; monitored, not managed');
+    }
     const accountSnap: BrokerAccount = accountRaw ?? { cash: 0, buyingPower: 0, equity: 0, currency: 'USD' };
     const held = new Set(positions.filter((p) => p.qty > 0).map((p) => p.symbol.toUpperCase()));
     // Working orders (pending pre/post-market limits getPositions() can't see) — exclude their symbols

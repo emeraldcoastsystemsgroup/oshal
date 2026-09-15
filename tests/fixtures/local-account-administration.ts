@@ -105,10 +105,10 @@ export class LocalAccountFixture {
     app.use('/api/swarm/roles', createSwarmRolesRoutes(this.runtime, (req, res, next) => {
       if (!req.oidc?.isAuthenticated()) { res.status(401).json({ error: 'fixture_auth_required' }); return; } next();
     }));
-    const directory = createApplicationPrincipalDirectory(this.runtime, Promise.resolve(), {
+    const directory = createApplicationPrincipalDirectory(this.runtime, () => Promise.resolve(), {
       OIDC_ISSUER_URL: directoryIssuer, OIDC_CLIENT_ID: 'fixture', OIDC_CLIENT_SECRET: 'fixture',
     });
-    app.use('/api/user-directory', createUserDirectoryRoutes({ ready: Promise.resolve(), registrations: directory.registrations,
+    app.use('/api/user-directory', createUserDirectoryRoutes({ ready: () => Promise.resolve(), registrations: directory.registrations,
       roster: directory.roster }, { requiresAuth: (_req, _res, next) => next(), resolveActor: async req => ({
       sub: req.oidc?.user?.sub ?? '', issuer: req.oidc?.user?.iss ?? '', isActive: req.oidc?.isAuthenticated() ?? false,
       isSwarmAdmin: isOperatorIdentity(req.oidc?.user?.sub, req.oidc?.user?.email),

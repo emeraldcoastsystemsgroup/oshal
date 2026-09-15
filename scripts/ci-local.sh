@@ -27,7 +27,8 @@
 # 20 | maintainer@emeraldcoastsystemsgroup.com   | Collapse duplicate gate names before writing the run-outcome line. The 2026-09-08 run re-executed a block (a mid-run edit to this file shifted the running shell's byte offset) and recorded `unpushed-commits` plus three *-skipped names twice, which made the new alert headline unreadable. That line is the durable record every later streak comparison reads, so a duplicate written here is wrong in the log forever.
 # 21 | maintainer@emeraldcoastsystemsgroup.com   | Require pinned core/store compatibility in disposable exports and retain compiler diagnostics per run.
 # 22 | maintainer@emeraldcoastsystemsgroup.com   | Two false outcomes closed. (1) The 2026-09-09 run sat nine hours inside `rm -rf` of the previous night's ci-src export (a full node_modules), held the lock all night and wrote no outcome line: prepare_head_src and gate_secrets now purge through scripts/ci/ci-purge.sh - watchdog-bounded, robocopy-then-rm on Windows, one `purge: OK|FAIL` line, and a FAIL fails the gate instead of hanging the run. (2) `gitleaks detect` exits 0 when it skips paths it cannot read (2026-09-10: 5 of 5077 files unread, secret-scan PASS): gate_secrets now runs through scripts/ci/ci-secret-scan.sh, which counts the scanner's skipped/unread stderr lines and writes `unread=N of M exported files` into the verdict, failing on any N above zero.
-# 23 | maintainer@emeraldcoastsystemsgroup.com   | New `alert-residue` post-gate: scripts/ci/check-alert-residue.sh fails when a fixture row from the alert integration guards is sitting in the DEPLOYMENT database. The two specs used to take whatever DSN the box handed them — here, the live database — and left 27 oshal_incident rows behind, one of which every surface reading that table still counts as a live incident. They now own a disposable PostgreSQL; this gate is what keeps that true after the next spec is written. SELECT-only, so it is safe against a running stack, and fail-closed: a database it could not query reports UNCHECKED, never clean.
+# 23 | maintainer@emeraldcoastsystemsgroup.com   | New `spec-database-default` gate: scripts/ci/check-spec-database-default.sh refuses a test file that can reach the operator LIVE Postgres by DEFAULT. 23 DB-backed specs ended their DSN expression in a loopback fallback on the stack published port (oshal-local-db, the real trading database), so a bare `npx vitest run tests/unit/trading-*.spec.ts` created and dropped schema and wrote order rows in production - it fired twice on 2026-09-14 from two lanes that had each been told in writing not to touch it. The specs now resolve through tests/helpers/spec-database-url.ts, which refuses an unpointed run; this gate is what keeps that true for the NEXT spec. Source hygiene, so it runs against GATE_SRC (committed HEAD in --head mode) next to repo-separation.
+# 24 | maintainer@emeraldcoastsystemsgroup.com   | New `alert-residue` post-gate: scripts/ci/check-alert-residue.sh fails when a fixture row from the alert integration guards is sitting in the DEPLOYMENT database. The two specs used to take whatever DSN the box handed them — here, the live database — and left 27 oshal_incident rows behind, one of which every surface reading that table still counts as a live incident. They now own a disposable PostgreSQL; this gate is what keeps that true after the next spec is written. SELECT-only, so it is safe against a running stack, and fail-closed: a database it could not query reports UNCHECKED, never clean.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -321,6 +322,19 @@ gate_repo_separation() {
   (cd "$GATE_SRC" && timeout 120 node scripts/check-repo-separation.js);
 }
 
+# STRUCTURAL GUARD (2026-09-15): no test file may reach the operator LIVE Postgres by DEFAULT.
+# The local stack publishes the real trading database on 127.0.0.1:55433, and 23 DB-backed specs
+# fell back to exactly that when no environment variable was set - so running them created and
+# destroyed production data with nothing warning. Two written briefs failed to stop it in one
+# night; this is the guard that does. Refuses a live published-port literal in a *.spec.ts /
+# *.test.ts, and any test-tree module reading the published-port knob off process.env (the
+# silent-default shape itself, caught even when the literal is renamed). Fail-closed: a tree with
+# no test files reports UNCHECKED (exit 2), never clean. Runs against $GATE_SRC so it judges the
+# committed tree, like repo-separation.
+gate_spec_database_default() {
+  (cd "$GATE_SRC" && timeout 120 bash scripts/ci/check-spec-database-default.sh);
+}
+
 # Stray-worktree guard (2026-07-29): worktree isolation made an unpushed agent commit
 # INVISIBLE — seven sat silent for two days in 2026-07, two of them regression guards.
 # Runs against the REPO (not the HEAD export): worktree state is repo plumbing, not tree
@@ -555,6 +569,7 @@ if [ "$NODE_GATES_OK" = "1" ]; then
   run_gate workflow-triggers gate_workflow_triggers
   run_gate security-policy gate_security_policy
   run_gate repo-separation gate_repo_separation
+  run_gate spec-database-default gate_spec_database_default
   run_gate worktree-strays gate_worktree_strays
 else
   log "GATES typecheck/unit/lint/connectors/manifests/kernel-skills/e2e: SKIPPED (pinned source export failed)"

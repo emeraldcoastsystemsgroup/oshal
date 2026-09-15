@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Require protected application assignments to use authorization preview/apply instead of the legacy tier mutation API.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | GET /:name/uninstall-impact reports optionalDependents (apps that list this one as an OPTIONAL dependency); only required dependents block.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | POST /import re-enters the caller's RLS request identity after multer (preserveRequestIdentity). When the manifest's last bytes reached multer on a later socket chunk, loadApp ran with no AsyncLocalStorage identity and the owner-stamped swarm_applications write was refused by RLS (400). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-157: mount the kernel-served Scheduled services surface (GET /:name/services, POST /:name/services/:id/activate, DELETE /:name/services/:id/activation) on this router, which already carries requiresAuth at its mount. Registered before the router's own /:name routes so the literal segments match first.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
@@ -23,6 +24,7 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { registerApplicationServiceActivationRoutes } from './application-service-activation-routes';
 import {
   SwarmAppService,
   APP_ACCESS_TIERS,
@@ -98,6 +100,9 @@ const upload = multer({
 export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAccessService,
   options: { isAuthorizationProtected?: (app: SwarmApplicationRecord) => boolean | Promise<boolean> } = {}): Router {
   const router = Router();
+  // ADR-157: the kernel-served Scheduled services surface. Registered first so its literal
+  // segments are matched before this router's own /:name routes.
+  registerApplicationServiceActivationRoutes(router);
 
   router.get('/', async (req: Request, res: Response) => {
     try {

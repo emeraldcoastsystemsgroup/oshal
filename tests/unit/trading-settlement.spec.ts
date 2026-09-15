@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-134 D8 cash-account settlement against the REAL oshal Postgres (books/accounts join, the orders ledger, the settlement_policy CHECK) with the venue doubled through the engine's own getBrokerAdapter seam (vi.mock, the trading-duplicate-submission pattern; recorded in the real-boundary audit). Proves: a CASH account loads as a cash-type book and the per-book policy persists (invalid values refused by the store AND the column CHECK); the ledger fallback keys on submitted_at (a days-old sell re-polled today is NOT unsettled); settlesOn is a weekday-only business-day add in ET (Friday → Monday); BOTH refusals cross the ENGINE boundary — placeDecisionOrder for an OPERATOR buy and for an AUTONOMOUS buy on the cash book throws 422 settlement_blocked naming the settlement date and the T+n label, never reaching the venue and leaving no ledger row; a SELL performs zero I/O (pool + venue both throw and it still resolves) and passes the engine's guard; policy 'warn' proceeds with a warning; margin / typeless paper / env 'off' are byte-identical no-ops; venue figures win over the ledger; an unknown type on a live book is cash (fail-closed) and a failed read under 'refuse' is 503 settlement_unknown; source pins the engine ordering (after guardrails, before the reservation INSERT). Run with --no-file-parallelism.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix guards: a market BUY whose price read throws (or answers null) with unsettled proceeds present is 503 under refuse and an explicit "NOT checked for unsettled funding" advisory under warn — never a silent $0 pass; with nothing unsettled the price is never read. Source pin: the kernel module contains no silent catch (every catch binds err and logs it at error).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Pool } from 'pg';
@@ -45,8 +46,9 @@ import {
 } from '../../src/app/trading-settlement';
 import { schwabSettlementFigures } from '../../src/features/trading/services/schwab-broker-adapter';
 import { alpacaAccountType } from '../../src/features/trading/services/alpaca-broker-adapter';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-const DSN = process.env.OSHAL_TEST_DSN || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-settle-${RUN}`;
 let pool: Pool;

@@ -27,6 +27,7 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Initial — daily Donchian swing sleeve on commodity/trend ETFs (the validated trend edge, executable on the equity rail); breakout entry / channel exit, hold across days, conviction-free fixed allocation, paper-only, provenance-preserving.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Trading engine extraction (ADR-085 pre-carve): import repoint only — guardrails/placeDecisionOrder/ensureTradingSchema now come from app/trading-engine.ts instead of the carvable route surface. Zero behavior change.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 reaches the swing leg. This dispatcher sells `qtyHeld` straight off the venue's positions and honoured NEITHER the unmanaged mark NOR TRADING_CORE_SYMBOLS, so it sat outside the closure that PR #486 drove through dispatchTradingSchedule/runAutopilot — a separate ScheduleService branch reading the same book. Two gates, both of which can only REMOVE an order: (a) positions run through withEngineCostBasis and a long the ledger cannot account for is never channel-exited; (b) the traded universe drops TRADING_CORE_SYMBOLS names, which matters concretely because USO — the symbol ADR-159's own Context names, ring-fenced as USO:0 — is in DEFAULT_SWING_UNIVERSE and this leg both entered and exited it. The withhold is nested INSIDE the `qtyHeld > 0` branch: folding it into that test would drop the name into the `else if` entry branch and invert a refusal-to-sell into a buy. `held` and `swingHeld` deliberately still count every long, so withholding never frees a MAX_NAMES slot or re-opens a name for entry.
  *
  * @module trading-swing-dispatch
  */
@@ -35,10 +36,12 @@ import * as crypto from 'crypto';
 import type { AppContext } from './composition-root';
 import type { ScheduleRecord, ScheduleDispatchResult } from '@/features/scheduling';
 import {
-  getBrokerAdapter, marketDataConfigured, tradableSession, dailyCloses, latestPrice,
+  getBrokerAdapter, marketDataConfigured, tradableSession, dailyCloses, latestPrice, unmanagedSymbols,
   type TradingMode, type Position, type BrokerAccount,
 } from '@/features/trading';
 import { guardrails, placeDecisionOrder, ensureTradingSchema } from './trading-engine';
+import { withEngineCostBasis } from './trading-engine-cost-basis';
+import { coreConfig } from './trading-dispatch-core';
 import { reconcileOpenOrders } from './trading-reconcile';
 import { createChildLogger } from '@/shared/logger';
 
@@ -119,13 +122,36 @@ export async function dispatchTradingSwing(ctx: AppContext, schedule: ScheduleRe
   if (!session) { logger.info({ scheduleId: schedule.id }, 'swing skipped — market closed'); return { success: true, scheduleId: schedule.id }; }
 
   const broker = getBrokerAdapter(mode, sub);
-  const [positions, accountRaw] = await Promise.all([broker.getPositions().catch(() => [] as Position[]), broker.getAccount().catch(() => null)]);
+  const [venuePositions, accountRaw] = await Promise.all([broker.getPositions().catch(() => [] as Position[]), broker.getAccount().catch(() => null)]);
   const account: BrokerAccount = accountRaw ?? { cash: 0, buyingPower: 0, equity: 0, currency: 'USD' };
+  // ADR-159 — THE MARK, before any leg reads the book: `unmanaged` on every long this book's own
+  // filled orders do not cover. A failed ledger read marks nothing and the fire behaves as it does
+  // today, so a database blip cannot silently unmanage the sleeve.
+  const positions = await withEngineCostBasis(ctx, sub, mode, venuePositions);
   const held = new Map(positions.filter((p) => p.qty > 0).map((p) => [p.symbol.toUpperCase(), p.qty]));
+  // `held` is a QUANTITY map and deliberately keeps every long, unmanaged ones included: it is also
+  // this leg's entry guard (the `else if` below buys only when qtyHeld is 0), so dropping a withheld
+  // name from it would let the sleeve BUY exactly what it just refused to manage.
+  const unaccounted = unmanagedSymbols(positions);
+  // TRADING_CORE_SYMBOLS — the operator's ring-fence. A `:0` name is held, never bought and never
+  // sleeve-sold, and USO (a ring-fenced name today) sits in this leg's default universe, so the
+  // fence has to be read HERE and not only in the autopilot.
+  const coreSet = new Set(coreConfig().symbols);
+  // swingHeld counts the FULL universe: withholding removes an order, it never frees a MAX_NAMES
+  // slot for another entry.
   const swingHeld = universe.filter((s) => (held.get(s) || 0) > 0).length;
+  const tradable = universe.filter((s) => !coreSet.has(s));
+  if (tradable.length !== universe.length) {
+    logger.info({ sub, mode, core: universe.filter((s) => coreSet.has(s)) },
+      'swing sleeve RING-FENCED — TRADING_CORE_SYMBOLS names are neither entered nor exited by this leg');
+  }
+  if (unaccounted.size) {
+    logger.info({ sub, mode, unmanaged: [...unaccounted] },
+      'swing sleeve WITHHELD — the engine cannot account for these holdings from its own fills; monitored, not managed');
+  }
   const orders: Array<Record<string, unknown>> = []; const errors: Array<{ symbol: string; error: string }> = [];
 
-  for (const sym of universe) {
+  for (const sym of tradable) {
     try {
       const closes = await dailyCloses(sym, ENTRY_N + EXIT_N + 5);
       if (closes.length < ENTRY_N + 2) continue;
@@ -135,6 +161,10 @@ export async function dispatchTradingSwing(ctx: AppContext, schedule: ScheduleRe
       for (let k = last - EXIT_N; k < last; k++) lo = Math.min(lo, closes[k]);
       const qtyHeld = held.get(sym) || 0;
       if (qtyHeld > 0) {
+        // ADR-159 — the withhold is nested INSIDE the held branch deliberately. Folding it into the
+        // `qtyHeld > 0` test would drop a withheld name through to the entry branch below and invert
+        // a refusal-to-sell into a BUY.
+        if (unaccounted.has(sym)) continue;
         // Channel exit — the trend broke; sell the whole position (this is the "getting out", on signal).
         if (cur < lo) await persistAndPlace(ctx, sub, mode, {
           symbol: sym, side: 'sell', qty: qtyHeld, price: cur,

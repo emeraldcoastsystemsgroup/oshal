@@ -90,6 +90,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 reaches the earnings watcher. fireRule sizes straight off the VENUE's positions (deps.positions → heldQty) and honoured NEITHER the unmanaged mark NOR TRADING_CORE_SYMBOLS, so it sat outside the closure PR #486 drove through dispatchTradingSchedule/runAutopilot — it hangs off the trading-events leg, a different ScheduleService branch, over the same book. Positions now run through withEngineCostBasis before the quantity is read, and a rule whose symbol the ledger cannot account for, or which TRADING_CORE_SYMBOLS ring-fences, terminates through closeRule instead of placing. BOTH sides are gated and neither can invert into a buy: the gate is reached only for a name the book already holds (`heldQty <= 0` returns above and the rule never opens a fresh position), so the beat-BUY it withholds is one that would only have ADDED to an unaccounted holding — which ADR-159 refuses as flatly as it refuses the exit. Routed through closeRule rather than patchRule so a rule whose earlier tranche already moved shares still ends `fired_short` with the exposed-share warning instead of a silent `no_action`. Two new RuleShortReason values, `unmanaged` and `ring_fenced`, keep the terminal state machine-readable.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Fix round 4, two live-money holes: (a) a tranched protective sell could end SILENTLY short — a rule that returned 'partial' stays `classified`, and the stale-classification and act-window stand-downs both wrote status='no_action' without ever reading `order.placedQty`, so "sell 100% of 1000" that placed 264 and then met a rebound was filed as if nothing was owed, with 736 shares exposed and no alert. Every terminal write now goes through ONE closer (closeRule): a rule that moved shares but did not complete its intent ends in the new terminal status `fired_short` (never `no_action`) with truncated=true, a machine-readable shortReason, the exposed-share sentence on the timeline and a WARN — at EVERY exit, including expiry, a vanished book and an engine refusal, not just the two the previous round handled. (b) the ambiguous-failure retry was side-blind and could double-fill: the engine DELETEs its status='submitting' reservation in its catch, so a retry under the same requestId genuinely re-submits, and Schwab ignores clientOrderId (2026-08-18 twin fills). The retry now settles with the venue's own order record first (settleAtVenue → deps.listOrders over ±TRADING_EARNINGS_RULE_VENUE_LOOKBACK_MIN, matched symbol/side/qty exactly as rebindOrder does): a found order is ADOPTED rather than re-placed, a positively-absent SELL retries, a BUY never re-places, and an unaskable venue stops the rule loudly. The attempt bound is per RULE (a successful tranche no longer resets it, which used to multiply the bound by the tranche count). Also: the once-only timeline note now scans the whole timeline, so an interleaved entry no longer lets a 5xx deferral note repeat.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fix round 3: (a) a protective sell larger than one guardrail-capped order is no longer silently truncated to whatever fits and then marked `fired` — the operator's INTENT is split from what one order may carry (intendedRuleQty vs guardrailCappedQty), a sell finishes in TRANCHES over following ticks under distinct requestIds (intent fixed at the first fire, so an unfilled tranche cannot become an oversell, bounded by TRADING_EARNINGS_RULE_MAX_TRANCHES), and a rule that still ends short records the shares left exposed on its timeline, in the order state and in the decision rationale; (b) an UNKNOWN place failure (a broker adapter's plain Error — the engine deletes its reservation on the way out, and Schwab has no client-order-id) is now caught at the site, counted and bounded by TRADING_EARNINGS_RULE_MAX_PLACE_ATTEMPTS instead of re-firing every tick to expiry; (c) a classification older than TRADING_EARNINGS_RULE_STALE_HOURS stands the rule down rather than trading a stale verdict — which also bounds the 5xx defer loop; (d) the document-read retry bound is the TRADING_EARNINGS_RULE_MAX_DOC_ATTEMPTS knob, and the remaining exported CRUD helpers carry full JSDoc.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fix round 2: (a) size against the marketable LIMIT the order will carry, not the last print — the engine re-checks notional at refPrice = limit_price, so a cap-bound buy sized off the print exceeded the ceiling at the limit and was refused 422 guardrail_blocked, terminally (self-inflicted); (b) a 5xx from placeDecisionOrder (broker_not_configured, settlement_unknown — both thrown before any venue submission, reservation released) now leaves the rule `classified` to retry under the same requestId instead of permanently disarming the protective miss→sell, and the minted decision is REUSED and repriced across retries so a deferral does not fan out ledger rows; (c) every catch logs the err, the live-gate wait is debug (it ran every full tick), the EDGAR user agent is read per call, and a rule armed after its window opened says so on its timeline.
@@ -105,9 +106,11 @@ import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shar
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { getActiveRegistry } from '@/app/extensions/swarm/swarm-bot-registry';
 import { createWorldIntelligenceService } from '@/features/world-data';
-import { getBrokerReader, liveTradingEnabled, type OrderResult, type Position, type TradingBook } from '@/features/trading';
+import { getBrokerReader, liveTradingEnabled, unmanagedSymbols, type OrderResult, type Position, type TradingBook } from '@/features/trading';
 import { loadBook } from './trading-books-store';
 import { guardrails, TradingError, type Guardrails } from './trading-engine';
+import { withEngineCostBasis } from './trading-engine-cost-basis';
+import { coreConfig } from './trading-dispatch-core';
 import { defaultDeps, type EventPlanDeps } from './trading-event-plans';
 import { resolveUserLlmConnection } from './routes/free-tier-rotation';
 import { executeBotOrInline } from './routes/inline-bot-execution';
@@ -175,7 +178,7 @@ export interface EventRuleSizing { mode: 'pct_of_position' | 'shares' | 'notiona
  */
 export type EventRuleStatus = 'armed' | 'detected' | 'classified' | 'fired' | 'fired_short' | 'no_action' | 'expired' | 'cancelled' | 'error';
 /** Why a rule stopped short of its intent — machine-readable beside the timeline sentence. */
-export type RuleShortReason = 'guardrail_cap' | 'tranche_bound' | 'stale_verdict' | 'reaction_faded' | 'no_longer_held' | 'expired' | 'book_missing' | 'engine_refused' | 'venue_ambiguous';
+export type RuleShortReason = 'guardrail_cap' | 'tranche_bound' | 'stale_verdict' | 'reaction_faded' | 'no_longer_held' | 'expired' | 'book_missing' | 'engine_refused' | 'venue_ambiguous' | 'unmanaged' | 'ring_fenced';
 /** The 8-K the watcher locked on to. */
 export interface RuleFiling { form: string; accession: string; acceptedAt: string; filedDate: string; items: string; url: string; docAttempts?: number }
 /** The analyst's structured read of the company's own release. */
@@ -1006,12 +1009,32 @@ function ruleOrderState(rule: EventRuleRow): RuleOrderState {
  */
 async function fireRule(ctx: AppContext, sub: string, rule: EventRuleRow, book: TradingBook, side: 'buy' | 'sell', price: number, deps: EarningsRuleDeps, now: Date): Promise<string | null> {
   if (tradingHalted()) { await noteOnce(ctx.pool, sub, rule, 'halted', 'TRADING_HALT is on — the rule holds its action until trading resumes', now); return null; }
-  const heldQty = (await deps.positions(book, sub)).find((p) => p.symbol.toUpperCase() === rule.symbol && p.qty > 0)?.qty ?? 0;
+  // ADR-159 — THE MARK, before the quantity is read: `unmanaged` on every long this book's own filled
+  // orders do not cover. A failed ledger read marks nothing, so a database blip cannot silently
+  // unmanage the book and the rule behaves exactly as it does today.
+  const positions = await withEngineCostBasis(ctx, sub, book, await deps.positions(book, sub));
+  const symbol = rule.symbol.toUpperCase();
+  const heldQty = positions.find((p) => p.symbol.toUpperCase() === symbol && p.qty > 0)?.qty ?? 0;
   const order = ruleOrderState(rule);
   if (heldQty <= 0) {
     return closeRule(ctx, sub, rule, order, {
       status: 'no_action', event: 'no_action', shortReason: 'no_longer_held',
       detail: `${rule.symbol} is no longer held on ${rule.bookRef} (sold by the operator or the earnings blackout) — the rule does not open a fresh position`,
+    }, now);
+  }
+  // The two fences the engine will not apply for this shape. Reached ONLY for a name the book
+  // actually holds — `heldQty <= 0` returned above and this rule never opens a fresh position — so
+  // both sides are gated and neither can invert: the beat-BUY only ever adds to a holding and the
+  // miss-SELL only ever reduces one, and ADR-159 withholds "no autopilot entry that adds to it" as
+  // flatly as it withholds the exit. closeRule promotes this to `fired_short` with the exposed-share
+  // warning if an earlier tranche already moved shares, so a part-filled intent is never filed silent.
+  const fenced = new Set(coreConfig().symbols).has(symbol);
+  if (fenced || unmanagedSymbols(positions).has(symbol)) {
+    return closeRule(ctx, sub, rule, order, {
+      status: 'no_action', event: 'no_action', shortReason: fenced ? 'ring_fenced' : 'unmanaged',
+      detail: fenced
+        ? `${rule.symbol} is ring-fenced by TRADING_CORE_SYMBOLS — the engine holds it and emits no order for it`
+        : `the engine's own filled orders do not account for the ${heldQty} ${rule.symbol} held on ${rule.bookRef} — monitored, never managed`,
     }, now);
   }
   // Size at the LIMIT the order will carry, not the print: the engine re-checks the same notional

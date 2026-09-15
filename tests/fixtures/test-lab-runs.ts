@@ -47,7 +47,7 @@ export async function startTestLabRunFixture(options: { catalog?: InstalledAppTe
         executionRevision: state.test.executionRevision,image: 'fixture@sha256:' + 'c'.repeat(64),cleanupVerified: state.cleanupVerified };
     },
   } as unknown as InstalledAppTestCatalog;
-  const store = new PostgresTestLabRunStore(pool,Promise.resolve(),async () => true); let service = new TestLabRunService(store,catalog);
+  const store = new PostgresTestLabRunStore(pool,() => Promise.resolve(),async () => true); let service = new TestLabRunService(store,catalog);
   const app = express(); app.use(express.json());
   const runContext = async (req: express.Request) => ({
     actor: { issuer: req.get('x-fixture-issuer') === 'other' || req.get('cookie') === 'actor=other' ? 'https://other.test' : 'https://first.test',sub: 'same-sub' },

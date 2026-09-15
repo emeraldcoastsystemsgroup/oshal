@@ -10,6 +10,7 @@
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | Made SEQ 2's promise true. OSHAL_SKIP_PREPUSH_VERIFY=1 exited at the very top of the script, BEFORE the publish gate — so the one documented escape hatch for a slow/unrunnable typecheck also silently disabled the leak wall on a public repo. The skip check now sits after the gate: you may skip the typecheck, never the gate.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | SEQ 3 preferred `$REPO_ROOT/node_modules` when present, which in an agent worktree is normally a JUNCTION back to the main checkout. Linking a link makes tsc resolve @types through a doubly-indirect path and emit ~36 spurious TS2742 "inferred type cannot be named without a reference to ../../../node_modules/@types/qs ... likely not portable" errors, so the newly-loud gate BLOCKED a push whose HEAD typechecks clean — SEQ 3 traded a silent skip for a false positive. Measured on the same commit: link-to-link 36 errors, direct link to the real directory 0. Now a linked worktree always resolves the main checkout's real node_modules and only falls back to its own. Found immediately because SEQ 3 made the gate loud, which is the argument for loud gates.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | The publish gate now runs with --pre-push and inherits this hook's stdin, where git writes one ref-update line per pushed ref. Without it the gate could only judge HEAD's unpublished commits, and a push BY SHA - the shared checkout's private-index recipe - publishes commits HEAD never reaches; the gate's new model-attribution check needs exactly the pushed set. Nothing else in this hook reads stdin.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | The gate was PERMANENTLY RED from every clone, and in one night three lanes pushed past it with OSHAL_SKIP_PREPUSH_VERIFY=1 - each correctly judging the failure pre-existing, each re-verifying by hand. A fail-closed gate that teaches everyone to skip it is worse than no gate. Cause: tsconfig sets "declaration": true, so tsc does declaration-emit checking even under --noEmit, and that has to NAME the file every inferred type comes from. node_modules is a LINK in this tree BY DESIGN (you cannot npm install on every push), so tsc resolved the link to its realpath and the only name it could give @types/qs was thirteen ../ back out to the real checkout - TS2742 "cannot be named ... likely not portable" against createApplicationAuthorizationWiring, which returns an express request adapter. SEQ 5 read this signature as link-TO-link; it is not. Measured 2026-09-15 on origin/main 7adc2f02 with a PROVEN single junction straight to the real directory: 1 error, exit 2. The verification tsc now passes --preserveSymlinks, so it names node_modules where it sits in the tree - the layout the real checkout has - and the gate answers the question it is actually asking. It cannot mask a real error: the real node_modules holds ZERO symlinks outside .bin (swept 2026-09-15, 660 packages), so this hook's own link is the only thing the flag can act on; measured against the real @types, the flag is a no-op when node_modules is a real directory (0 errors either way) and a GENUINE TS2742 raised by a transitively nested real package is still reported under it, as are ordinary type errors. Rejected the alternative of switching declaration checking off in the verification run, which would have dropped a whole real diagnostic class - that is the masking this avoids. Guarded by tests/unit/pre-push-preserve-symlinks.spec.ts, which runs the real tsc through a real link.
 # =============================================================================
 #
 # Exports committed HEAD to a scratch tree and typechecks THAT. Rule 0a: one worktree, one index,
@@ -42,7 +43,18 @@ fi
 # wall on a public repo is not. This check used to sit at the top of the file, which quietly made
 # the flag do both.
 if [ "${OSHAL_SKIP_PREPUSH_VERIFY:-0}" = "1" ]; then
-  echo "pre-push: HEAD typecheck SKIPPED (OSHAL_SKIP_PREPUSH_VERIFY=1) — publish gate still ran." >&2
+  # Say exactly what was and was not checked. A reader who sees only "SKIPPED" cannot tell whether
+  # the leak wall was skipped too, and the whole point of an honest escape hatch is that the next
+  # person knows what they are inheriting.
+  echo "" >&2
+  echo "⚠ pre-push: COMMITTED HEAD WAS NOT TYPECHECKED (OSHAL_SKIP_PREPUSH_VERIFY=1)." >&2
+  echo "  NOT checked: whether the commits in this push compile TOGETHER. That is the only check that" >&2
+  echo "  reads what you pushed rather than what is on your disk, so a green local typecheck says" >&2
+  echo "  nothing here — the classic shape is a file present locally but never committed, landing the" >&2
+  echo "  importers of a module without the module (Change Log 1)." >&2
+  echo "  STILL RAN, and never bypassable by this variable: the publish gate (the leak wall)." >&2
+  echo "  You own what lands. If main goes red, it is yours to fix now, not next session." >&2
+  echo "" >&2
   exit 0
 fi
 
@@ -106,7 +118,17 @@ if ! ln -s "$NODE_MODULES" "$VERIFY_DIR/node_modules" 2>/dev/null; then
   fi
 fi
 
-OUT="$(cd "$VERIFY_DIR" && timeout 600 npx tsc -p tsconfig.json --noEmit --pretty false 2>&1)"
+# --preserveSymlinks is what makes this tree answer the question the gate is actually asking.
+# node_modules is LINKED in here by design, and tsconfig sets "declaration": true, so tsc does
+# declaration-emit checking even under --noEmit and has to NAME the file each inferred type comes
+# from. Resolving the link to its realpath leaves it able to name @types/qs only by a path that
+# climbs out of the verification tree, so it raises TS2742 "likely not portable" against code that
+# is fine — a permanent RED that taught three lanes in one night to push with the override. With the
+# flag, node_modules is named where it sits in the tree, which is the layout the real checkout has.
+# It suppresses no diagnostic: the real node_modules contains no symlinks outside .bin, so this
+# hook's own link is the only thing the flag acts on, and a genuine TS2742 from a nested real
+# package is still reported under it. (Change Log 7.)
+OUT="$(cd "$VERIFY_DIR" && timeout 600 npx tsc -p tsconfig.json --noEmit --pretty false --preserveSymlinks 2>&1)"
 RC=$?
 
 if [ $RC -ne 0 ]; then
