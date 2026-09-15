@@ -22,8 +22,9 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | symbolBlocklist (TRADING_SYMBOL_BLOCKLIST): operator standing exclusions the engine can never buy — "drop MRNA" said repeatedly had no enforceable home; the engine re-bought whatever ranked. Exits deliberately unaffected.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | PolicyOverride param on riskPolicy (ADR-095 Strategy Library apply-to-profile): an applied lab strategy's posture beats both env postures, and its takeProfitPct (including an explicit null = posture default) beats TRADING_TAKE_PROFIT_PCT. No override → behavior unchanged.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SECTOR entries for the 19 regime-reweight names (universe 140 → 159): new 'materials' bucket (mining/chemicals/steel get their own cap headroom, not riding under 'consumer' industrials) and new 'storage' bucket for the memory/NAND pool — MU and SKHY MOVE into it from 'tech'/'other' so storage crowding is capped as one trade, not hidden under tech headroom.
- * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — exitsToRun, trailingExits and rebalanceTrims emit NOTHING for a position marked `unmanaged` (the engine's own filled orders do not account for the quantity held), and unmanagedSymbols exposes that same rule to the dispatch legs. The engine reads the VENUE's positions, so a share bought by hand is picked up and traded against a basis the engine never paid. Withholding only ever REMOVES a decision from the plan; a position without the mark is byte-identical to today, which keeps the strategy-lab replay and every other caller that never runs the attachment unchanged. Exposure, capital and drawdown deliberately keep counting the position — it is real money at the venue.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Veto a stop-loss that exists only because the venue reports a wash-sale-adjusted basis (washSaleStopVetoed). On 2026-09-14 the live book stop-lossed 10 names and all 10 were within 5% of what the engine had paid - CRM read -5.07% while trading +3.24% above its own buy. The veto can only SUPPRESS a stop the venue basis already wanted; it never creates one, and take-profit, trailing and cap trims are unchanged.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — exitsToRun, trailingExits and rebalanceTrims emit NOTHING for a position marked `unmanaged` (the engine's own filled orders do not account for the quantity held), and unmanagedSymbols exposes that same rule to the dispatch legs. The engine reads the VENUE's positions, so a share bought by hand is picked up and traded against a basis the engine never paid. Withholding only ever REMOVES a decision from the plan; a position without the mark is byte-identical to today, which keeps the strategy-lab replay and every other caller that never runs the attachment unchanged. Exposure, capital and drawdown deliberately keep counting the position — it is real money at the venue.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 round 2 — rotationBenches withholds the bench SELL for a position marked `unmanaged`, the fourth sell rule in this file and the one SEQ 9 missed. The mark is applied to `cold` only, never to `held` or `heldSyms`: those decide which names count as already-held, and a withheld name dropped from them would resurface as a hot BENCH CANDIDATE the caller then buys. Filtering `cold` can only shorten the returned list.
  *
  * @module portfolio
  */
@@ -366,6 +367,9 @@ const ROTATION_MARGIN = 0.25;  // the hot hand must beat the cold starter by thi
  * and beating the cold name by ROTATION_MARGIN), bench the cold name to free its capital. The caller's
  * entry step then starts the hot name in the freed slot. Coldest benched first; churn-capped per fire.
  * This is what moves the money to the hot hand instead of riding a cold starter down to its stop.
+ *
+ * ADR-159: a position marked `unmanaged` is never benched. It still counts as held (so the hot bench
+ * cannot contain it) and still occupies its slot; it simply never becomes a sell.
  * @param positions - Current open positions.
  * @param strength - Per-symbol current strength (score + action) from the scan.
  * @param policy - Active risk policy (maxPositions bounds the per-fire swap count).
@@ -385,7 +389,12 @@ export function rotationBenches(positions: Position[], strength: Map<string, Nam
   if (bestAvail < ROTATION_HOT) return []; // nobody hot enough on the bench to swap anyone for
 
   // Cold held names that a much-hotter candidate clearly beats, coldest first.
+  // ADR-159: a position marked `unmanaged` is never benched — a bench IS a sell, and the engine has no
+  // basis for this quantity. Withheld HERE and not from `held`/`heldSyms` above: those decide which
+  // names count as already-held, so removing it there would expose the same name as a BENCH CANDIDATE
+  // the caller then BUYS. Dropping it only from `cold` can shorten this list, never lengthen it.
   const cold = held
+    .filter((p) => !p.unmanaged)
     .map((p) => ({ p, score: strength.get(p.symbol.toUpperCase())?.score ?? -Infinity }))
     .filter((x) => x.score < ROTATION_COLD && bestAvail - x.score >= ROTATION_MARGIN)
     .sort((a, b) => a.score - b.score);

@@ -4,8 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The engine's OWN average cost per position, replayed from its own filled orders, so a stop-loss can tell a real loss from a wash-sale artifact. Schwab reports the wash-sale-adjusted basis; on 2026-09-14 the live book stop-lossed 10 names and all 10 were within 5% of what the engine had actually paid (two were up). Book-scoped by (user_sub, book_id) because the paper and live books trade the same symbols at different fills — replaying them together produces a basis neither book ever had. Trusted only when the replayed quantity equals the venue quantity.
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159: a long the ledger does not cover is now MARKED `unmanaged` instead of being returned unchanged, and the attachment log line carries the count. The engine reads the venue's positions, so a share bought by hand lands in the armed book and acquires an engine decision measured against a basis the engine never paid. The mark is what lets every order-decision path withhold for it while exposure, capital and drawdown keep counting it. A failed read still degrades to "no engine basis" and marks NOTHING, so a database blip cannot silently unmanage a whole book.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Price realized P&L on the engine's own cost: replayEngineRealized (pure, per sell, same average-cost reset-on-flat replay) and engineRealizedForBook (book-scoped read). The stored realized_pnl uses the venue's wash-sale-adjusted average and counts each disallowed loss twice (-6,451.61 against -1,540.50 of actual cash on the live book's flat names); reports read this instead. A sell the ledger cannot cover gets no figure rather than a guessed one. No decision path reads realized P&L, and none changes here.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159: a long the ledger does not cover is now MARKED `unmanaged` instead of being returned unchanged, and the attachment log line carries the count. The engine reads the venue's positions, so a share bought by hand lands in the armed book and acquires an engine decision measured against a basis the engine never paid. The mark is what lets every order-decision path withhold for it while exposure, capital and drawdown keep counting it. A failed read still degrades to "no engine basis" and marks NOTHING, so a database blip cannot silently unmanage a whole book.
  */
 
 import type { AppContext } from './composition-root';
@@ -118,6 +118,11 @@ export async function withEngineCostBasis(
         ORDER BY upper(symbol), created_at, order_id`,
       [sub, book.bookId, longs])).rows;
   } catch (err) {
+    // OPEN QUESTION (operator): this read fails OPEN. A pool failure returns the positions unmarked,
+    // so for that fire NOTHING is withheld and the engine manages the whole book against the venue
+    // basis — the opposite of the positions/account/equity-guard reads, which fail CLOSED and skip
+    // the fire. It is deliberate today (a database blip must not silently unmanage a whole book and
+    // strip its protective exits), and it is the operator's call to keep or change. Not decided here.
     logger.error({ err, bookId: book.bookId, symbols: longs.length }, 'engine cost basis unavailable — stops fall back to the venue basis');
     return positions;
   }

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-138 D3 pure guards: the overlay math (no pin, partial pin scales pro rata, full pin removes the symbol, over-pin never opens a short), the rules normalizer (pct XOR price per leg; stop XOR trailing; clamps), and the `lot-` request-id convention; plus SOURCE guards that the dispatcher applies the overlay BEFORE positions feed any decision and that freeStaleSells skips lot orders, and that the engine maps extended_hours for LIMIT orders only.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 moved the cost-basis attachment up into runAutopilot, so the SOURCE guard that the overlay feeds every decision now has two arrays to distinguish: `overlaid` (the pinned-lot subtraction) and the marked array withEngineCostBasis returns from it. The assertions follow that split — the overlay must still be applied before any leg reads positions, AND the mark must be applied to the overlaid array rather than the raw broker read, so a pinned lot can never be accounted for as an engine fill.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';

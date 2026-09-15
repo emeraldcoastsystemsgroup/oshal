@@ -4,8 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Cross the real boundary of the wash-sale veto. withEngineCostBasis catches ANY error and returns the positions unchanged, so a wrong column name or a broken book filter would make the fix silently inert in production while every pure test stayed green - the stop-losses would keep firing and nothing would say why. This drives the real SQL against a real PostgreSQL and the real oshal_trading_orders schema, inside a transaction that is always rolled back.
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 at the same real boundary: the `unmanaged` mark is what withholds every order decision for a position, so the query that decides it has to be exercised against the real oshal_trading_orders schema - a wrong column or a broken book filter would otherwise mark a whole covered book unmanaged and silently strip its protective exits. Asserts the mark on a venue quantity the ledger only partly covers and its ABSENCE on a covered one.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | engineRealizedForBook against the real schema: prices a live sell on the live book's own fill, keyed by order id, ignores a rejected row, and reads nothing from the paper book on the same symbol.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 at the same real boundary: the `unmanaged` mark is what withholds every order decision for a position, so the query that decides it has to be exercised against the real oshal_trading_orders schema - a wrong column or a broken book filter would otherwise mark a whole covered book unmanaged and silently strip its protective exits. Asserts the mark on a venue quantity the ledger only partly covers and its ABSENCE on a covered one.
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
