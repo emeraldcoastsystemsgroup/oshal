@@ -3,7 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards the post-deploy live verification. On 2026-09-15 a deploy printed DEPLOYED while Jarvis answered nothing and an operator ticket escalated on manifest_worker_dispatch_failed: every existing gate measures containers, none measured the product. Two boundaries are crossed for real here — the actual scripts/lib/deploy-verify.sh executed by the real Git Bash with a stubbed docker binary (ordering, loudness, the skip switch, the exact remedy text), and the actual probe script executed by the real Node against a real loopback HTTP server speaking the api's contracts (verdicts and cleanup). What is NOT crossed, and is stated rather than implied: the real api, the real queue manager and the real Jarvis bot. Only a deploy reaches those, which is why the deploy is where this runs.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards the post-deploy live verification. On 2026-09-15 a deploy printed DEPLOYED while Jarvis answered nothing and an operator ticket escalated on manifest_worker_dispatch_failed: every existing gate measures containers, none measured the product. Two boundaries are crossed for real here — the actual scripts/lib/deploy-verify.sh executed by the real Git Bash with a stubbed docker binary (ordering, loudness, the skip switch, the exact remedy text), and the actual probe checks run by the real Node against a real loopback HTTP server speaking the api's contracts (verdicts, cleanup, and no secret in the output) — in ONE process, because this host's firewall refuses a cross-process connection to a Node listener. What is NOT crossed, and is stated rather than implied: the real api, the real queue manager and the real Jarvis bot. Only a deploy reaches those, which is why the deploy is where this runs.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -11,6 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 const LIB = path.resolve('scripts/lib/deploy-verify.sh');
@@ -199,27 +200,27 @@ describe('scripts/oshal-deploy.sh — where the verification sits in the run', (
   });
 });
 
-/* ── The probe's own verdicts, against a real loopback server speaking the api's contracts ──
- * The api itself is not running here; the HTTP shapes are. That makes these cases closure
- * evidence for the probe's verdict and cleanup logic ONLY — the real api, queue manager and
- * Jarvis bot are crossed by the deploy, which is the point of shipping this as a deploy gate. */
+
+/* ── The probe's own verdicts, against a REAL loopback server speaking the api's contracts ──
+ * The fixture server and the checks run in ONE process on purpose: this host's firewall refuses a
+ * cross-process connection to a Node listener (curl reproduces it against the same socket that
+ * answers a same-process fetch), so a spawned probe could only ever be tested against a doubled
+ * fetch. Here the HTTP stack, the real `fetch`, the real headers and the real JSON are crossed.
+ * What is NOT crossed, and is stated rather than implied: the real api, the real queue manager and
+ * the real Jarvis bot. Only a deploy reaches those — which is why this ships as a deploy gate. */
 
 type Reply = { status: number; body: unknown };
+const probe = createRequire(import.meta.url)(PROBE) as {
+  runCheck: (name: string) => Promise<{ ok: boolean; code: number; detail: string }>;
+};
+
 let server: Server;
-let port = 0;
 let requests: string[] = [];
 let replies: Record<string, Reply | Reply[]> = {};
 
-/** Read one JSON request body, tolerating an empty one. */
-async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) chunks.push(chunk as Buffer);
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch { return {}; }
-}
-
-/** Route one fixture request: record it, then answer from the per-case `replies` table. */
-async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-  await readJson(request);
+/** Route one fixture request: drain and record it, then answer from the per-case `replies` table. */
+function handle(request: IncomingMessage, response: ServerResponse): void {
+  request.resume();
   const route = `${request.method} ${(request.url || '').split('?')[0]}`;
   requests.push(route);
   const key = Object.keys(replies).find((candidate) => route.startsWith(candidate));
@@ -232,111 +233,166 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
 }
 
 beforeAll(async () => {
-  server = createServer((request, response) => { void handle(request, response); });
+  server = createServer(handle);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  port = (server.address() as { port: number }).port;
+  const { port } = server.address() as { port: number };
+  Object.assign(process.env, {
+    PORT: String(port),
+    SWARM_SERVICE_SECRET: SECRET,
+    OSHAL_OPERATOR_SUBS: SUBJECT,
+    OSHAL_VERIFY_SUB: '',
+    OSHAL_VERIFY_POLL_MS: '5',
+    OSHAL_VERIFY_BUDGET_MS: '400',
+    OSHAL_VERIFY_REQUEST_TIMEOUT_MS: '4000',
+  });
 });
 
 afterAll(async () => { await new Promise<void>((resolve) => { server.close(() => resolve()); }); });
-
 afterEach(() => { requests = []; replies = {}; });
 
-/** Run the REAL probe script against the fixture server. NODE_TEST_CONTEXT is stripped so a
- *  child can never inherit a harness variable that rewrites its exit code. */
-function probe(check: 'jarvis' | 'ticket', env: Record<string, string> = {}) {
-  const childEnv = { ...process.env, ...env, PORT: String(port), SWARM_SERVICE_SECRET: SECRET, OSHAL_OPERATOR_SUBS: SUBJECT, OSHAL_VERIFY_POLL_MS: '10', OSHAL_VERIFY_BUDGET_MS: '900' };
-  delete childEnv.NODE_TEST_CONTEXT;
-  return spawnSync(process.execPath, [PROBE, check], { encoding: 'utf8', timeout: PROBE_TIMEOUT_MS, env: childEnv });
-}
-
 const MINT: Reply = { status: 201, body: { id: 'pat-1', token: 'never-printed-token-value' } };
+const ASK_ACCEPTED: Reply = { status: 202, body: { jobId: 'job-1' } };
 
 describe('scripts/operations/deploy-live-verification.js — verdicts and cleanup', () => {
-  it('passes when Jarvis answers, and closes the thread and revokes the token afterwards', () => {
+  it('passes when Jarvis answers, and closes the thread and revokes the token afterwards', async () => {
     replies = {
       'POST /api/cli-tokens': MINT,
-      'POST /api/jarvis/ask': { status: 202, body: { jobId: 'job-1' } },
+      'POST /api/jarvis/ask': ASK_ACCEPTED,
       'GET /api/jarvis/ask/result': [{ status: 200, body: { status: 'pending' } }, { status: 200, body: { status: 'done', answer: 'ready' } }],
     };
-    const run = probe('jarvis');
-    expect(run.status, run.stdout + run.stderr).toBe(0);
-    expect(run.stdout).toContain('Jarvis answered');
+    const verdict = await probe.runCheck('jarvis');
+    expect(verdict, verdict.detail).toMatchObject({ ok: true, code: 0 });
+    expect(verdict.detail).toContain('Jarvis answered');
     expect(requests).toContain('POST /api/jarvis/thread/close');
     expect(requests).toContain('DELETE /api/cli-tokens/pat-1');
   });
 
   it.each([
-    ['an error verdict', { status: 200, body: { status: 'error', error: 'authorization_bot_posture_unavailable' } }],
-    ['a done verdict with no answer text', { status: 200, body: { status: 'done', answer: '' } }],
-    ['an expired job', { status: 200, body: { status: 'expired' } }],
-  ])('fails on %s, and still revokes the token', (_label, result) => {
-    replies = { 'POST /api/cli-tokens': MINT, 'POST /api/jarvis/ask': { status: 202, body: { jobId: 'job-1' } }, 'GET /api/jarvis/ask/result': result as Reply };
-    const run = probe('jarvis');
-    expect(run.status).toBe(1);
+    ['an error verdict', { status: 200, body: { status: 'error', error: 'authorization_bot_posture_unavailable' } }, 'authorization_bot_posture_unavailable'],
+    ['a done verdict with no answer text', { status: 200, body: { status: 'done', answer: '' } }, 'no answer text'],
+    ['an expired job', { status: 200, body: { status: 'expired' } }, "status 'expired'"],
+  ])('fails on %s, and still revokes the token', async (_label, result, expected) => {
+    replies = { 'POST /api/cli-tokens': MINT, 'POST /api/jarvis/ask': ASK_ACCEPTED, 'GET /api/jarvis/ask/result': result as Reply };
+    const verdict = await probe.runCheck('jarvis');
+    expect(verdict.code).toBe(1);
+    expect(verdict.detail).toContain(expected as string);
     expect(requests).toContain('DELETE /api/cli-tokens/pat-1');
   });
 
-  it('fails when the ask itself is refused, naming the status', () => {
-    replies = { 'POST /api/cli-tokens': MINT, 'POST /api/jarvis/ask': { status: 404, body: { error: 'session_not_found' } } };
-    const run = probe('jarvis');
-    expect(run.status).toBe(1);
-    expect(run.stdout).toContain('404');
-    expect(run.stdout).toContain('session_not_found');
+  it('fails when Jarvis never answers inside the budget', async () => {
+    replies = { 'POST /api/cli-tokens': MINT, 'POST /api/jarvis/ask': ASK_ACCEPTED, 'GET /api/jarvis/ask/result': { status: 200, body: { status: 'pending' } } };
+    const verdict = await probe.runCheck('jarvis');
+    expect(verdict.code).toBe(1);
+    expect(verdict.detail).toContain('never answered within');
+    expect(requests).toContain('POST /api/jarvis/thread/close');
   });
 
-  it('passes when the queue moves the synthetic ticket, then cancels and deletes it', () => {
+  it('fails when the ask itself is refused, naming the status', async () => {
+    replies = { 'POST /api/cli-tokens': MINT, 'POST /api/jarvis/ask': { status: 404, body: { error: 'session_not_found' } } };
+    const verdict = await probe.runCheck('jarvis');
+    expect(verdict.code).toBe(1);
+    expect(verdict.detail).toContain('404');
+    expect(verdict.detail).toContain('session_not_found');
+  });
+
+  it('queues the synthetic ticket at the only state the queue manager polls', async () => {
+    const bodies: unknown[] = [];
+    replies = { 'POST /api/cli-tokens': MINT, 'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } }, 'GET /api/tickets/': { status: 200, body: { status: 'complete' } } };
+    const capture = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(chunk));
+      request.on('end', () => { bodies.push(Buffer.concat(chunks).toString('utf8')); handle(request, response); });
+    });
+    await new Promise<void>((resolve) => capture.listen(0, '127.0.0.1', resolve));
+    const previous = process.env.PORT;
+    process.env.PORT = String((capture.address() as { port: number }).port);
+    try {
+      await probe.runCheck('ticket');
+    } finally {
+      process.env.PORT = previous;
+      await new Promise<void>((resolve) => { capture.close(() => resolve()); });
+    }
+    const created = JSON.parse(bodies.find((body) => String(body).includes('ticketType')) as string);
+    expect(created).toMatchObject({ status: 'approved', ticketType: 'task' });
+  });
+
+  it('passes when the queue moves the synthetic ticket, then cancels and deletes it', async () => {
     replies = {
       'POST /api/cli-tokens': MINT,
       'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } },
       'GET /api/tickets/': [{ status: 200, body: { status: 'approved' } }, { status: 200, body: { status: 'complete' } }],
     };
-    const run = probe('ticket');
-    expect(run.status, run.stdout + run.stderr).toBe(0);
-    expect(run.stdout).toContain("'approved' -> 'complete'");
+    const verdict = await probe.runCheck('ticket');
+    expect(verdict, verdict.detail).toMatchObject({ ok: true, code: 0 });
+    expect(verdict.detail).toContain("'approved' -> 'complete'");
     expect(requests).toContain('PUT /api/tickets/ticket-1/cancel');
     expect(requests).toContain('DELETE /api/tickets/ticket-1');
   });
 
-  it('fails when the ticket escalates — the exact 2026-09-15 shape — and still cleans up', () => {
+  it('fails when the ticket escalates — the exact 2026-09-15 shape — and still cleans up', async () => {
     replies = {
       'POST /api/cli-tokens': MINT,
       'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } },
       'GET /api/tickets/': { status: 200, body: { status: 'escalated' } },
     };
-    const run = probe('ticket');
-    expect(run.status).toBe(1);
-    expect(run.stdout).toContain("landed in 'escalated'");
+    const verdict = await probe.runCheck('ticket');
+    expect(verdict.code).toBe(1);
+    expect(verdict.detail).toContain("landed in 'escalated'");
     expect(requests).toContain('DELETE /api/tickets/ticket-1');
   });
 
-  it('fails when the queue never dispatches the ticket at all', () => {
+  it('fails when the queue never dispatches the ticket at all', async () => {
     replies = {
       'POST /api/cli-tokens': MINT,
       'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } },
       'GET /api/tickets/': { status: 200, body: { status: 'approved' } },
     };
-    const run = probe('ticket');
-    expect(run.status).toBe(1);
-    expect(run.stdout).toContain('the queue never dispatched it');
+    const verdict = await probe.runCheck('ticket');
+    expect(verdict.code).toBe(1);
+    expect(verdict.detail).toContain('the queue never dispatched it');
     expect(requests).toContain('DELETE /api/tickets/ticket-1');
   });
 
-  it('refuses with its own exit code, and mints nothing, when the box has no operator identity', () => {
-    const run = probe('jarvis', { OSHAL_OPERATOR_SUBS: '', OSHAL_VERIFY_SUB: '' });
-    expect(run.status).toBe(2);
-    expect(run.stdout).toContain('OSHAL_OPERATOR_SUBS is empty');
-    expect(requests).toEqual([]);
+  it('fails without leaking anything when the token cannot be minted', async () => {
+    replies = { 'POST /api/cli-tokens': { status: 401, body: { error: 'service_secret_rejected' } } };
+    const verdict = await probe.runCheck('ticket');
+    expect(verdict.code).toBe(1);
+    expect(verdict.detail).toContain('could not mint an operator token');
+    expect(requests).toEqual(['POST /api/cli-tokens']);
   });
 
-  it('never prints the service secret, the minted token or the operator subject', () => {
+  it('never puts the service secret, the minted token or the operator subject in its output', async () => {
     replies = {
       'POST /api/cli-tokens': MINT,
-      'POST /api/jarvis/ask': { status: 202, body: { jobId: 'job-1' } },
+      'POST /api/jarvis/ask': ASK_ACCEPTED,
       'GET /api/jarvis/ask/result': { status: 200, body: { status: 'done', answer: 'ready' } },
     };
-    const run = probe('jarvis');
+    const verdict = await probe.runCheck('jarvis');
     for (const secret of [SECRET, SUBJECT, 'never-printed-token-value']) {
-      expect(run.stdout + run.stderr, `the probe leaked ${secret.slice(0, 8)}…`).not.toContain(secret);
+      expect(verdict.detail, `the probe leaked ${secret.slice(0, 8)}…`).not.toContain(secret);
     }
+  });
+
+  it('refuses an unknown check name rather than doing something', async () => {
+    const verdict = await probe.runCheck('something-else');
+    expect(verdict.code).toBe(1);
+    expect(verdict.detail).toContain('unknown check');
+    expect(requests).toEqual([]);
+  });
+});
+
+describe('scripts/operations/deploy-live-verification.js — the CLI wrapper', () => {
+  /** Run the REAL script as the deploy runs it. NODE_TEST_CONTEXT is stripped so a child can
+   *  never inherit a harness variable that rewrites its exit code. This case needs no network:
+   *  a box with no operator identity is refused before the first request. */
+  it('exits 2 and says so when the box carries no operator identity to ask as', () => {
+    const childEnv: NodeJS.ProcessEnv = { ...process.env };
+    delete childEnv.NODE_TEST_CONTEXT;
+    delete childEnv.OSHAL_OPERATOR_SUBS;
+    delete childEnv.OSHAL_VERIFY_SUB;
+    const run = spawnSync(process.execPath, [PROBE, 'jarvis'], { encoding: 'utf8', timeout: PROBE_TIMEOUT_MS, env: childEnv });
+    expect(run.status, run.stdout + run.stderr).toBe(2);
+    expect(run.stdout).toContain('OSHAL_OPERATOR_SUBS is empty');
+    expect(run.stdout.trim().split('\n')).toHaveLength(1);
   });
 });
