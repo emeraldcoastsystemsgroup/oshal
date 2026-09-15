@@ -26,6 +26,7 @@
 # 19 | maintainer@emeraldcoastsystemsgroup.com   | BUG-22: the failure alert said the same sentence for 38 consecutive nights, so a NEW gate breaking inside the standing failure was indistinguishable from the standing failure. The subject now leads with what CHANGED ("NEW: image-smoke (night 38)" / "no change from last run") and the body separates newly-red from already-known and names the streak. Derived from the run log by scripts/ci/ci-gate-streak.mjs — no new state to keep. The headline is also written to the log, so the signal survives an api container that is down and cannot send mail.
 # 20 | maintainer@emeraldcoastsystemsgroup.com   | Collapse duplicate gate names before writing the run-outcome line. The 2026-09-08 run re-executed a block (a mid-run edit to this file shifted the running shell's byte offset) and recorded `unpushed-commits` plus three *-skipped names twice, which made the new alert headline unreadable. That line is the durable record every later streak comparison reads, so a duplicate written here is wrong in the log forever.
 # 21 | maintainer@emeraldcoastsystemsgroup.com   | Require pinned core/store compatibility in disposable exports and retain compiler diagnostics per run.
+# 22 | maintainer@emeraldcoastsystemsgroup.com   | New `alert-residue` post-gate: scripts/ci/check-alert-residue.sh fails when a fixture row from the alert integration guards is sitting in the DEPLOYMENT database. The two specs used to take whatever DSN the box handed them — here, the live database — and left 27 oshal_incident rows behind, one of which every surface reading that table still counts as a live incident. They now own a disposable PostgreSQL; this gate is what keeps that true after the next spec is written. SELECT-only, so it is safe against a running stack, and fail-closed: a database it could not query reports UNCHECKED, never clean.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -329,6 +330,17 @@ gate_unpushed_commits() {
   (cd "$REPO_DIR" && timeout 180 bash scripts/check-unpushed-commits.sh --fetch);
 }
 
+# POST-GATE: no fixture row from the alert integration guards may sit in the DEPLOYMENT database.
+# Those specs used to take whatever DSN the box offered, which here is the live database, and 27
+# oshal_incident rows in it are fixture rows — one of which every dashboard reading that table still
+# counts as a live incident. They now own a disposable PostgreSQL; this is the standing proof that
+# stays true. Reads only (SELECT), so it is safe against a running stack, and it is fail-closed: a
+# database it could not query reports UNCHECKED rather than clean. Runs against the REPO, not the
+# HEAD export — deployment state is not tree content.
+gate_alert_residue() {
+  (cd "$REPO_DIR" && timeout 180 bash scripts/ci/check-alert-residue.sh);
+}
+
 # BLOCKING (2026-07-24): the governance counters reached 0 (324 warnings burned down —
 # FSD deep imports rewritten to slice barrels, no-console converted to the pino logger or
 # justified-disabled, harness second-barrel lint-exempt). The gate now FAILS on any new
@@ -547,6 +559,7 @@ if [ "$SKIP_IMAGE" != "1" ]; then
   fi
   prune_scoped
 fi
+run_gate alert-residue gate_alert_residue
 
 if [ "${#FAILED_GATES[@]}" -eq 0 ]; then
   log "=== LOCAL CI: ALL GATES GREEN ==="
