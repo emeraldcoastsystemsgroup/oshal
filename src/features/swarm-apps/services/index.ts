@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the CORE-05 package smoke verifier contract.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export the APP-02 package-audit rollout-mode resolver for installer boundaries.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-141 application-group validators + resolvers (swarm-app-group.ts).
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-149 rail-tile discoverability resolver and its per-person port (swarm-app-tile-discoverability.ts).
  */
 
 export { SwarmAppService } from './swarm-app-service';
@@ -33,6 +34,9 @@ export {
   assertGroupResolvable,
 } from './swarm-app-group';
 export type { ResolvedGroupSetupStep, ResolvedGroupToolbar } from './swarm-app-group';
+// ADR-149 rail discoverability — a static tile under ANOTHER package's mount follows that package.
+export { lockUndiscoverableTiles, mountOwner, packageMounts, tilePathname } from './swarm-app-tile-discoverability';
+export type { RibbonTileDiscovery, RibbonTileLock } from './swarm-app-tile-discoverability';
 export {
   buildHomePlan,
   coerceSummaryPayload,

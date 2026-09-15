@@ -6,14 +6,42 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial UI profile routes — /api/ui/profile, /api/ui/profiles
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve swarm-app manifests first, then fall back to on-disk profile JSONs
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | WARN when an explicitly requested ?name= profile falls back to disk — the silent fallback served a stale pre-carve-out little-monsters.json (4 ribbon items, no Record, no theme) whenever RLS hid the app row, masquerading as the app for days.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149 rail discoverability: the route has the request, so it resolves the verified actor and binds synthesiseProfile's discovery port to it (runtime.canDiscover + the role-guidance link the 403 page offers). A tile that opens ANOTHER package this person cannot discover now comes back locked instead of a dead frame. An actor that cannot be resolved is logged and the manifest-static rail is served as before — discovery hides, it never authorises; the mount guard stays the authority.
  */
 
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { UIProfileService } from '@/features/ui-profile';
-import type { SwarmAppService } from '@/features/swarm-apps';
+import type { RibbonTileDiscovery, SwarmAppService } from '@/features/swarm-apps';
+import type { AuthorizationActor } from '@/shared/application-authorization';
+import type { ApplicationAuthorizationRuntime } from '@/app/composition/application-authorization-runtime';
+import { roleGuidance } from '@/app/composition/application-navigation-authorization';
 
 const logger = createChildLogger({ module: 'ui-profile-routes' });
+
+/** The per-person ports the profile route needs to follow another package's discoverability (ADR-149). */
+export interface UiProfileDiscoveryPorts {
+  runtime: Pick<ApplicationAuthorizationRuntime, 'canDiscover'>;
+  resolveActor(req: Request): Promise<AuthorizationActor>;
+}
+
+/**
+ * @description Binds the discovery port synthesiseProfile takes to this request's verified actor.
+ * A resolution failure is logged and yields no port: the rail then renders exactly as declared,
+ * which is what every frame's own mount guard already answers for — never a wider result.
+ * @param req - The profile request.
+ * @param ports - Runtime discovery check and actor resolver.
+ * @returns The bound port, or undefined when the actor could not be resolved.
+ */
+async function bindTileDiscovery(req: Request, ports: UiProfileDiscoveryPorts): Promise<RibbonTileDiscovery | undefined> {
+  try {
+    const actor = await ports.resolveActor(req);
+    return { canDiscover: (app) => ports.runtime.canDiscover(app, actor), roleGuidanceUrl: roleGuidance(actor).href };
+  } catch (err) {
+    logger.error({ err }, 'Could not resolve the caller for rail discoverability — serving the manifest-static rail');
+    return undefined;
+  }
+}
 
 /**
  * @description Creates the UI profile routes. The cockpit calls these at boot
@@ -35,9 +63,11 @@ const logger = createChildLogger({ module: 'ui-profile-routes' });
  *
  * @param service - UIProfileService for file-based profile fallback
  * @param swarmApps - optional SwarmAppService for manifest-first resolution
+ * @param discovery - optional ADR-149 ports; when present a synthesised rail follows each
+ *   target package's discoverability for the signed-in person (locked tiles, kept in place)
  * @returns Express Router
  */
-export function createUiProfileRoutes(service: UIProfileService, swarmApps?: SwarmAppService): Router {
+export function createUiProfileRoutes(service: UIProfileService, swarmApps?: SwarmAppService, discovery?: UiProfileDiscoveryPorts): Router {
   const router = Router();
 
   router.get('/profile', async (req: Request, res: Response) => {
@@ -49,7 +79,8 @@ export function createUiProfileRoutes(service: UIProfileService, swarmApps?: Swa
       // disk profile JSON and loses the manifest's tool-* prefixed IDs and
       // focused ribbon.
       if (selected && swarmApps) {
-        const synthetic = await swarmApps.synthesiseProfile(selected);
+        const port = discovery ? await bindTileDiscovery(req, discovery) : undefined;
+        const synthetic = await swarmApps.synthesiseProfile(selected, port);
         if (synthetic) {
           logger.debug({ selected, source: requested ? 'query' : 'env' }, 'Serving synthesised profile from swarm-app manifest');
           res.json({ profile: synthetic, requested: selected, source: 'swarm-app', envDefault: service.getEnvSelectedName() });

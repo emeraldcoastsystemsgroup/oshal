@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Admit explicit browser workspace navigation and current shell-only member access without selecting a data workspace.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Explain denied document navigation with escaped static HTML while retaining API JSON and current policy decisions.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Accept the minimal navigation request shape so installed surfaces share workspace validation without unsafe Express casts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Export roleGuidance(actor) — the one place that decides where the role-guidance page sends a person (access review for a swarm admin, the account page otherwise) — so the ADR-149 locked rail tile carries the same link the denial page offers. The rendered denial body is unchanged.
  */
 import type { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
@@ -34,6 +35,16 @@ function escapeLabel(value: string): string {
   return value.slice(0, 160).replace(/[&<>"']/g, character => entities[character]);
 }
 
+/** @description Where the role-guidance page sends a person: application access review for an active swarm admin,
+ * their own account page otherwise. Shared with the cockpit rail so a locked tile (ADR-149) points where the denial page does.
+ * @param actor Verified caller. @returns Root-relative kernel page and the label the denial page shows for it.
+ */
+export function roleGuidance(actor: Pick<AuthorizationActor, 'isActive' | 'isSwarmAdmin'>): { href: string; label: string } {
+  return actor.isActive && actor.isSwarmAdmin
+    ? { href: '/access', label: 'Review application access' }
+    : { href: '/users', label: 'View your account' };
+}
+
 /** @description Render role guidance only for a denied browser document request; callers keep all other JSON errors.
  * @param req Current browser request. @param res Response. @param registration Active catalog.
  * @param operation Denied request. @param actor Verified caller. @param label Installed application display name.
@@ -44,9 +55,8 @@ export function sendApplicationNavigationDenied(req: Request, res: Response, reg
   if (!applicationShell(registration, operation) || req.get('sec-fetch-mode') !== 'navigate' ||
     !['document', 'iframe', 'frame'].includes(req.get('sec-fetch-dest') ?? '') || !req.accepts('html')) return false;
   const name = escapeLabel(label || registration.app);
-  const action = actor.isActive && actor.isSwarmAdmin
-    ? '<a href="/access" target="_top">Review application access</a>'
-    : '<a href="/users" target="_top">View your account</a>';
+  const guidance = roleGuidance(actor);
+  const action = `<a href="${guidance.href}" target="_top">${guidance.label}</a>`;
   res.status(403).set({ 'Cache-Control': 'private, no-store', 'Content-Type': 'text/html; charset=utf-8',
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
     'Content-Security-Policy': `default-src 'none'; script-src 'none'; style-src 'self' 'sha256-${DENIED_STYLE_HASH}'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'` });

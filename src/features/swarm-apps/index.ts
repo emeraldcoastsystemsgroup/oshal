@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export the manifest Takeout slice declaration and lifecycle registrar port.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-141 application-group types, validators and resolvers.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Export registered installation verification reports and the shared portable formatter.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Export the ADR-149 rail-tile discoverability resolver, its per-person port and the lock shape a synthesised ribbon item may carry.
  */
 
 export type {
@@ -89,6 +90,9 @@ export {
   assertGroupResolvable,
 } from './services';
 export type { ResolvedGroupSetupStep, ResolvedGroupToolbar } from './services';
+// ADR-149 — a static tile under ANOTHER package's mount follows that package's discoverability.
+export { lockUndiscoverableTiles, mountOwner, packageMounts, tilePathname } from './services';
+export type { RibbonTileDiscovery, RibbonTileLock } from './services';
 export {
   buildHomePlan,
   coerceSummaryPayload,
