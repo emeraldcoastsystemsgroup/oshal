@@ -116,7 +116,8 @@ npm --prefix packages/oshal-chat run build
 npm --prefix packages/oshal-chat run test:wake
 npx vitest run tests/unit/oshal-chat-background-wake.spec.ts tests/unit/jarvis-ambient-client.spec.ts --reporter=dot
 PLAYWRIGHT_PORT=35457 PLAYWRIGHT_REUSE_SERVER=true MOCK_OIDC=true \
-  npx playwright test tests/jarvis-audio-lifecycle.spec.ts --reporter=line
+  npx playwright test tests/jarvis-audio-lifecycle.spec.ts \
+  tests/jarvis-rich-response-native-wake.spec.ts --reporter=line
 npm run typecheck
 node --check packages/oshal-chat/src/renderer/renderer.js
 ```
@@ -134,8 +135,27 @@ package-tool blocks that landed on `/ask` since, so it was re-run rather than qu
 | `node --check packages/oshal-chat/src/renderer/renderer.js` | OK |
 | `vitest oshal-chat-background-wake + jarvis-ambient-client` | **21 passed / 2 files** (07-11: 16) |
 | `npm --prefix packages/oshal-chat run test:wake` | `{"confidence":0.987673938,"ok":true,"rawAudioStored":false,"locale":"en-US","phrase":"Hey Jarvis"}` - byte-identical to 07-11 |
-| `playwright tests/jarvis-audio-lifecycle.spec.ts` | **7 passed (7.1 s)** |
+| `playwright tests/jarvis-audio-lifecycle.spec.ts` | **7 passed** |
+| `playwright tests/jarvis-rich-response-native-wake.spec.ts` | ⛔ **3 failed / 3** - see below |
 | `npm run typecheck` | exit 0 |
+
+⛔ **CORRECTION to this record, 2026-09-15 (same day it was written).** The first version of
+this table listed only `jarvis-audio-lifecycle.spec.ts` and said "the whole suite is green". That
+overstated it. The 07-11 baseline covered **three** Playwright files - "rich-response,
+response-stage, and audio-lifecycle" - and the Run block above listed only one, so the one spec
+that actually drives the wake receiver in a browser was never run.
+
+Run now, `tests/jarvis-rich-response-native-wake.spec.ts` is **3 failed of 3**, and all three fail
+at the same first assertion: `__nativeWakeAudio.streams.length` is `0` rather than `1`, and `#mic`
+never gains the `live` class. The command microphone is never opened, so the three release
+invariants have nothing to release. The page itself loads and the button exists.
+
+**Not diagnosed here, and deliberately not fixed in passing:** `src/api/jarvis.html` has taken
+**15 commits since 2026-07-11** while the spec has not been touched since a governance chore, so
+spec-drift against a moved page is at least as likely as a runtime regression. Either way the
+release invariants on an always-on-microphone feature are currently unproven. Tracked in
+[BACKLOG](../BACKLOG.md) with done-when criteria. **The wake path should not be treated as
+delivery-ready until this is green or the spec is retired with a reason.**
 
 ⛔ **The Playwright line in the Run block above is corrected.** The bare
 `npx playwright test tests/jarvis-audio-lifecycle.spec.ts` fails on this box with
