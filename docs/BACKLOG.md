@@ -2096,3 +2096,51 @@ attempt-state record that the cockpit should stop treating as its primary escala
 Whichever it is, `PostgresSwarmEscalationStore` and the cockpit's `getTicketEscalations` lookup
 agree with it, and a guard proves an escalation raised by a non-run path lands wherever the
 decision says it belongs, proven red by removing that write.
+
+### The ticket-row escalation mirror outlives the escalation it describes (2026-09-15)
+
+**Context:** every ticket carries `metadata.lastStatusTransition`, a mirror of its most recent
+status transition, and `deriveTicketEscalationDetail` falls back to it when the append-only
+history cannot answer. Two rules combine so that the mirror is not replaced when a ticket leaves
+`escalated`: `buildTicketRowStatusMetadataPatch` returns `null` for empty transition metadata
+([ticket-status-row-metadata.ts:28](../src/entities/ticket/ticket-status-row-metadata.ts)), and
+`buildStatusTransitionMetadata` returns the caller's metadata unchanged for any target other than
+`escalated` or `dead_letter`
+([ticket-service.ts:489](../src/features/ticketing/services/ticket-service.ts)) — so a
+de-escalation raised with no metadata, which is what the cockpit's status route sends, writes a
+history row but leaves the escalation mirror in place on the ticket row.
+
+**Live instance:** ticket `104b11e1-cb27-450c-922e-0fbbd4dac4ec` on the operator box is
+`status='cancelled'`; its newest transition is `escalated → cancelled` at
+`2026-07-24 00:52:31.680879+00` carrying `reason='wrong_id_space'`, and the ticket row's
+`updated_at` is that same instant — yet `metadata.lastStatusTransition.status` still reads
+`escalated` with `reason='browser_submission_dispatch_failed'` and
+`escalatedAt='2026-07-24T00:45:53.950Z'`, and the row's top-level `reason` / `statusSource` /
+`nextAction` are likewise the escalation's. The ticket row was written by the cancelling call
+through the no-patch arm of `updateStatus`, while the history row for the same transition
+carries a reason — so the two came from different calls. What issued them is not established:
+the `wrong_id_space` text appears nowhere in the tree, and `recordStatusHistory` is a public
+store method any caller can use.
+
+**Why nothing is visibly wrong today:** the cockpit never reaches the mirror unless the ticket's
+live status is `escalated` — `readRecordedEscalation` returns `{ detail: null, escalatedAt: '' }`
+for every other status
+([cockpit-ticket-activity-route.ts](../src/app/routes/cockpit-ticket-activity-route.ts)) — and an
+escalation raised through `TicketService` is backstopped with `reason: 'unspecified_escalation'`,
+so a re-escalated ticket is answered by its history row before the mirror is consulted. The shape
+occurs on this database; it is currently unrenderable, not impossible. It becomes operator-facing
+the moment a ticket is escalated by a path that writes a history row without a reason — which
+has happened: 4,745 of the 5,153 all-time `→ escalated` history rows carry `metadata = {}`.
+4,712 of those belong to one ticket (`1d7763ce-b657-461f-9667-ce667effe2cb`) over ~20 hours of
+`system` escalate/de-escalate churn on 2026-06-21/22; the remaining 33 are single rows, 10 of
+which land inside 131 ms at `2026-06-22 14:27:24.243–.374` across 10 distinct tickets. What
+produced either group is not established — do not repeat a characterisation of them as a seed or
+a backfill without evidence.
+
+**Done when:** a transition that leaves `escalated` replaces or clears the ticket row's
+escalation mirror even when it carries no metadata, so `deriveTicketEscalationDetail` cannot
+return a reason belonging to an escalation the ticket is no longer in; and a unit guard proves
+it by escalating a ticket with a reason, de-escalating it with no metadata, and asserting the
+mirror no longer reports `status: 'escalated'` — proven red against today's code, which returns
+the stale reason. The guard asserts on the mirror directly rather than through the cockpit route,
+because the route's `status !== 'escalated'` gate hides the defect.
