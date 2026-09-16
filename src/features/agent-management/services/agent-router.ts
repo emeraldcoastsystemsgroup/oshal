@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added taskText tokenization so routing can use work-unit descriptions and acceptance criteria, not just ticket titles
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Replaced fuzzy phrase substring matching with normalized token overlap so QA phrases stop overmatching build tickets
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Tier 3 matches MULTI-WORD routing keywords as phrases instead of shredding them into tokens. A declared phrase such as 'what did i miss' was flattened to the routable token 'did' (3 chars, absent from ROUTING_STOP_WORDS), so the comms owners claimed any ticket merely containing that word - the reason a trading P&L question routed to the email bot. Phrases are now tested with includes() against the lowercased title+taskText, exactly as the Tier-1 self-score does, and are counted ONCE; single-word keywords and all capabilities keep token matching. Deliberately NO minimum-claim threshold: swept against the registry+persona corpus a threshold silently disowns every bot whose vocabulary is single words (weather, music, movies, calendar).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -204,10 +205,11 @@ export class AgentRouter {
     const searchTerms = buildSearchTerms(context);
     if (searchTerms.length === 0) return null;
 
+    const phraseText = buildPhraseMatchText(context);
     const scored = ranked
       .map((candidate) => ({
         candidate,
-        keywordScore: computeKeywordScore(candidate, searchTerms),
+        keywordScore: computeKeywordScore(candidate, searchTerms, phraseText),
       }))
       .filter((s) => s.keywordScore > 0)
       .sort((a, b) => b.keywordScore - a.keywordScore);
@@ -270,15 +272,56 @@ function buildSearchTerms(context: RouteContext): string[] {
 }
 
 /**
- * @description Scores a candidate based on keyword overlap with search terms.
- * Checks candidate capabilities and routing keywords against search terms.
+ * @description Builds the raw lowercased text a multi-word routing keyword is tested against.
+ * Phrases must be matched against the ORIGINAL text, not the token bag: tokenizing them is
+ * exactly what loses the phrase. Mirrors the Tier-1 self-score text in mesh-bid-responder so a
+ * bot is matched here on the same string it bids on there.
+ * @param context - Route context carrying the ticket title and the work-unit text.
+ * @returns Lowercased ticket title joined to the task text.
  */
-function computeKeywordScore(candidate: RouteCandidate, searchTerms: string[]): number {
+function buildPhraseMatchText(context: RouteContext): string {
+  return `${context.ticketTitle ?? ''}\n${context.taskText ?? ''}`.toLowerCase();
+}
+
+/**
+ * @description Splits declared routing keywords into multi-word PHRASES and single words.
+ * A phrase is the bot's claim on a whole expression; shredding it hands every constituent
+ * word the same claim, which is how 'what did i miss' let the comms owners win on the bare
+ * token 'did'. Phrases are de-duplicated so a repeated declaration cannot inflate a score.
+ * @param values - The candidate's declared routing keywords (persona routing_keywords).
+ * @returns Lowercased unique phrases and the untouched single-word keywords.
+ */
+function splitRoutingKeywords(values: string[] | undefined): { phrases: string[]; singles: string[] } {
+  const phrases = new Set<string>();
+  const singles: string[] = [];
+  for (const value of values ?? []) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) continue;
+    if (/\s/.test(trimmed)) {
+      phrases.add(trimmed.toLowerCase());
+    } else {
+      singles.push(trimmed);
+    }
+  }
+  return { phrases: [...phrases], singles };
+}
+
+/**
+ * @description Scores a candidate based on keyword overlap with search terms.
+ * Capabilities and single-word routing keywords are compared as normalized tokens;
+ * multi-word routing keywords are matched as whole phrases against the ticket text and
+ * count ONCE each — never once per constituent token, which would make a long phrase
+ * out-bid a bot that genuinely owns the domain.
+ */
+function computeKeywordScore(candidate: RouteCandidate, searchTerms: string[], phraseText: string): number {
+  const { phrases, singles } = splitRoutingKeywords(candidate.routingKeywords);
   const candidateTerms = new Set([
     ...flattenRoutingTerms(candidate.capabilities),
-    ...flattenRoutingTerms(candidate.routingKeywords),
+    ...flattenRoutingTerms(singles),
   ]);
-  return searchTerms.reduce((score, term) => score + (candidateTerms.has(term) ? 1 : 0), 0);
+  const tokenScore = searchTerms.reduce((score, term) => score + (candidateTerms.has(term) ? 1 : 0), 0);
+  const phraseScore = phrases.reduce((score, phrase) => score + (phraseText.includes(phrase) ? 1 : 0), 0);
+  return tokenScore + phraseScore;
 }
 
 /**

@@ -61,6 +61,7 @@
  * 54 | maintainer@emeraldcoastsystemsgroup.com   | Document default-on authoritative provider/model stamping and its fail-closed missing-database behavior at the composition seam.
  * 55 | maintainer@emeraldcoastsystemsgroup.com   | Codex fleet default: the boot-sync codexModel fallback gpt-5.3-codex -> gpt-5.5. 5.3-codex is the API-key model name and 400s on the ChatGPT-account login this deployment mounts, so the old fallback seeded the DB with a model no bot could actually run when CODEX_MODEL was unset.
  * 56 | maintainer@emeraldcoastsystemsgroup.com   | Extracted codexResolveEndpoint's body to ./resolve-bot-node-endpoint so the branch that sends a dedicated-node bot inline is unit-testable, and made that branch WARN instead of returning null silently. The silence hid a live misroute: career-hunter won its bid, ran on the controller instead of its career-bot node, and reported the user's resume data as missing because the inline session has neither the package's tools nor its workspace.
+ * 57 | maintainer@emeraldcoastsystemsgroup.com   | Removed the Tier-2 LLM routing wiring (entry 35). It called codexQuickCall, which asserts the audited-harness guard and throws UNBROKERED_AUTONOMOUS_PROVIDER before any spawn, so the function threw on EVERY task ticket and AgentRouter caught it and returned null - Tier 2 has been dead since that guard landed, costing one WARN plus one INFO per routing decision and hiding the fact that Tier 3 was doing all the work. The router is now constructed with no llmRoutingFunction, which is the behavior that was already running. Not revived on a hosted rail: a controller-local LLM call is exactly what CLAUDE.md forbids. codex-quick-call.ts and its refusal test are untouched.
  */
 
 import type { Pool } from 'pg';
@@ -401,38 +402,10 @@ export function createSwarmExtensionBindings(
   const routingAuditLog = new RoutingAuditLog(pool);
   const competencyRanker = new CompetencyRanker(agentMetricsServiceInstance);
 
-  // LLM routing: sends bot names + selector descriptions to codex exec and asks
-  // it to pick the best one. ~2-5s, no workspace, no session overhead.
-  const llmRoutingFunction: import('@/features/agent-management').LLMRoutingFunction =
-    async (context, candidates) => {
-      try {
-        const botList = candidates
-          .filter((c) => c.selectorDescriptor || c.name)
-          .map((c) => `- ${c.name || c.agentId} (${c.agentId}): ${(c.selectorDescriptor || '').trim().split('\n')[0]}`)
-          .join('\n');
-
-        if (!botList) return null;
-
-        const { codexQuickCall } = require('@/shared/services/codex-quick-call') as { codexQuickCall: (prompt: string) => Promise<string | null> };
-        const prompt = `Pick the single best bot for this task. Respond with ONLY the agent_id value, nothing else.\n\nTask: ${context.ticketTitle || context.taskId}\n${context.taskText ? `Details: ${context.taskText.slice(0, 500)}` : ''}\n\nAvailable bots:\n${botList}`;
-
-        const chosen = await codexQuickCall(prompt);
-        if (!chosen) return null;
-
-        const match = candidates.find((c) => chosen.includes(c.agentId));
-        if (match) {
-          logger.info({ taskId: context.taskId, chosenAgentId: match.agentId, chosenName: match.name }, 'LLM routing selected agent');
-          return match.agentId;
-        }
-        logger.info({ taskId: context.taskId, llmResponse: chosen.slice(0, 80) }, 'LLM routing response did not match any candidate');
-        return null;
-      } catch (err) {
-        logger.warn({ err: (err as Error).message, taskId: context.taskId }, 'LLM routing failed — falling through');
-        return null;
-      }
-    };
-
-  const agentRouter = new AgentRouter(new SelectionBidService(), llmRoutingFunction);
+  // Tier 2 (LLM routing) is deliberately NOT wired: its only implementation called codexQuickCall,
+  // which the audited-harness guard refuses unattended, so it threw on every ticket and the router
+  // swallowed it. Reviving it on a hosted rail would be a controller-local LLM call (CLAUDE.md).
+  const agentRouter = new AgentRouter(new SelectionBidService());
 
   const swarmProcessingService = new SwarmTicketProcessingService(
     intakeService,
