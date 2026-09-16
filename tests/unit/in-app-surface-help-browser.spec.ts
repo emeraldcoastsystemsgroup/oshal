@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the in-app help affordances end to end: the covered-surface list answers only guides that exist, the cockpit header affordance lands a covered surface on its OWN guide (real router, real docs/guides markdown) and degrades honestly on an uncovered one, a parked Intelligent Processing row states WHY it is parked, and the getting-started strip no longer suppresses itself on the full framework profile. The registered Test Lab readiness step is exercised against the same live router rather than a stubbed fetch, so a coverage claim and the Lab card cannot drift apart.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin the ribbon-spelled ids for the thirteen documented screens whose help button used to fall through to the index; the existing landing loop then proves each of them renders a real guide rather than just appearing on the list.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -47,6 +48,13 @@ it('answers a covered-surface list, and every surface on it reaches a real guide
   const surfaces = listed.surfaces ?? [];
   expect(surfaces).toEqual(expect.arrayContaining(
     ['tickets', 'tool-tickets', 'settings', 'calendar', 'devices', 'intelligent-processing']));
+  // Ribbon ids as config-seed/profiles/oshal-framework.json actually spells them, for screens whose
+  // guide exists. These landed on the index until the map learned the ribbon's vocabulary.
+  expect(surfaces).toEqual(expect.arrayContaining([
+    'tool-storage-files', 'tool-cloud-accounts', 'tool-kalshi-home', 'tool-sports-edge-home',
+    'tool-embodied', 'tool-animatronics', 'tool-drone-relay', 'tool-cad-studio', 'tool-circuit-lab',
+    'tool-scan-to-print', 'tool-aero-lab', 'tool-ocean-lab-harvest-console', 'tool-ocean-lab-blade-studio',
+  ]));
   // The list is a promise: every entry on it must actually land on a rendered guide.
   const landings = [] as Array<{ surface: string; status: number; guide: boolean }>;
   for (const surface of surfaces) {
