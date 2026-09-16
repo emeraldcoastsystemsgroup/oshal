@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cover rule 3, the live databases named rather than addressed: a DSN whose host is the live database container, the same for the timeseries one, and the container-name DEFAULT shape that was live in the tree and that neither port rule could see. Also holds the line the rule must NOT cross — the alert and topology fixtures name that same container as a monitoring subject dozens of times over, and a rule that fired on those would be worked around within a week. Every offending fixture assembles the container name at run time for the same reason the port literals do: this guard has to pass the gate it proves.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the spec-database-default gate by RUNNING IT — the real script, in Git Bash, against real trees on disk, which is the boundary it acts on. A gate asserted only by reading its source proves nothing about what grep does to a file. Covers both refusals (the live published-port literal in a test file, and a test-tree module reading the published-port knob off the environment even when the literal has been renamed), both allowances that keep the legitimate host-side Playwright helper working, the fail-closed UNCHECKED verdict on a tree with no test files, and the real repository passing. The forbidden port is assembled at run time so this guard is not itself a hit for the gate it proves.
  */
 
@@ -25,6 +26,9 @@ const SCRATCH = mkdtempSync(join(tmpdir(), 'oshal-spec-db-gate-'));
 const LIVE_PG = ['554', '33'].join('');
 const LIVE_TSDB = ['554', '34'].join('');
 const KNOB = ['process', 'env', 'OSHAL_PG_PORT'].join('.');
+/** The live stack's database containers, assembled for the same reason the ports are. */
+const LIVE_DB_CONTAINER = ['oshal', 'local', 'db'].join('-');
+const LIVE_TSDB_CONTAINER = ['oshal', 'local', 'tsdb'].join('-');
 
 afterAll(() => rmSync(SCRATCH, { recursive: true, force: true }));
 
@@ -107,6 +111,42 @@ describe('the spec-database-default gate REFUSES a test file that can reach the 
     expect(verdict.output).toContain('tests/helpers/sneaky.ts');
   });
 
+  it('fails on a DSN whose HOST is the live database container, not only on its published port', () => {
+    // The half the port rules could not see: the same server, named instead of addressed.
+    const offending = `const DSN = 'postgresql://oshal:oshal@${LIVE_DB_CONTAINER}:5432/oshal';\n`;
+    const verdict = judge('live-host', { 'tests/unit/offender.spec.ts': offending });
+    expect(verdict.status).toBe(1);
+    expect(verdict.output).toContain('tests/unit/offender.spec.ts');
+  });
+
+  it('fails on the timeseries container in the host position too', () => {
+    const offending = `const DSN = 'postgresql://oshal:oshal@${LIVE_TSDB_CONTAINER}:5432/oshal';\n`;
+    expect(judge('live-tsdb-host', { 'tests/unit/offender.spec.ts': offending }).status).toBe(1);
+  });
+
+  it('fails on a pg config whose host FIELD is the live database container', () => {
+    const offending = `const pool = new Pool({ host: '${LIVE_DB_CONTAINER}', port: 5432 });\n`;
+    expect(judge('live-host-field', { 'tests/unit/offender.spec.ts': offending }).status).toBe(1);
+  });
+
+  it('fails on the container-name DEFAULT — the shape that was live in the tree', () => {
+    // `process.env.OSHAL_TEST_DB_CONTAINER || '<the live container>'` pointed a spec's own
+    // `docker exec psql` at the deployment while the DSN beside it was correctly disposable.
+    const offending = `const C = process.env.OSHAL_TEST_DB_CONTAINER || '${LIVE_DB_CONTAINER}';\n`;
+    const verdict = judge('container-default', { 'tests/unit/offender.spec.ts': offending });
+    expect(verdict.status).toBe(1);
+    expect(verdict.output).toContain('tests/unit/offender.spec.ts');
+  });
+
+  it('fails when a test HELPER carries the live host, not only a spec', () => {
+    const verdict = judge('helper-live-host', {
+      'tests/helpers/sneaky-host.ts': `export const DSN = 'postgres://oshal@${LIVE_DB_CONTAINER}:5432/oshal';\n`,
+      'tests/unit/user.spec.ts': CLEAN_SPEC,
+    });
+    expect(verdict.status).toBe(1);
+    expect(verdict.output).toContain('tests/helpers/sneaky-host.ts');
+  });
+
   it('points the reader at the resolver instead of at a way to silence the gate', () => {
     const offending = `const DSN = 'postgresql://oshal:oshal@127.0.0.1:${LIVE_PG}/oshal';\n`;
     const verdict = judge('message', { 'tests/unit/offender.spec.ts': offending });
@@ -137,6 +177,27 @@ describe('the gate ALLOWS the legitimate uses, so it does not have to be worked 
     const verdict = judge('host-helper', {
       'tests/helpers/host-database-url.ts': helper,
       'tests/unit/user.spec.ts': CLEAN_SPEC,
+    });
+    expect(verdict.status).toBe(0);
+  });
+
+  it('does not fire on a fixture that names the live container as a MONITORING SUBJECT', () => {
+    // tests/unit/alert-*.spec.ts name this container dozens of times as an alert target and a
+    // dependency-map node. Those are not connections, and a rule that reddened them would be
+    // worked around rather than obeyed. The distinction is the shape, not an allowlist.
+    const fixture = [
+      `const event = { target: '${LIVE_DB_CONTAINER}', alertname: 'ContainerDown' };`,
+      `const chain = ['oshal-local-api', '${LIVE_DB_CONTAINER}'];`,
+      'export default { event, chain };',
+    ].join('\n');
+    const verdict = judge('monitoring-subject', { 'tests/unit/alert-shape.spec.ts': fixture });
+    expect(verdict.status).toBe(0);
+    expect(verdict.output).toMatch(/OK/);
+  });
+
+  it('does not fire on a host FIELD pointing somewhere that is not the live stack', () => {
+    const verdict = judge('other-host', {
+      'tests/unit/user.spec.ts': "const pool = new Pool({ host: '127.0.0.1', port: 5432 });\n",
     });
     expect(verdict.status).toBe(0);
   });

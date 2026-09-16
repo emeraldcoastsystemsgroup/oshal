@@ -8,9 +8,10 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fix round 2 guards: the fired order is sized so the ENGINE's own notional check passes — the persisted decision row is fed to the REAL guardrailViolation (not restated arithmetic) and a price sweep proves it across the whole cap-bound band, which is what the previous sizing (off the last print, under a higher limit) failed at every cap-bound buy; and a transient 5xx from the order rail defers instead of disarming — the rule stays classified, retries under the SAME requestId, and reuses/reprices its ONE decision row rather than fanning the journal out. Plus: the TRADING_HALT pin asserts the absence of a READ (process.env.TRADING_HALT), not of the string, so a comment cannot turn it red.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D5 earnings-reaction rules against the live oshal Postgres (real FORCE-RLS table, real partial unique index, real signals/decisions ledger rows). Drives the whole state machine with EDGAR, the document read, the analyst and the venue doubled at their seams: armed → detected → classified → fired; expiry never fires (and never polls); a miss sells with the rationale carrying the verdict, the numbers read and the filing URL; a beat buys the sized fraction; the notional ceiling is enforced BY THIS MODULE (the engine skips its notional test for a 0 refPrice, and never reads TRADING_HALT — both pinned from the engine source, which is why both guards live here and are exercised here); TRADING_HALT blocks the order; a position sold out from under a beat ends no_action, not a fresh entry; a disagreeing print waits then stands down; unclear never trades; the flag off does nothing at all. Plus the fundamentals CIK cache: a failed first fetch is NOT cached forever. Run with --no-file-parallelism (concurrent schema bootstrap races).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | This spec now STARTS its own PostgreSQL and removes it, the way the ADR-159 dispatch guards do, instead of taking an address from the environment at all. Refusing an unpointed run made the accident impossible but left the spec unrunnable, so it proved nothing in any gate; a private server makes it both safe and executable, and there is no longer any value a caller can supply that would reach a deployment. The DELETE-by-sub teardown is gone with it — the container is destroyed, so no cleanup SQL runs anywhere, which is the property that failed twice on 2026-09-14. Two consequences of the private server: the `ALTER TABLE ... OWNER TO oshal_app` handoff is gone (that role exists only in the shared deployment this spec no longer touches), and SEQ 1's `--no-file-parallelism` note no longer applies, because the schema bootstrap it raced against is now this file's alone.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import crypto from 'crypto';
 import { readFileSync } from 'fs';
 import * as path from 'path';
@@ -30,13 +31,19 @@ import { ensureTradingSchema, TradingError, guardrails } from '../../src/app/tra
 import { guardrailViolation } from '../../src/app/routes/trading-routes-helpers';
 import type { AppContext } from '../../src/app/composition/app-context';
 import type { OrderResult, Position } from '../../src/features/trading';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 
-// Every case here drives a multi-tick state machine against the LIVE Postgres; the 5 s default is a
-// flake, not a signal (the same tick costs milliseconds in production).
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 120_000 });
+// Every case here drives a multi-tick state machine against a REAL Postgres; the 5 s default is a
+// flake, not a signal (the same tick costs milliseconds in production). The hook timeout also has
+// to cover starting this file's own server.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 300_000 });
 
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+// A PostgreSQL this file owns: started here, removed in afterAll, reachable from nothing else.
+// `row_security=off` keeps the superuser's reads across the FORCE-RLS rule table explicit.
+const database = new DisposablePostgres({
+  purpose: 'trading-earnings-rules', database: 'trading_fixture', memory: '384m', max: 4,
+  statementTimeoutMs: 60_000, options: '-c row_security=off',
+});
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-erule-${RUN}`;
 let pool: Pool;
@@ -169,21 +176,13 @@ beforeAll(async () => {
   delete process.env.TRADING_EARNINGS_RULE_WINDOW_BEFORE_DAYS; delete process.env.TRADING_EARNINGS_RULE_WINDOW_AFTER_DAYS;
   delete process.env.TRADING_EARNINGS_RULE_MAX_TRANCHES; delete process.env.TRADING_EARNINGS_RULE_MAX_PLACE_ATTEMPTS;
   delete process.env.TRADING_EARNINGS_RULE_STALE_HOURS; delete process.env.TRADING_EARNINGS_RULE_MAX_DOC_ATTEMPTS;
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try { await pool.query('SELECT 1'); } catch (error) {
-    throw new Error(`trading-earnings-rules requires the live oshal Postgres at ${DSN.replace(/:[^:@/]+@/, ':***@')} — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
+  pool = await database.start();
   await ensureBooksSchema(pool as never); await ensureTradingSchema(pool as never); await ensureEventRulesSchema(pool as never);
-  await pool.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'oshal_app') THEN EXECUTE 'ALTER TABLE oshal_trading_event_rules OWNER TO oshal_app'; END IF; END $$;`);
   await ensureLegacyBooks(pool as never, SUB);
-}, 120_000);
+}, 300_000);
 
-afterAll(async () => {
-  for (const t of ['oshal_trading_event_rules', 'oshal_trading_orders', 'oshal_trading_decisions', 'oshal_trading_signals', 'oshal_trading_books']) {
-    await pool.query(`DELETE FROM ${t} WHERE user_sub = $1`, [SUB]).catch(() => {});
-  }
-  await pool.end();
-});
+// No DELETE pass: the whole server goes away, so there is nothing to clean and nowhere to clean it.
+afterAll(async () => { await database.stop(); });
 
 describe('the CIK lookup never caches a FAILED EDGAR fetch (fundamentals.ts, the poisoned-cache bug)', () => {
   it('a first fetch that fails returns null and is not remembered; the next call succeeds and IS cached', async () => {

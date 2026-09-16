@@ -267,17 +267,22 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   rows in production. They now resolve through `tests/helpers/spec-database-url.ts`, which REFUSES an
   unpointed run and names the variable to set, and the `spec-database-default` gate in
   `scripts/ci-local.sh` keeps that true for the next spec.
-- **Remaining:** those 23 specs therefore execute only when a run points them at a database. Nothing
-  in the repo does that yet, so the local-CI `unit` gate cannot execute them (it was already FAIL on
-  the 2026-09-14 and 2026-09-13 scheduled runs, for unrelated reasons). The rail to reuse is
-  `tests/helpers/disposable-alert-postgres.ts` — a per-run container on a random loopback port with
-  migrations applied — or the ephemeral `oshal-ci-pg` the e2e gate already starts. Whether the whole
-  set survives on a bare cluster is unmeasured: several of them expect the enforcing `oshal_app`
-  role, and `trading-engine-cost-basis-postgres.spec.ts` needs an admin role that can create
-  databases. Measure before wiring, and never point the variable at the published port.
-- **Also open, same class:** `tests/unit/trading-watchdog-books.spec.ts` still defaults
-  `OSHAL_TEST_DB_CONTAINER` to `'oshal-local-db'` — the live container by name rather than by port,
-  which the port-shaped gate does not see.
+- **Three of the 23 are closed (2026-09-16):** `trading-earnings-rules`, `trading-event-plans` and
+  `trading-engine-cost-basis-postgres` now START their own `postgres:16-alpine` and remove it,
+  through the shared `tests/helpers/disposable-postgres.ts` (the alert fixture delegates to the
+  same class). They take no address from the environment at all, so they run in any gate that has
+  Docker. That also answers the `oshal_app` / create-database question for the cost-basis spec: it
+  needed neither — it builds the trading schema itself on a bare cluster as the container's own
+  superuser. The watchdog spec's `OSHAL_TEST_DB_CONTAINER` / `OSHAL_TEST_REDIS_CONTAINER` defaults
+  onto the live containers are gone with it (`specContainerName`, no default, live stack refused),
+  and the `spec-database-default` gate now fails on that shape as well as on the port.
+- **Remaining:** the other 20 specs execute only when a run points them at a database. Nothing in
+  the repo does that yet, so the local-CI `unit` gate cannot execute them (it was already FAIL on
+  the 2026-09-14 and 2026-09-13 scheduled runs, for unrelated reasons). Converge them on
+  `tests/helpers/disposable-postgres.ts` the same way, or point them at the ephemeral `oshal-ci-pg`
+  the e2e gate already starts. Whether the whole set survives on a bare cluster is still
+  unmeasured: several of them expect the enforcing `oshal_app` role. Measure before wiring, and
+  never point the variable at the published port.
 - **Residue left behind, measured 2026-09-15 read-only after deleting the 24 orphan books:** 42
   `spec-%` rows remain in the live trading database — `oshal_trading_event_plans` 10,
   `oshal_trading_signals` 9, `oshal_trading_decisions` 8, `oshal_trading_pinned_lots` 5,
@@ -296,9 +301,9 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   UNION ALL SELECT 'accounts', count(*) FROM oshal_trading_accounts WHERE user_sub LIKE 'spec-%';
   ```
 
-- **Done when:** the 23 specs run green against a database the run provisions and destroys, the
-  local-CI `unit` gate executes them there rather than skipping or refusing, the watchdog spec names
-  its container the same way, and the survey above returns zero rows.
+- **Done when:** the remaining 20 specs run green against a database the run provisions and
+  destroys, the local-CI `unit` gate executes them there rather than skipping or refusing, and the
+  survey above returns zero rows.
 ### Codeless k8s install — first live-cluster proof (ADR-129)
 - **Remaining:** run `oshal-install.sh --mode 4` (or `-Kubernetes`) end-to-end on a real second machine — the dev laptop is excluded on purpose (Docker Desktop k8s beside the 44-container swarm is the documented OOM pairing). Then publish the OCI chart (`bash scripts/publish-chart.sh` + the one-time GHCR visibility flip) so the installer's OCI-first path goes live.
 - **Done when:** a fresh box reaches `/welcome` in a browser via the NodePort with only kubectl+helm+the installer present, a model connects through the wizard and a jarvis turn answers, and `helm show chart oci://ghcr.io/emeraldcoastsystemsgroup/charts/oshal` succeeds anonymously.
@@ -2410,21 +2415,3 @@ execute an order the OPERATOR authored (a protected lot is the operator's own bu
 rules, explicitly subtracted from the autopilot's view by ADR-138 D3; a dated order is an operator
 decision minted now and placed at a time they chose). ADR-159 withholds where the engine trades a
 position it did not buy, not where the operator instructed a specific order.
-
-### Two trading specs default their DSN to the operator's LIVE database
-
-`tests/unit/trading-earnings-rules.spec.ts:37` and `tests/unit/trading-event-plans.spec.ts:21` both
-read `process.env.OSHAL_TEST_DSN || postgresql://oshal:oshal@127.0.0.1:${OSHAL_PG_PORT ?? '55433'}/oshal`
-— port 55433 is `oshal-local-db`, the deployment database. Running either without setting
-`OSHAL_TEST_DSN` writes synthetic signals, decisions, orders, event rules and event plans into the
-live book under a `spec-*` sub, and their `afterAll` cleanup is the only thing that removes them.
-`tests/unit/trading-engine-cost-basis-postgres.spec.ts` has the same shape through its `ADMIN_URL`.
-The ADR-159 specs added alongside this entry instead start a disposable `postgres:16-alpine` and
-remove it, which is the pattern to converge on.
-
-**Done when:** those three specs start their own disposable container the way
-`tests/unit/trading-dispatch-unmanaged-fire.spec.ts` and
-`tests/unit/trading-outer-dispatch-unmanaged.spec.ts` do, with no default that can resolve to a
-deployment database, and a CI-local gate greps `tests/unit/**` for a hard-coded 55433 (or any
-`oshal-local-db` host) and fails on a new one. Proven red against today's tree, where three specs
-match.
