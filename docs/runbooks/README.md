@@ -76,6 +76,14 @@ OSHAL pipelines and surfaces. One file per procedure.
 
 ## Enable / operate a feature
 
+- [remote-install-self-developing-swarm.md](./remote-install-self-developing-swarm.md) — standing
+  up oshal on a second machine as a self-healing, self-developing swarm: why a fresh box has no
+  App Loader (operator gating is fail-closed, and `MOCK_OIDC` fabricates a different identity than
+  the one you allowlisted), what `scripts/oshal-install.sh --mode 2 --admin-email` does that a
+  hand-written `docker compose up` does not, the ordered "what comes after core" list, the two
+  self-development rails (ADR-081 in-swarm dev bot vs the ADR-077 dev-node sidecar) with the
+  SEC-05 `openai-codex` refusal both hit on a fresh box, and why hot-swap is the contributor inner
+  loop rather than the self-coding mechanism.
 - [provider-profiles.md](./provider-profiles.md) — running the swarm on **one API key** (xAI/Grok,
   Groq, DeepSeek, Mistral, …): why a provider is not a harness, the three env vars that repoint the
   deployment default, the provider→credential table, and the reason the env alone does not move the
