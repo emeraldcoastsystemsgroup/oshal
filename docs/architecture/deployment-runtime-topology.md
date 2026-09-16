@@ -68,10 +68,12 @@ flowchart LR
     W2 --> WS
 ```
 
-The JavaScript server at `any-bot/server/app.js` remains in the image for
-compatibility surfaces. It is not the canonical trusted provider-execution
-path; its own runtime rejects trusted provider intents in favor of the
-TypeScript bot-node.
+The JavaScript server at `any-bot/server/app.js` remains in the image for its
+`app-modules/*` route registrars and the provider/task layer the bot-node
+runtime executes through. It is **not a selectable runtime**:
+`scripts/bot-entrypoint.sh` implements exactly `swarm` and `bot-node`
+(`CANONICAL_BOT_RUNTIMES`), refuses `BOT_RUNTIME=any-bot`, and fails closed on
+any other value rather than falling through to the controller.
 
 ## Current local Docker Compose topology
 
