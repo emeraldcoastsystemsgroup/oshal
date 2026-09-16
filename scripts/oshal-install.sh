@@ -179,8 +179,8 @@ if [ -z "$MODE" ]; then
       printf '   bundle (kernel/full/little-monsters/gaming/jobs) [%s]: ' "$BUNDLE"; read -r b; BUNDLE="${b:-$BUNDLE}"
       [ -n "${BUNDLE_PACKAGES[$BUNDLE]+x}" ] || { echo "unknown bundle: $BUNDLE"; exit 2; }
       # This is the LOGIN, not just an admin flag: MOCK_OIDC has no sign-in page, so whatever
-      # lands here is who the swarm thinks you are. Blank = the shared demo identity.
-      printf '   your email — becomes your local login AND the superadmin (blank = decide later): '; read -r ADMIN_EMAIL || true
+      # lands here is who the swarm thinks you are. require_admin_email below enforces it.
+      printf '   portal administrator email — your local login AND the superadmin: '; read -r ADMIN_EMAIL || true
       for p in ${BUNDLE_PACKAGES[$BUNDLE]:-}; do PKG_SET[$p]=1; done
     fi
   else
@@ -205,6 +205,34 @@ local_sub() {
   _lsh=$(printf '%s' "$_lsl" | { sha256sum 2>/dev/null || shasum -a 256 2>/dev/null; } | awk '{print $1}')
   printf 'local-%s' "$(printf '%s' "$_lsh" | cut -c1-16)"
 }
+
+# ── The portal administrator is REQUIRED, not optional ───────────────────────
+# MOCK_OIDC has no sign-in page: whatever lands here IS the identity the swarm
+# serves every request as. Left blank, the swarm silently runs as the fabricated
+# demo user, the operator who installed it is NOT its superadmin, and connector
+# tokens bind to a shared demo sub. So: prompt until it is answered, and on a
+# non-interactive host REFUSE rather than install a swarm nobody owns.
+valid_email() {
+  case "$1" in
+    *[!a-zA-Z0-9._%+-]*@* | @* | *@ | *' '* ) return 1 ;;
+    *@*.* ) return 0 ;;
+    * ) return 1 ;;
+  esac
+}
+require_admin_email() {
+  [ "$MODE" = "3" ] && return 0                      # a leaf node joins an existing swarm's identity
+  while [ -z "$ADMIN_EMAIL" ] || ! valid_email "$ADMIN_EMAIL"; do
+    if [ -n "$ADMIN_EMAIL" ]; then echo "   not an email address: $ADMIN_EMAIL" >&2; ADMIN_EMAIL=""; fi
+    if [ ! -t 0 ]; then
+      echo "--admin-email is required: it is the portal administrator — the local login AND the" >&2
+      echo "superadmin of this swarm. Re-run with --admin-email you@example.com" >&2
+      exit 2
+    fi
+    printf '   portal administrator email — your local login AND the superadmin: '
+    read -r ADMIN_EMAIL || true
+  done
+}
+require_admin_email
 
 # ── Mode 4: Kubernetes — codeless helm install (ADR-129) ─────────────────────
 # Same contract as mode 1, different substrate: registry image + published chart,

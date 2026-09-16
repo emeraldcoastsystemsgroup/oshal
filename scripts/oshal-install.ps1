@@ -81,6 +81,29 @@ function LocalSub([string]$email) {
   } finally { $sha.Dispose() }
 }
 
+# -- The portal administrator is REQUIRED, not optional -----------------------
+# MOCK_OIDC has no sign-in page: this identity IS the one the swarm serves every request as.
+# Blank means the swarm runs as the fabricated demo user, the operator who installed it is NOT
+# its superadmin, and connector tokens bind to a shared demo sub. Prompt until answered; on a
+# non-interactive host REFUSE rather than install a swarm nobody owns.
+function Test-EmailShape([string]$value) {
+  if (-not $value) { return $false }
+  return $value -match '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+}
+function Require-AdminEmail([string]$value) {
+  while (-not (Test-EmailShape $value)) {
+    if ($value) { Write-Host "   not an email address: $value" -ForegroundColor Yellow }
+    if (-not [Environment]::UserInteractive) {
+      throw "-AdminEmail is required: it is the portal administrator - the local login AND the superadmin of this swarm. Re-run with -AdminEmail you@example.com"
+    }
+    Say "who owns this swarm?"
+    Note "This email becomes your local login AND makes you the superadmin. Nothing is sent"
+    Note "anywhere - it is written only to your local .env."
+    $value = (Read-Host "   portal administrator email").Trim()
+  }
+  return $value
+}
+
 
 # -- Bundles: kernel + curated sets, dependencies bound (keep in lockstep with oshal-install.sh) --
 # Lockstep with scripts/oshal-install.sh KERNEL_SERVICES: both new bots carry requiresOwnNode,
@@ -226,12 +249,7 @@ nodes:
 
   # Who owns this swarm? Same question, same reason as the compose path: MOCK_OIDC has
   # no sign-in page, so this identity IS the login.
-  if (-not $AdminEmail -and [Environment]::UserInteractive) {
-    Say "who owns this swarm?"
-    Note "Your email becomes your local login AND makes you the superadmin. It is written only"
-    Note "into the cluster's api env. Press Enter to skip (shared demo identity)."
-    $AdminEmail = (Read-Host "   your email").Trim()
-  }
+  $AdminEmail = Require-AdminEmail $AdminEmail
 
   $helmSet = @(
     '--set-string', "image.repository=$Registry/oshal-bot",
@@ -483,12 +501,8 @@ try {
 # else's demo account - never themselves, never the superadmin - and every account they connect
 # binds to that shared demo sub. One question here is what makes the swarm actually theirs.
 $envFile = Join-Path $Dir '.env'
-if (-not $AdminEmail -and -not (Test-Path $envFile) -and [Environment]::UserInteractive) {
-  Say "who owns this swarm?"
-  Note "Your email becomes your local login AND makes you the superadmin. Nothing is sent"
-  Note "anywhere - it is written only to your local .env. Press Enter to skip."
-  $AdminEmail = (Read-Host "   your email").Trim()
-}
+# An existing .env already carries the identity chosen on the first install.
+if (-not (Test-Path $envFile)) { $AdminEmail = Require-AdminEmail $AdminEmail }
 
 # -- .env: generated once, never overwritten ---------------------------------
 function Rand48 { -join ((1..48) | ForEach-Object { '0123456789abcdef'[(Get-Random -Maximum 16)] }) }
