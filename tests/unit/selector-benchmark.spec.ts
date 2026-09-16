@@ -338,7 +338,7 @@ const BURNED: readonly BenchCase[] = [
  *   before (origin/main 33eefac4, min(1, hits/3) self-score over raw substrings):
  *       103/105 correct (98.1%), Tier 1 decided 78/105 (74.3%), Tier 3 decided 27; held-out 23/26
  *   after  (evidence self-score + no tied award):
- *       105/105 correct (100%),  Tier 1 decided 102/105 (97.1%), Tier 3 decided 3;  held-out 23/26
+ *       105/105 correct (100%),  Tier 1 decided 101/105 (96.2%), Tier 3 decided 4;  held-out 23/26
  *
  * No case that worked before is broken: the two "before" misses are both fixed (an uber question
  * that reached eats-concierge, and a regression-guard ask that reached test-engineer), and the
@@ -360,7 +360,11 @@ const BURNED: readonly BenchCase[] = [
  * deliberately handed down rather than awarded arbitrarily.
  */
 const MIN_ACCURACY = 1;
-const MIN_BID_TIER_SHARE = 102 / 105;
+// 101, not the 102 first measured: one ask moved back to Tier 3 when a declared phrase made only
+// of function words stopped scoring as evidence ('as-is-to-be' normalizes to the bare auxiliary
+// 'to be'). That ask is decided correctly at Tier 3, and the share it cost was a bot claiming a
+// sentence it has no business claiming - a share bought that way is not worth holding.
+const MIN_BID_TIER_SHARE = 101 / 105;
 /** Held-out floor — what the held-out corpus actually scored, recorded rather than targeted. */
 const MIN_HELD_OUT_CORRECT = 23;
 

@@ -220,6 +220,26 @@ describe('computeBidConfidence: bids stay comparable across personas', () => {
     ).toBeGreaterThanOrEqual(computeBidConfidence(ask, loose));
   });
 
+  it('does not let a declaration made only of function words claim an ordinary sentence', () => {
+    // delivery-architect really declares 'as-is-to-be'. Separator normalization turns that into the
+    // bare auxiliary 'to be', which scored a full phrase hit (0.692) — above the 0.5 threshold and
+    // above a true owner holding one real declared word (0.5625) — so its declarer claimed any
+    // sentence containing those two words. Found by the independent verification of this change.
+    const flight = { title: 'my flight is going to be late', description: '', requiredCapabilities: [] as string[] };
+    const functionWords = { agentName: 'delivery-architect', capabilities: [], routingKeywords: ['as-is-to-be', 'to-be'] };
+    const trueOwner = { agentName: 'travel-concierge', capabilities: [], routingKeywords: ['flight'] };
+    expect(
+      computeBidConfidence(flight, functionWords),
+      'a declaration of nothing but function words bid on an ordinary sentence',
+    ).toBe(0);
+    expect(computeBidConfidence(flight, trueOwner)).toBeGreaterThan(computeBidConfidence(flight, functionWords));
+
+    // The same bot still bids on its REAL subject: the domain words in the declaration survive.
+    const real = { title: 'draw the as-is and to-be architecture diagrams', description: '', requiredCapabilities: [] as string[] };
+    const architect = { agentName: 'delivery-architect', capabilities: [], routingKeywords: ['architecture diagram', 'as-is-to-be'] };
+    expect(computeBidConfidence(real, architect)).toBeGreaterThan(0.5);
+  });
+
   it('always ranks more evidence strictly higher — nothing saturates into a tie', () => {
     const ask = { title: 'geofence waypoint takeoff rtl', description: '', requiredCapabilities: [] as string[] };
     const two = { agentName: 'two-owner', capabilities: [], routingKeywords: ['geofence', 'waypoint'] };
