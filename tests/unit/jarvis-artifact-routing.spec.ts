@@ -2,6 +2,7 @@
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove selected-artifact routing through real owner handles, registry, YAML and authenticated Jarvis HTTP routes; model and persistence are isolated fixtures.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Partial-mock the database barrel instead of listing its exports. createPersistenceActivation arrived in the barrel and both in-memory stores call it, so this file's mock threw on construction and the suite was red on main with nobody acting on it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Correct a stale assumption about the session-ownership gate, which is why the HTTP case answered 404 session_not_found. Its task-store double returned undefined from create() and null from get() forever - enough while ensureSessionTask read `return !created || created.ownerSub === sub`, and not enough after the 2026-09-11 hardening made a store that cannot hand back an owner-bound task a refusal. The case now runs against the REAL InMemoryTaskStore with Postgres configuration withheld, so it exercises the shipped create/read-back contract instead of a fixture's idea of it. No assertion is relaxed; updateStatus is observed with a spy over the real method.
  */
 import type { AddressInfo } from 'node:net';
 import express, { type Request, type RequestHandler } from 'express';
@@ -31,6 +32,7 @@ import { buildArtifactToolGuidance } from '@/app/routes/jarvis-tool-catalog';
 import * as toolCatalog from '@/app/routes/jarvis-tool-catalog';
 import { buildArtifactRoutingPrompt, resolveJarvisArtifact, resolveJarvisArtifactAnswer } from '@/app/routes/jarvis-artifact-routing';
 import { createJarvisRoutes, purgeJarvisAskJobsForOwner } from '@/app/routes/jarvis-routes';
+import { createMemoryOnlyTaskStore } from '../helpers/jarvis-session-task-store';
 
 const OWNER = 'auth0|artifact-routing-owner';
 const OTHER = 'auth0|artifact-routing-other';
@@ -154,9 +156,13 @@ describe('authenticated /api/jarvis/ask artifact handoff', () => {
     // Only persistence, model execution and the test identity rail are doubles. No live database or bot.
     const query = vi.fn(async () => ({ rows: [], rowCount: 0 }));
     const createTicket = vi.fn();
+    // The REAL task store, memory-backed and poolless. /ask owner-binds the session through create()
+    // and reads it back through get(); a double that answers neither cannot clear the ownership gate.
+    const taskStore = createMemoryOnlyTaskStore();
+    const updateStatus = vi.spyOn(taskStore, 'updateStatus');
     const ctx = {
       pool: { query }, orchestrator: { processMessage: vi.fn() },
-      taskStore: { get: vi.fn().mockResolvedValue(null), create: vi.fn(), updateStatus: vi.fn(), incrementMessageCount: vi.fn(), incrementTurnCount: vi.fn() },
+      taskStore,
       messageStore: { save: vi.fn(), getByTask: vi.fn().mockResolvedValue([]) },
       ticketService: { listTickets: vi.fn().mockResolvedValue([]), openChatTicket: vi.fn().mockResolvedValue({ ticketId: 'routing-chat' }), createTicket, updateStatus: vi.fn() },
     };
@@ -221,7 +227,7 @@ describe('authenticated /api/jarvis/ask artifact handoff', () => {
       vi.spyOn(toolCatalog, 'buildToolsBlock').mockImplementation(() => { throw new Error('fixture malformed YAML'); });
       expect((await ask({ ref: handle.ref })).status).toBe(503);
       expect(executeBot).toHaveBeenCalledTimes(modelCalls);
-      expect(ctx.taskStore.updateStatus).toHaveBeenCalledWith('artifact-routing-session', 'failed');
+      expect(updateStatus).toHaveBeenCalledWith('artifact-routing-session', 'failed');
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
