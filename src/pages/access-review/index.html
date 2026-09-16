@@ -1,0 +1,263 @@
+<!--
+  Access review — the one place that answers "what am I allowed to do".
+
+  Three authorization axes grant privilege on this swarm and each is a separate authority:
+  swarm administration (ADR-148), governance permissions, and per-application assignments
+  (ADR-149). They stay separate — folding per-app access into swarm administration would make
+  "may use the photo app" and "may administer the swarm" one decision. This page joins their
+  ANSWERS for one identity and names the source of every grant. It is read-only: there is no
+  control here that changes anything, and the API behind it has no write member.
+
+  Any signed-in person sees their own. Only an admin may name another subject, and that read
+  still runs through the authorization service's own management checks.
+-->
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ                 | AUTHOR                      | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | The joined read-only view over swarm role, governance permissions and per-application assignments, with the source of every grant named.
+-->
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Access review — OSHAL</title>
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <script src="/shared/ui/js/surface-theme.js"></script>
+  <style>
+    :root {
+      --bg: var(--bg-primary);
+      --panel: var(--bg-secondary);
+      --card: var(--bg-card);
+      --ink: var(--text-primary);
+      --ink-muted: var(--text-secondary);
+      --line: var(--border-color);
+      --teal: var(--accent-primary);
+      --amber: var(--status-warning);
+      --green: var(--status-success);
+      --red: var(--status-error);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; background: var(--panel); color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-size: 14.5px; -webkit-font-smoothing: antialiased; min-height: 100%;
+    }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 40px 22px 64px; }
+    h1 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+    h2 { font-size: 1.02rem; margin: 0 0 10px; }
+    .kicker { color: var(--amber); font-weight: 850; text-transform: uppercase; letter-spacing: .09em; font-size: .68rem; margin-bottom: 6px; }
+    .lede { color: var(--ink-muted); max-width: 66ch; margin: 0 0 26px; line-height: 1.55; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 18px; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+    .label { color: var(--ink-muted); min-width: 190px; }
+    .value { font-weight: 650; }
+    .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); font-size: .76rem; margin: 0 6px 6px 0; }
+    .pill.ok { border-color: var(--green); color: var(--green); }
+    .pill.warn { border-color: var(--amber); color: var(--amber); }
+    .pill.bad { border-color: var(--red); color: var(--red); }
+    .note { color: var(--ink-muted); font-size: .86rem; line-height: 1.5; margin-top: 10px; }
+    .note.warn { color: var(--amber); }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--ink-muted); font-weight: 650; text-transform: uppercase; letter-spacing: .05em; font-size: .7rem; }
+    .scroll { overflow-x: auto; }
+    input[type="text"] { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; min-width: 260px; font: inherit; }
+    button { background: var(--teal); color: var(--bg-primary); border: 0; border-radius: 7px; padding: 8px 14px; font: inherit; font-weight: 650; cursor: pointer; }
+    button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+    a { color: var(--teal); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="kicker">Access review</div>
+    <h1>What am I allowed to do</h1>
+    <p class="lede">
+      Three separate authorities decide what you can reach: your role on this swarm, the governance
+      permissions that role carries, and your assignment on each installed application. They stay
+      separate on purpose — this page only joins their answers and names where each grant came from.
+      Nothing here changes anything.
+    </p>
+
+    <div class="card" id="subjectCard">
+      <h2>Subject</h2>
+      <div class="row"><span class="label">Identity</span><span class="value" id="subjectIdentity">Loading…</span></div>
+      <div class="row"><span class="label">Issuer</span><span class="value" id="subjectIssuer">—</span></div>
+      <div id="chooser" hidden style="margin-top:14px">
+        <div class="row">
+          <input type="text" id="subjectInput" placeholder="subject identifier (sub)" aria-label="Subject identifier" />
+          <button id="lookupBtn" type="button">Review this subject</button>
+          <button id="selfBtn" type="button" class="ghost">Back to me</button>
+        </div>
+        <p class="note">
+          An administrator may review anybody by subject identifier. Somebody else has no session
+          here, so only their subject identifier is evaluated — see the note under Swarm role.
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Swarm role — and where it came from</h2>
+      <div class="row"><span class="label">Role</span><span class="value" id="swarmRole">—</span></div>
+      <div class="row"><span class="label">Granted by</span><span class="value" id="swarmSources">—</span></div>
+      <div class="row"><span class="label">Swarm root</span><span class="value" id="swarmRoot">—</span></div>
+      <div class="row"><span class="label">RBAC enforcement</span><span class="value" id="swarmEnforce">—</span></div>
+      <p class="note" id="swarmNote"></p>
+    </div>
+
+    <div class="card">
+      <h2>Governance permissions</h2>
+      <div id="permissions">—</div>
+      <p class="note" id="permissionsNote"></p>
+    </div>
+
+    <div class="card">
+      <h2>Per-application assignments</h2>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th>Application</th><th>Access</th><th>Granted by</th><th>Roles</th><th>Permissions</th></tr>
+          </thead>
+          <tbody id="appRows"><tr><td colspan="5">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <p class="note" id="appsNote"></p>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
+      })[c]);
+    }
+
+    function pill(text, tone) {
+      return '<span class="pill' + (tone ? ' ' + tone : '') + '">' + esc(text) + '</span>';
+    }
+
+    /**
+     * What each provenance label means, in the words a person asking "why can I do this?" needs.
+     * The page never guesses a source: the API reports it, because the browser can see neither
+     * swarm_roles, nor the identity-provider token mapping, nor the operator-local environment.
+     */
+    const SOURCE_COPY = {
+      'swarm-role': ['ok', 'a role on this swarm — manageable from Users, and it survives a change to the environment file'],
+      'idp-claim': ['warn', 'a role claim on the identity-provider token — it disappears when the directory stops sending it, and nobody here can revoke it'],
+      'break-glass': ['warn', 'the break-glass allowlist in this deployment’s environment file — not a role on this swarm, invisible to everyone, and unchangeable from a browser'],
+      'app-assignment': ['ok', 'an assignment on this application'],
+      'app-default': ['', 'the application’s own default tier — nothing was assigned'],
+      none: ['', 'nothing grants this'],
+    };
+
+    function sourceTone(source) { return (SOURCE_COPY[source] || ['', ''])[0]; }
+    function sourceText(source) { return (SOURCE_COPY[source] || ['', 'unknown source'])[1]; }
+
+    function renderSwarm(review) {
+      const swarm = review.swarm || {};
+      $('swarmRole').textContent = swarm.role || 'unknown';
+      const sources = Array.isArray(swarm.sources) ? swarm.sources : [];
+      $('swarmSources').innerHTML = sources.length
+        ? sources.map((s) => pill(s, sourceTone(s))).join('')
+        : pill('no role grant', '');
+      $('swarmRoot').textContent = swarm.isRoot
+        ? 'you hold swarm root'
+        : (swarm.rootClaimed ? 'held by somebody else' : 'unclaimed');
+      $('swarmEnforce').textContent = swarm.enforcement ? 'enforcing' : 'permissive (default)';
+
+      const notes = [];
+      if (sources.length) {
+        notes.push(sources.map((s) => esc(s) + ' — ' + esc(sourceText(s))).join('<br>'));
+      } else {
+        notes.push('No axis grants this identity a role above viewer.');
+      }
+      if (swarm.rolesLoaded === false) {
+        notes.push('<strong>The swarm role snapshot has not loaded.</strong> That is not the same statement as "holds no role" — a role granted on the Users page cannot be seen until it does.');
+      }
+      if (swarm.emailEvaluated === false) {
+        notes.push('Only the subject identifier was evaluated. A break-glass entry that names an EMAIL rather than a subject is not visible in this answer.');
+      }
+      $('swarmNote').innerHTML = notes.join('<br><br>');
+      $('swarmNote').className = 'note' + (sources.indexOf('break-glass') >= 0 || swarm.rolesLoaded === false ? ' warn' : '');
+    }
+
+    function renderPermissions(review) {
+      const permissions = Array.isArray(review.permissions) ? review.permissions : [];
+      $('permissions').innerHTML = permissions.length
+        ? permissions.map((p) => pill(p, 'ok')).join('')
+        : pill('none', '');
+      $('permissionsNote').textContent = review.swarm && review.swarm.enforcement
+        ? 'These are enforced: OSHAL_RBAC_ENFORCE is on.'
+        : 'Fine-grained enforcement is off on this deployment, so these are the permissions the role WOULD carry. Routes with their own owner/admin gate are unaffected by that setting.';
+    }
+
+    function renderApps(review) {
+      const body = $('appRows');
+      if (review.appsAvailable === false) {
+        body.innerHTML = '<tr><td colspan="5">The application authorization authority is not wired on this deployment, so per-application access is unknown here — not empty.</td></tr>';
+        $('appsNote').textContent = '';
+        return;
+      }
+      const apps = Array.isArray(review.apps) ? review.apps : [];
+      body.innerHTML = apps.length
+        ? apps.map((app) => '<tr>'
+          + '<td>' + esc(app.app) + '</td>'
+          + '<td>' + (app.denied || app.tier === 'deny' ? pill('denied', 'bad') : pill(app.tier, 'ok')) + '</td>'
+          + '<td>' + pill(app.source, sourceTone(app.source)) + '</td>'
+          + '<td>' + (app.roles && app.roles.length ? app.roles.map((r) => esc(r)).join(', ') : '—') + '</td>'
+          + '<td>' + (app.grants && app.grants.length ? app.grants.map((g) => esc(g)).join(', ') : '—') + '</td>'
+          + '</tr>').join('')
+        : '<tr><td colspan="5">No application has registered an authorization catalog on this swarm.</td></tr>';
+
+      const unreadable = Array.isArray(review.unreadable) ? review.unreadable : [];
+      $('appsNote').innerHTML = unreadable.length
+        ? 'Not readable for this subject: ' + unreadable.map((row) => esc(row.app) + ' (' + esc(row.reason) + ')').join(', ')
+        : '';
+    }
+
+    function renderSubject(review) {
+      const subject = review.subject || {};
+      $('subjectIdentity').textContent = (subject.email || subject.sub || 'unknown')
+        + (subject.self ? ' (you)' : '');
+      $('subjectIssuer').textContent = subject.issuer || '—';
+      $('chooser').hidden = !review.canChooseSubject;
+      $('selfBtn').hidden = Boolean(subject.self);
+    }
+
+    async function load(sub) {
+      const url = '/api/access-review' + (sub ? '?sub=' + encodeURIComponent(sub) : '');
+      let response;
+      try {
+        response = await fetch(url, { headers: { accept: 'application/json' } });
+      } catch (error) {
+        $('subjectIdentity').textContent = 'Could not reach the access review API.';
+        return;
+      }
+      if (!response.ok) {
+        const detail = response.status === 403
+          ? 'Only an administrator may review another subject.'
+          : 'The access review returned HTTP ' + response.status + '.';
+        $('subjectIdentity').textContent = detail;
+        return;
+      }
+      const review = await response.json();
+      renderSubject(review);
+      renderSwarm(review);
+      renderPermissions(review);
+      renderApps(review);
+    }
+
+    $('lookupBtn').addEventListener('click', () => load($('subjectInput').value.trim()));
+    $('selfBtn').addEventListener('click', () => { $('subjectInput').value = ''; load(''); });
+    $('subjectInput').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') load($('subjectInput').value.trim());
+    });
+
+    load(new URLSearchParams(window.location.search).get('sub') || '');
+  </script>
+</body>
+</html>

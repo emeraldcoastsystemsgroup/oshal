@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | /applications opts into guestWelcome: the app-store preview surface welcomes anonymous visitors through the /guest demo landing (?next= deep link back) instead of bouncing them to Google OAuth.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148: register the /users swarm access-management surface. requiresAuth only, deliberately — the page is where a signed-in user learns they are NOT an admin, and where the first person on a virgin swarm claims root before any operator exists; the privileged reads and every write are fenced by requiresOperator inside /api/swarm/roles.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Registered the /data-model page (data-model explorer). requiresAuth only at the page, like /users and /app-loader: a non-operator gets the explanatory screen, and every read is fenced by requiresOperator on /api/admin/data-model.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Registered the /access-review page - the joined read-only answer to "what am I allowed to do". requiresAuth only, like /users: the whole point is that a person who cannot open something can see WHY without being an administrator, and naming somebody else's subject is fenced inside /api/access-review.
  */
 
 import express from 'express';
@@ -236,6 +237,7 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
   const appLoaderDir = resolveExistingPath([path.resolve(__dirname, '../pages/app-loader'), path.resolve(process.cwd(), 'src/pages/app-loader')]);
   const pumpkinDir = resolveExistingPath([path.resolve(__dirname, '../pages/pumpkin'), path.resolve(process.cwd(), 'src/pages/pumpkin')]);
   const dataModelDir = resolveExistingPath([path.resolve(__dirname, '../pages/data-model'), path.resolve(process.cwd(), 'src/pages/data-model')]);
+  const accessReviewDir = resolveExistingPath([path.resolve(__dirname, '../pages/access-review'), path.resolve(process.cwd(), 'src/pages/access-review')]);
 
   return [
     { routePath: '/task-explorer', pageDir: taskExplorerDir },
@@ -275,6 +277,10 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
     // Data-model explorer. requiresAuth only at the page level so a non-admin sees why the data is
     // withheld; every read is fenced by requiresOperator on /api/admin/data-model.
     { routePath: '/data-model', pageDir: dataModelDir },
+    // Access review — the one place that answers "what am I allowed to do". requiresAuth only, for
+    // the same reason as /users: a person who cannot open something has to be able to see why.
+    // Naming another subject is admin-only inside /api/access-review, which is the real fence.
+    { routePath: '/access-review', pageDir: accessReviewDir },
     // Pumpkin projector — the full-screen jack-o'-lantern display for the Halloween prop (?app=pumpkin).
     { routePath: '/pumpkin', pageDir: pumpkinDir },
   ];
