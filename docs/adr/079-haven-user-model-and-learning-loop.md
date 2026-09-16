@@ -43,7 +43,13 @@ One feature slice, `src/features/user-model/`, four slices as-built:
    every chunk stamped `owner_sub` — retrieval runs through the permission filter with
    `allowPublic=false`, so only the owner's memories can ever surface (the 2026-07-05 cross-user
    denial proof covers exactly this path). `buildHavenPreamble` appends up to 3 relevant memories
-   per turn.
+   per turn. The search is an enrichment, never the answer, so it is bounded on both axes: callers
+   pass the user's OWN words as the retrieval query (never the assembled prompt), the query is
+   capped at `HAVEN_LONG_TAIL_QUERY_MAX_CHARS` (512), and the search races
+   `HAVEN_LONG_TAIL_TIMEOUT_MS` (3 s) — past it the turn answers on the hot core alone. Both
+   bounds exist because on 2026-09-15 the whole 71,817-character bot message was passed as the
+   query and the search took 100-127 s, longer than the Jarvis decision budget, so a question was
+   filed as a build ticket instead of being answered.
 
 4. **Proactivity — pull-based.** A lazy per-user sweep (throttled hourly, runs when the user
    arrives) decays idle facts (~3%/idle-day past 30 days; deactivate under 0.25) and computes

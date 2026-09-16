@@ -301,7 +301,7 @@ async function runJarvis(
  * corrected architecture (a bot in the framework, not an orchestrator outside it).
  */
 export async function runJarvisBot(
-  ctx: AppContext, sub: string, message: string, taskId: string, agentic = true,
+  ctx: AppContext, sub: string, message: string, taskId: string, agentic = true, userText?: string,
 ): Promise<{ answer: string; routed: AppRoute[]; handoffs: AppRoute[] }> {
   // ADR-127: which brain runs this turn — the caller's saved default, else the ladder (demo CLI
   // login for the operator, their own endpoint, their free tiers, this deployment's keys). A
@@ -323,7 +323,10 @@ export async function runJarvisBot(
   const request = {
     // Haven (ADR-079): every turn carries the caller's user-model hot core + relevant
     // owner-scoped long-tail memories, so Jarvis answers as if it knows them.
-    text: await withHavenContext(ctx.pool, sub, message),
+    // The long-tail search is given the user's OWN words when the caller has them: `message` here
+    // is the assembled prompt (tools + catalog + open work), and searching with all of it cost
+    // 100-127 s per turn on 2026-09-15 — longer than the whole decision budget.
+    text: await withHavenContext(ctx.pool, sub, message, userText ?? message),
     taskId,
     workspaceFolderId: taskId,
     agentId: JARVIS_AGENT_ID,
@@ -371,7 +374,10 @@ export async function runJarvisBot(
   const answer = String(result.response || '').trim();
   // Passive learning (fire-and-forget, throttled): extraction runs on the same accountable
   // inline brain so its LLM cost lands in chat_tasks (ADR-036/050). Never blocks the reply.
-  void learnFromExchange(ctx.pool, sub, message, answer, (p) => runJarvis(ctx, sub, p, 'haven-learn', byoLlmConnection));
+  // Learn from what the USER said. `message` here is the assembled prompt, and the extraction
+  // reads only its first 2,000 characters: under the old context-first order those characters were
+  // the tool catalog, so the loop was recording the catalog as durable facts about the person.
+  void learnFromExchange(ctx.pool, sub, userText ?? message, answer, (p) => runJarvis(ctx, sub, p, 'haven-learn', byoLlmConnection));
   return { answer, routed: [], handoffs: [] };
 }
 
@@ -743,7 +749,10 @@ async function summarizeComplexTask(
     // provider facts or prevent the visual. Ordinary work products still use Jarvis's summarizer.
     const trustedSummary = summarizeProviderBoundRecords(automaticProviderRecords);
     const answer = trustedSummary
-      || (await runJarvisBot(ctx, sub, prompt, `jarvis-summary-${taskId}`, true)).answer;
+      // The summary prompt opens with fixed boilerplate, so its first 512 characters are identical
+      // on every summary: pass the task's own title as the retrieval query instead, or the long-tail
+      // search runs the same meaningless query every time.
+      || (await runJarvisBot(ctx, sub, prompt, `jarvis-summary-${taskId}`, true, title)).answer;
     const directives = extractJarvisDirectives(answer);
     const cleanSummary = directives.cleanAnswer;
     const finalSummary = cleanSummary || readableDeliverable.slice(0, 4000);
