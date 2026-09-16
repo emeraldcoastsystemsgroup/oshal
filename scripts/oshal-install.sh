@@ -52,7 +52,9 @@ ALLOW_STALE_IMAGE=0
 SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 K8S_NAMESPACE="oshal"; K8S_CONTEXT=""; K8S_NODEPORT="30500"; K8S_CHART=""; BUNDLE_EXPLICIT=0
 REPO_URL="https://github.com/emeraldcoastsystemsgroup/oshal"
-STORE_REPO="${OSHAL_STORE_REPO:-https://github.com/emeraldcoastsystemsgroup/oshal-apps}"
+STORE_REPO_DEFAULT="https://github.com/emeraldcoastsystemsgroup/oshal-apps"
+STORE_REPO="${OSHAL_STORE_REPO:-$STORE_REPO_DEFAULT}"
+STORE_REPO_NAMED=0; [ -n "${OSHAL_STORE_REPO:-}" ] && STORE_REPO_NAMED=1
 
 while [ $# -gt 0 ]; do case "$1" in
   --mode) MODE="$2"; shift 2 ;;
@@ -63,6 +65,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --tag) TAG="$2"; shift 2 ;;
   --registry) REGISTRY="$2"; shift 2 ;;
   --admin-email) ADMIN_EMAIL="$2"; shift 2 ;;
+  --store-repo) STORE_REPO="$2"; STORE_REPO_NAMED=1; shift 2 ;;
   --control-plane) CONTROL_PLANE="$2"; shift 2 ;;
   --join-code) JOIN_CODE="$2"; shift 2 ;;
   --enrollment-token) ENROLL_TOKEN="$2"; shift 2 ;;
@@ -233,6 +236,37 @@ require_admin_email() {
   done
 }
 require_admin_email
+
+# ── Where do the applications come from, and can this box read it? ───────────
+# The store was environment-only (OSHAL_STORE_REPO / OSHAL_STORE_TOKEN), so a private
+# store was undiscoverable: an operator had to already know the variable existed. It is
+# asked for here, and a credential is requested ONLY when the store does not answer
+# anonymously — read silently, so it is never echoed or left in shell history.
+store_is_public() {
+  _sc=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$1" 2>/dev/null || echo 000)
+  [ "$_sc" = "200" ]
+}
+require_store_source() {
+  [ "$MODE" = "3" ] && return 0                      # a leaf node stages nothing
+  if [ "$STORE_REPO_NAMED" -eq 0 ] && [ -t 0 ]; then
+    printf '   application store [%s]: ' "$STORE_REPO_DEFAULT"
+    read -r _sr || true
+    [ -n "$_sr" ] && STORE_REPO="$_sr"
+  fi
+  case "$STORE_REPO" in https://*) ;; *) echo "--store-repo must be an https URL: $STORE_REPO" >&2; exit 2 ;; esac
+  [ -n "${OSHAL_STORE_TOKEN:-}" ] && return 0
+  store_is_public "$STORE_REPO" && return 0
+  if [ ! -t 0 ]; then
+    echo "$STORE_REPO is not readable anonymously and no credential was supplied." >&2
+    echo "Export OSHAL_STORE_TOKEN=<token with read access> and re-run." >&2
+    exit 2
+  fi
+  echo "   $STORE_REPO does not answer anonymously — it needs a read token."
+  printf '   store access token (input hidden, Enter to skip): '
+  stty -echo 2>/dev/null; read -r _st || true; stty echo 2>/dev/null; echo
+  [ -n "$_st" ] && export OSHAL_STORE_TOKEN="$_st"
+}
+require_store_source
 
 # ── Mode 4: Kubernetes — codeless helm install (ADR-129) ─────────────────────
 # Same contract as mode 1, different substrate: registry image + published chart,

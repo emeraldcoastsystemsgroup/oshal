@@ -107,6 +107,32 @@ function Require-AdminEmail([string]$value) {
   return $value
 }
 
+# -- Where do the applications come from, and can this box read it? -----------
+# The store was environment-only, so a private store was undiscoverable: the operator had
+# to already know OSHAL_STORE_REPO existed. Ask, and request a credential ONLY when the
+# store does not answer anonymously - read as a SecureString so it is never echoed.
+function Test-StoreIsPublic([string]$url) {
+  try { return (Invoke-WebRequest -Uri $url -Method Head -TimeoutSec 15 -UseBasicParsing).StatusCode -eq 200 }
+  catch { return $false }
+}
+function Require-StoreSource([string]$repo, [bool]$named) {
+  if (-not $named -and [Environment]::UserInteractive) {
+    $answer = (Read-Host "   application store [$repo]").Trim()
+    if ($answer) { $repo = $answer }
+  }
+  if ($repo -notmatch '^https://') { throw "-StoreRepo must be an https URL: $repo" }
+  if ($env:OSHAL_STORE_TOKEN -or (Test-StoreIsPublic $repo)) { return $repo }
+  if (-not [Environment]::UserInteractive) {
+    throw "$repo is not readable anonymously and no credential was supplied. Set OSHAL_STORE_TOKEN=<token with read access> and re-run."
+  }
+  Note "$repo does not answer anonymously - it needs a read token."
+  $secure = Read-Host "   store access token (input hidden, Enter to skip)" -AsSecureString
+  $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+  if ($plain) { $env:OSHAL_STORE_TOKEN = $plain }
+  return $repo
+}
+
 
 # -- Bundles: kernel + curated sets, dependencies bound (keep in lockstep with oshal-install.sh) --
 # Lockstep with scripts/oshal-install.sh KERNEL_SERVICES: both new bots carry requiresOwnNode,
@@ -253,6 +279,7 @@ nodes:
   # Who owns this swarm? Same question, same reason as the compose path: MOCK_OIDC has
   # no sign-in page, so this identity IS the login.
   $AdminEmail = Require-AdminEmail $AdminEmail
+  $StoreRepo = Require-StoreSource $StoreRepo ($PSBoundParameters.ContainsKey('StoreRepo') -or [bool]$env:OSHAL_STORE_REPO)
 
   $helmSet = @(
     '--set-string', "image.repository=$Registry/oshal-bot",
@@ -505,7 +532,10 @@ try {
 # binds to that shared demo sub. One question here is what makes the swarm actually theirs.
 $envFile = Join-Path $Dir '.env'
 # An existing .env already carries the identity chosen on the first install.
-if (-not (Test-Path $envFile)) { $AdminEmail = Require-AdminEmail $AdminEmail }
+if (-not (Test-Path $envFile)) {
+  $AdminEmail = Require-AdminEmail $AdminEmail
+  $StoreRepo = Require-StoreSource $StoreRepo ($PSBoundParameters.ContainsKey('StoreRepo') -or [bool]$env:OSHAL_STORE_REPO)
+}
 
 # -- .env: generated once, never overwritten ---------------------------------
 function Rand48 { -join ((1..48) | ForEach-Object { '0123456789abcdef'[(Get-Random -Maximum 16)] }) }
