@@ -103,6 +103,51 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   RED if the wide signature is granted back to the bot. The guard runs against a disposable
   PostgreSQL, never `oshal-local-db`.
 
+### Every automated proof that the product works has been dead since delegation signing (2026-09-16)
+
+- **Measured 2026-09-16, on two consecutive deploys.** `scripts/lib/deploy-verify.sh` runs three
+  post-deploy checks. `bot-role-grant` passes. The other two — **the only two that assert the
+  product does anything** — return UNVERIFIED every time, for one shared reason:
+  `User-bound delegation requires a verified principal issuer`. `jarvis-ask` cannot make Jarvis
+  answer; `ticket-dispatch` dispatched a real ticket to `general-bot` and it landed in **`escalated`**
+  with `manifest_worker_dispatch_failed`, same cause.
+- **Why nothing can fix this from inside the box.** The check can only mint a service-secret PAT,
+  which records no principal issuer (a fleet-wide secret is not proof of an IdP namespace), so
+  `resolveDelegatedPrincipal` refuses — correctly. Confirmed independently by calling the Jarvis bot
+  node directly on the internal network with a valid `X-Service-Secret`: it answers
+  `{"success":false,"error":"delegation_required"}`, HTTP 401. **No automation on this deployment can
+  prove Jarvis answers.**
+- **What it cost.** Jarvis was returning 503 to every ask and nothing raised an alarm; the deploy
+  reported `37 healthy / 37 app containers` and `parity clean` on the same run. The script's own
+  closing line has been saying it all along — *"this deploy is UNPROVEN as a product: nothing here
+  says Jarvis answers or a ticket moves"* — and it reads as boilerplate because it prints every time.
+- **The unblock is one operator action:** from a SIGNED-IN browser session `POST /api/cli-tokens` (a
+  session mint DOES record the issuer), then set `OSHAL_VERIFY_OPERATOR_PAT` in the environment the
+  deploy runs under. An agent cannot mint it, by design.
+- **Done when:** `jarvis-ask` and `ticket-dispatch` report PASS or FAIL rather than UNVERIFIED on a
+  normal deploy; a deploy whose Jarvis check fails EXITS NON-ZERO rather than printing a headline and
+  continuing; and a guard covers the exit-code contract so the gate cannot quietly regress to
+  advisory. Until the first two are true, treat "deployed" as "installed", never as "working".
+
+### Thirteen trading spec files have never run in any gate (2026-09-16)
+
+- **Measured 2026-09-16** during the review of PRs #215/#219: `grep -rn "trading" .github/workflows/`
+  in the store repo returns **nothing**, and `framework-coupled.vitest.config.mjs` includes only
+  `lora/tests` and `vids/tests`. `trading/tests/*.spec.ts` is **13 files**. None of them run
+  automatically — not in store CI, and not in the new local runner, which mirrors `store-ci.yml`
+  job-for-job and so inherits the same hole.
+- **This is the package that places real orders with the operator's money.** Two guards landed in
+  #215 and #219 on 2026-09-16 — the cost-basis divergence cases and the screener degradation cases —
+  and neither will ever execute on a push.
+- **It also hides a real drift.** The full trading suite is **10 failed / 272 passed** on those
+  branches and the identical 10 fail on `main` with the same core: the store package does not yet
+  consume core's `pinnedInFullGovernance` (`trading-unmanaged-positions.spec.ts`, the `protected lots`
+  and `ledgerGovernance` cases). Nobody saw them because nothing runs them.
+- **Done when:** the trading specs run in `store-ci-local.sh` and in whatever gate replaces store CI,
+  with the DSN refusal in force so no run can reach `oshal-local-db` (`scripts/ci/check-spec-database-default.sh`
+  is the existing guard for that shape); the 10 pre-existing failures are either fixed or explicitly
+  quarantined with their own entry; and a zero-test run for that package fails rather than passing.
+
 ### No gate typechecks a test file, so "typecheck clean" says nothing about one
 
 - **Found 2026-09-16** reviewing PR #579. `tsconfig.json` has `include: ["src/**/*.ts", "src/**/*.tsx"]` and `exclude: ["node_modules", "dist", "tests", "**/*.spec.ts", "**/*.test.ts"]`; `tsconfig.server.json` includes only four `src/` subtrees. So `npx tsc --noEmit` never reads a spec, and neither does the pre-push hook, which runs that same command against committed HEAD. Vitest transpiles with esbuild, which strips types without checking them.
