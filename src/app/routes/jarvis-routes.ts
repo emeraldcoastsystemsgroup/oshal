@@ -53,6 +53,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | No-hosted-brain honesty: the /ask catch runs describeJarvisAskFailure, so a turn whose user-brain ladder resolved to nothing on an unbrokered-harness bot records "Jarvis has no AI engine connected — add one under Settings → Connections → Bring Your Own LLM." with code NO_HOSTED_BRAIN, and /ask/result returns that code for the surface to speak. Every other failure keeps its own message and carries no code; the refusal, the ladder and the SEC-05 preflight are untouched.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted jarvis-speaker-profile-links.js in JARVIS_CLIENT_ASSETS: the Manage Voices → Ambient Recall bridge serves from the same authenticated /assets route as the other speaker siblings.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | GET /tasks claims the return leg's FAILURE half beside the success half: a task whose ticket reached a terminal failure is closed in the durable shelf and the honest sentence is written into its thread (returnFailedComplexTasks). The ticket map now carries the whole ticket rather than its status alone, because the recorded escalation reason lives in its metadata and re-reading it per task would turn one list into an N+1.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | GET /tasks now claims the PROTECTED success half too. Protected rows were dropped out of the summarize/repair pass and nothing else ever picked them up, so a protected ticket that finished correctly produced no summary, no finishTask and no thread turn - it simply went quiet. They are split out instead of discarded and handed to returnProtectedComplexSummaries, which records the derived lineage before it claims. The automatic half and the table-visual repair pass keep exactly the rows they had.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -98,6 +99,7 @@ import {
   runJarvisBot,
   compileAndDispatchPlan,
   maskPendingComplexSummaries,
+  returnProtectedComplexSummaries,
   repairCompletedTaskTableVisuals,
 } from './jarvis-orchestrator';
 import {
@@ -574,9 +576,18 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
       // (once, in the background). Until that lands, the task stays masked as in-flight — see
       // maskPendingComplexSummaries for why it must never surface as 'done' early.
       const automaticTasks = [];
+      const protectedTasks = [];
       const sourceSessions = new Map(rows.map(row => [row.id, row.session_id]));
-      for (const task of tasks) if (!await hasProtectedJarvisSource(ctx, [task.id, task.ticketId, sourceSessions.get(task.id)].filter((id): id is string => Boolean(id)))) automaticTasks.push(task);
+      for (const task of tasks) {
+        if (!await hasProtectedJarvisSource(ctx, [task.id, task.ticketId, sourceSessions.get(task.id)].filter((id): id is string => Boolean(id)))) automaticTasks.push(task);
+        else protectedTasks.push(task);
+      }
       await maskPendingComplexSummaries(ctx, sub, automaticTasks);
+      // The protected half of the return leg. It is NOT the automatic path: the source's execution
+      // lineage is bound to this row and its conversation first, so the summary that lands answers to
+      // the same authority as the work product. Without this a protected ticket that SUCCEEDED was
+      // dropped here and the thread it was asked in stayed silent forever.
+      await returnProtectedComplexSummaries(ctx, sub, protectedTasks, sourceSessions, () => resultActor(req));
       // Older completed rows may already contain a useful Markdown table but predate persisted
       // visual metadata. Repair at most three per owner poll; ordinary prose remains text-only.
       await repairCompletedTaskTableVisuals(ctx, visualResponseService, sub, automaticTasks);

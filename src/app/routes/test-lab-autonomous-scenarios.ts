@@ -9,6 +9,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register bot initialization, specialist context and briefing behavior suites with read-only discovery and explicit runner prerequisites.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register the BUG-20 guards on the isolated nightly regression scenario: the alert replay-idempotency and consolidateLanded suites on disposable PostgreSQL.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register the local CI export-purge and partial-secret-scan guards (Git Bash runs of the production script pieces) on the isolated nightly regression scenario.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Register the protected derived-result return guard on the protected remote application execution scenario.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -130,6 +131,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/bot-node-remote-authorization-client.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-result-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-jarvis-results.spec.ts' },
+    { level: 'integration', path: 'tests/unit/protected-jarvis-thread-return.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-ticket-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/queued-application-principal.spec.ts' },
     { level: 'integration', path: 'tests/unit/remote-execution-end-to-end.spec.ts' },

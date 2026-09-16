@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Bind persisted protected output to controller-owned execution lineage and current exact-principal result access.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Record derived-result lineage so a protected answer can be published to a second controller-owned destination (a Jarvis conversation) without laundering it: linkResult joins the authority port, and recordDerivedProtectedResult re-asserts the owner's current rights on the SOURCE, links every contributing execution to the destination, then proves the destination now answers to the same executions. Nothing about who may read is relaxed - the destination simply inherits the source's checks.
  */
 import type { AuthorizationActor } from '@/shared/application-authorization';
 
@@ -17,6 +18,10 @@ export interface ProtectedResultAccess {
   assertTaskResultAccess(taskId: string, actor: AuthorizationActor): Promise<void>;
   hasTaskResults(taskId: string): Promise<boolean>;
   isProtectedAgent(agentId: string): boolean | Promise<boolean>;
+  /** Durably bind an already-completed execution to a second controller-chosen destination task, under the
+   *  authority's own current-rights verification. The destination then fails every later read the source
+   *  would have failed; it never gains a right the source did not already grant this exact principal. */
+  linkResult(executionId: string, resultTaskId: string, actor: AuthorizationActor): Promise<void>;
 }
 
 /** @description Stored task fields needed to constrain result history and streaming. */
@@ -95,6 +100,39 @@ export async function assertProtectedResultAccess(executionId: string, taskId: s
   await authority.assertResultAccess(executionId, actor, { taskId });
   await authority.assertTaskResultAccess(taskId, actor);
   if (access !== authority) throw new Error('protected_result_unavailable');
+}
+
+/**
+ * @description Record derived lineage so one protected result may be published into a second controller-owned
+ * destination task while remaining bound to the SAME executions. This is the lineage the automatic Jarvis
+ * summary path was withheld for: without it a protected answer copied into a conversation would be readable
+ * through a row that no longer answered to the execution authority.
+ * @param source - Stored source task carrying the controller-recorded executions, with its owner.
+ * @param destinationTaskId - Controller-chosen destination task; never a caller-supplied identifier.
+ * @param actor - Verified request actor, which must be the source owner acting as itself.
+ * @returns The execution identifiers now bound to the destination, for stamping onto its metadata.
+ */
+export async function recordDerivedProtectedResult(source: ProtectedResultTask, destinationTaskId: string,
+  actor: AuthorizationActor): Promise<string[]> {
+  const authority = access;
+  if (!authority || !actor.isActive || !actor.sub || !actor.issuer) throw new Error('protected_result_unavailable');
+  if (!destinationTaskId || destinationTaskId === source.taskId) throw new Error('protected_result_binding_mismatch');
+  if (actor.sub !== source.ownerSub) throw new Error('protected_result_owner_mismatch');
+  const executions = readProtectedResultExecutions(source.metadata);
+  // The source must be readable by this exact principal RIGHT NOW, against its own binding, before any
+  // part of it is republished. A durable execution the metadata lost still counts, so the task-wide
+  // assertion runs too — it is what closes the "lineage append was lost" hole for the derived copy.
+  for (const executionId of executions) await authority.assertResultAccess(executionId, actor, { taskId: source.taskId });
+  await authority.assertTaskResultAccess(source.taskId, actor);
+  if (!executions.length) throw new Error('protected_result_lineage_required');
+  for (const executionId of executions) {
+    await authority.linkResult(executionId, destinationTaskId, actor);
+    // Prove the link took: a destination that does not yet answer to this execution must not be stamped.
+    await authority.assertResultAccess(executionId, actor, { taskId: destinationTaskId });
+  }
+  await authority.assertTaskResultAccess(destinationTaskId, actor);
+  if (access !== authority) throw new Error('protected_result_unavailable');
+  return executions;
 }
 
 /**
