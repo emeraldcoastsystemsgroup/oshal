@@ -18,6 +18,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove connector credentials from generic/fan-out model dispatch. Credential resolution is permitted only for a schema-bounded deterministic providerIntent executed by the trusted server handler.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Close ADR-034 push-on-dispatch enforcement: authoritative stamping defaults on, carries providerConfigRequired even when the record lookup fails, and retains an explicit off/false/0/no/disabled compatibility rollback.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Prevent authoritative remote dispatch from downgrading to the unstamped localhost path after a bot transport failure; only explicit flag-off compatibility requests may use that fallback.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com  | BACKLOG "The `task` call-out can still hand a ticket to a controller-inline bot under signing": the ADR-083 call-out may override the workflow declared worker with any online bidder, and under signed delegation a bidder that owns no dedicated bot-node endpoint had its ticket refused at the TRANSPORT ("Signed HTTP delegation requires a dedicated bot-node endpoint") - the one shape the sibling worker-routing fix does not cover, and the biggest contributor to the 269 escalated "task" rows on the 2026-09-16 box. Live there: 14 of 37 online agents resolve to no endpoint, including two with no registry definition at all (self-healing-bot a0...056, career-hunter cb...0001) that bid on a heartbeat alone. Now an unreachable winner is SET ASIDE for the workflow declared worker (routedBy "workflow-default-call-out-unreachable") and, when that one is unreachable too, the ticket is refused with reason "call_out_worker_has_no_dedicated_endpoint" naming both bots. No refusal is weakened: the dispatch still crosses the signed hop, and the behaviour is inert with signing off. The decision plus the two pure fan-out helpers moved to call-out-endpoint-routing.ts to keep this file under the file-size gate. Guard: tests/unit/task-call-out-endpoint-routing.spec.ts.
  */
 
 import * as http from 'node:http';
@@ -51,6 +52,14 @@ import {
 } from '@/app/bot-node-provider-intent';
 import type { WorkflowDefinition } from './dispatch-routing';
 import type { TaskCallOutOwner, TaskCallOutResolver } from './task-call-out';
+import {
+  CALL_OUT_UNREACHABLE_ROUTED_BY,
+  callOutUnreachableEscalation,
+  safeWorkerLabel,
+  unreachableCallOutWinner,
+  validatedFanOutOwners,
+  type CallOutWinner,
+} from './call-out-endpoint-routing';
 
 const logger = createChildLogger({ module: 'dispatch-manifest-worker' });
 
@@ -172,35 +181,6 @@ interface FanOutExecutionResult {
   owner: TaskCallOutOwner;
   result?: BotNodeResponse;
   error?: string;
-}
-
-function safeWorkerLabel(value: string): string {
-  return value.replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
-}
-
-function validatedFanOutOwners(
-  owners: TaskCallOutOwner[] | undefined,
-  winnerAgentId: string,
-): TaskCallOutOwner[] {
-  // Defense in depth: reject malformed resolver output instead of widening the bounded contract.
-  if (!owners || owners.length < 2 || owners.length > 3) return [];
-  if (owners[0]?.agentId !== winnerAgentId) return [];
-  const leadConfidence = owners[0]?.confidence;
-  if (!Number.isFinite(leadConfidence) || leadConfidence < 0.5) return [];
-
-  const seen = new Set<string>();
-  const validated: TaskCallOutOwner[] = [];
-  for (const owner of owners) {
-    const agentId = typeof owner.agentId === 'string' ? owner.agentId.trim() : '';
-    const agentName = typeof owner.agentName === 'string' ? safeWorkerLabel(owner.agentName) : '';
-    if (!agentId || !agentName || seen.has(agentId)) return [];
-    if (!Number.isFinite(owner.confidence)
-      || owner.confidence < 0.5
-      || leadConfidence - owner.confidence > 0.15 + Number.EPSILON) return [];
-    seen.add(agentId);
-    validated.push({ agentId, agentName, confidence: owner.confidence });
-  }
-  return validated;
 }
 
 function fanOutPrompt(
@@ -701,6 +681,27 @@ export async function dispatchManifestWorkerTicket(
     }
   }
 
+  // ADR-083 vs signed delegation. A winner with no dedicated bot-node endpoint cannot be
+  // dispatched at all - there is no hop for the token to bind to - so the bid was never
+  // ownership: the ticket was always going to park in 'escalated' naming HTTP transport.
+  // Set it aside for the workflow's DECLARED worker, which the workflow names precisely
+  // because it is reachable. Nothing is loosened: the dispatch still crosses the signed
+  // boundary, and an unreachable declared worker is refused below by ROUTING reason.
+  const setAsideWinner: CallOutWinner | null = unreachableCallOutWinner(
+    callOutAgentId ? { agentId: callOutAgentId, agentName: callOutAgentName } : null,
+    deps.botNodeClient,
+  );
+  if (setAsideWinner) {
+    logger.warn(
+      { ticketId, ...setAsideWinner, routedBy, workflowWorkerBot: workflow.workerBot },
+      'Call-out winner owns no dedicated bot-node endpoint under signed delegation - routing to the workflow-declared worker',
+    );
+    callOutAgentId = null;
+    callOutAgentName = null;
+    callOutOwners = [];
+    routedBy = CALL_OUT_UNREACHABLE_ROUTED_BY;
+  }
+
   const workerBot = callOutAgentName ?? workflow.workerBot;
 
   const workerAgentId =
@@ -767,6 +768,20 @@ export async function dispatchManifestWorkerTicket(
     { ticketId, ...routing, workflowWorkerBot: workflow.workerBot },
     'Manifest-worker owner resolved',
   );
+
+  // Both the claimed owner and the workflow's declared worker are unreachable. Refuse, but
+  // say which ROUTING decision produced the dead end - the transport message this replaces
+  // is true of every such refusal and identifies none of them.
+  if (setAsideWinner && deps.botNodeClient && !deps.botNodeClient.hasEndpoint(workerAgentId)) {
+    const escalation = callOutUnreachableEscalation(setAsideWinner, workflow.workerBot, routing);
+    logger.error({ ticketId, ...escalation }, 'Manifest-worker call-out has no reachable worker');
+    await deps.ticketService.updateStatus(ticketId, 'escalated', escalation).catch((updateErr) => {
+      logger.warn({ err: updateErr, ticketId }, 'Failed to mark ticket escalated after an unreachable call-out');
+    });
+    deps.activeTicketIds.delete(ticketId);
+    deps.dispatchStartTimes.delete(ticketId);
+    return;
+  }
 
   const port = deps.port ?? process.env.PORT ?? '5000';
   const baseText = [
