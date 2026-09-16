@@ -196,6 +196,7 @@
  * 180 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149: the /api/ui profile route receives the authorization runtime's canDiscover and the actor resolver, so a synthesised rail can lock a tile whose target package the signed-in person cannot discover. Same-line wiring; no new code line in this file.
  * 181 | maintainer@emeraldcoastsystemsgroup.com   | One MOCK_OIDC predicate, not three readings: this file tested MOCK_OIDC === 'true' at the /api/auth/user mode string and at the demo-auth mount, while the bypass itself uses isMockOidcEnabled() (true|1|yes, any case) - so MOCK_OIDC=1 authenticated every request as the mock user while the probe reported mode 'oidc' and the demo /login,/logout were never mounted. Both sites now go through ./routes/auth-state-routes (createAuthStateRoutes, mountDemoAuthRoutes), which read that one helper; the probe moves verbatim and keeps its position, ungated, right after the global auth middleware. Guard: tests/unit/mock-oidc-one-predicate.spec.ts.
  * 182 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/access-review - the read-only join over the three authorization axes (swarm role and its provenance, governance permissions, per-application assignments). requiresAuth only: every signed-in person may ask about themselves, naming another subject is admin-only inside the route, and the per-application read still runs through the authorization service's own management checks. No write member exists on the route.
+ * 183 | maintainer@emeraldcoastsystemsgroup.com   | ADR-145 D5: the swarm-apps router receives recentAppTasks, the kernel-owned jarvis_tasks read behind a status card for an app that declares no summary: probe. The router owns no pool, so the composition root binds it here. Same-line wiring; no new code line in this file.
  */
 
 require('dotenv').config();
@@ -338,7 +339,7 @@ import { createRagRoutes } from './routes/rag-routes';
 import { createGlobalSearchRoutes } from './routes/global-search-routes';
 import { RagService } from '@/features/rag';
 import { UIProfileService } from '@/features/ui-profile';
-import { AppAccessService, SwarmAppService, SwarmAppRepository } from '@/features/swarm-apps';
+import { AppAccessService, SwarmAppService, SwarmAppRepository, readAppTaskFallback } from '@/features/swarm-apps';
 import { createApplicationAuthorizationWiring } from './composition/application-authorization-wiring';
 import { createQueuedApplicationPrincipalWiring } from './composition/queued-application-principal-wiring';
 import { createApplicationRemoteExecutionRoutes } from './routes/application-remote-execution-routes';
@@ -1544,7 +1545,7 @@ function createApp(): express.Application {
     loadApp: (manifestPath, scopeMeta) => swarmAppService.loadApp(manifestPath, scopeMeta),
   }));
   app.use('/api/swarm/apps', requiresAuth, createSwarmAppRoutes(swarmAppService, appAccessService, {
-    isAuthorizationProtected: app => applicationAuthorization.isProtected(app.name),
+    isAuthorizationProtected: app => applicationAuthorization.isProtected(app.name), recentAppTasks: (sub, apps) => readAppTaskFallback(ctx.pool, sub, apps),
   }));
   app.use('/api/swarm/packs', requiresAuth, createSwarmPackRoutes(swarmAppService));
   // ADR-085 packaged skins: surfaces authored against core skins request

@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export the APP-02 package-audit rollout-mode resolver for installer boundaries.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-141 application-group validators + resolvers (swarm-app-group.ts).
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-149 rail-tile discoverability resolver and its per-person port (swarm-app-tile-discoverability.ts).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-145 D4 per-name status plan (app-status-plan.ts) and its D5 jarvis_tasks fallback (app-status-task-fallback.ts), plus humaniseReadinessSlug.
  */
 
 export { SwarmAppService } from './swarm-app-service';
@@ -44,7 +45,21 @@ export {
   atPointer,
   MAX_SUMMARY_TILES,
   MAX_SUMMARY_ITEMS,
+  humaniseReadinessSlug,
 } from './app-home-plan';
+// ADR-145 D4/D5 — one name (a group OR a plain app) resolved to a status plan, and the kernel-owned
+// jarvis_tasks fallback for an app that declares no `summary:`.
+export { getAppStatusPlan } from './app-status-plan';
+export type { AppStatusPlan, AppStatusSummaryProbe, AppStatusUndeclaredApp } from './app-status-plan';
+export {
+  readAppTaskFallback,
+  composeAppTaskItems,
+  appTaskTitlePrefixes,
+  APP_STATUS_FALLBACK_ITEMS,
+  APP_STATUS_FALLBACK_ROWS,
+  APP_STATUS_FALLBACK_TEXT_CHARS,
+} from './app-status-task-fallback';
+export type { AppStatusFallbackApp, AppStatusFallbackItem, AppStatusTaskRow } from './app-status-task-fallback';
 export type { HomePlanEntry, HomePlanSummaryProbe, HomePlanTodo } from './app-home-plan';
 export type {
   AppSmokeApplicationResult,

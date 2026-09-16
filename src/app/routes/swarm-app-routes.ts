@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com | GET /:name/uninstall-impact reports optionalDependents (apps that list this one as an OPTIONAL dependency); only required dependents block.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | POST /import re-enters the caller's RLS request identity after multer (preserveRequestIdentity). When the manifest's last bytes reached multer on a later socket chunk, loadApp ran with no AsyncLocalStorage identity and the owner-stamped swarm_applications write was refused by RLS (400). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-157: mount the kernel-served Scheduled services surface (GET /:name/services, POST /:name/services/:id/activate, DELETE /:name/services/:id/activation) on this router, which already carries requiresAuth at its mount. Registered before the router's own /:name routes so the literal segments match first.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com  | ADR-145 D4/D5: GET /:name/setup and /:name/setup-dashboard address an ACTIVE GROUP **or** an ACTIVE APP, so an app that belongs to no group can finally report. The plan comes from getAppStatusPlan over the manifests THIS caller may see (the /:name visibility rule, so an invisible app 404s like a missing one) and carries each app's summary probe; for a member that declares no `summary:` the response also carries D5's fallbackItems, composed from this user's own recent jarvis_tasks rows through the injected recentAppTasks port (the router owns no pool). Manifest data only — the page still asks every probe itself in the viewer's own session.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
@@ -35,9 +36,12 @@ import {
   serializeManifest,
   compileWorkflowSpec,
   buildHomePlan,
+  getAppStatusPlan,
   type SwarmAppScope,
   type SwarmAppManifest,
   type SwarmApplicationRecord,
+  type AppStatusFallbackApp,
+  type AppStatusFallbackItem,
 } from '@/features/swarm-apps';
 import { getCaller, isOperator } from '@/shared/middleware/authz';
 import { preserveRequestIdentity } from '@/shared/middleware/multipart-identity';
@@ -98,11 +102,33 @@ const upload = multer({
  * @returns Express Router
  */
 export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAccessService,
-  options: { isAuthorizationProtected?: (app: SwarmApplicationRecord) => boolean | Promise<boolean> } = {}): Router {
+  options: {
+    isAuthorizationProtected?: (app: SwarmApplicationRecord) => boolean | Promise<boolean>;
+    /**
+     * ADR-145 D5 — the kernel-owned `jarvis_tasks` read behind a card for an app that declares no
+     * `summary:`. Injected by the composition root because this router owns no pool; omitted, the
+     * status plan simply carries no fallback items (never a fabricated one).
+     */
+    recentAppTasks?: (sub: string, apps: readonly AppStatusFallbackApp[]) => Promise<AppStatusFallbackItem[]>;
+  } = {}): Router {
   const router = Router();
   // ADR-157: the kernel-served Scheduled services surface. Registered first so its literal
   // segments are matched before this router's own /:name routes.
   registerApplicationServiceActivationRoutes(router);
+
+  /**
+   * @description The ACTIVE manifests this caller may see — the same visibility rule GET /:name
+   * applies, so a status plan can never confirm that someone else's app exists.
+   * @param req - The authenticated request.
+   * @returns Active manifests visible to the caller.
+   */
+  const visibleActiveManifests = async (req: Request): Promise<SwarmAppManifest[]> => {
+    const { sub } = getCaller(req);
+    const visible = new Set(
+      (await service.listApps('active', { ownerSub: sub, isOperator: isOperator(req) })).map((app) => app.name),
+    );
+    return (await service.getActiveManifests()).filter((manifest) => visible.has(manifest.name));
+  };
 
   router.get('/', async (req: Request, res: Response) => {
     try {
@@ -557,43 +583,52 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAc
    * as the impact list + component picker before the user confirms an uninstall.
    */
   /**
-   * GET /:name/setup — the ADR-141 setup-dashboard plan for an active GROUP: its steps with each
-   * member's readiness probe (path + RFC 6901 pointers) resolved against the ACTIVE members, and the
-   * ribbon surface to open per step. Manifest data only — the dashboard page fetches every probe
-   * itself, in the signed-in user's own session, so nothing here impersonates the caller. 404 for
-   * anything that is not an active group (indistinguishable from not-found, like GET /:name).
+   * GET /:name/setup — the status-dashboard plan for an ACTIVE GROUP **or** an ACTIVE APP
+   * (ADR-145 D4, generalising ADR-141's group-only plan): the setup steps with each member's
+   * readiness probe (path + RFC 6901 pointers), each app's declared `summary:` probe, and — for an
+   * app that declares none — D5's `fallbackItems`, composed from THIS user's own recent
+   * `jarvis_tasks` rows. Everything else is manifest data: the page fetches every probe itself, in
+   * the signed-in user's own session, so nothing here impersonates the caller. 404 for a name that
+   * is not an active app or group VISIBLE TO THIS CALLER (indistinguishable from not-found, like
+   * GET /:name).
    */
   router.get('/:name/setup', async (req: Request, res: Response) => {
     const name = String(req.params.name);
     try {
-      const plan = await service.getGroupSetupPlan(name);
-      if (!plan) { res.status(404).json({ error: 'no active application group of that name' }); return; }
-      res.json(plan);
+      const plan = getAppStatusPlan(name, await visibleActiveManifests(req));
+      if (!plan) { res.status(404).json({ error: 'no active application or group of that name' }); return; }
+      const { sub } = getCaller(req);
+      const fallbackItems = sub && options.recentAppTasks && plan.undeclared.length
+        ? await options.recentAppTasks(sub, plan.undeclared)
+        : [];
+      res.set('Cache-Control', 'no-store');
+      res.json({ ...plan, fallbackItems });
     } catch (err: any) {
-      logger.error({ err, name }, 'Failed to build group setup plan');
+      logger.error({ err, name }, 'Failed to build app status plan');
       res.status(500).json({ error: 'setup plan unavailable' });
     }
   });
 
   /**
-   * GET /:name/setup-dashboard — the ONE kernel-served setup / connection-status page every group
-   * gets (ADR-141 D4). Self-contained HTML; it reads ?group=, fetches /setup, then probes each
-   * member in the viewer's session and opens the fix surface through the ribbon's app-navigate
-   * message. No group writes its own dashboard.
+   * GET /:name/setup-dashboard — the ONE kernel-served status / setup page every group AND every
+   * app gets (ADR-141 D4, widened by ADR-145 D3/D4). Self-contained HTML; it resolves its own name
+   * from the URL, fetches /setup, then asks every summary and readiness probe in the viewer's own
+   * session and opens a fix surface through the ribbon's app-navigate message. No app writes its
+   * own version of this page.
    */
   router.get('/:name/setup-dashboard', async (req: Request, res: Response) => {
     const name = String(req.params.name);
     try {
-      const plan = await service.getGroupSetupPlan(name);
-      if (!plan) { res.status(404).type('text/plain').send('no active application group of that name'); return; }
+      const plan = getAppStatusPlan(name, await visibleActiveManifests(req));
+      if (!plan) { res.status(404).type('text/plain').send('no active application or group of that name'); return; }
       res.sendFile(path.resolve(process.cwd(), 'src/pages/cockpit/tools/app-group-setup.html'), (err) => {
         if (err) {
-          logger.error({ err, name }, 'failed to serve group setup dashboard');
+          logger.error({ err, name }, 'failed to serve the app status dashboard');
           if (!res.headersSent) res.status(404).type('text/plain').send('setup dashboard not found');
         }
       });
     } catch (err: any) {
-      logger.error({ err, name }, 'Failed to serve group setup dashboard');
+      logger.error({ err, name }, 'Failed to serve the app status dashboard');
       res.status(500).type('text/plain').send('setup dashboard unavailable');
     }
   });
