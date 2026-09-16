@@ -129,6 +129,42 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   continuing; and a guard covers the exit-code contract so the gate cannot quietly regress to
   advisory. Until the first two are true, treat "deployed" as "installed", never as "working".
 
+### A catalog-less protected app cannot have a working system service (2026-09-16)
+
+- **Measured 2026-09-16, twice independently**, while building ADR-157 slice S3 and again while
+  amending the ADR. Against the real `ApplicationAuthorizationService` with a `MemoryAuthorizationStore`,
+  an app registered `mode: 'enforce', catalog: null`:
+  `service:venture-plan => { allowed: false, reason: 'authorization_app_admin_required', tier: 'deny' }`.
+  `authorize()` takes the `!app.catalog` branch
+  ([service.ts:159-163](../src/features/application-authorization/service.ts)) and demands `@app-admin`
+  at tier `admin`.
+- **Why that breaks the slice as designed.** A system activation grants the service principal exactly
+  the permissions the manifest declares in `requires` — and **none of these packages can declare any**,
+  because the loader refuses a `requires` that names a permission the app's own imported catalog does
+  not define, and refuses the WHOLE manifest when it does. All five schedule-owning packages import no
+  catalog (`catalog=NONE`, confirmed by running core's real `loadApplicationAuthorization` over each
+  manifest). So the activation grants nothing, the first tick is denied, and the runner **suspends the
+  activation** with the denial reason. ADR-157's first Consequence says these schedules "skip until
+  activated, then run"; for a catalog-less app the second half is false.
+- **This is the gate on five dead schedules.** `intelligent-sales-email-auto-log`,
+  `daily-trade-recap-recorded-reports`, `venture-plan-rebaseline-policy-tick`,
+  `marketing-engine-daily-metrics-ingest` and `marketing-engine-weekly-campaign-review` have not run
+  since 2026-09-10. S3 (declarations) landed; S2 (the activation panel) and an activation still stand
+  between here and a job firing — and this gap stands behind both.
+- **Two shapes were sketched and NEITHER is chosen — this is an operator/architecture decision.**
+  (a) a kernel rule giving a protected app with no ADR-149 catalog a defined system-service path
+  instead of the `@app-admin` fallback — one core change, covers all six schedule owners including
+  `calendar`, and any future package that never imports a catalog; (b) each package imports a catalog
+  and declares real `requires` — truer to ADR-149's intent and per-permission granular, but five
+  package changes plus catalog design, and nothing runs until every one lands. The operator's own
+  framing was that the installer should provision a portal admin and install apps under it, so that
+  "there is always a user" — which is a third shape and may subsume (a); it has not been costed.
+- **Done when:** a decision is recorded in ADR-157 or ADR-149; a system activation on a catalog-less
+  protected app either authorizes its declared scope or is refused at ACTIVATION time with a reason
+  naming the missing catalog, rather than being accepted and then suspended on its first tick; and a
+  guard covers whichever shape is chosen, run against a disposable PostgreSQL rather than
+  `oshal-local-db`.
+
 ### Thirteen trading spec files have never run in any gate (2026-09-16)
 
 - **Measured 2026-09-16** during the review of PRs #215/#219: `grep -rn "trading" .github/workflows/`
