@@ -4,10 +4,12 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Local sentence embeddings (transformers.js all-MiniLM-L6-v2) so RagService can do real vector retrieval on the existing Chroma 0.4.24 (whose REST /query rejects query_texts — everything was falling back to BM25). Fully local + free per the self-host ethos; fail-open: any load/inference failure returns null and retrieval degrades to lexical, never breaks.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Strip the ONNX runtime's process-global rethrow listeners once the model load settles. onnxruntime-web's Emscripten Node shell appends `process.on('unhandledRejection', t => { throw t })` and a matching `uncaughtException` rethrow the moment the wasm initialises, BEHIND installProcessCrashGuards — from that instant a stray rejection anywhere in the controller (not just in RAG) was rethrown into an uncaught exception, rethrown again, and killed the api with exit 7 and ~548 KB of minified bundle on stderr, before the crash guards' 250 ms log flush. Measured: exit 7 / 548,709 bytes without the strip, exit 0 / 54 bytes with it.
  */
 
 import { resolve } from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { snapshotProcessGuards, stripRethrowGuards } from './onnx-process-guards';
 
 const logger = createChildLogger({ module: 'local-embedding-service' });
 
@@ -71,6 +73,11 @@ class LocalEmbeddingService {
 
   private async load(): Promise<FeatureExtractor | null> {
     const started = Date.now();
+    // Capture the process-global crash-guard listeners BEFORE anything can pull in
+    // the ONNX runtime: its Emscripten Node shell appends two rethrow listeners at
+    // wasm init that make any stray rejection in the whole process fatal. The strip
+    // in `finally` removes exactly those and nothing the api installed itself.
+    const guards = snapshotProcessGuards();
     try {
       // @xenova/transformers is ESM-only and this codebase compiles CommonJS —
       // the Function wrapper keeps tsc from down-compiling import() to require().
@@ -94,6 +101,11 @@ class LocalEmbeddingService {
       this.unavailable = true;
       logger.warn({ err, model: MODEL_ID, ms: Date.now() - started }, 'Local embedding model unavailable — RAG stays lexical-only for this process');
       return null;
+    } finally {
+      // Both paths register the listeners: a failing InferenceSession.create arms
+      // them just as a successful one does, so the strip belongs here rather than
+      // only on the success path.
+      stripRethrowGuards(guards);
     }
   }
 }

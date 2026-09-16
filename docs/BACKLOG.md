@@ -208,6 +208,38 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ### The ONNX runtime installs process-global rethrow handlers that make any stray rejection fatal (2026-09-15)
 
+- ✅ **CLOSED 2026-09-16 (branch `fix/onnx-global-rethrow-handlers`).** The strip landed as
+  `src/features/rag/services/onnx-process-guards.ts` (`snapshotProcessGuards` / `stripRethrowGuards`
+  / `isRethrowListener`), called from `local-embedding-service.ts` `load()` — snapshot before the
+  dynamic import, strip in `finally` so a failing `InferenceSession.create` is covered as well as a
+  successful `pipeline()`. Matching is on the listener SHAPE (it throws its own first parameter) AND
+  on absence from the snapshot, so the api's own crash guards, and anything it registers during the
+  4-5 s load window, survive untouched. Nothing is added: no catch-all, no swallow.
+- **Measured both ways.** Plain `node`, no source maps — the shape `bot-entrypoint.sh` runs the api
+  in (`exec node dist/app/server.js`): without the strip **exit 7**, **548,709 bytes** of stderr,
+  offending source line `ort-web.node.js:6`; with it **exit 0**, **54 bytes**, listener counts back
+  to pre-load. Inside `oshal-bot:latest` through the real `load()` and the real model: pre-load 1/1
+  → post-load **2/2 and exit 7** without the fix, **1/1 and exit 0** with it, `embed(['x'])`
+  returning **384 dims** in both runs — inference was never the defect.
+- **Blast radius, established.** No boot-path caller reaches `embed()`, so the import is lazy — but
+  `startAmbientEnrichmentRuntime` (`src/app/server.ts:1397`) registers a sweeper
+  (`src/app/ambient-enrichment-runtime.ts:105`, `AMBIENT_ENRICH_SWEEP_MS` default 300 s) that reaches
+  `src/features/person-model/services/semantic-projection.ts:58` with no request in flight, and
+  `docker-compose.oshal-local.yml:1037` defaults `OSHAL_AMBIENT_ENRICH` on for the api. So a live api
+  arms the handlers minutes after boot, unattended — which is why the board's "Live state" bullet
+  found them there.
+- **Guard:** `tests/unit/onnx-global-rethrow-handlers.spec.ts`, 8 cases — a shape pin on the real
+  installed `onnxruntime-web` bundle, a classifier negative against the real
+  `installProcessCrashGuards` listeners, a three-way host child (runtime absent / present unstripped
+  / present stripped) under `tests/fixtures/onnx-rethrow-child.ts`, the `load()` wiring pin, and two
+  docker-gated in-image cases under `tests/fixtures/onnx-image-probe.ts` — including a no-fix
+  control, so the suite fails loudly rather than passing vacuously if the dependency stops
+  misbehaving. Red counts: **2 of 8** with the strip neutered, **2 of 8** with the `load()` wiring
+  reverted to its pre-fix form.
+- **Left open on purpose:** if `mod.pipeline()` never settles, `finally` never runs and the listeners
+  stay. That is the pre-existing hang the `numThreads = 1` comment describes, not a new exposure, and
+  it is not addressed here.
+
 - **Root-caused 2026-09-15 with probes on the real api image. The board's stated mechanism was
   WRONG and is corrected here.** The board said "an abort inside the WASM during inference is not
   caught (the try/catch covers model LOADING only)". **False** -
@@ -596,6 +628,17 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** either a support request is filed for the three repos and a sample old SHA returns 404 while `git ls-remote origin 'refs/pull/*/head'` no longer reaches an attributed commit, or the operator records here that the residue is accepted.
 
 ### An abort inside the local embedding runtime takes the whole api process down (2026-09-15)
+- ⚠ **2026-09-16 — the observed signature is reproduced with NO wasm abort at all**, by the ONNX
+  process-global rethrow-handler defect recorded above. A plain-`node` probe against
+  `oshal-bot:latest`'s compiled `dist` (real crash guards, real `load()`, then one unawaited
+  `Promise.reject`) produces exactly this log shape: the whole `ort-web.node.js` bundle on stderr, no
+  error object, no module name, process gone, Docker restarts it. The `Aborted(` markers this entry
+  cites appear as **string literals inside that dumped bundle** — `grep -o "Aborted([^)]*)"` over
+  the probe's stderr returns the minifier's `Aborted("+t+")` template — so their presence is not
+  evidence that the wasm aborted. Whether the three restarts at 01:47/02:26/02:33Z were this crash is
+  **not established here**: re-check `RestartCount` over a window after the strip deploys before
+  acting on the done-when below. ⛔ Do not build the worker-thread containment until that re-check
+  — it may be containing a failure that no longer happens.
 - **Observed:** the api container restarted three times in 45 minutes on a loaded box (01:47:33Z,
   02:26:47Z, 02:33:08Z). For the last two the container log ends the same way: the entire
   `onnxruntime-web/dist/ort-web.node.js` bundle dumped to stderr followed by Emscripten `Aborted(`
