@@ -1828,25 +1828,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   hostname resolving to `10.0.0.0/8` is refused through a real local resolver seam; and ADR-147's
   As built section records the completed behavior and evidence.
 
-### One place that answers "what am I allowed to do"
-- **Context:** [swarm administration — as built, and how to continue](architecture/swarm-administration.md) section 3.
-- **Remaining:** three authorization axes now exist and each is correct in isolation:
-  `swarm_roles` (who administers the SWARM, ADR-148), the governance RBAC role + permissions
-  (`features/governance/rbac/policy.ts`, which as of 2026-09-13 reads `swarm_roles` first and
-  then the env allowlists), and `application-authorization` (who may use each INSTALLED APP,
-  released 2026-09-11, surfaced at `/access`). Nobody — operator or user — can see all
-  three together, so "why can't I open this?" is answered by checking three surfaces and an
-  environment file. The axes must NOT be merged: folding per-app access into swarm
-  administration would make "may use the photo app" and "may administer the swarm" one
-  decision. What is missing is a READ-ONLY view that joins them for one identity and names the
-  source of each grant (`swarm-role` | `break-glass` | `idp-claim` | `app-assignment`), which
-  `/api/governance/whoami` already reports for the first two.
-- **Done when:** one authenticated surface shows, for the caller and — for an admin — for any
-  chosen subject: their swarm role and where it came from, their governance permissions, and
-  their per-app assignments; every value is read from the existing stores with no new grant
-  path; and a guard proves a break-glass-only operator is labelled as such rather than
-  rendering identically to a granted admin.
-
 ### `swarm-cli` zsh completion
 - **Remaining:** execute the current completion in real zsh, covering sourced/autoloaded modes, command/state dispatch, and saved context completion.
 - **Done when:** `zsh -n` and real tab completion pass for top-level commands, completion shells, token actions, and `--context`; append evidence to the existing 2026-07-12 proof or delete the unsupported script.
