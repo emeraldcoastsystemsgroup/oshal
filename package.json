@@ -77,6 +77,7 @@
     "repair:ticket-assignments": "ts-node -r tsconfig-paths/register scripts/operations/repair-ticket-assignments.ts",
     "repair:jarvis-task-lifecycle": "ts-node -r tsconfig-paths/register scripts/operations/repair-jarvis-task-lifecycle.ts",
     "benchmark:dynamic-insertion": "node scripts/dynamic-insertion-benchmark.mjs",
+    "bench:jarvis-tools": "tsx bench/jarvis-tool-selection/run.ts",
     "test:framework-contracts": "npx playwright test tests/dynamic-registration-framework.spec.ts tests/remote-client-framework.spec.ts tests/remote-client-live-mcp-e2e.spec.ts tests/workflow-runtime-boundary.spec.ts --reporter=line",
     "import:legacy-bots": "ts-node -r tsconfig-paths/register scripts/import-legacy-persona-bots.ts",
     "import:all-bots": "bash scripts/import-all-bots.sh",
