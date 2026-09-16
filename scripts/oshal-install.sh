@@ -13,6 +13,7 @@
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: mode 4 goes from a printed Terraform pointer to a REAL codeless k8s install — kubectl/helm preflight, cluster detection (offers a single-node kind cluster with the cockpit port mapped; REFUSES to create one beside a running compose swarm — that pairing OOM-wedged a 6GB engine twice), chart from the published OCI package with a repo-fetch fallback, fleet presets kernel|full (store bundles stay compose-only and say so), the same admin-email→MOCK_OIDC identity wiring as mode 1 (shared local_sub, hoisted above the mode dispatch), NodePort exposure with localhost/node-IP detection, /api/health postflight, and the /welcome open. New flags: --namespace, --k8s-context, --nodeport, --chart.
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | Mode 4 now INSTALLS its prerequisites instead of printing links and exiting 1 (operator: the installer should include the prereqs). kubectl and helm are fetched from their official sources into /usr/local/bin when writable, else ~/.local/bin (never a silent sudo); if no cluster is reachable it offers k3s on Linux (native, no Docker, survives reboot, NodePorts land on the host) and kind wherever Docker is present (fully scriptable — no GUI toggle), still refusing kind beside a running compose swarm. Every system-touching step asks first; --yes/-y accepts them for unattended installs, and a non-interactive shell DECLINES rather than surprise-installing.
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | Lockstep with the ps1: --allow-stale-image plus the post-pull freshness gate, and the Windows WSL2 guidance on both docker preflight failures. Git Bash on Windows hits the same dead end as the ps1 path - 'docker daemon not running' with no hint that WSL2 is the engine that is missing. The sh path only ADVISES (it cannot elevate); the ps1 can actually enable it.
+# 10 | maintainer@emeraldcoastsystemsgroup.com  | The install ends with a USER, not just an allowlist entry. --auth-mode (basic|mock, default basic) picks the sign-in stack: basic writes LOCAL_AUTH=true/MOCK_OIDC=false, asks for a password (or generates and prints one), issues the one-use installer proof through scripts/oshal-setup-root.mjs and completes /api/local-auth/bootstrap, so the account exists AND holds swarm root (ADR-117/148). mock keeps the no-login demo posture but still claims root for the mock principal. Both write OSHAL_INSTALL_OWNER_SUB — the same sha256-of-lowercased-email the local-auth store derives — so packages staged before anyone could log in belong to the operator instead of landing unowned and invisible. Unattended runs with no --admin-email get admin@localhost rather than an ownerless swarm. Closing output now states the actual sign-in path, names the 0.0.0.0 exposure mock implies, and points at the OIDC variables.
 # =============================================================================
 #
 # One-click:
@@ -52,6 +53,10 @@ ALLOW_STALE_IMAGE=0
 SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 K8S_NAMESPACE="oshal"; K8S_CONTEXT=""; K8S_NODEPORT="30500"; K8S_CHART=""; BUNDLE_EXPLICIT=0
 REPO_URL="https://github.com/emeraldcoastsystemsgroup/oshal"
+COCKPIT_PORT="${OSHAL_API_PORT:-35457}"
+AUTH_MODE="${OSHAL_AUTH_MODE:-basic}"     # basic = real login (ADR-117); mock = trust every caller
+ADMIN_PASSWORD="${OSHAL_ADMIN_PASSWORD:-}"
+DEFAULT_ADMIN_EMAIL="admin@localhost"
 STORE_REPO_DEFAULT="https://github.com/emeraldcoastsystemsgroup/oshal-apps"
 STORE_REPO="${OSHAL_STORE_REPO:-$STORE_REPO_DEFAULT}"
 STORE_REPO_NAMED=0; [ -n "${OSHAL_STORE_REPO:-}" ] && STORE_REPO_NAMED=1
@@ -66,6 +71,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --registry) REGISTRY="$2"; shift 2 ;;
   --admin-email) ADMIN_EMAIL="$2"; shift 2 ;;
   --store-repo) STORE_REPO="$2"; STORE_REPO_NAMED=1; shift 2 ;;
+  --auth-mode) AUTH_MODE="$2"; shift 2 ;;
   --control-plane) CONTROL_PLANE="$2"; shift 2 ;;
   --join-code) JOIN_CODE="$2"; shift 2 ;;
   --enrollment-token) ENROLL_TOKEN="$2"; shift 2 ;;
@@ -82,6 +88,7 @@ while [ $# -gt 0 ]; do case "$1" in
 esac; done
 
 case "$PACKAGE_AUDIT_MODE" in compatible|enforce) ;; *) echo "--audit-mode must be compatible or enforce" >&2; exit 2 ;; esac
+case "$AUTH_MODE" in basic|mock) ;; *) echo "--auth-mode must be basic or mock" >&2; exit 2 ;; esac
 
 say()  { printf '\n== %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
@@ -227,15 +234,54 @@ require_admin_email() {
   while [ -z "$ADMIN_EMAIL" ] || ! valid_email "$ADMIN_EMAIL"; do
     if [ -n "$ADMIN_EMAIL" ]; then echo "   not an email address: $ADMIN_EMAIL" >&2; ADMIN_EMAIL=""; fi
     if [ ! -t 0 ]; then
-      echo "--admin-email is required: it is the portal administrator — the local login AND the" >&2
-      echo "superadmin of this swarm. Re-run with --admin-email you@example.com" >&2
-      exit 2
+      # Unattended installs still get an owner: an unowned swarm is the failure mode this
+      # whole ceremony exists to prevent. The password is generated and printed, never a
+      # shipped constant, and the account must change it at first login.
+      ADMIN_EMAIL="$DEFAULT_ADMIN_EMAIL"
+      note "no --admin-email given; the administrator is $ADMIN_EMAIL"
+      break
     fi
     printf '   portal administrator email — your local login AND the superadmin: '
     read -r ADMIN_EMAIL || true
   done
 }
 require_admin_email
+
+# ── How do people sign in? ───────────────────────────────────────────────────
+# MOCK_OIDC has no login page: it treats EVERY caller as the operator, and the api
+# publishes on 0.0.0.0, so anyone who can reach the port owns the swarm. That is a demo
+# posture, not a default. basic = LOCAL_AUTH (ADR-117): a real account, a real password,
+# and the first-admin bootstrap claims swarm root (ADR-148) so the operator-gated pages
+# answer instead of 403ing. The two modes are mutually exclusive by design — the server
+# throws at boot if both are set — so this is a choice, never a layer.
+require_auth_mode() {
+  [ "$MODE" = "3" ] && return 0
+  if [ -z "${OSHAL_AUTH_MODE:-}" ] && [ -t 0 ] && [ "$ASSUME_YES" -ne 1 ]; then
+    echo "   how should people sign in?"
+    echo "     1) basic  — a real login: this email plus a password you set   [recommended]"
+    echo "     2) mock   — NO login page; every caller is treated as the operator (demo only)"
+    printf '   choose [1]: '; read -r _am || true
+    case "${_am:-1}" in 2|mock) AUTH_MODE=mock ;; *) AUTH_MODE=basic ;; esac
+  fi
+  [ "$AUTH_MODE" = "basic" ] || return 0
+  [ -n "$ADMIN_PASSWORD" ] && return 0
+  if [ ! -t 0 ]; then
+    ADMIN_PASSWORD="$(rand | cut -c1-20)"
+    GENERATED_PASSWORD=1
+    return 0
+  fi
+  while : ; do
+    printf '   password for %s (min 10 chars, input hidden, Enter to generate one): ' "$ADMIN_EMAIL"
+    stty -echo 2>/dev/null; read -r _pw1 || true; stty echo 2>/dev/null; echo
+    if [ -z "$_pw1" ]; then ADMIN_PASSWORD="$(rand | cut -c1-20)"; GENERATED_PASSWORD=1; return 0; fi
+    if [ "${#_pw1}" -lt 10 ]; then echo "   too short — the store requires at least 10 characters" >&2; continue; fi
+    printf '   confirm: '; stty -echo 2>/dev/null; read -r _pw2 || true; stty echo 2>/dev/null; echo
+    [ "$_pw1" = "$_pw2" ] && { ADMIN_PASSWORD="$_pw1"; return 0; }
+    echo "   they do not match" >&2
+  done
+}
+GENERATED_PASSWORD=0
+require_auth_mode
 
 # ── Where do the applications come from, and can this box read it? ───────────
 # The store was environment-only (OSHAL_STORE_REPO / OSHAL_STORE_TOKEN), so a private
@@ -652,7 +698,7 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "SWARM_SERVICE_SECRET=$(rand)"
     echo "SESSION_SECRET=$(rand)"
     echo "REMOTE_CLIENT_SHARED_SECRET=$(rand)"
-    echo "MOCK_OIDC=true"
+    if [ "$AUTH_MODE" = "mock" ]; then echo "MOCK_OIDC=true"; fi
     echo "REJECT_LOOP_TICKETS=true"
     [ -n "${BUNDLE_PROFILES[$BUNDLE]}" ] && echo "COMPOSE_PROFILES=${BUNDLE_PROFILES[$BUNDLE]}"
     echo "#"
@@ -679,6 +725,16 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "# tokens are keyed to YOU. Changing them later = a different user (a fresh, empty"
     echo "# workspace). For a real IdP instead: set OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET"
     echo "# and remove MOCK_OIDC, then list your real login email below."
+    # localSubForEmail() in the local-auth store derives the SAME sha256-of-lowercased-email,
+    # so the owner is knowable before the api ever boots — packages staged now can belong to
+    # the operator created later, instead of landing unowned and invisible to everyone.
+    if [ -n "$ADMIN_EMAIL" ]; then echo "OSHAL_INSTALL_OWNER_SUB=$(local_sub "$ADMIN_EMAIL")"; fi
+    if [ "$AUTH_MODE" = "basic" ]; then
+      echo "# ADR-117 local login: real accounts, real passwords. MOCK_OIDC must stay false —"
+      echo "# the server throws at boot if both are enabled rather than degrade to open auth."
+      echo "LOCAL_AUTH=true"
+      echo "MOCK_OIDC=false"
+    fi
     if [ -n "$ADMIN_EMAIL" ]; then
       echo "MOCK_OIDC_EMAIL=$ADMIN_EMAIL"
       echo "MOCK_OIDC_NAME=${ADMIN_EMAIL%%@*}"
@@ -756,6 +812,40 @@ for i in $(seq 1 50); do
   docker logs oshal-local-api 2>&1 | grep -q "Swarm app auto-load complete" && break; sleep 3
 done
 
+# ── The first account: a swarm with nobody in it is a swarm nobody owns ──────
+# Staging happens before any user can exist, so without this the roster is empty, swarm
+# root is UNCLAIMED, and every operator-gated page 403s at the person who just installed
+# the thing (ADR-148 names this exact failure). Both modes end with a real identity.
+seed_first_admin() {
+  [ "$MODE" = "3" ] && return 0
+  [ -n "$ADMIN_EMAIL" ] || return 0
+  _origin="http://localhost:$COCKPIT_PORT"
+  if [ "$AUTH_MODE" = "mock" ]; then
+    # No login page to bootstrap through: the mock principal IS the operator, so it only
+    # needs the root role that makes the access pages answer.
+    say "claiming swarm root for $ADMIN_EMAIL"
+    curl -fsS -X POST "$_origin/api/swarm/roles/claim-root" -H 'content-type: application/json'       -H "origin: $_origin" -d '{}' >/dev/null 2>&1       && note "swarm root claimed" || note "root claim skipped (already held, or the route declined)"
+    return 0
+  fi
+  say "creating the administrator account"
+  _proof="$(docker exec oshal-local-api node scripts/oshal-setup-root.mjs --origin "$_origin" 2>/dev/null     | sed -n 's/^Installer setup code: //p' | tr -d '
+')"
+  if [ -z "$_proof" ]; then
+    note "could not issue the installer setup code — finish setup in the browser at $_origin/login"
+    return 0
+  fi
+  # The proof is one-use, origin-bound and expires in 15 minutes; it never reaches a log.
+  _body=$(printf '{"email":%s,"name":%s,"password":%s,"setupToken":%s}'     "\"$ADMIN_EMAIL\"" "\"${ADMIN_EMAIL%%@*}\"" "\"$ADMIN_PASSWORD\"" "\"$_proof\"")
+  if printf '%s' "$_body" | curl -fsS -X POST "$_origin/api/local-auth/bootstrap"       -H 'content-type: application/json' -H "origin: $_origin" --data-binary @- >/dev/null 2>&1; then
+    note "administrator $ADMIN_EMAIL created; swarm root claimed"
+    ADMIN_ACCOUNT_CREATED=1
+  else
+    note "account bootstrap declined — open $_origin/login and use setup code: $_proof"
+  fi
+}
+ADMIN_ACCOUNT_CREATED=0
+seed_first_admin
+
 say "[3/3] bots — batched (a mass cold-start OOMs small engines)"
 if [ "${BUNDLE_SERVICES[$BUNDLE]}" = "__ALL__" ]; then
   remaining=$("${DC[@]}" config --services 2>/dev/null | grep -vxE 'oshal-db|oshal-redis|oshal-chromadb|oshal-api')
@@ -826,15 +916,30 @@ case "$(uname -s 2>/dev/null)" in
   *) xdg-open "$WELCOME" 2>/dev/null || true ;;
 esac
 
-say "what happens next, in the browser"
-if [ -n "$ADMIN_EMAIL" ]; then
-  note "You are $ADMIN_EMAIL — your local login AND the swarm superadmin. No sign-in page will"
-  note "appear: MOCK_OIDC trusts this machine, and .env says that machine is you."
+say "how you sign in"
+if [ "$AUTH_MODE" = "basic" ]; then
+  note "Local login (ADR-117). Sign in at http://localhost:$COCKPIT_PORT/login as:"
+  note "  $ADMIN_EMAIL"
+  if [ "$GENERATED_PASSWORD" -eq 1 ]; then
+    note "  password: $ADMIN_PASSWORD"
+    note "This password was generated for this install and is shown ONCE. Change it after"
+    note "signing in (your account menu), and it is not stored anywhere outside $ENV_FILE-free memory."
+  else
+    note "  password: the one you chose during this install"
+  fi
+  if [ "$ADMIN_ACCOUNT_CREATED" -eq 1 ]; then
+    note "The account exists and holds swarm root, so the access/users pages answer for you."
+  fi
+  note "Add other people from the cockpit (Users -> invite); each gets their own login."
+  note "Real identity provider instead? Google/Microsoft/Entra via OIDC: set MOCK_OIDC=false,"
+  note "LOCAL_AUTH=false plus OIDC_ISSUER_URL / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET / APP_URL in"
+  note "$ENV_FILE and restart the api. See docs/adr/117-local-auth.md and INSTALL.md."
 else
-  note "You skipped the email prompt, so you are the shared demo identity (alex@demo.local) and"
-  note "NOT the superadmin. To become yourself, set MOCK_OIDC_EMAIL / MOCK_OIDC_NAME /"
-  note "MOCK_OIDC_SUB / OSHAL_OPERATOR_EMAILS in $ENV_FILE, then:"
-  note "  docker compose -f $COMPOSE_FILE restart oshal-api"
+  note "MOCK auth: there is NO sign-in page. Every request to this api is treated as"
+  note "$ADMIN_EMAIL — and the api publishes on 0.0.0.0, so anyone who can reach port"
+  note "$COCKPIT_PORT on this machine is that operator. Use it for a demo box, not a shared one."
+  note "To switch to a real login: set LOCAL_AUTH=true and MOCK_OIDC=false in $ENV_FILE, restart"
+  note "the api, then visit /login (the first account claims swarm root)."
 fi
 if [ "$NO_AI" -eq 1 ]; then
   note "This box was installed --no-ai: AI features stay disabled until a model is connected."

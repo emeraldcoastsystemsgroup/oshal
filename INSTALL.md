@@ -89,11 +89,34 @@ flowchart LR
 ```
 
 **When it finishes** the installer opens your cockpit (`http://localhost:35457/cockpit/` — the
-full web application ships inside the image) and prints the **superadmin steps**: sign in with
-your email (`MOCK_OIDC=true` accepts any local login), put that email in `.env` as
-`OSHAL_OPERATOR_EMAILS`, restart the api — you are the operator of your swarm. Pass
-`--admin-email you@example.com` and the installer wires it for you. Databases and app state live
-in named volumes; `.env` and `config-seed/` are never overwritten on re-runs.
+full web application ships inside the image). Databases and app state live in named volumes;
+`.env` and `config-seed/` are never overwritten on re-runs.
+
+### Who owns the swarm
+
+The installer asks for a **portal administrator email**, and that answer is not just an allowlist
+entry — it is the identity the swarm belongs to. It is required: an install that cannot name an
+owner ends with an empty user roster, an unclaimed swarm root, and operator-gated pages that
+refuse the person who just installed the thing. Unattended runs without `--admin-email` fall back
+to `admin@localhost` with a generated password printed once.
+
+**Two sign-in modes** (`--auth-mode`, default `basic`). They are mutually exclusive: the server
+throws at boot if both are enabled rather than silently degrade to open auth.
+
+| Mode | What you get |
+|---|---|
+| `basic` *(default)* | A real login at `/login` — the administrator email plus a password you choose (or one generated and printed once). The first account **claims swarm root** (ADR-148), so access, users and application-permission pages answer instead of refusing. Invite other people from the cockpit; each gets their own account. |
+| `mock` | **No sign-in page at all.** Every request is treated as the administrator. The api publishes on `0.0.0.0`, so anyone who can reach port 35457 is that operator — a demo posture, never a shared machine. |
+
+Packages staged during the install are **owned by that administrator** (`OSHAL_INSTALL_OWNER_SUB`,
+derived from the email exactly as the local-auth store derives it). Without an owner, person-scoped
+applications match nobody and stay invisible to every user.
+
+**Switching to a real identity provider** (Google, Microsoft/Entra, any OIDC): set `MOCK_OIDC=false`
+and `LOCAL_AUTH=false`, add `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` and `APP_URL`
+to `.env`, then restart the api. **Leaving mock mode** is the same edit with `LOCAL_AUTH=true`
+instead — the first visit to `/login` then runs the first-admin ceremony. See
+[ADR-117](docs/adr/117-local-auth-invited-users.md) for the local-login contract.
 
 ## Prerequisites
 

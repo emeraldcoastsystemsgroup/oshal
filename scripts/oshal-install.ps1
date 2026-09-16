@@ -29,6 +29,7 @@
   5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: -Kubernetes — the codeless k8s install, lockstep with oshal-install.sh mode 4. kubectl/helm preflight (winget offers for both), cluster reachability check with crisp Docker-Desktop/kind guidance, chart from the published OCI package with a repo-fetch fallback, fleet presets kernel|full, the same AdminEmail→MOCK_OIDC identity wiring as the compose path (shared LocalSub, hoisted above the branch), NodePort exposure, /api/health postflight, /welcome open. New params: -Namespace, -K8sContext, -NodePort, -Chart, -Fleet.
   6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129 amendment: bundles/-Apps reach Kubernetes. The k8s branch moves BELOW bundle resolution so it installs the same curated app sets as compose (chart `packages:` staging + the fleet those bots need), auto-creating the private-store Secret when a token is present. Fixes a latent parameter bug found dry-running the new path: `-Apps a,b` is an ARRAY to PowerShell, so the [string] parameter threw a transformation error on the very syntax the bash installer and our closing instructions advertise — now [string[]], accepting both forms.
   7 | maintainer@emeraldcoastsystemsgroup.com   | The k8s path INSTALLS its prerequisites instead of printing links and exiting (operator: the installer should include the prereqs). kubectl/Helm/kind/Docker Desktop are offered via winget, and the session PATH is re-read from the registry after each install so the run CONTINUES rather than demanding a new terminal. With no cluster reachable it stands up a kind cluster with the cockpit port mapped — Docker Desktop's Kubernetes toggle is a GUI setting we deliberately do not poke at, and kind gives the same result scriptably on the engine already installed; it still refuses to create one beside a running compose swarm. New -Yes accepts every prerequisite step for unattended installs, and a non-interactive host DECLINES rather than surprise-installing.
+  8 | maintainer@emeraldcoastsystemsgroup.com   | Lockstep with oshal-install.sh seq 10: -AuthMode (basic|mock, default basic) picks the sign-in stack, -AdminPassword (or a prompt / generated-and-printed value) feeds the first-admin bootstrap, and the install ends by creating the account and claiming swarm root (ADR-117/148) instead of leaving an empty roster behind. Both modes write OSHAL_INSTALL_OWNER_SUB so staged packages have an owner.
   8 | maintainer@emeraldcoastsystemsgroup.com   | Two gaps the 2026-09-16 remote install walked into. (1) WSL2 preflight: winget installs Docker Desktop successfully on a box whose WSL2 features are off, Docker Desktop then never starts, and every message here pointed at Docker - so the client wrote a patch script by hand to get past a Windows problem this installer never mentioned. Detection is by EXIT CODE (wsl.exe emits UTF-16LE; matching its text is a check that stops working silently), enabling needs elevation and ALWAYS needs a reboot, so it ends the run either way rather than pretending to continue. -SkipWslCheck for a Hyper-V backend. (2) Stale-image refusal: GHCR is published only by the manual-only CI workflow, so latest rots with nothing saying so - that box came up 52 days and 983 commits behind and its operator reported MISSING FEATURES, not an old image. Refuses past the threshold unless -AllowStaleImage, and fails open when it cannot check.
 #>
 [CmdletBinding()]
@@ -47,6 +48,9 @@ param(
   # Lockstep with oshal-install.sh STORE_REPO: the store packages are staged from, and the
   # registry the api seeds at first boot. Override for the private trunk.
   [string]$StoreRepo = $(if ($env:OSHAL_STORE_REPO) { $env:OSHAL_STORE_REPO } else { "https://github.com/emeraldcoastsystemsgroup/oshal-apps" }),
+  # basic = a real login (ADR-117); mock = no sign-in page, every caller is the operator.
+  [ValidateSet("basic","mock")][string]$AuthMode = $(if ($env:OSHAL_AUTH_MODE) { $env:OSHAL_AUTH_MODE } else { "basic" }),
+  [string]$AdminPassword = $(if ($env:OSHAL_ADMIN_PASSWORD) { $env:OSHAL_ADMIN_PASSWORD } else { "" }),
   [switch]$NoAi,
   [switch]$DryRun,
   [switch]$Kubernetes,
@@ -93,6 +97,26 @@ function Test-EmailShape([string]$value) {
   if (-not $value) { return $false }
   return $value -match '^[^@\s]+@[^@\s]+\.[^@\s]+$'
 }
+function Require-AdminPassword([string]$value, [string]$email) {
+  # basic mode needs a credential. A generated one is printed once; a shipped constant never is.
+  if ($value) { return @{ Password = $value; Generated = $false } }
+  if (-not [Environment]::UserInteractive) {
+    return @{ Password = (-join ((1..20) | ForEach-Object { '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'[(Get-Random -Maximum 62)] })); Generated = $true }
+  }
+  while ($true) {
+    $first = Read-Host "   password for $email (min 10 chars, Enter to generate one)" -AsSecureString
+    $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($first))
+    if (-not $plain) {
+      return @{ Password = (-join ((1..20) | ForEach-Object { '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'[(Get-Random -Maximum 62)] })); Generated = $true }
+    }
+    if ($plain.Length -lt 10) { Write-Host "   too short - the store requires at least 10 characters" -ForegroundColor Yellow; continue }
+    $again = Read-Host "   confirm" -AsSecureString
+    $confirm = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($again))
+    if ($plain -eq $confirm) { return @{ Password = $plain; Generated = $false } }
+    Write-Host "   they do not match" -ForegroundColor Yellow
+  }
+}
+
 function Require-AdminEmail([string]$value) {
   while (-not (Test-EmailShape $value)) {
     if ($value) { Write-Host "   not an email address: $value" -ForegroundColor Yellow }
@@ -532,8 +556,14 @@ try {
 # binds to that shared demo sub. One question here is what makes the swarm actually theirs.
 $envFile = Join-Path $Dir '.env'
 # An existing .env already carries the identity chosen on the first install.
+$script:AdminAccountCreated = $false
+$script:PasswordGenerated = $false
 if (-not (Test-Path $envFile)) {
   $AdminEmail = Require-AdminEmail $AdminEmail
+  if ($AuthMode -eq 'basic') {
+    $credential = Require-AdminPassword $AdminPassword $AdminEmail
+    $AdminPassword = $credential.Password; $script:PasswordGenerated = $credential.Generated
+  }
   $StoreRepo = Require-StoreSource $StoreRepo ($PSBoundParameters.ContainsKey('StoreRepo') -or [bool]$env:OSHAL_STORE_REPO)
 }
 
@@ -551,6 +581,9 @@ if (-not (Test-Path $envFile)) {
     # build. A registry install must name the image it actually pulled or every bot fails to pull.
     "OSHAL_BOT_IMAGE=$Image"
     "OSHAL_PACKAGE_AUDIT_MODE=$PackageAuditMode"
+    # Same sha256-of-lowercased-email the local-auth store derives, so packages staged before
+    # anyone can log in belong to the operator instead of landing unowned and invisible.
+    "OSHAL_INSTALL_OWNER_SUB=$(LocalSub $AdminEmail)"
     # Record the store these packages came from: the api seeds its built-in registry from this
     # at first boot, and the PUBLIC default would offer that store's copies as updates to a
     # swarm staged from somewhere else.
@@ -567,7 +600,7 @@ if (-not (Test-Path $envFile)) {
     "SWARM_SERVICE_SECRET=$(Rand48)"
     "SESSION_SECRET=$(Rand48)"
     "REMOTE_CLIENT_SHARED_SECRET=$(Rand48)"
-    "MOCK_OIDC=true"
+    $(if ($AuthMode -eq "mock") { "MOCK_OIDC=true" } else { "MOCK_OIDC=false`nLOCAL_AUTH=true" })
     "REJECT_LOOP_TICKETS=true"
   )
   if ($BundleProfiles[$Bundle]) { $lines += "COMPOSE_PROFILES=$($BundleProfiles[$Bundle])" }
@@ -659,6 +692,35 @@ for ($i = 0; $i -lt 50; $i++) {
   $logs = cmd /c "docker logs oshal-local-api 2>&1" | Out-String
   if ($logs -match 'Swarm app auto-load complete') { break }
   Start-Sleep -Seconds 3
+}
+
+# -- The first account: a swarm with nobody in it is a swarm nobody owns ------
+# Lockstep with oshal-install.sh seed_first_admin. Without it the roster is empty, swarm
+# root is UNCLAIMED and every operator-gated page 403s at the person who just installed it.
+$origin = "http://localhost:35457"
+if ($AuthMode -eq 'mock') {
+  Say "claiming swarm root for $AdminEmail"
+  try {
+    Invoke-RestMethod -Uri "$origin/api/swarm/roles/claim-root" -Method Post -TimeoutSec 30 `
+      -Headers @{ origin = $origin } -ContentType 'application/json' -Body '{}' | Out-Null
+    Note "swarm root claimed"
+  } catch { Note "root claim skipped (already held, or the route declined)" }
+} else {
+  Say "creating the administrator account"
+  # One-use, origin-bound, 15-minute proof. Terminal-only by design - it never reaches a log.
+  $proof = (cmd /c "docker exec oshal-local-api node scripts/oshal-setup-root.mjs --origin $origin 2>nul" |
+    Select-String -Pattern '^Installer setup code: (.+)$' | ForEach-Object { $_.Matches[0].Groups[1].Value }) | Select-Object -First 1
+  if (-not $proof) {
+    Note "could not issue the installer setup code - finish setup in the browser at $origin/login"
+  } else {
+    try {
+      Invoke-RestMethod -Uri "$origin/api/local-auth/bootstrap" -Method Post -TimeoutSec 60 `
+        -Headers @{ origin = $origin } -ContentType 'application/json' `
+        -Body (@{ email = $AdminEmail; name = $AdminEmail.Split('@')[0]; password = $AdminPassword; setupToken = $proof } | ConvertTo-Json) | Out-Null
+      Note "administrator $AdminEmail created; swarm root claimed"
+      $script:AdminAccountCreated = $true
+    } catch { Note "account bootstrap declined - open $origin/login and use setup code: $proof" }
+  }
 }
 
 Say "[3/3] bots - batched (a mass cold-start OOMs small engines)"
