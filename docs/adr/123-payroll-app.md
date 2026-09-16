@@ -109,8 +109,8 @@ is a plausible number, not a verified one, and it will look exactly as confident
 - **Also not modelled, and deliberately so:** the pre-2020 Form W-4 allowances path; overpayment
   repayment across tax years (which has genuinely different tax treatment and getting it backwards is
   an IRS violation); garnishment limits under the CCPA disposable-earnings caps; PTO and leave
-  accrual; workers' compensation and employer benefit contributions. These are listed in the backlog
-  with done-when criteria rather than approximated.
+  accrual; workers' compensation and employer benefit contributions. These are listed with done-when
+  criteria in the payroll package's own `payroll/BACKLOG.md` (app store repo) rather than approximated.
 - A mid-year switch from another payroll provider is supported only through the prior-YTD fields on
   the employee, which feed the wage-base caps but are deliberately **excluded** from the W-2 preview —
   the prior provider issues its own W-2, and adding the figures would double-count.
@@ -174,7 +174,7 @@ State coverage is still four verified tables plus the nine no-wage-income-tax
 states; an unverified state still falls back to an operator rate *with a warning*.
 Local taxes, state disability and paid-leave contributions, employee self-service,
 1099 contractors, PTO accrual, and segregation of duties remain absent with
-done-when criteria in the backlog.
+done-when criteria in `payroll/BACKLOG.md` (app store repo), where the numbered items this ADR cites live.
 
 **Method note worth keeping:** `computePaycheck` now delegates to the same
 `computeTaxes` the row model uses. Two tax implementations in one payroll system
@@ -306,11 +306,11 @@ route persists them, which is what makes the rest possible.
 
     This is the same rule the state tax tables follow, applied to a second domain: **a wrong table is
     worse than an absent one, because the operator cannot tell it is wrong.** Item 15 is therefore
-    closed only in part, and the backlog says so.
+    closed only in part, and `payroll/BACKLOG.md` says so.
 
 ### What this supersedes
 
 The v2.1 amendment's closing sentence — "there is no check printing" — is superseded: checks print,
 without a MICR line. Everything else in that paragraph stands. **Nothing transmits.** There is still
-no e-file and no EFTPS enrolment (backlog item 12), which is unchanged and is not a code problem:
-it needs credentials and an enrolment a human completes.
+no e-file and no EFTPS enrolment (item 12 in `payroll/BACKLOG.md`), which is unchanged and is not a
+code problem: it needs credentials and an enrolment a human completes.
