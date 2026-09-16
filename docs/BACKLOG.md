@@ -20,7 +20,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   commits / 5,057 files / +408,701 lines** behind.
 - **Why it happened.** The only thing that pushes to GHCR is the image job in
   `.github/workflows/ci.yml`, which is `workflow_dispatch`-only by deliberate cost decision. Its
-  run count on this repository is **zero** (`actions/workflows/322698333/runs` → `total_count: 0`).
+  run count on this repository was **zero** when measured (`actions/workflows/322698333/runs`). A single manual dispatch on 2026-09-16 has since FAILED with its image job skipped, so it published nothing and the conclusion stands.
   The July image was published before the ADR-115 cutover, from somewhere else. So the trunk has
   never published an image of itself, and `--mode 1` — the **default** documented install — hands
   every new user that July artifact.
@@ -46,6 +46,27 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   artifacts are wanted later. B spends nothing of the constrained resource and reuses an image the
   nightly gate builds anyway; the gate already has the build, the smoke test and the Trivy scan in
   front of the push, which is a better pre-publish bar than the hosted pipeline applies.
+- **Built 2026-09-16 — option B's mechanism, not yet a published image.** `scripts/ci-local.sh`
+  takes `--publish-image`, and `scripts/ci/publish-image.sh` pushes the image THAT RUN built and
+  scanned as `:sha-<pinned commit>` and `:latest`. It is fail-closed on every input: no flag
+  publishes nothing, a red run is refused (checked both in the caller and inside the script that
+  holds the credential), `--skip-image` is refused because that run built nothing, a `--sha` that
+  is not a commit is refused, and an absent `OSHAL_GHCR_TOKEN`/`OSHAL_GHCR_USER` is refused. The
+  registry path is DERIVED from the repository's own `origin` remote (`OSHAL_CI_GHCR_IMAGE`
+  overrides), so no owner is hardcoded. The immutable `sha-` tag is pushed BEFORE `latest`, so a
+  run that dies between the two never leaves `latest` naming an image the registry has no record
+  of. The credential reaches `docker login` only on stdin — never on a command line, never in the
+  log — and only its length is ever reported.
+  [ci-publish-image.spec.ts](../tests/unit/ci-publish-image.spec.ts) drives the real script through
+  a real bash with a recording stand-in for `docker`: 8/8 green, and three mutations kill exactly
+  the cases that should die — deleting the red-run refusal reds the red-run case, swapping the push
+  order reds the ordering case, and moving the token from stdin onto the command line reds the
+  secret case.
+- **What is left, and the first part is the operator's:** mint a GHCR PAT with `write:packages`
+  and put it in the environment the nightly task runs under as `OSHAL_GHCR_TOKEN` +
+  `OSHAL_GHCR_USER` (an agent never mints secret material), add `--publish-image` to the scheduled
+  invocation, then prove a fresh `--mode 1` install on a clean machine comes up with the App Loader
+  present and the wizard's app selections actually installed.
 - **Done when:** a mechanism exists that publishes `latest` from the current trunk without a human
   remembering to; a fresh `--mode 1` install on a clean machine is shown to come up with the App
   Loader present and the wizard's app selections actually installed; and
@@ -81,6 +102,51 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   gets answers identical to the controller's through the three-argument form; and `verifyBotAcl` goes
   RED if the wide signature is granted back to the bot. The guard runs against a disposable
   PostgreSQL, never `oshal-local-db`.
+
+### Every automated proof that the product works has been dead since delegation signing (2026-09-16)
+
+- **Measured 2026-09-16, on two consecutive deploys.** `scripts/lib/deploy-verify.sh` runs three
+  post-deploy checks. `bot-role-grant` passes. The other two — **the only two that assert the
+  product does anything** — return UNVERIFIED every time, for one shared reason:
+  `User-bound delegation requires a verified principal issuer`. `jarvis-ask` cannot make Jarvis
+  answer; `ticket-dispatch` dispatched a real ticket to `general-bot` and it landed in **`escalated`**
+  with `manifest_worker_dispatch_failed`, same cause.
+- **Why nothing can fix this from inside the box.** The check can only mint a service-secret PAT,
+  which records no principal issuer (a fleet-wide secret is not proof of an IdP namespace), so
+  `resolveDelegatedPrincipal` refuses — correctly. Confirmed independently by calling the Jarvis bot
+  node directly on the internal network with a valid `X-Service-Secret`: it answers
+  `{"success":false,"error":"delegation_required"}`, HTTP 401. **No automation on this deployment can
+  prove Jarvis answers.**
+- **What it cost.** Jarvis was returning 503 to every ask and nothing raised an alarm; the deploy
+  reported `37 healthy / 37 app containers` and `parity clean` on the same run. The script's own
+  closing line has been saying it all along — *"this deploy is UNPROVEN as a product: nothing here
+  says Jarvis answers or a ticket moves"* — and it reads as boilerplate because it prints every time.
+- **The unblock is one operator action:** from a SIGNED-IN browser session `POST /api/cli-tokens` (a
+  session mint DOES record the issuer), then set `OSHAL_VERIFY_OPERATOR_PAT` in the environment the
+  deploy runs under. An agent cannot mint it, by design.
+- **Done when:** `jarvis-ask` and `ticket-dispatch` report PASS or FAIL rather than UNVERIFIED on a
+  normal deploy; a deploy whose Jarvis check fails EXITS NON-ZERO rather than printing a headline and
+  continuing; and a guard covers the exit-code contract so the gate cannot quietly regress to
+  advisory. Until the first two are true, treat "deployed" as "installed", never as "working".
+
+### Thirteen trading spec files have never run in any gate (2026-09-16)
+
+- **Measured 2026-09-16** during the review of PRs #215/#219: `grep -rn "trading" .github/workflows/`
+  in the store repo returns **nothing**, and `framework-coupled.vitest.config.mjs` includes only
+  `lora/tests` and `vids/tests`. `trading/tests/*.spec.ts` is **13 files**. None of them run
+  automatically — not in store CI, and not in the new local runner, which mirrors `store-ci.yml`
+  job-for-job and so inherits the same hole.
+- **This is the package that places real orders with the operator's money.** Two guards landed in
+  #215 and #219 on 2026-09-16 — the cost-basis divergence cases and the screener degradation cases —
+  and neither will ever execute on a push.
+- **It also hides a real drift.** The full trading suite is **10 failed / 272 passed** on those
+  branches and the identical 10 fail on `main` with the same core: the store package does not yet
+  consume core's `pinnedInFullGovernance` (`trading-unmanaged-positions.spec.ts`, the `protected lots`
+  and `ledgerGovernance` cases). Nobody saw them because nothing runs them.
+- **Done when:** the trading specs run in `store-ci-local.sh` and in whatever gate replaces store CI,
+  with the DSN refusal in force so no run can reach `oshal-local-db` (`scripts/ci/check-spec-database-default.sh`
+  is the existing guard for that shape); the 10 pre-existing failures are either fixed or explicitly
+  quarantined with their own entry; and a zero-test run for that package fails rather than passing.
 
 ### No gate typechecks a test file, so "typecheck clean" says nothing about one
 
