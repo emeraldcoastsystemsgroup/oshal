@@ -339,6 +339,12 @@ fleets:
     - name: cloud-ops-bot
       agentId: d0000000-0000-0000-0000-000000000002
       capabilities: "gcp-inventory,gcp-projects,gcp-compute,gcp-enabled-apis,gcp-cost-optimization,gcp-health-audit,gcp-iam-audit"
+    - name: security-analyst
+      agentId: a0000000-0000-0000-0000-000000000047
+      capabilities: "finding-triage,threat-assessment,attack-scenario-analysis,remediation-recommendation"
+    - name: workflow-assistant
+      agentId: a0000000-0000-0000-0000-000000000051
+      capabilities: "workflow-design,process-architecture,orchestration,workflow-validation"
 # END GENERATED FLEET
 
 # ── RBAC: dynamic bot runtimes ────────────────────────────────────────────────

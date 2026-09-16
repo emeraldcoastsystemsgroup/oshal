@@ -723,17 +723,87 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   service-route schedule completed` on the box.
 
 ### Signed delegation refuses every ticket whose worker bot runs inline (2026-09-15)
-- **Remaining:** with `OSHAL_DELEGATION_SIGNING_KID` and `OSHAL_DELEGATION_SIGNING_PRIVATE_KEY` set on the
-  controller (live on this box since the 2026-09-15 deploy, with the matching public ring verified on all 34
-  bot nodes), `dispatch-manifest-worker.ts` throws `Signed HTTP delegation requires a dedicated bot-node
-  endpoint` for any worker registered with `container: 'oshal-api'`. 25 of the 60 bots in
-  `swarm-bot-registry-local.ts` are inline, including the core workers for `security-finding`
-  (security-analyst) and `workflow-build` (workflow-assistant). The deploy verifier's `task` ticket escalated
-  this way twice on 2026-09-15. `docs/security/http-delegation.md` expects legacy paths to fail once signing is
-  on, but nothing says which ticket types stop.
-- **Done when:** every core ticket type either routes to a dedicated bot node under signing or has a designed
-  signed inline path, the choice is recorded in `docs/security/http-delegation.md`, and a guard dispatches one
-  ticket per core ticket type with signing configured and fails if any of them is refused.
+- **Built 2026-09-16 on `fix/signed-delegation-core-ticket-types`.** With `OSHAL_DELEGATION_SIGNING_KID`
+  and `OSHAL_DELEGATION_SIGNING_PRIVATE_KEY` set on the controller (live on this box since the
+  2026-09-15 deploy), a worker with no dedicated bot-node endpoint was refused:
+  `dispatch-manifest-worker.ts` threw `Signed HTTP delegation requires a dedicated bot-node endpoint`
+  and the incident pipeline re-threw `No endpoint found for agent a0...0016 - bot node may not be
+  registered` for the same missing endpoint. Both messages are live on this box: the first appears
+  five times in the api log in the 24 h to 2026-09-16 (e.g. ticket `a058ca53` at 07:38:34Z), the
+  second on six `intelligent-processing` tickets - though those escalated on 2026-09-11, so their
+  trigger was the ADR-034 push-on-dispatch rethrow rather than signing. The routing decision is now
+  written down in
+  [docs/security/http-delegation.md](security/http-delegation.md) under "Worker routing for core
+  ticket types": a **queued** ticket type must name a worker that owns a dedicated node; a
+  controller-inline concierge stays inline for its **interactive** surface, where the turn runs
+  in-process through `executeBotOrInline` and crosses no network hop, and is not eligible to own a
+  queued type. rca-specialist, system-architect and queue-bot already named running compose nodes and
+  were sent inline only by the codex rule that `resolve-bot-node-endpoint.ts` already logs as a
+  declaration bug, so they carry `requiresOwnNode: true`; security-analyst and workflow-assistant were
+  `container: oshal-api` and get their own bot-node services, which for security-analyst also takes
+  untrusted Trivy output out of the control-plane container. No signed inline path was designed: the
+  same result was available as configuration, and the doc records what one would have to provide if a
+  future queued type genuinely cannot own a node.
+- **Guard:** `tests/unit/signed-delegation-core-ticket-types.spec.ts` enumerates the core ticket types
+  from the tree (`WORKFLOW_PIPELINES` plus every `swarm-apps/*.yaml`), resolves each worker and
+  reviewer through the real registry and the real `resolveBotNodeEndpoint`, and dispatches one ticket
+  per manifest-worker type through the real `dispatchManifestWorkerTicket` with a real `BotNodeClient`
+  holding a locally generated Ed25519 signing key, over a real loopback bot node that records the
+  signed token. Mutation-proved: putting `security-analyst` back on `container: oshal-api` turns two
+  cases red, naming the bot, its container, the ticket type and the manifest it came from.
+- **Done when:** met for the core ticket types - every one of the seven routes to a dedicated node
+  under signing, the choice and its reasoning are in `docs/security/http-delegation.md`, and the guard
+  fails if any of them is refused. Two refusals are NOT covered and are filed separately below: the
+  `task` call-out can still select a controller-inline bot, and the build/swarm pipeline never uses
+  this hop at all.
+
+### The `task` call-out can still hand a ticket to a controller-inline bot under signing
+
+- **Observed live 2026-09-16.** The five `Signed HTTP delegation requires a dedicated bot-node
+  endpoint` refusals in the api log in the preceding 24 h are all this shape, not the manifest-worker
+  shape the entry above fixes: `workerBot: self-healing-bot` (`a0...0056`), `routedBy: "bid"`, on the
+  `task` tickets `scripts/lib/deploy-verify.sh` files (`"deploy verification 2026-09-16T07:38:04.781Z"`
+  at 07:38:34.332Z, and four more). `self-healing-bot` has no entry in either registry file - it is
+  registered dynamically - so it resolves to no endpoint and wins the bid anyway.
+- ADR-083 lets an online knowledge owner claim a `task` ticket and override the workflow's declared
+  worker
+  (`task-call-out.ts` -> `callOutAgentId` in `dispatch-manifest-worker.ts`). The workflow default is
+  now a dedicated node (general-bot), but the local registry still holds 24 bots on
+  `container: oshal-api` plus 13 that name a node and are held inline by the codex rule, and a
+  dispatch to any of those is refused with `Signed HTTP delegation requires a dedicated bot-node
+  endpoint`. `task` is the operator's highest-volume lane (269 escalated rows on this box).
+- **Why the obvious fix needs care:** dropping endpoint-less candidates from the call-out silently
+  changes who owns a ticket, and the 13 codex-held bots each name a real running container, so for
+  them the answer is probably `requiresOwnNode` rather than exclusion - but two of the 13
+  (`apply-operator`, `linkedin-profile-operator`) are remote-worker identities with no compose
+  service, and one is `oshal-assistant`, the Jarvis brain, whose interactive path would move to its
+  node with it. Each needs its own decision.
+- **Done when:** a `task` ticket whose call-out winner has no dedicated endpoint either reaches a
+  worker that does or is refused with a reason naming the routing decision rather than the transport;
+  every remaining controller-inline bot is recorded in `docs/security/http-delegation.md` as
+  interactive-only by intent; and a guard drives a call-out that selects an endpoint-less bot under
+  signing and proves the ticket does not escalate with the transport message.
+
+### The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh
+
+- **Found 2026-09-16** while routing the core ticket types (entry above). `build` does not use the
+  controller-to-bot HTTP hop at all: `multi-round-dispatch-service.ts`,
+  `swarm-execution-lifecycle-service.ts` and `swarm-subtask-handler.ts` publish
+  `buildExecutionEnvelope(...)` onto `MESH_CHANNELS.agentDirect(<agent>)`, and every bot node wraps
+  its mesh execution handler in `prohibitUnsignedMeshExecution` (`bot-node-server.ts:187`), which with
+  a public ring configured answers `Unsigned Redis mesh execution is prohibited while delegation
+  enforcement is active`. Verified on this box: all four sampled nodes log `Bot-node HTTP delegation
+  is fail-closed ...` at boot, so the prohibition is active. Giving system-architect
+  `requiresOwnNode: true` fixes the controller's endpoint decision; it does not give the swarm
+  pipeline a transport. `docs/security/http-delegation.md` states the prohibition as intended
+  behaviour; it does not say the build lane stops with it.
+- **Not established:** whether any `build` ticket has actually failed this way since signing went on.
+  The last `build` row on this box predates the 2026-09-15 deploy, so the refusal is read from the
+  code path, not from a ticket.
+- **Done when:** a `build` ticket completes with signing configured - its work units cross a signed,
+  replay-bounded boundary rather than an unsigned mesh envelope, or the swarm pipeline is explicitly
+  recorded as unavailable under signing with the surfaces that file `build` tickets saying so - and a
+  guard runs one work unit end to end in whichever shape is chosen.
 
 ### A protected Jarvis answer with no bindable lineage leaves the thread silent
 

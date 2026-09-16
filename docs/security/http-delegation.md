@@ -78,6 +78,91 @@ Authorization responses are deliberately non-secret: `delegation_required` (401)
 and replay/verification infrastructure failures (503). Logs include bounded task or
 agent context but never token, private-key, raw nonce, or replay-key material.
 
+## Worker routing for core ticket types
+
+Enforcement above says a controller localhost execution fallback is prohibited while signing is
+active. That sentence decides which queued work can run, so the consequence is written out here
+rather than left to be discovered a ticket at a time.
+
+**The rule: a queued ticket type must name a worker that owns a dedicated bot node.** A bot
+registered with `container: oshal-api` / `oshal-local-api` resolves to no endpoint
+(`createRegistryEndpointResolver`, `resolve-bot-node-endpoint.ts`), so with signing configured
+`dispatchManifestWorkerTicket` refuses it with
+
+```
+Signed HTTP delegation requires a dedicated bot-node endpoint
+```
+
+and the incident pipeline re-throws the underlying
+`No endpoint found for agent <id> - bot node may not be registered` for the same cause. A
+controller-inline concierge stays inline for its **interactive** surface, where the turn runs
+in-process through `executeBotOrInline` and never crosses a network hop; it is simply not eligible
+to own a **queued** ticket type.
+
+The core ticket types are the built-ins in `WORKFLOW_PIPELINES`
+(`src/features/swarm-orchestration/services/dispatch-routing.ts`) plus every `ticketType:` declared
+by a kernel-resident manifest in `swarm-apps/`:
+
+| Ticket type | Declared in | Pipeline | Worker (reviewer) | Routing under signing |
+| --- | --- | --- | --- | --- |
+| `build` | `WORKFLOW_PIPELINES`, `swarm-apps/oshal-engineering.yaml` | `swarm` | system-architect | Dedicated node `oshal-local-system-architect`. See the mesh note below - the HTTP decision is fixed, the swarm pipeline's own transport is not. |
+| `incident` | `WORKFLOW_PIPELINES`, `swarm-apps/intelligent-operations.yaml` | `incident-rca` | rca-specialist (queue-bot) | Dedicated nodes `oshal-local-rca-specialist` / `oshal-local-queue-bot`. |
+| `intelligent-processing` | `swarm-apps/intelligent-processing.yaml` | `incident-rca` | rca-specialist (queue-bot) | Same two nodes. |
+| `oshal-dev` | `swarm-apps/oshal-dev.yaml` | manifest-worker | oshal-developer | Dedicated node `oshal-developer` (already `requiresOwnNode`). |
+| `security-finding` | `swarm-apps/security.yaml` | `security` (manifest-worker) | security-analyst | Dedicated node `security-analyst`. |
+| `task` | `WORKFLOW_PIPELINES` | manifest-worker | general-bot | Dedicated node `general-bot` (already `requiresOwnNode`). The call-out may override the worker - see below. |
+| `workflow-build` | `swarm-apps/workflow-studio.yaml` | manifest-worker | workflow-assistant | Dedicated node `workflow-assistant`. |
+
+Three of those workers - rca-specialist, system-architect and queue-bot - already named a running
+compose node and were sent inline only by the legacy codex rule in `resolve-bot-node-endpoint.ts`,
+which that function already logs as a declaration bug
+(`Bot declares a dedicated node but is being forced inline by the codex rule`). They now carry
+`requiresOwnNode: true`. security-analyst and workflow-assistant were controller-inline and now have
+their own bot-node services in `docker-compose.oshal-local.yml`; for security-analyst that also
+takes untrusted scanner text out of the control-plane container, which is the blast radius
+`src/features/llm-provider/services/controller-inline-scope.ts` describes.
+
+`tests/unit/signed-delegation-core-ticket-types.spec.ts` enumerates these types from the tree on
+every run and dispatches one ticket per manifest-worker type through the real dispatcher, the real
+registry, the real endpoint resolver and a real signing key, so a new manifest that points a ticket
+type at a controller-inline bot fails without anyone editing that spec.
+
+### Why there is no signed inline path
+
+A signed inline path was considered and not built. The token authenticates a network hop, and an
+inline worker has none - so a correct inline path would not be a token at all; it would be the
+in-process `executeBotOrInline` call the interactive surfaces already use, carrying the ticket's
+owner and verified principal issuer and refusing without one. The reason it was not built is that
+the equivalent result is available as configuration: every core queued ticket type can name a
+worker that owns a node, and moving a queued worker onto a node also **shrinks** its blast radius,
+where a new in-process authorization path would add one. If a future queued ticket type genuinely
+cannot own a node, that design has to be specified here first - it must demand the same subject and
+verified-issuer binding the signed path demands, keep the `isApplicationExecutionProtected` refusal
+and the deterministic-provider-intent refusal, and it must not reintroduce the localhost
+`/api/send-message` leg, which asserts an arbitrary user subject with a machine credential and no
+issuer.
+
+### What is still refused, and why it is not this rule
+
+Two refusals survive this routing decision. Neither is fixed by naming a different worker.
+
+- **The `task` lane's call-out can still select a controller-inline bot.** ADR-083 lets an online
+  knowledge owner claim a `task` ticket, overriding the workflow default, and a bidder that resolves
+  to no endpoint is refused with the message above. The workflow default (general-bot) and the
+  manifest-declared workers are covered by the rule; a call-out winner is not. This is where the
+  refusal is actually being produced on the local box: every occurrence in the api log in the 24 h to
+  2026-09-16 names `workerBot: self-healing-bot`, `routedBy: "bid"`, on the `task` tickets
+  `scripts/lib/deploy-verify.sh` files. The backlog entry carries the measured size of the
+  endpoint-less set; do not copy a count into this page, it drifts.
+- **The `build` pipeline does not use this hop at all.** The swarm pipeline sends work units over
+  the Redis mesh (`buildExecutionEnvelope` -> `MESH_CHANNELS.agentDirect`), and every bot node wraps
+  its mesh handler in `prohibitUnsignedMeshExecution`, so with a public ring configured it answers
+  `Unsigned Redis mesh execution is prohibited while delegation enforcement is active`. Giving
+  system-architect a node fixes the controller's routing decision; it does not give the swarm
+  pipeline a signed transport.
+
+Both are tracked in [the backlog](../BACKLOG.md).
+
 ## Generate a key pair
 
 Generate keys on a trusted operator machine. This Node command emits one-line JWK values
