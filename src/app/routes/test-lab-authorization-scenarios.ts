@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register disposable PostgreSQL role provisioning and repeat-bootstrap integration coverage.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register roster imports, delegated management roles and external business memberships with their isolated browser/database proofs.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register the authorization schema-readiness recovery proof: a bootstrap that loses the pool acquire at boot must be retried by the next operation rather than refusing for the life of the process.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the joined access review - the one surface that answers "what am I allowed to do" across swarm role, governance permissions and per-application assignments - with a read-only self probe.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -36,6 +37,32 @@ async function authorizationCatalog(cookie: string): Promise<StepResult> {
   return { app: 'authorization', label, state: valid ? 'pass' : 'fail',
     detail: valid ? 'Caller-visible app metadata, source and policy revision verified. No grants, previews or business data were accessed.'
       : 'Access catalog is missing application provenance or policy revision metadata.' };
+}
+
+/** @description Read the CALLER's own joined access review. Reads three authorities and changes none. */
+async function accessReview(cookie: string): Promise<StepResult> {
+  const label = 'Joined access review (self)';
+  const response = await fetch(`http://127.0.0.1:${process.env.PORT || '5000'}/api/access-review`, {
+    headers: cookie ? { cookie } : {}, signal: AbortSignal.timeout(20000), redirect: 'manual',
+  });
+  if (response.status !== 200) return {
+    app: 'authorization', label, status: response.status,
+    state: [401, 403, 503].includes(response.status) ? 'degraded' : response.status === 404 ? 'gap' : 'fail',
+    detail: `Access review returned HTTP ${response.status}; a verified identity is required. It is a read-only view and attempted no change.`,
+  };
+  const data = await response.json() as Record<string, unknown>;
+  const swarm = (data.swarm ?? {}) as Record<string, unknown>;
+  const named = ['swarm-role', 'idp-claim', 'break-glass', 'none'].includes(String(swarm.source));
+  const joined = named && Array.isArray(swarm.sources) && Array.isArray(data.permissions)
+    && Array.isArray(data.apps) && typeof data.appsAvailable === 'boolean'
+    && (data.apps as unknown[]).every(row => {
+      const app = row as Record<string, unknown>;
+      return typeof app.app === 'string' && typeof app.denied === 'boolean'
+        && ['app-assignment', 'app-default', 'none'].includes(String(app.source));
+    });
+  return { app: 'authorization', label, state: joined ? 'pass' : 'fail',
+    detail: joined ? `Swarm role ${String(swarm.role)} from ${String(swarm.source)}, ${(data.permissions as unknown[]).length} governance permissions and ${(data.apps as unknown[]).length} application rows, each naming its own grant source.`
+      : 'The access review did not name the source of every grant it reported.' };
 }
 
 export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
@@ -81,4 +108,9 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     app: 'authorization', label: 'Authenticated localhost browser required', state: 'degraded',
     detail: 'Pending: run tests/live/authorization-management.live.spec.ts with playwright.live.config.ts, OSHAL_E2E_BASE_URL=http://localhost:35457 and an existing authenticated CDP browser. No browser tests ran from this Lab request.',
   }) }],
+}, {
+  id: 'access-review', title: 'What am I allowed to do', group: 'tool',
+  description: 'Read the joined answer over the three authorization axes for the calling identity: swarm role and where it came from, governance permissions, and per-application assignments. Read-only; the route has no write member.',
+  regressionTests: [{ level: 'integration', path: 'tests/unit/access-review.spec.ts' }],
+  steps: [{ id: 'self', app: 'authorization', label: 'Joined access review (self)', run: accessReview }],
 }];
