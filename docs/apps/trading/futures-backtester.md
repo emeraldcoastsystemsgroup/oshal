@@ -26,6 +26,16 @@ npx tsx scripts/oshal-futures-backtest.ts --roots ES --source kibot-file \
 
 # Inspect raw roll seams (turns OFF back-adjustment; not a results run)
 npx tsx scripts/oshal-futures-backtest.ts --roots CL --source kibot-file --adjust none ...
+
+# OUT-OF-SAMPLE at frozen constants — 24-month train, the 6 unseen months after it, step 6
+npx tsx scripts/oshal-futures-backtest.ts --roots ES,CL --source kibot-file \
+  --start 2021-01-01 --end 2025-12-15 --equity 500000 \
+  --walk-forward --is-months 24 --oos-months 6 --step-months 6 --out wf.json
+
+# Parameter sweep — cartesian grid, series built once per market, NAMED objective, CSV out
+npx tsx scripts/oshal-futures-sweep.ts --roots ES,CL --source kibot-file \
+  --start 2021-01-01 --end 2025-12-15 --equity 500000 \
+  --grid scripts/futures-grids/ensemble-entry.json --fitness entry-logic --out sweep.csv
 ```
 
 Flags: `--roots` (comma list) · `--tf` / `--ltf` (chart and higher-timeframe bar sizes) ·
@@ -33,6 +43,21 @@ Flags: `--roots` (comma list) · `--tf` / `--ltf` (chart and higher-timeframe ba
 `--data-dir` (kibot-file root, default `C:\MarketData\kibot`, env `KIBOT_DATA_DIR`) ·
 `--adjust panama|none` (default **panama**) · `--min-volume` (default 1) · `--stage1 N` ·
 `--slippage-ticks` · `--commission` · `--equity` · `--risk-pct`.
+
+**Evidence flags** (ADR-116 Phase 1): `--config <file.json>` deep-merges a partial `BacktestConfig`
+over the runner's literal — a key the file omits keeps its default, a key written as `null` is
+REFUSED rather than becoming `NaN` · `--out <file.json>` writes the run machine-readable so nothing
+downstream has to re-parse stdout; it deliberately carries no timestamp, so two runs of the same
+command over the same archive produce byte-identical files and `diff` is the harness self-check ·
+`--walk-forward` with `--is-months` / `--oos-months` / `--step-months` replaces the single
+whole-archive run with rolling in-sample/out-of-sample windows at FROZEN constants.
+
+**The sweep runner** (`scripts/oshal-futures-sweep.ts`) shares those series and cost flags and adds
+`--grid <file.json>` (required — dotted config key → the values to try on that axis), `--fitness`
+(a name from the `FITNESS_FUNCTIONS` registry; an unknown name exits 2 rather than picking a
+default nobody stated), `--config` (a base overlay applied under the grid), `--top` and `--out`
+(CSV of every combination, not just the ranked head). An axis with no values is an error, not an
+empty sweep.
 
 **Mock data prints a banner saying results are meaningless as strategy evidence.** That is
 deliberate: the runner should never be quotable as a result unless it ran on real bars.
@@ -174,31 +199,179 @@ Stage-1 sanity check worth noting: on CL, configurations A and B produce the *id
 and identical MFE/MAE while differing in net P&L. That is exactly right — stage-1 suppresses stops
 but still sizes from the estimated stop, so a wider stop changes contracts, not entries.
 
-## Current honest numbers (2026-07-27, second pass)
+## Current honest numbers (re-measured 2026-09-16)
 
 Defaults everywhere (no per-market optimization), 1 tick slippage/side, $2.50/contract/side,
-$500K equity, 2% risk, hourly chart / daily LTF, panama-adjusted front-month series:
+$500K equity, 2% risk, hourly chart / daily LTF, panama-adjusted front-month series. Measured on
+core `5f31219` with the commands under "Running it":
 
 | Run | Trades | Win% | Net | MaxDD | AvgMFE/AvgMAE |
 |---|---|---|---|---|---|
-| ES 2021→2025 stage-1 (25-bar hold, no stops) | 119 | 47.1% | **−$36,273** | $108,005 | 1.026 |
-| ES 2021→2025 full stop stack | 118 | 70.3% | **+$42,115** | $37,829 | — |
-| CL 2021→2025 stage-1 | 125 | 48.0% | −$92,895 | $124,490 | 0.924 |
-| CL 2021→2025 full stop stack | 122 | 68.0% | −$31,177 | $114,883 | — |
+| ES 2021→2025 stage-1 (25-bar hold, no stops) | 117 | 47.0% | **−$44,928** | $124,733 | 0.965 |
+| ES 2021→2025 full stop stack | 123 | 66.7% | **+$23,367** | $50,767 | — |
+| CL 2021→2025 stage-1 | 126 | 49.2% | −$113,245 | $161,675 | 0.932 |
+| CL 2021→2025 full stop stack | 126 | 64.3% | −$77,544 | $126,502 | — |
 
-(Row A of the table above reproduces this block exactly — 119 trades / −$36,273 / 1.0256 stage-1 and
-118 / 70.3% / +$42,115 full-stack — which is the harness self-check that makes the comparison
-trustworthy. One caveat it exposed: the daily LTF series must come from the **daily** bulk files, as
-the runner picks them. Resampling minute bars up to daily instead changes the trade set materially,
-so never mix the two within a comparison.)
+Read: at DEFAULT parameters the entries still carry essentially no fixed-horizon edge
+(AvgMFE/AvgMAE below 1 on both markets) — which is exactly why the trader's pipeline optimizes
+entry constants per market as stage 1. The stop stack still **adds** value over the raw hold on both
+markets (ES −$45K → +$23K; CL −$113K → −$78K) while lifting win rate by roughly 15–20 points. Every
+number here is in-sample, un-optimized and un-walk-forwarded; the out-of-sample section below is the
+one that speaks about the strategy rather than about the archive.
 
-Read: at DEFAULT parameters the entries carry essentially no fixed-horizon edge (AvgMFE/AvgMAE ≈ 1)
-— which is exactly why the trader's pipeline optimizes entry constants per market as stage 1. The
-stop stack **adds** value over the raw hold on both markets (ES −$36K → +$42K; CL −$93K → −$31K)
-while roughly tripling win rate. All numbers are in-sample, un-optimized, no walk-forward; they
-are machinery-grade evidence, not edge claims. ⚠ The first-pass numbers published earlier the
-same day (ES stage-1 +$135,978 / full +$17,318) are **void**: that run's LTF series was
-column-shift misparsed minute data and its 19 roll seams were unadjusted.
+### Why the 2026-07-27 block no longer reproduces
+
+The 2026-07-27 second-pass table published **ES stage-1 119 / −$36,273 / 1.026, ES full-stack
+118 / 70.3% / +$42,115, CL stage-1 125 / −$92,895 / 0.924, CL full-stack 122 / 68.0% / −$31,177**,
+and said row A reproduced it bit-for-bit. Re-running the same command on 2026-09-16 does not: the
+table above is what the code produces now. Nothing was lost — two merged changes moved it, both
+deliberately:
+
+- **#82 (2026-07-31) replaced the 24h session fiction with the real Globex calendar.** Sessions,
+  the expected-bar count and the gap detector all changed, so the bar set the evaluator walks is
+  not the same bar set.
+- **#114 added the margin model, the Target-1 partial and the daily-ADX regime gate.** The last two
+  ship default-OFF and the gate stayed unfed until this change, but the margin/notional accounting
+  runs on every trade.
+
+The lesson is the one this file already teaches in "How it was verified", applied to itself: a
+hand-typed results block is a snapshot, and a snapshot with no re-runnable artifact behind it decays
+silently. That is what `--out` is for. The old numbers are recorded here as history; do not quote
+them. ⚠ The first-pass numbers published on 2026-07-27 before the second pass (ES stage-1
++$135,978 / full +$17,318) remain **void**: that run's LTF series was column-shift misparsed minute
+data and its 19 roll seams were unadjusted.
+
+## Walk-forward at frozen defaults (OOS) — 2026-09-16
+
+**The first out-of-sample numbers this project has ever had.** One frozen configuration (the
+defaults above — `dynstops` entries, the full stop stack, no per-market tuning) run over rolling
+24-month in-sample / 6-month out-of-sample windows stepping 6 months, so consecutive out-of-sample
+periods are contiguous and never overlap. No optimizer is involved: the OOS column measures the
+STRATEGY, not a parameter search.
+
+```bash
+npx tsx scripts/oshal-futures-backtest.ts --roots ES,CL --source kibot-file \
+  --start 2021-01-01 --end 2025-12-15 --equity 500000 \
+  --walk-forward --is-months 24 --oos-months 6 --step-months 6 --out wf.json
+```
+
+**ES** — paper, in-sample column trained, out-of-sample column unseen:
+
+| win | in-sample period | IS trades | IS net | out-of-sample period | OOS trades | OOS net | OOS maxDD |
+|---|---|---|---|---|---|---|---|
+| 0 | 2021-01→2023-01 | 43 | +$39,794 | 2023-01→2023-07 | 6 | +$7,186 | $9,855 |
+| 1 | 2021-07→2023-07 | 42 | +$4,950 | 2023-07→2024-01 | 16 | +$13,683 | $29,513 |
+| 2 | 2022-01→2024-01 | 51 | +$19,254 | 2024-01→2024-07 | 9 | +$6,695 | $20,899 |
+| 3 | 2022-07→2024-07 | 52 | +$1,454 | 2024-07→2025-01 | 7 | −$1,004 | $15,487 |
+| 4 | 2023-01→2025-01 | 50 | −$1,230 | 2025-01→2025-07 | 10 | −$33,166 | $42,877 |
+| **all** | 2021-01→2025-01 | **238** | **+$64,222** | 2023-01→2025-07 | **48** | **−$6,606** | worst window $42,877 |
+
+Degradation (OOS $/month ÷ IS $/month): **−0.411**.
+
+**CL** — same split, same frozen config:
+
+| win | in-sample period | IS trades | IS net | out-of-sample period | OOS trades | OOS net | OOS maxDD |
+|---|---|---|---|---|---|---|---|
+| 0 | 2021-01→2023-01 | 51 | −$26,348 | 2023-01→2023-07 | 5 | +$18,343 | $8,780 |
+| 1 | 2021-07→2023-07 | 45 | −$40,854 | 2023-07→2024-01 | 12 | +$11,016 | $17,685 |
+| 2 | 2022-01→2024-01 | 44 | −$28,140 | 2024-01→2024-07 | 13 | −$45,203 | $45,203 |
+| 3 | 2022-07→2024-07 | 50 | −$60,650 | 2024-07→2025-01 | 9 | −$46,597 | $46,760 |
+| 4 | 2023-01→2025-01 | 51 | −$45,956 | 2025-01→2025-07 | 11 | −$18,719 | $34,999 |
+| **all** | 2021-01→2025-01 | **241** | **−$201,948** | 2023-01→2025-07 | **50** | **−$81,160** | worst window $46,760 |
+
+Degradation: **n/a** — the in-sample half never made money, so the ratio would be meaningless and
+the driver reports null rather than a number that reads like a result.
+
+**Read, plainly:** across 30 months of bars the frozen constants never saw, ES lost $6,606 on 48
+trades and CL lost $81,160 on 50. ES's in-sample profit does not survive the walk forward; CL is
+negative in both columns. **At default constants this system has no demonstrated out-of-sample
+edge on either market with bars on disk.** That is the starting point Phase 2's optimizer has to
+beat, and it is now a re-runnable number rather than an opinion.
+
+Three properties of the measurement, so nobody has to infer them:
+
+- **Each window's series is sliced cold.** Indicators warm up from scratch inside every window (the
+  longest warmup in the stack is the 100-bar wave-stops RMS). Both halves are treated identically,
+  so the comparison is fair, but a 6-month OOS window carries proportionally more warmup than a
+  24-month IS window — part of why OOS trade counts are low.
+- **Each window is an independent account.** The drawdowns are per-window; the report gives the
+  worst one and never adds them into a portfolio claim.
+- **The split is guarded, not asserted.** `tests/unit/futures-walk-forward.spec.ts` drives the real
+  ES daily archive through the driver's own slicer and proves no bar reaches both halves of a
+  window — mutation-checked (swapping the halves turns it red).
+
+## Sweeps (in-sample, un-optimized) — 2026-09-16
+
+Both grids the ADR-116 Phase 1 plan owed. **Every number in this section is in-sample**: a sweep by
+definition saw the data it is ranked on, so a winner here is a hypothesis for the walk-forward, not
+a result.
+
+### Stop buffer: ticks vs percent-of-ATR
+
+```bash
+npx tsx scripts/oshal-futures-sweep.ts --roots ES,CL --source kibot-file \
+  --start 2021-01-01 --end 2025-12-15 --equity 500000 \
+  --grid scripts/futures-grids/stop-buffer.json --fitness trailing-stop --out sweep-stop.csv
+```
+
+| market | stopBufferMode | strangleBufferAtrPercent | trades | win% | net | maxDD | trailing-stop |
+|---|---|---|---|---|---|---|---|
+| ES | ticks | 5 / 7 / 10 (inert) | 123 | 66.7% | +$23,367 | $50,767 | −1211.49 |
+| ES | atr-percent | 5 | 123 | 66.7% | −$4,708 | $61,353 | −1270.15 |
+| ES | atr-percent | 7 | 123 | 66.7% | +$20,900 | $51,722 | −1223.56 |
+| ES | atr-percent | 10 | 122 | 68.0% | **+$49,529** | $53,232 | −1196.12 |
+| CL | ticks | 5 / 7 / 10 (inert) | 126 | 64.3% | −$77,544 | $126,502 | −1456.87 |
+| CL | atr-percent | 5 | 126 | 63.5% | −$80,337 | $128,645 | −1455.54 |
+| CL | atr-percent | 7 | 126 | 63.5% | −$81,190 | $129,130 | −1459.60 |
+| CL | atr-percent | 10 | 125 | 64.0% | −$78,101 | $125,973 | −1459.45 |
+
+The ATR-percent axis is **inert under `stopBufferMode: 'ticks'`** — the mode does not read it — so
+three of the six combinations per market are duplicates by construction. That is a property of the
+grid, not a bug, and it is exactly the kind of wasted axis a staged optimizer must avoid paying for.
+Reading: on ES a 10%-of-ATR Strangle buffer more than doubles in-sample net over the shipped tick
+buffer; on CL nothing in the grid escapes a large loss. Neither has been walk-forwarded, and the
+ES row is one market, one grid, one period.
+
+### Ensemble entry: threshold and the dual-floor confirmation
+
+```bash
+npx tsx scripts/oshal-futures-sweep.ts --roots ES,CL --source kibot-file \
+  --start 2021-01-01 --end 2025-12-15 --equity 500000 \
+  --grid scripts/futures-grids/ensemble-entry.json --fitness entry-logic --out sweep-ensemble.csv
+```
+
+45 combinations per market (`entry.generation: ensemble` × threshold 62/66/70/74/78 ×
+`retentionPct` 85/90/95 × `drawdownPct` 90/93/96).
+
+| market | combinations | positive net | net range | best row |
+|---|---|---|---|---|
+| ES | 45 | **0** | −$58,829 → −$31,270 | thr 78, drawdownPct 96 — 162 trades, 39.5%, −$31,270, maxDD $48,645 |
+| CL | 45 | **0** | −$90,834 → −$28,574 | thr 78, drawdownPct 96 — 173 trades, 37.0%, −$28,574, maxDD $51,179 |
+
+Average net by entry threshold (mean over the nine confirmation combinations at each threshold):
+
+| threshold | ES trades | ES avg net | CL trades | CL avg net |
+|---|---|---|---|---|
+| 62 | 433 | −$54,473 | 454 | −$87,065 |
+| 66 | 433 | −$54,473 | 454 | −$87,065 |
+| 70 | 371 | −$50,208 | 379 | −$75,703 |
+| 74 | 288 | −$46,575 | 300 | −$59,878 |
+| 78 | 159 | −$32,655 | 170 | −$29,487 |
+
+Three readings, all in-sample:
+
+- **Not one of the 90 ensemble runs is profitable.** The shipped `dynstops` default (+$23,367 on ES)
+  beats every ensemble combination on both markets. On this archive, at these constants, the
+  ensemble generation is worse than what it was meant to replace.
+- **Thresholds 62 and 66 produce identical books on both markets.** The ensemble score is a
+  percentage of a discrete contributor count, so those two thresholds fall between the same pair of
+  achievable scores. The grid's effective entry axis is four values, not five — a real finding for
+  whoever sizes Phase 2's grids, since a staged optimizer would otherwise pay full runtime for a
+  duplicate column.
+- **Loss shrinks monotonically as the threshold tightens**, entirely by trading less: ES goes 433
+  trades / −$54K at 62 to 159 trades / −$33K at 78. That is a pattern consistent with entries that
+  carry no edge, which is the same thing the AvgMFE/AvgMAE ≈ 1 stage-1 number says.
+
 
 ## Known limits (read before quoting any number)
 
@@ -224,9 +397,14 @@ column-shift misparsed minute data and its 19 roll seams were unadjusted.
   backtest can hold a position a real account could not fund.
 - **Single position at a time, per market** (`EntriesPerDirection = 1` in the source). No
   pyramiding, no scale-outs — his Target-1 partial is not yet modeled.
-- **No walk-forward driver yet.** Constants are frozen per run; the staged optimizer and its
-  out-of-sample harness are the next build. His own repo documents walk-forward as policy but
-  never implemented it — this port should not inherit that gap.
+- **The walk-forward driver exists; the staged optimizer does not.** `--walk-forward` runs FROZEN
+  constants over rolling in-sample/out-of-sample windows (numbers above). What is still missing is
+  the six-stage locked-winner optimizer running INSIDE those windows — Phase 2 in
+  [futures-phasing.md](./futures-phasing.md), and the point at which an optimized constant set could
+  be judged on bars it did not choose. Until then, every "winner" in the sweep tables is in-sample.
+- **Walk-forward windows are sliced cold.** Indicators restart inside each window, so the first
+  ~100 chart bars of each half are warmup rather than tradable. Identical treatment either side, but
+  it depresses out-of-sample trade counts relative to a continuously-run book.
 - **The mock source is not a market.** It is a random walk with drift; it will happily produce a
   profitable-looking curve. Only `--source kibot` runs are evidence.
 
@@ -272,9 +450,10 @@ future data, not contributors to these numbers.
 
 ## Next
 
-The staged optimizer (Entry → StopLoss → Trail → Targets → EmergencyExit → Sizing, prior-stage
-winners locked, each scored by its own fitness above) plus a walk-forward driver that freezes
-constants and re-runs on unseen periods — that is where "no edge at defaults" is supposed to turn
-into per-market constants worth quoting. Then the `futures_backtest` tool on the trading-analyst
-bot, so the source trader can iterate parameters conversationally. See the BACKLOG futures
-section.
+The walk-forward driver is built (above). Next is the staged optimizer — Entry → StopLoss → Trail →
+Targets → EmergencyExit → Sizing, prior-stage winners locked, each scored by its own fitness above —
+running INSIDE those windows, which is Phase 2 and the ADR-116 evidence gate: it is where "no edge
+at defaults" either turns into per-market constants that survive unseen bars, or is confirmed, and
+confirming it closes the live items as "do not build live". Then the `futures_backtest` tool on the
+trading-analyst bot, so the source trader can iterate parameters conversationally. Scope, sizes and
+done-whens: [futures-phasing.md](./futures-phasing.md); status: the BACKLOG futures section.

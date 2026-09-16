@@ -42,8 +42,10 @@ Not present anywhere in `src/` (each grep returned nothing): a Schwab futures da
 src/features/trading/services/futures-data-source.ts`), a Tradovate or any FCM client, a
 `futures_backtest` tool on any persona (`grep -rn futures_backtest ai-lab swarm-apps src`), and any
 `TRADING_FUTURES_*` env var (`grep TRADING_FUTURES .env.example docker-compose.oshal-local.yml`).
-`KIBOT_*` appears in **no** documented env reference — not `.env.example`, not the README table, not
-compose — only as `process.env` reads in code.
+`KIBOT_*` appeared in **no** documented env reference — not `.env.example`, not the README table,
+not compose — only as `process.env` reads in code. *(Closed 2026-09-16: all five are now in
+`.env.example` and the [reference env table](../../reference.md#futures-market-data-adr-116-research-runners),
+marked research-only.)*
 
 ### 1.2 Data on disk (`C:\MarketData\kibot`)
 
@@ -99,6 +101,22 @@ and blanks excluded). "Guard" names the spec and the real boundary it crosses; a
 allowed only where the claim is branch logic.
 
 ### Phase 1 — Evidence rail: reproducible real-bar in-sample / out-of-sample (core, scripts + one pure module, ~450 lines)
+
+> **Status: SHIPPED 2026-09-16.** `src/features/trading/services/futures-walk-forward.ts` (splitter,
+> frozen-constant driver, config merge, grid expansion, named-fitness lookup),
+> `scripts/oshal-futures-sweep.ts`, `scripts/lib/futures-series.ts` (shared series build, so a sweep
+> winner is comparable to the reference run), `--config` / `--out` / `--walk-forward` on the backtest
+> runner, the `dailyBars` wiring fix, the `KIBOT_*` documentation, and
+> `tests/unit/futures-walk-forward.spec.ts` as the guard. The out-of-sample and sweep tables are in
+> [futures-backtester.md](./futures-backtester.md).
+>
+> **One part of this phase's done-when could not be met as written, and it is a finding, not a
+> shortfall.** The harness self-check ("reproduces the canonical row-A numbers bit-for-bit") FAILS:
+> the same command now returns ES 123 trades / +$23,367 against the recorded 118 / +$42,115, because
+> #82 (the real Globex calendar) and #114 (margin / Target-1 / regime gate) landed after those
+> numbers were written down. The in-sample block has been re-measured and the divergence recorded in
+> futures-backtester.md; the `--out` artifact is deliberately timestamp-free so the check is a
+> `diff` from here on rather than a hand comparison. Read the pre-2026-07-31 figures as history.
 
 **Goal.** Turn "we ran it once and wrote the numbers down" into a re-runnable, machine-readable
 IS/OOS report at frozen constants, plus the two parameter sweeps the old BACKLOG line asked for.
