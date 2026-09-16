@@ -1,5 +1,6 @@
 import type { LLMToolDefinition } from './llm-service';
 import type { Tool } from '@/shared/types/tool';
+import { HARNESS_NATIVE_TOOL_NAMES } from '@/shared/tools/embedded-tool-tier';
 
 /**
  * @description Capability scope used to keep prompts and MCP sessions lean for a bot.
@@ -21,16 +22,9 @@ export type AgentCapabilityResolver = (
   agentId: string,
 ) => Promise<string[] | AgentSelectorResolution | null> | string[] | AgentSelectorResolution | null;
 
-const CORE_RUNTIME_TOOL_NAMES = new Set([
-  'list_directory',
-  'read_file',
-  'search_files',
-  'write_to_file',
-  'replace_in_file',
-  'execute_command',
-  'ask_followup_question',
-  'attempt_completion',
-]);
+// The harness's own primitives. One list, shared with the tool-tier vocabulary, so a capability
+// filter and a run trace can never disagree about what is harness-native.
+const CORE_RUNTIME_TOOL_NAMES = new Set(HARNESS_NATIVE_TOOL_NAMES);
 
 const CAPABILITY_ALIASES: Record<string, string[]> = {
   qa: ['testing', 'verification', 'test-automation'],

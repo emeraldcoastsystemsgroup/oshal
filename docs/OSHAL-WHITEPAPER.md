@@ -164,9 +164,14 @@ registry · Redis · Postgres. This loop is the line between a *starter repo* an
 ## 9. Tools, RAG, and scheduling
 
 - **Three tool tiers per bot:** (1) the shared OSHAL registry exposed across harnesses, with per‑agent
-  authorization (`auto` / `ask` / `off`); (2) the harness's own native tools; (3) — emerging — the
-  LLM's embedded tools. The shared tier is governed end‑to‑end: registry metadata → per‑agent switch →
-  runtime executor (built‑in · CLI · API · MCP). **31 standard tools across 16 categories** ship today.
+  authorization (`auto` / `ask` / `off`); (2) the harness's own native tools; (3) the model provider's
+  embedded tools — operations the provider runs inside its own service (server‑side web search, code
+  execution, file search). The shared tier is governed end‑to‑end: registry metadata → per‑agent switch →
+  runtime executor (built‑in · CLI · API · MCP). The embedded tier is governed by the same per‑agent
+  persona authorizations and is fail‑closed: a named embedded tool the agent has not enabled refuses at
+  execution, and every tool a run invokes is traced with its tier and, for an embedded tool, the exact
+  provider operation. Attaching embedded tools to a provider request is not wired yet — the policy and
+  the trace are. **31 standard tools across 16 categories** ship today.
 - **RAG:** an infra-runbooks ChromaDB collection any bot can query, with provenance‑tagged
   citations.
 - **Scheduling & self‑healing:** a cron‑backed scheduling slice (cron‑parser + runner + Redis store),
