@@ -113,6 +113,15 @@ by a kernel-resident manifest in `swarm-apps/`:
 | `task` | `WORKFLOW_PIPELINES` | manifest-worker | general-bot | Dedicated node `general-bot` (already `requiresOwnNode`). The call-out may override the worker - see below. |
 | `workflow-build` | `swarm-apps/workflow-studio.yaml` | manifest-worker | workflow-assistant | Dedicated node `workflow-assistant`. |
 
+**A profile-gated worker makes its ticket type profile-gated too.** `rca-specialist` sits behind the
+compose profile `incident` and `system-architect` behind `build`, so neither is part of a default
+`docker compose up` and neither can join the chart's kernel fleet (the fleet generator refuses,
+deliberately). Before signing they were forced inline by the codex rule, which meant a deployment
+without those profiles still served `incident`, `intelligent-processing` and `build` from the api
+container. It no longer can: with signing configured those types need their profile enabled, or they
+are refused. That is a deployment requirement, not a defect - but it has to be stated, because
+nothing else says it.
+
 Three of those workers - rca-specialist, system-architect and queue-bot - already named a running
 compose node and were sent inline only by the legacy codex rule in `resolve-bot-node-endpoint.ts`,
 which that function already logs as a declaration bug

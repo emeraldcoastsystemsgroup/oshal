@@ -20,6 +20,7 @@ import { dispatchManifestWorkerTicket } from '@/features/swarm-orchestration/ser
 import { resolveBotNodeEndpoint } from '@/app/extensions/swarm/resolve-bot-node-endpoint';
 import {
   getActiveRegistry,
+  kernelBotAgentIds,
   registerAppBots,
   unregisterAppBots,
   type SwarmBotDefinition,
@@ -227,6 +228,75 @@ describe('every core ticket type has a worker the controller can reach under sig
           + `ticket type '${workflow.ticketType}' from ${workflow.source} is refused once controller `
           + 'signing is configured',
         ).not.toBeNull();
+      }
+    },
+  );
+});
+
+describe('a resolved endpoint names a container that is really there', () => {
+  // Resolution is registry-derived and never probes: resolveBotNodeEndpoint returns
+  // http://<container>:5000 for anything flagged requiresOwnNode, whether or not that service
+  // exists. A fabricated container name passed this file's other cases, which is the whole risk of
+  // moving a bot onto a node - the refusal becomes an opaque connect error instead.
+  const compose = yaml.load(
+    fs.readFileSync(path.resolve(__dirname, '../../docker-compose.oshal-local.yml'), 'utf8'),
+  ) as { services?: Record<string, { container_name?: string; profiles?: string[] }> };
+  // Docker answers to BOTH: a service is reachable by its compose key and by its container_name,
+  // because compose registers each as a network alias. The registry uses one or the other depending
+  // on the bot's vintage, and both work - so a name is 'real' if it is either.
+  const services = new Set<string>();
+  for (const [key, service] of Object.entries(compose.services ?? {})) {
+    services.add(key);
+    if (service && typeof service.container_name === 'string') services.add(service.container_name);
+  }
+  const installer = fs.readFileSync(path.resolve(__dirname, '../../scripts/oshal-install.sh'), 'utf8');
+  const delegationDoc = fs.readFileSync(path.resolve(__dirname, '../../docs/security/http-delegation.md'), 'utf8');
+  const kernelServices = /KERNEL_SERVICES=\(([^)]*)\)/.exec(installer)?.[1].split(/\s+/).filter(Boolean) ?? [];
+
+  it('read a real compose file and a real kernel service list', () => {
+    expect(services.size, 'no compose services parsed - every case below would pass vacuously').toBeGreaterThan(10);
+    expect(kernelServices, 'KERNEL_SERVICES did not parse').toContain('oshal-api');
+  });
+
+  it.each(CORE_TYPES.map((w) => [w.ticketType, w] as const))(
+    "'%s' resolves its worker onto a container docker-compose actually defines",
+    (_ticketType, workflow) => {
+      for (const botName of [workflow.workerBot, workflow.reviewerBot].filter(Boolean) as string[]) {
+        const def = definitionByName(botName);
+        if (!def || realEndpoint(def.agentId) === null) continue;
+        expect(
+          services.has(def.container),
+          `${botName} resolves to http://${def.container}:5000, but docker-compose.oshal-local.yml `
+          + `defines no service called '${def.container}' - the dispatcher would report a connect `
+          + 'error rather than a refusal',
+        ).toBe(true);
+        // A kernel bot on its own node that the kernel install never starts is the same failure,
+        // one bundle later: the surface calls it and nothing answers.
+        if (kernelBotAgentIds().has(def.agentId)) {
+          // KERNEL_SERVICES names compose SERVICES, so compare on the service key however the
+          // registry spells the container.
+          const entry = Object.entries(compose.services ?? {}).find(
+            ([key, value]) => key === def.container || value?.container_name === def.container,
+          );
+          const service = entry?.[0] ?? def.container;
+          if (entry?.[1]?.profiles?.length) {
+            // Profile-gated on purpose: not part of a default `up`, and the chart's fleet generator
+            // refuses to render it. Then the TICKET TYPE is opt-in too, and that has to be written
+            // down - before signing these ran inline, so a profile-less box served them and now does
+            // not. The doc is the contract, so the doc is what this asserts.
+            expect(
+              delegationDoc,
+              `${botName} is profile-gated (${entry[1].profiles.join(', ')}), so ticket type `
+              + `'${workflow.ticketType}' only runs where that profile is enabled - say so in `
+              + 'docs/security/http-delegation.md',
+            ).toContain('profile-gated worker makes its ticket type profile-gated');
+            continue;
+          }
+          expect(
+            kernelServices,
+            `${botName} is a KERNEL bot on its own node, so scripts/oshal-install.sh must start '${service}'`,
+          ).toContain(service);
+        }
       }
     },
   );

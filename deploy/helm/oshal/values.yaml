@@ -252,6 +252,12 @@ fleets:
       agentId: a0000000-0000-0000-0000-000000000099
       personaFile: /app/ai-lab/bot-personas/everything-default.yaml
       capabilities: "general-assistance,cross-domain-synthesis,web-research,overflow-fallback"
+    - name: security-analyst
+      agentId: a0000000-0000-0000-0000-000000000047
+      capabilities: "finding-triage,threat-assessment,attack-scenario-analysis,remediation-recommendation"
+    - name: workflow-assistant
+      agentId: a0000000-0000-0000-0000-000000000051
+      capabilities: "workflow-design,process-architecture,orchestration,workflow-validation"
   full:
     - name: weather-bot
       agentId: a0000000-0000-0000-0000-000000000036
