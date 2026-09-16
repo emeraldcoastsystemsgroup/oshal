@@ -33,6 +33,12 @@ import { specDatabaseUrl } from '../helpers/spec-database-url';
 
 /** Same convention as the other enforcing-role specs: a cluster the run names, never a default. */
 const ADMIN_DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+
+/** Home admission is not this suite's boundary: discovery always admits, so nothing here changes shape. */
+const admitEveryApplication = {
+  canDiscover: async () => true,
+  resolveActor: async () => ({ sub: 'route-fixture-subject', issuer: 'https://route.fixture.test', isActive: true, isSwarmAdmin: false }),
+};
 const ENFORCING_ROLE = 'oshal_app';
 const FIXTURE_DB = `oshal_multipart_identity_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 const OWNER = 'auth0|multipart-owner';
@@ -190,7 +196,7 @@ async function startServer(): Promise<void> {
   const app = express();
   app.use(signedIn, requestIdentity);
   app.use('/api/rag', createRagRoutes(rag.ingest, rag.memory, gucPool));
-  app.use('/api/swarm/apps', createSwarmAppRoutes(swarmAppDouble()));
+  app.use('/api/swarm/apps', createSwarmAppRoutes(swarmAppDouble(), undefined, { authorization: admitEveryApplication }));
   app.use('/api/jarvis/ambient', createAmbientSpeakerRoutes({ pool: gucPool }, ambientDoubles()));
   app.use('/api/agents', createAgentProfileRoutes(agentProfileController()));
   server = http.createServer(app);

@@ -4,13 +4,40 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the unified-bot-strategy gap (operator report 2026-09-04): the live Jarvis turn carried NO app catalog, so the persona's baked specialist list was the model's whole world — a CRM-only deployment had a Jarvis that had never heard of its own CRM and answered "I don't have that data" about an app on the same box. Pins: buildCatalogBlock lists a dynamically discovered store app with its deep link, declares its authority over any baked-in list, stays bounded, and the turn assembly + persona actually use it (the two ends the block is useless without).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The turn-assembly case reads the prompt the MODEL was handed through a real authenticated /api/jarvis/ask turn, instead of regex-matching the router's source. The old form matched the first bracketed group after `const ctxBlocks = `, which stops at the first closing bracket - now an inner array literal in the artifact-selection branch - so it reported the catalog missing while the wiring was correct, and no source change could clear it. The source-text form also never proved the model received anything.
  */
 
-import { describe, it, expect } from 'vitest';
+import type { AddressInfo } from 'node:net';
+import express, { type RequestHandler } from 'express';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { buildCatalogBlock } from '@/app/routes/jarvis-orchestrator';
+
+// Only model execution, the brain-selection reads and persistence are doubles: the context
+// assembly under test is the shipped one, reached over real HTTP through the real router.
+const executeBot = vi.hoisted(() => vi.fn());
+vi.mock('@/app/routes/inline-bot-execution', () => ({ executeBotOrInline: executeBot }));
+vi.mock('@/app/routes/connector-token-broker', () => ({ resolveBotCreds: vi.fn().mockResolvedValue({}) }));
+vi.mock('@/app/routes/free-tier-rotation', () => ({
+  resolveUserLlmConnection: vi.fn().mockResolvedValue(null), reportResolvedLlmFailure: vi.fn().mockResolvedValue(false),
+}));
+vi.mock('@/features/user-model', () => ({
+  withHavenContext: vi.fn(async (_pool: unknown, _sub: string, prompt: string) => prompt),
+  learnFromExchange: vi.fn().mockResolvedValue(undefined),
+}));
+// PARTIAL mock: a factory that LISTS the barrel's exports goes red the moment the barrel grows one
+// the spec never asked about.
+vi.mock('@/shared/services/database', async (importOriginal) => ({
+  ...await importOriginal<object>(),
+  runRuntimeSchemaBootstrap: vi.fn().mockResolvedValue(undefined), buildOwnerRlsPolicyStatements: vi.fn().mockReturnValue([]),
+}));
+
+import { buildCatalogBlock, PLAN_DIRECTIVE_GUIDANCE } from '@/app/routes/jarvis-orchestrator';
 import { buildOpenWorkBlock } from '@/app/routes/jarvis-task-store';
+import { createJarvisRoutes, purgeJarvisAskJobsForOwner } from '@/app/routes/jarvis-routes';
+import { createMemoryOnlyTaskStore } from '../helpers/jarvis-session-task-store';
+
+const OWNER = 'auth0|catalog-block-owner';
 
 /** Minimal AppContext double — the catalog path only reaches for ctx.pool.query. */
 function ctxReturning(rows: Array<Record<string, unknown>>): never {
@@ -80,18 +107,61 @@ describe('Jarvis catalog block: the model sees the deployment it actually runs o
     expect(block).toMatch(/ASSISTANT CATALOG/);
   });
 
-  it('the live turn assembly actually injects the block (the gap this guard exists for)', async () => {
-    // The catalog was fully built (surface chips, plan compiler) while the MODEL never received
-    // it — the exact defect. Pin the wiring: the /ask context assembly must call
-    // buildCatalogBlock and place it in the context blocks ahead of the plan guidance, whose
-    // text refers to "the catalog keys above".
-    const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'app', 'routes', 'jarvis-routes.ts'), 'utf8');
-    const assembly = /const ctxBlocks = \[([^\]]*)\]/.exec(src);
-    expect(assembly, 'ctxBlocks assembly must exist in jarvis-routes.ts').toBeTruthy();
-    const order = (assembly as RegExpExecArray)[1];
-    expect(order).toContain('catalog');
-    expect(order.indexOf('catalog')).toBeLessThan(order.indexOf('PLAN_DIRECTIVE_GUIDANCE'));
-    expect(src).toContain('await buildCatalogBlock(ctx)');
+  it('the live turn assembly hands the block to the MODEL, ahead of the plan guidance', async () => {
+    // The catalog was fully built (surface chips, plan compiler) while the MODEL never received it
+    // - the exact defect this guard exists for. So read what the model was actually handed: run a
+    // real authenticated turn through the shipped router and assert on the prompt it executed with.
+    // The plan directive tells the model to use "the catalog keys above", so order is load-bearing.
+    const query = vi.fn(async () => ({ rows: [], rowCount: 0 }));
+    const taskStore = createMemoryOnlyTaskStore();
+    const ctx = {
+      pool: { query }, orchestrator: { processMessage: vi.fn() }, taskStore,
+      messageStore: { save: vi.fn(), getByTask: vi.fn().mockResolvedValue([]) },
+      ticketService: {
+        listTickets: vi.fn().mockResolvedValue([]), createTicket: vi.fn(), updateStatus: vi.fn(),
+        openChatTicket: vi.fn().mockResolvedValue({ ticketId: 'catalog-block-chat' }),
+      },
+    };
+    const auth: RequestHandler = (request, response, next) => {
+      const sub = request.header('x-test-sub');
+      if (!sub) { response.sendStatus(401); return; }
+      (request as unknown as { oidc: unknown }).oidc = { isAuthenticated: () => true, user: { sub } };
+      next();
+    };
+    executeBot.mockReset();
+    executeBot.mockResolvedValue({ response: 'Hello.' });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/jarvis', auth, createJarvisRoutes(ctx as never, process.cwd()));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/jarvis`;
+    const headers = { 'Content-Type': 'application/json', 'x-test-sub': OWNER };
+    try {
+      const response = await fetch(base + '/ask', {
+        method: 'POST', headers,
+        body: JSON.stringify({ message: 'Say hello.', sessionId: 'catalog-block-session' }),
+      });
+      expect(response.status).toBe(202);
+      const { jobId } = await response.json() as { jobId: string };
+      let result: Record<string, unknown> = {};
+      for (let attempt = 0; attempt < 200; attempt++) {
+        result = await (await fetch(base + '/ask/result?jobId=' + jobId, { headers })).json() as Record<string, unknown>;
+        if (result.status !== 'pending') break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(result.status).toBe('done');
+      // The model turn happened, and this is the text it ran on - not the router's source.
+      expect(executeBot).toHaveBeenCalledTimes(1);
+      const prompt = executeBot.mock.calls[0][3].text as string;
+      expect(prompt).toContain('ASSISTANT CATALOG');
+      expect(prompt).toContain(PLAN_DIRECTIVE_GUIDANCE);
+      expect(prompt.indexOf('ASSISTANT CATALOG')).toBeLessThan(prompt.indexOf(PLAN_DIRECTIVE_GUIDANCE));
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      purgeJarvisAskJobsForOwner(OWNER);
+    }
   });
 
   it('the persona defers to the per-turn catalog instead of hardcoding one deployment\'s apps', async () => {
