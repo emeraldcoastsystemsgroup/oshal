@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Browser guard for the data-model explorer: real Chromium against the real page files, the real route + operator gate and the real service over fixture ports (a temp source tree with a core migration and one store package). Proves the graph renders, the tabs and URL deep links drive it, the detail panel navigates FKs, search opens a table, the stores view shows every card, and a non-operator gets the operator-only explanation instead of data. Browser console errors fail the suite.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Export guards at the real boundary: the Mermaid block copied for the view on screen names exactly the tables Chromium drew and reaches the clipboard, the SVG and JSON downloads are real files with the drawn scope inside them, and a non-operator - who never got a snapshot - is told there is nothing to export instead of being handed an empty one.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Shared glass finish at the served boundary: Chromium must load /shared/ui/css/surface-glass.css from the real static mount AFTER the page's own data-model.css, and --oshal-glass-bg (defined only by that sheet) must resolve on :root. The page shipped without the link and the source-level glass specs went red; this case runs inside `npm run test:data-model`, the command the explorer's own work runs.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | A real mermaid@11 parse, at the only boundary that settles it: the block Chromium copied out of the real page is handed to mermaid's own parser, which must read the Tables export as an `er` diagram and the owner export as a flowchart, and must REJECT a mangled block - so a parser that silently accepted anything could not pass this. The structural assertions above and the byte-parity to the docs generator never ran a parser at all; a block that renders on GitHub but throws in mermaid would have shipped unnoticed.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -16,10 +17,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium, type Browser, type Download, type Page } from 'playwright';
+import { createRequire } from 'node:module';
 import { requiresOperator } from '@/shared/middleware/authz';
 import { createDataModelRoutes } from '@/app/routes/data-model-routes';
 import { createDataModelService, type CatalogSnapshot, type RelationInfo } from '@/features/data-model';
 
+// The real mermaid@11 bundle: a self-contained UMD build that defines globalThis.mermaid, so the
+// parse runs in a page with no network and no CDN.
+const MERMAID_BUNDLE = createRequire(import.meta.url).resolve('mermaid/dist/mermaid.js');
 let root: string, base: string, server: Server, browser: Browser;
 const consoleErrors: string[] = [];
 const rel = (name: string, cols: string[], fks: Array<[string, string]> = []): RelationInfo => ({
@@ -93,6 +98,42 @@ async function readDownload(download: Download): Promise<string> {
   const text = readFileSync(path, 'utf8');
   await download.delete();
   return text;
+}
+
+/**
+ * Parse each fenced export block with the real mermaid@11, in a page of its own (no console-error
+ * collector, because a deliberately mangled block makes mermaid log). Returns the diagram type
+ * mermaid detected, or null when mermaid refused the block.
+ */
+async function mermaidParse(blocks: string[]): Promise<Array<string | null>> {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.setContent('<!doctype html><title>mermaid parse</title><body></body>');
+  await page.addScriptTag({ path: MERMAID_BUNDLE });
+  const types = await page.evaluate(async (texts: string[]) => {
+    const api = (window as unknown as { mermaid: { initialize: (c: unknown) => void; parse: (t: string) => Promise<{ diagramType: string }> } }).mermaid;
+    api.initialize({ startOnLoad: false });
+    const out: Array<string | null> = [];
+    for (const text of texts) {
+      const body = text.split(/\r?\n/).filter((l) => !l.startsWith('```')).join('\n');
+      try { out.push((await api.parse(body)).diagramType); } catch { out.push(null); }
+    }
+    return out;
+  }, blocks);
+  await context.close();
+  return types;
+}
+
+/** Copy the Mermaid block for the view `query` opens, straight out of the real page. */
+async function copiedMermaid(query: string): Promise<string> {
+  const page = await open('the-operator', query);
+  await page.waitForSelector('#graph g.node');
+  await page.click('#exportBtn');
+  await page.click('[data-export="mermaid"]');
+  await page.waitForSelector('#exportPreview:not([hidden])');
+  const block = await page.locator('#exportPreview').textContent() || '';
+  await page.context().close();
+  return block;
 }
 
 // Real Chromium page loads on a loaded host need more than vitest's 5 s default.
@@ -207,6 +248,17 @@ describe('data-model explorer in the browser', { timeout: 60_000 }, () => {
     const glassToken = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--oshal-glass-bg').trim());
     expect(glassToken).not.toBe('');
     await page.context().close();
+  });
+
+  it('exports blocks mermaid@11 parses itself - and would refuse a mangled one', async () => {
+    const er = await copiedMermaid('?view=tables&app=%40core');
+    const flow = await copiedMermaid('?view=apps');
+    // Same renderer writes docs/architecture/data-model, so parsing this block parses those too.
+    const mangled = er.replace('erDiagram', 'erDiagram' + String.fromCharCode(10) + '  {{ not an entity');
+    const [erType, flowType, mangledType] = await mermaidParse([er, flow, mangled]);
+    expect(erType).toBe('er');
+    expect(flowType).toMatch(/^flowchart/);
+    expect(mangledType).toBeNull();
   });
 
   it('raised no browser errors along the way', () => {
