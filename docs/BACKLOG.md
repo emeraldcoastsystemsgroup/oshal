@@ -147,6 +147,39 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   with the DSN refusal in force so no run can reach `oshal-local-db` (`scripts/ci/check-spec-database-default.sh`
   is the existing guard for that shape); the 10 pre-existing failures are either fixed or explicitly
   quarantined with their own entry; and a zero-test run for that package fails rather than passing.
+- ✅ **CLOSED 2026-09-16** on store branch `fix/trading-specs-in-a-gate` (oshal-applications). The
+  file count was **17**, not 13, by the time it was wired. A new `scripts/run-trading-specs.mjs` is
+  the one command both gates call: a `trading` job in `store-ci.yml` (still `workflow_dispatch`-only)
+  checks the public framework out, runs its locked Vitest over `trading/vitest.config.mjs`, and
+  `store-ci-local.sh` mirrors it through a new `OSHAL_FRAMEWORK` capability — so a box without a
+  framework checkout SKIPS, which is non-zero, rather than reporting green. Measured: the local gate
+  is **48 passed / 0 failed** with the two trading checks in it, and **47 / 1 failed** with one
+  trading assertion broken, so the wiring really carries a red.
+- **The 10 failures are FIXED, none quarantined** — and the cause recorded above was wrong. The
+  package *does* consume `pinnedInFullGovernance`. All nine `trading-unmanaged-positions.spec.ts`
+  failures were one thing: the kernel moved trading's lazy bootstraps onto the advisory-locked path
+  (`ensurePinnedLotsSchema` → `runRuntimeSchemaBootstrap` → `applyLockedSchema`), which checks out a
+  client, and the spec's pool double answered only `query` — so every case died on
+  `pool.connect is not a function`, `ledgerGovernance` caught it and answered `{}`, and the
+  assertions read the "not known" fallback. The double now answers `connect()`; nothing asserts less
+  than before. The tenth was `trading-html-syntax.spec.ts` parsing every `tools/ui/*.js` as a classic
+  script while `connected-actions.js` is loaded `type="module"` and is correct — the grammar is now
+  read off `trading.html`'s own `<script>` tags, mutation-proved red three ways (drop the
+  `type="module"`, give a classic file an `import`, break the module's syntax). **17 files, 293
+  tests, 0 failures**, against a clean core checkout.
+- **Remaining, and small:** the store repo still has no repo-WIDE equivalent of
+  `scripts/ci/check-spec-database-default.sh`. The refusal that landed is scoped to the package the
+  runner is pointed at (live published port, the live containers named as a connection host, and the
+  `process.env.X || 'oshal-local-db'` fallback shape), plus a pre-flight refusal of an environment
+  that already points at the live stack and a child pinned to a DSN that cannot connect. Generalising
+  it to every `*/tests/**` in the store is the follow-up; note that the guard's own test file carries
+  the forbidden literals as fixtures, so a repo-wide scanner needs the shape exemption core's script
+  already documents.
+- **One thing to stop citing as evidence:** `scripts/security/framework-coupled.vitest.config.mjs`
+  still lists only `lora/tests` and `vids/tests`, deliberately. The trading specs run through the
+  package's own `trading/vitest.config.mjs` — the config their spec headers document and the only one
+  carrying the `express` / `js-yaml` / `acorn` aliases they need. Two configs claiming the same specs
+  is the drift this entry was about.
 
 ### No gate typechecks a test file, so "typecheck clean" says nothing about one
 
