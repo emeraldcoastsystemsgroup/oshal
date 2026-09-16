@@ -15,6 +15,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Replace obsolete posture flags with the runtime's actual control resolution: CSP mode follows cspMode (report-only by default), connector crypto follows SESSION_SECRET plus default-on envelope mode, the always-mounted external limiter is distinguished from opt-in internal/expensive rails, and Alertmanager HMAC configuration is surfaced explicitly.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Surface the connector DEK failure policy so governance cannot present an explicit shared-HKDF break-glass as the normal deny posture.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148: /whoami reports `source` (swarm-role | break-glass | none) plus root status, so the admin console can distinguish a role that lives in swarm_roles from one that exists only in the operator-local .env. The page cannot see either store, so it must be told; without this an admin granted on the Users page and an operator hard-coded into a file render identically.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | /whoami resolves its `source` through the shared grant-source resolver instead of its own two-way guess. The guess had no third answer, so an admin granted by an IdP ROLE CLAIM was reported as `break-glass` and the console told them to ask for a role that would survive an edit to an environment file they are not in. The resolver also reports every source that independently confers the role, and whether the swarm_roles snapshot has loaded at all — the joined access review reads the same function, so the two surfaces cannot disagree about one fact.
  */
 
 /**
@@ -52,17 +53,15 @@ import {
   type AuditQueryFilter,
   type AuditRow,
   rbacMiddleware,
-  resolveRole,
+  resolveSwarmRoleGrant,
   callerFromRequest,
   isEnforcementEnabled,
   requireAdminConsoleAccess,
   Permission,
   ROLE_PERMISSIONS,
-  Role,
 } from '@/features/governance';
 import { cspMode } from '@/features/security';
 import { envelopeDekFailureMode } from '@/app/routes/connector-token-crypto';
-import { isPrivilegedIdentity, getRootSub } from '@/shared/middleware/privileged-identities';
 
 const logger = createChildLogger({ module: 'audit-export-routes' });
 
@@ -524,19 +523,20 @@ export function createAuditExportRouter(ctx: AppContext, requiresAuth?: RequestH
    */
   router.get('/whoami', ...guards, (req: Request, res: Response) => {
     const caller = callerFromRequest(req);
-    const role = resolveRole(caller);
-    const bySwarmRole = isPrivilegedIdentity(caller.sub, caller.email);
+    const grant = resolveSwarmRoleGrant(caller);
     res.json({
       sub: caller.sub,
       email: caller.email,
       tokenRoles: caller.roles ?? [],
-      role,
-      permissions: ROLE_PERMISSIONS[role] ?? [],
+      role: grant.role,
+      permissions: ROLE_PERMISSIONS[grant.role] ?? [],
       enforcement: isEnforcementEnabled(),
       // Reported, never inferred by the page: the page cannot see swarm_roles or the environment.
-      source: bySwarmRole ? 'swarm-role' : (role === Role.Viewer ? 'none' : 'break-glass'),
-      isRoot: Boolean(caller.sub) && getRootSub() === caller.sub,
-      rootClaimed: getRootSub() !== null,
+      source: grant.source,
+      sources: grant.sources,
+      rolesLoaded: grant.rolesLoaded,
+      isRoot: grant.isRoot,
+      rootClaimed: grant.rootClaimed,
     });
   });
 
