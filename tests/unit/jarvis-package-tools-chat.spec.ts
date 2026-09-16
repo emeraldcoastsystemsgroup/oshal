@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove actual Jarvis ask/poll proposals reach current package execution without private history or stream leakage.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Partial-mock the database barrel instead of listing its exports. createPersistenceActivation arrived in the barrel and both in-memory stores call it, so this file's mock threw on construction and the suite was red on main with nobody acting on it.
  */
 import express, { type RequestHandler } from 'express';
 import type { Server } from 'node:http';
@@ -13,7 +14,11 @@ vi.mock('@/app/routes/inline-bot-execution', () => ({ executeBotOrInline: model 
 vi.mock('@/app/routes/user-brain-resolution', () => ({ resolveUserBrain: async () => ({ kind: 'cli', providerId: 'fixture' }), isRetryableCliBrainFailure: () => false }));
 vi.mock('@/app/routes/connector-token-broker', () => ({ resolveBotCreds: async () => ({}) }));
 vi.mock('@/features/user-model', () => ({ withHavenContext: async (_pool: unknown, _sub: string, text: string) => text, learnFromExchange: async () => {} }));
-vi.mock('@/shared/services/database', () => ({ createOptionalPostgresPool: () => null, ensureConversationStoreSchema: async () => {},
+// PARTIAL mock: a factory that LISTS the barrel's exports goes red the moment the barrel grows one
+// the spec never asked about - which is how six files were left red on main at once.
+vi.mock('@/shared/services/database', async (importOriginal) => ({
+  ...await importOriginal<object>(),
+ createOptionalPostgresPool: () => null, ensureConversationStoreSchema: async () => {},
   runRuntimeSchemaBootstrap: async () => {}, buildOwnerRlsPolicyStatements: () => [] }));
 vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 import { InMemoryTaskStore } from '@/entities/task';
