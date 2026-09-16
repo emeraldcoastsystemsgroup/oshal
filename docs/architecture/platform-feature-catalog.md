@@ -431,4 +431,4 @@ cannot be counted from the tree does not belong here.
 | Kernel app manifests (`swarm-apps/*.yaml`) | 10 |
 | LLM providers | 40 |
 | Hand-audited connector specs | 310 |
-| ADRs | 157 (latest ADR-156) |
+| ADRs | 162 (latest ADR-161) |
