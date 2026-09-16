@@ -595,6 +595,14 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** bound the export the way `purge_tree` is bounded — a watchdog, one verdict line through `log`, a failure that fails its gate and lets the run continue to its outcome line rather than holding the lock.
 - **Done when:** an export that cannot finish inside its limit ends in a named FAIL line in `ci-local.log`, the run still reaches its outcome line, and a spec proves the timeout path the way `tests/unit/ci-local-purge.spec.ts` proves the purge's.
 
+### The publish gate's attribution wall can be disabled by author, and no case would notice
+
+- **Found 2026-09-16** reviewing PR #573. Mutating `scripts/publish-gate.sh` check 5b to skip when `git log -1 --format=%ae` equals `maintainer@emeraldcoastsystemsgroup.com` leaves `tests/unit/publish-gate.spec.ts` at **45 passed**, and the same gate then exits 0 on all three refusal shapes a separate harness drives through it - the `-by:` trailer, the vendor no-reply address, and the "generated with" footer.
+- **Why it is not theoretical:** every commit in this repository is authored as that exact address ([CLAUDE.md](../CLAUDE.md) mandates it and `lane-clone.sh` sets it), so an author allowlist added for any reason - a "skip our own commits" convenience, a rebase helper - turns the wall off for ALL real traffic. The spec cannot see it because all 45 cases commit as `t@example.com` (`tests/unit/publish-gate.spec.ts:145,160,243`).
+- **Five other single-point mutations of the gate are caught** (dropping the footer pattern, losing case-folding, judging HEAD instead of the pushed range, dropping the address branch, failing open when a pushed commit cannot be enumerated), so this is one uncovered axis, not an absent guard.
+- **Remaining:** one case that commits a fixture carrying model attribution as `maintainer@emeraldcoastsystemsgroup.com` and asserts the gate still refuses it.
+- **Done when:** that case is green on today's gate and red against a gate carrying an author allowlist, recorded the way the other mutations are.
+
 ## Security, tenancy, and trust boundaries
 
 ### The SEC/CORE/APP hardening-track identifiers have no definition anywhere in the repo

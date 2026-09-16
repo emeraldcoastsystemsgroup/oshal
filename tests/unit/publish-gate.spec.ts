@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Apply the documented full-suite startup allowance to the real-repository gate assertion itself; the child process remains independently bounded at 15 seconds.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Guards the model-attribution refusal added to check 5. Every spelling of the co-author trailer, the vendor no-reply address and the tool footer that a session produces goes red and names the commit; a human co-author, the maintainer and prose that merely names the model pass; history the remote already holds is never re-judged. Also pins the PRE-PUSH scope - the ref-update lines git writes to the hook's stdin - including a push BY SHA while HEAD is clean, and drives one case through a real `git push` with the real hook installed, the boundary a direct gate call cannot exercise.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Makes this guard's own verdict trustworthy, which is what the attribution entry was still missing: it passed in isolation and went red in scheduled runs, so it could never be shown green on main. Two causes, both in the harness rather than the gate. The artifacts/ ignore probe swallowed every git failure into `false`, so on 2026-09-15 one environmental git fault printed as four broken ignore rules AND one vacuous pass; it now reads check-ignore's exit status and refuses loudly on anything but 0 or 1. And six cases that spawn bash and git named no timeout, inheriting Vitest's 5s default while their siblings carried 20-30s; the file now raises its own floor, so a case added later inherits headroom instead of the flake.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Correct SEQ 7's cause and answer the ignore question where the gate RUNS. It is not 'one environmental git fault': ci-local.sh exports the unit gate's tree with `git archive | tar -x`, so it has no .git and check-ignore exits 128 there on EVERY scheduled run. Throwing on 128 therefore did not turn that run green, it turned 4 failed + 1 vacuous pass into 5 failed. The probe now seeds a throwaway repository with the committed .gitignore the export does carry, and asks there; identical verdicts for all five paths, and a genuine fault still throws.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -512,15 +513,62 @@ describe('commit messages, which the tree checks cannot see', () => {
  * @returns True when the path is ignored.
  */
 function isIgnored(relPath: string, root: string = REPO_ROOT): boolean {
+  return askGitIgnore(relPath, ignoreProbeRoot(root));
+}
+
+/** Memoised disposable repositories, one per root that is not itself a work tree. */
+const ignoreProbeRoots = new Map<string, string>();
+
+/**
+ * @description The directory to ask `check-ignore` in. `ci-local.sh` runs the unit gate from an
+ * export made with `git archive | tar -x`, which carries the committed `.gitignore` but NO `.git` -
+ * so git answers 128 there on every scheduled run, permanently. Rather than read that as "not
+ * ignored" (which hid four broken rules behind one vacuous pass) or as a fault (which just fails the
+ * run for the wrong reason), seed a throwaway repository with that same `.gitignore` and ask there:
+ * the rules under test are the committed ones either way.
+ * @param root - The tree the caller wants judged.
+ * @returns A directory `check-ignore` can answer in.
+ */
+function ignoreProbeRoot(root: string): string {
+  const isWorkTree = spawnSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'],
+    { encoding: 'utf8', timeout: 15_000 });
+  if (isWorkTree.status === 0 && (isWorkTree.stdout || '').trim() === 'true') return root;
+
+  const cached = ignoreProbeRoots.get(root);
+  if (cached) return cached;
+  // An export carries the committed .gitignore; a directory that carries neither that nor a .git is
+  // not a tree this question has an answer for, and saying so beats guessing "not ignored".
+  if (!existsSync(join(root, '.gitignore'))) {
+    throw new Error(
+      `git check-ignore could not answer in ${root}: it is not a work tree and carries no .gitignore, ` +
+        'so there are no rules to judge against',
+    );
+  }
+  const probeRoot = mkdtempSync(join(tmpdir(), 'oshal-ignore-probe-'));
+  const init = spawnSync('git', ['init', '-q', probeRoot], { encoding: 'utf8', timeout: 15_000 });
+  if (init.status !== 0) {
+    throw new Error(`could not seed an ignore probe for ${root}: ${(init.stderr || '').trim()}`);
+  }
+  copyFileSync(join(root, '.gitignore'), join(probeRoot, '.gitignore'));
+  ignoreProbeRoots.set(root, probeRoot);
+  return probeRoot;
+}
+
+/**
+ * @description Ask git the ignore question and refuse to guess when it cannot answer.
+ * @param relPath - Repo-relative path to test.
+ * @param root - A directory that IS a work tree.
+ * @returns True when the path is ignored.
+ */
+function askGitIgnore(relPath: string, root: string): boolean {
   const probe = spawnSync('git', ['-C', root, 'check-ignore', '-q', '--no-index', relPath], {
     encoding: 'utf8',
     timeout: 15_000,
   });
   if (probe.status === 0) return true; // ignored
   if (probe.status === 1) return false; // looked, and it is not ignored
-  // Anything else - a spawn failure, the 15s bound, or git's own exit 128 - means git never
-  // answered. Reporting that as `false` is what let one environmental fault read as four broken
-  // ignore rules plus one silently vacuous pass.
+  // A spawn failure or the 15 s bound means git never answered. Reporting that as `false` is what
+  // let four broken ignore rules read as green with one silently vacuous pass alongside them.
   const why = probe.error ? probe.error.message : (probe.stderr || '').trim();
   throw new Error(
     `git check-ignore could not answer for ${relPath} in ${root} ` +
