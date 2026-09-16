@@ -176,6 +176,7 @@ export {
   persistJarvisTurn,
   markJarvisSessionTaskStatus,
   mapJarvisTaskStatusFromTicketStatus,
+  jarvisFailureSentence,
   storedVisual,
 } from './jarvis-task-store';
 export { maskPendingComplexSummaries, JARVIS_AGENT_ID } from './jarvis-orchestrator';

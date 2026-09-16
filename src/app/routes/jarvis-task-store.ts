@@ -20,6 +20,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | The return leg's failure half: finishFailedComplexTask/returnFailedComplexTasks claim a dead ticket's shelf row with one guarded UPDATE and persist the honest sentence into the Jarvis thread. finishTask is called only from success paths, so a ticket that escalated left its row at 'queued' with a NULL error forever and buildOpenWorkBlock injected it into every turn as "in progress" — two live rows did exactly that for 18 hours (2026-09-15). 'dead_letter' joins the error branch of the ticket-status map: it is terminal and read 'in progress' forever.
  *
  * @module jarvis-task-store
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Fourteen real escalation reason codes had no plain-words sentence, so a dead ticket returned the bare status line for them; the composer is now exported and pinned, because a review mutation proved the free-text worker message could be substituted for the fixed map with every test still green.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
@@ -403,6 +404,20 @@ const JARVIS_FAILURE_REASON_SENTENCES: Readonly<Record<string, string>> = {
   escalation_loop_poison: 'It failed the same way repeatedly and was quarantined.',
   max_dispatch_attempts_poison: 'It could not be handed off after repeated attempts and was quarantined.',
   unspecified_dead_letter: 'It was quarantined without recording why.',
+  max_dispatch_attempts_exceeded: 'It ran out of attempts to hand the work to a bot.',
+  deferred_ticket_max_attempts_exceeded: 'It waited for its turn too many times and gave up.',
+  deferred_child_max_attempts_exceeded: 'A step under it waited for its turn too many times and gave up.',
+  dispatch_slot_timeout: 'No bot was free to take it before the wait ran out.',
+  undispatched_claim_timeout: 'A bot claimed it and never started the work.',
+  worker_ack_timeout_idle: 'The bot that took it went quiet without answering.',
+  non_retryable_dispatch_failure: 'The handoff failed in a way that retrying would not fix.',
+  graph_workflow_execution_failed: 'The workflow started and then failed part-way.',
+  multi_owner_partial_failure: 'Some of the apps it was split across finished and some failed.',
+  pipeline_work_items_failed: 'The individual work items under it failed.',
+  planning_decomposition_failed: 'It could not be broken into steps to work on.',
+  provider_runtime_failure: 'The connected service failed while the work was running.',
+  rollback_circuit_breaker_escalation: 'A repeated failure tripped a safety stop and the run was held.',
+  routing_failed_retry: 'Routing could not find a bot for it on that attempt.',
 };
 
 /** Longest failure sentence that may enter a thread turn. */
@@ -423,11 +438,16 @@ const FAILURE_RETURN_MAX_AGE_DAYS = STALE_RESULT_DAYS;
  * @description Composes the one sentence a dead ticket returns with: the honest terminal-status
  * line, plus the plain-words half-sentence for the recorded reason CODE when there is one. Newlines
  * are collapsed and the whole thing is bounded before anything reaches a thread turn.
+ *
+ * The recorded free-text `message` is NEVER added: it is worker-authored text of unbounded shape,
+ * and this line goes straight into the user's thread. An unrecognised code therefore returns the
+ * terminal-status line alone — less detail, never someone else's prose. Exported so that contract
+ * is pinned directly rather than inferred from the codes that happen to be mapped today.
  * @param note - The fixed line for the ticket's terminal status.
  * @param detail - The recorded escalation detail, when the transition recorded one.
  * @returns A single bounded line of plain text.
  */
-function jarvisFailureSentence(note: string, detail: TicketEscalationDetail | null): string {
+export function jarvisFailureSentence(note: string, detail: TicketEscalationDetail | null): string {
   const extra = JARVIS_FAILURE_REASON_SENTENCES[detail?.reason ?? ''];
   return `${note}${extra ? ` ${extra}` : ''}`.replace(/\s+/g, ' ').trim().slice(0, FAILURE_SENTENCE_LIMIT);
 }

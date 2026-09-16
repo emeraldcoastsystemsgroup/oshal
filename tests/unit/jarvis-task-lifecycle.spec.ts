@@ -10,6 +10,7 @@ import {
   finishTask,
   markJarvisSessionTaskStatus,
   mapJarvisTaskStatusFromTicketStatus,
+  jarvisFailureSentence,
   maskPendingComplexSummaries,
   persistJarvisTurn,
   providerRecordsMatchingTrustedIntent,
@@ -611,6 +612,36 @@ describe('Jarvis task lifecycle persistence', () => {
     // DLQ quarantine is terminal — read as 'running' it left a dead work item "in progress" forever.
     expect(mapJarvisTaskStatusFromTicketStatus('dead_letter')).toBe('error');
     expect(mapJarvisTaskStatusFromTicketStatus('approved')).toBe('running');
+  });
+
+  it('returns the status line alone for a reason code it does not know, never the worker text', () => {
+    // The recorded `message` is worker-authored text of unbounded shape and it goes straight into
+    // the user's thread. A mutation that substituted it for the fixed map survived the PR #532
+    // review because every covered case hit a mapped code — this is the case that kills it.
+    const note = 'This one did not finish.';
+    const worker = 'Traceback (most recent call last): secret-looking blob at 0xdeadbeef';
+    const unmapped = jarvisFailureSentence(note, {
+      reason: 'a_code_nobody_has_mapped_yet', message: worker, status: 'escalated',
+    } as never);
+    expect(unmapped).toBe(note);
+    expect(unmapped).not.toContain('Traceback');
+
+    // A mapped code still adds its plain-words half-sentence, and a missing detail is just the line.
+    expect(jarvisFailureSentence(note, { reason: 'manifest_worker_dispatch_failed', message: worker, status: 'escalated' } as never))
+      .toContain('would not accept the handoff');
+    expect(jarvisFailureSentence(note, null)).toBe(note);
+  });
+
+  it('has a plain-words sentence for every escalation reason the queue actually records', () => {
+    // Fourteen real codes had none, so those tickets returned the bare status line.
+    for (const code of ['max_dispatch_attempts_exceeded', 'deferred_ticket_max_attempts_exceeded',
+      'deferred_child_max_attempts_exceeded', 'dispatch_slot_timeout', 'undispatched_claim_timeout',
+      'worker_ack_timeout_idle', 'non_retryable_dispatch_failure', 'graph_workflow_execution_failed',
+      'multi_owner_partial_failure', 'pipeline_work_items_failed', 'planning_decomposition_failed',
+      'provider_runtime_failure', 'rollback_circuit_breaker_escalation', 'routing_failed_retry']) {
+      const line = jarvisFailureSentence('This one did not finish.', { reason: code, message: 'x', status: 'escalated' } as never);
+      expect(line, code).not.toBe('This one did not finish.');
+    }
   });
 
   it('persists completed background visual metadata with the task result', async () => {
