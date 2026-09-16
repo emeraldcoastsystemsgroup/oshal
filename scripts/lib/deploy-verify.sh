@@ -99,7 +99,7 @@ oshal_verify_bot_role_grant() {
     "Every Jarvis ask answers 503 authorization_bot_posture_unavailable until that runs." \
     "Unlike the table grants this replaced, the EXECUTE grant SURVIVES the next api boot:" \
     "scripts/governance/provision-app-role.mjs converges $role onto an allowlist that includes this" \
-    "helper, so if it is missing after a boot the provisioner did not run or did not reach its final phase."
+    "helper, so if it is missing after a boot the provisioner did not run or did not reach its final phase."     "The migration ALONE may not be enough: the provisioner re-enables  LOGIN inside the same"     "transaction as its helper checks, so a final phase that failed leaves the role unable to log in at"     "all (28000) while this check reads PASS. Run the provisioner too:"     "MSYS_NO_PATHCONV=1 docker exec \$(docker ps --filter name=api -q | head -1) node scripts/governance/provision-app-role.mjs"
 }
 
 # Copy the loopback probe into the api container. It runs THERE so the service secret it needs
