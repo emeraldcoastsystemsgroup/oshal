@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard the third verdict, and guard it AGAINST ITSELF. With delegation signing configured this gate could not pass at all - the service-secret PAT it mints records no principal issuer by design, so the controller refuses the Jarvis ask AND the queued dispatch, and the 'task' ticket's call-out winner was an inline bot that signed delegation refuses outright. The fix adds an UNVERIFIED state, and the ONLY thing that makes an unverifiable state safe is how narrow it is: a third state wide enough to swallow a product outage reads as green and is worse than no check. So the cases below pin the narrowness from four sides - the byte-identical refusal is a FAIL when an operator token was supplied, a FAIL when no signing material is configured, and a FAIL for any other refusal under signing; only the self-minted-PAT-under-signing case is UNVERIFIED, and it is never printed as PASS and never masks a real failure in the same run. Plus the two halves the live box cannot demonstrate headlessly: a genuine PASS under signing on a session-minted token, and the knob forwarding that makes that remedy runnable at all (the probe reads its environment inside the container, not in the deploy's shell).
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Two findings from this change's own review. The deploy's terminal headline said 'live verification passed' over a run where both product checks proved NOTHING, and THIS FILE pinned that wording - so the case now asserts the tally-driven tail and both of its branches. And the 'swallows nothing else' rows gained the two sibling refusals that contain the substring 'principal issuer': without them, widening the classifier from the pinned constant to that substring passed the whole suite.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Follow the bot contract to the privilege it actually grants. These cases pinned has_table_privilege on public.oshal_authorization_applications and a remedy naming scripts/migrations/140-bot-role-ownership-reads.sql. That table is withheld from oshal_bot by the governed contract and that migration is gone: the posture guard reads the derived helper oshal_application_execution_claims (migration 142) instead, so the old assertion would have demanded a privilege a correctly provisioned box must NOT have, and pinned a remedy that could not run. The cases now pin has_function_privilege on the helper, the remedy that applies migration 142, and the sentence saying this grant survives the next boot - the property that distinguishes the fix from the workaround it replaced.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Hand the shell harness to tests/helpers so the exit-code-contract cases can drive the SAME one from their own file. Adding them here would have pushed this file past the 800-code-line decomposition threshold, and a second private copy of the harness is how the two files would quietly start driving a different shell, a different stub or a different environment baseline. What moved is only the plumbing - the Git Bash identity probe, the docker function that shadows the binary, and the spawn - and one behavioural change comes with it: the three switches the gate reads are now pinned empty in the child, so no case here can inherit a verdict from whatever the operator happens to have exported. Two anchors also moved because the contract did: the deploy no longer negates the gate's return, it READS it, because the gate now has two distinct non-zero returns and `if !` would fold them into one. tests/unit/deploy-verify-exit-contract.spec.ts guards what those returns do.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -18,11 +19,13 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import {
+  DEPLOY_SCRIPT, DOCKER_STUB, VERIFY_LIB, resolveHostBash, runPostVerify,
+} from '../helpers/deploy-verify-shell';
 
-const LIB = path.resolve('scripts/lib/deploy-verify.sh');
-const DEPLOY = path.resolve('scripts/oshal-deploy.sh');
+const LIB = VERIFY_LIB;
+const DEPLOY = DEPLOY_SCRIPT;
 const PROBE = path.resolve('scripts/operations/deploy-live-verification.js');
-const BASH_RESOLVER = path.resolve('scripts/lib/windows-git-bash.ps1');
 const libSource = readFileSync(LIB, 'utf8');
 const deploySource = readFileSync(DEPLOY, 'utf8');
 const SECRET = 'fixture-service-secret-never-printed';
@@ -30,41 +33,10 @@ const SUBJECT = 'fixture|operator-subject-never-printed';
 const BASH_TIMEOUT_MS = 20_000;
 const PROBE_TIMEOUT_MS = 30_000;
 
-/** Resolve Bash through the production identity probe and fail closed on a WSL/System32 launcher. */
-function resolveHostBash(): string {
-  if (process.platform !== 'win32') return 'bash';
-  const resolver = BASH_RESOLVER.replace(/'/g, "''");
-  const result = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
-    `. '${resolver}'; $selected = Resolve-OshalGitBash; if (-not $selected) { exit 2 }; [Console]::Out.Write($selected)`,
-  ], { encoding: 'utf8', timeout: 30_000 });
-  const candidate = result.stdout.trim();
-  if (result.error || result.status !== 0 || !path.win32.isAbsolute(candidate)
-    || /[\\/](?:system32|sysnative|syswow64)[\\/]|wsl\.exe$/i.test(candidate)) {
-    throw new Error('A validated Git Bash executable is required for the deploy verification guard.');
-  }
-  return candidate;
-}
 const BASH = resolveHostBash();
 
 let scratch: string;
 let stub: string;
-/** A bash `docker` FUNCTION, not a PATH entry: it shadows the real binary completely, so no case
- *  in this file can reach the engine even if the lib grows another docker call tomorrow. */
-const DOCKER_STUB = `docker() {
-  printf '%s\\n' "$*" >> "$DOCKER_STUB_LOG"
-  case "$1" in
-    cp) return "\${DOCKER_STUB_CP_RC:-0}" ;;
-    exec)
-      case "$*" in
-        *psql*) printf '%s\\n' "\${DOCKER_STUB_GRANT:-t}"; return 0 ;;
-        *" jarvis") printf '%s\\n' "\${DOCKER_STUB_JARVIS_OUT:-answered}"; return "\${DOCKER_STUB_JARVIS_RC:-0}" ;;
-        *" ticket") printf '%s\\n' "\${DOCKER_STUB_TICKET_OUT:-moved}"; return "\${DOCKER_STUB_TICKET_RC:-0}" ;;
-      esac ;;
-  esac
-  printf 'UNEXPECTED DOCKER CALL\\n' >&2
-  return 97
-}
-`;
 
 beforeAll(() => {
   scratch = mkdtempSync(path.join(tmpdir(), 'deploy-verify-'));
@@ -79,13 +51,7 @@ afterAll(() => {
 
 /** Run the REAL verification library in a real shell with the docker binary shadowed. */
 function verify(env: Record<string, string> = {}) {
-  const callLog = path.join(scratch, `calls-${Math.random().toString(36).slice(2)}.log`);
-  writeFileSync(callLog, '');
-  const result = spawnSync(BASH, ['--noprofile', '--norc', '-c',
-    'set -uo pipefail\nsource "$1"\nsource "$2"\noshal_deploy_post_verify\nprintf "RC=%s\\n" "$?"',
-    'deploy-verify-test', stub.replace(/\\/g, '/'), LIB.replace(/\\/g, '/')],
-  { cwd: process.cwd(), encoding: 'utf8', timeout: BASH_TIMEOUT_MS, env: { ...process.env, ...env, DOCKER_STUB_LOG: callLog.replace(/\\/g, '/') } });
-  return { ...result, calls: readFileSync(callLog, 'utf8').trim().split('\n').filter(Boolean) };
+  return runPostVerify(BASH, stub, scratch, env);
 }
 
 describe('scripts/lib/deploy-verify.sh — the three checks a deploy is not finished without', () => {
@@ -412,7 +378,9 @@ describe('scripts/oshal-deploy.sh — where the verification sits in the run', (
   };
 
   it('runs AFTER the health, parity and census gates and BEFORE the DEPLOYED line', () => {
-    const call = at('if ! oshal_deploy_post_verify; then');
+    // The deploy READS the gate's return code rather than negating it: the gate has two distinct
+    // non-zero returns now, and `if !` would fold them into one with nothing to say it happened.
+    const call = at('oshal_deploy_post_verify; VERIFY_RC=$?');
     expect(call).toBeGreaterThan(at('bash scripts/deploy-parity-check.sh --quiet >>'));
     expect(call).toBeGreaterThan(at('host /health not answering'));
     expect(call).toBeGreaterThan(at('unhealthy after grace window'));
@@ -426,7 +394,7 @@ describe('scripts/oshal-deploy.sh — where the verification sits in the run', (
   });
 
   it('exits 4 — its own code — and does NOT roll back on a verification failure', () => {
-    const block = deploySource.slice(at('if ! oshal_deploy_post_verify; then'), at('log "DEPLOYED '));
+    const block = deploySource.slice(at('if [ "$VERIFY_RC" -eq 1 ]; then'), at('if [ "$VERIFY_RC" -eq 3 ]; then'));
     expect(block).toContain('exit 4');
     expect(block, 'rolling back on a product failure replaces an outage with an outage plus a version surprise')
       .not.toMatch(/\brollback\b/);

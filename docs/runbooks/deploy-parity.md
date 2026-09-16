@@ -69,7 +69,8 @@ Root cause is usually a `:latest` retag between recreates — see the deploy not
 
 **Library:** [`scripts/lib/deploy-verify.sh`](../../scripts/lib/deploy-verify.sh) ·
 **loopback probe:** [`scripts/operations/deploy-live-verification.js`](../../scripts/operations/deploy-live-verification.js) ·
-**guard:** `tests/unit/deploy-live-verification.spec.ts`
+**guards:** `tests/unit/deploy-live-verification.spec.ts` (the three checks) and
+`tests/unit/deploy-verify-exit-contract.spec.ts` (what a deploy does with their verdicts)
 
 Every other gate in `scripts/oshal-deploy.sh` measures the **stack**: containers healthy, image
 parity clean, `/health` 200, zero unhealthy. On 2026-09-15 all of them were green, the run printed
@@ -106,10 +107,35 @@ for the Jarvis ask **and** for the queued dispatch. That refusal is the authoriz
 
 So that refusal — and *only* that refusal, and only when signing is configured, and only on the PAT
 the check minted for itself — prints `VERIFY UNVERIFIED`, counts in its own bucket, and does **not**
-fail the deploy. It is not a pass either: the run log says
+fail the deploy *immediately*. It is not a pass either: the run log says
 `N check(s) NOT VERIFIABLE from automation - this deploy is UNPROVEN as a product`. **Any** other
 refusal is still `VERIFY FAIL` and still exit 4 — including this same refusal when an operator token
 *was* supplied, because then the supplied token is the thing at fault.
+
+#### With `OSHAL_VERIFY_OPERATOR_PAT` set, there is no third state
+
+**A check that has a token either passes or fails.** With `OSHAL_VERIFY_OPERATOR_PAT` non-empty in the
+shell that runs the gate, `VERIFY UNVERIFIED` is unreachable for `jarvis-ask` and `ticket-dispatch` —
+the gate refuses it and prints `VERIFY FAIL` instead. That rule is enforced twice on purpose, because
+the two sides can disagree:
+
+- the **probe**, inside the container, refuses to classify its way to "not verifiable" when it
+  *received* a token (`classifyVerdict`); and
+- the **gate**, in the deploy's own shell, refuses a "not verifiable" answer when it *sent* one.
+
+Those are different facts, and the gap between them is reachable. `${!OSHAL_VERIFY_@}` enumerates
+non-exported shell variables too, so `OSHAL_VERIFY_OPERATOR_PAT=abc` **without `export`** is forwarded
+as a bare `-e OSHAL_VERIFY_OPERATOR_PAT`, docker resolves that name against *its own* environment,
+finds nothing, and the probe mints a service-secret PAT and refuses exactly as if no token had been
+supplied. Only the shell can see that, so only the shell can refuse it. When it does, the remedy names
+both causes and puts the free one first:
+
+```bash
+export OSHAL_VERIFY_OPERATOR_PAT          # (b) it never reached the container - check this first
+```
+
+If that is already done, the cause is (a): the token carries no verified principal issuer, i.e. it was
+not minted from a signed-in session. Mint a new one the way the next section shows.
 
 **To verify it for real**, hand the gate an identity that carries a verified issuer. Only a mint made
 from a signed-in session records one, so from a browser already logged into the cockpit:
@@ -130,6 +156,69 @@ it is forwarded into the container by `docker exec -e NAME` with no `=value`, so
 a command line, in `ps`, or in the run log. Every `OSHAL_VERIFY_*` variable exported by the caller is
 forwarded the same way — the probe reads its knobs from the environment of the process it runs in,
 which is the api container, not the shell that started the deploy.
+
+### When nothing proves the product: the unproven streak, and `exit 5`
+
+`VERIFY UNVERIFIED` used to return 0 forever. Between 2026-09-15 and 2026-09-16 it printed on **every**
+deploy, in the same words each time, while Jarvis answered `503` to every ask and a real `task` ticket
+landed in `escalated` — and each of those runs still ended `DEPLOYED … parity clean, 0 unhealthy`. A
+verdict with no consequence is not a gate, and a sentence that never changes its wording is wallpaper.
+
+So an unproven run now escalates. The gate appends **one line per completed run** to a ledger and counts
+consecutive unproven runs back from it — the same shape `scripts/ci/ci-gate-streak.mjs` uses for the
+nightly gate, where the history is a *parse* of the log the tool already writes rather than new state:
+
+```
+~/.oshal-deploy/live-verify.log      # or $OSHAL_DEPLOY_STATE, or $OSHAL_VERIFY_LEDGER
+
+2026-09-16T18:22:41Z UNPROVEN unverified=2
+2026-09-16T18:40:03Z PROVEN
+2026-09-16T18:55:12Z FAILED failed=1
+```
+
+| consecutive unproven runs | what the gate does |
+|---|---|
+| 1 | prints `UNPROVEN on 1 consecutive run(s) … 2 more before this FAILS the deploy`; returns 0 |
+| 2 | same line, `1 more`; returns 0 |
+| **3** | prints `the grace for that is SPENT - FAILING this deploy`; returns 3 → the deploy **exits 5** |
+
+Three consecutive runs is the whole grace. One unproven run is a notice; by the third it is a standing
+condition, and on this box's deploy cadence three lands inside a day. A `PROVEN` run resets the streak,
+and so does a `FAILED` one — a failed run already exits non-zero, so it needs no escalation. A run
+skipped with `OSHAL_DEPLOY_SKIP_LIVE_VERIFY` records **nothing**: it measured nothing, so it neither
+grows nor resets the streak.
+
+**The grace is a constant in `scripts/lib/deploy-verify.sh`, not an environment variable.** There is
+deliberately no knob that widens it, because a knob that defuses a gate is the knob that gets used to
+defuse the gate. The one switch there is only tightens it:
+
+```bash
+OSHAL_VERIFY_REQUIRE_PROOF=1 bash scripts/oshal-deploy.sh   # exits 5 on the FIRST unproven run
+```
+
+That is the **intended steady state** once an operator PAT exists on the box. Until then the grace is
+what keeps the gate from being permanently red for something no process on the box can fix.
+
+If the ledger cannot be written (a read-only `$HOME`, say) the run says so —
+`the unproven streak cannot escalate` — and still returns 0. A gate that goes red because a log file is
+unwritable is a gate nobody can act on; but without the ledger the escalation is frozen at its first
+rung, so it must never be silent about it.
+
+### `exit 4` and `exit 5`: proved broken vs never proved
+
+Both mean the same thing about the stack: **the new image is live, serving, and deliberately not rolled
+back.** They mean opposite things about the product, and they demand different actions.
+
+| exit | meaning | what to go do |
+|---|---|---|
+| `4` | the product is **proved broken** — a check FAILED | fix the named check; re-verify without redeploying |
+| `5` | the product was **never proved** — unproven past the grace | give the gate an identity it can prove the product with |
+
+`exit 5` is not a softer `exit 4`. Nothing on the box is known to be broken *and nothing is known to
+work*; what is missing is proof, and only a signed-in operator session can mint the identity that
+supplies it. `src/features/dev-console/services/deploy-promoter.ts` decodes both as
+`stackServing: true, needsHands: false` — an operator sent to `oshal-up.sh` for a stack that is already
+up would be the exact inversion its exit-code contract exists to prevent.
 
 ### Exit 4: deployed and serving, but the product is down
 
@@ -191,7 +280,11 @@ ticket's workflow (`task`); `OSHAL_VERIFY_TICKET_WORKER` names the bot that tick
 (`general-bot` — it must be one the registry marks `requiresOwnNode`, or signed delegation refuses it
 as inline); `OSHAL_VERIFY_BUDGET_MS` (default 300000) bounds both polls; `OSHAL_VERIFY_QUESTION` sets
 the Jarvis question; `OSHAL_VERIFY_OPERATOR_PAT` supplies a session-minted token so both product
-checks are answerable under delegation signing (see `VERIFY UNVERIFIED` above).
+checks are answerable under delegation signing (see `VERIFY UNVERIFIED` above) — **`export` it**, it is
+forwarded into the container by name; `OSHAL_VERIFY_REQUIRE_PROOF=1` removes the unproven grace
+entirely; `OSHAL_VERIFY_LEDGER` moves the run ledger off
+`${OSHAL_DEPLOY_STATE:-~/.oshal-deploy}/live-verify.log` (the guard uses it to give each case an
+isolated streak). There is no variable that *widens* the grace — see above for why.
 
 ### What a deploy leaves behind
 
