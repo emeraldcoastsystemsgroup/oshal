@@ -7,15 +7,19 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 const ROOT = resolve(__dirname, '../..');
 const CI_SOURCE = readFileSync(join(ROOT, 'scripts', 'ci-local.sh'), 'utf8');
 const PURGE_HELPER = join(ROOT, 'scripts', 'ci', 'ci-purge.sh').replaceAll('\\', '/');
 const SCRATCH = mkdtempSync(join(tmpdir(), 'oshal-ci-inherited-'));
+// This spec runs on the nightly isolated runner, and each run builds a git repository plus three
+// state directories. Without this it leaks one tree a night - the same class of leftover the change
+// under test exists to survive, which would be a poor joke to ship.
+afterAll(() => rmSync(SCRATCH, { recursive: true, force: true }));
 
 /** A file only the PREVIOUS run's export carries, so a tree can be identified by generation. */
 const LEFTOVER_MARK = 'LEFTOVER-FROM-THE-PREVIOUS-RUN.txt';
@@ -223,7 +227,7 @@ describe('a nightly that inherits the previous run export (scripts/ci-local.sh)'
     expect(existsSync(join(run.stateDir, abandoned[0], LEFTOVER_MARK))).toBe(true);
   }, 240_000);
 
-  it('gives a tree an earlier run had to abandon one more bounded attempt, so it cannot accumulate', () => {
+  it('gives a tree an earlier run had to abandon one more bounded attempt, and one bounded retry per run is what that costs', () => {
     const run = runProbe({ abandoned: true });
 
     expect(run.status, run.output).toBe(0);
