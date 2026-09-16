@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Derive durable delegated management roles and revalidate writes without nested pool acquisition.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Reserve the global business-membership audit namespace against application registration.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Expose the registered application names for read-only review surfaces. effective() already answers one app at a time, but a joined access review has to ask about every registered app INCLUDING the ones the subject is denied — which is the half of the answer ownCatalog() cannot give, because it returns only what is already permitted.
  */
 /** ADR-149 authoritative management and execution service. No swarm-admin business bypass. */
 import { randomUUID } from 'node:crypto';
@@ -76,6 +77,11 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     app.adapters = { ...app.adapters, [resource]: adapter };
   }
   unregisterApp(app: string): void { this.apps.delete(app); }
+  /** @description Every application registered with this authority, for read-only review surfaces.
+   * Names only — no catalog, no assignments, no decision. A caller still gets one `effective()`
+   * answer per app under the same authority checks, so this widens no read.
+   * @returns The registered application names in registration order. */
+  listApps(): string[] { return [...this.apps.keys()]; }
   getApp(app: string): AuthorizationAppSummary | null { const registration = this.apps.get(app); return registration ? this.summary(registration) : null; }
   /** @description Read applied changes under current authority on every page.
    * @param actor Verified calling identity. @param input Bounded app/tenant filters. @returns Redacted applied-change history.

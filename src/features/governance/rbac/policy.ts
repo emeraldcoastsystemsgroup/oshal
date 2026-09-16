@@ -21,6 +21,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact, case-sensitive OIDC subjects in privileged admin/operator allowlist checks; configuration delimiters are still trimmed and email matching remains case-insensitive.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148 alignment: resolveRole now reads the swarm_roles snapshot FIRST, via the same synchronous privileged-identity cache isOperatorIdentity uses. This module's own header already promised it 'matches the existing authorization model in authz.ts', and that stopped being true the day roles became rows: an admin granted on the Users page passed requiresOperator and appeared in the cockpit rail, while /admin's Current Operator panel resolved them from .env alone and could still call them a viewer with no role claims. Enforcement default (OFF) is untouched, so this changes a DISPLAY today and closes a latent gap for any deployment that turns OSHAL_RBAC_ENFORCE on. The env allowlists stay exactly as they are — break-glass is permanent (ADR-148 D4).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Export onBreakGlassAllowlist. resolveRole collapses the three axes to one role, which is right for a gate and wrong for a surface: the joined access review has to name WHICH axis granted the role, and the environment allowlists were only reachable through a private helper.
  *
  * @module features/governance/rbac/policy
  */
@@ -82,6 +83,22 @@ function onAllowlist(caller: RbacCaller, subsEnv: string | undefined, emailsEnv:
   if (caller.sub && subs.has(caller.sub)) return true;
   if (caller.email && emails.has(caller.email.toLowerCase())) return true;
   return false;
+}
+
+/**
+ * @description The role, if any, that the operator-local BREAK-GLASS allowlists confer on this
+ * caller — `OSHAL_OPERATOR_*` (admin) and `OSHAL_RBAC_OPERATOR_*` (operator). It is separate from
+ * resolveRole because a surface has to distinguish a role that lives in `swarm_roles` and can be
+ * revoked from a browser from one that exists only in a file nobody can see or audit (ADR-148 D4).
+ *
+ * @param caller - The identity to test; `sub` matches exactly, `email` case-insensitively.
+ * @returns Admin, Operator, or null when neither allowlist names this caller.
+ */
+export function onBreakGlassAllowlist(caller: RbacCaller | null | undefined): Role | null {
+  const identity: RbacCaller = caller ?? { sub: null, email: null };
+  if (onAllowlist(identity, process.env.OSHAL_OPERATOR_SUBS, process.env.OSHAL_OPERATOR_EMAILS)) return Role.Admin;
+  if (onAllowlist(identity, process.env.OSHAL_RBAC_OPERATOR_SUBS, process.env.OSHAL_RBAC_OPERATOR_EMAILS)) return Role.Operator;
+  return null;
 }
 
 /**

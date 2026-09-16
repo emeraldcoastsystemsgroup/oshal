@@ -195,6 +195,7 @@
  * 179 | maintainer@emeraldcoastsystemsgroup.com   | Moved the OpenAPI spec definition, the swagger-jsdoc scan globs and the /openapi.json + /api-docs + /docs mount into ./server-openapi so this entrypoint is back under the 1000 code-line cap. Pure move: the spec, the glob list and the registration order are unchanged, and createApp now calls registerOpenApiDocsRoutes at the same point in the middleware chain.
  * 180 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149: the /api/ui profile route receives the authorization runtime's canDiscover and the actor resolver, so a synthesised rail can lock a tile whose target package the signed-in person cannot discover. Same-line wiring; no new code line in this file.
  * 181 | maintainer@emeraldcoastsystemsgroup.com   | One MOCK_OIDC predicate, not three readings: this file tested MOCK_OIDC === 'true' at the /api/auth/user mode string and at the demo-auth mount, while the bypass itself uses isMockOidcEnabled() (true|1|yes, any case) - so MOCK_OIDC=1 authenticated every request as the mock user while the probe reported mode 'oidc' and the demo /login,/logout were never mounted. Both sites now go through ./routes/auth-state-routes (createAuthStateRoutes, mountDemoAuthRoutes), which read that one helper; the probe moves verbatim and keeps its position, ungated, right after the global auth middleware. Guard: tests/unit/mock-oidc-one-predicate.spec.ts.
+ * 182 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/access-review - the read-only join over the three authorization axes (swarm role and its provenance, governance permissions, per-application assignments). requiresAuth only: every signed-in person may ask about themselves, naming another subject is admin-only inside the route, and the per-application read still runs through the authorization service's own management checks. No write member exists on the route.
  */
 
 require('dotenv').config();
@@ -347,6 +348,7 @@ import { PackageToolRegistry, configurePackageToolRegistry } from '@/shared/pack
 import { createApplicationAuthorizationGate } from './middleware/application-authorization-gate';
 import { createApplicationActorContext } from './middleware/application-authorization-context';
 import { createAuthorizationRoutes, createAuthorizationPageRoutes } from './routes/authorization-routes';
+import { createAccessReviewRoutes } from './routes/access-review-routes';
 import { createUserDirectoryRoutes } from './routes/user-directory-routes';
 import { createExternalTenantMembershipRoutes } from './routes/external-tenant-membership-routes';
 // Manifest schedule registrar/deregistrar + per-user reconciler + nightly oshal-dev schedule —
@@ -1133,6 +1135,11 @@ function createApp(): express.Application {
     registrations: applicationAuthorization.directory.registrations, roster: async actor => applicationAuthorization.directory.roster(actor,
       (await applicationAuthorization.service.catalog(actor)).users) }, authorizationRoutes));
   app.use('/access', createAuthorizationPageRoutes(applicationAuthorization.service, authorizationRoutes));
+  // One place that answers "what am I allowed to do": a read-only join over swarm role +
+  // provenance, governance permissions and per-application assignments. The three axes stay
+  // separate authorities; this only reports their answers together for one identity.
+  app.use('/api/access-review', createAccessReviewRoutes({ requiresAuth,
+    resolveActor: applicationAuthorization.resolveActor, authority: applicationAuthorization.service }));
 
   // Node Pool Mode (phase0) — register /node/* endpoints when running as a pool node.
   // Opt-in via env, so this is inert on the normal controller/bot-node runtime.

@@ -54,6 +54,7 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted jarvis-speaker-profile-links.js in JARVIS_CLIENT_ASSETS: the Manage Voices → Ambient Recall bridge serves from the same authenticated /assets route as the other speaker siblings.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | GET /tasks claims the return leg's FAILURE half beside the success half: a task whose ticket reached a terminal failure is closed in the durable shelf and the honest sentence is written into its thread (returnFailedComplexTasks). The ticket map now carries the whole ticket rather than its status alone, because the recorded escalation reason lives in its metadata and re-reading it per task would turn one list into an N+1.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | GET /tasks now claims the PROTECTED success half too. Protected rows were dropped out of the summarize/repair pass and nothing else ever picked them up, so a protected ticket that finished correctly produced no summary, no finishTask and no thread turn - it simply went quiet. They are split out instead of discarded and handed to returnProtectedComplexSummaries, which records the derived lineage before it claims. The automatic half and the table-visual repair pass keep exactly the rows they had.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | Record WHICH half of the /ask session gate refused. The 404 session_not_found was emitted with no log line at all, so an operator reading the api log could not tell a foreign-owned session id from a store that failed to answer - the same indistinguishability that let a Jarvis ownership fault read as an empty conversation for three days. The decision, the status, the body and the short-circuit order are all unchanged; only the refusal is now written down.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -666,7 +667,15 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     // Register the thread as a chat_task FIRST — the chat-ticket link + saveTurn (chat_messages) both
     // FK-reference it; without it every persistence write fails (no durable history). Idempotent.
     const ownsSession = await ensureSessionTask(ctx, sub, issuer, sessionId, message);
-    if (!ownsSession || !await canReadJarvisSession(ctx, sub, issuer, sessionId, () => resultActor(req))) {
+    const readsSession = ownsSession
+      && await canReadJarvisSession(ctx, sub, issuer, sessionId, () => resultActor(req));
+    if (!readsSession) {
+      // The refusal is correct either way and its wording stays deliberately uninformative to the
+      // caller. The LOG is where the two halves separate: `ownership` means the session task could
+      // not be written owner-bound (a foreign owner, or a store that answered nothing), `read-back`
+      // means it was written and then would not read back. Answering 404 with no record at all is
+      // how an ownership fault becomes indistinguishable from an empty conversation.
+      logger.warn({ sessionId, refusedBy: ownsSession ? 'read-back' : 'ownership' }, 'jarvis /ask refused: session_not_found');
       res.status(404).json({ error: 'session_not_found' }); return;
     }
     await markJarvisSessionTaskStatus(ctx, sessionId, 'processing');

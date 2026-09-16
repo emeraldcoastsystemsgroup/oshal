@@ -935,11 +935,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ### Jarvis /ask answers 404 session_not_found in two guards (2026-09-16)
 
-- **Uncovered 2026-09-16** repairing six specs whose database-barrel mock had gone stale (they threw on construction, so 16 cases had been dead on main). With the mocks repaired, 137 of 139 cases pass and two fail the same way: `tests/unit/jarvis-provider-intent-routing.spec.ts` ("dispatches weather and priority inbox reads without a model turn or direct visual") and `tests/unit/jarvis-artifact-routing.spec.ts` ("loads YAML and destination metadata into the real model prompt and returns an owner-bound action through polling") both get **404 where they expect 202**. The 404 is `session_not_found` at [jarvis-routes.ts:670](../src/app/routes/jarvis-routes.ts) — `ensureSessionTask` returned falsy, or `canReadJarvisSession` denied.
-- **It predates the repair, measured:** with each spec's ORIGINAL mock restored and the pre-activation stores checked out (`b999b05f^` for `src/entities/task`, `src/entities/message`, `src/features/memory`, `src/shared/services/database`), the provider-intent case fails identically — 1 failed / 62 passed. So the dead mock was hiding it, and neither the store refactor nor the repair caused it.
-- **Why it is worth chasing rather than re-baselining:** a silent 404 out of this exact ownership check is the shape that took Jarvis down for three days in September (a text-vs-uuid ownership comparison plus a bare `catch { return false }`). The guards may be right and the product wrong.
-- **Remaining:** decide which side is wrong. Instrument `ensureSessionTask` / `canReadJarvisSession` under those two specs and find whether the ownership write or the read is failing, then fix whichever is genuinely broken — and if the guards are the ones carrying a stale assumption, say so in their Change Log rather than loosening the assertion.
-- **Done when:** both cases are green for a reason recorded in the commit, no assertion is weakened to get there, and a case covers the branch that produced the 404 so the same silence cannot come back unnoticed.
+- **Built 2026-09-16 on `fix/jarvis-ask-session-not-found`. The GUARDS were wrong, and they were wrong about a rule the product tightened on purpose.** Instrumenting `ensureSessionTask` under both cases printed the same line twice — `created= undefined typeof= undefined` — so the write half never produced an owner-bound task, and `canReadJarvisSession` was never even reached. Each spec's fake task store answered `undefined` to `create()` and `null` to `get()` forever, which violates `ITaskStore.create(input): Promise<StoredTask>`; the real `InMemoryTaskStore` returns the created row (or the existing one) on every path, in memory and in Postgres.
+- **Why it only started failing then:** commit `c18f057a` (2026-09-11, "Enforce current user rights across protected remote reasoning") changed the check from `return !created || created.ownerSub === sub` — where a store that returned NOTHING was read as agreement — to `Boolean(created && created.ownerSub === sub && ...)`, and added `canReadJarvisSession` to `/ask`. That is the correct rule (a store that cannot hand back an owner-bound task has not proved ownership) and it was not relaxed. The doubles had been written the day before, against the older reading.
+- **What the live evidence does and does not show.** On the running box: 65 `chat_tasks` rows with `metadata->>'origin' = 'jarvis-chat'` spanning 2026-06-20 to 2026-09-15, **zero** with a null `owner_sub`, and zero `ensureSessionTask failed` lines. That is weaker than it looks, and the review of this change said so: `ensureSessionTask` always passes `ownerSub: sub`, so a null owner from this path is near-impossible either way, and the false-return branches logged NOTHING until this change - zero hits is equally consistent with "the gate is fine" and with "the gate is invisible". The honest reading is that this defect was not OBSERVED live, not that it could not happen. The shape it would leave is a session stranded at `status='created'` with zero messages, because the gate refuses before `markJarvisSessionTaskStatus(..., 'processing')`; exactly two such rows exist (`jarvis-f52548b2-...`, `jarvis-61f6f847-...`, 150 ms apart on 2026-09-14, both issuer-stamped), inside the window of the September Jarvis outage whose cause was the `text = uuid` ownership comparison in `application-execution-ownership.ts` - a different branch, already fixed on main. Nothing is stranded after that date.
+- **Fixed:** both specs now run against the REAL `InMemoryTaskStore` through `tests/helpers/jarvis-session-task-store.ts`, which withholds `DATABASE_URL`/`PGHOST`/`POSTGRES_HOST` across construction so the store is memory-backed and holds no pool — it cannot reach a deployment's database. No assertion was weakened: the provider-intent spec's cross-owner case, which used to assert that a second owner reaching the same session id got an ordinary model answer, now asserts the stricter truth (404 before the model), and its direct-turn count follows that refusal from four to three.
+- **And the silence is closed:** `/ask` used to emit the 404 with no log line at all, and `ensureSessionTask` called its own failure "non-fatal" while the caller turned it into a hard refusal — the same indistinguishability that let a Jarvis ownership fault read as an empty conversation for three days. The route now records which half refused (`refusedBy: 'ownership' | 'read-back'`) and the store fault is logged at ERROR as UNDETERMINED. The decision, the status and the body are unchanged.
+- **Done when:** met — both cases green (`jarvis-provider-intent-routing` 63/63, `jarvis-artifact-routing` 21/21, from 1 failed each), the reason is in the commit and in both specs' Change Logs, no assertion relaxed, and [jarvis-ask-session-ownership.spec.ts](../tests/unit/jarvis-ask-session-ownership.spec.ts) covers the 404 branch end to end through the real route — owner admitted, foreign owner refused quietly, a store that returns nothing refused (restoring `!created ||` turns it red), a throwing store refused AND reported at ERROR, and a write-but-no-read-back session refused as the read-back half. Registered on the `jarvis-routing` Lab scenario, which had no `regressionTests` at all.
 
 ## Connectors, channels, and external systems
 
@@ -1826,25 +1827,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** a two-registry dependency spec fails closed on ambiguity; a fence spec where a
   hostname resolving to `10.0.0.0/8` is refused through a real local resolver seam; and ADR-147's
   As built section records the completed behavior and evidence.
-
-### One place that answers "what am I allowed to do"
-- **Context:** [swarm administration — as built, and how to continue](architecture/swarm-administration.md) section 3.
-- **Remaining:** three authorization axes now exist and each is correct in isolation:
-  `swarm_roles` (who administers the SWARM, ADR-148), the governance RBAC role + permissions
-  (`features/governance/rbac/policy.ts`, which as of 2026-09-13 reads `swarm_roles` first and
-  then the env allowlists), and `application-authorization` (who may use each INSTALLED APP,
-  released 2026-09-11, surfaced at `/access`). Nobody — operator or user — can see all
-  three together, so "why can't I open this?" is answered by checking three surfaces and an
-  environment file. The axes must NOT be merged: folding per-app access into swarm
-  administration would make "may use the photo app" and "may administer the swarm" one
-  decision. What is missing is a READ-ONLY view that joins them for one identity and names the
-  source of each grant (`swarm-role` | `break-glass` | `idp-claim` | `app-assignment`), which
-  `/api/governance/whoami` already reports for the first two.
-- **Done when:** one authenticated surface shows, for the caller and — for an admin — for any
-  chosen subject: their swarm role and where it came from, their governance permissions, and
-  their per-app assignments; every value is read from the existing stores with no new grant
-  path; and a guard proves a break-glass-only operator is labelled as such rather than
-  rendering identically to a granted admin.
 
 ### `swarm-cli` zsh completion
 - **Remaining:** execute the current completion in real zsh, covering sourced/autoloaded modes, command/state dispatch, and saved context completion.
