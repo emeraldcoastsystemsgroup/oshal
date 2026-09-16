@@ -158,6 +158,13 @@ x-bot-env: &bot-env
   MOCK_OIDC_EMAIL: ${MOCK_OIDC_EMAIL:-}
   MOCK_OIDC_NAME: ${MOCK_OIDC_NAME:-}
   MOCK_OIDC_SUB: ${MOCK_OIDC_SUB:-}
+  # Which store this swarm installed from. The api seeds its built-in 'oshal-store' registry
+  # from these at first boot; without the passthrough it seeds the PUBLIC default while the
+  # installer staged from somewhere else, so the cockpit would offer to REPLACE the packages
+  # on disk with a different store's copies. The token is read only for a private store.
+  OSHAL_STORE_REPO: ${OSHAL_STORE_REPO:-}
+  OSHAL_STORE_REF: ${OSHAL_STORE_REF:-}
+  OSHAL_STORE_TOKEN: ${OSHAL_STORE_TOKEN:-}
   OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
   OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
   OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}

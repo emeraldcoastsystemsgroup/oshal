@@ -604,6 +604,16 @@ if [ ! -f "$ENV_FILE" ]; then
     # build. Name the image actually resolved so registry installs pull what they just pulled.
     echo "OSHAL_BOT_IMAGE=$IMAGE"
     echo "OSHAL_PACKAGE_AUDIT_MODE=$PACKAGE_AUDIT_MODE"
+    # Record the store these packages actually came from: the api seeds its built-in registry
+    # from this at first boot. Left unset it seeds the PUBLIC default, and a swarm staged from
+    # the private trunk would be offered that store's copies as "updates" to what it has.
+    echo "OSHAL_STORE_REPO=$STORE_REPO"
+    echo "OSHAL_STORE_REF=main"
+    if [ -n "${OSHAL_STORE_TOKEN:-}" ]; then
+      echo "# Private-store credential, operator-local. Remove it and the cockpit simply"
+      echo "# reports the store unreadable; staged packages keep working either way."
+      echo "OSHAL_STORE_TOKEN=$OSHAL_STORE_TOKEN"
+    fi
     echo "POSTGRES_PASSWORD=$(rand)"
     echo "SWARM_SERVICE_SECRET=$(rand)"
     echo "SESSION_SECRET=$(rand)"

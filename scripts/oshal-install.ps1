@@ -44,6 +44,9 @@ param(
   [string]$AdminEmail = "",
   [string]$FromArchive = "",
   [string]$PackageAuditMode = "",
+  # Lockstep with oshal-install.sh STORE_REPO: the store packages are staged from, and the
+  # registry the api seeds at first boot. Override for the private trunk.
+  [string]$StoreRepo = $(if ($env:OSHAL_STORE_REPO) { $env:OSHAL_STORE_REPO } else { "https://github.com/emeraldcoastsystemsgroup/oshal-apps" }),
   [switch]$NoAi,
   [switch]$DryRun,
   [switch]$Kubernetes,
@@ -518,6 +521,18 @@ if (-not (Test-Path $envFile)) {
     # build. A registry install must name the image it actually pulled or every bot fails to pull.
     "OSHAL_BOT_IMAGE=$Image"
     "OSHAL_PACKAGE_AUDIT_MODE=$PackageAuditMode"
+    # Record the store these packages came from: the api seeds its built-in registry from this
+    # at first boot, and the PUBLIC default would offer that store's copies as updates to a
+    # swarm staged from somewhere else.
+    "OSHAL_STORE_REPO=$StoreRepo"
+    "OSHAL_STORE_REF=main"
+  )
+  if ($env:OSHAL_STORE_TOKEN) {
+    $lines += "# Private-store credential, operator-local. Remove it and the cockpit simply reports"
+    $lines += "# the store unreadable; staged packages keep working either way."
+    $lines += "OSHAL_STORE_TOKEN=$($env:OSHAL_STORE_TOKEN)"
+  }
+  $lines += @(
     "POSTGRES_PASSWORD=$(Rand48)"
     "SWARM_SERVICE_SECRET=$(Rand48)"
     "SESSION_SECRET=$(Rand48)"
@@ -565,7 +580,9 @@ if (-not (Test-Path $envFile)) {
 # -- Stage store packages BEFORE the api boots (auto-load registers each once) -
 if ($pkgSet.Count -gt 0) {
   Say "staging $($pkgSet.Count) store package(s): $($pkgSet -join ', ')"
-  $storeRepo = 'https://github.com/emeraldcoastsystemsgroup/oshal-apps'
+  # -StoreRepo (parameter, OSHAL_STORE_REPO-aware) is the single source: hardcoding it here
+  # re-pointed staging AFTER .env had already recorded the operator's store, so the swarm
+  # staged from one store and seeded its registry from another.
   $storeToken = if ($env:OSHAL_STORE_TOKEN) { $env:OSHAL_STORE_TOKEN } else { $env:GITHUB_TOKEN }
   $installEnv = @('-e', "OSHAL_PACKAGE_AUDIT_MODE=$PackageAuditMode")
   if ($storeToken) {
