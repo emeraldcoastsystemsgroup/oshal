@@ -137,6 +137,18 @@ makes the case assert on the capture that follows the insert. Its real companion
 ticket-store RLS entries at the top of this table. Red-proven on `1f0978a0`: both cases fail with
 `timeout exceeded when trying to connect`, the first raised out of `createTicket`.
 
+The last consumer left permanently dead by that first attempt was local Test Lab schedule POLLING:
+schedule reads recovered per operation, but the poll timer was started inside the boot attempt's
+`.then()`, so one lost acquire stopped scheduling until the process restarted. The two polling cases
+in `tests/unit/test-lab-schedule-wiring.spec.ts` close it. They inject the failure at the real seam -
+the readiness the controller hands the wiring - with the same `timeout exceeded when trying to
+connect` PostgreSQL raises, and run the wiring, the schedule schema bootstrap with its advisory-lock
+DDL, the store's claim transaction and the service's own poll timer for real, asserting the claim
+SQL a later cycle issued. The pg pool is the one scoped double, because a real one cannot
+fail-then-recover without a server; its real companion is the disposable-PostgreSQL file above.
+Red-proven against the unmodified wiring: the recovery case fails with the readiness asked exactly
+once, while the shutdown case passes on both sides.
+
 Not covered: the user-directory and Jarvis-briefing routes are proven at their readiness seam only,
 not driven over HTTP.
 
