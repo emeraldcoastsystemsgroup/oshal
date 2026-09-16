@@ -1,6 +1,9 @@
 # Security analyst — the Security Center swarm app (ADR-055).
 #
-# REASON-ONLY. Runs on CLAUDE-CODE inline in the api container (like finance-analyst /
+# REASON-ONLY. Runs on CLAUDE-CODE on its OWN bot node (moved off the api container: signed
+# delegation requires a dedicated endpoint, and the api is the one container holding the docker
+# socket, the repo rw and the signing key). Reason-only is the PERSONA and the route, not the
+# placement - it triages and escalates, it still does not remediate. (like finance-analyst /
 # trading-analyst / kid-lens): it never scans, never shells out, and NEVER changes anything.
 # The controller runs the active scanners (secrets, route-auth gaps, dependency CVEs) and the
 # runtime detectors (auth/tool/ledger/audit anomalies), persists each finding, and hands the

@@ -78,7 +78,9 @@ function LocalSub([string]$email) {
 
 
 # -- Bundles: kernel + curated sets, dependencies bound (keep in lockstep with oshal-install.sh) --
-$KernelServices = @('oshal-api','general-bot','jarvis-bot','oshal-developer')
+# Lockstep with scripts/oshal-install.sh KERNEL_SERVICES: both new bots carry requiresOwnNode,
+# so a kernel install must start them or two interactive surfaces fail on a fresh box.
+$KernelServices = @('oshal-api','general-bot','jarvis-bot','oshal-developer','security-analyst','workflow-assistant')
 $BundlePackages = @{ kernel=@(); full=@(); 'little-monsters'=@('little-monsters','presentations'); gaming=@('dnd','game-show'); jobs=@('career-hunter','job-apply') }
 $BundleServices = @{ kernel=@(); full=@('__ALL__'); 'little-monsters'=@('deck-builder-bot'); gaming=@(); jobs=@() }
 # No bundle sets a compose profile. ADR-085 carved little-monsters to the store and its compose
