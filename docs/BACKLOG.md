@@ -11,6 +11,47 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ## Promotion, deployment, and regression proof
 
+### Nothing publishes the container image, so the default install ships whatever was last pushed by hand
+
+- **Measured 2026-09-16.** `ghcr.io/emeraldcoastsystemsgroup/oshal-bot:latest` resolves to digest
+  `20beaff…`, created **2026-07-26T04:27Z**, label `oshal.git.commit=f7204c4f…`. Every published
+  tag — `latest`, `2.1.0-beta.1`, and three `sha-*` — was checked; `2.1.0-beta.1` is the SAME
+  digest as `latest` and nothing newer exists. Against that day's `main` the image was **983
+  commits / 5,057 files / +408,701 lines** behind.
+- **Why it happened.** The only thing that pushes to GHCR is the image job in
+  `.github/workflows/ci.yml`, which is `workflow_dispatch`-only by deliberate cost decision. Its
+  run count on this repository is **zero** (`actions/workflows/322698333/runs` → `total_count: 0`).
+  The July image was published before the ADR-115 cutover, from somewhere else. So the trunk has
+  never published an image of itself, and `--mode 1` — the **default** documented install — hands
+  every new user that July artifact.
+- **Why it cost a day.** A stale image does not look stale. The remote box that installed it
+  reported *missing features*: no App Loader (`src/pages/app-loader` first shipped 2026-09-09), a
+  wizard whose app selections never installed (`welcome/provisioning.js`, 2026-09-11), and a
+  progress ring on the onboarding screen that was removed last July. Every symptom pointed at
+  configuration.
+- **Already landed (PR #590), and it is a detector, not a fix.** `scripts/image-freshness.js` now
+  refuses an image more than 30 days behind the repository and names both exits. That converts a
+  silent wrong install into a blocked one. It does not cause a current image to exist.
+- **The decision, with what each option actually costs.** Hosted-runner minutes are the binding
+  constraint — that is why CI is manual-only, and the rule has been reverted for cost twice.
+
+  | Option | Hosted-runner cost | The catch |
+  |---|---|---|
+  | **A. Tag-triggered publish** — a new minimal workflow on `push: tags: ['v*']` that only builds and pushes | ~15–25 job-min per release tag, nothing per push | Collides head-on with `scripts/check-workflow-triggers.js`, which fails on ANY automatic trigger and whose own history records an allowlist widening being reverted by operator decision (2026-08-06, "a cost guard that grants its own exception is not a guard"). Taking this option means amending that gate on purpose, not around it. |
+  | **B. Push from the nightly local gate** — `scripts/ci-local.sh` already builds the image every night at $0; add a publish step behind an explicit flag + a GHCR token on the box | **zero** | Needs a PAT on the operator's machine and ~GB of upload per changed layer. Ties publishing to one machine being up. |
+  | **C. Make mode 2 the documented default** — demote the registry path | zero | Breaks the one-command promise and the "Docker is the only prerequisite" claim: every new user then needs git and an 8 GB build. |
+  | **D. Status quo plus the new guard** | zero | Honest, but a blocked install is still a failed install, and the operator has to notice and publish by hand. |
+
+- **Recommendation, not a decision:** **B**, with A reserved for tagged releases if versioned
+  artifacts are wanted later. B spends nothing of the constrained resource and reuses an image the
+  nightly gate builds anyway; the gate already has the build, the smoke test and the Trivy scan in
+  front of the push, which is a better pre-publish bar than the hosted pipeline applies.
+- **Done when:** a mechanism exists that publishes `latest` from the current trunk without a human
+  remembering to; a fresh `--mode 1` install on a clean machine is shown to come up with the App
+  Loader present and the wizard's app selections actually installed; and
+  `scripts/image-freshness.js` reports `current` against the published image on that box.
+
+
 ### No gate typechecks a test file, so "typecheck clean" says nothing about one
 
 - **Found 2026-09-16** reviewing PR #579. `tsconfig.json` has `include: ["src/**/*.ts", "src/**/*.tsx"]` and `exclude: ["node_modules", "dist", "tests", "**/*.spec.ts", "**/*.test.ts"]`; `tsconfig.server.json` includes only four `src/` subtrees. So `npx tsc --noEmit` never reads a spec, and neither does the pre-push hook, which runs that same command against committed HEAD. Vitest transpiles with esbuild, which strips types without checking them.
