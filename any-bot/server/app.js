@@ -12,15 +12,30 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: require service authentication before every non-health HTTP/static request and Socket.IO upgrade, fail startup closed when unconfigured, and require exact dispatch tool/scope grants.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 credential containment: reject generic credential carriers on the legacy execute route and propagate only the exact caller identity. Deterministic provider intents remain exclusive to the canonical bot-node runtime.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: carry the controller-authenticated agent identity into request-scoped MCP capability enforcement.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | BACKLOG "Bot runtime consolidation": documented the demotion. This is no longer a selectable BOT_RUNTIME target — the entrypoint refuses any-bot — and the canonical bot worker is src/app/bot-node-server.ts. The app-modules/* registrars stay shared with that runtime; nothing here is a second implementation of a bot's dispatch/heartbeat/authorization behavior.
  */
 
 /**
  * Main Application Server
  * Integrates all Phase 1 components with Express + Socket.IO
  *
+ * DEMOTED (BACKLOG "Bot runtime consolidation"):
+ * this file is NOT a supported BOT_RUNTIME target. `scripts/bot-entrypoint.sh`
+ * refuses `BOT_RUNTIME=any-bot` outright. The canonical bot worker is
+ * `src/app/bot-node-server.ts`, and it is the only runtime that owns config,
+ * dispatch, result, heartbeat and authorization for a bot node — this server
+ * consumes no mesh envelopes, publishes no heartbeat, and has no Ed25519
+ * delegation verifier, so a container that booted it looked healthy and was
+ * never dispatched work.
+ *
+ * What survives here is the `app-modules/*` registrars and the provider/task
+ * layer, which the canonical runtime mounts and calls directly rather than
+ * re-implementing (see `src/app/bot-node-self-heal-route.ts`): two
+ * implementations of a container-restarting endpoint is exactly how a whitelist
+ * or an auth gate silently diverges.
+ *
  * Decomposition note (2026-07-11): the startup sequence and route registrations
- * live in ./app-modules/*. This file remains the runtime entrypoint
- * (`node any-bot/server/app.js`) and composes the modules in the exact original
+ * live in ./app-modules/*. This file composes the modules in the exact original
  * order — Express route registration ORDER is part of the API contract.
  */
 

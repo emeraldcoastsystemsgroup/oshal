@@ -13,6 +13,7 @@
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | Refuse the unsigned legacy any-bot HTTP runtime whenever delegation verification/signing material enables the task-bound security posture.
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | 2026-08-12 seeding repair (comment-only here): Step 1b's copy-IF-MISSING is now the ONLY config seeding path — the compose x-bot-common command had force-copied (`cp -f`) the seed over /app/output on EVERY start, which made this guard dead code and silently reset runtime provider config each boot. Compose now execs this entrypoint directly; the same change split the 14 concierge bots off the shared api-output volume (each bot's /app/output is private, so the fixed bot-persona.json path in Step 2 no longer races across containers).
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | Step 1b no longer re-seeds plaintext secrets.json once the encrypted store exists: after the ENCRYPTION_KEY migration deletes /app/output/secrets.json (by design), the next container start saw it "missing", re-copied the stale seed, and re-tripped the fail-closed LEGACY_PLAINTEXT_SECRETS_PRESENT guard on every secret operation — which is what broke the codex OAuth login. secrets.enc.json present ⇒ the encrypted store owns secrets; only the non-secret seed files still copy-if-missing.
+# 10 | maintainer@emeraldcoastsystemsgroup.com  | BACKLOG "Bot runtime consolidation": BOT_RUNTIME now selects from ONE declared canonical set (CANONICAL_BOT_RUNTIMES="swarm bot-node") and fails closed on everything else. BOT_RUNTIME=any-bot is retired outright instead of being refused only when delegation material happens to be configured — the legacy any-bot/server/app.js consumes no mesh envelopes, publishes no heartbeat and has no Ed25519 verifier, so a container that selected it looked healthy and was never dispatched work. An unrecognised value no longer falls through to the controller; that fallthrough is how a mistyped bot service boots the API (deploy/helm/oshal/templates/bots.yaml change-log seq 2).
 # =============================================================================
 #
 # @description Bot startup entrypoint for per-container architecture.
@@ -173,12 +174,26 @@ if [ -n "$REDIS_URL" ] && command -v redis-cli >/dev/null 2>&1; then
   redis-cli -u "$REDIS_URL" SET "bot:${EFFECTIVE_NAME}:status" "starting" EX 300 2>/dev/null || true
 fi
 
-# ── Step 4: Start the server ─────────────────────────────────────────────────
-# BOT_RUNTIME controls which server process starts:
-#   "swarm"    → swarm controller (node dist/app/server.js) — handles orchestration
-#   "bot-node" → first-class worker (node dist/app/bot-node-server.js) — handles LLM execution
-#   "any-bot"  → slim legacy/testing server (node any-bot/server/app.js)
-#   (default)  → swarm controller (backward compatible)
+# ── Step 4: Start the server ─────────────────────────────────────
+# BOT_RUNTIME selects the process this container runs. There are exactly TWO
+# canonical runtimes, and CANONICAL_BOT_RUNTIMES below is the single source of
+# truth for that set:
+#   "swarm"    → swarm controller (node dist/app/server.js) — orchestration only
+#   "bot-node" → the canonical worker (node dist/app/bot-node-server.js) — owns
+#                config, dispatch, result, heartbeat and authorization for a bot
+#   (unset)    → "swarm" (backward compatible)
+#
+# Every other value is REFUSED rather than started. Two ways a container used to
+# land on the wrong process, both of them silent:
+#   - BOT_RUNTIME=any-bot booted any-bot/server/app.js, which consumes no mesh
+#     envelopes, publishes no heartbeat and has no Ed25519 delegation verifier, so
+#     the container looked healthy and was never dispatched work. That runtime is
+#     retired here; its app-modules/* registrars are mounted on the bot-node
+#     runtime instead (src/app/bot-node-self-heal-route.ts is the worked example,
+#     added after POST /api/self-heal/apply 404'd on every real bot container).
+#   - An unrecognised value (a typo, a stale env) fell through to the controller.
+#     deploy/helm/oshal/templates/bots.yaml change-log seq 2 is that failure in the
+#     wild: a "bot" booted the CONTROLLER and crash-looped on the real-OIDC path.
 #
 # Per any-bot-swarm-separation-design.md:
 #   - Bot containers run BOT_RUNTIME=bot-node (they own LLM execution)
@@ -186,25 +201,32 @@ fi
 
 BOT_RUNTIME="${BOT_RUNTIME:-swarm}"
 
+# Single source of truth for the selectable set. tests/unit/bot-runtime-consolidation.spec.ts
+# parses this line and then evaluates this block under sh for every value below.
+CANONICAL_BOT_RUNTIMES="swarm bot-node"
+
 if [ "$BOT_RUNTIME" = "any-bot" ]; then
-  if [ -n "${OSHAL_DELEGATION_PUBLIC_KEYS:-}" ] || [ -n "${OSHAL_DELEGATION_SIGNING_PRIVATE_KEY:-}" ]; then
-    echo "[bot-entrypoint] FATAL: BOT_RUNTIME=any-bot cannot run while HTTP delegation enforcement is configured." >&2
-    echo "[bot-entrypoint] Use BOT_RUNTIME=bot-node; the legacy runtime has no Ed25519 verifier or shared replay ledger." >&2
-    exit 78
+  echo "[bot-entrypoint] FATAL: BOT_RUNTIME=any-bot is retired — the legacy any-bot HTTP server is not a bot runtime." >&2
+  echo "[bot-entrypoint] Use BOT_RUNTIME=bot-node. It is the only worker runtime that consumes mesh envelopes," >&2
+  echo "[bot-entrypoint] publishes heartbeats and verifies Ed25519 delegations." >&2
+  exit 78
+fi
+
+RUNTIME_RECOGNIZED=""
+for candidate in $CANONICAL_BOT_RUNTIMES; do
+  if [ "$BOT_RUNTIME" = "$candidate" ]; then
+    RUNTIME_RECOGNIZED="yes"
   fi
-  echo "[bot-entrypoint] ANY-BOT RUNTIME — starting any-bot server (LLM execution node) ..."
-  echo "[bot-entrypoint]   The swarm controller dispatches work to this node via HTTP."
-  echo "[bot-entrypoint]   This node handles: provider config, credentials, CLI spawning, cost capture."
+done
 
-  # Any-bot uses its own port (default 5000)
-  export PORT="${PORT:-5000}"
+if [ -z "$RUNTIME_RECOGNIZED" ]; then
+  echo "[bot-entrypoint] FATAL: unknown BOT_RUNTIME '$BOT_RUNTIME' — refusing to start." >&2
+  echo "[bot-entrypoint] Supported runtimes: $CANONICAL_BOT_RUNTIMES. Falling through to the controller would give" >&2
+  echo "[bot-entrypoint] this container no worker at all, which is how a mistyped bot service boots the API." >&2
+  exit 78
+fi
 
-  # Slim any-bot HTTP server (no swarm participation — legacy/testing only)
-  # Canonical server: preserves owner scoping, BYO routing, and provider records.
-  # swarm-node.js is a legacy harness and is not a supported BOT_RUNTIME target.
-  exec node any-bot/server/app.js
-
-elif [ "$BOT_RUNTIME" = "bot-node" ]; then
+if [ "$BOT_RUNTIME" = "bot-node" ]; then
   echo "[bot-entrypoint] BOT-NODE RUNTIME — first-class swarm participant (TypeScript + any-bot providers)"
   echo "[bot-entrypoint]   Consumes own Redis envelopes. Executes via any-bot LLM stack."
   echo "[bot-entrypoint]   No cockpit, no OIDC, no Plane, no voice."
