@@ -39,14 +39,23 @@ your roster, your opponents' rosters, the schedule and your league's scoring rul
 **Path B — let the desktop node capture them** (Config → Accounts → ESPN Fantasy → *Log in + push*).
 The node opens a real ESPN sign-in window and pushes the pair for you.
 
-> **In that window, do not use the person icon in the top-right.** Its dropdown opens, and its
-> **Log In** item closes the dropdown and does nothing — verified 2026-09-09 by reproducing it in the
-> node's own Electron window and screenshotting the result. Use the **Log In** button in the
-> **Customize ESPN** card down the right-hand side of the page instead. That one hands you to
-> MyDisney and redirects back signed in, and it is the path that produced this swarm's first working
-> ESPN connection. The window closes itself once the pair is captured. This path is built but is not
-yet running on any machine here — see the BACKLOG entry *"The ESPN 'Log in + push' button has not
-reached a running node"* for exactly what is missing.
+> **The window opens on ESPN's own Log In form** — email and password, with nothing to find first.
+> Sign in there. ESPN then sends the window to the Fantasy home page, and the window closes itself
+> once the pair is captured.
+>
+> The node opens ESPN's sign-in page (`www.espn.com/login`) rather than the Fantasy home page because
+> on the home page the first control you reach for is dead in this window: the person icon's
+> **Log In** closes its dropdown and does nothing (reproduced 2026-09-09 in the node's own Electron
+> window). The control that does work there, the **Log In** button in the **Customize ESPN** card,
+> is not shown at all at the window's opening size.
+>
+> If you close the form with its **×**, the window goes to the Fantasy home page instead. Close the
+> window and press *Log in + push* again to get the form back — or maximise the window and use the
+> **Log In** button in the **Customize ESPN** card that appears in the side rail, never the person
+> icon. That card is the path that produced this swarm's first working ESPN connection.
+
+This path is built but is not yet running on any machine here — see the BACKLOG entry *"The ESPN
+'Log in + push' button has not reached a running node"* for exactly what is missing.
 
 **Where the cookies go.** They are stored by the connector broker, resolved per request, used on the
 one outbound ESPN call that needs them, and discarded. They are never logged, never returned in a
@@ -132,7 +141,7 @@ The app degrades rather than lying, but the messages are worth knowing:
 | what you see | what it means |
 |---|---|
 | *"Connect ESPN Fantasy to read a private league."* | You have no ESPN connection stored — **or** ESPN could not be reached at all. Those two are not yet told apart; if you know you are connected, suspect the network before re-pasting cookies. |
-| The sign-in window's account dropdown closes when you click **Log In** | Known: the person-icon path does not work in the node's window. Use the **Log In** button in the Customize ESPN card instead (above). |
+| The sign-in window shows the ESPN Fantasy home page, not a Log In form | The form's **×** sends the window there. Close the window and press *Log in + push* again for the form, or maximise the window and use **Log In** in the Customize ESPN card (above). Not the person icon: its **Log In** does nothing in the node's window. |
 | *"ESPN would not return that league right now."* | You are connected, and ESPN refused or did not answer. Usually transient; the league id being wrong looks the same. |
 | *"No opponent could be read for this week"* | Either a genuine bye, or the schedule read failed. The lineup shown is then simply the highest-projected one — safe, just not opponent-aware. |
 | Projection date in the footer is old | ESPN's ~39 MB player feed could not be refreshed, so a cached one is being used. A stale cache beats a blank screen, and the date is there so you can judge. |

@@ -16,6 +16,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Withhold protected completed work from automatic summarization pending a derived-result lineage contract.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | The lineage contract exists now, so the protected half of the return leg runs: returnProtectedComplexSummaries binds the source ticket's executions to the conversation and work task, then claims and summarizes exactly like the automatic half. Without it a protected ticket that SUCCEEDED was never claimed, summarizeComplexTask never ran, finishTask never ran, and the operator's thread stayed silent forever - twice on 2026-09-15. The summarizer now re-checks the captured actor's rights before it reads and again before it writes, so a revocation mid-summary withholds the answer rather than racing it.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: JARVIS_AGENT_ID, APP_ROUTES/loadEffectiveRoutes, runJarvisBot + the classify/delegate/synthesize helpers, summarizeComplexTask, maskPendingComplexSummaries, repairCompletedTaskTableVisuals (route decomposition, no behaviour change).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credential forwarding from Jarvis/model delegation; credentials stay inside audited server-side provider operations.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry the turn's resolved endpoint through the whole turn: the in-process steps (haven passive learning, the legacy classify/synthesize path) now run on the same byoLlmConnection instead of silently falling to the controller's configured CLI harness, and the one bounded retry re-resolves to the NEXT usable endpoint rather than deliberately dropping the connection onto a provider a SEC-05 node refuses.
@@ -31,6 +32,7 @@ import * as crypto from 'crypto';
 import type { AppContext } from '@/app/composition/app-context';
 import { createChildLogger } from '@/shared/logger';
 import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
+import type { AuthorizationActor } from '@/shared/application-authorization';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { learnFromExchange, withHavenContext } from '@/features/user-model';
 import {
@@ -301,7 +303,7 @@ async function runJarvis(
  * corrected architecture (a bot in the framework, not an orchestrator outside it).
  */
 export async function runJarvisBot(
-  ctx: AppContext, sub: string, message: string, taskId: string, agentic = true,
+  ctx: AppContext, sub: string, message: string, taskId: string, agentic = true, userText?: string,
 ): Promise<{ answer: string; routed: AppRoute[]; handoffs: AppRoute[] }> {
   // ADR-127: which brain runs this turn — the caller's saved default, else the ladder (demo CLI
   // login for the operator, their own endpoint, their free tiers, this deployment's keys). A
@@ -323,7 +325,10 @@ export async function runJarvisBot(
   const request = {
     // Haven (ADR-079): every turn carries the caller's user-model hot core + relevant
     // owner-scoped long-tail memories, so Jarvis answers as if it knows them.
-    text: await withHavenContext(ctx.pool, sub, message),
+    // The long-tail search is given the user's OWN words when the caller has them: `message` here
+    // is the assembled prompt (tools + catalog + open work), and searching with all of it cost
+    // 100-127 s per turn on 2026-09-15 — longer than the whole decision budget.
+    text: await withHavenContext(ctx.pool, sub, message, userText ?? message),
     taskId,
     workspaceFolderId: taskId,
     agentId: JARVIS_AGENT_ID,
@@ -371,7 +376,10 @@ export async function runJarvisBot(
   const answer = String(result.response || '').trim();
   // Passive learning (fire-and-forget, throttled): extraction runs on the same accountable
   // inline brain so its LLM cost lands in chat_tasks (ADR-036/050). Never blocks the reply.
-  void learnFromExchange(ctx.pool, sub, message, answer, (p) => runJarvis(ctx, sub, p, 'haven-learn', byoLlmConnection));
+  // Learn from what the USER said. `message` here is the assembled prompt, and the extraction
+  // reads only its first 2,000 characters: under the old context-first order those characters were
+  // the tool catalog, so the loop was recording the catalog as durable facts about the person.
+  void learnFromExchange(ctx.pool, sub, userText ?? message, answer, (p) => runJarvis(ctx, sub, p, 'haven-learn', byoLlmConnection));
   return { answer, routed: [], handoffs: [] };
 }
 
@@ -681,16 +689,21 @@ void orchestrate;   // retained for parity; not wired to a route (bot-node path 
  * (the caller guards via a 'summarizing' status) in the background.
  */
 async function summarizeComplexTask(
-  ctx: AppContext, sub: string, taskId: string, ticketId: string, title: string,
+  ctx: AppContext, sub: string, taskId: string, ticketId: string, title: string, derived?: AuthorizationActor,
 ): Promise<void> {
   try {
-  const { hasProtectedJarvisSource } = await import('./jarvis-result-access.js');
-    if (await hasProtectedJarvisSource(ctx, [taskId, ticketId])) return;
+  const { hasProtectedJarvisSource, canReadDerivedJarvisSources } = await import('./jarvis-result-access.js');
+    // A protected source is readable here ONLY because returnProtectedComplexSummaries already bound its
+    // executions to this task and conversation under this exact actor. Everything else still fails closed.
+    const permitted = async () => derived
+      ? canReadDerivedJarvisSources(ctx, sub, [taskId, ticketId], derived)
+      : !await hasProtectedJarvisSource(ctx, [taskId, ticketId]);
+    if (!await permitted()) return;
     const msgs = (await ctx.messageStore.getByTask(ticketId)) as Array<{
       text?: string;
       metadata?: Record<string, unknown>;
     }>;
-    if (await hasProtectedJarvisSource(ctx, [taskId, ticketId])) return;
+    if (!await permitted()) return;
     const newestFirst = [...(msgs || [])].reverse();
     const capturedCompletion = newestFirst.find((message) => (
       message.metadata?.source === 'manifest-worker-bot-node'
@@ -743,7 +756,10 @@ async function summarizeComplexTask(
     // provider facts or prevent the visual. Ordinary work products still use Jarvis's summarizer.
     const trustedSummary = summarizeProviderBoundRecords(automaticProviderRecords);
     const answer = trustedSummary
-      || (await runJarvisBot(ctx, sub, prompt, `jarvis-summary-${taskId}`, true)).answer;
+      // The summary prompt opens with fixed boilerplate, so its first 512 characters are identical
+      // on every summary: pass the task's own title as the retrieval query instead, or the long-tail
+      // search runs the same meaningless query every time.
+      || (await runJarvisBot(ctx, sub, prompt, `jarvis-summary-${taskId}`, true, title)).answer;
     const directives = extractJarvisDirectives(answer);
     const cleanSummary = directives.cleanAnswer;
     const finalSummary = cleanSummary || readableDeliverable.slice(0, 4000);
@@ -844,6 +860,9 @@ async function summarizeComplexTask(
       summaryWithLinks = summaryWithLinks.split(from).join(to);
     }
 
+    // Last check before anything is published: the model call and the file capture take time, and a
+    // grant revoked in that window must withhold the answer rather than lose the race to it.
+    if (!await permitted()) return;
     await finishTask(ctx.pool, taskId, true, summaryWithLinks, visual, captured.files);
     if (taskSessionId) {
       await persistJarvisTurn(ctx, taskSessionId, 'assistant', summaryWithLinks, {
@@ -887,6 +906,48 @@ export async function maskPendingComplexSummaries(
     if (claimed && claimed.rowCount) {
       void fire(ctx, sub, t.id, t.ticketId, t.title);   // background — don't block the poll
     }
+    t.status = 'summarizing';
+    t.result = 'Reading the results…';
+  }
+}
+
+/**
+ * @description The protected half of the same poll-time return leg. A ticket whose work product carries
+ * controller-recorded execution lineage is never handed to the automatic summarizer, because a summary
+ * copied into a conversation would otherwise be readable through a row that no longer answered to the
+ * execution authority. That is the whole reason a SUCCESSFUL protected ticket used to go silent. Here the
+ * lineage is RECORDED first - the source's executions are bound to the exact work task and conversation
+ * the answer will be written to - and only then is the summarize job claimed, with the same atomic,
+ * re-claimable UPDATE the automatic half uses. A task whose lineage cannot be recorded, because the caller
+ * is not the owner, carries no verified issuer, or has lost the grant, is left exactly as it was: silent.
+ * @param ctx - App context (Postgres pool, canonical task store).
+ * @param sub - The caller's user sub; rows are caller-scoped.
+ * @param tasks - The protected mapped rows about to be returned by GET /tasks; mutated in place.
+ * @param sessions - Row id to its stored conversation id, from the same owner-filtered read.
+ * @param resolveActor - Existing server-owned actor resolver, never caller body identity.
+ * @param fire - The summarize job to launch on a successful claim (injectable for tests).
+ * @returns Resolves once every protected pending-summary task has been bound-and-claimed or left alone.
+ */
+export async function returnProtectedComplexSummaries(
+  ctx: AppContext, sub: string,
+  tasks: Array<{ id: string; title: string; status: string; result: string | null; kind: string; ticketId: string | null }>,
+  sessions: ReadonlyMap<string, unknown>,
+  resolveActor: () => Promise<AuthorizationActor>,
+  fire: typeof summarizeComplexTask = summarizeComplexTask,
+): Promise<void> {
+  const { recordDerivedJarvisResultLineage } = await import('./jarvis-result-access.js');
+  for (const t of tasks) {
+    if (t.kind !== 'complex' || t.status !== 'done' || t.result || !t.ticketId) continue;
+    const sessionId = String(sessions.get(t.id) || '').trim();
+    const destinations = [t.id, ...(/^[\w.-]{6,180}$/.test(sessionId) ? [sessionId] : [])];
+    const actor = await recordDerivedJarvisResultLineage(ctx, sub, t.ticketId, destinations, JARVIS_AGENT_ID, resolveActor);
+    if (!actor) continue;
+    const claimed = await ctx.pool.query(
+      `UPDATE jarvis_tasks SET status = 'summarizing', summarize_started_at = NOW()
+        WHERE id = $1 AND user_sub = $2 AND (status <> 'summarizing' OR summarize_started_at IS NULL
+              OR summarize_started_at < NOW() - INTERVAL '3 minutes')
+        RETURNING id`, [t.id, sub]).catch(() => null);
+    if (claimed && claimed.rowCount) void fire(ctx, sub, t.id, t.ticketId, t.title, actor);
     t.status = 'summarizing';
     t.result = 'Reading the results…';
   }

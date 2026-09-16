@@ -232,7 +232,7 @@ any-bot/server/
   stores/                        — TaskStore, MessageStore (SQLite)
 
 scripts/
-  bot-entrypoint.sh              — BOT_RUNTIME switch (swarm | bot-node | any-bot)
+  bot-entrypoint.sh              — BOT_RUNTIME switch (swarm | bot-node; anything else fails closed)
   setup-cline-auth.sh            — Cline CLI credential setup
   migrations/                    — Postgres schema migrations
 

@@ -54,7 +54,7 @@ The queue/workflow is just the *tracked, retriable wrapper* for background work.
 | Rail | Where |
 |---|---|
 | `BotNodeClient` → `http://{bot}:5000/api/swarm-execute`, returns `{response, cost, model, provider}` | [bot-node-client.ts](../../src/features/agent-management/services/bot-node-client.ts) |
-| Bot `/api/swarm-execute` — runs the bot's configured harness, returns cost | [swarm-node.js](../../any-bot/server/swarm-node.js) |
+| Bot `/api/swarm-execute` — runs the bot's configured harness, returns cost | [bot-node-server.ts](../../src/app/bot-node-server.ts) |
 | `CostTrackingService.recordCost` → writes `chat_tasks` | [cost-tracking-service.ts](../../src/features/operational-intelligence/services/cost-tracking-service.ts) |
 | `HARNESS_FACTORIES` — per-bot harness/model resolution | [provider-runtime.ts](../../src/app/composition/provider-runtime.ts) |
 | Per-user store — `user_sub`-keyed, AES-256-GCM encrypted (like `oshal_connections`) | [connectors-tenant-isolation](../architecture/connectors-tenant-isolation.md) |

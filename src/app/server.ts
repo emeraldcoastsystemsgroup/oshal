@@ -194,6 +194,7 @@
  * 178 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/admin/data-model (the data-model explorer: every Postgres table/view with owners, keys and RLS scope, shared objects, the app integration map and store inventories) behind requiresAuth + requiresOperator, read-only; ports wired to the platform pool and the app service. Guards: tests/unit/data-model-routes.spec.ts, tests/unit/data-model-explorer-browser.spec.ts.
  * 179 | maintainer@emeraldcoastsystemsgroup.com   | Moved the OpenAPI spec definition, the swagger-jsdoc scan globs and the /openapi.json + /api-docs + /docs mount into ./server-openapi so this entrypoint is back under the 1000 code-line cap. Pure move: the spec, the glob list and the registration order are unchanged, and createApp now calls registerOpenApiDocsRoutes at the same point in the middleware chain.
  * 180 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149: the /api/ui profile route receives the authorization runtime's canDiscover and the actor resolver, so a synthesised rail can lock a tile whose target package the signed-in person cannot discover. Same-line wiring; no new code line in this file.
+ * 181 | maintainer@emeraldcoastsystemsgroup.com   | One MOCK_OIDC predicate, not three readings: this file tested MOCK_OIDC === 'true' at the /api/auth/user mode string and at the demo-auth mount, while the bypass itself uses isMockOidcEnabled() (true|1|yes, any case) - so MOCK_OIDC=1 authenticated every request as the mock user while the probe reported mode 'oidc' and the demo /login,/logout were never mounted. Both sites now go through ./routes/auth-state-routes (createAuthStateRoutes, mountDemoAuthRoutes), which read that one helper; the probe moves verbatim and keeps its position, ungated, right after the global auth middleware. Guard: tests/unit/mock-oidc-one-predicate.spec.ts.
  */
 
 require('dotenv').config();
@@ -209,6 +210,7 @@ import { createChildLogger } from '@/shared/logger';
 import { createWorkspaceNavigationRoutes } from './routes/workspace-navigation-routes';
 import { registerCodeServerBridgeRoutes, buildCodeServerRedirectUrl } from './routes/code-server-bridge-routes';
 import { registerDebugRoutes } from './routes/debug-routes';
+import { createAuthStateRoutes, mountDemoAuthRoutes } from './routes/auth-state-routes';
 import { createAppContext } from './composition-root';
 import { resolveHostLandingPath } from './host-app-map';
 import { 
@@ -236,7 +238,6 @@ import {
   createSwarmAppRoutes,
   createPackagedThemeCssFallback,
   createSwarmPackRoutes,
-  createDemoAuthRoutes,
   createScheduleRoutes,
   createRemoteClientRoutes,
   createCheckpointRoutes,
@@ -331,7 +332,6 @@ import { createLogsRoutes } from './routes/logs-routes';
 import { createAuditCaptureMiddleware, requireAdminConsoleAccess } from '@/features/governance';
 import { createGuestSessionInjector, isGuestRequest } from '@/shared/middleware/guest-session';
 import { createGuestGuard } from '@/shared/middleware/guest-guard';
-import { guestCapabilities } from '@/shared/middleware/guest-capability-matrix';
 import { createGuestRoutes } from './routes/guest-routes';
 import { createRagRoutes } from './routes/rag-routes';
 import { createGlobalSearchRoutes } from './routes/global-search-routes';
@@ -862,21 +862,9 @@ function createApp(): express.Application {
   // Auth-state probe for the cockpit profile widget — UNGATED so it always returns
   // 200 (no login redirect) and reports the real session. Reflects the live OIDC
   // session in production and the injected mock session under MOCK_OIDC. This is
-  // what makes the header show "Signed in as <you>" + a working Sign Out.
-  app.get('/api/auth/user', (req, res) => {
-    const oidc = (req as any).oidc;
-    const authenticated = !!(oidc && typeof oidc.isAuthenticated === 'function' && oidc.isAuthenticated());
-    const guest = isGuestRequest(req);
-    res.json({
-      authenticated,
-      user: authenticated ? oidc.user : null,
-      mode: guest ? 'guest' : isLocalAuthEnabled() ? 'local' : process.env.MOCK_OIDC === 'true' ? 'demo' : 'oidc',
-      guestMode: guest,
-      // Capability snapshot so the cockpit can gray the right tiles. Only meaningful
-      // for guests; present always so the frontend can read it unconditionally.
-      capabilities: guest ? guestCapabilities() : null,
-    });
-  });
+  // what makes the header show "Signed in as <you>" + a working Sign Out. The mode
+  // string reads the SAME MOCK_OIDC predicate as the bypass (./routes/auth-state-routes).
+  app.use('/api/auth/user', createAuthStateRoutes());
 
   // Serve static files from src/api directory (public assets only, if needed)
   // app.use(express.static(apiDir)); // Removed: static files are now protected
@@ -1601,12 +1589,10 @@ function createApp(): express.Application {
   app.use('/api/ui', requiresAuth, createWorkspaceNavigationRoutes({ apps: swarmAppService,
     runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor, access: appAccessService }));
 
-  // Demo auth routes — ONLY in MOCK_OIDC mode. In production OIDC deployments
-  // express-openid-connect owns /login and /logout, and we must NOT leak the
-  // fabricated "Alex" identity from createDemoAuthRoutes via /api/auth/user.
-  if (process.env.MOCK_OIDC === 'true') {
-    app.use('/', createDemoAuthRoutes());
-  }
+  // Demo auth routes — ONLY in MOCK_OIDC mode, decided by the one shared predicate. In
+  // production OIDC deployments express-openid-connect owns /login and /logout, and we must
+  // NOT leak the fabricated "Alex" identity from the demo routes via /api/auth/user.
+  mountDemoAuthRoutes(app);
 
   // Layer 1 Tools Framework routes
   // Internal bots register their UI surfaces here with X-Service-Secret (no OIDC session);

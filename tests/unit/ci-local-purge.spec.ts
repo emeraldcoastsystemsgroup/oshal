@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Run the nightly's export purge in Git Bash on a synthetic node_modules-shaped tree, prove its watchdog fails loud with an outcome line instead of hanging (the 2026-09-09 run sat nine hours in rm -rf and wrote nothing), and pin that ci-local.sh purges both of its exports through it rather than a bare rm -rf.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Cover the watchdog's abandon with a delete whose work is a NATIVE child that outlives its bash wrapper, the shape of robocopy.exe under `timeout`. The existing timeout case overrides the primitive with a bash `sleep`, so it proves the watchdog unblocks but cannot see an orphaned native process: against the old `kill "$pid"` the child was still running (and still deleting) after the FAIL line. The new case asserts the child is gone, and its heartbeat frozen, shortly after purge_tree returns.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Judge the abandon's three outcomes separately, because the one thing it could not do was tell them apart: found descendants, enumerated and genuinely none, and could not enumerate at all were two messages for three facts, and on this box - where Git Bash's ps rejects `-eo` - the third was printed as the second. The walk itself is driven over a fixture process table so the POSIX descendants-then-parent branch is exercised on any box (it kills real spawned processes, and its deepest-first order is asserted), while the real reader is judged against the platform it is actually running on. Reverting either could-not-look branch turns these cases red, which is the property that makes them a guard rather than a description.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Drive a real native GRANDCHILD under a `timeout` through the abandon, and judge the process-table reader by whether it ANSWERS. Entry 3 pinned the honest refusal, and on Windows that refusal was every abandon that fell past taskkill - nothing was ever killed by enumeration here, and the reader case asserted that refusal as the contract. The new case is the exact shape of the production primitive (`timeout` wrapping a native binary, which then spawns its own native child) and it goes red against either half of the reader alone: measured 2026-09-15, Windows' own table answers with an EMPTY descendant list for it because an MSYS exec leaves a dead parent pid on the `timeout` row, and Git Bash's `ps` cannot see the grandchild at all. The grandchild is spawned detached on purpose - libuv otherwise puts it in a job object that dies with its parent, which would let a walk that never reached it look like it had. The could-not-look cases are unchanged and still go red when their branch is collapsed.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -59,6 +60,37 @@ const NATIVE_CHILD_SOURCE = [
   'let beats = 0;',
   'const timer = setInterval(() => fs.writeFileSync(beatFile, String(++beats)), 200);',
   'setTimeout(() => clearInterval(timer), 25000);',
+  '',
+].join('\n');
+
+/**
+ * A native process that spawns its OWN native child, outside the MSYS tree: the shape no MSYS
+ * process table can see. Measured on this box 2026-09-15 - the grandchild is absent from Git Bash's
+ * bare `ps` entirely, and `ps -W` lists it with ppid 0, no linkage to anything. `robocopy.exe`
+ * under `timeout` is this shape one level down, which is why an enumerator built on `ps` alone
+ * would have gone on reporting a checked absence it had not earned.
+ */
+const NATIVE_GRANDPARENT_SOURCE = [
+  "const { spawn } = require('node:child_process');",
+  "const fs = require('node:fs');",
+  'const [, , grandScript, pidFile, beatFile] = process.argv;',
+  // detached, because libuv otherwise puts a spawned child in a job object that dies with its
+  // parent - which would let a walk that never reached the grandchild still look like it had.
+  "const grand = spawn(process.execPath, [grandScript, beatFile], { stdio: 'ignore', windowsHide: true, detached: true });",
+  'grand.unref();',
+  'fs.writeFileSync(pidFile, String(grand.pid));',
+  'setTimeout(() => process.exit(0), 30000);',
+  '',
+].join('\n');
+
+/** The grandchild itself: a rising heartbeat, so "still working after the FAIL line" is measurable. */
+const NATIVE_GRANDCHILD_SOURCE = [
+  "const fs = require('node:fs');",
+  'const [, , beatFile] = process.argv;',
+  "fs.writeFileSync(beatFile, '0');",
+  'let beats = 0;',
+  'const timer = setInterval(() => fs.writeFileSync(beatFile, String(++beats)), 200);',
+  'setTimeout(() => clearInterval(timer), 30000);',
   '',
 ].join('\n');
 
@@ -314,35 +346,77 @@ describe('purge abandon: found, none, and could-not-look are three different ans
     expect(run.output).not.toContain('found none');
   }, 60_000);
 
-  it('judges the real process-table reader on the platform it is running on, and never lets a refusal read as an empty list', () => {
+  it('kills a native GRANDCHILD under a `timeout`, which neither process table can reach alone', () => {
+    const stuck = join(SCRATCH, 'native-grandchild-export');
+    mkdirSync(stuck, { recursive: true });
+    writeFileSync(join(stuck, 'f.js'), 'x');
+    const parentScript = join(SCRATCH, 'native-grandparent.js');
+    const grandScript = join(SCRATCH, 'native-grandchild.js');
+    const pidFile = join(SCRATCH, 'native-grandchild.pid');
+    const beatFile = join(SCRATCH, 'native-grandchild.beat');
+    writeFileSync(parentScript, NATIVE_GRANDPARENT_SOURCE);
+    writeFileSync(grandScript, NATIVE_GRANDCHILD_SOURCE);
+    const body = [
+      // taskkill /T is stood down to a no-op because it is the branch that already works. What is
+      // under test is the enumerator the abandon falls to when taskkill is absent or refused - the
+      // path that, on Windows, used to report UNCHECKED and kill nothing at all.
+      'taskkill() { return 0; }',
+      // `timeout <native>` is the production primitive's exact shape, and it is what makes this case
+      // need BOTH halves of the Windows reader: Windows' own table cannot link `timeout` back to the
+      // wrapper (an MSYS exec hands off to a new Windows process and the one that exec'd exits, so
+      // the parent on that row is dead), and the MSYS table cannot see the grandchild at all.
+      `purge_tree_delete() { exec >/dev/null 2>&1; timeout 30 node "${posix(parentScript)}" "${posix(grandScript)}" "${posix(pidFile)}" "${posix(beatFile)}" & sleep 30; }`,
+      'purge_tree "$2" "$3"',
+      'echo "purge_rc=$?"',
+    ].join('\n');
+    const run = runShell(body, [posix(stuck), '4']);
+    expect(run.output).toContain('purge_rc=1');
+    expect(existsSync(pidFile), `the native grandchild never started: ${run.output}`).toBe(true);
+    const grandPid = Number(readFileSync(pidFile, 'utf8').trim());
+    expect(Number.isInteger(grandPid) && grandPid > 0, `unusable grandchild pid: ${run.output}`).toBe(true);
+    const beatAtAbandon = readFileSync(beatFile, 'utf8').trim();
+    const survived = outlivesAbandon(grandPid, 8_000);
+    const beatAfterAbandon = readFileSync(beatFile, 'utf8').trim();
+    if (survived) {
+      try {
+        process.kill(grandPid, 'SIGKILL');
+      } catch {
+        /* it exited between the poll and the cleanup */
+      }
+    }
+    expect(survived, `the native grandchild outlived the abandon - it was never enumerated: ${run.output}`).toBe(false);
+    expect(beatAfterAbandon, 'the abandoned grandchild was still working after purge_tree returned').toBe(beatAtAbandon);
+    expect(run.output, 'the table can be read on this box, so UNCHECKED is not the honest answer').not.toContain('UNCHECKED');
+    expect(run.output, 'the outcome line must name the descendants it killed').toMatch(/descendant process\(es\) of pid \d+/);
+  }, 90_000);
+
+  it('judges the real process-table reader on the platform it is running on, and it answers there', () => {
     const run = runShell([
       'purge_tree_process_table >/dev/null 2>&1',
       'echo "table_rc=$?"',
-      'sleep 5 & child=$!',
-      'purge_tree_descendants "$$"',
+      'sleep 10 & child=$!',
+      `childwin="$(purge_tree_winpid "$child" 2>/dev/null)" || childwin=''`,
+      `purge_tree_descendants "$$" "$(purge_tree_winpid "$$" 2>/dev/null)"`,
       'echo "walk_rc=$?"',
-      `echo "child=$child list=[$(printf '%s' "$PURGE_DESCENDANTS" | tr '\\n' ',')]"`,
+      'echo "winpids=[$PURGE_DESCENDANTS_WINPIDS]"',
+      `echo "child=$child childwin=$childwin list=[$(printf '%s' "$PURGE_DESCENDANTS" | tr '\\n' ',')]"`,
       'kill "$child" 2>/dev/null',
       'exit 0',
     ].join('\n'));
     expect(run.status, run.output).toBe(0);
-    const walkRc = /walk_rc=(\d+)/.exec(run.output)?.[1];
-    if (process.platform === 'win32') {
-      // Git Bash's ps answers `ps: unknown option -- o` and prints nothing. The contract on this
-      // box is that the reader SAYS it could not look (2), never that it looked and found nobody.
-      expect(run.output, `expected the MSYS ps to refuse -eo: ${run.output}`).toContain('table_rc=2');
-      expect(walkRc, 'an unreadable table must propagate as could-not-look, not as an empty list').toBe('2');
-      expect(run.output).toContain('list=[]');
-    } else {
-      // A POSIX runner: the branch that cannot execute on Windows runs for real here, against a
-      // process this probe genuinely spawned.
-      expect(run.output, `expected a usable POSIX process table: ${run.output}`).toContain('table_rc=0');
-      expect(walkRc).toBe('0');
-      const child = /child=(\d+)/.exec(run.output)?.[1];
-      expect(child, run.output).toBeTruthy();
-      expect(run.output, 'the real walk missed a real child of this shell').toMatch(new RegExp(`list=\\[[^\\]]*\\b${child}\\b`));
-    }
-  }, 30_000);
+    // Whatever the platform, the reader has to ANSWER: a permanent refusal here is the state this
+    // box was in, where every abandon that fell past taskkill reported UNCHECKED and killed nothing.
+    expect(run.output, `the process-table reader refused on this platform: ${run.output}`).toContain('table_rc=0');
+    expect(/walk_rc=(\d+)/.exec(run.output)?.[1], run.output).toBe('0');
+    // On Windows the rows are Windows pids and the walk is rooted at the shell's own Windows pid,
+    // so the child is looked for under that identity; on a POSIX runner both are the same number.
+    const expectedPid = process.platform === 'win32'
+      ? /childwin=(\d+)/.exec(run.output)?.[1]
+      : /child=(\d+)/.exec(run.output)?.[1];
+    expect(run.output).toContain(process.platform === 'win32' ? 'winpids=[1]' : 'winpids=[]');
+    expect(expectedPid, run.output).toBeTruthy();
+    expect(run.output, 'the real walk missed a real child of this shell').toMatch(new RegExp(`list=\\[[^\\]]*\\b${expectedPid}\\b`));
+  }, 60_000);
 });
 
 describe('ci-local.sh purges its exports through the bounded helper', () => {

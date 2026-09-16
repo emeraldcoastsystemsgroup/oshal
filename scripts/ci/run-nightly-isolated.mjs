@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Document the fixed runner API and its evidence boundaries for scheduler callers.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | BUG-20 guards join the fixed isolated set: a re-drained alert event changes the world once, and consolidateLanded applies each effect once, both on disposable PostgreSQL.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | The local CI export-purge and partial-secret-scan guards join the fixed isolated set: both run production pieces of scripts/ci-local.sh in Git Bash against disposable trees and a stand-in scanner.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | The three trading guards that now own their PostgreSQL join the fixed isolated set. They used to take a DSN from the environment, and this runner deliberately blanks every database variable it passes down - so they could only ever have refused here. Now they start and destroy their own container, which is exactly what this gate is for, and it is the only place they actually EXECUTE: the plain unit gate has nothing to point them at. isolatedEnvironment needs no new key for them, because they read no address at all.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
@@ -29,6 +30,9 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/ci-local-purge.spec.ts',
   'tests/unit/ci-local-secret-scan.spec.ts',
   'tests/unit/ci-gate-streak.spec.ts',
+  'tests/unit/trading-engine-cost-basis-postgres.spec.ts',
+  'tests/unit/trading-event-plans.spec.ts',
+  'tests/unit/trading-earnings-rules.spec.ts',
 ]);
 
 /**

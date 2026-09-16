@@ -5,19 +5,21 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove unattended execution re-resolves an exact observed account and its current administrator authority.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise real batch and runner watchdogs with fixed/all selectors and current operator revocation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove local schedule polling survives a first-attempt bootstrap failure instead of staying stopped until the process restarts.
  */
 import type { Request } from 'express';
 import type { Pool } from 'pg';
 import { expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { createApplicationAuthorizationActorResolver } from '@/app/middleware/application-authorization-identity';
-import { resolveTestLabScheduledActor } from '@/app/composition/test-lab-schedule-wiring';
+import { createTestLabScheduleWiring, resolveTestLabScheduledActor } from '@/app/composition/test-lab-schedule-wiring';
+import type { AppContext } from '@/app/composition/app-context';
 import type { AuthorizationActor } from '@/shared/application-authorization';
 import { TestLabScheduleService } from '@/app/routes/test-lab-schedule-service';
 import { TestLabRunService } from '@/app/routes/test-lab-run-service';
 import type { TestLabRun, TestLabRunStore } from '@/app/routes/test-lab-run-types';
 import type { TestLabSchedule, TestLabScheduleBatch, TestLabScheduleStore } from '@/app/routes/test-lab-schedule-types';
-import type { InstalledAppTestCatalog, InstalledAppTestCase } from '@/features/swarm-apps';
+import type { InstalledAppTestCatalog, InstalledAppTestCase, SwarmAppService } from '@/features/swarm-apps';
 
 function fixture() {
   const principal = { issuer: 'https://schedule-provider.test', sub: 'owner' };
@@ -112,3 +114,71 @@ it('cancels a fixed-package batch and withholds output after current operator re
     expect(new Set(f.scopes)).toEqual(new Set(['fixture'])); expect(f.storage.state.row?.result?.output).toBeUndefined();
   } finally { await f.state.executing; f.service.stop(); }
 },10000);
+
+/**
+ * The boundary these two cases cross is the readiness the controller HANDS the schedule wiring -
+ * the authorization bootstrap passed at `server.ts`. On a busy box its first attempt loses a pool
+ * acquire and rejects; `createRetryableReady` drops that attempt so every later ask starts a fresh
+ * one. That is injected here at the real seam (`options.ready`), with the same rejection PostgreSQL
+ * raises, and everything downstream of it runs for real: the wiring, the schedule schema bootstrap
+ * and its advisory-lock DDL, the store's claim transaction, and the service's own poll timer.
+ *
+ * The pg pool is the one scoped double, because a real one cannot fail-then-recover without a
+ * server. Its real companion is tests/unit/authorization-readiness-consumers.spec.ts, which drives
+ * the same readiness through a genuine lost acquire against disposable PostgreSQL.
+ */
+function pollingFixture(failFirstAttempt = true) {
+  const statements: string[] = [];
+  const record = async (text: unknown) => {
+    statements.push(typeof text === 'string' ? text : String((text as { text?: string } | null)?.text ?? ''));
+    return { rows: [] as unknown[] };
+  };
+  const pool = { query: record,connect: async () => ({ query: record,release: () => undefined }) } as unknown as Pool;
+  let asks = 0;
+  const service = createTestLabScheduleWiring({
+    ctx: { pool } as unknown as AppContext,
+    apps: { testLabCatalog: { list: () => [],inventory: () => [] } } as unknown as SwarmAppService,
+    runs: {} as unknown as TestLabRunService,
+    ready: async () => { asks++; if (failFirstAttempt && asks === 1) throw new Error('timeout exceeded when trying to connect'); },
+    authorization: { targetActor: async () => null,refreshActor: async () => null },
+    visible: async () => new Map<string,string>(),
+  });
+  const matching = (fragment: string) => statements.filter(text => text.includes(fragment));
+  return { service,asks: () => asks,
+    schema: () => matching('CREATE TABLE IF NOT EXISTS oshal_test_lab_schedules'),
+    claims: () => matching('FOR UPDATE SKIP LOCKED') };
+}
+/** Advance the poll timer and let the store's promise chain finish; nothing below the timer uses timers. */
+async function settle(advanceMs: number): Promise<void> {
+  await vi.advanceTimersByTimeAsync(advanceMs);
+  for (let turn = 0; turn < 100; turn++) await Promise.resolve();
+}
+
+it('polls again after the boot-time bootstrap attempt fails, instead of staying stopped until restart', async () => {
+  vi.useFakeTimers();
+  const f = pollingFixture();
+  try {
+    await settle(0);
+    // The boot attempt ran and lost the acquire, so nothing reached the schema.
+    expect(f.asks()).toBe(1); expect(f.schema()).toHaveLength(0); expect(f.claims()).toHaveLength(0);
+    // One poll cycle must re-ask the readiness. Starting the timer inside the boot attempt's .then()
+    // meant this cycle never happened and local scheduling stayed dead for the life of the process.
+    await settle(15000);
+    expect(f.asks()).toBeGreaterThan(1);
+    expect(f.schema().length).toBeGreaterThan(0);
+    expect(f.claims().length).toBeGreaterThan(0);
+  } finally { f.service.stop(); vi.useRealTimers(); }
+},20000);
+
+it('stops claiming once the registered shutdown path stops the service', async () => {
+  vi.useFakeTimers();
+  const f = pollingFixture(false);
+  try {
+    await settle(15000);
+    const claimed = f.claims().length;
+    expect(claimed).toBeGreaterThan(0);
+    f.service.stop();
+    await settle(60000);
+    expect(f.claims()).toHaveLength(claimed);
+  } finally { f.service.stop(); vi.useRealTimers(); }
+},20000);

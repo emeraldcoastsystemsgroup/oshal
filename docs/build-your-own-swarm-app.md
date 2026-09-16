@@ -151,7 +151,9 @@ larger class of apps also owns server-side state and HTTP routes. [Security Cent
 (ADR-055) is a compact example of that shape:
 
 - `bots[]` — a single `security-analyst` that is **reason-only** (it triages findings; it does
-  not act). Because it only reasons, it runs inline on the api container rather than as a
+  not act). It reasons only - but it runs on its own bot node rather than inline, because signed
+  delegation requires a dedicated endpoint and the api container is the one holding the docker
+  socket and the signing key. Reason-only is enforced by the persona and the route, not by the
   separate bot-node container.
 - `routes[]` — declares `mountPath: /api/security`. The path is authoritative for the gate:
   when the app is toggled inactive, `/api/security/*` returns 503. (The Express mount itself is

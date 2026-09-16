@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Restore protected queued authority and persist exact-parent result lineage without permitting a localhost fallback.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Carry the ticket owner's hosted-connection resolver into protected dispatch so the queued request is built in the supported direct/hosted shape, and keep a shape refusal on the ticket (no localhost downgrade, which would replace the honest reason with a generic one).
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded multi-bid specialist fan-out with per-owner credentials, one durable aggregate, truthful routing metadata, partial-result handling, and safe single-winner fallback.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Persist dedicated bot-node completions (including out-of-band provider records) into the shared conversation stores before marking manifest-worker tickets complete; retry writes are deduplicated and localhost dispatch remains single-write.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Extracted dispatchManifestWorkerTicket from queue-manager-service.ts (audit P0 second cut)
@@ -37,7 +38,11 @@ import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middle
 import { isSuperAdminSub } from '@/shared/middleware/superadmin';
 import { resolveSkillProfileByTicketType, composeSkillProfilePrompt } from '@/shared/skill-profiles';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
-import { executeManifestApplicationBot } from './manifest-worker-application-execution';
+import {
+  executeManifestApplicationBot,
+  QueuedProtectedDispatchError,
+  type QueuedHostedConnectionResolver,
+} from './manifest-worker-application-execution';
 import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
 import {
   parseTrustedProviderIntent,
@@ -331,6 +336,16 @@ export interface ManifestWorkerDispatchDeps {
    *  it (default-on OSHAL_PUSH_ON_DISPATCH). Missing authority is carried explicitly so the
    *  target refuses before model/task execution; explicit flag-off restores the legacy rail. */
   runtimeParamsResolver?: RuntimeParamsResolver;
+  /**
+   * Resolves the ticket owner's HOSTED reasoning endpoint for a protected application dispatch
+   * (docs/security/remote-application-execution.md "Supported execution"). A queued protected
+   * request has to carry a server-resolved `byoLlmConnection` or the worker denies it; this is the
+   * only way the queue can obtain one, because the queue has no request to resolve a brain from.
+   * It must be the hosted ladder, not the full user-brain ladder: that one answers with a local CLI
+   * brain first for a configured operator on a demo box, and a CLI brain cannot satisfy the worker.
+   * Absent → a protected target refuses naming this wiring; unprotected dispatch is unaffected.
+   */
+  resolveHostedConnection?: QueuedHostedConnectionResolver;
 }
 
 /**
@@ -836,7 +851,7 @@ export async function dispatchManifestWorkerTicket(
             userSub: ticket.ownerSub ?? undefined,
             principalIssuer: readOwnerPrincipalIssuer(ticket.metadata) ?? undefined,
             ...ownerConfigFields,
-          }, deps.taskStore);
+          }, deps.taskStore, deps.resolveHostedConnection);
           return {
             owner,
             result,
@@ -926,7 +941,7 @@ export async function dispatchManifestWorkerTicket(
           ...(providerIntent && creds && Object.keys(creds).length > 0 ? { creds } : {}),
           ...(providerIntent ? { providerIntent } : {}),
           ...configFields,
-        }, deps.taskStore);
+        }, deps.taskStore, deps.resolveHostedConnection);
         botNodeResult = result;
         dispatchResult = {
           success: result.success === true,
@@ -934,6 +949,12 @@ export async function dispatchManifestWorkerTicket(
           error: result.success ? undefined : result.response || 'bot-node returned success=false',
         };
       } catch (botErr) {
+        // A protected-shape refusal already names exactly what the owner is missing. The localhost
+        // leg refuses every protected target with its own generic code, so falling through would
+        // overwrite that reason with one nobody can act on — the blank escalation this fixes.
+        if (botErr instanceof QueuedProtectedDispatchError) {
+          throw botErr;
+        }
         if (authoritativeDispatch || providerIntent || deps.botNodeClient.isDelegationEnforced()) {
           throw botErr;
         }

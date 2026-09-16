@@ -16,6 +16,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Extracted from jarvis-routes.ts (804 code lines, over the 800-line decomposition threshold): threadTicketKey, ensureSessionTask, ensureThreadChatTicket and the durable open-ticket lookup move here unchanged; closeThreadChatTicket wraps the map access POST /thread/close used to do inline.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Stop calling an ensureSessionTask failure non-fatal. It is fatal to the ask: the caller turns the false into 404 session_not_found, so a store that could not answer is refused in exactly the words used for a session somebody else owns. The guard still fails closed - nothing about the decision changes - but the cause is now logged at ERROR, which is the only thing that tells an undetermined check apart from a real denial.
  */
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
@@ -72,7 +73,10 @@ export async function ensureSessionTask(ctx: AppContext, sub: string, issuer: st
     return Boolean(created && created.ownerSub === sub && (readOwnerPrincipalIssuer(created.metadata) === issuer
       || !issuer && !ctx.applicationAuthorization));
   } catch (err) {
-    logger.warn({ err, sessionId }, 'jarvis: ensureSessionTask failed (non-fatal)');
+    // Fail closed, but never silently and never mislabelled: the caller answers 404
+    // session_not_found on this false, so an unavailable store is refused with the same words as a
+    // foreign owner. The log is what separates "denied" from "could not be determined".
+    logger.error({ err, sessionId }, 'jarvis: session ownership UNDETERMINED (task store failed); /ask will refuse with session_not_found');
     return false;
   }
 }

@@ -41,7 +41,9 @@ import { executeBotOrInline } from './inline-bot-execution';
 
 const logger = createChildLogger({ module: 'security-routes' });
 
-/** The security-analyst bot — reason-only, runs inline on the api container (claude-code). */
+/** The security-analyst bot — reason-only (claude-code), on its own bot node since signed
+ * delegation requires a dedicated endpoint. This route still passes only a byoLlmConnection:
+ * no connector credential, no provider intent. */
 const SECURITY_AGENT_ID = 'a0000000-0000-0000-0000-000000000047';
 const botClient = new BotNodeClient(createRegistryEndpointResolver());
 

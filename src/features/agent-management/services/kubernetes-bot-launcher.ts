@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment 2) — the Kubernetes sibling of the compose bot spawner, so an app package that brings its own bot-node launches it on a cluster too. Talks to the in-cluster API directly over HTTPS with the pod's ServiceAccount token (no new dependency, and nothing to keep in sync with a client library); renders the SAME workload shape as the chart's bots.yaml so a dynamically-launched bot is indistinguishable from a chart-declared one (bot-entrypoint.sh command, oshal-shared-env + oshal-bot-env envFrom, workspace PVC, Service named for the bot because the controller dials http://<name>:5000). SECURITY: the image is ALWAYS the platform image from env and never caller-supplied — a caller-chosen image would turn agent creation into arbitrary container execution; the name is DNS-1123-validated before it reaches an API path; and RBAC is a namespace-scoped Role (never a ClusterRole), so the blast radius is the tenant's own namespace.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added setRunning — the Kubernetes half of the cockpit enable/disable toggle. Disabling a bot must not delete its runtime, so this PATCHes the Deployment's `scale` SUBRESOURCE to 0 (and back to 1 to enable) rather than deleting and re-creating the workload: the pod stops, the Deployment, Service and DNS name stay, and re-enabling is one more scale call. The scale subresource is used deliberately over a whole-object replace so a concurrent `helm upgrade` or operator edit of the pod template is never clobbered by a stale copy the controller happened to be holding.
  */
 
 import { readFileSync, existsSync } from 'fs';
@@ -282,6 +283,40 @@ export class KubernetesBotRuntimeLauncher implements BotRuntimeLauncher {
       return { success: true, runtime: this.runtime };
     } catch (err) {
       return { success: false, runtime: this.runtime, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * @description Scale the bot's Deployment to 1 (enabled) or 0 (disabled). The
+   * Deployment and Service survive, so this is a toggle rather than a teardown.
+   * @param agentName bot slug — also the Deployment name
+   * @param running true to scale to 1, false to scale to 0
+   * @returns {Promise<BotLaunchResult>}
+   */
+  async setRunning(agentName: string, running: boolean): Promise<BotLaunchResult> {
+    if (!BOT_NAME_PATTERN.test(agentName)) {
+      return { success: false, runtime: this.runtime, error: `invalid bot name: ${agentName}` };
+    }
+    const ns = this.access.namespace;
+    const path = `/apis/apps/v1/namespaces/${ns}/deployments/${agentName}/scale`;
+    try {
+      const res = await apiRequest(
+        this.access,
+        'PATCH',
+        path,
+        { spec: { replicas: running ? 1 : 0 } },
+        'application/merge-patch+json',
+      );
+      if (res.status >= 400) {
+        logger.error({ name: agentName, running, status: res.status }, 'kubernetes bot scale failed');
+        return { success: false, runtime: this.runtime, error: `${res.status}: ${res.body}` };
+      }
+      logger.info({ name: agentName, running, namespace: ns }, 'bot runtime running-state changed (kubernetes)');
+      return { success: true, runtime: this.runtime };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      logger.error({ err, name: agentName }, 'kubernetes bot scale request failed');
+      return { success: false, runtime: this.runtime, error };
     }
   }
 

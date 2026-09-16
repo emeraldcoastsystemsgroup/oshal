@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | K7/K8 (BACKLOG kernel audit 2026-07-29): scoped the remaining internal-machinery bots (code-developer, devops-bot, code-reviewer, research-bot, test-engineer, tester-bot, security-analyst, vault-bot) to accessRoles operator+swarm — they carried the shared workspace read-write with NO declaration, so ADR-087's omitted=open made them live Jarvis/inbound-A2A call-out candidates (security-analyst was the sharpest: its ROUTE is requiresOperator-gated but its identity was not, so a call-out reached it around the gate). general-bot is scoped but KEEPS 'jarvis' — it is the ADR-083 task-lane fallback and removing jarvis strands every Jarvis task ticket (wave-2 constraint; guarded by internal-machinery-scoping.spec.ts + routability-critical-bots.spec.ts). K8 membership: added apply-operator (cb…0003) and linkedin-profile-operator (cb…0004) — both are pinned by core dispatch (browser-task-dispatch / profile-studio-dispatch) but existed ONLY in the full registry, so the DEFAULT lineup served their identities as unknown (= open, undiscoverable, unattributable). Guard: tests/unit/internal-machinery-scoping.spec.ts.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Fleet default -> codex (operator directive 2026-08-12): every LLM-harness bot flipped to harnessType codex-cli / apiType openai-codex (was a mix of claude-code and gemini). a2a untouched - an external-agent boundary, not an LLM harness. Model rides CODEX_MODEL (floor gpt-5.5, the ChatGPT-login model verified live; gpt-5.4 is the documented $20-plan self-install economy pick; gpt-5.6-sol stays interactive-only). claude-code remains a per-bot override and the runtime-failover secondary. Mirrored in swarm-bot-registry.ts.
  * 16 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. Doc-only here: the inline-bot comments said '(claude-code)' while the fleet has run codex since 2026-08-12 — corrected to '(codex)'. No registry entry changed.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com  | Signed delegation, core queued ticket types (BACKLOG "Signed delegation refuses every ticket whose worker bot runs inline"): with controller signing on, a worker with no dedicated bot-node endpoint is refused - dispatch-manifest-worker throws 'Signed HTTP delegation requires a dedicated bot-node endpoint' and the incident path rethrows 'No endpoint found for agent ...' for the same missing endpoint (the first appears five times in this box's api log in the 24h to 2026-09-16). rca-specialist, system-architect and queue-bot already NAME a running compose node and were forced inline only by the codex rule, so they take requiresOwnNode (the remedy resolve-bot-node-endpoint.ts already logs). security-analyst and workflow-assistant own queued ticket types ('security-finding', 'workflow-build') and move off container oshal-api onto their own nodes - a queued type must cross the signed hop, and triaging untrusted scanner output inside the control-plane container was the blast radius controller-inline-scope.ts names. Guard: tests/unit/signed-delegation-core-ticket-types.spec.ts.
  */
 
 import type { SwarmBotDefinition } from './swarm-bot-registry';
@@ -181,6 +182,10 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     name: 'rca-specialist',
     port: 3045,
     container: 'oshal-local-rca-specialist',
+    // Signed delegation (docs/security/http-delegation.md): this bot OWNS a core queued ticket
+    // type, so it must dispatch over the signed bot-node hop. Without this flag the codex rule in
+    // resolve-bot-node-endpoint.ts forces it inline and the dispatch is refused once signing is on.
+    requiresOwnNode: true,
     role: 'localhost/worker',
     capabilities: ['debugging', 'investigation', 'root-cause', 'incident', 'analysis', 'troubleshooting'],
     harnessType: 'codex-cli',
@@ -511,8 +516,13 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
   {
     agentId: 'a0000000-0000-0000-0000-000000000047',
     name: 'security-analyst',
-    port: 3010,
-    container: 'oshal-api',
+    port: 3056,
+    // Owns the queued 'security-finding' ticket type (swarm-apps/security.yaml), which Trivy
+    // auto-files. A queued type dispatches over signed HTTP delegation, so its worker needs a
+    // dedicated node; running it inline in the api ALSO put untrusted scanner text in the
+    // control-plane container (controller-inline-scope.ts names that blast radius).
+    container: 'security-analyst',
+    requiresOwnNode: true,
     role: 'security/triage-specialist',
     capabilities: ['finding-triage', 'threat-assessment', 'attack-scenario-analysis', 'remediation-recommendation'],
     harnessType: 'codex-cli',
@@ -656,8 +666,12 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
   {
     agentId: 'a0000000-0000-0000-0000-000000000051',
     name: 'workflow-assistant',
-    port: 3010,
-    container: 'oshal-api',
+    port: 3057,
+    // Owns the queued 'workflow-build' ticket type (swarm-apps/workflow-studio.yaml). Queued work
+    // dispatches over signed HTTP delegation, so the worker needs a dedicated node; the studio's
+    // interactive /chat turn takes the same node through executeBotOrInline.
+    container: 'workflow-assistant',
+    requiresOwnNode: true,
     role: 'workflow/orchestration-specialist',
     capabilities: ['workflow-design', 'process-architecture', 'orchestration', 'workflow-validation'],
     harnessType: 'codex-cli',
@@ -776,6 +790,10 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     name: 'system-architect',
     port: 3047,
     container: 'oshal-local-system-architect',
+    // Signed delegation (docs/security/http-delegation.md): this bot OWNS a core queued ticket
+    // type, so it must dispatch over the signed bot-node hop. Without this flag the codex rule in
+    // resolve-bot-node-endpoint.ts forces it inline and the dispatch is refused once signing is on.
+    requiresOwnNode: true,
     role: 'localhost/worker',
     capabilities: ['architecture', 'design', 'system-modeling', 'technical-specification', 'decomposition', 'research', 'analysis'],
     harnessType: 'codex-cli',
@@ -804,6 +822,10 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     name: 'queue-bot',
     port: 3055,
     container: 'oshal-local-queue-bot',
+    // Signed delegation (docs/security/http-delegation.md): this bot OWNS a core queued ticket
+    // type, so it must dispatch over the signed bot-node hop. Without this flag the codex rule in
+    // resolve-bot-node-endpoint.ts forces it inline and the dispatch is refused once signing is on.
+    requiresOwnNode: true,
     role: 'queue/quality-reviewer',
     capabilities: ['quality-review', 'deliverable-assessment', 'feedback-generation'],
     harnessType: 'codex-cli',

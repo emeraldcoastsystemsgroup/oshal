@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { InMemoryTicketStore, TicketService } from '../../src/features/ticketing';
+import {
+  buildTicketRowStatusMetadataPatch,
+  deriveTicketEscalationDetail,
+} from '../../src/entities/ticket';
 
 describe('ticket status history metadata', () => {
   it('records one actor-aware history row with metadata for a transition', async () => {
@@ -161,6 +165,42 @@ describe('ticket status history metadata', () => {
         currentStatus: 'in_process_build',
         elapsedMs: 180000,
       },
+    });
+  });
+  // Regression guard: the ticket row's lastStatusTransition mirror is what
+  // deriveTicketEscalationDetail falls back to when the append-only history cannot answer.
+  // A transition carrying no metadata used to leave the previous transition in the mirror,
+  // so a ticket de-escalated by the cockpit status route (which sends no metadata) kept
+  // reporting the escalation it had already left. Asserted on the mirror directly: the
+  // cockpit route gates on the ticket's live status being 'escalated' and hides this.
+  it('replaces the escalation mirror when a ticket leaves escalated carrying no metadata', async () => {
+    const store = new InMemoryTicketStore();
+    const service = new TicketService(store);
+    const ticket = await service.createTicket({
+      title: 'Browser submission dispatch',
+      ticketType: 'build',
+      status: 'in_process_build',
+      priority: 'medium',
+      labels: [],
+      metadata: { source: 'jarvis', queueId: 'jarvis' },
+    });
+
+    await service.updateStatus(ticket.ticketId, 'escalated', {
+      reason: 'browser_submission_dispatch_failed',
+      source: 'dispatch-browser-node',
+    });
+    await service.updateStatus(ticket.ticketId, 'cancelled');
+
+    const updated = await service.getTicket(ticket.ticketId);
+    expect(updated?.status).toBe('cancelled');
+    expect(updated?.metadata.lastStatusTransition).toEqual({ status: 'cancelled' });
+    expect(deriveTicketEscalationDetail(null, updated?.metadata)).toBeNull();
+    expect(updated?.metadata).toMatchObject({ source: 'jarvis', queueId: 'jarvis' });
+  });
+
+  it('mirrors a metadata-less transition without writing board fields the transition never carried', () => {
+    expect(buildTicketRowStatusMetadataPatch('cancelled', {})).toEqual({
+      lastStatusTransition: { status: 'cancelled' },
     });
   });
 });

@@ -85,7 +85,10 @@ note() { printf '   %s\n' "$*"; }
 # includes the office/presentations surface AND the deck-builder bot because its
 # lessons render decks. The resolved package set is deduplicated, so overlapping
 # bundles/--apps never stage a package or register a bot/surface twice.
-KERNEL_SERVICES=(oshal-api general-bot jarvis-bot oshal-developer)
+# security-analyst and workflow-assistant are KERNEL bots (KERNEL_BOT_AGENT_IDS) and now carry
+# requiresOwnNode, so a kernel install that does not START them leaves the Security Center
+# assessment and Workflow Studio talk-to-build resolving to a container that never came up.
+KERNEL_SERVICES=(oshal-api general-bot jarvis-bot oshal-developer security-analyst workflow-assistant)
 declare -A BUNDLE_PACKAGES=(
   [kernel]=""
   [full]=""

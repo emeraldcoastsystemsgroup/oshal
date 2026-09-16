@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Compose durable remote authority from current principal, package and existing controller signing services.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Report at boot when the authority is registered on a controller holding no signing material. Registration is unconditional and signing is lazy, so that controller looked healthy and refused every protected package dispatch instead.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Take schema readiness as a re-requestable thunk so a bootstrap that failed at boot is retried by the next remote-execution call instead of refusing for the life of the process.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Publish the authority's linkResult through the protected-result port so a derived answer can be bound to its destination task under the same current-rights verification.
  */
 import { createPrivateKey, createPublicKey } from 'node:crypto';
 import type { Pool } from 'pg';
@@ -78,6 +79,7 @@ export function createApplicationRemoteExecutionWiring(pool: Pool, ready: () => 
     assertResultAccess: (id, actor, binding) => authority.assertResultAccess(id, actor, binding),
     assertTaskResultAccess: (id, actor) => authority.assertTaskResultAccess(id, actor),
     hasTaskResults: id => authority.hasTaskResults(id),
+    linkResult: (id, resultTaskId, actor) => authority.linkResult(id, resultTaskId, actor),
     isProtectedAgent: async id => { await ready();
       return Boolean((await readApplicationExecutionOwnership(pool, { kind: 'bots', id, mode: applicationAuthorizationMode(env) }))?.protected);
     },

@@ -15,13 +15,14 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | ADR-127 REMOTE brain (stampRemoteBrain): a dedicated-node dispatch for a CLI-harness bot now carries the caller's resolved brain — the FULL ladder including the demo-CLI carve, so the operator's turns ride the mounted login stamped as the ADR-034 authoritative provider and guests ride a hosted lane as byoLlmConnection. Before this, only jarvis-orchestrator stamped its own dispatches; every other node route dispatched brainless and the node's static default governed regardless of who was calling.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | One harness resolution for guard AND executor (live 2026-08-13, career.oshal.ai swarmbot popup): agentRequiresHostedBrain matched the registry by agentId ONLY, but provider-runtime's resolveHarnessForAgent ALSO falls back to the entry named by process BOT_NAME. The controller runs BOT_NAME=project-manager (harness codex-cli), so every agent absent from the registry — 84 of 116 active rows on the operator box — was EXECUTED through a CLI harness while this guard answered "not a CLI bot", skipped the ladder, and let assertAuditedAutonomousHarness hand the user its raw SEC-05 text (reproduced on email-bot a695dd5f-…). resolveGoverningEntry now mirrors the executor's two-step lookup, so both entry points resolve a brain for exactly the agents that will need one. The refusal itself, demoOperatorCliUnlock, and the node path are untouched — this closes a guard gap, it does not widen what may execute.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | Refuse inline specialist dispatch until that transport can carry the required bounded package context.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com  | ONE bot-invocation chokepoint, the INLINE half (BACKLOG "One bot-invocation chokepoint - the INLINE half of /api/send-message"): the admission gates executeBotOrInline applied inline in its own body - specialist-context, the two credential-carrier refusals and the cost-governance HARD cap - are extracted into the exported assertBotInvocationAdmissible so a caller that CANNOT take this function's bot-node request shape (message-routes' inline branch carries a ticketContext and an interactionMode BotNodeRequest has no room for) clears the same decision instead of no decision at all. Behaviour here is byte-identical except the budget refusal is now the typed BudgetBlockedError (same message, code budget_cap_exceeded, statusCode 402) so a route can say WHY rather than 500. Entitlement stays asserted by each caller - one assert, one audit line. Guard: tests/unit/send-message-budget-gate.spec.ts.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
 import type { BotNodeClient, BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
 import type { TaskUsageSummary } from '@/shared/types';
 import { createChildLogger } from '@/shared/logger';
-import { BudgetService } from '@/features/cost-governance';
+import { BudgetService, type BudgetDecision } from '@/features/cost-governance';
 import { isUnbrokeredAutonomousProvider } from '@/features/llm-provider';
 import { composeSkillProfilePrompt, resolveSkillProfileByApp } from '@/shared/skill-profiles';
 import { assertExecuteEntitlement } from '@/app/bot-node-execute-entitlement';
@@ -361,6 +362,97 @@ export function swallowedTurnFailure(
 }
 
 /**
+ * @description Thrown when cost governance definitively refuses an invocation — a HARD
+ * daily cap exceeded, or the runaway kill switch. Typed (rather than the bare Error this
+ * used to be) so a route can answer `402 budget_cap_exceeded` instead of an anonymous 500:
+ * "you are over your cap" and "the server broke" are different facts and the cockpit has to
+ * be able to tell them apart. The message text is unchanged from the untyped throw.
+ */
+export class BudgetBlockedError extends Error {
+  /** Machine code callers branch on and routes return. */
+  readonly code = 'budget_cap_exceeded';
+
+  /** HTTP status the chat routes map this to — Payment Required, the cap is the reason. */
+  readonly statusCode = 402;
+
+  constructor(readonly verdict: BudgetDecision) {
+    super(
+      `Budget governance blocked execution (${verdict.reason}): spend $${verdict.spend?.toFixed(2)} >= cap $${verdict.cap}`,
+    );
+    this.name = 'BudgetBlockedError';
+  }
+}
+
+/**
+ * @description The facts an admission decision reads off an invocation. Structural (not the
+ * full {@link BotNodeRequest}) so a caller that does NOT build a bot-node request — the
+ * inline half of the chat route, which hands the controller orchestrator its own options
+ * object — can still be admitted by exactly this function instead of a second copy of the
+ * policy that drifts from it.
+ */
+export interface BotInvocationFacts {
+  /** The accountable spend owner; null/undefined is an unscoped (swarm) invocation. */
+  userSub?: string | null;
+  /** Connector credentials riding the request, if any. */
+  creds?: Record<string, string>;
+  /** A validated deterministic provider intent, if any. */
+  providerIntent?: unknown;
+}
+
+/**
+ * @description The admission gates EVERY bot invocation must clear, in one definition.
+ *
+ * `executeBotOrInline` below is the chokepoint by construction, but not every caller can
+ * route through it: the inline half of `POST /api/send-message` carries a ticketContext and
+ * an interactionMode the bot-node request shape has no room for, so it calls the controller
+ * orchestrator itself. Before this function existed, that branch cleared NO gate at all —
+ * a user sitting on a tripped HARD cap kept spending through the cockpit chat panel for as
+ * long as the bot they were talking to was controller-inline, which is most of the concierge
+ * fleet. Sharing the decision (not re-implementing it) is what keeps the two from drifting.
+ *
+ * Execute-time entitlement is deliberately NOT here: both callers already assert it against
+ * the same pure `decideExecuteEntitlement`, and asserting twice would double the audit line.
+ *
+ * @param ctx - App context; only the pg pool is read (for cost governance).
+ * @param agentId - The target bot's agent UUID.
+ * @param request - The invocation facts (owner sub, credential carriers).
+ * @param hasDedicatedEndpoint - Whether this agent resolves to its own bot node.
+ * @returns Nothing; it either admits the invocation or throws.
+ * @throws SpecialistContextError when an inline transport cannot carry the bounded package
+ *   context the target bot requires.
+ * @throws Error `UNSCOPED_CREDENTIAL_CARRIER` / `PROVIDER_INTENT_REQUIRES_BOT_NODE` when
+ *   connector credentials are not inside an audited deterministic provider intent on a node.
+ * @throws BudgetBlockedError (statusCode 402) when a HARD cap is definitively exceeded.
+ *   Fail-OPEN on infra gaps, per BudgetService semantics: an unreadable budgets table or a
+ *   DB hiccup never blocks a turn.
+ */
+export async function assertBotInvocationAdmissible(
+  ctx: Pick<AppContext, 'pool'>,
+  agentId: string,
+  request: BotInvocationFacts,
+  hasDedicatedEndpoint: boolean,
+): Promise<void> {
+  const carriesCreds = Boolean(request.creds && Object.keys(request.creds).length > 0);
+  if (!hasDedicatedEndpoint && getSpecialistContextRegistry()?.requires(agentId)) {
+    throw new SpecialistContextError('specialist_context_requires_bot_node');
+  }
+  if (carriesCreds && !request.providerIntent) {
+    const error = new Error('Connector credentials require a validated deterministic provider intent') as Error & { code: string };
+    error.code = 'UNSCOPED_CREDENTIAL_CARRIER';
+    throw error;
+  }
+  if (!hasDedicatedEndpoint && (request.providerIntent || carriesCreds)) {
+    const error = new Error('Deterministic provider intents require a dedicated audited bot-node handler') as Error & { code: string };
+    error.code = 'PROVIDER_INTENT_REQUIRES_BOT_NODE';
+    throw error;
+  }
+
+  // BudgetService holds no per-instance caches, so per-call construction is safe.
+  const verdict = await new BudgetService(ctx.pool).checkBudget(request.userSub ?? null);
+  if (!verdict.allowed) throw new BudgetBlockedError(verdict);
+}
+
+/**
  * @description Executes a bot request on its remote any-bot node when one exists;
  * otherwise runs controller-inline bots through the local orchestrator. Both paths sit
  * behind the cost-governance budget gate: a HARD user-scope daily cap definitively
@@ -393,29 +485,8 @@ export async function executeBotOrInline(
     surface: 'executeBotOrInline',
   });
 
-  const carriesCreds = Boolean(request.creds && Object.keys(request.creds).length > 0);
   const hasDedicatedEndpoint = botClient.hasEndpoint(agentId);
-  if (!hasDedicatedEndpoint && getSpecialistContextRegistry()?.requires(agentId)) {
-    throw new SpecialistContextError('specialist_context_requires_bot_node');
-  }
-  if (carriesCreds && !request.providerIntent) {
-    const error = new Error('Connector credentials require a validated deterministic provider intent') as Error & { code: string };
-    error.code = 'UNSCOPED_CREDENTIAL_CARRIER';
-    throw error;
-  }
-  if (!hasDedicatedEndpoint && (request.providerIntent || carriesCreds)) {
-    const error = new Error('Deterministic provider intents require a dedicated audited bot-node handler') as Error & { code: string };
-    error.code = 'PROVIDER_INTENT_REQUIRES_BOT_NODE';
-    throw error;
-  }
-
-  // BudgetService holds no per-instance caches, so per-call construction is safe.
-  const verdict = await new BudgetService(ctx.pool).checkBudget(request.userSub ?? null);
-  if (!verdict.allowed) {
-    throw new Error(
-      `Budget governance blocked execution (${verdict.reason}): spend $${verdict.spend?.toFixed(2)} >= cap $${verdict.cap}`,
-    );
-  }
+  await assertBotInvocationAdmissible(ctx, agentId, request, hasDedicatedEndpoint);
 
   // ADR-090 skill-profile GENERAL carrier: resolve the calling app's domain profile for this
   // capability ONCE, controller-side (the bot holds no registry — ADR-036). Guarded on BOTH app +

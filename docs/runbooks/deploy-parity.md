@@ -83,10 +83,52 @@ decides whether `DEPLOYED` is printed at all.
 |---|---|---|
 | `bot-role-grant` | `has_table_privilege('oshal_bot','public.oshal_authorization_applications','SELECT')` is true | `scripts/governance/provision-app-role.mjs` re-converges `oshal_bot` to an exact allowlist on every api boot, and that allowlist does not contain this table — so migration 140's grants are stripped at boot and **every** Jarvis ask answers `503 authorization_bot_posture_unavailable` until someone re-applies them by hand. |
 | `jarvis-ask` | Jarvis answers one fixed question **as the operator**, on a fresh thread | The reasoning rail is the product. A time-boxed PAT is minted inside the api container with the service secret already in its environment, used on loopback, and revoked by id; the thread is closed afterwards. The token and the operator subject are never printed. |
-| `ticket-dispatch` | one synthetic `task` ticket leaves `approved` without landing in `escalated`/`dead_letter`/`failed` | `task` is a built-in `manifest-worker` workflow, so it exercises the exact dispatch path that failed, on every box, with no manifest-registration race. The ticket is cancelled and deleted whatever the verdict. |
+| `ticket-dispatch` | one synthetic `task` ticket, **pinned to the workflow's declared owner**, leaves `approved` without landing in `escalated`/`dead_letter`/`failed` | `task` is a built-in `manifest-worker` workflow, so it exercises the exact dispatch path that failed, on every box, with no manifest-registration race. The pin (`metadata.targetAgentId`, resolved by name through `GET /api/agents`) is what makes the target a **dedicated bot node**: unpinned, a `task` ticket routes by the ADR-083 call-out and lands on whichever knowledge owner wins the bid, which on 2026-09-15/16 was an INLINE bot — and signed delegation refuses every inline target outright (`Signed HTTP delegation requires a dedicated bot-node endpoint`). The ticket is cancelled and deleted whatever the verdict. |
 
-Each check prints one `VERIFY PASS` / `VERIFY FAIL` line; a failure prints the remedy underneath it,
-including the exact re-apply command for the missing grant.
+Each check prints one `VERIFY PASS` / `VERIFY FAIL` / `VERIFY UNVERIFIED` line; anything that is not
+a pass prints the remedy underneath it, including the exact re-apply command for the missing grant.
+
+### `VERIFY UNVERIFIED` — the third state, and why it is not a pass
+
+There is exactly one thing this gate structurally cannot do for itself, and pretending otherwise
+made it permanently red on 2026-09-15 and 2026-09-16.
+
+The probe asks as a PAT it mints inside the api container from `SWARM_SERVICE_SECRET`. That mint
+records **no principal issuer**, on purpose: every bot container carries the fleet-wide service
+secret, so treating it as proof of an identity-provider namespace would let one injected bot assert
+any user's identity namespace (`src/app/routes/cli-token-routes.ts` — "a service-secret assertion is
+not proof of an IdP namespace"). With `OSHAL_DELEGATION_SIGNING_KID` +
+`OSHAL_DELEGATION_SIGNING_PRIVATE_KEY` configured on the controller, `resolveDelegatedPrincipal`
+(`src/features/agent-management/services/bot-node-client.ts`) therefore refuses a user-bound
+delegation raised under that PAT with `User-bound delegation requires a verified principal issuer` —
+for the Jarvis ask **and** for the queued dispatch. That refusal is the authorization rule working.
+
+So that refusal — and *only* that refusal, and only when signing is configured, and only on the PAT
+the check minted for itself — prints `VERIFY UNVERIFIED`, counts in its own bucket, and does **not**
+fail the deploy. It is not a pass either: the run log says
+`N check(s) NOT VERIFIABLE from automation - this deploy is UNPROVEN as a product`. **Any** other
+refusal is still `VERIFY FAIL` and still exit 4 — including this same refusal when an operator token
+*was* supplied, because then the supplied token is the thing at fault.
+
+**To verify it for real**, hand the gate an identity that carries a verified issuer. Only a mint made
+from a signed-in session records one, so from a browser already logged into the cockpit:
+
+```js
+// browser console on the cockpit origin, signed in
+await (await fetch('/api/cli-tokens', { method: 'POST', credentials: 'same-origin',
+  headers: { 'content-type': 'application/json' }, body: JSON.stringify({ label: 'deploy-verify' }) })).json()
+```
+
+```bash
+export OSHAL_VERIFY_OPERATOR_PAT='<the token from that response>'
+bash -c 'source scripts/lib/deploy-verify.sh && oshal_deploy_post_verify'
+```
+
+That token is used as-is and **never revoked** by the gate (it is the operator's own credential), and
+it is forwarded into the container by `docker exec -e NAME` with no `=value`, so it never appears in
+a command line, in `ps`, or in the run log. Every `OSHAL_VERIFY_*` variable exported by the caller is
+forwarded the same way — the probe reads its knobs from the environment of the process it runs in,
+which is the api container, not the shell that started the deploy.
 
 ### Exit 4: deployed and serving, but the product is down
 
@@ -144,8 +186,11 @@ quietly skipping.
 
 `OSHAL_VERIFY_DB_CONTAINER` / `OSHAL_VERIFY_API_CONTAINER` / `OSHAL_VERIFY_DB_USER` /
 `OSHAL_VERIFY_DB_NAME` name the containers and role; `OSHAL_VERIFY_TICKET_TYPE` picks the synthetic
-ticket's workflow (`task`); `OSHAL_VERIFY_BUDGET_MS` (default 300000) bounds both polls;
-`OSHAL_VERIFY_QUESTION` sets the Jarvis question.
+ticket's workflow (`task`); `OSHAL_VERIFY_TICKET_WORKER` names the bot that ticket is pinned to
+(`general-bot` — it must be one the registry marks `requiresOwnNode`, or signed delegation refuses it
+as inline); `OSHAL_VERIFY_BUDGET_MS` (default 300000) bounds both polls; `OSHAL_VERIFY_QUESTION` sets
+the Jarvis question; `OSHAL_VERIFY_OPERATOR_PAT` supplies a session-minted token so both product
+checks are answerable under delegation signing (see `VERIFY UNVERIFIED` above).
 
 ### What a deploy leaves behind
 

@@ -328,9 +328,11 @@ gate_repo_separation() {
 # destroyed production data with nothing warning. Two written briefs failed to stop it in one
 # night; this is the guard that does. Refuses a live published-port literal in a *.spec.ts /
 # *.test.ts, and any test-tree module reading the published-port knob off process.env (the
-# silent-default shape itself, caught even when the literal is renamed). Fail-closed: a tree with
-# no test files reports UNCHECKED (exit 2), never clean. Runs against $GATE_SRC so it judges the
-# committed tree, like repo-separation.
+# silent-default shape itself, caught even when the literal is renamed). Also refuses the live
+# databases NAMED rather than addressed - the container in a DSN host position, a host: field, or
+# an environment fallback - which is the half the port rules could not see and which was live in
+# the tree until 2026-09-16. Fail-closed: a tree with no test files reports UNCHECKED (exit 2),
+# never clean. Runs against $GATE_SRC so it judges the committed tree, like repo-separation.
 gate_spec_database_default() {
   (cd "$GATE_SRC" && timeout 120 bash scripts/ci/check-spec-database-default.sh);
 }

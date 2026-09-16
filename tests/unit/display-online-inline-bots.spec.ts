@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the inline-bot display-online fix. Inline/api-hosted bots never publish a heartbeat, so the cockpit's heartbeat-only rule rendered every one of them offline even while working (dnd had 122 real runs). resolveDisplayOnline = heartbeat OR isControllerInlineContainer(container), classified from the LIVE registry container — NOT agents.metadata, which stale-tags the promoted trading-analyst NODE as inline. This locks in: inline (oshal-api) with no heartbeat = online; a dedicated node with no heartbeat = offline; and the trading-analyst trap can't regress.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The concrete inline case moved from security-analyst to codex-packer: security-analyst now runs on its own bot node because it owns the queued 'security-finding' ticket type, and a queued type must cross the signed delegation hop (BACKLOG "Signed delegation refuses every ticket whose worker bot runs inline"). The rule under test is unchanged - only the bot that still exercises the inline half.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -49,10 +50,13 @@ describe('display online rule — inline bots must not render offline', () => {
     expect(isControllerInlineContainer(trading!.container)).toBe(false);
     expect(resolveDisplayOnline(false, trading!.container)).toBe(false);
 
-    // security-analyst is a real inline concierge (container oshal-api) → online with no heartbeat.
-    const security = byName.get('security-analyst');
-    expect(security, 'security-analyst present in registry').toBeDefined();
-    expect(isControllerInlineContainer(security!.container)).toBe(true);
-    expect(resolveDisplayOnline(false, security!.container)).toBe(true);
+    // codex-packer is a real inline concierge (container oshal-api) → online with no heartbeat.
+    // It replaced security-analyst here when that bot moved to its own node: a bot that owns a
+    // queued ticket type must cross the signed delegation hop, so it can no longer be inline
+    // (docs/security/http-delegation.md, "Worker routing for core ticket types").
+    const packer = byName.get('codex-packer');
+    expect(packer, 'codex-packer present in registry').toBeDefined();
+    expect(isControllerInlineContainer(packer!.container)).toBe(true);
+    expect(resolveDisplayOnline(false, packer!.container)).toBe(true);
   });
 });

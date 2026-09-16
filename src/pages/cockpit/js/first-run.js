@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | De-brand (visible leak): reworded the "no model connected" banner + doc comment to drop the legacy stub-name wording (now just "placeholder text"). The stub-provider detection was left matching the legacy provider id until the noop rename landed.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | De-brand final pass: the stub-provider detection now matches 'noop' (NoopProvider reports 'noop' as of the provider rename); isFreeOrStub replaces the legacy-named flag. Functional fix, not cosmetic — the old pattern would no longer match the renamed provider id.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Model-state banners are now dismissible (session-scoped, so the reminder returns next visit) and the strip wraps on narrow viewports — without flex-wrap the fixed-width buttons squeezed the text into a tall sliver that filled a phone screen with no way to close it.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | DECIDED (BACKLOG "In-app help: per-surface affordances and first-run"): the getting-started strip no longer suppresses itself on the full framework profile. Suppression was inherited from a "starter home only" reading, but the full profile is the cockpit a signed-in user lands on by default, so the one screen carrying every surface was also the one screen offering no orientation. A focused app (?app=) still suppresses it — that workspace belongs to one product and the generic actions are noise there.
  */
 
 /**
@@ -32,7 +33,6 @@ const GS_DISMISS_KEY = 'oshal-getting-started-dismissed';
 // previously filled the screen with no dismiss at all).
 const MODEL_DISMISS_KEY = 'oshal-model-banner-dismissed';
 const FOCUSED_APP = /[?&]app=/.test(window.location.search);
-const FULL_PROFILE = /[?&]profile=oshal-framework/.test(window.location.search);
 
 /** Inject the scoped stylesheet once. */
 function injectStyles() {
@@ -162,7 +162,12 @@ async function modelBanner() {
 
 /** Getting-started strip with three first actions (C3). Returns an element or null. */
 function gettingStartedStrip() {
-  if (FOCUSED_APP || FULL_PROFILE) return null; // only on the clean starter home
+  // Suppressed inside a focused app (?app=) — that cockpit is one product's workspace and the
+  // generic three actions are noise there. NOT suppressed on the full framework profile any
+  // more: that is the cockpit carrying every surface, the one a new user is most likely to land
+  // on, and suppressing there meant they got no orientation at all. The strip is dismissible and
+  // the dismissal is remembered, so the cost to a returning user is one click, once.
+  if (FOCUSED_APP) return null;
   try { if (localStorage.getItem(GS_DISMISS_KEY)) return null; } catch { /* no storage */ }
 
   const bar = document.createElement('div');

@@ -24,6 +24,12 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The cockpit enable/disable toggle PATCHes the scale SUBRESOURCE (kubernetes-bot-launcher
+  # setRunning) so a disable stops the pod without deleting the Deployment. A grant on
+  # `deployments` does NOT cover `deployments/scale` - without this line the toggle 403s.
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update", "patch"]
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

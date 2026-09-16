@@ -18,6 +18,7 @@
  * -----------------------------------------------------------------------------
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Attach regression tests to the jarvis-routing scenario. It had none, so the two guards behind every step in it - the /ask session-ownership gate and the deterministic provider-intent routing - were invisible from the Lab, and the ownership guard sat red for days with nothing pointing at it.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Register the ADR-100 Ambient Recall scenario (exact recall, asks/people/trends reads, deterministic Jarvis asks answer).
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Register isolated nightly, provisioning and authoritative bot initialization coverage.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Register installed-case discovery, connector callback boundaries and multi-store control regression suites.
@@ -328,6 +329,10 @@ export const SCENARIOS: Scenario[] = [
   {
     id: 'jarvis-routing', title: 'Jarvis routing — does it understand each ask?', group: 'jarvis',
     description: 'Fire each command at Jarvis and confirm it answers or dispatches.',
+    regressionTests: [
+      { level: 'integration', path: 'tests/unit/jarvis-ask-session-ownership.spec.ts' },
+      { level: 'integration', path: 'tests/unit/jarvis-provider-intent-routing.spec.ts' },
+    ],
     steps: [
       { id: 'j-jobs', app: 'jarvis', label: '"What are my top job opportunities right now?"', run: (c) => jarvisStep(c, 'top jobs', 'What are my top job opportunities right now?') },
       { id: 'j-fly', app: 'jarvis', label: '"Search flights from JFK to London next month."', run: (c) => jarvisStep(c, 'search flights', 'Search flights from JFK to London next month.') },
