@@ -19,6 +19,8 @@
  *
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | barsBatchSinceOhlcv(): deep-history daily bars from an explicit start that KEEP open/high/low/volume. barsBatchSince drops them, and the true-range family (ATR, ADX/+DI/−DI) cannot be reconstructed from closes — which blocked the trend-exhaustion study (ADX≥40 + RSI extreme) from running on a multi-year window. Additive; barsBatchSince and all its callers untouched.
  *
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Export the two Alpaca primitives a sibling leg needs to speak to the same vendor with the same policy: alpacaAuthHeaders() (the key headers, or null when unconfigured) and alpacaFetch() (the shared abort-timeout fetch). ADR-143 D5's REST screener lives in its own module (alpaca-screener.ts) rather than growing this file, and a second private copy of the key resolution + timeout would be free to drift from this one.
+ *
  * @module market-data
  */
 
@@ -96,6 +98,26 @@ function keys(): { id: string; secret: string } {
 
 /** True when Alpaca data credentials are present. */
 export function marketDataConfigured(): boolean { const k = keys(); return Boolean(k.id && k.secret); }
+
+/**
+ * @description The Alpaca data-API key headers, or null when no key is configured — the single place
+ * a sibling Alpaca leg asks "do we have a key, and what does it send".
+ * @returns The APCA-API-KEY-ID / APCA-API-SECRET-KEY headers, or null when unconfigured.
+ */
+export function alpacaAuthHeaders(): Record<string, string> | null {
+  return marketDataConfigured() ? authHeaders() : null;
+}
+
+/**
+ * @description `fetch` with this module's shared Alpaca abort timeout (ALPACA_FETCH_TIMEOUT_MS) —
+ * exported so a sibling Alpaca leg uses one timeout policy instead of keeping a second copy of it.
+ * @param url - Request URL.
+ * @param init - Fetch init (headers/method/body); the abort signal is merged in.
+ * @returns The fetch Response.
+ */
+export function alpacaFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetchT(url, init);
+}
 
 async function adata<T>(pathname: string): Promise<T> {
   const k = keys();

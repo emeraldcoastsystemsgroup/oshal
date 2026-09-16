@@ -47,6 +47,8 @@
   .lbl { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 5px; }
   input[type=text] { flex: 1 1 140px; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--line);
     border-radius: 9px; padding: 8px 11px; font: inherit; font-size: 13.5px; }
+  select { background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 9px; padding: 8px 11px; font: inherit; font-size: 13.5px; }
   button, a.btn { cursor: pointer; border: 1px solid var(--line); background: var(--chip);
     color: var(--text); border-radius: 9px; padding: 8px 15px; font: inherit; font-size: 13.5px;
     font-weight: 600; text-decoration: none; display: inline-block; white-space: nowrap; }
@@ -91,27 +93,24 @@
 
     <section class="card" id="desktopTile">
       <div class="tile-head"><span class="codicon codicon-device-desktop"></span><h2>Desktop</h2></div>
-      <p class="lead">Make a Windows PC a worker node. The swarm can then run a browser on it, execute
-      shell tasks and drive the screen, and only work dispatched to you ever reaches it.</p>
+      <p class="lead">Make a Windows, Mac or Linux computer a worker node. The swarm can then run a
+      browser on it, execute shell tasks and drive the screen, and only work dispatched to you ever
+      reaches it.</p>
       <label class="lbl" for="nodeName">Name this computer</label>
       <div class="actions">
         <input id="nodeName" type="text" value="my-computer" maxlength="40" autocomplete="off" spellcheck="false" />
+        <select id="platform" aria-label="Which kind of computer is this for?">
+          <option value="windows">Windows</option>
+          <option value="macos">macOS</option>
+          <option value="linux">Linux</option>
+        </select>
         <button class="primary" id="downloadBtn" type="button">Download installer</button>
       </div>
       <div class="msg" id="downloadMsg"></div>
-      <div class="howto" id="howto" hidden>
-        <b>Saved as <code>install-oshal-node.cmd</code>. Copy it to the PC and double-click it.</b>
-        <ol>
-          <li>Node.js 20 or newer must be installed on that PC first
-            (<a href="https://nodejs.org" target="_blank" rel="noreferrer">nodejs.org</a>, the LTS build).</li>
-          <li>Windows may ask whether to run a file from the internet. Choose <b>Run</b>.</li>
-          <li>It installs the node app, binds it to your account and starts it. The computer appears
-            below within a minute.</li>
-          <li>Delete the file afterwards. It holds a credential for that one computer.</li>
-        </ol>
-      </div>
-      <p class="fine">Windows only today. macOS and Linux are not one-click yet; the guide says what
-      exists for them.</p>
+      <div class="howto" id="howto" hidden></div>
+      <p class="fine">The list starts on the computer you are reading this from. Downloading for a
+      different machine? Pick it above &mdash; the installer is built for the one you choose, not the
+      one you are on.</p>
       <h3>Your computers</h3>
       <div id="computers" class="list"><span class="empty">Loading…</span></div>
     </section>
@@ -190,6 +189,55 @@
     m.className = 'msg' + (cls ? ' ' + cls : '');
   }
 
+  // ONE description per platform, used for the query the route is asked for, the name the
+  // file is saved under, and the steps shown afterwards — so those three can never disagree.
+  var INSTALL_TARGETS = {
+    windows: {
+      filename: 'install-oshal-node.cmd',
+      opening: 'Saved as <code>install-oshal-node.cmd</code>. Copy it to the PC and double-click it.',
+      steps: [
+        'Node.js 20 or newer must be installed on that PC first (<a href="https://nodejs.org" target="_blank" rel="noreferrer">nodejs.org</a>, the LTS build).',
+        'Windows may ask whether to run a file from the internet. Choose <b>Run</b>.'
+      ]
+    },
+    macos: {
+      filename: 'install-oshal-node.sh',
+      opening: 'Saved as <code>install-oshal-node.sh</code>. Copy it to the Mac, open Terminal and run it.',
+      steps: [
+        'Node.js 20 or newer must be installed on that Mac first (<a href="https://nodejs.org" target="_blank" rel="noreferrer">nodejs.org</a>, the LTS build).',
+        'In Terminal: <code>bash ~/Downloads/install-oshal-node.sh</code> &mdash; run it through <code>bash</code> and there is nothing to make executable and no <code>sudo</code>.'
+      ]
+    },
+    linux: {
+      filename: 'install-oshal-node.sh',
+      opening: 'Saved as <code>install-oshal-node.sh</code>. Copy it to that machine, open a terminal and run it.',
+      steps: [
+        'Node.js 20 or newer must be installed there first (<a href="https://nodejs.org" target="_blank" rel="noreferrer">nodejs.org</a>, the LTS build).',
+        'In a terminal: <code>bash ~/Downloads/install-oshal-node.sh</code> &mdash; run it through <code>bash</code> and there is nothing to make executable and no <code>sudo</code>.',
+        'Run it from that machine\u2019s own desktop, not over a plain SSH session: the node app opens a window, and the installer stops early and says so if there is no graphical session.'
+      ]
+    }
+  };
+
+  // Which computer the person is reading this from. A guess, and only a default: the select
+  // stays authoritative, because downloading on one machine for another is normal.
+  function detectPlatform() {
+    var uaData = (navigator.userAgentData && navigator.userAgentData.platform) || '';
+    var s = (uaData + ' ' + (navigator.platform || '') + ' ' + (navigator.userAgent || '')).toLowerCase();
+    // Mac first: iPadOS reports itself as "Macintosh", and no Windows string contains "mac".
+    if (/mac|iphone|ipad|ipod|darwin/.test(s)) return 'macos';
+    if (/win/.test(s)) return 'windows';
+    if (/linux|android|cros|x11/.test(s)) return 'linux';
+    return 'windows';
+  }
+
+  function chosenPlatform() {
+    var value = $('platform').value;
+    return Object.prototype.hasOwnProperty.call(INSTALL_TARGETS, value) ? value : 'windows';
+  }
+
+  $('platform').value = detectPlatform();
+
   $('origin').textContent = location.origin;
   $('cockpitUrl').textContent = location.origin + '/cockpit/';
 
@@ -205,8 +253,19 @@
     'delete it once the computer appears on this page. You can revoke it at any time; that disables ' +
     'this one computer and nothing else.\n\nDownload it?';
 
+  function showHowTo(platform) {
+    var target = INSTALL_TARGETS[platform];
+    $('howto').innerHTML = '<b>' + target.opening + '</b><ol>'
+      + target.steps.map(function (step) { return '<li>' + step + '</li>'; }).join('')
+      + '<li>It installs the node app, binds it to your account and starts it. The computer'
+      + ' appears below within a minute.</li>'
+      + '<li>Delete the file afterwards. It holds a credential for that one computer.</li></ol>';
+    $('howto').hidden = false;
+  }
+
   async function download() {
     var name = ($('nodeName').value || '').trim().slice(0, 40) || 'my-computer';
+    var platform = chosenPlatform();
     if (!window.confirm(CREDENTIAL_NOTICE)) return;
     var btn = $('downloadBtn');
     btn.disabled = true;
@@ -216,7 +275,8 @@
       // (409 when the cockpit was opened over localhost, or when the swarm still accepts its
       // swarm-wide secret for nodes), and a plain <a download> would save that JSON to Downloads
       // under the installer's own name. Save only a 200.
-      var res = await fetch('/api/join/node-installer?name=' + encodeURIComponent(name), { credentials: 'same-origin' });
+      var res = await fetch('/api/join/node-installer?name=' + encodeURIComponent(name)
+        + '&platform=' + encodeURIComponent(platform), { credentials: 'same-origin' });
       if (!res.ok) {
         var body = null;
         try { body = await res.json(); } catch (e) { body = null; }
@@ -229,13 +289,13 @@
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
       a.href = url;
-      a.download = 'install-oshal-node.cmd';
+      a.download = INSTALL_TARGETS[platform].filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
-      $('howto').hidden = false;
-      setMsg('Saved to your Downloads folder as install-oshal-node.cmd.', 'ok');
+      showHowTo(platform);
+      setMsg('Saved to your Downloads folder as ' + INSTALL_TARGETS[platform].filename + '.', 'ok');
     } catch (e) {
       setMsg('Could not reach the swarm: ' + (e && e.message ? e.message : e), 'bad');
     } finally {
