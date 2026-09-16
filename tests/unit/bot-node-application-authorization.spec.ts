@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for the bot posture check that refused without saying why (live-board fault B4). readProtectedBotApplication ended in a bare `catch { throw ... }`, so a 42501 from the ownership read — the exact failure migration 140 exists for — reached the operator as a bare 503 authorization_bot_posture_unavailable with nothing logged and no cause attached. These cases assert the pair that matters: every refusal still fails closed with its EXACT existing code (nothing here widens execution authority) AND an undetermined posture is now reported, while a posture the guard genuinely DECIDED is distinguishable from one it could not determine. A fix that logged on every path, or that stopped failing closed, fails these cases.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Same correction as the module: the live comment named migration 140, which this change deletes. The case itself is unchanged - it still pins that a 42501 from the ownership read is reported as UNDETERMINED rather than swallowed.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -24,7 +25,7 @@ const POOL = { query: vi.fn() } as never;
 const LOCAL = 'agent-local-1';
 const TARGET = 'agent-target-2';
 
-/** The shape migration 140 exists to prevent: the bot cannot read what its guard reads. */
+/** The shape the derived helper exists to prevent: the bot cannot read what its guard reads. */
 const PERMISSION_DENIED = Object.assign(new Error('permission denied for table oshal_authorization_applications'), {
   code: '42501',
 });

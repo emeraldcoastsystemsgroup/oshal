@@ -150,7 +150,7 @@ policies can remain in place harmlessly.
   or they ship unprotected — a posture test should assert coverage.
 - (2026-07-05) The `/api/governance/posture` release gate codifies the as-built deviation: `OSHAL_SCHEMA_BOOTSTRAP=auto` with a non-superuser, non-BYPASSRLS runtime role is compliant (informational advisory only, since the owner is FORCE-RLS-scoped); `validate-only` remains the hardened target, and superuser + non-validate-only stays a blocker.
 
-## Amendment — derived helpers are the bot contract's only functions (2026-09-14, pending operator approval)
+## Amendment — derived helpers are the bot contract's only functions (2026-09-14, approved 2026-09-16)
 
 The worker role `oshal_bot` executes **derived** `SECURITY DEFINER` helpers only: they answer one
 question about a row the bot may act on and expose nothing else. `oshal_owns_ticket(uuid)` was the

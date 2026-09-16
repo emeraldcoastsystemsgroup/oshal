@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve durable protected ownership for verified hosted execution while keeping unbound transports unavailable.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Say WHY the posture is unavailable. readProtectedBotApplication ended in a bare `catch { throw ... }` that discarded the cause, so a bot answered 503 authorization_bot_posture_unavailable for every execution with nothing anywhere recording the reason. That is not hypothetical: migration 140 exists because oshal_bot could not SELECT the tables this guard reads, the 42501 was swallowed here, the api surfaced "Bot node returned 500", and the page spoke a generic apology. The refusal is CORRECT and both throws keep their exact code and 503 status — what changes is that the cause is logged at ERROR and attached to the error, and a conflicting-ownership refusal (a real posture decision) is distinguished in the log from an infrastructure fault (undetermined). Guard: tests/unit/bot-node-application-authorization.spec.ts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Correct the live comment that named migration 140. That migration is deleted by this change - the bot reads the derived helper oshal_application_execution_claims instead - and a comment pointing at a file that no longer exists is how a later lane gets misdirected. The Change Log entries above are left exactly as written: they record what was true when each change landed.
  */
 /** Protected package execution requires both durable ownership and current caller permits. */
 import type { Pool } from 'pg';
@@ -61,7 +62,7 @@ export async function readProtectedBotApplication(pool: Pick<Pool, 'query'> | nu
   } catch (err) {
     // Fail closed, unchanged — the code and the 503 are the contract. What was missing is the
     // reason. A conflicting-ownership throw is a real posture DECISION; anything else is an
-    // infrastructure fault (the 42501 migration 140 exists for) and is merely UNDETERMINED.
+    // infrastructure fault (a 42501 from the ownership read) and is merely UNDETERMINED.
     // Both refuse; only the log tells them apart.
     const conflicting = err instanceof Error && err.message === 'Conflicting protected bot ownership';
     logger.error({ err, localAgentId, requestedAgentId, conflicting },
