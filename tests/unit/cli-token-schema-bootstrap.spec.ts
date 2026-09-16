@@ -49,6 +49,8 @@ const PROBE = /to_regclass/;
 function makeFakePool(options: {
   failStatement?: RegExp;
   probe?: 'present' | 'absent' | 'throws';
+  /** Columns the probe reports MISSING — the ALTERs that add them belong to the failed bootstrap. */
+  missingColumns?: string[];
 } = {}): FakePool {
   const state: FakePool = {
     poolQueries: [], clientQueries: [], connects: 0, releases: 0,
@@ -62,7 +64,10 @@ function makeFakePool(options: {
       if (options.probe === 'throws') {
         throw Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01' });
       }
-      return { rows: [{ present: options.probe === 'present' }], rowCount: 1 };
+      return {
+        rows: [{ present: options.probe === 'present', missing: options.missingColumns ?? null }],
+        rowCount: 1,
+      };
     }
     if (options.failStatement?.test(text)) {
       throw Object.assign(new Error('sorry, too many clients already'), { code: '53300' });
@@ -168,6 +173,32 @@ describe('oshal_cli_tokens schema bootstrap', () => {
     expect(message).toMatch(/unaffected/i);
     // The claim that cost a day: never assert this impact when the table is right there.
     expect(message).not.toMatch(/unavailable until it exists/);
+  });
+
+  it('refuses to call PAT auth unaffected when the table is missing columns PAT auth reads', async () => {
+    // The table existing is not the claim. findLiveCliToken selects node_client_id and
+    // principal_issuer, and those arrive in ALTER statements belonging to this very bootstrap — so
+    // on a database that never ran migration 102 the table is present and PAT auth is broken.
+    const pool = makeFakePool({
+      failStatement: /ALTER TABLE oshal_cli_tokens/,
+      probe: 'present',
+      missingColumns: ['node_client_id', 'principal_issuer'],
+    });
+
+    createCliTokenRoutes(pool.asPool);
+    await waitForBootstrapReport();
+
+    expect(pool.probeCount).toBe(1);
+    expect(logSpies.warn).not.toHaveBeenCalled();
+    expect(logSpies.error).toHaveBeenCalledTimes(1);
+    const message = reportedMessage();
+    expect(message).toMatch(/missing columns PAT auth reads/);
+    expect(message).toMatch(/WILL fail/);
+    // The exact regression: this is the branch that used to say the opposite.
+    expect(message).not.toMatch(/unaffected/i);
+    // And the columns are named, so the reader does not have to go looking.
+    const payload = logSpies.error.mock.calls[0][0] as { missing?: string[] };
+    expect(payload.missing).toEqual(['node_client_id', 'principal_issuer']);
   });
 
   it('errors with the unavailable wording only after probing and finding the table absent', async () => {

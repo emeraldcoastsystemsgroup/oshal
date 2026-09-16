@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the verified principal issuer on newly minted PATs and rotated node credentials. Bearer authentication now replays the original (issuer, subject) namespace; legacy rows remain usable by core routes but carry no invented issuer, so issuer-bound applications fail closed instead of rebinding an old token to a newly configured IdP.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact owner subjects during node-token rotation. The required non-empty validation remains, but subject case/whitespace is no longer trimmed before owner-scoped revocation and successor minting.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | The boot bootstrap takes ONE advisory-locked client (SCHEMA_LOCK_KEYS.cliTokens) instead of issuing its eight idempotent statements as eight separate pool acquires against a pool of 8 while 83 manifests load — that contention is what made it fail on a cold boot; the statements, including the per-boot owner-RLS/policy re-assert, are unchanged. And its catch now RE-PROBES before it names an impact: table present -> warn that PAT auth is unaffected, absent -> the unavailable wording, probe failed -> say the effect is unverified. The old handler asserted "PAT auth unavailable until it exists" on every failure without checking; migration 100 creates the table before the process starts and the auth middleware queries it directly, so that line described a functional loss that had not happened and cost a day of investigation. Guard: tests/unit/cli-token-schema-bootstrap.spec.ts.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | The failure report probes the COLUMNS PAT auth reads, not just the table. findLiveCliToken selects node_client_id and principal_issuer, which the failed bootstrap own ALTERs add - so a database that never ran migration 102 has the table, has broken PAT auth, and was being told unaffected. Four branches now: present-and-complete warns, present-with-missing-columns reports at ERROR and names them, absent and unprobeable unchanged.
  */
 import { Router, type RequestHandler, type Request, type Response } from 'express';
 import crypto from 'crypto';
@@ -128,6 +129,12 @@ export async function ensureCliTokenSchema(pool: Pool): Promise<void> {
 }
 
 /**
+ * The columns `findLiveCliToken` reads. A failure report may only call PAT auth unaffected if the
+ * table carries these: the table existing says nothing about the ALTERs that add them.
+ */
+const PAT_AUTH_COLUMNS = ['id', 'user_sub', 'email', 'node_client_id', 'principal_issuer'];
+
+/**
  * @description Reports a failed PAT-store bootstrap with an impact it has CHECKED. The handler
  * this replaces hardcoded "PAT auth unavailable until it exists" on every failure — a consequence
  * it never verified, and one that is usually false: migration 100 creates the table before the
@@ -144,12 +151,23 @@ export async function ensureCliTokenSchema(pool: Pool): Promise<void> {
  */
 async function reportCliTokenSchemaBootstrapFailure(pool: Pool, err: unknown): Promise<void> {
   let present: boolean;
+  let missing: string[] = [];
   try {
-    const { rows } = await runWithSystemIdentity(() => pool.query<{ present: boolean }>(
-      'SELECT to_regclass($1) IS NOT NULL AS present',
-      ['public.oshal_cli_tokens'],
+    // Probe what the CLAIM is about. The table existing is not enough to call PAT auth unaffected:
+    // findLiveCliToken reads node_client_id and principal_issuer, and those columns arrive in ALTER
+    // statements belonging to the very bootstrap that just failed — so on a database that never ran
+    // migration 102 the table is present, PAT auth is broken, and "unaffected" would be exactly the
+    // unprobed impact this reporter exists to stop.
+    const { rows } = await runWithSystemIdentity(() => pool.query<{ present: boolean; missing: string[] | null }>(
+      `SELECT to_regclass($1) IS NOT NULL AS present,
+              (SELECT array_agg(needed) FROM unnest($2::text[]) AS needed
+                WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_schema = 'public' AND table_name = $3
+                                     AND column_name = needed)) AS missing`,
+      ['public.oshal_cli_tokens', PAT_AUTH_COLUMNS, 'oshal_cli_tokens'],
     ));
     present = Boolean(rows[0]?.present);
+    missing = rows[0]?.missing ?? [];
   } catch (probeErr) {
     logger.error(
       { err, probeErr },
@@ -158,11 +176,20 @@ async function reportCliTokenSchemaBootstrapFailure(pool: Pool, err: unknown): P
     );
     return;
   }
+  if (present && missing.length) {
+    logger.error(
+      { err, missing },
+      'oshal_cli_tokens schema bootstrap failed and the table is missing columns PAT auth reads — ' +
+      'authentication with a personal access token WILL fail until the bootstrap completes',
+    );
+    return;
+  }
   if (present) {
     logger.warn(
       { err },
-      'oshal_cli_tokens schema bootstrap failed but the table is present — PAT auth is unaffected; ' +
-      'what did not complete is this boot\'s idempotent re-assert of the columns, index and owner RLS',
+      'oshal_cli_tokens schema bootstrap failed but the table carries every column PAT auth reads — ' +
+      'PAT auth is unaffected; what did not complete is this boot\'s idempotent re-assert of the ' +
+      'index and owner RLS',
     );
     return;
   }
