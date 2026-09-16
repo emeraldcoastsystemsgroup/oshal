@@ -2173,6 +2173,34 @@ A servo bought once should be describable once.
 - Neither the store's package-separation guard nor the canonical route compile is weakened to allow it: the
   shared rows travel as data, not as an imported runtime.
 
+### Compare our simulators against PteroSim (2026-09-15)
+
+**Context:** operator ask — carry PteroSim as the outside comparison point for our own simulators.
+[PteroSim](https://pterolabs.ai/) ([GitHub](https://github.com/PteroLabsAI/PteroSim-UAV-Simulator),
+[PX4 docs](https://docs.px4.io/main/en/sim_pterosim/index)) renders in Unreal Engine 5, computes 6-DOF
+dynamics with JSBSim, and speaks the lockstep Simulator MAVLink API on TCP 4560 to PX4, ArduPilot and
+Betaflight SITL, with a gRPC/Python SDK for multi-vehicle orchestration on Windows and Ubuntu. Our
+simulators solve different problems and none of them overlap it fully: `aero-lab` is a design-space
+search on a custom two-timescale 3-DOF integrator (it rejected JSBSim after measuring it add energy at
+wind-field steps); the `embodied` physics lab ([ADR-152](adr/152-embodied-physics-and-training-lab.md))
+is MuJoCo from the parts model with the kinematic sim as the certification gate; the embodied drone node
+already flies real PX4 SITL (SIH) over MAVLink but with no scene and no aerodynamic model; Spaces' Sim
+engine reconstructs rather than flies. The gap is an independent 6-DOF result to check ours against, and
+a rendered world for camera-in-the-loop work. This entry is evaluation, not adoption.
+
+**Done when:**
+- A written comparison covers each of our simulators against PteroSim on: what physics it solves, what it
+  renders, which flight stack it drives, how a bot or node would call it, and what it costs to run — and
+  states for each one whether PteroSim is a cross-check oracle, a replacement, or neither, with the reason.
+- One reproducible cross-check is run and recorded, not asserted: the same vehicle and the same commanded
+  manoeuvre through the embodied PX4 SITL node and through PteroSim, with the two trajectories and the
+  divergence published. A disagreement is a finding about one of the two models, named as such.
+- The licence position is recorded before any dependency is taken: the free tier's one-vehicle, F450-only,
+  two-hour/five-hour-cooldown and non-commercial limits are written down against the way we would actually
+  use it, and anything that would need a paid tier is called out as a purchase decision, not assumed.
+- If the answer is "neither", that verdict is recorded with its reason and the entry closes — a negative
+  result here is a result.
+
 ### Animatronic props: the bench, tracking, dynamics and sound (2026-09-14)
 
 **Context:** `animatronics` 0.1.0 rehearses and drives a rig, and its own backlog carries the done-when
