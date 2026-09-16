@@ -54,6 +54,12 @@ OSHAL pipelines and surfaces. One file per procedure.
   run: the spec-level failures of `ci-local.sh --head --skip-image` on 2026-09-14 (loaded host),
   classified by first error line — unit 49 tests, e2e 59, security-policy 5, lint 1 — with the
   verbatim assertions and the kept-log path. Evidence only; no causes.
+- [scheduled-tasks-trunk-vs-archive.md](./scheduled-tasks-trunk-vs-archive.md) — which checkout
+  each Windows scheduled task actually runs, and the launcher rule that keeps it there: resolve the
+  payload from the launcher's own directory, never a typed `C:\Projects\...` path. Carries the
+  measured archive-vs-trunk drift, the full task inventory, the deliberate Evidence-Nightly
+  exception (its board lives in `docs/evidence/`, which this public trunk cannot hold), and the
+  copy-pasteable repoint commands.
 - [gha-local.md](./gha-local.md) — `scripts/gha-local.ts`: run ANY GitHub Actions workflow locally
   ($0, no cloud runners) — plan/run/install; `uses:` mapped to local equivalents, push+login stripped,
   jobs execute from a clean HEAD export. The generic bridge beside the hardened daily gate (ADR-090).
