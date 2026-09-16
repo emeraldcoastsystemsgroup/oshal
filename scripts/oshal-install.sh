@@ -829,8 +829,10 @@ seed_first_admin() {
   say "creating the administrator account"
   # rand() is in scope by now; the prompt block deliberately did not reach for it.
   if [ -z "$ADMIN_PASSWORD" ]; then ADMIN_PASSWORD="$(rand | cut -c1-20)"; GENERATED_PASSWORD=1; fi
-  _proof="$(docker exec oshal-local-api node scripts/oshal-setup-root.mjs --origin "$_origin" 2>/dev/null     | sed -n 's/^Installer setup code: //p' | tr -d '
-')"
+  # set -euo pipefail: a failing docker exec makes the pipeline non-zero, and an unassignable
+  # command substitution would abort the install. A swarm that is already up must not be torn
+  # down by a ceremony that could not start.
+  _proof="$( { docker exec oshal-local-api node scripts/oshal-setup-root.mjs --origin "$_origin" 2>/dev/null || true; } | sed -n 's/^Installer setup code: //p' | tr -d '\r' || true)"
   if [ -z "$_proof" ]; then
     note "could not issue the installer setup code — finish setup in the browser at $_origin/login"
     return 0
