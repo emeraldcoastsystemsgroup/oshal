@@ -329,10 +329,10 @@ describe('the real dispatcher refuses no core ticket type with signing configure
   // endpoint assertions above, which is the same decision the other two pipelines branch on.
   //
   // What these cases do NOT cover: the ADR-083 call-out can replace the 'task' lane's declared
-  // worker with any online bidder, including one with no endpoint, and that dispatch is still
-  // refused. No resolveTaskWorker is wired here, so these tickets take the declared worker. That
-  // gap has its own BACKLOG entry ("The `task` call-out can still hand a ticket to a
-  // controller-inline bot under signing") and is not silently passed by this guard.
+  // worker with any online bidder, including one with no endpoint. No resolveTaskWorker is wired
+  // here, so these tickets take the declared worker. That path has its OWN guard -
+  // tests/unit/task-call-out-endpoint-routing.spec.ts, which drives a real call-out onto an
+  // endpoint-less owner - so it is covered there rather than silently passed here.
   const manifestWorkerTypes = CORE_TYPES.filter(
     (w) => w.ticketType !== 'build' && w.pipeline !== 'swarm' && w.pipeline !== 'incident-rca',
   );

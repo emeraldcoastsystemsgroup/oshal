@@ -1016,34 +1016,67 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   this hop at all.
 
 ### The `task` call-out can still hand a ticket to a controller-inline bot under signing
-
-- **Observed live 2026-09-16.** Of the five `Signed HTTP delegation requires a dedicated bot-node
-  endpoint` refusals in this box's api log in the preceding 24 h, THREE are this shape rather than the
-  pinned-worker shape the entry above fixes: `routedBy: "bid"`, `workerAgentId
-  a0000000-0000-0000-0000-000000000056` (self-healing-bot), on the `task` tickets
-  `scripts/lib/deploy-verify.sh` files - `"deploy verification 2026-09-16T07:38:04.781Z"` refused at
-  07:38:34.332Z, and two more at 07:39:34.264Z and 07:44:04.314Z. `self-healing-bot` has no entry in
-  either registry file - it is registered dynamically - so it resolves to no endpoint and wins the bid
-  anyway. (The other two, at 07:57:54.330Z and 08:10:30.744Z, are `routedBy: "pinned"` on
-  `a0000000-0000-0000-0000-000000000047`, security-analyst: the case the entry above closes.)
-- ADR-083 lets an online knowledge owner claim a `task` ticket and override the workflow's declared
-  worker
-  (`task-call-out.ts` -> `callOutAgentId` in `dispatch-manifest-worker.ts`). The workflow default is
-  now a dedicated node (general-bot), but the local registry still holds 24 bots on
-  `container: oshal-api` plus 13 that name a node and are held inline by the codex rule, and a
-  dispatch to any of those is refused with `Signed HTTP delegation requires a dedicated bot-node
-  endpoint`. `task` is the operator's highest-volume lane (269 escalated rows on this box).
-- **Why the obvious fix needs care:** dropping endpoint-less candidates from the call-out silently
-  changes who owns a ticket, and the 13 codex-held bots each name a real running container, so for
-  them the answer is probably `requiresOwnNode` rather than exclusion - but two of the 13
-  (`apply-operator`, `linkedin-profile-operator`) are remote-worker identities with no compose
-  service, and one is `oshal-assistant`, the Jarvis brain, whose interactive path would move to its
-  node with it. Each needs its own decision.
-- **Done when:** a `task` ticket whose call-out winner has no dedicated endpoint either reaches a
-  worker that does or is refused with a reason naming the routing decision rather than the transport;
-  every remaining controller-inline bot is recorded in `docs/security/http-delegation.md` as
-  interactive-only by intent; and a guard drives a call-out that selects an endpoint-less bot under
-  signing and proves the ticket does not escalate with the transport message.
+- **Built 2026-09-16 on `fix/task-call-out-endpoint-routing`.** ADR-083 lets an online knowledge
+  owner claim a `task` ticket and override the workflow's declared worker (`task-call-out.ts` ->
+  `callOutAgentId` in `dispatch-manifest-worker.ts`). A bid is not an endpoint, so with controller
+  signing configured the winner could be a bot that resolves to no bot-node endpoint, and the ticket
+  died at the TRANSPORT (`Signed HTTP delegation requires a dedicated bot-node endpoint`) rather
+  than at a routing decision. `task` is the highest-volume lane - 269 escalated `task` rows on this
+  box, against 44 `build` and 36 `oshal-dev`.
+- **Re-derived on the box 2026-09-16 21:0x UTC.** The 07:38/07:39/07:44 refusals the entry was filed
+  from are NOT recoverable: `oshal-local-api` was recreated at 18:55:56Z (`RestartCount 0`), so its
+  json log starts at 18:56:00Z and the synthetic tickets `scripts/lib/deploy-verify.sh` files are
+  cancelled and deleted whatever the verdict. What IS still true, measured rather than recalled: a
+  read-only probe of the live registry against the live heartbeats
+  (`getActiveRegistry` + the real `resolveBotNodeEndpoint` + `isControllerInlineContainer`) says
+  **14 of 37 online agents resolve to no endpoint** - 11 held inline by the codex rule, 1
+  `container: oshal-local-api`, and **2 with no registry definition at all**: `self-healing-bot`
+  (`a0…056`, `active` in `agents`, heartbeat `http://self-healing-bot:5000`, no entry in either
+  registry file) and `career-hunter` (`cb…0001`, the same shape - the entry recorded one, there are
+  two). `OSHAL_DELEGATION_SIGNING_KID`/`_PRIVATE_KEY` are set on the api, so enforcement is live.
+  The override itself is live too: at 19:39:16Z a `task` ticket logged `routedBy: "bid"`,
+  `workerBot: trading-analyst`, `workflowWorkerBot: general-bot` - the call-out replacing the
+  declared worker, which only completed because trading-analyst is `requiresOwnNode`.
+- **The fix is a routing decision, not a new code path** (`call-out-endpoint-routing.ts`). Under
+  enforcement a call-out winner with no dedicated endpoint is SET ASIDE for the workflow's declared
+  worker - `task` declares general-bot, which is `requiresOwnNode` - and the ticket records
+  `routedBy: workflow-default-call-out-unreachable`, so the metadata says an owner claimed it and
+  was overruled by reachability rather than that the call-out never ran. If the declared worker is
+  unreachable too, the refusal is `reason: call_out_worker_has_no_dedicated_endpoint` with a message
+  naming both bots. Nothing is weakened: the dispatch still crosses the signed hop, an unreachable
+  pair still fails closed, and the decision is inert with signing off, so no unsigned deployment
+  silently changes owners. Handing an unclaimable bid to general-bot is the same fallback ADR-083 §5
+  already applies when nobody claims a task.
+- **Three groups, three decisions, recorded in
+  [docs/security/http-delegation.md](security/http-delegation.md) "Controller-inline bots are
+  interactive-only, by intent".** (1) `container: oshal-api` bots stay inline - that is the design
+  `controller-inline-scope.ts` states, and they are interactive-only. (2) The codex-held group keeps
+  its inline path; `requiresOwnNode` stays a per-bot decision, never a sweep, and three are called
+  out individually: `oshal-assistant` (the Jarvis brain) is already in
+  `CALL_OUT_EXCLUDED_AGENT_IDS` so it can never win a `task` call-out and is **not** part of this
+  problem - moving it is an operator decision and was NOT taken here; `apply-operator` and
+  `linkedin-profile-operator` name containers docker-compose does not define, so `requiresOwnNode`
+  would turn a refusal into an opaque connect error. (3) The registry-less identities get no
+  registry entry - for the docker-socket self-healing bot that would be a deliberate widening - and
+  the routing rule keeps them off queued work. No compose service, registry row or ticket-type
+  worker changed.
+- **Guard:** `tests/unit/task-call-out-endpoint-routing.spec.ts` (6 cases, ~60 ms). It drives a REAL
+  call-out - real `buildTaskCallOutResolver`, real `AgentRouter` + `SelectionBidService`, real
+  `MeshBidBroadcaster` ranking a real `BID_RESPONSE` - that selects an endpoint-less owner, then
+  dispatches through the REAL `dispatchManifestWorkerTicket`, the REAL registry, the REAL
+  `resolveBotNodeEndpoint` and a REAL `BotNodeClient` holding a locally generated Ed25519 key, over
+  a REAL loopback bot node that records the signed token. Both endpoint-less shapes are covered (an
+  unregistered bidder and a `container: oshal-api` bidder), plus the two things that must NOT change:
+  a reachable winner still owns its ticket, and with signing off nothing is rerouted. Proved RED
+  against the pristine HEAD dispatcher (3 of 6 red, quoting the transport message verbatim) and
+  mutation-proved twice - inverting the endpoint test kills 4 cases, removing the enforcement gate
+  kills the signing-off case.
+- **Done when:** met. A `task` ticket whose call-out winner has no dedicated endpoint reaches the
+  workflow's declared worker over the signed hop, or is refused by `reason:
+  call_out_worker_has_no_dedicated_endpoint` naming the routing decision instead of the transport;
+  the controller-inline groups are recorded as interactive-only by intent in
+  `docs/security/http-delegation.md` (as a rule plus a tree-read command, not a hand-typed list that
+  drifts); and the guard above proves the ticket does not escalate with the transport message.
 
 ### The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh
 

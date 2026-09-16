@@ -136,6 +136,77 @@ every run and dispatches one ticket per manifest-worker type through the real di
 registry, the real endpoint resolver and a real signing key, so a new manifest that points a ticket
 type at a controller-inline bot fails without anyone editing that spec.
 
+### The `task` call-out may not hand a queued ticket to an unreachable owner
+
+`task` is the one open lane: ADR-083 broadcasts a `BID_REQUEST` to every online knowledge owner and
+the winner **overrides** the workflow's declared worker (`task-call-out.ts` ->
+`callOutAgentId` in `dispatch-manifest-worker.ts`). A bid is not an endpoint, so the winner can be a
+bot the rule above sends inline - or an agent with no registry definition at all, because a live
+Redis heartbeat plus an `active` row in `agents` is enough to be a candidate.
+
+Under signing such a win was never ownership: the ticket was always going to park in `escalated`
+quoting the transport. So the dispatcher now makes it a **routing** decision, in
+`call-out-endpoint-routing.ts`:
+
+1. A call-out winner that owns no dedicated bot-node endpoint is **set aside** for the workflow's
+   declared worker - which the workflow names precisely because it is reachable (`task` ->
+   general-bot, `requiresOwnNode`). The ticket records `routedBy:
+   workflow-default-call-out-unreachable`, so the metadata says an owner claimed it and was overruled
+   by reachability rather than that the call-out never ran.
+2. If that worker is unreachable too, the ticket is refused with reason
+   `call_out_worker_has_no_dedicated_endpoint` and a message naming **both** bots, instead of the
+   transport sentence above, which is true of every such refusal and identifies none of them.
+
+Nothing is loosened. The dispatch still crosses the signed hop, an unreachable pair still fails
+closed, and the whole decision is inert when signing is off - an endpoint-less winner keeps running
+inline exactly as it does today, so no unsigned deployment silently changes owners.
+
+Guard: `tests/unit/task-call-out-endpoint-routing.spec.ts` drives a real call-out (real
+`buildTaskCallOutResolver`, real `AgentRouter`, real `MeshBidBroadcaster` ranking a real
+`BID_RESPONSE`) that selects an endpoint-less owner, then dispatches through the real dispatcher, the
+real registry, the real `resolveBotNodeEndpoint` and a real `BotNodeClient` holding a locally
+generated Ed25519 key, over a real loopback bot node.
+
+### Controller-inline bots are interactive-only, by intent
+
+Everything below is a bot that resolves to **no** dedicated bot-node endpoint. Each is
+interactive-only on purpose: its turn runs in-process through `executeBotOrInline`, crossing no
+network hop, so there is nothing for a delegation token to bind to. None of them may own a queued
+ticket type, and after the call-out rule above none of them can acquire one by winning a bid either.
+
+Three groups, three different reasons - do not treat them as one list, and do not "fix" a group by
+flipping `requiresOwnNode` without reading why it is inline:
+
+| Group | What it is | Why it stays inline | Is the rule enough? |
+| --- | --- | --- | --- |
+| `container: oshal-api` / `oshal-local-api` | the concierges, packers, judges and operators that have no compose service of their own (project-manager, codex-packer, quality-judge, the delivery/video/capture/vault operators, `a2a-sample-agent`, ...) | they execute inside the control-plane container **by design**; `controller-inline-scope.ts` states the threat model and strips their shell and platform-plane credentials for exactly that reason | yes - interactive-only, nothing to change |
+| named a node, held inline by the codex rule | bots that DO declare a real running container but take the legacy inline path (`resolve-bot-node-endpoint.ts` already WARNs: `Bot declares a dedicated node but is being forced inline by the codex rule`) | the rule predates the bot-node JS CodexProvider; `requiresOwnNode: true` is the per-bot override | **per-bot decision, not a sweep** - see the exceptions below |
+| online with no registry definition | dynamically-registered identities that bid on a heartbeat alone (self-healing-bot `a0…056`, career-hunter `cb…0001` on the 2026-09-16 box) | there is no definition for the resolver to read, so there is no endpoint; adding one is a topology/ownership change, and for the docker-socket bot a deliberate widening | yes - the call-out rule keeps them off queued work |
+
+Read the current inventory from the tree rather than trusting a list on this page (counts drift; the
+registry does not):
+
+```bash
+node -e "const{getActiveRegistry}=require('./dist/app/extensions/swarm/swarm-bot-registry.js');const{resolveBotNodeEndpoint}=require('./dist/app/extensions/swarm/resolve-bot-node-endpoint.js');const{isControllerInlineContainer}=require('./dist/features/llm-provider/services/controller-inline-scope.js');const r=getActiveRegistry();for(const d of r){if(!resolveBotNodeEndpoint(d.agentId,r,isControllerInlineContainer))console.log(d.name,d.agentId,d.container)}"
+```
+
+Three bots in the middle group are called out individually, because the obvious remedy is wrong for
+each of them:
+
+- **`oshal-assistant` (`a0…050`) - the Jarvis brain. Do not move it as part of this rule.** It is
+  already in `CALL_OUT_EXCLUDED_AGENT_IDS` (`task-call-out.ts`), so it can never win a `task`
+  call-out and is not part of this problem at all. Giving it `requiresOwnNode` would move the
+  operator's primary interactive surface onto `jarvis-bot`, which is a deployment decision for the
+  operator and nothing else.
+- **`apply-operator` (`cb…0003`) and `linkedin-profile-operator` (`cb…0004`)** name containers
+  (`apply-operator`, `linkedin-profile-operator`) that `docker-compose.oshal-local.yml` does **not**
+  define - they are remote-worker identities. `requiresOwnNode` would resolve them to an address
+  nothing answers, turning a refusal into an opaque connect error: strictly worse.
+
+The rest of that group name a running compose service and could take `requiresOwnNode` one at a
+time, with the endpoint proven after each - the same care the core queued workers got above. None of
+them owns a queued ticket type today, so nothing is waiting on it.
+
 ### Why there is no signed inline path
 
 A signed inline path was considered and not built. The token authenticates a network hop, and an
@@ -153,16 +224,10 @@ issuer.
 
 ### What is still refused, and why it is not this rule
 
-Two refusals survive this routing decision. Neither is fixed by naming a different worker.
+One refusal survives this routing decision, and it is not fixed by naming a different worker.
+(The `task` lane's call-out was the second; it is closed above under
+[The `task` call-out](#the-task-call-out-may-not-hand-a-queued-ticket-to-an-unreachable-owner).)
 
-- **The `task` lane's call-out can still select a controller-inline bot.** ADR-083 lets an online
-  knowledge owner claim a `task` ticket, overriding the workflow default, and a bidder that resolves
-  to no endpoint is refused with the message above. The workflow default (general-bot) and the
-  manifest-declared workers are covered by the rule; a call-out winner is not. Three of the five
-  refusals in the local box's api log in the 24 h to 2026-09-16 are this shape - `routedBy: "bid"` on
-  self-healing-bot, which has no registry entry at all - on the `task` tickets
-  `scripts/lib/deploy-verify.sh` files. The backlog entry carries the measured size of the
-  endpoint-less set; do not copy a count into this page, it drifts.
 - **The `build` pipeline does not use this hop at all.** The swarm pipeline sends work units over
   the Redis mesh (`buildExecutionEnvelope` -> `MESH_CHANNELS.agentDirect`), and every bot node wraps
   its mesh handler in `prohibitUnsignedMeshExecution`, so with a public ring configured it answers
@@ -170,7 +235,7 @@ Two refusals survive this routing decision. Neither is fixed by naming a differe
   system-architect a node fixes the controller's routing decision; it does not give the swarm
   pipeline a signed transport.
 
-Both are tracked in [the backlog](../BACKLOG.md).
+It is tracked in [the backlog](../BACKLOG.md).
 
 ## Generate a key pair
 
