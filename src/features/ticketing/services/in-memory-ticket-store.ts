@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added in-memory ticket store fallback so MOCK_OIDC localhost flows can create, link, and inspect internal tickets without Postgres
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Queue DLQ: deriveStateFields maps 'dead_letter' → state_group 'escalated' (parity with the Postgres store so MOCK_OIDC flows behave identically).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): added findLatestByMetadataKey (newest match, any status; same-millisecond ties broken by insertion order) — parity with the Postgres consolidation lookup
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | buildTicketRowStatusMetadataPatch always returns a patch now, so the row's transition mirror is merged on every status update instead of being skipped for a metadata-less one
  */
 
 import { randomUUID } from 'crypto';
@@ -159,9 +160,7 @@ export class InMemoryTicketStore implements ITicketStore {
     existing.status = status;
     existing.stateGroup = stateGroup;
     existing.executionPhase = executionPhase;
-    if (metadataPatch) {
-      existing.metadata = { ...cloneRecord(existing.metadata), ...metadataPatch };
-    }
+    existing.metadata = { ...cloneRecord(existing.metadata), ...metadataPatch };
     existing.updatedAt = new Date().toISOString();
     this.tickets.set(ticketId, existing);
 
