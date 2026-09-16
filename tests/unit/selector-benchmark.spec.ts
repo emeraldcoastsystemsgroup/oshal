@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the selection benchmark. It measures, end to end through the REAL AgentRouter, how often the right owner wins an ask phrased the way a person types it. Candidates are built the way boot builds them (capabilities from LOCAL_BOT_REGISTRY, routing keywords read off the on-disk persona YAML the seeders read, minus the four bots the ADR-083 call-out never lets win); every candidate's Tier-1 bid is computed with the REAL exported computeBidConfidence and passed in, so the bid auction is genuinely exercised instead of skipped with bids:[]. The corpus covers every registered bot that declares a domain, several asks each, and pins the phrasings that have already misrouted in production.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Neutral fixture recipient: one corpus ask named a family member, which matches the publish gate's personal-identifier denylist, so once it reached main's TREE the fail-closed pre-push gate refused EVERY local push for every agent on the repo - the same shape as core #302/#303. The routing evidence in that ask is 'send a text message'; the recipient is inert, and the held-out benchmark holds its original score unchanged. Fix the identifier, never the pattern - and do not quote the offending phrase in the fix.
  */
 
 import { afterAll, describe, expect, it } from 'vitest';
@@ -204,7 +205,7 @@ const BENCH: readonly BenchCase[] = [
   { ask: 'follow the runbook for this production outage', owners: ['incident-response-bot'] },
   { ask: 'summarize my inbox and what did i miss in email today', owners: ['communications-bot'] },
   { ask: "what's on my calendar tomorrow, draft a reply to the meeting invite", owners: ['communications-bot'] },
-  { ask: 'send a text message to my wife', owners: ['communications-bot'] },
+  { ask: 'send a text message to my neighbor', owners: ['communications-bot'] },
   { ask: "what's the forecast for tomorrow, will it rain", owners: ['weather-bot'] },
   { ask: 'what are the weather conditions this weekend', owners: ['weather-bot'] },
   { ask: 'author a new bot persona and emit the manifest for it', owners: ['codex-packer'] },

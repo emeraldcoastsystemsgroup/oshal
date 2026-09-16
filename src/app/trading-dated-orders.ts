@@ -5,10 +5,11 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D4 dated (timed) orders. An operator decision minted now, PLACED later: a FORCE-RLS `oshal_trading_dated_orders` row carries the fire time (an Eastern wall-clock the operator chose, stored as an instant); the tick rides the existing `trading-events:<sub>` leg (5-minute cadence, TRADING_EVENT_PLANS-gated — no new schedule type, no cron change) and fires each due row ONCE through the same `deps.place` seam the event playbooks and protected lots use, so the engine's guardrails, live gate and reservation arbiter apply unchanged. Safety: a row whose window was missed (box asleep, leg off) EXPIRES instead of firing stale — never a market order 3 hours late; a closed market at the fire time (an exchange holiday) expires it too; an engine refusal is terminal (no retry loop); transient errors retry only inside the late window. v1 window = the leg's own 09:00–16:55 ET weekdays, 5-minute steps, ≤ TRADING_DATED_MAX_DAYS ahead.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-136 D4 follow-up: minute precision (the 5-minute grid is gone — the leg now fires every minute), the accepted window DERIVED from the leg cron (legWindowFromCron → 07:00–19:59 ET by default; one source of truth, no second env), NYSE full-closure holidays refused BY NAME at scheduling (nyse-holidays table + TRADING_MARKET_HOLIDAYS), and the extended-session rule: outside the regular session (TRADING_DATED_REGULAR_ET, default 09:30-16:00) only a LIMIT + extendedHours + DAY order is accepted — the venues (Alpaca extended_hours limit, Schwab SEAMLESS) take nothing else there — and validateFireAt FAILS CLOSED when the caller omits the order shape (the 1.9.2 store call `validateFireAt(fireAt)` therefore refuses every pre/post time). Schema bootstrap memoised per process: the tick now runs 60/5 × more often. fireDatedOrder's 'closed at fire time → expired' backstop is unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  */
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
-import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { nyseHolidayOn, type TradingBook } from '@/features/trading';
 import { loadBook } from './trading-books-store';
 import { TradingError } from './trading-engine';
@@ -136,7 +137,7 @@ let schemaReady = false;
 export async function ensureDatedOrdersSchema(pool: AppContext['pool']): Promise<void> {
   if (schemaReady) return;
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading dated orders',
+    pool, moduleName: 'trading dated orders', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_dated_orders (
         dated_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

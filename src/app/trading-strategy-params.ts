@@ -11,12 +11,13 @@
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — approved strategy-param store (load overlay onto defaults, clamped upsert) for the nightly optimizer + approval gate.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  *
  * @module trading-strategy-params
  */
 
 import type { AppContext } from './composition-root';
-import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { DEFAULT_STRATEGY_PARAMS, type StrategyParams } from '@/features/trading';
 
 /** The params the optimizer may tune and the Tuning page may approve. */
@@ -53,7 +54,7 @@ export function clampParam(p: keyof StrategyParams, v: number): number {
 /** Ensure the param store exists (self-healing). */
 export async function ensureStrategyParamsTable(pool: AppContext['pool']): Promise<void> {
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading strategy params',
+    pool, moduleName: 'trading strategy params', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_params (
         param TEXT PRIMARY KEY,

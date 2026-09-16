@@ -18,13 +18,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-(sub,mode,ET-day) closing-equity snapshot + prior-close lookup for the honest consolidated day P&L.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | loadDailyEquitySeries: the recorded equity curve, ascending, optionally windowed. Backs the /performance fallback for the LIVE (Schwab) book — Schwab has no equity-curve endpoint, so the "Total return"/"vs S&P" tiles were blank; this store IS our curve.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book re-key (PR1): book_id + a DENORMALIZED book_ref on every write (the raw-pool host report scripts read as the enforcing role with no GUC — a join to the FORCE-RLS'd books table would return zero rows and the report would lie; the ref rides the row instead). Reads/writes keyed (user_sub, book_id); accepts TradingBook or legacy mode.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  *
  * @module trading-daily-equity-store
  */
 
 import type { AppContext } from './composition-root';
 import type { TradingBook, TradingMode } from '@/features/trading';
-import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { ensureBooksSchema, legacyBook } from './trading-books-store';
 
 /** US/Eastern calendar day (YYYY-MM-DD) for a given epoch-ms (default: now). Market days are ET. */
@@ -36,7 +37,7 @@ function etDay(ms: number = Date.now()): string {
 export async function ensureDailyEquityTable(pool: AppContext['pool']): Promise<void> {
   await ensureBooksSchema(pool);
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading daily equity',
+    pool, moduleName: 'trading daily equity', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_daily_equity (
         user_sub TEXT NOT NULL, mode TEXT NOT NULL, et_day DATE NOT NULL,

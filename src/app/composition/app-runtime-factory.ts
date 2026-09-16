@@ -38,6 +38,7 @@ import { SwitchFrameworkService, AgentToolController, seedPersonaAuthorizations 
 import { SelectorCompositionService } from '@/features/selector-composition';
 import { ToolVerificationService, VerificationController, VerificationScheduler } from '@/features/tool-verification';
 import { ApprovalWorkflowService, ToolAuthInterceptor } from '@/features/tool-approval';
+import { createPersonaEmbeddedToolPolicy } from './embedded-tool-policy';
 import { readJsonConfig, readChatAgentProfileConfig, parseSelectorSkills, readNonEmptyString, runtimeDefaults } from './provider-runtime';
 import { ConnectorSpecToolService } from '@/app/connectors/runtime/spec-tools';
 import { ConnectorMarketplaceService } from '@/app/connectors/runtime/marketplace';
@@ -125,6 +126,9 @@ export function createOrchestrator(
   const toolAuthInterceptor = switchFrameworkService
     ? new ToolAuthInterceptor({
         approvalService: new ApprovalWorkflowService({ streamManager }),
+        // Tier 3 (provider-embedded) reads the SAME per-agent persona authorizations the
+        // registry tier is seeded from; absent a declaration the decision denies.
+        embeddedToolPolicy: createPersonaEmbeddedToolPolicy(),
         lookupAuthMode: async (agentId, toolName) => {
           const agentTools = await switchFrameworkService.getAgentTools(agentId);
           const match = agentTools.find((entry) => entry.tool?.name === toolName);

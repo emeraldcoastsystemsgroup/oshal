@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — honesty-rail guards: journal writes carry sub/kind/summary/source, failures are swallowed (a knob turn is never blocked by its paper trail), the reader's window is (since, through] oldest-first, and read failures return empty (the report ships without the section, never crashes).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The fake pool answers `connect()` too. A bootstrap that names an advisory lock key checks out ONE client and issues every statement on it, so a stand-in pool has to answer `connect()` as well as `query()`. The client records into the same `calls` array and shares the injected handler, so every assertion below still reads the statements this module issues; the injected-failure cases still throw from the same place.
  */
 import { describe, it, expect } from 'vitest';
 import type { Pool } from 'pg';
@@ -12,11 +13,14 @@ import { recordStrategyJournal, listStrategyJournal } from '../../src/app/tradin
 /** Fake pg pool capturing every query; per-call results/errors injectable. */
 function fakePool(handler?: (sql: string, params?: unknown[]) => { rows: unknown[] }) {
   const calls: Array<{ sql: string; params?: unknown[] }> = [];
+  const query = async (sql: string, params?: unknown[]) => {
+    calls.push({ sql, params });
+    return handler ? handler(sql, params) : { rows: [] };
+  };
   const pool = {
-    query: async (sql: string, params?: unknown[]) => {
-      calls.push({ sql, params });
-      return handler ? handler(sql, params) : { rows: [] };
-    },
+    query,
+    // The advisory-lock bootstrap path runs its statements on a checked-out client, not the pool.
+    connect: async () => ({ query, release: () => { /* a fake pool has nothing to reclaim */ } }),
   } as unknown as Pool;
   return { pool, calls };
 }
