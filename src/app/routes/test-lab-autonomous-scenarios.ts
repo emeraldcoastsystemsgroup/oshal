@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register the protected derived-result return guard on the protected remote application execution scenario.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the three trading guards that now start and destroy their own PostgreSQL (earnings rules, event plans, engine cost basis). They are the same disposable-container class this scenario already covers, and it is the only registered gate that executes them - they read no database address, so nothing else can point them anywhere.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Register the inherited-export guard next to the purge guard it completes. The purge guard runs purge_tree alone; this one runs ci-local.sh's own gate sequence over a state directory that already holds the previous run's export, which is the state the 2026-09-09 nightly wedged in.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Register the provider-embedded tool tier: per-agent grants read from the agent's own persona, a fail-closed refusal at execution, and a run trace that names the tier and the provider operation.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -159,5 +160,15 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
   steps: [{ id: 'runner', app: 'test-lab', label: 'Protected remote authorization fixtures', run: async () => ({
     app: 'test-lab', label: 'Protected remote authorization fixtures', state: 'degraded',
     detail: 'Run npm run test:remote-authorization with local Node and Docker. Fixtures create disposable databases and SQLite workspaces; no live provider, application data or account is changed. No tests ran from this step.',
+  }) }],
+}, {
+  id: 'embedded-llm-tool-tier', title: 'Provider-embedded tool tier', group: 'tool',
+  description: 'A named embedded tool is enabled or disabled per agent in that agent\'s own persona, a denied one refuses at execution with a stable code, and the run trace names the tier and the provider operation. Isolated fixtures; no model provider is called.',
+  regressionTests: [
+    { level: 'integration', path: 'tests/unit/embedded-tool-tier.spec.ts' },
+  ],
+  steps: [{ id: 'runner', app: 'test-lab', label: 'Embedded tool tier fixtures', run: async () => ({
+    app: 'test-lab', label: 'Embedded tool tier fixtures', state: 'degraded',
+    detail: 'Run npm run test:embedded-tools with local Node. Fixtures write persona YAML to a temporary directory and run the agentic loop against a scripted provider; no model, application data or account is reached. No tests ran from this step.',
   }) }],
 }];

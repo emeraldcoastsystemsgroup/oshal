@@ -14,9 +14,11 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Permit trusted in-process reason-only callers to supply an explicit system prompt without filesystem persona discovery.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove the generic connector-credential carrier from ProcessMessageOptions; model requests keep owner identity only.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: typed byoLlmConnection on ProcessMessageOptions (baseUrl+apiKey+model — the user-brain ladder result) so the orchestrator can honor a caller-resolved hosted endpoint instead of the callers smuggling it through an `as any` cast the orchestrator never read.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | ProcessResult carries a tier-aware tool trace (toolRuns) beside the flat toolsUsed names, so a finished run says which tier owned each tool and which provider operation an embedded tool actually ran. Optional, so every existing ProcessResult literal stays valid.
  */
 
 import { z } from 'zod';
+import { TOOL_TIERS, type ToolTier } from '@/shared/tools/embedded-tool-tier';
 
 /**
  * @description Task lifecycle status values.
@@ -195,6 +197,17 @@ export const ProcessMessageOptionsSchema = z.object({
 export type ProcessMessageOptions = z.infer<typeof ProcessMessageOptionsSchema>;
 
 /**
+ * @description One row of a run's tool trace: which tool ran, which tier owned it, and
+ * (embedded tier only) which provider operation the provider executed on our behalf.
+ */
+export const ToolRunTraceEntrySchema = z.object({
+  name: z.string().min(1),
+  tier: z.enum([...TOOL_TIERS] as [ToolTier, ...ToolTier[]]),
+  providerId: z.string().optional(),
+  providerOperation: z.string().optional(),
+});
+
+/**
  * @description Result from processing a message through the agentic loop.
  */
 export const ProcessResultSchema = z.object({
@@ -202,6 +215,9 @@ export const ProcessResultSchema = z.object({
   response: z.string().optional(),
   turnCount: z.number().int().nonnegative().optional().default(0),
   toolsUsed: z.array(z.string()).optional().default([]),
+  /** Tier-aware trace of every tool the run invoked: names the tier and, for the
+   *  provider-embedded tier, the provider operation that actually ran. */
+  toolRuns: z.array(ToolRunTraceEntrySchema).optional(),
   usageSummary: TaskUsageSummarySchema.optional(),
   error: z.string().optional(),
   completionType: z.enum(['natural', 'tool_limit', 'error', 'user_cancel', 'waiting_for_input']).optional(),

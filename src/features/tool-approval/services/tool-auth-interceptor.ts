@@ -5,10 +5,16 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of tool auth interceptor
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: unknown or missing-registry tools always deny; remove the environment-controlled graceful raw-executor fallback.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Provider-embedded tool tier: a name in the embedded catalog is judged by the per-agent embedded policy instead of being denied as not-registered. The registry tier never held these, so a real embedded tool and a typo refused identically, with no tier and no provider operation recorded anywhere. Denial stays fail-closed (no policy, no declaration, or any mode other than exactly auto) and the reason leads with the stable embedded_tool_denied code and names the tier and the provider operation.
  */
 
 import { createChildLogger } from '@/shared/logger';
 import type { AuthMode, AuthorizationResult, Tool } from '@/shared/types/tool';
+import {
+  decideEmbeddedToolUse,
+  getEmbeddedTool,
+  type EmbeddedToolPolicy,
+} from '@/shared/tools/embedded-tool-tier';
 import type { ApprovalWorkflowService } from './approval-workflow-service';
 
 const logger = createChildLogger({ module: 'tool-auth-interceptor' });
@@ -36,6 +42,8 @@ export type AuthModeLookup = (
 export interface ToolAuthInterceptorDeps {
   approvalService: ApprovalWorkflowService;
   lookupAuthMode: AuthModeLookup;
+  /** Per-agent grant source for the provider-embedded tier. Absent = every embedded tool denies. */
+  embeddedToolPolicy?: EmbeddedToolPolicy;
 }
 
 /**
@@ -45,15 +53,23 @@ export interface ToolAuthInterceptorDeps {
  * - ask → trigger approval workflow, wait for decision
  * - off → reject execution
  * - not in registry / registry unavailable → reject execution
+ *
+ * A name in the provider-embedded catalog never reaches the registry lookup: that tier is
+ * governed by its own per-agent policy, and its refusals name the tier and provider operation.
  */
 export class ToolAuthInterceptor {
   private readonly approvalService: ApprovalWorkflowService;
   private readonly lookupAuthMode: AuthModeLookup;
+  private readonly embeddedToolPolicy: EmbeddedToolPolicy | null;
 
   constructor(deps: ToolAuthInterceptorDeps) {
     this.approvalService = deps.approvalService;
     this.lookupAuthMode = deps.lookupAuthMode;
-    logger.info('ToolAuthInterceptor initialized (unknown tools fail closed)');
+    this.embeddedToolPolicy = deps.embeddedToolPolicy ?? null;
+    logger.info(
+      { embeddedTierGoverned: this.embeddedToolPolicy !== null },
+      'ToolAuthInterceptor initialized (unknown tools fail closed)',
+    );
   }
 
   /**
@@ -63,15 +79,18 @@ export class ToolAuthInterceptor {
    * @param originalExecutor - The original tool execution callback
    * @param agentId - The agent requesting tool execution
    * @param taskId - The current task context
+   * @param providerId - Active model provider for this run; names the provider operation an
+   *                     embedded-tier decision applies to. Omitted outside a live turn.
    * @returns A wrapped executor that checks authorization before executing
    */
   createInterceptedExecutor(
     originalExecutor: ToolExecutor,
     agentId: string,
     taskId: string,
+    providerId?: string,
   ): ToolExecutor {
     return async (toolName: string, toolInput: Record<string, unknown>) => {
-      const authResult = await this.checkAuthorization(agentId, toolName, taskId, toolInput);
+      const authResult = await this.checkAuthorization(agentId, toolName, taskId, toolInput, providerId);
       return this.executeWithAuth(authResult, originalExecutor, toolName, toolInput);
     };
   }
@@ -83,6 +102,7 @@ export class ToolAuthInterceptor {
    * @param toolName - The tool being invoked
    * @param taskId - The current task context
    * @param toolInput - The tool input arguments
+   * @param providerId - Active model provider, for embedded-tier operation resolution
    * @returns Authorization result with decision and metadata
    */
   private async checkAuthorization(
@@ -90,7 +110,12 @@ export class ToolAuthInterceptor {
     toolName: string,
     taskId: string,
     toolInput: Record<string, unknown>,
+    providerId?: string,
   ): Promise<AuthorizationResult> {
+    if (getEmbeddedTool(toolName)) {
+      return this.checkEmbeddedTool(agentId, toolName, providerId);
+    }
+
     const lookup = await this.lookupAuthMode(agentId, toolName);
 
     if (!lookup) {
@@ -133,6 +158,55 @@ export class ToolAuthInterceptor {
 
     logger.info({ toolName, authMode: authResult.authMode }, 'Tool authorized — executing');
     return originalExecutor(toolName, toolInput);
+  }
+
+  /**
+   * @description Authorizes a provider-embedded tool against the per-agent policy. The provider
+   * executes these inside its own service, so the platform's only lever is whether the agent may
+   * reach the operation at all — and the refusal has to say which tier and which operation it was.
+   *
+   * @param agentId - The agent requesting execution
+   * @param toolName - The embedded tool name, in any accepted spelling
+   * @param providerId - Active model provider, when known
+   * @returns Authorization result carrying the tier-aware reason on denial
+   */
+  private async checkEmbeddedTool(
+    agentId: string,
+    toolName: string,
+    providerId?: string,
+  ): Promise<AuthorizationResult> {
+    const mode = this.embeddedToolPolicy
+      ? await this.embeddedToolPolicy.resolveMode(agentId, toolName)
+      : null;
+    const decision = decideEmbeddedToolUse({ toolName, agentId, providerId, mode });
+
+    if (!decision.allowed) {
+      logger.warn(
+        {
+          toolName,
+          agentId,
+          tier: decision.tier,
+          providerId: decision.providerId,
+          providerOperation: decision.providerOperation,
+          mode: decision.mode,
+          policyWired: this.embeddedToolPolicy !== null,
+        },
+        'Embedded tool denied',
+      );
+      return { authorized: false, authMode: 'off' as AuthMode, reason: decision.reason };
+    }
+
+    logger.info(
+      {
+        toolName,
+        agentId,
+        tier: decision.tier,
+        providerId: decision.providerId,
+        providerOperation: decision.providerOperation,
+      },
+      'Embedded tool authorized',
+    );
+    return { authorized: true, authMode: 'auto' as AuthMode };
   }
 
   /**
