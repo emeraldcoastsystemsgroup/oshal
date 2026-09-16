@@ -232,7 +232,7 @@ The window is a front end. Both halves are ordinary scripts you can run yourself
 .\installer\lib\install-swarm.ps1 -Minimal     # controller + infra, no worker bots
 .\installer\lib\install-swarm.ps1 -OffLan      # join code that works from another network
 .\installer\lib\install-swarm.ps1 -Down        # stop and remove it
-.\installer\lib\install-node.ps1 -JoinCode OSJOIN1.xxxxx
+.\installer\lib\install-node.ps1 -JoinCode OSJOIN1.xxxxx -EnrollmentToken oshal_pat_xxxxx
 ```
 
 ## Adding more computers

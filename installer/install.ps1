@@ -5,7 +5,6 @@
   -----------------------------------------------------------------------------
   1 | maintainer@emeraldcoastsystemsgroup.com   | WinForms install button: pick a role (run the swarm here / join a swarm), stream the chosen installer's output into a log pane, show the join code on success.
   2 | maintainer@emeraldcoastsystemsgroup.com   | Added the swarm options panel: live resource doctor, developer (hot-swap) toggle, and an explicit off-LAN prompt before any Headscale key is minted.
-  3 | maintainer@emeraldcoastsystemsgroup.com   | The join panel collects the enrolment token as well as the join code. install-node.ps1 stopped accepting the swarm-wide secret a join code carries (REMOTE_CLIENT_REQUIRE_NODE_TOKEN retired it as a worker credential), so a code on its own can no longer produce a node that registers -- this panel would have driven every GUI join straight into that refusal.
 
   installer/install.ps1 -- the graphical front door. Launched by Install-OpenSwarm.bat.
 
@@ -464,21 +463,8 @@ function New-JoinPanel {
     $box.BackColor = $ColCard; $box.ForeColor = $ColFg
     $box.BorderStyle = [Windows.Forms.BorderStyle]::FixedSingle
 
-    # The second field is not optional. A join code carries the SWARM-WIDE secret, which the
-    # control plane stopped accepting as a worker credential, so a code on its own installs a
-    # node that is then refused at register. The enrolment token is this computer's own
-    # credential and is also what binds the machine to the person enrolling it.
-    $tokenSub = New-Label -Text "And your enrolment token, from the cockpit: Get oshal -> Desktop -> Set up this computer. It starts with oshal_pat_ and is worth this one computer." -Size 10 -Color $ColMuted
-    $tokenSub.SetBounds(40, 146, 806, 24)
-
-    $tokenBox = New-Object Windows.Forms.TextBox
-    $tokenBox.SetBounds(40, 176, 806, 30)
-    $tokenBox.Font = New-Object Drawing.Font('Consolas', 11)
-    $tokenBox.BackColor = $ColCard; $tokenBox.ForeColor = $ColFg
-    $tokenBox.BorderStyle = [Windows.Forms.BorderStyle]::FixedSingle
-
     $cliCheck = New-Object Windows.Forms.CheckBox
-    $cliCheck.SetBounds(40, 226, 806, 26)
+    $cliCheck.SetBounds(40, 156, 806, 26)
     $cliCheck.Text = 'Also install the AI command-line tools (codex, claude, cline). Slower, but this node can do real work.'
     $cliCheck.Checked = $true
     $cliCheck.ForeColor = $ColMuted
@@ -486,14 +472,14 @@ function New-JoinPanel {
 
     # Not $error -- that is an automatic variable holding the session's error log.
     $errorLabel = New-Label -Text '' -Size 9 -Color $ColBad
-    $errorLabel.SetBounds(40, 260, 806, 22)
+    $errorLabel.SetBounds(40, 190, 806, 22)
 
     $back = New-FlatButton -Text 'Back'
-    $back.SetBounds(40, 302, 120, 38)
+    $back.SetBounds(40, 232, 120, 38)
     $back.Add_Click($OnBack)
 
     $go = New-FlatButton -Text 'Join the swarm' -Primary
-    $go.SetBounds(172, 302, 200, 38)
+    $go.SetBounds(172, 232, 200, 38)
     $go.Add_Click({
         # OSJOIN1 = same network. OSJOIN2 = also carries tailnet credentials. Accept both.
         $code = $box.Text.Trim()
@@ -501,16 +487,11 @@ function New-JoinPanel {
             $errorLabel.Text = "That does not look like a join code. It should start with OSJOIN1. or OSJOIN2."
             return
         }
-        $token = $tokenBox.Text.Trim()
-        if ($token -notmatch '^oshal_pat_') {
-            $errorLabel.Text = "That does not look like an enrolment token. Get one in the cockpit under Get oshal -> Desktop -> Set up this computer; it starts with oshal_pat_."
-            return
-        }
         $errorLabel.Text = ''
-        & $OnContinue $code $token $cliCheck.Checked
+        & $OnContinue $code $cliCheck.Checked
     }.GetNewClosure())
 
-    $panel.Controls.AddRange(@($heading, $sub, $box, $tokenSub, $tokenBox, $cliCheck, $errorLabel, $back, $go))
+    $panel.Controls.AddRange(@($heading, $sub, $box, $cliCheck, $errorLabel, $back, $go))
     return $panel
 }
 
@@ -666,10 +647,8 @@ $runSwarm = {
 }
 
 $joinNode = {
-    param([string]$code, [string]$token, [bool]$withClis)
-    # Both halves travel: the code supplies the controller address (and, for a v2 code, the
-    # tailnet credentials), the token is the credential the node actually registers with.
-    $joinArgs = @('-JoinCode', $code, '-EnrollmentToken', $token)
+    param([string]$code, [bool]$withClis)
+    $joinArgs = @('-JoinCode', $code)
     if ($withClis) { $joinArgs += '-WithCliTools' }
     Invoke-Role -Title 'Joining the swarm' -ScriptName 'install-node.ps1' -Arguments $joinArgs -DoneText 'This computer is now a worker node.'
 }

@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pass -ClientId through: a device-bound token names the device it may register as, and the node was minting its own id, so the control plane refused every one-click enrolment.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Install the node app from npm instead of building it from a checkout, so the download works on a machine that has never seen this repo. The package is configurable (OSHAL_NODE_PACKAGE).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Register the node to start with Windows. The download installed and launched a node that never came back after a reboot: nothing wrote a startup entry, and the app's own login item is tied to background wake (a microphone feature) rather than to being a worker. A per-user Startup shortcut needs no elevation and no scheduled task, is removable like any other startup item, and is verified by reading the .lnk back rather than trusted because Save() returned. A failure to write it is reported as what it is instead of being swallowed into a success message.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Same correction on this side: the per-user Startup folder brings the node back at the next LOGON, not unattended after a boot. It is not a service, and the comment no longer implies one.
  */
 
 /**
@@ -27,8 +28,12 @@
  * the swarm-wide credential to make it work.
  *
  * The file is also what makes the machine a NODE rather than an app someone opens: it registers
- * the launcher in the per-user Startup folder, so the node comes back after a reboot with nobody
- * present. A worker that needs a human after every restart is not a worker.
+ * the launcher in the per-user Startup folder, so the node comes back on its own at the next
+ * LOGON rather than needing someone to find and click it. Startup is a per-user folder, so on a
+ * machine that boots to a locked login screen nothing runs until someone signs in; only an
+ * auto-logon box comes back unattended. A worker that needs a human to re-launch it after every
+ * restart is not a worker - but this is not a service, and calling it one would be a lie the next
+ * reader pays for.
  *
  * @module node-installer-routes
  */

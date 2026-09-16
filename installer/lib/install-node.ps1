@@ -7,6 +7,7 @@
   2 | maintainer@emeraldcoastsystemsgroup.com   | Accept v2 join codes: join the Headscale tailnet (installing Tailscale if needed) before probing the controller, so a node outside the swarm's LAN can reach it.
   3 | maintainer@emeraldcoastsystemsgroup.com   | Full-Jarvis is now the install default: seed OSHAL_FULL_JARVIS=true so a fresh satellite opens the swarm-hosted cockpit (OIDC sign-in on first launch). -OrbOnly opts a worker-only box out.
   4 | maintainer@emeraldcoastsystemsgroup.com   | The swarm-wide shared secret is gone from this installer, and the node now starts with Windows. REMOTE_CLIENT_REQUIRE_NODE_TOKEN retired that secret as a worker credential, so a node configured with it installed cleanly and was then REFUSED at register - a silent dead end. Resolve-JoinTarget now requires a device-bound -EnrollmentToken: -SharedSecret is refused by name, and a join code contributes only the controller address and (v2) the tailnet credentials while the secret inside it is discarded. A Startup-folder shortcut goes in beside the Desktop one so a worker node comes back after a reboot without a human, and both are read back through the .lnk rather than trusted because Save() returned.
+  5 | maintainer@emeraldcoastsystemsgroup.com   | Say what a Startup entry actually does. It runs at LOGON, not at boot, so "comes back after a reboot with nobody present" was true only on an auto-logon machine - a claim the next reader would have paid for at the worst moment. The success line now says "when you next sign in" and names the locked-login-screen case.
 
   installer/lib/install-node.ps1 -- make THIS machine a worker node of someone else's swarm.
 
@@ -225,7 +226,8 @@ function Install-NodeApp {
 <#
 .SYNOPSIS Writes a shortcut to the launcher into one Windows folder.
 .DESCRIPTION Used twice: the Desktop copy (how a person opens the node) and the Startup copy
-(how the node comes back after a reboot with nobody present). Both are READ BACK through the
+(how the node comes back on its own at the next LOGON -- Startup is per-user, so a machine sitting
+at a locked login screen starts nothing until someone signs in). Both are READ BACK through the
 .lnk, because a Save() that returned can still have recorded nothing -- and a startup entry
 pointing nowhere is indistinguishable from one that works until the machine is restarted.
 .PARAMETER Directory Where the .lnk goes.
@@ -320,9 +322,10 @@ if (New-LauncherShortcut -Directory ([Environment]::GetFolderPath('Desktop')) -N
 # same way they remove any other startup item.
 $startupLink = New-LauncherShortcut -Directory ([Environment]::GetFolderPath('Startup')) -Name 'Open Swarm Node'
 if ($startupLink) {
-    Write-Ok "This node starts again by itself after a reboot"
+    Write-Ok "This node starts again by itself when you next sign in to Windows"
+    Write-Info "Startup is per-user: after a reboot it waits at the login screen until someone signs in."
 } else {
-    Write-Warn "This node will NOT come back on its own after a reboot."
+    Write-Warn "This node will NOT come back on its own when you sign in."
     Write-Info "Put a shortcut to $LauncherCmd in shell:startup to fix that."
 }
 
