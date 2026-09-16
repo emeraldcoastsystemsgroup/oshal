@@ -1,0 +1,4 @@
+{
+  "stops.stopBufferMode": ["ticks", "atr-percent"],
+  "stops.strangleBufferAtrPercent": [5, 7, 10]
+}
