@@ -30,7 +30,7 @@
 # 23 | maintainer@emeraldcoastsystemsgroup.com   | New `spec-database-default` gate: scripts/ci/check-spec-database-default.sh refuses a test file that can reach the operator LIVE Postgres by DEFAULT. 23 DB-backed specs ended their DSN expression in a loopback fallback on the stack published port (oshal-local-db, the real trading database), so a bare `npx vitest run tests/unit/trading-*.spec.ts` created and dropped schema and wrote order rows in production - it fired twice on 2026-09-14 from two lanes that had each been told in writing not to touch it. The specs now resolve through tests/helpers/spec-database-url.ts, which refuses an unpointed run; this gate is what keeps that true for the NEXT spec. Source hygiene, so it runs against GATE_SRC (committed HEAD in --head mode) next to repo-separation.
 # 24 | maintainer@emeraldcoastsystemsgroup.com   | New `alert-residue` post-gate: scripts/ci/check-alert-residue.sh fails when a fixture row from the alert integration guards is sitting in the DEPLOYMENT database. The two specs used to take whatever DSN the box handed them — here, the live database — and left 27 oshal_incident rows behind, one of which every surface reading that table still counts as a live incident. They now own a disposable PostgreSQL; this gate is what keeps that true after the next spec is written. SELECT-only, so it is safe against a running stack, and fail-closed: a database it could not query reports UNCHECKED, never clean.
 # 25 | maintainer@emeraldcoastsystemsgroup.com   | An inherited export the purge cannot clear no longer ends the run. `rm -rf` was bounded in entry 22, but a purge FAIL still returned from prepare_head_src: twelve node gates were skipped and $GATE_SRC kept naming the half-deleted tree, which gate_kernel_skills_image and gate_trivy read outside the node-gate block - so the image tier silently judged a previous commit. The export is disposable, so a corpse that will not delete is renamed to ci-src.abandoned.<ts>-<pid> and this run exports beside it; sweep_abandoned_exports gives each one a bounded retry next run, and a rename that itself fails points GATE_SRC at a path that does not exist so those gates refuse loudly. Closes the last done-when of the 2026-09-09 nine-hour wedge: a run that inherits a leftover export reaches its gates and writes an outcome line.
-# 26 | maintainer@emeraldcoastsystemsgroup.com   | New --publish-image flag. Nothing has ever published this trunk's container image: the only pusher is the workflow_dispatch-only image job in .github/workflows/ci.yml, whose run count here is ZERO, so the registry's `latest` is the pre-cutover 2026-07-26 artifact and `--mode 1` - the DEFAULT documented install - still hands it to every new user. That cost a day: a stale image does not look stale, and the box that installed it reported MISSING FEATURES while every symptom pointed at configuration. Publishing from this gate spends nothing of the constrained hosted-runner budget and puts the build, the kernel-skills image probe, the smoke boot and the Trivy scan in front of the push - a better pre-publish bar than the hosted pipeline applies. Fail-closed: no flag, a red run, --skip-image, or an absent credential all publish nothing. The credential is the operator's to mint; this script never creates one and never prints one.
+# 26 | maintainer@emeraldcoastsystemsgroup.com   | New --publish-image flag. Nothing has ever published this trunk's container image: the only pusher is the workflow_dispatch-only image job in .github/workflows/ci.yml, which has been dispatched by hand once (2026-09-16, failed with the image job skipped) and has never published, so the registry's `latest` is the pre-cutover 2026-07-26 artifact and `--mode 1` - the DEFAULT documented install - still hands it to every new user. That cost a day: a stale image does not look stale, and the box that installed it reported MISSING FEATURES while every symptom pointed at configuration. Publishing from this gate spends nothing of the constrained hosted-runner budget and puts the build, the kernel-skills image probe, the smoke boot and the Trivy scan in front of the push - a better pre-publish bar than the hosted pipeline applies. Fail-closed: no flag, a red run, --skip-image, or an absent credential all publish nothing. The credential is the operator's to mint; this script never creates one and never prints one.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -588,7 +588,9 @@ gate_publish_image() {
     origin="$(cd "$REPO_DIR" && git remote get-url origin 2>/dev/null || true)"
     owner="$(printf '%s' "$origin" | sed -nE 's#^(https://[^/]+/|git@[^:]+:)([^/]+)/.*#\2#p')"
     if [ -z "$owner" ]; then
-      log "PUBLISH: cannot derive the registry owner from origin ('${origin:-<none>}') - set OSHAL_CI_GHCR_IMAGE"
+      # The URL VALUE never reaches the log: a remote can carry an embedded credential, which is
+      # why this file already suppresses git's own diagnostic. Say the shape, not the secret.
+      log "PUBLISH: cannot derive the registry owner from origin (${origin:+unparseable remote}${origin:-no origin remote}) - set OSHAL_CI_GHCR_IMAGE"
       return 1
     fi
     remote="ghcr.io/$owner/oshal-bot"
@@ -657,13 +659,19 @@ if [ "$SKIP_IMAGE" != "1" ]; then
 fi
 run_gate alert-residue gate_alert_residue
 
-# Last, and only from a wholly green run. publish-image.sh refuses a non-empty failed list on its
-# own too - the check is in both places on purpose, because the one that matters is the one inside
-# the thing that holds the credential.
+# Last, and only from a wholly green run. The refusal is checked HERE and again inside
+# publish-image.sh, which is the one that matters because it is the one holding the credential -
+# but a caller that only forwarded a string would leave a single layer, so this one is real too.
 if [ "$PUBLISH_IMAGE" = "1" ]; then
   if [ "$SKIP_IMAGE" = "1" ]; then
     log "PUBLISH: refused - --skip-image was set, so this run built and scanned no image"
     FAILED_GATES+=(publish-image-refused-no-image)
+  elif [ "$SKIP_E2E" = "1" ]; then
+    # A run whose e2e gate never executed is not a green run; it is an untested one.
+    log "PUBLISH: refused - --skip-e2e was set, so this run never exercised the e2e gate"
+    FAILED_GATES+=(publish-image-refused-no-e2e)
+  elif [ "${#FAILED_GATES[@]}" -ne 0 ]; then
+    log "PUBLISH: refused - the run is red (${FAILED_GATES[*]}); only an all-green run may publish"
   else
     run_gate publish-image gate_publish_image
   fi

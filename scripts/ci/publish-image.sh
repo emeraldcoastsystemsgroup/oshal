@@ -14,12 +14,17 @@
 set -uo pipefail
 
 SHORT_SHA=""; LOCAL_TAG=""; REMOTE=""; FAILED=""
+# `shift 2` with a single positional left returns 1 WITHOUT shifting, and there is no `set -e`:
+# a dangling flag would spin here silently until the caller's timeout killed it.
+need_value() {
+  [ "$2" -ge 2 ] || { echo "publish-image: $1 needs a value" >&2; exit 64; }
+}
 while [ $# -gt 0 ]; do
   case "$1" in
-    --sha)    SHORT_SHA="${2:-}"; shift 2 ;;
-    --local)  LOCAL_TAG="${2:-}"; shift 2 ;;
-    --remote) REMOTE="${2:-}"; shift 2 ;;
-    --failed) FAILED="${2:-}"; shift 2 ;;
+    --sha)    need_value --sha    "$#"; SHORT_SHA="$2"; shift 2 ;;
+    --local)  need_value --local  "$#"; LOCAL_TAG="$2"; shift 2 ;;
+    --remote) need_value --remote "$#"; REMOTE="$2";    shift 2 ;;
+    --failed) need_value --failed "$#"; FAILED="$2";    shift 2 ;;
     *) echo "publish-image: unknown argument '$1'" >&2; exit 64 ;;
   esac
 done
@@ -57,19 +62,27 @@ if ! printf '%s' "$TOKEN" | timeout 120 docker login "$REGISTRY" --username "$GH
   echo "publish-image: REFUSED - $REGISTRY rejected the credential (token length ${#TOKEN}); nothing was pushed" >&2
   exit 5
 fi
+# From here the credential is in ~/.docker/config.json. A trap clears it on EVERY exit, including
+# a kill between the login and the push - the explicit paths below are not the only way out.
+trap 'timeout 60 docker logout "$REGISTRY" >/dev/null 2>&1 || true' EXIT INT TERM
 
 # The immutable sha- tag goes first. If the run dies between the two pushes, the registry holds a
 # record of WHAT was published before `latest` starts pointing at it - never the reverse.
-rc=0
-docker tag "$LOCAL_TAG" "$REMOTE:sha-$SHORT_SHA" || rc=$?
-if [ $rc -eq 0 ]; then docker tag "$LOCAL_TAG" "$REMOTE:latest" || rc=$?; fi
-if [ $rc -eq 0 ]; then timeout 3600 docker push "$REMOTE:sha-$SHORT_SHA" || rc=$?; fi
-if [ $rc -eq 0 ]; then timeout 3600 docker push "$REMOTE:latest" || rc=$?; fi
-
-timeout 60 docker logout "$REGISTRY" >/dev/null 2>&1 || true
+rc=0; failed_step=""
+docker tag "$LOCAL_TAG" "$REMOTE:sha-$SHORT_SHA" || { rc=$?; failed_step="tag sha-$SHORT_SHA"; }
+if [ $rc -eq 0 ]; then docker tag "$LOCAL_TAG" "$REMOTE:latest" || { rc=$?; failed_step="tag latest"; }; fi
+if [ $rc -eq 0 ]; then timeout 3600 docker push "$REMOTE:sha-$SHORT_SHA" || { rc=$?; failed_step="push sha-$SHORT_SHA"; }; fi
+if [ $rc -eq 0 ]; then timeout 3600 docker push "$REMOTE:latest" || { rc=$?; failed_step="push latest"; }; fi
 
 if [ $rc -ne 0 ]; then
-  echo "publish-image: FAILED - the push did not complete (exit $rc); the registry may hold sha-$SHORT_SHA without latest" >&2
+  # One message for three different registry states was wrong in two of them. Say which step
+  # stopped and what the registry is actually left holding, because that decides what to do next.
+  if [ "$failed_step" = "push latest" ]; then
+    left="the registry holds $REMOTE:sha-$SHORT_SHA, and latest still names the PREVIOUS image"
+  else
+    left="nothing reached $REGISTRY"
+  fi
+  echo "publish-image: FAILED at '$failed_step' (exit $rc) - $left" >&2
   exit $rc
 fi
 

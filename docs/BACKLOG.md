@@ -20,7 +20,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   commits / 5,057 files / +408,701 lines** behind.
 - **Why it happened.** The only thing that pushes to GHCR is the image job in
   `.github/workflows/ci.yml`, which is `workflow_dispatch`-only by deliberate cost decision. Its
-  run count on this repository is **zero** (`actions/workflows/322698333/runs` → `total_count: 0`).
+  run count on this repository was **zero** when measured (`actions/workflows/322698333/runs`). A single manual dispatch on 2026-09-16 has since FAILED with its image job skipped, so it published nothing and the conclusion stands.
   The July image was published before the ADR-115 cutover, from somewhere else. So the trunk has
   never published an image of itself, and `--mode 1` — the **default** documented install — hands
   every new user that July artifact.
