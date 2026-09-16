@@ -39,6 +39,16 @@ export interface StripResult {
  * whichever dependency installed it. oshal's own guards log and never throw their
  * argument, so they can never match.
  *
+ * This reads source text, so it has edges, measured in both directions against nine
+ * shapes: the three Emscripten forms and `t => { log(x); throw t; }` match; an aliased
+ * rethrow (`const e = t; throw e;`) and a bound listener (`toString` yields
+ * `[native code]`) do NOT, and a listener that merely contains the characters
+ * `throw t;` in a comment or string literal, with `t` as its parameter name, DOES.
+ * Both edges are bounded by the snapshot: only listeners registered during the model
+ * load window are candidates at all. A miss degrades the fix rather than breaking the
+ * process, and `stripRethrowGuards` warns when new listeners appear and none match,
+ * which is what a minifier renaming the throw would look like.
+ *
  * @param listener - A process listener function to classify.
  * @returns True when the listener rethrows its first parameter.
  */
