@@ -29,6 +29,7 @@
 # 22 | maintainer@emeraldcoastsystemsgroup.com   | Two false outcomes closed. (1) The 2026-09-09 run sat nine hours inside `rm -rf` of the previous night's ci-src export (a full node_modules), held the lock all night and wrote no outcome line: prepare_head_src and gate_secrets now purge through scripts/ci/ci-purge.sh - watchdog-bounded, robocopy-then-rm on Windows, one `purge: OK|FAIL` line, and a FAIL fails the gate instead of hanging the run. (2) `gitleaks detect` exits 0 when it skips paths it cannot read (2026-09-10: 5 of 5077 files unread, secret-scan PASS): gate_secrets now runs through scripts/ci/ci-secret-scan.sh, which counts the scanner's skipped/unread stderr lines and writes `unread=N of M exported files` into the verdict, failing on any N above zero.
 # 23 | maintainer@emeraldcoastsystemsgroup.com   | New `spec-database-default` gate: scripts/ci/check-spec-database-default.sh refuses a test file that can reach the operator LIVE Postgres by DEFAULT. 23 DB-backed specs ended their DSN expression in a loopback fallback on the stack published port (oshal-local-db, the real trading database), so a bare `npx vitest run tests/unit/trading-*.spec.ts` created and dropped schema and wrote order rows in production - it fired twice on 2026-09-14 from two lanes that had each been told in writing not to touch it. The specs now resolve through tests/helpers/spec-database-url.ts, which refuses an unpointed run; this gate is what keeps that true for the NEXT spec. Source hygiene, so it runs against GATE_SRC (committed HEAD in --head mode) next to repo-separation.
 # 24 | maintainer@emeraldcoastsystemsgroup.com   | New `alert-residue` post-gate: scripts/ci/check-alert-residue.sh fails when a fixture row from the alert integration guards is sitting in the DEPLOYMENT database. The two specs used to take whatever DSN the box handed them — here, the live database — and left 27 oshal_incident rows behind, one of which every surface reading that table still counts as a live incident. They now own a disposable PostgreSQL; this gate is what keeps that true after the next spec is written. SELECT-only, so it is safe against a running stack, and fail-closed: a database it could not query reports UNCHECKED, never clean.
+# 25 | maintainer@emeraldcoastsystemsgroup.com   | An inherited export the purge cannot clear no longer ends the run. `rm -rf` was bounded in entry 22, but a purge FAIL still returned from prepare_head_src: twelve node gates were skipped and $GATE_SRC kept naming the half-deleted tree, which gate_kernel_skills_image and gate_trivy read outside the node-gate block - so the image tier silently judged a previous commit. The export is disposable, so a corpse that will not delete is renamed to ci-src.abandoned.<ts>-<pid> and this run exports beside it; sweep_abandoned_exports gives each one a bounded retry next run, and a rename that itself fails points GATE_SRC at a path that does not exist so those gates refuse loudly. Closes the last done-when of the 2026-09-09 nine-hour wedge: a run that inherits a leftover export reaches its gates and writes an outcome line.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -209,12 +210,43 @@ resolve_source_commit() {
 # pinned commit export in --head/--scheduled mode (multi-agent trees are routinely
 # mid-edit; an unattended gate judges one immutable committed generation).
 GATE_SRC="$REPO_DIR"
+# A disposable export an earlier run could not clear inside the watchdog, moved aside by
+# prepare_head_src so that run could keep going. Each one gets one more bounded attempt per run;
+# a tree that still will not go is named in the log rather than left to grow on disk unremarked.
+sweep_abandoned_exports() {
+  local stale
+  for stale in "$STATE_DIR"/ci-src.abandoned.*; do
+    [ -e "$stale" ] || continue
+    purge_tree "$stale" || log "head-src: abandoned export still present: $stale"
+  done
+}
+
 prepare_head_src() {
   GATE_SRC="$STATE_DIR/ci-src"
+  sweep_abandoned_exports
   # The previous run's export is a full node_modules. The 2026-09-09 run sat nine hours inside
-  # `rm -rf` of it and wrote no outcome line; purge_tree is watchdog-bounded and fails this gate
-  # loudly instead, so the run still reaches its other gates and its outcome line.
-  purge_tree "$GATE_SRC" || return 1
+  # `rm -rf` of it and wrote no outcome line; purge_tree is watchdog-bounded and fails loudly
+  # instead. Failing loudly is not enough on its own: an inherited export this run cannot delete
+  # would then skip every node gate, and $GATE_SRC would still name the half-deleted tree that
+  # gate_kernel_skills_image and gate_trivy read OUTSIDE the node-gate block - judging another
+  # commit silently. The export is disposable, so move the corpse aside (a rename, not a walk)
+  # and build this run beside it; the run reaches its gates and its outcome line either way.
+  if ! purge_tree "$GATE_SRC"; then
+    local abandoned="$STATE_DIR/ci-src.abandoned.$(date +%Y%m%d%H%M%S)-$$"
+    if mv "$GATE_SRC" "$abandoned" 2>/dev/null; then
+      log "head-src: WARNING inherited export could not be purged; moved aside to $abandoned and exporting fresh"
+      # Named in the outcome line so the night is red and the alert says which fact it is.
+      # A gate this run could not perform must never be indistinguishable from a clean one,
+      # and the node gates still have to run - hence a distinct name, not a head-src failure.
+      FAILED_GATES+=(head-src-inherited-export-abandoned)
+    else
+      log "head-src: FAIL inherited export could not be purged or moved aside: $GATE_SRC"
+      # Never leave the pointer on a half-deleted generation: a path that does not exist makes
+      # the image-tier gates refuse loudly instead of passing on another commit's tree.
+      GATE_SRC="$STATE_DIR/ci-src-unavailable"
+      return 1
+    fi
+  fi
   mkdir -p "$GATE_SRC" || return 1
   (cd "$REPO_DIR" && git archive "$SOURCE_SHA" | tar -x -C "$GATE_SRC") || return 1
   (cd "$GATE_SRC" && timeout 1800 npm ci --legacy-peer-deps) || return 1
