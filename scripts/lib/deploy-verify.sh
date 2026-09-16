@@ -6,6 +6,7 @@
 # 1 | maintainer@emeraldcoastsystemsgroup.com | Post-deploy live verification for scripts/oshal-deploy.sh. On 2026-09-15 a deploy reported DEPLOYED while Jarvis answered nothing and a ticket raised at 00:51Z escalated on manifest_worker_dispatch_failed instead of being worked. Container health, image parity and a 200 on /health were all green throughout: every existing gate measures the STACK, and none of them measures the PRODUCT. These three checks do - the bot role can still read what its own posture guard reads, Jarvis answers a question as the operator, and one synthetic ticket leaves the queue without parking in a failed state.
 # 2 | maintainer@emeraldcoastsystemsgroup.com | Hand the probe runner a path that resolves where the probe actually executes. The first real run of this gate reported jarvis-ask and ticket-dispatch FAILED against a stack where both were fine: Git Bash rewrites a POSIX-absolute argument on its way into native docker.exe, so the container path reached node as a Windows host path, node resolved it against /app and died MODULE_NOT_FOUND. Neither product check ever ran. The staging cp beside it was already guarded; the runner was not, and no existing case could see it because they shadow docker with a bash function, which never crosses the boundary that rewrites the argument.
 # 3 | maintainer@emeraldcoastsystemsgroup.com | Add the third verdict, and make the dispatch check mean something under delegation signing. With OSHAL_DELEGATION_SIGNING_* configured this gate could not pass at all: the Jarvis check asks through a service-secret PAT, which records no principal issuer by design, so the controller refuses a user-bound delegation raised under it - and the dispatch check's 'task' ticket routed by ADR-083 call-out onto an INLINE bid winner, which signed delegation refuses before the issuer is even consulted. Both went FAIL on 2026-09-15 and 2026-09-16 on a stack that was healthy, which is a red gate nobody can act on. Now the probe pins its ticket to the workflow's declared owner (a dedicated bot node) and exits 3 for the ONE refusal automation structurally cannot answer; this library prints VERIFY UNVERIFIED for exit 3 - not PASS, not FAIL - counts it separately, names the remedy, and still returns 0 so a deploy is never gated on something no automation can do. Any other refusal is still a FAIL and still non-zero. Caller-exported OSHAL_VERIFY_* knobs are also forwarded into the container by name, because the probe reads them from ITS OWN environment - without that the documented knobs, and the remedy this state prints, reached nothing.
+# 4 | maintainer@emeraldcoastsystemsgroup.com | Assert the privilege the bot contract actually carries. The bot role's ADR-149 posture guard no longer reads oshal_authorization_applications; it calls the derived helper oshal_application_execution_claims (migration 142), and the governed contract grants oshal_bot EXECUTE on that helper while withholding the tables on purpose. So has_table_privilege on the table was about to become a check that fails on a CORRECTLY provisioned box, forever, with a remedy naming a migration file that no longer exists. The check now asks has_function_privilege on the helper - the one privilege whose absence still means every Jarvis ask answers 503 - and its remedy applies migration 142 and says that, unlike the grants it replaced, this one survives the next api boot.
 # -----------------------------------------------------------------------------
 #
 # Sourced by scripts/oshal-deploy.sh; also runnable on its own after fixing a failure:
@@ -73,30 +74,32 @@ oshal_verify_issuer_remedy() {
     "Until then this deploy is UNPROVEN as a product: nothing here says Jarvis answers or a ticket moves."
 }
 
-# (1) The bot database role must still be able to read the table its own ADR-149 posture
-# guard reads. scripts/governance/provision-app-role.mjs re-converges oshal_bot to an exact
-# allowlist on every api boot and that allowlist does not contain this table, so migration
-# 140's grants are stripped at boot and every Jarvis ask answers 503
-# authorization_bot_posture_unavailable until someone re-applies them by hand.
+# (1) The bot database role must still hold the one derived decision its own ADR-149 posture
+# guard reads: oshal_application_execution_claims (migration 142) answers "which application
+# claims this bot, and is it protected". The tables behind that answer are withheld from
+# oshal_bot on purpose, so the privilege that has to be present is EXECUTE on the helper, not
+# SELECT on a table. Without it every Jarvis ask answers 503
+# authorization_bot_posture_unavailable, because the posture guard fails closed on the 42501.
 oshal_verify_bot_role_grant() {
   local db="${OSHAL_VERIFY_DB_CONTAINER:-oshal-local-db}"
   local db_user="${OSHAL_VERIFY_DB_USER:-oshal}" db_name="${OSHAL_VERIFY_DB_NAME:-oshal}"
   local role="${OSHAL_VERIFY_BOT_ROLE:-oshal_bot}"
-  local table="${OSHAL_VERIFY_GRANT_TABLE:-public.oshal_authorization_applications}"
-  local grant_sql="${OSHAL_VERIFY_GRANT_SQL:-scripts/migrations/140-bot-role-ownership-reads.sql}"
+  local helper="${OSHAL_VERIFY_GRANT_FUNCTION:-public.oshal_application_execution_claims(text,text,text,boolean)}"
+  local grant_sql="${OSHAL_VERIFY_GRANT_SQL:-scripts/migrations/142-application-execution-claims-helper.sql}"
   local answer
   answer=$(docker exec "$db" psql -U "$db_user" -d "$db_name" -Atc \
-    "SELECT has_table_privilege('$role', '$table', 'SELECT')" 2>&1 | tr -d '[:space:]')
+    "SELECT has_function_privilege('$role', '$helper', 'EXECUTE')" 2>&1 | tr -d '[:space:]')
   if [ "$answer" = "t" ]; then
-    oshal_verify_pass bot-role-grant "$role can SELECT $table"
+    oshal_verify_pass bot-role-grant "$role can EXECUTE $helper"
     return 0
   fi
-  oshal_verify_fail bot-role-grant "$role cannot SELECT $table (psql answered: ${answer:-<nothing>})" \
-    "MSYS_NO_PATHCONV=1 docker cp $grant_sql $db:/tmp/bot-role-grants.sql" \
-    "MSYS_NO_PATHCONV=1 docker exec $db psql -U $db_user -d $db_name -f /tmp/bot-role-grants.sql" \
+  oshal_verify_fail bot-role-grant "$role cannot EXECUTE $helper (psql answered: ${answer:-<nothing>})" \
+    "MSYS_NO_PATHCONV=1 docker cp $grant_sql $db:/tmp/ownership-helper.sql" \
+    "MSYS_NO_PATHCONV=1 docker exec $db psql -U $db_user -d $db_name -f /tmp/ownership-helper.sql" \
     "Every Jarvis ask answers 503 authorization_bot_posture_unavailable until that runs." \
-    "It is stripped again on the NEXT api boot: scripts/governance/provision-app-role.mjs re-converges" \
-    "$role to an exact allowlist that omits this table. The permanent fix is core PR #459."
+    "Unlike the table grants this replaced, the EXECUTE grant SURVIVES the next api boot:" \
+    "scripts/governance/provision-app-role.mjs converges $role onto an allowlist that includes this" \
+    "helper, so if it is missing after a boot the provisioner did not run or did not reach its final phase."
 }
 
 # Copy the loopback probe into the api container. It runs THERE so the service secret it needs
