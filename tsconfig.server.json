@@ -30,13 +30,13 @@
     "src/types/**/*.d.ts",
     "src/app/**/*.ts",
     "src/shared/**/*.ts",
-    "src/entities/**/*.ts"
+    "src/entities/**/*.ts",
+    "src/features/google-calendar/**/*.ts"
   ],
   "exclude": [
     "node_modules",
     "dist",
     "tests",
-    "src/features/**",
     "src/api/**",
     "src/shared/ui/**",
     "src/shared/services/streaming-client/**",
