@@ -2,7 +2,10 @@
 
 Date: 2026-09-14
 Status: **Accepted by the operator (2026-09-14); implementation in progress — see "Implementation" for what
-is built.**
+is built. Amended 2026-09-16 — implementing S3 measured two claims in "Consequences" to be wrong (the service
+class of three of the five schedules, and the RLS guarantee), and found that a protected application with no
+imported permission catalog cannot run a system service at all. All three are recorded under "Amendment"; the
+catalog-less finding is an open question for the operator, not a decision this ADR makes.**
 
 Related: [ADR-149](149-enterprise-application-authorization.md) (application authorization — its §7 already
 states the rule this ADR builds the mechanism for), [ADR-148](148-swarm-root.md) (swarm roles),
@@ -197,14 +200,26 @@ Jarvis never activates a system service.
 - **Silent failure ends.** A declared-but-inactive service is a visible to-do; a refused run suspends its
   activation with the reason in the panel. The five schedules on the operator's box stop failing on the next
   deploy: they skip until activated, then run under the class their packages declare.
+  *(The last clause does not hold today for a catalog-less application — see
+  [Amendment C](#c--a-catalog-less-protected-application-cannot-run-a-system-service-at-all-open).)*
 - **Packages classify their services.** The public-store packages carrying the five schedules declare
   `runsAs`/`requires` in a follow-up: `daily-trade-recap` recorded-reports → **user** (it collects per
   registered owner), `venture-plan` rebaseline tick → **user** (owner-scoped policies), `marketing-engine`
   daily ingest and weekly review → **system** (workspace metrics, a review ticket); the private
   `intelligent-sales` email auto-log → **user**. Until a package declares, an administrator classifies at
   activation.
+  **Corrected 2026-09-16: three of those five predictions were wrong.** `daily-trade-recap`, `venture-plan`
+  and `intelligent-sales` are **system** services, and S3 declared them so; only the two `marketing-engine`
+  predictions held. The prediction is left standing above because it is what the decision was weighed
+  against — what the handlers actually do, and the rule that generalises from it, is in
+  [Amendment A](#a--three-of-the-five-are-system-services-not-user-services).
 - **System services cannot touch person-owned rows.** That is enforced by RLS on the service principal's
   `sub`, not by convention; a package that needs person data for a job declares a user service.
+  **Corrected 2026-09-16: this guarantee binds none of the five schedules.** Each handler calls
+  `runWithSystemIdentity` itself, which blanks `oshal.current_sub` and stamps `oshal.is_operator='on'`, so the
+  service principal's `sub` never reaches the connection RLS evaluates. What the service principal actually
+  constrains, and what would have to change for the stronger guarantee to be real, is in
+  [Amendment B](#b--the-rls-guarantee-binds-none-of-the-five-schedules).
 - **Legacy mode is untouched.** Applications that are not protected run their framework jobs as before, so a
   box without ADR-149 enforce sees no change.
 - **The authorization core grows by one concept** — the application service principal — expressed entirely
@@ -212,6 +227,99 @@ Jarvis never activates a system service.
 - **Cost:** activations are one more thing to set up after install. The readiness to-do and the one-screen
   confirmation are the mitigation; the alternative (running as the installer by default) is exactly the
   escalation ADR-149 §7 forbids.
+
+## Amendment
+
+*2026-09-16. Recorded while implementing this ADR's own slice S3. Nothing in "Context", "Decision" or "How to
+activate" changes; the corrections below are to "Consequences", which predicted rather than measured. The
+original predictions are left in place above so the record shows what the decision was made against.*
+
+### A — Three of the five are system services, not user services
+
+**Predicted:** `daily-trade-recap` recorded-reports → user, `venture-plan` rebaseline tick → user, the private
+`intelligent-sales` email auto-log → user. **Measured:** all three are **system** services, and S3 declared
+them `runsAs: system`. The two `marketing-engine` predictions (system) held.
+
+What the handlers do, read 2026-09-16:
+
+- `daily-trade-recap/src-routes/completed-report-briefings.ts` — `recordedRows()` selects
+  `user_sub, et_day, summary FROM oshal_trading_strategy_journal WHERE kind='report' AND source='daily-report'`
+  inside `runWithSystemIdentity`, bounded by time and a row limit and by **no owner predicate**; `admitRows()`
+  then files each row to whichever owner the row itself names.
+- `venture-plan/src-routes/venture-rebaseline-routes.ts` — `runDueRebaselineTick` runs its whole loop inside
+  `deps.withSystemIdentity` (default `runWithSystemIdentity`), lists `listEnabledRebaselinePoliciesSystem(ctx.pool)`
+  — every owner's enabled policy — and starts each one with `policy.ownerSub`.
+- `intelligent-sales/lib/is-email-sync.js` — `runSync` selects
+  `rep_id, user_sub, display_name FROM sales_reps WHERE tenant_id = $1 AND active = true AND user_sub IS NOT NULL`
+  and calls `outlookMailSync({ userSub: rep.user_sub })` for **every active rep in the tenant**. The scheduler
+  entry point `runEmailSync` wraps it in the package's `runWithIdentity`, which resolves to the kernel's
+  `runWithSystemIdentity`. That is a roster sweep, not "my mailbox".
+
+**The rule that generalises, and the reason this correction is worth the space: a `user` activation on a
+handler like these would be a false claim.** The kernel does its half correctly — a user activation registers
+a per-user instance and pins `userSub` — but the pin only constrains what the kernel passes *in*; it cannot
+constrain what the handler *queries*. A handler that ignores the request identity and sweeps the table would
+read person B's rows under person A's identity, with A's "run this for me" checkbox as the audit record of
+why. So the class is a property of **what the handler reads**, not of who the output is for: these three
+produce per-person output while reading across everyone, which makes them system services that fan out.
+
+The practical test when classifying a schedule: if two people each activated it for themselves and the second
+activation would do the same work over the same rows as the first, it is not a user service.
+
+### B — The RLS guarantee binds none of the five schedules
+
+**Predicted:** a system service "cannot read or write person-owned rows (its `sub` matches no person) …
+enforced by RLS on the service principal's `sub`, not by convention". **Measured:** no handler among the five
+is constrained that way, because each one opens system database scope for itself before it queries.
+
+`runWithSystemIdentity` runs its callback under the frozen `SYSTEM_IDENTITY` sentinel —
+`{ sub: null, principalIssuer: 'urn:oshal:system', isOperator: true, system: true }`
+(`src/shared/services/database/request-identity.ts`) — and the GUC pool's system branch stamps the connection
+`set_config('oshal.current_sub', '', false), set_config('oshal.is_operator', 'on', false)`
+(`src/shared/services/database/guc-pool.ts`, the `isSystemIdentity(id)` branch). The service principal's `sub`
+is not what reaches the connection: it is blanked, and the operator flag — the flag ownership policies test —
+is on. All five handlers do this: the three in Amendment A, plus `marketing-engine`'s
+`runMarketingDailyIngest` and `runMarketingWeeklyReview`, both of which open `runWithSystemIdentity` in
+`src-routes/marketing-ops-routes.ts`.
+
+**What actually holds today:** the service principal decides **whether the job may run, not what it may
+read**. `authorize()` is consulted at every tick with the activation's principal and `kind: 'jobs'`; past that
+gate the handler's database scope is whatever the handler opens. So `requires:` is admission control on the
+job plus the audit record of what an administrator agreed to — it is a real check, and it is not a data fence.
+The rest of the Decision is unaffected: activation is still required, rights are still rechecked every tick,
+and a denial still suspends.
+
+**What would have to change for the stronger guarantee to be real** (stated so the gap is legible, not
+designed here): the connection would have to be stamped with `service:<app>` for the duration of the run
+rather than with the system sentinel, which means the runner would have to establish that scope and the kernel
+would have to **refuse** — not merely discourage — a handler that re-opens system scope inside an activated
+run; and every table such a job touches would need a policy admitting `service:<app>` to exactly the rows its
+declared permissions cover. That last part is not uniformly available: `intelligent-sales` records in its own
+source that the `sales_*` tables it touches are not RLS-fenced at all, citing the public-launch isolation
+audit. None of this is decided here.
+
+### C — A catalog-less protected application cannot run a system service at all (open)
+
+Measured 2026-09-16 against the real `ApplicationAuthorizationService` backed by `MemoryAuthorizationStore`.
+An application registered `mode: 'enforce'` with no imported permission catalog takes the `!app.catalog` branch
+of `authorize()` (`src/features/application-authorization/service.ts:159-163`), which admits only an actor
+holding the `@app-admin` role at tier `admin`. A system activation grants the service principal the schedule's
+declared permissions as ordinary assignments; it does not make that principal an application administrator. So
+the principal falls to the branch's refusal:
+
+```
+service:venture-plan => { allowed: false, reason: 'authorization_app_admin_required', tier: 'deny' }
+```
+
+None of the four packages carrying the five schedules imports a permission catalog today. On such an
+application a system activation therefore grants the principal nothing the evaluator will accept: the first
+tick is denied and the activation suspends with that reason. That is visible rather than silent, which is what
+this ADR bought — but it means "they skip until activated, then run" in the first Consequences bullet does not
+hold for a catalog-less application, and the five schedules on the box do not start running on activation
+alone.
+
+**This is recorded as a known gap, not resolved.** It is an open decision for the operator; no resolution is
+proposed or chosen here.
 
 ## Implementation
 
