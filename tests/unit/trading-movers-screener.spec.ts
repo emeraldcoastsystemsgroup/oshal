@@ -166,7 +166,9 @@ describe('ADR-143 D5 — the screener reads the whole board over a real HTTP bou
     answers(MOVERS_BODY);
     const { screenerMovers } = await screener();
     await screenerMovers('gainers', 5000);
-    expect(vendor.requests[0].url).toContain('top=50');
+    // A SUBSTRING match here is no match at all: 'top=5000'.includes('top=50') is true, so the
+    // clamp could be deleted and this case would still pass. Anchor the whole parameter.
+    expect(vendor.requests[0].url).toMatch(/[?&]top=50(&|$)/);
   });
 
   it('most-actives ranks by the asked-for measure and leaves the unpriced rows unpriced', async () => {
@@ -181,6 +183,16 @@ describe('ADR-143 D5 — the screener reads the whole board over a real HTTP bou
     // ZZZQ is not in the directory, so the directory filter drops it; TSLA survives unpriced.
     expect(board!.rows.map((r) => r.symbol)).toEqual(['TSLA']);
     expect(board!.rows[0]).toMatchObject({ price: null, changePct: null, dayVolume: 91_204_331, tradeCount: 812_004 });
+  });
+
+  it('most-actives has its own ceiling, and asking past it does not reach the vendor', async () => {
+    // ACTIVES_TOP_MAX is 100, not 50 — a shared clamp constant would pass the movers case above
+    // and still send 5000 here, so the second ceiling needs its own case.
+    directory = FULL_DIRECTORY;
+    answers(ACTIVES_BODY);
+    const { screenerMostActives } = await screener();
+    await screenerMostActives('volume', 5000);
+    expect(vendor.requests[0].url).toMatch(/[?&]top=100(&|$)/);
   });
 });
 
