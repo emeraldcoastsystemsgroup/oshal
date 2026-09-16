@@ -11,6 +11,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Link contextual sidebar, Federal CRM navigation and actual Career group integration checks with explicit store-fixture prerequisites.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Link full-head local asset startup, rendering and service-worker browser coverage without changing the read-only readiness check.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register real Profile dialog and abandoned workspace HTTP coverage, with shared fixed-asset readiness.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the per-surface in-app help contract: the covered-surface list the cockpit header reads, and a representative deep link, so a deployment that ships without the guide corpus (or with a mapping to a guide nobody wrote) reports it here instead of failing in front of a stuck reader.
  * =============================================================================
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -51,6 +52,31 @@ async function workspaceDiscovery(cookie: string): Promise<StepResult> {
     : 'Workspace discovery did not return canonical application links.' };
 }
 
+/** @description Read the per-surface help contract without rendering account data or running a browser.
+ * @param cookie Current authenticated request cookie. @returns Honest coverage readiness for the header help affordance.
+ */
+async function helpSurfaceCoverage(cookie: string): Promise<StepResult> {
+  const origin = `http://127.0.0.1:${process.env.PORT || '5000'}`;
+  const request = (path: string) => fetch(`${origin}${path}`,
+    { headers: cookie ? { cookie } : {}, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+  const response = await request('/api/help/surfaces');
+  const base = { app: 'cockpit', label: 'Per-surface help coverage', status: response.status };
+  if (response.status !== 200) return { ...base,
+    state: [401, 403, 503].includes(response.status) ? 'degraded' : response.status === 404 ? 'gap' : 'fail',
+    detail: `The covered-surface list returned HTTP ${response.status}. Nothing was changed.` };
+  const body = await response.json() as { surfaces?: unknown };
+  const surfaces = Array.isArray(body.surfaces) ? body.surfaces.filter(item => typeof item === 'string') : [];
+  if (surfaces.length === 0) return { ...base, state: 'gap',
+    detail: 'No surface reaches a guide on this deployment — the guide corpus is not installed, so the header help control can only offer the index.' };
+  // One representative deep link proves the ?for= contract still lands on a guide rather than the index.
+  const sample = surfaces.includes('tickets') ? 'tickets' : surfaces[0];
+  const deep = await request(`/api/help?for=${encodeURIComponent(sample)}`);
+  const landed = deep.status === 302 && (deep.headers.get('location') || '').startsWith('/api/help/');
+  return { ...base, state: landed ? 'pass' : 'fail', detail: landed
+    ? `${surfaces.length} surface identifiers reach a guide, and "${sample}" still deep-links to its own page. The linked browser suite, not this check, exercises the header control.`
+    : `"${sample}" is advertised as covered but did not deep-link to a guide (HTTP ${deep.status}).` };
+}
+
 export const APPEARANCE_SCENARIOS: Scenario[] = [{
   id: 'cockpit-appearance', title: 'Cockpit appearance', group: 'tool',
   description: 'Read the fixed Workspace and Profile stylesheets. This does not execute the browser suite or change saved themes; linked fixtures cover the actual Profile dialog, local-asset startup, the portal chooser, application colors, open tabs, chat, administration and operations surfaces.',
@@ -87,4 +113,12 @@ export const APPEARANCE_SCENARIOS: Scenario[] = [{
   regressionTests: [{ level: 'browser', path: 'tests/unit/stl-viewer-browser.spec.ts' }],
   steps: [{ id: 'stl-viewer-client', app: 'cockpit', label: 'Shared STL viewer',
     run: cookie => assetReadiness(cookie, '/shared/ui/js/stl-viewer.js', 'javascript', 'Shared STL viewer') }],
+}, {
+  id: 'in-app-help', title: 'In-app help', group: 'tool',
+  description: 'Read the per-surface help contract the cockpit header depends on: which surface identifiers reach a guide this deployment actually ships, and whether a representative one still deep-links to its own page. Read-only — it renders no account data and does not execute the linked browser suite.',
+  regressionTests: [
+    { level: 'unit', path: 'tests/unit/help-routes.spec.ts' },
+    { level: 'browser', path: 'tests/unit/in-app-surface-help-browser.spec.ts' },
+  ],
+  steps: [{ id: 'help-surface-coverage', app: 'cockpit', label: 'Per-surface help coverage', run: helpSurfaceCoverage }],
 }];
