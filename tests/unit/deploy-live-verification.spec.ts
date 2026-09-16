@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cross the argument boundary the cases below are blind to. They shadow docker with a bash FUNCTION, so the command never leaves the shell and its arguments are never marshalled into a native process - which is exactly the boundary that broke the gate on its first real deploy: Git Bash rewrote the staged container path on its way into docker.exe, node resolved the Windows host path it received against the image's /app working directory, and both product checks died MODULE_NOT_FOUND while every case here stayed green. The new cases put a copy of the real node binary on PATH as `docker` - a genuine native executable, which is the property that makes the host runtime convert the argument at all - and assert that the path the runtime was handed resolves, under the image's own WORKDIR, to the file that was staged in the container. One case is the negative control: it drives the pre-fix call shape and requires the harness to SEE the rewrite, so the suite can never pass by being blind again.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard the third verdict, and guard it AGAINST ITSELF. With delegation signing configured this gate could not pass at all - the service-secret PAT it mints records no principal issuer by design, so the controller refuses the Jarvis ask AND the queued dispatch, and the 'task' ticket's call-out winner was an inline bot that signed delegation refuses outright. The fix adds an UNVERIFIED state, and the ONLY thing that makes an unverifiable state safe is how narrow it is: a third state wide enough to swallow a product outage reads as green and is worse than no check. So the cases below pin the narrowness from four sides - the byte-identical refusal is a FAIL when an operator token was supplied, a FAIL when no signing material is configured, and a FAIL for any other refusal under signing; only the self-minted-PAT-under-signing case is UNVERIFIED, and it is never printed as PASS and never masks a real failure in the same run. Plus the two halves the live box cannot demonstrate headlessly: a genuine PASS under signing on a session-minted token, and the knob forwarding that makes that remedy runnable at all (the probe reads its environment inside the container, not in the deploy's shell).
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Two findings from this change's own review. The deploy's terminal headline said 'live verification passed' over a run where both product checks proved NOTHING, and THIS FILE pinned that wording - so the case now asserts the tally-driven tail and both of its branches. And the 'swallows nothing else' rows gained the two sibling refusals that contain the substring 'principal issuer': without them, widening the classifier from the pinned constant to that substring passed the whole suite.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Follow the bot contract to the privilege it actually grants. These cases pinned has_table_privilege on public.oshal_authorization_applications and a remedy naming scripts/migrations/140-bot-role-ownership-reads.sql. That table is withheld from oshal_bot by the governed contract and that migration is gone: the posture guard reads the derived helper oshal_application_execution_claims (migration 142) instead, so the old assertion would have demanded a privilege a correctly provisioned box must NOT have, and pinned a remedy that could not run. The cases now pin has_function_privilege on the helper, the remedy that applies migration 142, and the sentence saying this grant survives the next boot - the property that distinguishes the fix from the workaround it replaced.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -95,7 +96,7 @@ describe('scripts/lib/deploy-verify.sh — the three checks a deploy is not fini
     const lines = run.stdout.split('\n').filter((line) => line.startsWith('VERIFY '));
     expect(lines.map((line) => line.split(/\s+/)[2])).toEqual(['bot-role-grant', 'jarvis-ask', 'ticket-dispatch']);
     expect(lines.every((line) => line.startsWith('VERIFY PASS'))).toBe(true);
-    expect(run.calls[0]).toMatch(/psql .*has_table_privilege/);
+    expect(run.calls[0]).toMatch(/psql .*has_function_privilege/);
     expect(run.calls.some((call) => call.endsWith(' jarvis'))).toBe(true);
     expect(run.calls.some((call) => call.endsWith(' ticket'))).toBe(true);
   });
@@ -104,17 +105,26 @@ describe('scripts/lib/deploy-verify.sh — the three checks a deploy is not fini
     const run = verify({ DOCKER_STUB_GRANT: 'f' });
     expect(run.stdout).toContain('RC=1');
     expect(run.stdout).toContain('VERIFY FAIL  bot-role-grant');
-    // The remedy has to be runnable as typed, not a pointer to "the migration".
-    expect(run.stdout).toContain('docker cp scripts/migrations/140-bot-role-ownership-reads.sql');
-    expect(run.stdout).toMatch(/psql -U \w+ -d \w+ -f \/tmp\/bot-role-grants\.sql/);
-    // And it has to say why it will come back, or it gets re-applied forever without a fix.
+    // The remedy has to be runnable as typed, not a pointer to "the migration" - and it has to name
+    // a file that exists, which the migration-140 remedy stopped doing when that migration was removed.
+    expect(run.stdout).toContain('docker cp scripts/migrations/142-application-execution-claims-helper.sql');
+    expect(run.stdout).toMatch(/psql -U \w+ -d \w+ -f \/tmp\/ownership-helper\.sql/);
+    // And it has to say what the next api boot does to it. The grants this replaced were stripped on
+    // every boot; this one is converged BACK by the same provisioner, so a grant still missing after a
+    // boot means the provisioner did not run - the opposite diagnosis, and the operator needs it.
     expect(run.stdout).toContain('scripts/governance/provision-app-role.mjs');
+    expect(run.stdout).toContain('SURVIVES the next api boot');
     expect(run.stdout).toContain('authorization_bot_posture_unavailable');
   });
 
-  it('asserts the grant on the table the ADR-149 posture guard actually reads', () => {
+  it('asserts the privilege the ADR-149 posture guard actually needs: EXECUTE on the derived helper', () => {
     const run = verify();
-    expect(run.calls[0]).toContain("has_table_privilege('oshal_bot', 'public.oshal_authorization_applications', 'SELECT')");
+    expect(run.calls[0]).toContain(
+      "has_function_privilege('oshal_bot', 'public.oshal_application_execution_claims(text,text,text,boolean)', 'EXECUTE')");
+    // The tables behind the helper are withheld from oshal_bot by the governed contract. A check that
+    // demanded SELECT on one of them would fail on every correctly provisioned box, forever.
+    expect(run.calls[0]).not.toContain('has_table_privilege');
+    expect(run.calls[0]).not.toContain('oshal_authorization_applications');
   });
 
   it.each([

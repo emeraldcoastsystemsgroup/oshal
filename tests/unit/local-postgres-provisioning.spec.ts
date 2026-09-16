@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise actual runtime-role provisioning against disposable PostgreSQL16 for local superuser and managed creator membership paths.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Converge legacy broad app defaults through the full final provisioner and verify PostgreSQL16 worker ACLs and future object privileges.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Seed the fourth approved helper, oshal_application_execution_claims (migration 142), so the real provisioner converges and verifies the bot contract with both derived bot helpers present.
  */
 import { execFileSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -87,7 +88,8 @@ async function seedFinalSchema(): Promise<void> {
     await pool.query(`CREATE TABLE ${table} (${columns.split(',').map(column => `${column} text`).join(',')})`);
   }
   await pool.query('CREATE SEQUENCE oshal_cost_events_id_seq');
-  for (const signature of ['oshal_is_tenant_member(text)', 'oshal_owns_task(text)', 'oshal_owns_ticket(uuid)']) {
+  for (const signature of ['oshal_is_tenant_member(text)', 'oshal_owns_task(text)', 'oshal_owns_ticket(uuid)',
+    'oshal_application_execution_claims(text,text,text,boolean)']) {
     await pool.query(`CREATE FUNCTION ${signature} RETURNS boolean LANGUAGE sql SECURITY DEFINER
       SET search_path=public,pg_temp AS 'SELECT false'`);
   }

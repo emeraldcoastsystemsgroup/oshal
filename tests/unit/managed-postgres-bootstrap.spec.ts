@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Production guard for the CRM DigitalOcean PostgreSQL 18 lifecycle: URL/CA/topology validation, guarded launcher environment isolation, and the real pinned PG18 one-shot bootstrap/redeploy/retry proof (gated by OSHAL_RUN_PG18_INTEGRATION=1).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Align the writable-CA fixture with the launcher's path-component walker (0666 trips the component guard first) and add a 0640 case so the specific 0600-or-0644 mode guard stays covered.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Permit explicit ADMIN convergence only inside the superuser branch; preserve managed creator membership guards.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | The governed contract now carries a fourth approved helper, oshal_application_execution_claims (migration 142), EXECUTE for oshal_app and oshal_bot and never PUBLIC; the static contract and the live migrated-helper counts include it.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -221,6 +222,8 @@ describe('PostgreSQL 18 role and ownership contract', () => {
     expect(sql).toContain('GRANT UPDATE (status, assigned_agent_id, execution_output, updated_at)');
     expect(sql).toContain('GRANT USAGE ON SEQUENCE public.oshal_cost_events_id_seq TO oshal_bot');
     expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.oshal_owns_ticket(uuid) TO oshal_app, oshal_bot');
+    expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) TO oshal_app, oshal_bot');
+    expect(sql).toContain('REVOKE EXECUTE ON FUNCTION public.oshal_application_execution_claims(text, text, text, boolean) FROM PUBLIC, oshal_bot');
     expect(sql).not.toContain('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO oshal_bot');
     expect(provision).toContain("has_table_privilege('oshal_bot'");
     expect(provision).toContain("has_column_privilege('oshal_bot'");
@@ -750,7 +753,7 @@ describe.skipIf(!RUN_PG18_INTEGRATION)('real pinned PostgreSQL 18 managed lifecy
         SELECT count(*) FROM pg_proc p
           JOIN pg_namespace n ON n.oid = p.pronamespace
          WHERE n.nspname = 'public'
-           AND p.proname IN ('oshal_is_tenant_member', 'oshal_owns_task', 'oshal_owns_ticket')
+           AND p.proname IN ('oshal_is_tenant_member', 'oshal_owns_task', 'oshal_owns_ticket', 'oshal_application_execution_claims')
       `)).toBe('2');
       expect(fixtureQuery(fixture, `
         SELECT count(*) FROM pg_class c
@@ -785,8 +788,8 @@ describe.skipIf(!RUN_PG18_INTEGRATION)('real pinned PostgreSQL 18 managed lifecy
         SELECT count(*) FROM pg_proc p
           JOIN pg_namespace n ON n.oid = p.pronamespace
          WHERE n.nspname = 'public'
-           AND p.proname IN ('oshal_is_tenant_member', 'oshal_owns_task', 'oshal_owns_ticket')
-      `)).toBe('3');
+           AND p.proname IN ('oshal_is_tenant_member', 'oshal_owns_task', 'oshal_owns_ticket', 'oshal_application_execution_claims')
+      `)).toBe('4');
     } finally {
       docker(['rm', '-f', sleeper], { timeout: 30_000 });
       fs.rmSync(tempRoot, { recursive: true, force: true });

@@ -1490,13 +1490,16 @@ permission denied for table oshal_authorization_applications   (SQLSTATE 42501)
 permission denied for function oshal_is_tenant_member          (SQLSTATE 42501)
 ```
 
-**The grant was missed, not withheld.** Migration 099 revokes exactly two controller-only tables
-from `oshal_bot` — `oshal_workload_identities` and `oshal_user_delegations` — and neither is this.
-Migration 127 creates `oshal_authorization_applications` with no `GRANT` statement at all, and
-`pg_default_acl` carries **no `oshal_bot` entry**, so nothing `oshal_app` creates is readable by the
-bot role.
+**The privilege was withheld on purpose — and the first fix fought the control that withholds it.**
+The bot role's privileges are not whatever the migrations left behind. The governed contract
+[`docs/governance/app-role-provisioning.sql`](../governance/app-role-provisioning.sql) (ADR-076),
+run by `scripts/governance/provision-app-role.mjs` on **every api boot** after migrations, resets
+`oshal_bot` to an exact allowlist and verifies it: DML on the worker tables, a column-scoped read of
+`agents`, and one derived helper (`oshal_owns_ticket`). *"Every SECURITY DEFINER helper is private
+by default."* Neither ownership table is in that contract, and `oshal_is_tenant_member` is
+explicitly revoked from the bot.
 
-**Why a missing GRANT is worse here than a denial.** `readProtectedBotApplication` wraps the whole
+**Why a privilege error is worse here than a denial.** `readProtectedBotApplication` wraps the whole
 resolution in `catch { throw new BotApplicationAuthorizationError('authorization_bot_posture_unavailable') }`.
 A privilege error is therefore indistinguishable from "this bot is protected and you may not run
 it" — so the failure is not "one denied execution", it is **every** bot execution, permanently, with
@@ -1504,29 +1507,35 @@ the cause named only in the bot container's own log. This is the same shape as t
 original Jarvis outage for three days: an authorization gate that cannot tell an infrastructure
 failure from a legitimate refusal.
 
-**Fix.** `scripts/migrations/140-bot-role-ownership-reads.sql` — `SELECT` on the three relations the
-reader queries, plus `EXECUTE` on the one RLS helper their policies call. The `EXECUTE` is not
-optional: without it `swarm_applications`' policy raises 42501 instead of returning a filtered
-result. Neither widens what the bot may **see** — `oshal_bot` stays `NOSUPERUSER`/`NOBYPASSRLS`,
-every policy still evaluates, and `oshal_authorization_applications` keeps its operator-only
-`authorization_control_plane` policy. The grants let the policies run instead of erroring.
+**Fix, first attempt (2026-09-14, workaround).** Migration 140 granted `SELECT` on the three
+relations and `EXECUTE` on the tenant helper. Jarvis answered `"Hi. I'm here."` — until the next
+boot. With `log_statement = ddl` on, the boot after the evening deploy logged the provisioner's
+`REVOKE` sweep (20:18Z), and the four grants read `false` after that boot and after each of the two
+api restarts that followed; each time Jarvis worked again only after re-applying 140 by hand. The
+earlier write-up of this entry called the grant "missed, not withheld" and read "3 of 409 readable
+tables" as a broken migration 099; both were wrong — that is the governed allowlist doing its job.
 
-**Proof it is fixed — live, not inferred.** Jarvis answers `"Hi. I'm here."` to `hi`, end to end
-through the real ask path under a time-boxed PAT revoked by id afterwards.
+**Fix, in the contract's own pattern.** The bot is given the *decision*, not the tables:
+migration 142 adds `oshal_application_execution_claims(kind, id, app, enforce)`, a
+`SECURITY DEFINER` helper returning one `(app, protected)` row per claiming application — the
+shape of `oshal_owns_ticket`. `readApplicationExecutionOwnership` calls it for the controller and
+every bot node, so ownership has one definition. A bad question (unknown kind, empty id) raises
+instead of returning no rows, because "no claimant" reads as "unprotected". The governed contract
+grants the helper to `oshal_app` and `oshal_bot` and never to `PUBLIC`; the provisioner now approves
+four helpers and verifies an explicit set of bot helpers. Migration 140 is removed — its only effect
+was grants the provisioner strips on every boot. **This extends the governed bot contract, so it
+lands only with the operator's approval.**
 
-**Guard.** `tests/unit/bot-role-ownership-reads-postgres.spec.ts` crosses the real boundary — a real
-PostgreSQL, the real `oshal_bot` role, the real relations and helper — because a mock cannot express
-a privilege. Mutation-checked: revoking the two grants turns 2 of its 4 cases red; re-applying the
-migration turns them green. One case also asserts the control-plane policy still exists, so the
-grant can never become the reason it is gone.
-
-**The wider finding, deliberately not fixed here.** `oshal_bot` can `SELECT` only **3 of 409** public
-tables, so migration 099's intended blanket grants are not in effect for anything `oshal_app`
-created afterwards — `agents`, `swarm_applications` and `chat_tasks` among them, the last of which
-099's own docblock names as a bot write path. Re-granting wholesale changes a least-privilege
-security posture and is the operator's decision, recorded in [BACKLOG.md](../BACKLOG.md).
+**Guard.** `tests/unit/application-execution-ownership-postgres.spec.ts` runs the real reader as a
+real `oshal_bot` login role in a disposable PostgreSQL, holding exactly the governed contract — the
+statements are executed verbatim from `app-role-provisioning.sql`. It answers what the controller
+answers (including loader-stamp arbitration), the bot-side posture guard runs, both ownership tables
+stay denied (42501), a revoked helper grant fails closed, and a malformed question raises.
+`local-postgres-provisioning.spec.ts` and `managed-postgres-bootstrap.spec.ts` prove the real
+provisioner converges and verifies the four-helper contract. The live-grant spec written for 140 is
+removed: it asserted a state the provisioner reverts on every boot.
 
 **The tell, for next time.** A bot-node 500 whose body carries `durationMs` under a second and
 `totalTokens: 0` never reached a model — read the **bot container's** log, not the api's. The api
-only ever sees the relayed 500.
-
+only ever sees the relayed 500. And a grant that keeps "disappearing" after restarts is not being
+lost: something is converging it on purpose. Find that before adding it back.
