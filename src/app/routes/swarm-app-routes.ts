@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | POST /import re-enters the caller's RLS request identity after multer (preserveRequestIdentity). When the manifest's last bytes reached multer on a later socket chunk, loadApp ran with no AsyncLocalStorage identity and the owner-stamped swarm_applications write was refused by RLS (400). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-157: mount the kernel-served Scheduled services surface (GET /:name/services, POST /:name/services/:id/activate, DELETE /:name/services/:id/activation) on this router, which already carries requiresAuth at its mount. Registered before the router's own /:name routes so the literal segments match first.
  * 15 | maintainer@emeraldcoastsystemsgroup.com  | GET /home-plan now admits a card through current application policy (discovery + the explicit coarse deny tier), the same test /api/ui/workspaces applies. It filtered on INSTALL SCOPE alone, so a protected package stayed on Home — named area plus an Open button in All applications — for a caller holding no grant, and survived revocation while its top-navigation tab disappeared. The authorization port is a REQUIRED construction option so a caller cannot silently re-open the gap.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | A GUEST session degrades to the unprotected applications instead of being refused. The actor resolver throws for the guest issuer by design, and routing that refusal to the surface as 401 left AppsHomeView rendering "The application list could not be read" on a deployment running ENABLE_GUEST_MODE=true. A guest is now admitted with NO actor, which the runtime already reads as refusing every protected application - stricter than main, which showed a guest those same framework apps without asking policy at all.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
@@ -25,6 +26,7 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { isGuestRequest } from '@/shared/middleware/guest-session';
 import { registerApplicationServiceActivationRoutes } from './application-service-activation-routes';
 import {
   SwarmAppService,
@@ -90,8 +92,10 @@ const upload = multer({
  * checks the owning package still performs.
  */
 export interface SwarmAppRouteAuthorization {
-  /** Coarse "could this caller open it at all" answer for one installed application. */
-  canDiscover(appName: string, actor: AuthorizationActor): Promise<boolean>;
+  /** Coarse "could this caller open it at all" answer for one installed application. An absent actor
+   *  is a caller with no verified principal (a guest session): the runtime refuses every PROTECTED
+   *  application for one, which is the honest answer rather than an invented identity. */
+  canDiscover(appName: string, actor: AuthorizationActor | undefined): Promise<boolean>;
   /** Verified current principal for one original request; throws rather than inventing an anonymous one. */
   resolveActor(req: Request): Promise<AuthorizationActor>;
 }
@@ -115,15 +119,27 @@ async function admittedHomeManifests(
   authorization: SwarmAppRouteAuthorization,
   appAccess?: AppAccessService,
 ): Promise<SwarmAppManifest[]> {
-  const actor = await authorization.resolveActor(req);
-  if (!actor.isActive || !actor.sub || !actor.issuer) {
-    throw Object.assign(new Error('Verified application actor unavailable'), { status: 401 });
+  // A guest session carries the guest issuer, for which the resolver refuses to mint an actor - by
+  // design, since a guest has no verified principal. That refusal must not become a blank Home on a
+  // deployment running with guests enabled, so a guest is admitted WITHOUT an actor: the runtime
+  // then refuses every protected application and only the unprotected framework ones survive. Main
+  // showed a guest those same apps having asked policy nothing at all, so this is stricter, not
+  // looser.
+  const guest = isGuestRequest(req);
+  let actor: AuthorizationActor | undefined;
+  if (!guest) {
+    actor = await authorization.resolveActor(req);
+    if (!actor.isActive || !actor.sub || !actor.issuer) {
+      throw Object.assign(new Error('Verified application actor unavailable'), { status: 401 });
+    }
   }
   const admitted: SwarmAppManifest[] = [];
   for (const manifest of manifests) {
     if (!(await authorization.canDiscover(manifest.name, actor))) continue;
     const access = manifest.access;
-    if (access && appAccess && (await appAccess.resolve(manifest.name, actor.sub, access)).tier === 'deny') continue;
+    // The coarse ceiling is keyed on a subject. A guest has none, and canDiscover has already
+    // refused everything protected, so there is nothing left for this tier to judge.
+    if (actor && access && appAccess && (await appAccess.resolve(manifest.name, actor.sub, access)).tier === 'deny') continue;
     admitted.push(manifest);
   }
   return admitted;
@@ -317,9 +333,11 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
    * neither impersonates the caller nor reads an app's tables (ADR-145 D6).
    *
    * Install scope decides what the caller can SEE EXISTS; current application policy decides what
-   * is admitted onto Home — the same discovery + explicit-deny test /api/ui/workspaces applies, so
-   * the named areas and the All-applications list can never offer a destination the top navigation
-   * has already withdrawn.
+   * is admitted onto Home — the same discovery + explicit-deny tests /api/ui/workspaces applies.
+   * Not the SAME answer, though: the top navigation additionally tests the initial surface path
+   * (canNavigateHttpPath), which Home does not, so a card can still appear for an application whose
+   * first screen the navigation withholds. Opening it is then refused at the mount guard with the
+   * role guidance — the card is reachable, the application is not.
    *
    * Declared BEFORE /:name so "home-plan" can never be captured as an app name.
    */

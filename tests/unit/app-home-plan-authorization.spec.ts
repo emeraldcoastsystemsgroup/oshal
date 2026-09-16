@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the Home plan admits an installed application only through current application policy, converging with workspace discovery across grant, revocation and explicit coarse deny.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin the guest outcome: a guest session keeps the unprotected framework application and never receives the protected one, even while a current grant on it exists. Red without the degrade - the route answers 401 and Home renders its read-failure copy.
  */
 /** Real Express, package loading and authorization; only persistence, identity and coarse access are isolated doubles. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -116,7 +117,14 @@ beforeEach(async () => {
   const requiresAuth: RequestHandler = (req, res, next) => {
     const name = req.get('x-fixture-user');
     if (!name) { res.status(401).json({ error: 'fixture_auth_required' }); return; }
-    (req as typeof req & { oidc: unknown }).oidc = { isAuthenticated: () => true, user: { sub: name } };
+    // A guest session passes requiresAuth and carries is_guest - the marker isGuestRequest reads -
+    // with no verified principal behind it. That is the shape the guest injector plants in
+    // production, and the shape the actor resolver refuses to mint an actor for.
+    const guest = req.get('x-fixture-guest') === 'yes';
+    (req as typeof req & { oidc: unknown }).oidc = {
+      isAuthenticated: () => true,
+      user: guest ? { sub: name, is_guest: true } : { sub: name },
+    };
     next();
   };
   const access: Pick<AppAccessService, 'resolve'> = { resolve: async (appName, userSub) => ({ appName, userSub,
@@ -143,9 +151,16 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** @description Read one caller's Home plan over real HTTP. */
-async function call(user: string | null = 'alice') {
-  const response = await fetch(`${base}/api/swarm/apps/home-plan`, { headers: user ? { 'x-fixture-user': user } : {} });
+/**
+ * @description Read one caller's Home plan over real HTTP.
+ * @param user - Fixture subject, or null for no session at all.
+ * @param options.guest - Mark the session as a guest, which carries no verified principal.
+ * @returns Status, cache header and parsed body.
+ */
+async function call(user: string | null = 'alice', options: { guest?: boolean } = {}) {
+  const headers: Record<string, string> = user ? { 'x-fixture-user': user } : {};
+  if (options.guest) headers['x-fixture-guest'] = 'yes';
+  const response = await fetch(`${base}/api/swarm/apps/home-plan`, { headers });
   return { status: response.status, cache: response.headers.get('cache-control'), body: await response.json() };
 }
 
@@ -189,6 +204,23 @@ it('keeps an unprotected framework application on Home with no application grant
   expect(await homePlan()).toEqual([FRAMEWORK]);
   await change();
   expect((await homePlan()).slice().sort()).toEqual([APP, FRAMEWORK].sort());
+});
+
+it('degrades a guest to the unprotected applications instead of blanking Home', async () => {
+  // A guest has no verified principal, so the actor resolver refuses to mint one - correctly. That
+  // refusal must not reach the surface as 401, because AppsHomeView then renders "The application
+  // list could not be read" and a guest deployment has no Home at all.
+  await install({ name: FRAMEWORK, theme: undefined, uses: undefined, routes: undefined, authorization: undefined,
+    ui: { static: [{ toolName: 'home', label: 'Home', icon: 'codicon codicon-home', iframeUrl: `/api/${FRAMEWORK}/app` }] } },
+  'framework.yaml');
+  await install();
+  // A CURRENT grant on the protected app, to prove the guest is judged on its own absence of a
+  // principal rather than inheriting someone else's admission.
+  await change();
+
+  const guest = await call('guest-fixture', { guest: true });
+  expect(guest.status, JSON.stringify(guest.body)).toBe(200);
+  expect(guest.body.apps.map((app: { name: string }) => app.name)).toEqual([FRAMEWORK]);
 });
 
 it('refuses a Home plan to a caller with no current verified identity', async () => {
