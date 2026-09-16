@@ -26,6 +26,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — regression guard for the process-global rethrow handlers the ONNX wasm runtime installs: the real-library shape pin, the classifier's refusal to touch oshal's own crash guards, the three-way host child (no runtime / runtime unstripped / runtime stripped), the wiring pin on local-embedding-service, and the in-image case that runs the real load() against the Dockerfile's onnxruntime-node -> onnxruntime-web shim.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The in-image no-fix control ran the IMAGE's own local-embedding-service, and Dockerfile.oshal copies src/features/ in - so the first deploy of this fix would have handed the control the FIXED file and pinned it red forever on a fix that still works. It now mounts tests/fixtures/onnx-guards-neutered.ts over the guards module, giving the control a genuinely unfixed runtime at any image age.
  */
 import { spawnSync } from 'child_process';
 import { readFileSync } from 'fs';
@@ -37,6 +38,8 @@ import { installProcessCrashGuards, resetProcessCrashGuardsForTest } from '@/sha
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CHILD = path.join('tests', 'fixtures', 'onnx-rethrow-child.ts');
 const IMAGE_PROBE = path.join(REPO_ROOT, 'tests', 'fixtures', 'onnx-image-probe.ts');
+/** The no-fix control's stand-in for the guards module — see runImageProbe(). */
+const NEUTERED_GUARDS = path.join(REPO_ROOT, 'tests', 'fixtures', 'onnx-guards-neutered.ts');
 const ORT_WEB_NODE_BUNDLE = path.join(REPO_ROOT, 'node_modules', 'onnxruntime-web', 'dist', 'ort-web.node.js');
 const EMBEDDING_SERVICE = path.join(REPO_ROOT, 'src', 'features', 'rag', 'services', 'local-embedding-service.ts');
 const IMAGE = 'oshal-bot:latest';
@@ -203,6 +206,12 @@ describe.skipIf(!imageAvailable())(`the real load() inside ${IMAGE} (requires th
    * fixed sources over the image's own copies so the same container can be run with
    * and without the fix.
    * @param withFix - Mount the working tree's onnx-process-guards + local-embedding-service.
+   *   When false, a NEUTERED guards stub is mounted over the module instead of nothing at all:
+   *   Dockerfile.oshal copies src/features/ into the image, so after this change is deployed the
+   *   image's own local-embedding-service calls the strip and a bare no-mount control would stop
+   *   reproducing the defect - the control would go red permanently on a fix that still works. The
+   *   stub exports the same three names and removes nothing, so the runtime keeps its rethrow pair
+   *   at any image age.
    * @returns The parsed probe output.
    */
   function runImageProbe(withFix: boolean): ChildRun {
@@ -213,6 +222,8 @@ describe.skipIf(!imageAvailable())(`the real load() inside ${IMAGE} (requires th
         const host = path.join(REPO_ROOT, 'src', 'features', 'rag', 'services', rel).replace(/\\/g, '/');
         args.push('-v', `${host}:/app/src/features/rag/services/${rel}:ro`);
       }
+    } else {
+      args.push('-v', `${NEUTERED_GUARDS.replace(/\\/g, '/')}:/app/src/features/rag/services/onnx-process-guards.ts:ro`);
     }
     args.push('-v', `${IMAGE_PROBE.replace(/\\/g, '/')}:/app/onnx-image-probe.ts:ro`);
     if (cacheVolume) args.push('-v', `${cacheVolume}:/cache-src:ro`);
@@ -235,6 +246,8 @@ describe.skipIf(!imageAvailable())(`the real load() inside ${IMAGE} (requires th
   }
 
   it('without the fix: the shimmed runtime adds the pair and the stray rejection is fatal', () => {
+    // The control mounts a neutered guards module, so it reproduces the defect against the
+    // image as-built rather than against an image that happens to predate the fix.
     const run = runImageProbe(false);
     expect(run.probes.baseline.shim, 'the Dockerfile shim is what creates this defect').toContain('require("onnxruntime-web")');
     expect(run.probes['after-load'].counts.unhandledRejection).toBe(run.probes.baseline.counts.unhandledRejection + 1);

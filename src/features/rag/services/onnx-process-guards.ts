@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | New. onnxruntime-web's Emscripten Node shell appends two process-global rethrow listeners the moment the wasm initialises (`process.on('unhandledRejection', t => { throw t })` and `process.on('uncaughtException', t => { if (!(t instanceof ExitStatus)) throw t })`, dist/ort-web.node.js). They land BEHIND installProcessCrashGuards, so from that instant any unhandled rejection anywhere in the controller is rethrown from inside the rejection handler, becomes an uncaught exception, is rethrown again from inside the exception handler, and kills the process with exit code 7 and half a megabyte of minified bundle on stderr — before the crash guards' 250 ms log flush runs. This module snapshots the two listener lists before the runtime loads and removes exactly the rethrow-shaped listeners the runtime added, leaving every listener the process legitimately owns in place.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Warn when listeners appeared since the snapshot and none matched the rethrow shape. The strip logged only on success, so it was silent in exactly the case worth hearing about - a minifier change renaming the throw, or a new listener shape, would have degraded the fix with nothing in the log.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -108,10 +109,19 @@ export function stripRethrowGuards(snapshot: ProcessGuardSnapshot): StripResult 
     }
   }
   const total = result.removed.unhandledRejection + result.removed.uncaughtException;
+  const survivors = result.kept.unhandledRejection + result.kept.uncaughtException;
   if (total > 0) {
     logger.warn(
       { removed: result.removed, kept: result.kept },
       'Removed process-global rethrow listeners installed by the ONNX runtime — a stray rejection is survivable again',
+    );
+  } else if (survivors > 0) {
+    // The failure mode worth hearing about: the runtime registered listeners and the classifier
+    // matched none of them — a minifier change renaming the throw, or a new listener shape. Logging
+    // only on success would make exactly that case silent.
+    logger.warn(
+      { kept: result.kept },
+      'The ONNX runtime added process listeners and none matched the rethrow shape — the strip may have stopped working; a stray rejection could be fatal again',
     );
   }
   return result;
