@@ -601,6 +601,13 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Why it is worth a real run:** the wordings were calibrated against v8.30.1 while the gate runs the floating `:latest`, so a phrase change in the image turns a partial scan back into a silent pass - the exact defect the helper was built to end. And nothing has exercised the failing path in production: `%LOCALAPPDATA%\oshal\ci-local.log` carries `unread=0 of 5598` (2026-09-15) and `unread=0 of 5666` (2026-09-16), and **zero** `FAIL unread=` or `FAIL scanner rc=` lines have ever been written.
 - **Remaining:** run `gate_secrets` against the real `zricethezav/gitleaks:latest` over an export holding a path the scanner cannot read, and record which of the five `GITLEAKS_UNREAD_PATTERN` phrases the current image actually emits.
 - **Done when:** one dated run shows `secret-scan: FAIL unread=N of M` produced by the real image, the five calibrated phrases are re-derived from that run rather than from v8.30.1's release notes, and the audit row moves from `Owed` to green with that date.
+### The publish gate's attribution wall can be disabled by author, and no case would notice
+
+- **Found 2026-09-16** reviewing PR #573. Mutating `scripts/publish-gate.sh` check 5b to skip when `git log -1 --format=%ae` equals `maintainer@emeraldcoastsystemsgroup.com` leaves `tests/unit/publish-gate.spec.ts` at **45 passed**, and the same gate then exits 0 on all three refusal shapes a separate harness drives through it - the `-by:` trailer, the vendor no-reply address, and the "generated with" footer.
+- **Why it is not theoretical:** every commit in this repository is authored as that exact address ([CLAUDE.md](../CLAUDE.md) mandates it and `lane-clone.sh` sets it), so an author allowlist added for any reason - a "skip our own commits" convenience, a rebase helper - turns the wall off for ALL real traffic. The spec cannot see it because all 45 cases commit as `t@example.com` (`tests/unit/publish-gate.spec.ts:145,160,243`).
+- **Five other single-point mutations of the gate are caught** (dropping the footer pattern, losing case-folding, judging HEAD instead of the pushed range, dropping the address branch, failing open when a pushed commit cannot be enumerated), so this is one uncovered axis, not an absent guard.
+- **Remaining:** one case that commits a fixture carrying model attribution as `maintainer@emeraldcoastsystemsgroup.com` and asserts the gate still refuses it.
+- **Done when:** that case is green on today's gate and red against a gate carrying an author allowlist, recorded the way the other mutations are.
 
 ## Security, tenancy, and trust boundaries
 
