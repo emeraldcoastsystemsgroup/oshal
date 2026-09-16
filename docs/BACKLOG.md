@@ -763,6 +763,13 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   signed inline path, the choice is recorded in `docs/security/http-delegation.md`, and a guard dispatches one
   ticket per core ticket type with signing configured and fails if any of them is refused.
 
+### A protected Jarvis answer with no bindable lineage leaves the thread silent
+
+- **Observed 2026-09-16:** `returnProtectedComplexSummaries` ([src/app/routes/jarvis-orchestrator.ts](../src/app/routes/jarvis-orchestrator.ts)) skips a task when `recordDerivedJarvisResultLineage` returns no actor (`if (!actor) continue`), and no other leg picks that task up: the row stays `done` with a null result and the conversation the user asked in never says anything. A ticket classified protected by its SESSION binding but carrying no executions of its own reaches this state permanently.
+- **Why the obvious fix is wrong:** the same null actor is how an unauthorised reader is refused. `tests/unit/protected-jarvis-thread-return.spec.ts` ("never derives or returns the answer for a principal carrying no verified issuer") pins that a PAT-shaped principal polling the owner's task must NOT cause a summary — so handing every unbound task to the automatic summarizer turns the refusal into a leak. The two cases have to be told apart at the source: "this reader may not have it" versus "this source has no lineage anyone could bind".
+- **Remaining:** distinguish the two at the point of decision (the authority already knows which it answered), return the genuinely unbindable set to the caller, and give it an honest outcome — the automatic summarizer when the work product is not protected at all, otherwise a stated sentence in the thread rather than silence. Leave the refusal path exactly as it is.
+- **Done when:** a protected-classified task whose source has NO executions ends with either an answer or a sentence in the thread it was asked in, proven against the real authority and real PostgreSQL in the existing fixture; and the unauthorised-reader case still produces nothing — same spec file, both cases green.
+
 ## Workflow, agent, and model runtime
 
 ### Jarvis briefing preferences (operator ask, 2026-08-09)
@@ -879,6 +886,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** the controller holds a signing keypair and every bot node the matching public ring;
   the operator's question above (or an equivalent re-ask) returns an answer instead of escalating; and
   a live protected dispatch is observed completing with a recorded delegation.
+
+### Jarvis knows the shape of the data he can reach
+
+- **Operator, 2026-09-15:** "why doesnt jarvis know about the data in the databases.. as an admin i should be albe to look across all data and have access to all functions". Approved shape, his choice: **schema first, rows behind signed delegation.**
+- **Remaining:** give the turn a schema-level capability — the tables/columns/relationships the caller is authorised to see, assembled from the catalog rather than hand-listed, so Jarvis can answer "what do we hold about X" and name the right store without reading a single row. Row access stays where it is: an exact, schema-bounded read through the signed delegation rail, never a model-visible connection string, and never a free-text SQL tool. The catalog must be derived (the schema docs generator already does this for docs) so a migration cannot leave the answer stale.
+- **Done when:** Jarvis answers "which databases and tables do we have, and what is in them" from the live catalog with no row data in the prompt; a row-level ask still routes to the delegated read and refuses without it; the catalog is generated, not typed; and a schema change is reflected without editing a prompt. Register the scenarios in AI Test Lab.
 
 ## Connectors, channels, and external systems
 
