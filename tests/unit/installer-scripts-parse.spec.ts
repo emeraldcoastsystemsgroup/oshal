@@ -209,3 +209,66 @@ describe('installer scripts stay executable', () => {
     },
   );
 });
+
+// A fresh Windows box is the install this project keeps losing. Both regressions below were
+// found on the same remote install (2026-09-16) and neither was visible from the installer's
+// own output: Docker was blamed for a Windows feature being off, and a 52-day-old image was
+// reported as missing features. These hold the wiring, not the wording.
+describe('installers survive a fresh Windows box', () => {
+  const read = (rel: string) => codeOnly(fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'));
+
+  it('the ps1 CALLS the WSL2 preflight before it looks for docker, not after', () => {
+    const lines = read('scripts/oshal-install.ps1').split(/\r?\n/);
+    // The CALL SITE, not the definition. An earlier version of this guard searched for the
+    // bare name and matched `function Invoke-Wsl2Preflight {`, which sits above the docker
+    // gate wherever the call goes -- so deleting the call left the test GREEN. A guard that
+    // still passes with the fix removed is not a guard; this one was caught by mutating it.
+    const callSite = lines.findIndex((l) => l.trim() === 'Invoke-Wsl2Preflight');
+    const dockerGate = lines.findIndex((l) => l.includes('$docker = Get-Command docker'));
+    expect(callSite, 'the ps1 never CALLS Invoke-Wsl2Preflight').toBeGreaterThan(-1);
+    expect(dockerGate, 'the ps1 no longer runs the compose-path docker gate').toBeGreaterThan(-1);
+    // Order is the whole point: running it afterwards reports "install Docker Desktop" on a
+    // machine where installing Docker Desktop cannot help.
+    expect(callSite).toBeLessThan(dockerGate);
+  });
+
+  it('the ps1 detects WSL by exit code, never by parsing wsl.exe output', () => {
+    const text = read('scripts/oshal-install.ps1');
+    expect(text).toContain('$LASTEXITCODE -eq 0');
+    // wsl.exe emits UTF-16LE, so matching on its TEXT is a check that silently stops working.
+    // Guard the shape rather than the wording: no wsl.exe output may be piped or -match'd.
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.includes('wsl.exe')) continue;
+      expect(line, `wsl.exe output is being parsed: ${line.trim()}`).not.toContain('Select-String');
+      expect(line, `wsl.exe output is being parsed: ${line.trim()}`).not.toContain('-match');
+    }
+  });
+
+  it('both installers name WSL2 when the engine is down, instead of only blaming docker', () => {
+    const ps1 = read('scripts/oshal-install.ps1');
+    const sh = read('scripts/oshal-install.sh');
+    expect(ps1, 'the ps1 engine-down path never mentions WSL2').toContain('WSL2');
+    expect(sh, 'the sh installer never calls wsl_guidance').toContain('wsl_guidance');
+    // BOTH docker preflight failures, not just one — the client hit the "not running" branch.
+    // (definition + the two call sites)
+    expect((sh.match(/wsl_guidance/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('both installers gate on image freshness after pulling from the registry', () => {
+    const ps1 = read('scripts/oshal-install.ps1');
+    const sh = read('scripts/oshal-install.sh');
+    expect(ps1.indexOf('docker pull')).toBeLessThan(ps1.indexOf('Test-ImageFreshness $Image'));
+    expect(sh.indexOf('docker pull')).toBeLessThan(sh.indexOf('check_image_freshness "$IMAGE"'));
+    // The override has to exist, or a deliberately-pinned old image becomes uninstallable.
+    expect(ps1).toContain('AllowStaleImage');
+    expect(sh).toContain('--allow-stale-image');
+  });
+
+  it('the freshness module the installers shell out to is baked into the image', () => {
+    // Mode 1 has no repository on the host and no guaranteed node, so the check runs INSIDE
+    // the pulled image. Without the COPY it degrades to a skip on the exact path it protects.
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, 'Dockerfile.oshal'), 'utf8');
+    expect(dockerfile).toContain('COPY scripts/image-freshness.js');
+    expect(fs.existsSync(path.join(REPO_ROOT, 'scripts', 'image-freshness.js'))).toBe(true);
+  });
+});
