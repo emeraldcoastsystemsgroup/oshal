@@ -463,6 +463,24 @@ SEQ | AUTHOR | DESCRIPTION
         return;
       }
 
+      /**
+       * The action for one catalog row. A package already staged in this swarm is NOT an install:
+       * a mode-2 install stages dozens up front, so an unconditional Install button described the
+       * whole catalog as missing. Installed rows say so and name the version; a newer catalogue
+       * version offers the update, which is the only reason to run the install rail again.
+       */
+      function installAction(a, ready) {
+        if (!ready) return '<button disabled title="Source status is ' + esc(a.status) + '">Install</button>';
+        if (!a.installed) return '<button class="primary" data-install>Install</button>';
+        var newer = a.installedVersion && a.version && a.installedVersion !== a.version;
+        return '<span class="pill ok" title="Installed in this swarm' +
+          (a.installedVersion ? ' at ' + esc(a.installedVersion) : '') + '">INSTALLED</span>' +
+          (newer
+            ? ' <button class="primary" data-install title="Catalog publishes ' + esc(a.version) +
+              ', this swarm has ' + esc(a.installedVersion) + '">Update</button>'
+            : ' <button data-install title="Already installed — run the install rail again">Reinstall</button>');
+      }
+
       tbody.innerHTML = rows.map(function (a) {
         var dupes = byName[a.name].length > 1;
         var ready = a.status === 'ready';
@@ -474,11 +492,7 @@ SEQ | AUTHOR | DESCRIPTION
           '<td><span class="pill mute">' + esc(a.registryLabel || a.registry) + '</span></td>' +
           '<td>' + esc(a.suite || '—') + '</td>' +
           '<td>' + auditPill(auditStateOf(a)) + '</td>' +
-          '<td><div class="row-actions">' +
-            (ready
-              ? '<button class="primary" data-install>Install</button>'
-              : '<button disabled title="Source status is ' + esc(a.status) + '">Install</button>') +
-          '</div></td></tr>';
+          '<td><div class="row-actions">' + installAction(a, ready) + '</div></td></tr>';
       }).join('');
 
       tbody.querySelectorAll('button[data-install]').forEach(function (btn) {
