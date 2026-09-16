@@ -595,6 +595,13 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** bound the export the way `purge_tree` is bounded — a watchdog, one verdict line through `log`, a failure that fails its gate and lets the run continue to its outcome line rather than holding the lock.
 - **Done when:** an export that cannot finish inside its limit ends in a named FAIL line in `ci-local.log`, the run still reaches its outcome line, and a spec proves the timeout path the way `tests/unit/ci-local-purge.spec.ts` proves the purge's.
 
+### secret-scan has never been shown to fail against the REAL gitleaks image
+
+- **Registered 2026-09-16** in [the real-boundary audit](governance/real-boundary-regression-audit.md) as an owed proof, because the guard that protects this gate stands a fake `docker` first on PATH: `tests/unit/ci-local-secret-scan.spec.ts` replays the image's stderr wording and `zricethezav/gitleaks:latest` never runs. The branch logic is genuinely covered - `FAIL unread=2 of 3`, the 2026-09-10 wording, a clean `PASS unread=0`, and a findings `rc=1` - but every one of those verdicts is reached from text this repository wrote.
+- **Why it is worth a real run:** the wordings were calibrated against v8.30.1 while the gate runs the floating `:latest`, so a phrase change in the image turns a partial scan back into a silent pass - the exact defect the helper was built to end. And nothing has exercised the failing path in production: `%LOCALAPPDATA%\oshal\ci-local.log` carries `unread=0 of 5598` (2026-09-15) and `unread=0 of 5666` (2026-09-16), and **zero** `FAIL unread=` or `FAIL scanner rc=` lines have ever been written.
+- **Remaining:** run `gate_secrets` against the real `zricethezav/gitleaks:latest` over an export holding a path the scanner cannot read, and record which of the five `GITLEAKS_UNREAD_PATTERN` phrases the current image actually emits.
+- **Done when:** one dated run shows `secret-scan: FAIL unread=N of M` produced by the real image, the five calibrated phrases are re-derived from that run rather than from v8.30.1's release notes, and the audit row moves from `Owed` to green with that date.
+
 ## Security, tenancy, and trust boundaries
 
 ### The SEC/CORE/APP hardening-track identifiers have no definition anywhere in the repo
