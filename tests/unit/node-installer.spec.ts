@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the one-click node installer: no swarm-wide secret in the download, a refusal when a per-device token would not be enough, and no way to break out of a PowerShell literal.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Followed installer/lib/install-node.ps1 off the swarm-wide secret. Three cases pinned the OLD contract - that the checkout installer still accepted a bare join code and a URL-plus-shared-secret - which is exactly the path that produced a node the control plane then refused at register. They now assert the opposite: one device-bound credential form, no fallback branch left, and a refusal that names the way out. The behaviour these read statically is EXECUTED in tests/unit/node-enrolment-installer.spec.ts.
  */
 
 /**
@@ -108,33 +109,50 @@ describe('the precondition the installer depends on', () => {
 describe('the installer the download actually invokes', () => {
   const installer = () => import('fs').then((fs) => fs.promises.readFile(
     'installer/lib/install-node.ps1', 'utf8'));
+  const resolverOf = (source: string) => source.slice(
+    source.indexOf('function Resolve-JoinTarget'),
+    source.indexOf('function Connect-Tailnet'));
 
-  it('accepts a URL plus an enrollment token as a COMPLETE target', async () => {
+  it('takes a URL plus a DEVICE-BOUND token as a COMPLETE target', async () => {
     // The defect this exists for: the download was refused by the script it invokes.
     // Resolve-JoinTarget knew a join code, or a URL plus the SWARM-WIDE secret — the one
     // thing the one-click file deliberately does not carry — and nothing else. Every unit
     // test passed, because they all tested the renderer and none ran the installer.
-    const source = await installer();
-    const resolver = source.slice(
-      source.indexOf('function Resolve-JoinTarget'),
-      source.indexOf('function Connect-Tailnet'));
-    expect(resolver).toContain('$ControlPlaneUrl -and $EnrollmentToken');
+    const resolver = resolverOf(await installer());
+    expect(resolver).toContain('if ($ControlPlaneUrl) {');
     // ...and the token must land in the slot the node sends as its bearer credential
     // (config.sharedSecret, see mesh-client.ts), or it authenticates nothing.
-    const tokenBranch = resolver.slice(resolver.indexOf('$ControlPlaneUrl -and $EnrollmentToken'));
-    expect(tokenBranch).toMatch(/SharedSecret\s*=\s*\$EnrollmentToken/);
+    expect(resolver).toMatch(/SharedSecret\s*=\s*\$EnrollmentToken/);
   });
 
-  it('still accepts the two older forms, so existing installs keep working', async () => {
-    const source = await installer();
-    expect(source).toContain('if ($JoinCode) {');
-    expect(source).toContain('$ControlPlaneUrl -and $SharedSecret');
+  it('keeps no swarm-wide secret path to fall back to', async () => {
+    // Not "prefers a token": no branch that configures the retired credential at all. Once
+    // REMOTE_CLIENT_REQUIRE_NODE_TOKEN retired it, a node built on it installed cleanly and
+    // was refused at POST /api/remote-clients/register — a success message and a node that
+    // can never join, which is the worst shape a failure can take.
+    const resolver = resolverOf(await installer());
+    expect(resolver).not.toMatch(/SharedSecret\s*=\s*\$SharedSecret/);
+    // A join code embeds the swarm-wide secret, so returning the decoded code wholesale is
+    // the same fallback wearing a different hat.
+    expect(resolver).not.toMatch(/SharedSecret\s*=\s*\$parsed\.SharedSecret/);
+    expect(resolver).not.toContain('return $parsed');
+    // Refused by name, not by a parameter-binding error, so the reason is readable.
+    expect(resolver).toMatch(/shared secret is no longer/i);
   });
 
   it('names the token form in its own refusal, so the dead end is escapable', async () => {
     const source = await installer();
-    const refusal = source.slice(source.indexOf('Stop-WithError "No join code supplied."'));
-    expect(refusal.slice(0, 300)).toMatch(/one-click|Set up this computer/i);
+    const refusal = source.slice(source.indexOf('Stop-WithError "No enrolment token supplied."'));
+    expect(refusal.slice(0, 400)).toMatch(/Set up this computer/i);
+    expect(refusal.slice(0, 400)).toContain('-EnrollmentToken');
+  });
+
+  it('registers the node to start with Windows, so a reboot needs nobody', async () => {
+    // A worker node that has to be reopened by hand after every restart is not a worker.
+    // The per-user Startup folder needs no elevation and no scheduled task.
+    const source = await installer();
+    expect(source).toMatch(/GetFolderPath\('Startup'\)/);
+    expect(source).toContain('New-LauncherShortcut');
   });
 });
 
