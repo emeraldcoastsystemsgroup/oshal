@@ -8,6 +8,13 @@
   Filters by status (default Backlog) and GROUPS by alert fingerprint so the same
   issue is always one row with a count — the queue cannot show 10K duplicates.
   Promote moves backlog -> approved (the only way work enters the RCA pipeline).
+
+  A parked row states WHY it parked, because the two reasons mean different things and the
+  screen previously showed neither: a row whose alert rule never asked for auto-flow is simply
+  waiting for a person, while a row the RCA spend gate stopped carries the analysis-skipped
+  budget flag and WANTED to investigate itself. Reading only "backlog" made a working queue
+  look broken. The reason is read from the flag the consolidator actually writes (labels, and
+  the incident flags in metadata) — nothing here infers it.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -61,7 +68,9 @@
     .count { display: inline-block; min-width: 20px; text-align: center; background: var(--navy2);
       border: 1px solid var(--line); border-radius: 10px; padding: 1px 7px; font-weight: 700; }
     .count.dup { border-color: var(--high); color: var(--high); }
+    .park-reason { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); }
     .empty { padding: 48px; text-align: center; color: var(--muted); }
+    .empty small { display: block; margin-top: 10px; font-size: 12px; }
     code { color: var(--emerald); }
   </style>
   <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
@@ -101,7 +110,13 @@
     </thead>
     <tbody id="rows"></tbody>
   </table>
-  <div class="empty" id="empty" style="display:none">No tickets in this view.</div>
+  <div class="empty" id="empty" style="display:none">Nothing in this view.
+    <small>An empty backlog is the normal state. The watching half is opt-in: Prometheus and
+      Alertmanager ship as a separate monitoring overlay a default stack start does not launch, and
+      the receiver refuses every alert until <code>ALERT_WEBHOOK_TOKEN</code> is set — until then
+      this screen is correctly empty rather than broken.
+      <a href="/api/help/intelligent-processing" target="_blank" rel="noreferrer">Read the guide</a>.</small>
+  </div>
 
   <script>
     const TICKET_TYPE = 'intelligent-processing';
@@ -125,6 +140,21 @@
       return `${Math.floor(h / 24)}d`;
     }
     function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+    // The marker the consolidator writes when the RCA spend gate parks a ticket that WANTED to
+    // auto-flow (BUDGET_PARK_FLAG in src/features/alert-triage/services/rca-budget-gate.ts). It is
+    // stamped both as a ticket label and into metadata.incident.flags; either one is authoritative.
+    const BUDGET_PARK_FLAG = 'analysis-skipped:budget';
+
+    /** Why this row is parked, in the reader's words — '' when it is not parked at all. */
+    function parkReason(t) {
+      if (t.status !== 'backlog') return '';
+      const incident = (t.metadata || {}).incident || {};
+      const flags = [...(t.labels || []), ...(Array.isArray(incident.flags) ? incident.flags : [])];
+      return flags.includes(BUDGET_PARK_FLAG)
+        ? 'Parked: the RCA spend budget was gone — it wanted to investigate itself. Promoting overrides the gate.'
+        : 'Parked: waiting for a person — its alert rule never asked to auto-flow.';
+    }
 
     async function load() {
       const status = $('statusFilter').value;
@@ -159,6 +189,7 @@
         const isBacklog = latest.status === 'backlog';
         if (isBacklog) backlog++;
         const dup = g.tickets.length > 1 ? 'dup' : '';
+        const reason = parkReason(latest);
         const action = isBacklog
           ? `<button class="primary" data-id="${esc(latest.ticketId)}">Promote to approval</button>`
           : `<span class="muted">—</span>`;
@@ -166,7 +197,7 @@
           <td><span class="sev ${esc(g.sev)}">${esc(g.sev)}</span></td>
           <td>${esc(g.m.alertname || g.title)}</td>
           <td><code>${esc(g.m.target || '')}</code></td>
-          <td><span class="status">${esc(latest.status)}</span></td>
+          <td><span class="status">${esc(latest.status)}</span>${reason ? `<span class="park-reason">${esc(reason)}</span>` : ''}</td>
           <td><span class="count ${dup}">${g.tickets.length}</span></td>
           <td class="muted">${ageOf(latest.createdAt)}</td>
           <td>${action}</td>

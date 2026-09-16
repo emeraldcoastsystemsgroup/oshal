@@ -20,6 +20,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Validate first-class manifest schedules before install, including service-route ownership/auth, named handler exports, and static bounded bodies.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Validate fixed in-process package tool declarations and required capabilities before installation.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers through the shared contract (oshal-app-dependencies.js): `validate` checks required/optional (or the legacy flat form); `install` resolves REQUIRED apps fail-closed as before and installs OPTIONAL apps only when asked (`--with a,b` / `--with-optional`), recording both tiers in .oshal-install.json; `uninstall` blocks on required dependents only and reports optional ones; `init` scaffolds the tiered form.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | `build` stages a package's sources in its own src/__oshal_build_<random>/ directory instead of copying them FLAT into the framework's src/app/routes/. The copies were removed in a `finally` that a kill, an OOM or a closed terminal never reaches — on 2026-09-09 seventeen package sources sat untracked in the kernel's src/app/routes/ after such a build, passing every tracked-path gate and one `git add -A` from landing application code in the kernel (Rule 0c). Staging outside src/app/ means an interrupted build leaves kernel source byte-identical, and the surviving staging directory is a path check-repo-separation.js refuses by name.
  *
  * The npm-of-OSHAL-apps helper. An OSHAL app package is a folder with a definition
  * file (oshal-app.yaml — the package.json analog), personas, compiled routes, migrations,
@@ -703,12 +704,22 @@ function installPackage(name, opts, seen) {
  * (no tsc-alias — the swarm's ManifestRouteMounter resolves @/ at runtime).
  *
  * Mechanics (the procedure proven by the little-monsters carve-out, automated):
- *   1. Copy src-routes/*.ts into <framework>/src/app/routes/ (transient; collision-guarded).
+ *   1. Copy src-routes/*.ts into a private <framework>/src/__oshal_build_<random>/ staging
+ *      directory — inside src/ so tsconfig's include + rootDir cover it and the @/ paths
+ *      resolve, and OUTSIDE src/app/ so nothing a build does can alter kernel source.
  *   2. Run the framework's tsc with --outDir <tmp> (plain emit, keeps @/).
  *   3. Harvest the emitted .js for each copied source into <package>/routes/.
  *   4. Verify: every relative require targets another bundled module (framework imports
  *      must use @/ — the self-containment rule), and each manifest factory is exported.
- *   5. Clean up the transient copies + tmp dir (always, in finally).
+ *   5. Clean up the staging directory + tmp dir (always, in finally).
+ *
+ * Step 1 used to copy the sources FLAT into <framework>/src/app/routes/ and delete each copy in
+ * the `finally`. A `finally` does not run through a kill, an OOM or a closed terminal: on
+ * 2026-09-09 seventeen package sources sat untracked in the kernel's src/app/routes/ after such a
+ * build, invisible to every tracked-path gate and one `git add -A` from landing application code
+ * in the kernel (Rule 0c). Staging in its own directory means an interrupted build leaves src/app/
+ * byte-identical; the survivor is the staging directory itself, which
+ * scripts/check-repo-separation.js refuses by name.
  */
 function buildPackage(pkgDirInput, opts) {
   const pkgDir = path.resolve(pkgDirInput);
@@ -726,19 +737,19 @@ function buildPackage(pkgDirInput, opts) {
   if (!sources.length) { console.error(C.red('src-routes/ has no .ts files')); return 1; }
   const bundledBases = new Set(sources.map((f) => f.replace(/\.ts$/, '')));
 
-  const fwRoutes = path.join(fw, 'src', 'app', 'routes');
-  const copied = [];
+  const fwSrc = path.join(fw, 'src');
+  if (!fs.existsSync(fwSrc)) { console.error(C.red(`--framework has no src/ (got ${fw})`)); return 1; }
+  // Staging lives under src/ (tsconfig include + rootDir + @/ paths) but never under src/app/:
+  // a build that is killed mid-compile must leave kernel source byte-identical. The directory
+  // name carries the BUILD_STAGING_DIR_PREFIX that check-repo-separation.js refuses, so a
+  // survivor is caught by the gate rather than by a person reading `git status`.
+  const stageDir = fs.mkdtempSync(path.join(fwSrc, '__oshal_build_'));
+  const stageRel = path.basename(stageDir);
   const tmpOut = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-build-'));
   try {
-    // 1. transient copy (collision-guarded: never overwrite a framework file)
+    // 1. transient copy into the private staging directory
     for (const f of sources) {
-      const destFile = path.join(fwRoutes, f);
-      if (fs.existsSync(destFile)) {
-        console.error(C.red(`collision: ${f} already exists in the framework checkout — refusing to overwrite`));
-        return 1;
-      }
-      fs.copyFileSync(path.join(srcDir, f), destFile);
-      copied.push(destFile);
+      fs.copyFileSync(path.join(srcDir, f), path.join(stageDir, f));
     }
     // 2. plain tsc emit (NO tsc-alias → @/ preserved)
     console.log(C.dim(`compiling ${sources.length} source(s) against ${fw} …`));
@@ -747,7 +758,7 @@ function buildPackage(pkgDirInput, opts) {
     fs.mkdirSync(outRoutes, { recursive: true });
     let built = 0;
     for (const base of bundledBases) {
-      const emitted = path.join(tmpOut, 'app', 'routes', `${base}.js`);
+      const emitted = path.join(tmpOut, stageRel, `${base}.js`);
       if (!fs.existsSync(emitted)) { console.error(C.red(`tsc emitted no ${base}.js`)); return 1; }
       fs.copyFileSync(emitted, path.join(outRoutes, `${base}.js`));
       built++;
@@ -801,7 +812,7 @@ function buildPackage(pkgDirInput, opts) {
     if (detail) console.error(C.dim(detail.split('\n').slice(0, 12).join('\n')));
     return 1;
   } finally {
-    for (const f of copied) fs.rmSync(f, { force: true });
+    fs.rmSync(stageDir, { recursive: true, force: true });
     fs.rmSync(tmpOut, { recursive: true, force: true });
   }
 }

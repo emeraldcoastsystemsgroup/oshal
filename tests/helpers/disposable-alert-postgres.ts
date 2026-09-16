@@ -4,69 +4,41 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Give alert integration guards a private PostgreSQL lifetime with no deployment DSN fallback.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Delegate the container lifetime to tests/helpers/disposable-postgres.ts instead of carrying a private copy of it. The trading specs needed the same private server with a different database, migration set and libpq options, and a second hand-rolled `docker run` block is how the first one came to be pasted seven times. Behaviour here is unchanged for the ~25 alert/Jarvis/test-lab specs that import this class: same container name shape, same `oshal.test-fixture=alert-postgres` label, same `alert_fixture` database, same migrations, same pool settings.
  */
-import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
+import { DisposablePostgres } from './disposable-postgres';
 
 const MIGRATIONS = ['104-alert-pipeline-core.sql', '105-alert-incident.sql', '106-alert-evidence.sql',
   '107-alert-config-topology.sql', '108-alert-metering.sql', '109-topology-transit.sql', '141-alert-event-effects.sql'];
 
-/** Docker arguments are fixed except generated fixture credentials; inherited DSNs are never read. */
-function docker(args: string[]): string {
-  return execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 }).trim();
-}
-
 /** Own the container even during failed startup so no SQL cleanup ever targets operator data. */
 export class DisposableAlertPostgres {
-  readonly containerName = `oshal-alert-fixture-${randomUUID()}`;
-  private poolValue?: Pool;
-  private started = false;
+  private readonly fixture = new DisposablePostgres({
+    purpose: 'alert', label: 'alert-postgres', database: 'alert_fixture', migrations: MIGRATIONS,
+    memory: '256m', max: 12, connectionTimeoutMillis: 500, statementTimeoutMs: 15_000,
+  });
 
-  get pool(): Pool {
-    if (!this.poolValue) throw new Error('Disposable alert PostgreSQL is not started');
-    return this.poolValue;
-  }
+  /** The container this fixture owns, for a spec that asserts on its own isolation. */
+  get containerName(): string { return this.fixture.containerName; }
 
-  async start(): Promise<Pool> {
-    if (this.started) throw new Error('Disposable alert PostgreSQL is already started');
-    const password = randomUUID();
-    try {
-      docker(['run', '--detach', '--rm', '--name', this.containerName, '--label', 'oshal.test-fixture=alert-postgres',
-        '--publish', '127.0.0.1::5432', '--tmpfs', '/var/lib/postgresql/data', '--memory', '256m', '--cpus', '1',
-        '--env', `POSTGRES_PASSWORD=${password}`, '--env', 'POSTGRES_DB=alert_fixture', 'postgres:16-alpine']);
-      this.started = true;
-      const published = docker(['port', this.containerName, '5432/tcp']);
-      const match = /^127\.0\.0\.1:(\d+)$/.exec(published);
-      if (!match) throw new Error('Disposable alert PostgreSQL must publish exactly one loopback port');
-      this.poolValue = new Pool({ host: '127.0.0.1', port: Number(match[1]), user: 'postgres', password,
-        database: 'alert_fixture', max: 12, connectionTimeoutMillis: 500, statement_timeout: 15_000 });
-      let ready = false;
-      for (let attempt = 0; attempt < 90; attempt += 1) {
-        try { await this.poolValue.query('SELECT 1'); ready = true; break; }
-        catch { await new Promise(resolveDelay => setTimeout(resolveDelay, 200)); }
-      }
-      if (!ready) throw new Error('Disposable alert PostgreSQL did not become ready');
-      for (const migration of MIGRATIONS) {
-        await this.poolValue.query(readFileSync(resolve(__dirname, '../../scripts/migrations', migration), 'utf8'));
-      }
-      return this.poolValue;
-    } catch (error) {
-      await this.stop();
-      // Do not echo Docker argv: POSTGRES_PASSWORD is a transient fixture credential.
-      throw new Error(`Disposable alert PostgreSQL setup failed (${error instanceof Error ? error.name : 'unknown error'}). Docker with postgres:16-alpine is required; deployment databases are never used.`);
-    }
-  }
+  /**
+   * @description The pool for the running alert fixture.
+   * @returns The connected pool.
+   * @throws When the fixture has not been started.
+   */
+  get pool(): Pool { return this.fixture.pool; }
 
-  async stop(): Promise<void> {
-    try { if (this.poolValue) { await this.poolValue.end(); this.poolValue = undefined; } }
-    finally {
-      if (this.started) {
-        docker(['rm', '--force', this.containerName]);
-        this.started = false;
-      }
-    }
-  }
+  /**
+   * @description Start a private PostgreSQL and apply the alert-pipeline migrations to it.
+   * @returns The connected pool.
+   * @throws When Docker is unavailable or the server never became ready.
+   */
+  async start(): Promise<Pool> { return this.fixture.start(); }
+
+  /**
+   * @description End the pool and force-remove the container.
+   * @returns Nothing.
+   */
+  async stop(): Promise<void> { return this.fixture.stop(); }
 }

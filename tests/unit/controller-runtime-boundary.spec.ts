@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for the two-runtimes doctrine (CLAUDE.md "Two runtimes, one image": the swarm controller NEVER calls an LLM; bot nodes own execution). Half (a): a static import-graph walk from src/app/server.ts (same regex-walk idiom as scripts/check-kernel-skills.ts) proving the controller graph never reaches the any-bot JS LLM layer or the bot-node entrypoints, and that every harness-stack module it DOES reach is pinned to today's exact sanctioned importer edges — a new edge into the harness stack fails this spec. Half (b): pins scripts/bot-entrypoint.sh runtime selection (swarm/unset → dist/app/server.js, bot-node → dist/app/bot-node-server.js).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Barrel split landed (TODO-BOUNDARY-FINDING resolved): the llm-provider barrels no longer re-export harness modules, so every "barrel re-export" edge left the allowlist; the new '@/features/llm-provider/harness' sub-barrel is now a tracked forbidden module whose SOLE sanctioned importer is provider-runtime.ts. Added a named barrel-boundary regression test that scans both barrels' import specifiers directly (graph-independent), so a reintroduced harness re-export goes red even if the walker changes.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "Bot runtime consolidation": half (b) re-anchored on the consolidated runtime switch — the any-bot branch now exits instead of exec'ing the legacy server, so bot-node is the leading `if`, and the selectable set is the single CANONICAL_BOT_RUNTIMES declaration with a fail-closed default. The behavioural proof (the shell actually refusing an unknown value) is tests/unit/bot-runtime-consolidation.spec.ts.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -231,13 +232,17 @@ describe('controller runtime boundary — bot-entrypoint.sh runtime selection', 
     expect(script).toMatch(/BOT_RUNTIME="\$\{BOT_RUNTIME:-swarm\}"/);
   });
 
-  it('the only BOT_RUNTIME branches are any-bot and bot-node — swarm/unset falls through to the controller', () => {
-    const compared = [...script.matchAll(/"\$BOT_RUNTIME" = "([^"]+)"/g)].map((m) => m[1]);
+  it('selects from one declared canonical set — any-bot is refused, anything unknown fails closed', () => {
+    // The literal comparisons, excluding the `$candidate` loop that walks CANONICAL_BOT_RUNTIMES.
+    const compared = [...script.matchAll(/"\$BOT_RUNTIME" = "([^"$]+)"/g)].map((m) => m[1]);
     expect(compared).toEqual(['any-bot', 'bot-node']);
+    expect(script).toContain('CANONICAL_BOT_RUNTIMES="swarm bot-node"');
+    // swarm/unset still falls through to the controller; every other value exits instead.
+    expect(script).toContain('RUNTIME_RECOGNIZED');
   });
 
   it('bot-node → dist/app/bot-node-server.js (the LLM-owning worker), and ONLY that branch starts it', () => {
-    const body = branchBody('elif [ "$BOT_RUNTIME" = "bot-node" ]');
+    const body = branchBody('if [ "$BOT_RUNTIME" = "bot-node" ]');
     expect(body).toMatch(/exec node dist\/app\/bot-node-server\.js/);
     expect(body).not.toMatch(/dist\/app\/server\.js/);
     // Count exec lines only — the header comment block also names the file.

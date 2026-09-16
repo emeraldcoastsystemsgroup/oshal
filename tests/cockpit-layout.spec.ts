@@ -130,9 +130,14 @@ test.describe('Cockpit — Status Bar', () => {
     await expect(el).toContainText('Q:');
   });
 
-  test('status bar has 4 status items', async ({ page }) => {
-    const items = page.locator('.status-bar .status-item');
-    await expect(items).toHaveCount(4);
+  test('status bar shows its four always-on items, and the degraded-persistence item only when degraded', async ({ page }) => {
+    // Five items exist in the markup; the fifth (#statusPersistenceItem) carries .hidden and is
+    // unhidden only when a store is stranded in memory, so what a healthy cockpit SHOWS is four.
+    // toHaveCount counts DOM matches regardless of visibility, which is why the literal 4 became
+    // false the moment the fifth item was added as static markup.
+    await expect(page.locator('.status-bar .status-item')).toHaveCount(5);
+    await expect(page.locator('.status-bar .status-item:not(.hidden)')).toHaveCount(4);
+    await expect(page.locator('#statusPersistenceItem')).toHaveClass(/hidden/);
   });
 
   test('connection status dot is visible', async ({ page }) => {

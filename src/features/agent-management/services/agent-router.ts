@@ -9,9 +9,13 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added taskText tokenization so routing can use work-unit descriptions and acceptance criteria, not just ticket titles
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Replaced fuzzy phrase substring matching with normalized token overlap so QA phrases stop overmatching build tickets
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Tier 3 matches MULTI-WORD routing keywords as phrases instead of shredding them into tokens. A declared phrase such as 'what did i miss' was flattened to the routable token 'did' (3 chars, absent from ROUTING_STOP_WORDS), so the comms owners claimed any ticket merely containing that word - the reason a trading P&L question routed to the email bot. Phrases are now tested with includes() against the lowercased title+taskText, exactly as the Tier-1 self-score does, and are counted ONCE; single-word keywords and all capabilities keep token matching. Deliberately NO minimum-claim threshold: swept against the registry+persona corpus a threshold silently disowns every bot whose vocabulary is single words (weather, music, movies, calendar).
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Made phrase matching ADDITIVE instead of a replacement, and moved the 'did' class into the stop list. Entry 7 removed a phrase's constituent tokens from the candidate's token bag, so a bot whose vocabulary is mostly phrases lost it whenever the caller rephrased: 'find idle gce instances' no longer reached cloud-ops-bot (declares 'gce instance'), 'run a survey flight pattern' no longer reached drone-operator (declares 'survey pattern'), and five more owners were measured losing their ticket. Now an EXACT phrase hit scores PHRASE_MATCH_WEIGHT (worth more than one token), while an unmatched phrase still contributes its tokens, so nothing is taken away. The actual cause of the email misroute - the bare auxiliary 'did' being routable at all - is fixed where it belongs: ROUTING_STOP_WORDS gains the auxiliaries and interrogatives, measured against the real corpus as costing one declared keyword versus 31 for the minimum-token-length lever, which is why that lever was rejected. Tier 3 also no longer bails on an empty token bag alone, or an ask made entirely of stop words would skip phrase matching it can still answer. Still NO minimum-claim threshold - it disowns every single-word corpus (weather, career, spotify, calendar, movies).
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Tier 1 now refuses to award a TIED auction. chooseWinner breaks an equal-confidence tie on estimatedCost and estimatedLatencyMs, and every BID_RESPONSE the mesh collects reports both as 0 (mesh-bid-broadcaster.requestBid), so a tie was settled by whichever reply arrived first - an arbitrary owner presented as a confident claim. Two bots bidding the same number have not identified an owner between them; Tier 3 has strictly more to go on (it also reads ticket labels and required capabilities), so a tie falls through to it instead. Measured on tests/unit/selector-benchmark.spec.ts against the rebuilt Tier-1 self-score: 104/105 -> 105/105 correct owners, at a cost of 3 asks moving from the bid tier to the keyword tier (105 -> 102). Unqualified and single-bid auctions are untouched.
  */
 
 import { createChildLogger } from '@/shared/logger';
+import { tokenizeRoutingText } from './routing-text';
 import type { AgentBid } from './selection-bid-service';
 import { SelectionBidService } from './selection-bid-service';
 
@@ -26,6 +30,14 @@ const PROJECT_MANAGER_AGENT_ID = 'a0000000-0000-0000-0000-000000000001';
  * @description Minimum bid confidence threshold. Bids below this are not considered.
  */
 const BID_CONFIDENCE_THRESHOLD = 0.5;
+
+/**
+ * @description Score a declared multi-word routing keyword earns when it appears VERBATIM in the
+ * ticket text. It is deliberately greater than a single token hit (1): an exact phrase is stronger
+ * evidence of ownership than one loose word. It is deliberately LESS than the phrase's word count,
+ * so a long declared phrase can never out-score a bot that matched that many independent keywords.
+ */
+const PHRASE_MATCH_WEIGHT = 2;
 
 /**
  * @description Route context assembled from task, tenant, and workspace state.
@@ -134,7 +146,8 @@ export class AgentRouter {
   }
 
   /**
-   * @description Tier 1: Bid auction — highest confidence bid above threshold wins.
+   * @description Tier 1: Bid auction — the single highest confidence bid above threshold wins.
+   * A tie at the lead is not a claim and falls through to the next tier.
    */
   private tryBidAuction(context: RouteContext, ranked: RouteCandidate[]): RouteDecision | null {
     if (!context.bids || context.bids.length === 0) return null;
@@ -142,6 +155,20 @@ export class AgentRouter {
     const qualifiedBids = context.bids.filter((b) => b.confidence >= BID_CONFIDENCE_THRESHOLD);
     if (qualifiedBids.length === 0) {
       logger.info({ taskId: context.taskId, bidCount: context.bids.length }, 'Tier 1: All bids below confidence threshold — falling through');
+      return null;
+    }
+
+    // A TIE is not a claim. Every mesh BID_RESPONSE carries estimatedCost 0 and estimatedLatencyMs 0,
+    // so chooseWinner's tie-breakers cannot separate equal bids and the winner would be whichever
+    // reply landed first. Hand a tie to Tier 3, which reads the labels and required capabilities the
+    // self-score never saw.
+    const topConfidence = qualifiedBids.reduce((top, bid) => Math.max(top, bid.confidence), 0);
+    const leaders = new Set(qualifiedBids.filter((bid) => bid.confidence === topConfidence).map((bid) => bid.agentId));
+    if (leaders.size > 1) {
+      logger.info(
+        { taskId: context.taskId, confidence: topConfidence, tiedAgentIds: [...leaders] },
+        'Tier 1: Auction tied at the lead — no owner claimed it, falling through',
+      );
       return null;
     }
 
@@ -202,12 +229,15 @@ export class AgentRouter {
    */
   private tryKeywordMatching(context: RouteContext, ranked: RouteCandidate[]): RouteDecision | null {
     const searchTerms = buildSearchTerms(context);
-    if (searchTerms.length === 0) return null;
-
+    const phraseText = buildPhraseMatchText(context);
+    // An all-stop-word ask ('get me to ...') still has phrases to match, so this tier may only
+    // bail when there is NOTHING to compare against - bailing on empty tokens alone would
+    // silently disown every keyword a bot declares purely as a phrase of common words.
+    if (searchTerms.length === 0 && phraseText.trim().length === 0) return null;
     const scored = ranked
       .map((candidate) => ({
         candidate,
-        keywordScore: computeKeywordScore(candidate, searchTerms),
+        keywordScore: computeKeywordScore(candidate, searchTerms, phraseText),
       }))
       .filter((s) => s.keywordScore > 0)
       .sort((a, b) => b.keywordScore - a.keywordScore);
@@ -270,15 +300,68 @@ function buildSearchTerms(context: RouteContext): string[] {
 }
 
 /**
- * @description Scores a candidate based on keyword overlap with search terms.
- * Checks candidate capabilities and routing keywords against search terms.
+ * @description Builds the raw lowercased text a multi-word routing keyword is tested against.
+ * Phrases must be matched against the ORIGINAL text, not the token bag: tokenizing them is
+ * exactly what loses the phrase. Mirrors the Tier-1 self-score text in mesh-bid-responder so a
+ * bot is matched here on the same string it bids on there.
+ * @param context - Route context carrying the ticket title and the work-unit text.
+ * @returns Lowercased ticket title joined to the task text.
  */
-function computeKeywordScore(candidate: RouteCandidate, searchTerms: string[]): number {
+function buildPhraseMatchText(context: RouteContext): string {
+  return `${context.ticketTitle ?? ''}\n${context.taskText ?? ''}`.toLowerCase();
+}
+
+/**
+ * @description Splits declared routing keywords into multi-word PHRASES and single words, so the
+ * scorer can test a phrase verbatim first. This split does NOT cost a phrase its tokens — an
+ * unmatched phrase is handed back to token matching by computeKeywordScore. Phrases are
+ * de-duplicated so a repeated declaration cannot inflate a score.
+ * @param values - The candidate's declared routing keywords (persona routing_keywords).
+ * @returns Lowercased unique phrases and the untouched single-word keywords.
+ */
+function splitRoutingKeywords(values: string[] | undefined): { phrases: string[]; singles: string[] } {
+  const phrases = new Set<string>();
+  const singles: string[] = [];
+  for (const value of values ?? []) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) continue;
+    if (/\s/.test(trimmed)) {
+      phrases.add(trimmed.toLowerCase());
+    } else {
+      singles.push(trimmed);
+    }
+  }
+  return { phrases: [...phrases], singles };
+}
+
+/**
+ * @description Scores a candidate on its overlap with the ticket, phrase-aware and ADDITIVE.
+ * A declared multi-word keyword is first tested VERBATIM against the ticket text — the same string
+ * Tier 1 self-scores against in mesh-bid-responder.computeBidConfidence — and an exact hit is worth
+ * PHRASE_MATCH_WEIGHT, more than any single loose word. A phrase that does NOT appear verbatim is not
+ * discarded: its constituent tokens rejoin the candidate's token bag, so a caller who rephrases
+ * ('find idle gce instances' against the declared 'gce instance') still reaches the owner. Phrase
+ * matching therefore only ever ADDS evidence; it never removes vocabulary a bot already had.
+ * Capabilities and single-word routing keywords are token-matched exactly as before.
+ * @param candidate - The agent candidate carrying its declared capabilities and routing keywords.
+ * @param searchTerms - Normalized tokens drawn from the ticket title, labels and task text.
+ * @param phraseText - The raw lowercased ticket text a phrase is tested against verbatim.
+ * @returns The candidate's Tier-3 score: one point per distinct token hit plus PHRASE_MATCH_WEIGHT per exact phrase hit.
+ */
+function computeKeywordScore(candidate: RouteCandidate, searchTerms: string[], phraseText: string): number {
+  const { phrases, singles } = splitRoutingKeywords(candidate.routingKeywords);
+  const matchedPhrases: string[] = [];
+  const unmatchedPhrases: string[] = [];
+  for (const phrase of phrases) {
+    (phraseText.includes(phrase) ? matchedPhrases : unmatchedPhrases).push(phrase);
+  }
   const candidateTerms = new Set([
     ...flattenRoutingTerms(candidate.capabilities),
-    ...flattenRoutingTerms(candidate.routingKeywords),
+    ...flattenRoutingTerms(singles),
+    ...flattenRoutingTerms(unmatchedPhrases),
   ]);
-  return searchTerms.reduce((score, term) => score + (candidateTerms.has(term) ? 1 : 0), 0);
+  const tokenScore = searchTerms.reduce((score, term) => score + (candidateTerms.has(term) ? 1 : 0), 0);
+  return tokenScore + matchedPhrases.length * PHRASE_MATCH_WEIGHT;
 }
 
 /**
@@ -292,52 +375,3 @@ function flattenRoutingTerms(values: string[] | undefined): string[] {
   }
   return values.flatMap((value) => tokenizeRoutingText(value));
 }
-
-/**
- * @description Tokenizes freeform routing text into normalized comparison terms.
- * @param value - Source text from title, labels, descriptions, or capability phrases.
- * @returns Normalized tokens with stop-words removed.
- */
-function tokenizeRoutingText(value: string): string[] {
-  return value
-    .toLowerCase()
-    .split(/[\s\-_/.,;:()]+/)
-    .map((token) => normalizeRoutingToken(token))
-    .filter((token) => token.length > 2 && !ROUTING_STOP_WORDS.has(token));
-}
-
-/**
- * @description Normalizes a routing token to reduce inflection noise in keyword matching.
- * @param token - Raw token.
- * @returns Normalized token stem.
- */
-function normalizeRoutingToken(token: string): string {
-  const trimmed = token.replaceAll(/[^a-z0-9]+/g, '');
-  if (trimmed.endsWith('ation')) return trimmed.slice(0, -5);
-  if (trimmed.endsWith('ing')) return trimmed.slice(0, -3);
-  if (trimmed.endsWith('ed')) return trimmed.slice(0, -2);
-  if (trimmed.endsWith('es')) return trimmed.slice(0, -2);
-  if (trimmed.endsWith('s')) return trimmed.slice(0, -1);
-  return trimmed;
-}
-
-const ROUTING_STOP_WORDS = new Set([
-  'the',
-  'and',
-  'for',
-  'with',
-  'that',
-  'this',
-  'from',
-  'into',
-  'inside',
-  'your',
-  'their',
-  'then',
-  'than',
-  'when',
-  'where',
-  'while',
-  'must',
-  'should',
-]);

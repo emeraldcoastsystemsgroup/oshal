@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment 2) — real-boundary check for the dynamic bot launcher. The unit spec asserts the manifest SHAPE, which is not closure for "the Kubernetes API accepts this": a mock cannot reject an invalid field, a bad probe, or a malformed selector. This renders the exact manifest the launcher POSTs and pushes it through `kubectl apply --dry-run` — server-side when a cluster is reachable (the API server itself validates and admits, creating nothing), client-side otherwise. Run it against any cluster; it never creates a resource.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Also asks the live API server whether the enable/disable toggle target exists: the cockpit toggle scales a bot Deployment through the scale SUBRESOURCE, and a unit spec that captures the outgoing request cannot prove that path is real or that it accepts PATCH. kubectl get --raw /apis/apps/v1 is the API server own discovery document, naming deployments/scale and the verbs it accepts, and it creates nothing.
  *
  * Usage: npx tsx scripts/validate-dynamic-bot-manifest.mjs [--namespace oshal] [--context ctx]
  *        (tsx, not bare node: the launcher uses parameter properties, which Node's
@@ -63,3 +64,36 @@ if (mode === 'client') {
   console.warn('\nWARNING: client-side only. Re-run against a cluster for real admission validation.');
 }
 console.log('\nOK: the dynamic bot manifest is accepted by kubectl apply --dry-run.');
+
+// The cockpit enable/disable toggle PATCHes
+// /apis/apps/v1/namespaces/<ns>/deployments/<name>/scale. Ask the API server's own
+// discovery document whether that subresource exists and accepts PATCH. Read-only —
+// discovery creates and modifies nothing.
+if (reachable) {
+  const discovery = kubectl(['get', '--raw', '/apis/apps/v1']);
+  if (discovery.status !== 0) {
+    console.error('FAILED: could not read /apis/apps/v1 from the API server.');
+    console.error(`${discovery.stdout ?? ''}${discovery.stderr ?? ''}`.trim());
+    process.exit(1);
+  }
+  let resources;
+  try {
+    resources = JSON.parse(discovery.stdout).resources ?? [];
+  } catch (err) {
+    console.error(`FAILED: /apis/apps/v1 did not return JSON: ${err.message}`);
+    process.exit(1);
+  }
+  const scale = resources.find((r) => r.name === 'deployments/scale');
+  if (!scale) {
+    console.error('FAILED: this API server does not expose deployments/scale — the toggle path does not exist here.');
+    process.exit(1);
+  }
+  const verbs = scale.verbs ?? [];
+  if (!verbs.includes('patch')) {
+    console.error(`FAILED: deployments/scale does not accept patch here (verbs: ${verbs.join(', ')}).`);
+    process.exit(1);
+  }
+  console.log(`OK: the API server exposes deployments/scale with verbs [${verbs.join(', ')}] — the enable/disable toggle PATCHes that path.`);
+} else {
+  console.warn('WARNING: no cluster reachable — deployments/scale was not confirmed against a real API server.');
+}

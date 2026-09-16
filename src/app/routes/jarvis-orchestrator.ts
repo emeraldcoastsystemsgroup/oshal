@@ -16,6 +16,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Withhold protected completed work from automatic summarization pending a derived-result lineage contract.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | The lineage contract exists now, so the protected half of the return leg runs: returnProtectedComplexSummaries binds the source ticket's executions to the conversation and work task, then claims and summarizes exactly like the automatic half. Without it a protected ticket that SUCCEEDED was never claimed, summarizeComplexTask never ran, finishTask never ran, and the operator's thread stayed silent forever - twice on 2026-09-15. The summarizer now re-checks the captured actor's rights before it reads and again before it writes, so a revocation mid-summary withholds the answer rather than racing it.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: JARVIS_AGENT_ID, APP_ROUTES/loadEffectiveRoutes, runJarvisBot + the classify/delegate/synthesize helpers, summarizeComplexTask, maskPendingComplexSummaries, repairCompletedTaskTableVisuals (route decomposition, no behaviour change).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credential forwarding from Jarvis/model delegation; credentials stay inside audited server-side provider operations.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry the turn's resolved endpoint through the whole turn: the in-process steps (haven passive learning, the legacy classify/synthesize path) now run on the same byoLlmConnection instead of silently falling to the controller's configured CLI harness, and the one bounded retry re-resolves to the NEXT usable endpoint rather than deliberately dropping the connection onto a provider a SEC-05 node refuses.
@@ -31,6 +32,7 @@ import * as crypto from 'crypto';
 import type { AppContext } from '@/app/composition/app-context';
 import { createChildLogger } from '@/shared/logger';
 import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
+import type { AuthorizationActor } from '@/shared/application-authorization';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { learnFromExchange, withHavenContext } from '@/features/user-model';
 import {
@@ -687,16 +689,21 @@ void orchestrate;   // retained for parity; not wired to a route (bot-node path 
  * (the caller guards via a 'summarizing' status) in the background.
  */
 async function summarizeComplexTask(
-  ctx: AppContext, sub: string, taskId: string, ticketId: string, title: string,
+  ctx: AppContext, sub: string, taskId: string, ticketId: string, title: string, derived?: AuthorizationActor,
 ): Promise<void> {
   try {
-  const { hasProtectedJarvisSource } = await import('./jarvis-result-access.js');
-    if (await hasProtectedJarvisSource(ctx, [taskId, ticketId])) return;
+  const { hasProtectedJarvisSource, canReadDerivedJarvisSources } = await import('./jarvis-result-access.js');
+    // A protected source is readable here ONLY because returnProtectedComplexSummaries already bound its
+    // executions to this task and conversation under this exact actor. Everything else still fails closed.
+    const permitted = async () => derived
+      ? canReadDerivedJarvisSources(ctx, sub, [taskId, ticketId], derived)
+      : !await hasProtectedJarvisSource(ctx, [taskId, ticketId]);
+    if (!await permitted()) return;
     const msgs = (await ctx.messageStore.getByTask(ticketId)) as Array<{
       text?: string;
       metadata?: Record<string, unknown>;
     }>;
-    if (await hasProtectedJarvisSource(ctx, [taskId, ticketId])) return;
+    if (!await permitted()) return;
     const newestFirst = [...(msgs || [])].reverse();
     const capturedCompletion = newestFirst.find((message) => (
       message.metadata?.source === 'manifest-worker-bot-node'
@@ -853,6 +860,9 @@ async function summarizeComplexTask(
       summaryWithLinks = summaryWithLinks.split(from).join(to);
     }
 
+    // Last check before anything is published: the model call and the file capture take time, and a
+    // grant revoked in that window must withhold the answer rather than lose the race to it.
+    if (!await permitted()) return;
     await finishTask(ctx.pool, taskId, true, summaryWithLinks, visual, captured.files);
     if (taskSessionId) {
       await persistJarvisTurn(ctx, taskSessionId, 'assistant', summaryWithLinks, {
@@ -896,6 +906,48 @@ export async function maskPendingComplexSummaries(
     if (claimed && claimed.rowCount) {
       void fire(ctx, sub, t.id, t.ticketId, t.title);   // background — don't block the poll
     }
+    t.status = 'summarizing';
+    t.result = 'Reading the results…';
+  }
+}
+
+/**
+ * @description The protected half of the same poll-time return leg. A ticket whose work product carries
+ * controller-recorded execution lineage is never handed to the automatic summarizer, because a summary
+ * copied into a conversation would otherwise be readable through a row that no longer answered to the
+ * execution authority. That is the whole reason a SUCCESSFUL protected ticket used to go silent. Here the
+ * lineage is RECORDED first - the source's executions are bound to the exact work task and conversation
+ * the answer will be written to - and only then is the summarize job claimed, with the same atomic,
+ * re-claimable UPDATE the automatic half uses. A task whose lineage cannot be recorded, because the caller
+ * is not the owner, carries no verified issuer, or has lost the grant, is left exactly as it was: silent.
+ * @param ctx - App context (Postgres pool, canonical task store).
+ * @param sub - The caller's user sub; rows are caller-scoped.
+ * @param tasks - The protected mapped rows about to be returned by GET /tasks; mutated in place.
+ * @param sessions - Row id to its stored conversation id, from the same owner-filtered read.
+ * @param resolveActor - Existing server-owned actor resolver, never caller body identity.
+ * @param fire - The summarize job to launch on a successful claim (injectable for tests).
+ * @returns Resolves once every protected pending-summary task has been bound-and-claimed or left alone.
+ */
+export async function returnProtectedComplexSummaries(
+  ctx: AppContext, sub: string,
+  tasks: Array<{ id: string; title: string; status: string; result: string | null; kind: string; ticketId: string | null }>,
+  sessions: ReadonlyMap<string, unknown>,
+  resolveActor: () => Promise<AuthorizationActor>,
+  fire: typeof summarizeComplexTask = summarizeComplexTask,
+): Promise<void> {
+  const { recordDerivedJarvisResultLineage } = await import('./jarvis-result-access.js');
+  for (const t of tasks) {
+    if (t.kind !== 'complex' || t.status !== 'done' || t.result || !t.ticketId) continue;
+    const sessionId = String(sessions.get(t.id) || '').trim();
+    const destinations = [t.id, ...(/^[\w.-]{6,180}$/.test(sessionId) ? [sessionId] : [])];
+    const actor = await recordDerivedJarvisResultLineage(ctx, sub, t.ticketId, destinations, JARVIS_AGENT_ID, resolveActor);
+    if (!actor) continue;
+    const claimed = await ctx.pool.query(
+      `UPDATE jarvis_tasks SET status = 'summarizing', summarize_started_at = NOW()
+        WHERE id = $1 AND user_sub = $2 AND (status <> 'summarizing' OR summarize_started_at IS NULL
+              OR summarize_started_at < NOW() - INTERVAL '3 minutes')
+        RETURNING id`, [t.id, sub]).catch(() => null);
+    if (claimed && claimed.rowCount) void fire(ctx, sub, t.id, t.ticketId, t.title, actor);
     t.status = 'summarizing';
     t.result = 'Reading the results…';
   }

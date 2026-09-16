@@ -52,6 +52,9 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Emitted surface ops log op count, names (custom:<name>) and the target app + its declared custom names at INFO on the success path, so a BUG-18 custom-name mismatch is diagnosable from the api log alone.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | No-hosted-brain honesty: the /ask catch runs describeJarvisAskFailure, so a turn whose user-brain ladder resolved to nothing on an unbrokered-harness bot records "Jarvis has no AI engine connected — add one under Settings → Connections → Bring Your Own LLM." with code NO_HOSTED_BRAIN, and /ask/result returns that code for the surface to speak. Every other failure keeps its own message and carries no code; the refusal, the ladder and the SEC-05 preflight are untouched.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted jarvis-speaker-profile-links.js in JARVIS_CLIENT_ASSETS: the Manage Voices → Ambient Recall bridge serves from the same authenticated /assets route as the other speaker siblings.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | GET /tasks claims the return leg's FAILURE half beside the success half: a task whose ticket reached a terminal failure is closed in the durable shelf and the honest sentence is written into its thread (returnFailedComplexTasks). The ticket map now carries the whole ticket rather than its status alone, because the recorded escalation reason lives in its metadata and re-reading it per task would turn one list into an N+1.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | GET /tasks now claims the PROTECTED success half too. Protected rows were dropped out of the summarize/repair pass and nothing else ever picked them up, so a protected ticket that finished correctly produced no summary, no finishTask and no thread turn - it simply went quiet. They are split out instead of discarded and handed to returnProtectedComplexSummaries, which records the derived lineage before it claims. The automatic half and the table-visual repair pass keep exactly the rows they had.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | Record WHICH half of the /ask session gate refused. The 404 session_not_found was emitted with no log line at all, so an operator reading the api log could not tell a foreign-owned session id from a store that failed to answer - the same indistinguishability that let a Jarvis ownership fault read as an empty conversation for three days. The decision, the status, the body and the short-circuit order are all unchanged; only the refusal is now written down.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -97,6 +100,7 @@ import {
   runJarvisBot,
   compileAndDispatchPlan,
   maskPendingComplexSummaries,
+  returnProtectedComplexSummaries,
   repairCompletedTaskTableVisuals,
 } from './jarvis-orchestrator';
 import {
@@ -134,9 +138,12 @@ import {
   markJarvisSessionTaskStatus,
   mapJarvisTaskStatusFromTicketStatus,
   jarvisFailureNoteForTicketStatus,
+  returnFailedComplexTasks,
+  type JarvisFailedTaskCandidate,
   storedVisual,
   storedFiles,
 } from './jarvis-task-store';
+import { deriveTicketEscalationDetail } from '@/entities/ticket';
 import { threadTicketKey, ensureSessionTask, ensureThreadChatTicket, closeThreadChatTicket } from './jarvis-thread-tickets';
 import { describeJarvisAskFailure } from './jarvis-no-brain-notice';
 
@@ -172,6 +179,7 @@ export {
   persistJarvisTurn,
   markJarvisSessionTaskStatus,
   mapJarvisTaskStatusFromTicketStatus,
+  jarvisFailureSentence,
   storedVisual,
 } from './jarvis-task-store';
 export { maskPendingComplexSummaries, JARVIS_AGENT_ID } from './jarvis-orchestrator';
@@ -517,23 +525,32 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
       if (briefings) rows = await briefings.service.listTasks(sub, await briefings.resolveActor(req), 50);
       rows = await filterJarvisResultRows(ctx, sub, rows, () => resultActor(req));
       // For complex tasks (filed with the swarm), the live status lives on the ticket — map it in.
+      // The whole ticket is carried, not just its status: the recorded escalation reason lives in
+      // its metadata, and re-reading it per task would turn one list into an N+1.
       const hasComplex = rows.some((r) => r.kind === 'complex' && r.ticket_id);
-      let ticketStatus = new Map<string, string>();
+      let ticketsById = new Map<string, { status: string; metadata: Record<string, unknown> }>();
       if (hasComplex) {
         try {
           const tickets = await ctx.ticketService.listTickets({ ownerSub: sub, limit: 200 });
-          ticketStatus = new Map(tickets.map((t) => [String(t.ticketId), String(t.status)]));
+          ticketsById = new Map(tickets.map((t) => [String(t.ticketId), { status: String(t.status), metadata: t.metadata }]));
         } catch { /* fall back to the stored status */ }
       }
+      // Tasks whose ticket is terminally dead and whose row has not been closed yet. Collected in
+      // this same owner-filtered pass so the return leg costs no extra read.
+      const failedComplex: JarvisFailedTaskCandidate[] = [];
       const tasks = rows.map((r) => {
         let status = r.status;
         let error = r.error as string | null;
-        if (r.kind === 'complex' && r.ticket_id && ticketStatus.has(r.ticket_id)) {
-          const ts = ticketStatus.get(r.ticket_id)!;
+        if (r.kind === 'complex' && r.ticket_id && ticketsById.has(r.ticket_id)) {
+          const ts = ticketsById.get(r.ticket_id)!.status;
           status = mapJarvisTaskStatusFromTicketStatus(ts);
           // A ticket that escalated never wrote to the shelf row's error column, so a failed
           // multi-app plan arrived as status 'error' with a null message. Say what happened.
           if (!error) error = jarvisFailureNoteForTicketStatus(ts);
+          if (status === 'error') {
+            failedComplex.push({ id: r.id, kind: r.kind, ticketId: r.ticket_id, ticketStatus: ts,
+              storedStatus: String(r.status || ''), createdAt: r.created_at });
+          }
         }
         const visual = storedVisual({ visual: r.visual });
         // Deliverables the task produced, already copied into THIS caller's private folder. The
@@ -548,13 +565,30 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
           ...(files.length ? { files } : {}),
         };
       });
+      // The return leg's failure half, claimed here alongside the success half below. A dead
+      // ticket has no work product to summarize, so the honest sentence is derived from its own
+      // recorded status and reason code and written straight into the thread the user asked in —
+      // otherwise the row sits at 'queued' forever and Jarvis keeps calling it "in progress".
+      await returnFailedComplexTasks(ctx, sub, failedComplex, new Map(failedComplex.map((task) => [
+        task.ticketId ?? '',
+        deriveTicketEscalationDetail(null, ticketsById.get(task.ticketId ?? '')?.metadata),
+      ])));
       // For finished complex tasks, have Jarvis READ the deliverable and summarize it in his voice
       // (once, in the background). Until that lands, the task stays masked as in-flight — see
       // maskPendingComplexSummaries for why it must never surface as 'done' early.
       const automaticTasks = [];
+      const protectedTasks = [];
       const sourceSessions = new Map(rows.map(row => [row.id, row.session_id]));
-      for (const task of tasks) if (!await hasProtectedJarvisSource(ctx, [task.id, task.ticketId, sourceSessions.get(task.id)].filter((id): id is string => Boolean(id)))) automaticTasks.push(task);
+      for (const task of tasks) {
+        if (!await hasProtectedJarvisSource(ctx, [task.id, task.ticketId, sourceSessions.get(task.id)].filter((id): id is string => Boolean(id)))) automaticTasks.push(task);
+        else protectedTasks.push(task);
+      }
       await maskPendingComplexSummaries(ctx, sub, automaticTasks);
+      // The protected half of the return leg. It is NOT the automatic path: the source's execution
+      // lineage is bound to this row and its conversation first, so the summary that lands answers to
+      // the same authority as the work product. Without this a protected ticket that SUCCEEDED was
+      // dropped here and the thread it was asked in stayed silent forever.
+      await returnProtectedComplexSummaries(ctx, sub, protectedTasks, sourceSessions, () => resultActor(req));
       // Older completed rows may already contain a useful Markdown table but predate persisted
       // visual metadata. Repair at most three per owner poll; ordinary prose remains text-only.
       await repairCompletedTaskTableVisuals(ctx, visualResponseService, sub, automaticTasks);
@@ -633,7 +667,15 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     // Register the thread as a chat_task FIRST — the chat-ticket link + saveTurn (chat_messages) both
     // FK-reference it; without it every persistence write fails (no durable history). Idempotent.
     const ownsSession = await ensureSessionTask(ctx, sub, issuer, sessionId, message);
-    if (!ownsSession || !await canReadJarvisSession(ctx, sub, issuer, sessionId, () => resultActor(req))) {
+    const readsSession = ownsSession
+      && await canReadJarvisSession(ctx, sub, issuer, sessionId, () => resultActor(req));
+    if (!readsSession) {
+      // The refusal is correct either way and its wording stays deliberately uninformative to the
+      // caller. The LOG is where the two halves separate: `ownership` means the session task could
+      // not be written owner-bound (a foreign owner, or a store that answered nothing), `read-back`
+      // means it was written and then would not read back. Answering 404 with no record at all is
+      // how an ownership fault becomes indistinguishable from an empty conversation.
+      logger.warn({ sessionId, refusedBy: ownsSession ? 'read-back' : 'ownership' }, 'jarvis /ask refused: session_not_found');
       res.status(404).json({ error: 'session_not_found' }); return;
     }
     await markJarvisSessionTaskStatus(ctx, sessionId, 'processing');

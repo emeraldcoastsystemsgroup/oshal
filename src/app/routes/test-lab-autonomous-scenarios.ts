@@ -9,6 +9,8 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register bot initialization, specialist context and briefing behavior suites with read-only discovery and explicit runner prerequisites.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register the BUG-20 guards on the isolated nightly regression scenario: the alert replay-idempotency and consolidateLanded suites on disposable PostgreSQL.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register the local CI export-purge and partial-secret-scan guards (Git Bash runs of the production script pieces) on the isolated nightly regression scenario.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Register the protected derived-result return guard on the protected remote application execution scenario.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the three trading guards that now start and destroy their own PostgreSQL (earnings rules, event plans, engine cost basis). They are the same disposable-container class this scenario already covers, and it is the only registered gate that executes them - they read no database address, so nothing else can point them anywhere.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -43,7 +45,7 @@ async function briefingSources(cookie: string): Promise<StepResult> {
 /** @description Discover autonomous regression suites without granting the browser host execution authority. */
 export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
   id: 'nightly-isolated-regression', title: 'Isolated nightly regressions', group: 'tool',
-  description: 'Disposable PostgreSQL alert/topology coverage and bounded local runner evidence. Deployment credentials and live notification endpoints are excluded.',
+  description: 'Disposable PostgreSQL alert, topology and trading-guard coverage with bounded local runner evidence. Deployment credentials and live notification endpoints are excluded.',
   regressionTests: [
     { level: 'integration', path: 'tests/unit/alert-incident-cutover.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-incident-reopen.spec.ts' },
@@ -57,6 +59,9 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/ci-local-purge.spec.ts' },
     { level: 'integration', path: 'tests/unit/ci-local-secret-scan.spec.ts' },
     { level: 'unit', path: 'tests/unit/ci-gate-streak.spec.ts' },
+    { level: 'integration', path: 'tests/unit/trading-engine-cost-basis-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/trading-event-plans.spec.ts' },
+    { level: 'integration', path: 'tests/unit/trading-earnings-rules.spec.ts' },
   ],
   steps: [{ id: 'runner', app: 'test-lab', label: 'Local isolated runner', run: async () => ({
     app: 'test-lab', label: 'Local isolated runner', state: 'degraded',
@@ -121,7 +126,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
   steps: [{ id: 'sources', app: 'jarvis', label: 'Caller-visible sources', run: briefingSources }],
 }, {
   id: 'protected-remote-application-execution', title: 'Protected remote application execution', group: 'tool',
-  description: 'Current per-user application rights across signed controller dispatch, hosted worker reasoning, immutable queued initiators, history, caches and SSE. Isolated HTTP/SQLite/PostgreSQL fixtures cover allowed, forged, replayed, revoked and stale requests.',
+  description: 'Current per-user application rights across signed controller dispatch, hosted worker reasoning, immutable queued initiators, history, caches and SSE. Isolated HTTP/SQLite/PostgreSQL fixtures cover allowed, forged, replayed, revoked and stale requests. Queued dispatch is covered in the same supported direct/hosted shape, including the refusal that names a missing owner connection.',
   regressionTests: [
     { level: 'integration', path: 'tests/unit/application-remote-execution.spec.ts' },
     { level: 'integration', path: 'tests/unit/application-remote-execution-postgres.spec.ts' },
@@ -130,6 +135,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/bot-node-remote-authorization-client.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-result-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-jarvis-results.spec.ts' },
+    { level: 'integration', path: 'tests/unit/protected-jarvis-thread-return.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-ticket-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/queued-application-principal.spec.ts' },
     { level: 'integration', path: 'tests/unit/remote-execution-end-to-end.spec.ts' },
@@ -145,6 +151,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/jarvis-task-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/specialist-context-dispatch.spec.ts' },
     { level: 'integration', path: 'tests/unit/manifest-worker-bot-node-boundary.spec.ts' },
+    { level: 'integration', path: 'tests/unit/queued-protected-dispatch.spec.ts' },
     { level: 'unit', path: 'tests/unit/autonomous-test-lab-registration.spec.ts' },
   ],
   steps: [{ id: 'runner', app: 'test-lab', label: 'Protected remote authorization fixtures', run: async () => ({

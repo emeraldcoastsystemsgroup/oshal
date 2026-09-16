@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | :root[data-oshal-status-bar-hidden="true"] .status-bar {display:none} — the manifest-declared per-app hide of the status bar (ribbon.hideStatusBar, set on the root by app.js). Zen mode hides it for everyone in a session; this drops it permanently for one app.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Keep Home singular and group secondary actions in a theme-aware options disclosure.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Keep the sidebar utility disclosure opaque over application content.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Styled the status-bar durable-storage indicator (.status-persistence) for the degraded and unreadable states, matching the existing cost-indicator colours.
  */
 
 /* ===== Layout — Cockpit Shell (Apple Liquid Glass) ===== */
@@ -275,6 +276,15 @@ body {
 .status-item i {
   font-size: 14px;
 }
+
+/* Durable-storage indicator — silent unless a store advertised as durable is not. */
+.status-persistence {
+  cursor: help;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.status-persistence.status-error { color: #ef4444; }
+.status-persistence.status-warning { color: #f59e0b; }
 
 /* Cost indicator states */
 .status-cost {

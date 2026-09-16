@@ -24,7 +24,9 @@ const END = '# END GENERATED FLEET';
  * controller (oshal-api runs as the chart's api Deployment, not a bot). Keep in
  * lockstep with scripts/oshal-install.sh / oshal-install.ps1.
  */
-export const KERNEL_BOTS = ['general-bot', 'jarvis-bot', 'oshal-developer'];
+// Lockstep with oshal-install.sh KERNEL_SERVICES. security-analyst and workflow-assistant are in
+// KERNEL_BOT_AGENT_IDS and now resolve to their own nodes, so the kernel fleet must carry them.
+export const KERNEL_BOTS = ['general-bot', 'jarvis-bot', 'oshal-developer', 'security-analyst', 'workflow-assistant'];
 
 /**
  * @description Parse the compose file and derive the k8s-eligible bot fleet.
