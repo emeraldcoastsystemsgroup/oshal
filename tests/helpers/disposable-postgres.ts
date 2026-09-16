@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ONE private PostgreSQL lifetime for every spec that needs a real server. The DB-backed specs each grew their own `docker run` block, and the ones that did not grow one fell back to a connection string instead — a fallback that resolved to the local stack's published port, which is the operator's LIVE trading database, and wrote synthetic orders into the real book twice on 2026-09-14. A spec that owns its server cannot reach a deployment at all: the address is invented at start(), nothing inherits a DSN, and the container is force-removed in stop() even when startup failed part-way, so no cleanup SQL ever runs somewhere it did not create. Generalised from the alert fixture (which now delegates here) so converging a spec onto it is an import rather than a fourth copy of the same twelve lines.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Redact POSTGRES_PASSWORD out of the setup-failure message. execFileSync reports the failing command as its message, so appending it printed the fixture credential the line above promises never to echo - the diagnostic stays, the value does not.
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -143,8 +144,12 @@ export class DisposablePostgres {
       return this.poolValue;
     } catch (error) {
       await this.stop();
-      // Do not echo Docker argv: POSTGRES_PASSWORD is a transient fixture credential.
-      throw new Error(`Disposable PostgreSQL setup failed for ${this.opts.purpose} (${error instanceof Error ? error.name : 'unknown error'}: ${error instanceof Error ? error.message : ''}). Docker with postgres:16-alpine is required; deployment databases are never used.`);
+      // execFileSync puts the whole docker argv in `message`, and that argv carries the fixture's
+      // POSTGRES_PASSWORD. The cause is worth printing; the value never is - so redact it here
+      // rather than dropping the diagnostic and leaving a bare "setup failed".
+      const detail = (error instanceof Error ? `${error.name}: ${error.message}` : 'unknown error')
+        .replace(/POSTGRES_PASSWORD=\S+/g, 'POSTGRES_PASSWORD=***');
+      throw new Error(`Disposable PostgreSQL setup failed for ${this.opts.purpose} (${detail}). Docker with postgres:16-alpine is required; deployment databases are never used.`);
     }
   }
 
