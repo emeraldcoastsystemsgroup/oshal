@@ -9,16 +9,28 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bound each disposable Git/Bash gate process and give the two-invocation branch-scope proof explicit full-suite startup headroom.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Apply the documented full-suite startup allowance to the real-repository gate assertion itself; the child process remains independently bounded at 15 seconds.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Guards the model-attribution refusal added to check 5. Every spelling of the co-author trailer, the vendor no-reply address and the tool footer that a session produces goes red and names the commit; a human co-author, the maintainer and prose that merely names the model pass; history the remote already holds is never re-judged. Also pins the PRE-PUSH scope - the ref-update lines git writes to the hook's stdin - including a push BY SHA while HEAD is clean, and drives one case through a real `git push` with the real hook installed, the boundary a direct gate call cannot exercise.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Makes this guard's own verdict trustworthy, which is what the attribution entry was still missing: it passed in isolation and went red in scheduled runs, so it could never be shown green on main. Two causes, both in the harness rather than the gate. The artifacts/ ignore probe swallowed every git failure into `false`, so on 2026-09-15 one environmental git fault printed as four broken ignore rules AND one vacuous pass; it now reads check-ignore's exit status and refuses loudly on anything but 0 or 1. And six cases that spawn bash and git named no timeout, inheriting Vitest's 5s default while their siblings carried 20-30s; the file now raises its own floor, so a case added later inherits headroom instead of the flake.
  */
 
-import { describe, expect, it } from 'vitest';
-import { execFileSync } from 'child_process';
+import { describe, expect, it, vi } from 'vitest';
+import { execFileSync, spawnSync } from 'child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join, resolve } from 'path';
 
 const REPO_ROOT = resolve(__dirname, '../..');
 const GATE = join(REPO_ROOT, 'scripts/publish-gate.sh');
+
+/**
+ * Every case in this file drives real `bash` and `git` child processes, and on this box a full
+ * parallel unit run spends seconds in process startup alone. Cases that named their own timeout
+ * survived that; the ones that did not inherited Vitest's 5s default and went red in scheduled
+ * runs while passing in isolation - a guard whose verdict tracks the load on the box is a guard
+ * nobody can act on. Raise the floor for the whole file instead of per case, so a case added
+ * later inherits the headroom rather than the flake. An explicit per-case timeout still wins,
+ * which keeps the 90s real-push case and the tighter ones exactly as they were.
+ */
+vi.setConfig({ testTimeout: 30_000 });
 
 /**
  * @description Resolve a POSIX bash to run the gate with.
@@ -493,23 +505,30 @@ describe('commit messages, which the tree checks cannot see', () => {
   }, 30_000);
 });
 
-describe('artifacts/ ignore rules cover pipeline debris at any depth', () => {
-  /**
-   * @description Ask git whether a path would be ignored in this repo.
-   * @param relPath - Repo-relative path to test.
-   * @returns True when the path is ignored.
-   */
-  function isIgnored(relPath: string): boolean {
-    try {
-      execFileSync('git', ['-C', REPO_ROOT, 'check-ignore', '-q', '--no-index', relPath], {
-        stdio: 'pipe',
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
+/**
+ * @description Ask git whether a path would be ignored in a working tree.
+ * @param relPath - Repo-relative path to test.
+ * @param root - Working tree to ask in; defaults to this repository.
+ * @returns True when the path is ignored.
+ */
+function isIgnored(relPath: string, root: string = REPO_ROOT): boolean {
+  const probe = spawnSync('git', ['-C', root, 'check-ignore', '-q', '--no-index', relPath], {
+    encoding: 'utf8',
+    timeout: 15_000,
+  });
+  if (probe.status === 0) return true; // ignored
+  if (probe.status === 1) return false; // looked, and it is not ignored
+  // Anything else - a spawn failure, the 15s bound, or git's own exit 128 - means git never
+  // answered. Reporting that as `false` is what let one environmental fault read as four broken
+  // ignore rules plus one silently vacuous pass.
+  const why = probe.error ? probe.error.message : (probe.stderr || '').trim();
+  throw new Error(
+    `git check-ignore could not answer for ${relPath} in ${root} ` +
+      `(status ${String(probe.status)}, signal ${String(probe.signal)}): ${why}`,
+  );
+}
 
+describe('artifacts/ ignore rules cover pipeline debris at any depth', () => {
   it.each([
     'artifacts/remote-control/samsara-form.png',
     'artifacts/some-future-pipeline/nested/deep/capture.jpg',
@@ -523,6 +542,37 @@ describe('artifacts/ ignore rules cover pipeline debris at any depth', () => {
     // The excludes are extension patterns rather than a directory, which is what lets this
     // re-include work at all — git cannot re-include a file through an excluded parent directory.
     expect(isIgnored('artifacts/jarvis-rich-ux-mockups/option-d-new.png')).toBe(false);
+  });
+});
+
+describe('the harness behind this guard: a verdict it never obtained, and a budget it never had', () => {
+  it('REFUSES to answer when git cannot look, instead of reporting "not ignored"', () => {
+    // 2026-09-15 23:30, scheduled ci-local against origin/main: the four `ignores artifacts/...`
+    // rows failed with `expected false to be true` while the fifth row, which expects false,
+    // passed on the same git failure. One environmental fault cannot turn four cases red and a
+    // fifth vacuously green unless the probe is reporting a verdict it never obtained.
+    // `git check-ignore` exits 0 for ignored, 1 for not ignored, and 128 when it could not look
+    // at all; a bare `catch` folds the third into the second. A directory that is not a
+    // repository reproduces exit 128 deterministically, through the real git binary.
+    const notARepo = mkdtempSync(join(tmpdir(), 'oshal-not-a-repo-'));
+    try {
+      expect(() =>
+        isIgnored('artifacts/remote-control/samsara-form.png', notARepo),
+      ).toThrowError(/could not/i);
+    } finally {
+      rmSync(notARepo, { recursive: true, force: true });
+    }
+  });
+
+  // Deliberately carries NO explicit timeout: it measures the budget a case in this file gets
+  // when it does not name one. Vitest's default is 5s, and every case here that spawns bash and
+  // git needs far more than that on a loaded box - which is how five of them went red in the
+  // 2026-09-15 scheduled run while the same file passed in isolation. Red at the 5s default,
+  // green at the file budget.
+  it('gives a case that names no timeout more headroom than the Vitest 5s default', async () => {
+    const started = Date.now();
+    await new Promise((r) => setTimeout(r, 6_000));
+    expect(Date.now() - started).toBeGreaterThanOrEqual(6_000);
   });
 });
 
