@@ -28,6 +28,13 @@ Source for the public oshal product site — live at **https://oswarm.ai** and
   | Install / build guide prose | `scripts/lib/product-site/guides-content.js` |
   | Layout, CSS, page shell | `scripts/lib/product-site/theme.js` / `render.js` |
 
+  **Which applications get a page.** A store package is published when its `marketplace.json`
+  entry says `status: ready` and it is not a carved commercial package. The package's own
+  `oshal-app.yaml` `status:` is *install* state — what a fresh install does — and is deliberately
+  not read: Print Ingest installs `inactive` because printing into a corpus must be switched on by an
+  operator (ADR-135 D11), and it still gets a page. Kernel manifests in `swarm-apps/` have no
+  registry, so their own `status: inactive` is what withholds them.
+
   Counts are read off the tree and substituted into prose through `%token%`, so no number is ever
   typed. If the sibling store trunk is not checked out the generator warns and leaves the committed
   pages alone rather than publishing a site with 47 application pages missing — point it elsewhere
