@@ -140,10 +140,14 @@ The app degrades rather than lying, but the messages are worth knowing:
 
 | what you see | what it means |
 |---|---|
-| *"Connect ESPN Fantasy to read a private league."* | You have no ESPN connection stored — **or** ESPN could not be reached at all. Those two are not yet told apart; if you know you are connected, suspect the network before re-pasting cookies. |
+| *"Connect ESPN Fantasy to read a private league."* | ESPN answered, and refused the league. You have no ESPN connection stored, and a private league needs one — this message now means only that, so re-pasting your cookies is the right move. |
+| *"Could not reach ESPN at all (…)."* | The read never produced an HTTP response: DNS, the network, or the timeout. **No credential can fix it**, so do not re-paste anything — check connectivity, starting with the DNS command below. Answered as a 503. |
+| *"Could not reach ESPN for that league — it answered HTTP 5xx."* | ESPN answered but could not serve it. Also not your account; usually transient. Answered as a 503. |
 | The sign-in window shows the ESPN Fantasy home page, not a Log In form | The form's **×** sends the window there. Close the window and press *Log in + push* again for the form, or maximise the window and use **Log In** in the Customize ESPN card (above). Not the person icon: its **Log In** does nothing in the node's window. |
-| *"ESPN would not return that league right now."* | You are connected, and ESPN refused or did not answer. Usually transient; the league id being wrong looks the same. |
-| *"No opponent could be read for this week"* | Either a genuine bye, or the schedule read failed. The lineup shown is then simply the highest-projected one — safe, just not opponent-aware. |
+| *"ESPN would not return that league right now."* | You are connected and ESPN answered, refusing the league — the id or the season is wrong, or this ESPN account is not in it. A read that never answered at all has its own message above. |
+| *"You have a BYE this week."* | A real bye: the league's schedule has your week's fixture and there is nobody on the other side. The lineup shown is the highest-projected one, which is the right lineup when there is nobody to beat. |
+| *"This week’s schedule could not be read from ESPN (…)."* | The schedule read failed, which is **not** a bye. The lineup shown is still safe — it falls back to the highest-projected one — but it is not opponent-aware, so re-run it once ESPN is reachable. |
+| *"The league schedule carries no fixture for this week."* | The schedule came back and simply does not cover that week (a week past the end of the season, or a playoff format whose matchup periods run differently). |
 | Projection date in the footer is old | ESPN's ~39 MB player feed could not be refreshed, so a cached one is being used. A stale cache beats a blank screen, and the date is there so you can judge. |
 
 **Before blaming ESPN, check your own DNS.** On 2026-09-09 every ESPN endpoint on this box returned
