@@ -103,12 +103,36 @@ The core call site is different in kind and worth stating plainly: `swarm-contro
 not in the path. Its migration is to route through the controller, not to add a check where there is
 nothing to check.
 
-Kernel call sites already on Tier A, for contrast:
-`ambient-enrichment-runtime.ts`, `home-schedule-dispatch.ts`, `chat-channel-routes.ts`,
-`content-routes.ts`, `jarvis-orchestrator.ts`, `linkedin-assistant-routes.ts`, `rca-routes.ts`,
-`security-routes.ts`, `workflow-studio-assist-routes.ts`, `series-pipeline.ts`,
-`trading-earnings-rules.ts`, `trading-engine.ts`, and `composition-root.ts`'s `executeBot` binding — which is how an
-installed app package reaches a kernel bot the sanctioned way.
+Kernel call sites on Tier A, for contrast — they reach a model through `executeBotOrInline`, which
+is where the admission gate lives: `ambient-enrichment-runtime.ts`, `home-schedule-dispatch.ts`,
+`chat-channel-routes.ts`, `content-routes.ts`, `rca-routes.ts`, `security-routes.ts`,
+`workflow-studio-assist-routes.ts`, `series-pipeline.ts`, `trading-earnings-rules.ts`,
+`trading-engine.ts`, and `composition-root.ts`'s `executeBot` binding — which is how an installed app
+package reaches a kernel bot the sanctioned way.
+
+**Kernel call sites that are NOT admitted, measured rather than recalled.** These reach
+`orchestrator.processMessage` directly, and nothing on the path calls the governance check:
+
+| call site | what it serves |
+|---|---|
+| `ticket-routes.ts` `POST /api/tickets/:ticketId/chat` | a cockpit surface — the browser calls it |
+| `schedule-runtime.ts` scheduled prompt dispatch | every scheduled model turn |
+| `judge-routes.ts`, `persona-eval-routes.ts`, `test-lab-golden.ts` (two) | judge and evaluation lanes |
+| `remote-client-chat-bridge.ts` | the remote-client bridge |
+| `jarvis-orchestrator.ts` (one call) | a sub-step of a turn already admitted upstream |
+| `linkedin-assistant-routes.ts` (one call) | one path beside its three admitted ones |
+
+`jarvis-orchestrator.ts` and `linkedin-assistant-routes.ts` appear in BOTH lists on purpose: their
+main paths go through the gate and each retains exactly one direct call. An earlier draft of this
+ADR listed them as wholly Tier A, which read as "nothing to do here" and was wrong.
+`token-chase-routes.ts` is excluded: it carries its own `TokenChaseBudgetGate`.
+
+Re-derive the register rather than trusting this table — it is true on the day it was written:
+
+```bash
+grep -rn "orchestrator\.processMessage" src --include=*.ts | grep -v "\.spec\."   # every direct call
+grep -rln "assertBotInvocationAdmissible\|checkBudget" src --include=*.ts            # everything that admits
+```
 
 ## Consequences
 
@@ -120,8 +144,10 @@ two tiers cannot drift the way "copy the checks into the new caller" always even
 
 **What it does not buy.** Three honest limits:
 
-- The Tier-C register is a list, not a fix. Twelve call sites still reach a model without clearing
-  anything, and this ADR does not change one of them.
+- The registers are lists, not fixes. Store packages on Tier C, and the kernel call sites tabled
+  above, still reach a model without clearing anything — and this ADR does not change one of them.
+  The count is deliberately not written here: it was hand-typed as "twelve" in an earlier draft and
+  was wrong, in the half of the deliverable the done-when asks for. Run the two commands above.
 - The budget gate reads `oshal_cost_events`, and **no inline chat path writes that ledger** — inline
   turns land usage in `chat_tasks` only. So the cap an inline turn now honours is fed by node,
   A2A, Argo and vision spend. That gap has its own BACKLOG entry ("Inline chat spend is invisible to
