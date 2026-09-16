@@ -6,9 +6,11 @@
 > answer always follows the steps below — the only thing that changes per site is
 > the appendix entry. Read this first; the appendix has the site-specific knobs.
 
-This document is **as-built**: every connector named here is wired in
-[`src/app/routes/connectors-routes.ts`](../src/app/routes/connectors-routes.ts).
-Adding a connector = a registry entry there + an appendix entry here + the env vars.
+This document is **as-built** in both directions: every connector named here is wired in
+[`src/app/routes/connector-provider-registry.ts`](../src/app/routes/connector-provider-registry.ts),
+and every connector in that registry appears in the generated reference below. Adding a connector
+= a registry entry there + the env vars; the reference regenerates, the appendix entry is where
+you write down the console steps.
 
 ---
 
@@ -372,27 +374,114 @@ watchlist. Discovery is real; watch/ticket links are deep-link handoffs (JustWat
 
 ---
 
-## Existing connectors (reference — already registered)
+## Every wired hub connector — the registration reference
 
-These are already done; listed so the pattern is visible and so you know the redirect
-URIs that are already registered under the business email.
+Generated from the hub registry, so the list cannot fall behind the code. A connector in the
+first table needs a partner app registered under the business email; one in the second needs no
+app at all. The redirect paths below are the ones already registered on those consoles.
 
-| Provider (id) | Shape | Redirect path | Env vars |
-|---|---|---|---|
-| Google / Gmail+Calendar (`google`) | A | `/api/connect/google/callback` | reuses `OIDC_CLIENT_ID/SECRET` |
-| Google Cloud / GCP (`gcp`) | A | `/api/connect/gcp/callback` | `GCP_CLIENT_ID`, `GCP_CLIENT_SECRET`, opt `GCP_SCOPES` |
-| Outlook / M365 (`outlook`) | A | `/api/connect/outlook/callback` | `AZURE_EMAIL_APPLICATION_ID`, `OUTLOOK_CLIENT_VALUE` |
-| LinkedIn (`linkedin`) | A | `/api/connect/linkedin/callback` | `LINKEDIN_CLIENT_ID`, `LINKEDIN_PRIMARY_CLIENT_SECRET` |
-| X / Twitter (`twitter`) | A (PKCE) | `/api/connect/twitter/callback` | `X_CLIENT_ID`, `X_CLIENT_SECRECT` |
-| GitHub (`github`) | A | `/api/connect/github/callback` | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` |
-| Dropbox (`dropbox`) | A | `/api/connect/dropbox/callback` | `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET` |
-| Facebook login (`facebook`) | A | `/auth/facebook/callback` | `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` |
-| Facebook Pages (`meta-business`) | A | `/api/connect/meta-business/callback` | `META_APPID_OSHAL_BUSINESS`, `META_APPSECRET_OSHAL_BUSINESS` |
-| Facebook bot Page auth | A | `/api/facebook-auth/callback` | deployment-managed `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, and required `ENCRYPTION_KEY`; browser password/App-Secret write routes return 410 |
-| SmartThings (`smartthings`) | A | `/api/connect/smartthings/callback` | `SMARTTHINGS_CLIENT_ID`, `SMARTTHINGS_CLIENT_SECRET` |
-| Google Nest (`google-home`) | A | `/api/connect/google-home/callback` | `GOOGLE_HOME_CLIENT_ID/SECRET`, `GOOGLE_HOME_PROJECT_ID` |
-| Spotify (`spotify`) — Music | A | `/api/connect/spotify/callback` | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` (dev-mode: 5 Premium users, allowlist) |
-| TMDB (`tmdb`) — Movies & TV | B (token) | n/a (paste / env) | paste on `/utilities`, or `TMDB_API_KEY` / `THEMOVIEDB_*` env |
+<!-- BEGIN GENERATED: connector-registration-reference -->
+<!-- Generated from src/app/routes/connector-provider-registry.ts. Do not edit between these markers: run `npm run connectors:partner-doc`. -->
+
+**63 connectors are wired in the hub registry — 18 need a partner app registered (Shape A or Link) and 45 are token-paste only (Shape B).**
+
+### Needs a partner app — Shape A (OAuth redirect) and Link
+
+The redirect column is the path appended to `APP_URL`; the bracketed variable replaces the whole
+callback URI when it is set. The credential columns list the variables `providerCreds()` honours,
+highest precedence first (`→` reads "falls back to").
+
+| Provider (id) | Shape | Redirect path | Client id env | Client secret env |
+|---|---|---|---|---|
+| Google (Gmail + Calendar) (`google`) | A | `/api/connect/google/callback` (override `GOOGLE_REDIRECT_URI`) | `GOOGLE_CONNECT_CLIENT_ID` → `OIDC_CLIENT_ID` | `GOOGLE_CONNECT_CLIENT_SECRET` → `OIDC_CLIENT_SECRET` |
+| Google Cloud (GCP) (`gcp`) | A | `/api/connect/gcp/callback` (override `GCP_REDIRECT_URI`) | `GCP_CLIENT_ID` → `OIDC_CLIENT_ID` | `GCP_CLIENT_SECRET` → `OIDC_CLIENT_SECRET` |
+| Facebook (login) (`facebook`) | A | `/auth/facebook/callback` (override `FACEBOOK_REDIRECT_URI`) | `FACEBOOK_APP_ID` | `FACEBOOK_APP_SECRET` |
+| LinkedIn (`linkedin`) | A | `/api/connect/linkedin/callback` (override `LINKEDIN_REDIRECT_URI`) | `LINKEDIN_CLIENT_ID` | `LINKEDIN_PRIMARY_CLIENT_SECRET` → `LINKEDIN_CLIENT_SECRET` |
+| Outlook / Microsoft 365 (`outlook`) | A | `/api/connect/outlook/callback` (override `OUTLOOK_REDIRECT_URI`) | `AZURE_EMAIL_APPLICATION_ID` → `AZURE_EMAIL_APPLICCATION_ID` → `OUTLOOK_OIDC_CLIENT_ID` → `MICROSOFT_OIDC_CLIENT_ID` | `OUTLOOK_CLIENT_VALUE` → `AZURE_EMAIL_CLIENT_SECRET` → `OUTLOOK_CLIENT_SECRET` → `OUTLOOK_OIDC_CLIENT_SECRET` → `MICROSOFT_OIDC_CLIENT_SECRET` |
+| X / Twitter (`twitter`) | A | `/api/connect/twitter/callback` (override `TWITTER_REDIRECT_URI`) | `TWITTER_CLIENT_ID` → `X_CLIENT_ID` | `TWITTER_CLIENT_SECRET` → `X_CLIENT_SECRET` → `X_CLIENT_SECRECT` |
+| GitHub (`github`) | A | `/api/connect/github/callback` (override `GITHUB_REDIRECT_URI`) | `GITHUB_CLIENT_ID` | `GITHUB_CLIENT_SECRET` |
+| Slack (`slack`) | A | `/api/connect/slack/callback` (override `SLACK_REDIRECT_URI`) | `SLACK_CLIENT_ID` → `SLACK_CLINET_ID` | `SLACK_CLIENT_SECRET` |
+| Spotify (`spotify`) | A | `/api/connect/spotify/callback` (override `SPOTIFY_REDIRECT_URI`) | `SPOTIFY_CLIENT_ID` | `SPOTIFY_CLIENT_SECRET` |
+| Charles Schwab (Trading) (`schwab`) | A | `/api/connect/schwab/callback` (override `SCHWAB_REDIRECT_URI` → `SCHWAB_CLIENT_CALL_BACK`) | `SCHWAB_CLIENT_ID_PRD` → `SCHWAB_CLIENT_ID` → `SCHWAB_APP_KEY` | `SCHWAB_CLIENT_SECRET_PRD` → `SCHWAB_CLIENT_SECRET` → `SCHWAB_APP_SECRET` |
+| Plaid (Banks & Brokerages) (`plaid`) | Link | `/api/connect/plaid/callback` (override `PLAID_REDIRECT_URI`) | — | — |
+| Dropbox (`dropbox`) | A | `/api/connect/dropbox/callback` (override `DROPBOX_REDIRECT_URI`) | `DROPBOX_CLIENT_ID` → `DROPBOX_APP_KEY` | `DROPBOX_CLIENT_SECRET` → `DROPBOX_APP_SECRET` |
+| SmartThings (`smartthings`) | A | `/api/connect/smartthings/callback` (override `SMARTTHINGS_REDIRECT_URI`) | `SMARTTHINGS_CLIENT_ID` → `SMARTTHINGS_OAUTH_CLIENT_ID` | `SMARTTHINGS_CLIENT_SECRET` → `SMARTTHINGS_OAUTH_CLIENT_SECRET` |
+| Google Nest (Home) (`google-home`) | A | `/api/connect/google-home/callback` (override `GOOGLE_HOME_REDIRECT_URI`) | `GOOGLE_HOME_CLIENT_ID` | `GOOGLE_HOME_CLIENT_SECRET` |
+| Facebook (Business / Pages) (`meta-business`) | A | `/api/connect/meta-business/callback` (override `META_BUSINESS_REDIRECT_URI`) | `META_APPID_OSHAL_BUSINESS` → `META_APP_ID_OSHAL_BUSINESS` → `meta_appid_oshal_business` | `META_APPSECRET_OSHAL_BUSINESS` → `META_APP_SECRET_OSHAL_BUSINESS` → `meta_appsecret_oshal_business` |
+| Square (`square`) | A | `/api/connect/square/callback` (override `SQUARE_REDIRECT_URI`) | `SQUARE_CLIENT_ID` → `SQUARE_APPLICATION_ID` | `SQUARE_CLIENT_SECRET` |
+| PayPal (`paypal`) | A | `/api/connect/paypal/callback` (override `PAYPAL_REDIRECT_URI`) | `PAYPAL_CLIENT_ID` | `PAYPAL_CLIENT_SECRET` |
+| RingCentral (Phone) (`ringcentral`) | A | `/api/connect/ringcentral/callback` (override `RINGCENTRAL_REDIRECT_URI`) | `RINGCENTRAL_CLIENT_ID` | `RINGCENTRAL_CLIENT_SECRET` |
+
+- **Plaid (Banks & Brokerages)** is a Link connector: `providerCreds()` resolves nothing for it, and its platform app credentials are read by `plaidCreds()` in `src/app/routes/connector-plaid-link.ts` from `PLAID_CLIENT_ID`, `PLAID_SECRET`.
+- **SmartThings** also accepts a pasted token when the OAuth client is not configured (`allowTokenFallback`) — the user creates it at https://account.smartthings.com/tokens.
+
+### No partner app — Shape B, Personal Access Token paste only
+
+These 45 connectors have no OAuth app to register: the user pastes a token on
+`/utilities` (or the operator sets the connector env fallback). The link is the page the registry
+sends them to (`tokenHelpUrl`).
+
+| Provider (id) | Where the user creates the token |
+|---|---|
+| Jira (`jira`) | https://id.atlassian.com/manage-profile/security/api-tokens |
+| Twilio (SMS & Voice) (`twilio`) | https://console.twilio.com/ |
+| Walmart (`walmart`) | https://walmart.io/ |
+| Uber Eats (`uber`) | https://merchants.ubereats.com/us/en/services/marketing/ |
+| Uber Rides (`uber-rides`) | https://developer.uber.com/docs/riders/ride-requests/tutorials/deep-links/introduction |
+| TMDB (Movies & TV) (`tmdb`) | https://www.themoviedb.org/settings/api |
+| Duffel (Travel) (`duffel`) | https://app.duffel.com/join |
+| GitLab (`gitlab`) | https://gitlab.com/-/user_settings/personal_access_tokens |
+| Zoom (`zoom`) | https://marketplace.zoom.us/ |
+| Calendly (`calendly`) | https://calendly.com/integrations/api_webhooks |
+| HubSpot (`hubspot`) | https://app.hubspot.com/private-apps |
+| Asana (`asana`) | https://app.asana.com/0/my-apps |
+| Airtable (`airtable`) | https://airtable.com/create/tokens |
+| Stripe (`stripe`) | https://dashboard.stripe.com/apikeys |
+| SendGrid (`sendgrid`) | https://app.sendgrid.com/settings/api_keys |
+| OpenAI (`openai`) | https://platform.openai.com/api-keys |
+| Strava (`strava`) | https://www.strava.com/settings/api |
+| Oura Ring (`oura`) | https://cloud.ouraring.com/personal-access-tokens |
+| Fitbit (`fitbit`) | https://dev.fitbit.com/apps |
+| WHOOP (`whoop`) | https://developer.whoop.com/ |
+| Vercel (`vercel`) | https://vercel.com/account/tokens |
+| Netlify (`netlify`) | https://app.netlify.com/user/applications#personal-access-tokens |
+| Sentry (`sentry`) | https://sentry.io/settings/account/api/auth-tokens/ |
+| Bitbucket (`bitbucket`) | https://bitbucket.org/account/settings/app-passwords/ |
+| Coinbase (`coinbase`) | https://www.coinbase.com/settings/api |
+| Discord (`discord`) | https://discord.com/developers/applications |
+| Intercom (`intercom`) | https://app.intercom.com/a/apps/_/developer-hub |
+| ClickUp (`clickup`) | https://app.clickup.com/settings/apps |
+| Figma (`figma`) | https://www.figma.com/developers/api#access-tokens |
+| Todoist (`todoist`) | https://todoist.com/app/settings/integrations/developer |
+| WakaTime (`wakatime`) | https://wakatime.com/settings/api-key |
+| Pinterest (`pinterest`) | https://developers.pinterest.com/apps/ |
+| Gumroad (`gumroad`) | https://app.gumroad.com/settings/advanced |
+| PagerDuty (`pagerduty`) | https://support.pagerduty.com/main/docs/api-access-keys |
+| Shippo (`shippo`) | https://apps.goshippo.com/settings/api |
+| Raindrop.io (`raindrop`) | https://app.raindrop.io/settings/integrations |
+| Monzo (`monzo`) | https://developers.monzo.com/ |
+| Buttondown (`buttondown`) | https://buttondown.com/settings/api |
+| Postmark (`postmark`) | https://postmarkapp.com/support/article/1008-what-are-the-account-and-server-api-tokens |
+| Unsplash (`unsplash`) | https://unsplash.com/oauth/applications |
+| Kalshi (Prediction Markets) (`kalshi`) | https://kalshi.com/account/api-keys |
+| ESPN Fantasy (`espn-fantasy`) | https://fantasy.espn.com/football/league |
+| Finnhub (Market Data / Earnings) (`finnhub`) | https://finnhub.io/dashboard |
+| Bluesky (`bluesky`) | https://bsky.app/settings/app-passwords |
+| Resend (Email) (`resend`) | https://resend.com/api-keys |
+
+<!-- END GENERATED: connector-registration-reference -->
+
+### Registrations this reference cannot see
+
+The tables above are exactly what the hub registry declares. Three things sit outside it:
+
+- **Facebook bot Page auth** is its own route rather than a registry provider: callback
+  `/api/facebook-auth/callback`, deployment-managed `FACEBOOK_APP_ID` + `FACEBOOK_APP_SECRET`,
+  and a required `ENCRYPTION_KEY`; the browser password / App-Secret write routes return 410.
+- **Spotify** is still a developer-mode app: 5 Premium users maximum, each added to the app's
+  allowlist by hand before they can connect.
+- **TMDB** and **Duffel** also accept a shared operator key (`PLATFORM_DEFAULT_ENV`), which makes
+  the per-user paste optional on those two cards.
 
 ### Google (`google`) in Testing mode — the refresh token EXPIRES on you (read before a customer box)
 
