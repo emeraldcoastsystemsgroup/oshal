@@ -2,8 +2,12 @@
 
 [ADR-115](../adr/115-clean-trunk-branch-strategy.md) made this repository the development trunk and
 `emeraldcoastsystemsgroup/open-shal` — checked out on the dev box at
-`C:\Projects\open-shal-swarm-harness-agent-llm` — a **frozen reference archive**. Its working tree
-has not moved since the cutover commit (`55e99bca`, 2026-07-23).
+`C:\Projects\open-shal-swarm-harness-agent-llm` — a **frozen reference archive**. Its git HEAD has not
+moved since the cutover commit (`55e99bca`, 2026-07-23). **Its working tree is NOT frozen:** `git
+status` there reports about 2,600 entries, including uncommitted post-cutover hand-edits to
+`scripts/run-daily-recap.ps1` (2026-07-28) and `scripts/assemble-recap.js` (2026-07-29). Check
+`git -C C:\Projects\open-shal-swarm-harness-agent-llm status --short` before moving anything out of
+it — the recap, below, is exactly that case.
 
 A Windows scheduled task that still names that path therefore runs code from July. It is not a
 stale-looking run; it is a different program. Measured on 2026-09-16, the archive's copies differ
