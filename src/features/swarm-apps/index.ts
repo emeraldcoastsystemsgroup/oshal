@@ -94,7 +94,7 @@ export {
 } from './services';
 export type { ResolvedGroupSetupStep, ResolvedGroupToolbar } from './services';
 // ADR-149 — a static tile under ANOTHER package's mount follows that package's discoverability.
-export { lockUndiscoverableTiles, mountOwner, packageMounts, tilePathname } from './services';
+export { lockUndiscoverableTiles, openableDefaultView, mountOwner, packageMounts, tilePathname } from './services';
 export type { RibbonTileDiscovery, RibbonTileLock } from './services';
 export {
   buildHomePlan,

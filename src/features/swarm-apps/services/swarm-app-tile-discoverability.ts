@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149 rail discoverability. A launcher-shaped app (Create, Life, Games, the creative bundle) declares ui.static tiles whose iframeUrl sits under ANOTHER package's mount. Under enforce mode that package may be unprovisioned for the signed-in person, and the manifest-static rail rendered the tile anyway — a click landed on the kernel's role-guidance 403 inside the frame. lockUndiscoverableTiles resolves, for each tile under another ACTIVE package's mount (longest mount wins; the app's own mounts and paths no package owns are never touched), that package's canDiscover through a port the route binds to the verified actor, and marks a non-discoverable target `locked` — kept in place, so the cockpit renders it in the guest-disabled style with the role-guidance link. An ADR-141 group borrows every tile, so each borrowed tile follows its member. Lives beside swarm-app-group.ts because swarm-app-service.ts is over its size budget.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | openableDefaultView: the landing half of the same rule. Locking the rail button left the LANDING view alone, so an app whose ribbon.defaultView names a tile under another package's mount (life -> life-movies, games -> games-dnd) still opened straight onto the kernel's role-guidance 403 inside the frame for a person who cannot discover that target — the tile showed locked in the rail while the content area showed the dead frame. The landing choice now skips a locked tile: the declared one when it is openable, else the first openable tile, else the first framework item.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -136,4 +137,38 @@ export async function lockUndiscoverableTiles<T extends RibbonTileTarget>(
     result.push({ ...tile, locked: { app: target, reason: 'application-role-required', roleGuidanceUrl: discovery.roleGuidanceUrl } });
   }
   return result;
+}
+
+/** The part of a synthesised ribbon item the landing choice reads. */
+export interface RibbonTileChoice {
+  id: string;
+  locked?: RibbonTileLock;
+}
+
+/**
+ * @description The view the cockpit should land on. A locked tile is kept in the rail but must
+ * never be the landing view: the shell would iframe its surface before the person ever clicks,
+ * putting the kernel's role-guidance 403 in the content area — the dead frame this whole path
+ * exists to remove. So a declared `ribbon.defaultView` that resolves to a locked tile falls
+ * through to the first tile that IS openable, and to the first framework item when every static
+ * tile is locked. Behaviour with no lock anywhere is exactly the previous one: the declared tile,
+ * else the first static tile; a declared id that matches no static tile (a framework id) rides
+ * through untouched, and an app with no static tiles still returns nothing.
+ * @param declared - The manifest's raw `ribbon.defaultView` toolName, if any.
+ * @param staticItems - The synthesised static tiles, in rail order, with any `locked` marks.
+ * @param frameworkItems - The framework ribbon ids left after the manifest's hides.
+ * @returns The view id to land on, or undefined to leave the choice to the shell.
+ */
+export function openableDefaultView(
+  declared: string | undefined,
+  staticItems: readonly RibbonTileChoice[],
+  frameworkItems: readonly string[],
+): string | undefined {
+  const match = declared ? staticItems.find((item) => item.id === `tool-${declared}` || item.id === declared) : undefined;
+  if (declared && !match) return declared;
+  if (match && !match.locked) return match.id;
+  const openable = staticItems.find((item) => !item.locked);
+  if (match) logger.info({ declared, landing: openable?.id ?? frameworkItems[0] }, 'Declared landing tile is locked for this person — landing on an openable view');
+  if (openable) return openable.id;
+  return staticItems.length ? frameworkItems[0] : undefined;
 }

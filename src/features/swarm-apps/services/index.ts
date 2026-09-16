@@ -36,7 +36,7 @@ export {
 } from './swarm-app-group';
 export type { ResolvedGroupSetupStep, ResolvedGroupToolbar } from './swarm-app-group';
 // ADR-149 rail discoverability — a static tile under ANOTHER package's mount follows that package.
-export { lockUndiscoverableTiles, mountOwner, packageMounts, tilePathname } from './swarm-app-tile-discoverability';
+export { lockUndiscoverableTiles, openableDefaultView, mountOwner, packageMounts, tilePathname } from './swarm-app-tile-discoverability';
 export type { RibbonTileDiscovery, RibbonTileLock } from './swarm-app-tile-discoverability';
 export {
   buildHomePlan,
