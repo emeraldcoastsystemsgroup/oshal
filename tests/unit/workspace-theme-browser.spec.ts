@@ -86,7 +86,7 @@ afterAll(async () => {
       writeFileSync(`temp/workspace-theme-browser-cleanup-${cleanup.pid}.json`, JSON.stringify(cleanup, null, 2) + '\n', { flag: 'wx' });
     }
   } finally { await settingsFixture?.close(); await fixture?.close(); }
-}, 20000);
+}, BROWSER_HOOK_TIMEOUT_MS);
 beforeEach(async () => {
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
   await context.route('**/*', route => [fixture.origin, settingsFixture.origin].includes(new URL(route.request().url()).origin)

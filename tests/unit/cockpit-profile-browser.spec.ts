@@ -30,7 +30,7 @@ afterEach(async () => {
 afterAll(async () => {
   try { await writeFile('temp/cockpit-profile-browser-cleanup.json', JSON.stringify(await owned?.close(), null, 2)); }
   finally { await fixture?.close(); }
-}, 30_000);
+}, BROWSER_HOOK_TIMEOUT_MS);
 
 /** @description Load the real application and retain its synthetic editor as an unsaved-draft witness. */
 async function open(theme = 'workspace', width = 1280, height = 800) {

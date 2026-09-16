@@ -30,7 +30,7 @@ afterAll(async () => {
     const cleanup = await owned?.close();
     await writeFile('temp/jarvis-dashboard-browser-cleanup.json', JSON.stringify(cleanup, null, 2));
   } finally { await fixture?.stop(); await media?.cleanup(); }
-}, 30_000);
+}, BROWSER_HOOK_TIMEOUT_MS);
 
 /** @description Read the real current page with all outbound origins blocked. */
 async function openDashboard(width = 1280, height = 800, embedded = false, theme = 'workspace', persistedSessionId?: string) {

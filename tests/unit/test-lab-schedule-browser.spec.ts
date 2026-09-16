@@ -40,7 +40,7 @@ afterAll(async () => {
     if (cleanup && process.env.OSHAL_BATCH_CLEANUP_DIR) writeFileSync(resolve(process.env.OSHAL_BATCH_CLEANUP_DIR,
       `package-batch-browser-cleanup-${cleanup.pid}-${Date.now()}.json`),JSON.stringify(cleanup,null,2)+'\n',{ flag: 'wx' });
   } finally { await database.stop(); }
-},30000);
+}, BROWSER_HOOK_TIMEOUT_MS);
 beforeEach(async () => {
   await pool.query('TRUNCATE oshal_test_lab_schedule_batches,oshal_test_lab_schedules,oshal_test_lab_runs');
   fixture = await startTestLabScheduleFixture(pool); packageSource = fixture.addPackage({ name: 'schedule-browser' });

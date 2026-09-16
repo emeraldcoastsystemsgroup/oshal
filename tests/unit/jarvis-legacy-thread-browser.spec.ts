@@ -34,7 +34,7 @@ beforeAll(async () => {
   await database.start();
   owned = await launchIsolatedBrowser(); browser = owned.browser;
 }, 90_000);
-afterAll(async () => { try { await owned?.close(); } finally { await database.stop(); } }, 40_000);
+afterAll(async () => { try { await owned?.close(); } finally { await database.stop(); } }, BROWSER_HOOK_TIMEOUT_MS);
 beforeEach(async () => {
   vi.stubEnv('OSHAL_NO_AI', 'false');
   fixture = await createProtectedJarvisFixture(database);

@@ -31,7 +31,7 @@ afterAll(async () => {
     try { expect(fixture.requests.filter(value => !value.startsWith('GET '))).toEqual([]); }
     finally { await writeFile(`temp/shared-stl-viewer-cleanup-${process.pid}.json`, JSON.stringify(await owned.close(), null, 2)); }
   } finally { await fixture.close(); }
-}, 30_000);
+}, BROWSER_HOOK_TIMEOUT_MS);
 
 /** @description Open unmodified shipped HTML and app boot, revealing its existing empty preview for component checks. */
 async function open(slug: string) {

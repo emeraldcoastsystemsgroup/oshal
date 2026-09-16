@@ -82,7 +82,7 @@ beforeEach(() => {
 
 afterAll(async () => {
   try { await owned?.close(); } finally { await fixture?.stop(); }
-}, 40_000);
+}, BROWSER_HOOK_TIMEOUT_MS);
 
 /**
  * @description Open the unchanged page with every other origin blocked. Records what it asked the
