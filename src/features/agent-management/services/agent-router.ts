@@ -11,9 +11,11 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Tier 3 matches MULTI-WORD routing keywords as phrases instead of shredding them into tokens. A declared phrase such as 'what did i miss' was flattened to the routable token 'did' (3 chars, absent from ROUTING_STOP_WORDS), so the comms owners claimed any ticket merely containing that word - the reason a trading P&L question routed to the email bot. Phrases are now tested with includes() against the lowercased title+taskText, exactly as the Tier-1 self-score does, and are counted ONCE; single-word keywords and all capabilities keep token matching. Deliberately NO minimum-claim threshold: swept against the registry+persona corpus a threshold silently disowns every bot whose vocabulary is single words (weather, music, movies, calendar).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Made phrase matching ADDITIVE instead of a replacement, and moved the 'did' class into the stop list. Entry 7 removed a phrase's constituent tokens from the candidate's token bag, so a bot whose vocabulary is mostly phrases lost it whenever the caller rephrased: 'find idle gce instances' no longer reached cloud-ops-bot (declares 'gce instance'), 'run a survey flight pattern' no longer reached drone-operator (declares 'survey pattern'), and five more owners were measured losing their ticket. Now an EXACT phrase hit scores PHRASE_MATCH_WEIGHT (worth more than one token), while an unmatched phrase still contributes its tokens, so nothing is taken away. The actual cause of the email misroute - the bare auxiliary 'did' being routable at all - is fixed where it belongs: ROUTING_STOP_WORDS gains the auxiliaries and interrogatives, measured against the real corpus as costing one declared keyword versus 31 for the minimum-token-length lever, which is why that lever was rejected. Tier 3 also no longer bails on an empty token bag alone, or an ask made entirely of stop words would skip phrase matching it can still answer. Still NO minimum-claim threshold - it disowns every single-word corpus (weather, career, spotify, calendar, movies).
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Tier 1 now refuses to award a TIED auction. chooseWinner breaks an equal-confidence tie on estimatedCost and estimatedLatencyMs, and every BID_RESPONSE the mesh collects reports both as 0 (mesh-bid-broadcaster.requestBid), so a tie was settled by whichever reply arrived first - an arbitrary owner presented as a confident claim. Two bots bidding the same number have not identified an owner between them; Tier 3 has strictly more to go on (it also reads ticket labels and required capabilities), so a tie falls through to it instead. Measured on tests/unit/selector-benchmark.spec.ts against the rebuilt Tier-1 self-score: 104/105 -> 105/105 correct owners, at a cost of 3 asks moving from the bid tier to the keyword tier (105 -> 102). Unqualified and single-bid auctions are untouched.
  */
 
 import { createChildLogger } from '@/shared/logger';
+import { tokenizeRoutingText } from './routing-text';
 import type { AgentBid } from './selection-bid-service';
 import { SelectionBidService } from './selection-bid-service';
 
@@ -144,7 +146,8 @@ export class AgentRouter {
   }
 
   /**
-   * @description Tier 1: Bid auction — highest confidence bid above threshold wins.
+   * @description Tier 1: Bid auction — the single highest confidence bid above threshold wins.
+   * A tie at the lead is not a claim and falls through to the next tier.
    */
   private tryBidAuction(context: RouteContext, ranked: RouteCandidate[]): RouteDecision | null {
     if (!context.bids || context.bids.length === 0) return null;
@@ -152,6 +155,20 @@ export class AgentRouter {
     const qualifiedBids = context.bids.filter((b) => b.confidence >= BID_CONFIDENCE_THRESHOLD);
     if (qualifiedBids.length === 0) {
       logger.info({ taskId: context.taskId, bidCount: context.bids.length }, 'Tier 1: All bids below confidence threshold — falling through');
+      return null;
+    }
+
+    // A TIE is not a claim. Every mesh BID_RESPONSE carries estimatedCost 0 and estimatedLatencyMs 0,
+    // so chooseWinner's tie-breakers cannot separate equal bids and the winner would be whichever
+    // reply landed first. Hand a tie to Tier 3, which reads the labels and required capabilities the
+    // self-score never saw.
+    const topConfidence = qualifiedBids.reduce((top, bid) => Math.max(top, bid.confidence), 0);
+    const leaders = new Set(qualifiedBids.filter((bid) => bid.confidence === topConfidence).map((bid) => bid.agentId));
+    if (leaders.size > 1) {
+      logger.info(
+        { taskId: context.taskId, confidence: topConfidence, tiedAgentIds: [...leaders] },
+        'Tier 1: Auction tied at the lead — no owner claimed it, falling through',
+      );
       return null;
     }
 
@@ -358,78 +375,3 @@ function flattenRoutingTerms(values: string[] | undefined): string[] {
   }
   return values.flatMap((value) => tokenizeRoutingText(value));
 }
-
-/**
- * @description Tokenizes freeform routing text into normalized comparison terms.
- * @param value - Source text from title, labels, descriptions, or capability phrases.
- * @returns Normalized tokens with stop-words removed.
- */
-function tokenizeRoutingText(value: string): string[] {
-  return value
-    .toLowerCase()
-    .split(/[\s\-_/.,;:()]+/)
-    .map((token) => normalizeRoutingToken(token))
-    .filter((token) => token.length > 2 && !ROUTING_STOP_WORDS.has(token));
-}
-
-/**
- * @description Normalizes a routing token to reduce inflection noise in keyword matching.
- * @param token - Raw token.
- * @returns Normalized token stem.
- */
-function normalizeRoutingToken(token: string): string {
-  const trimmed = token.replaceAll(/[^a-z0-9]+/g, '');
-  if (trimmed.endsWith('ation')) return trimmed.slice(0, -5);
-  if (trimmed.endsWith('ing')) return trimmed.slice(0, -3);
-  if (trimmed.endsWith('ed')) return trimmed.slice(0, -2);
-  if (trimmed.endsWith('es')) return trimmed.slice(0, -2);
-  if (trimmed.endsWith('s')) return trimmed.slice(0, -1);
-  return trimmed;
-}
-
-const ROUTING_STOP_WORDS = new Set([
-  'the',
-  'and',
-  'for',
-  'with',
-  'that',
-  'this',
-  'from',
-  'into',
-  'inside',
-  'your',
-  'their',
-  'then',
-  'than',
-  'when',
-  'where',
-  'while',
-  'must',
-  'should',
-  // Auxiliaries and interrogatives. These carry no domain signal, yet they are long enough to
-  // survive the length filter, so ANY bot that declares a conversational phrase containing one
-  // ('what did i miss') used to claim every ticket merely containing that word - the token 'did'
-  // sent a trading P&L question to the email bot, and the token 'what' sent 'what's the weather
-  // tomorrow' to a feed curator. Measured against the registry+persona corpus this costs ONE
-  // declared keyword ('get me to'), which phrase matching recovers verbatim. The alternative
-  // lever - raising the minimum routable token length to 4 - was measured and rejected: it
-  // silently disowns 31 declared keywords, among them 'gcp', 'rtl' and 'dim'.
-  // Words that cannot survive normalizeRoutingToken ('does'/'do', 'was', 'has', 'made') are not
-  // listed: they are already dropped by the length filter and an entry for them would be dead.
-  'did',
-  'were',
-  'have',
-  'had',
-  'will',
-  'can',
-  'get',
-  'got',
-  'make',
-  'what',
-  'how',
-  'who',
-  'whom',
-  'whose',
-  'which',
-  'why',
-]);
