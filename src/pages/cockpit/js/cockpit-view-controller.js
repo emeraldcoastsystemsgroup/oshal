@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 D4a: renderToolView forwards a shape-checked one-shot `artifact=` ref from the cockpit URL to the surface iframe URL, so an open-mode "Send to…" dispatch lands in the destination surface pre-loaded.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | renderToolView appends the ribbon's consumed one-shot tool query (sanitized k=v&k=v) to the tile's own iframeUrl — the Create front door's deep link into AI Office.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Notify the directory bridge only when the current Home has finished rendering.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 locked surface: renderToolView refuses to iframe a view the kernel marked `locked` (the target package is not discoverable for this person) and renders the lock panel with the role-guidance link instead. The rail button already followed that link on a click, but every OTHER way into a tool view — the landing defaultView, an embedded surface's app-navigate, a handoff — reached the iframe directly and showed the kernel's role-guidance 403 inside the frame. This is the one choke point all of them pass through. lockedSurfacePanel is the pure, exported decision, and it reuses ribbonTilePresentation so the same-origin rule for the guidance link is stated once.
  */
 
 import {
@@ -29,6 +30,43 @@ import { DashboardHomeView } from './views/DashboardHomeView.js';
 import { AppsHomeView } from './views/AppsHomeView.js';
 import { deliverHandoff, homeSurfaceView } from './app-handoff.js';
 import { bindAppHandoffs } from './app-workflows.js';
+import { ribbonTilePresentation } from './components/RibbonNav.js';
+
+/** Escapes a value for HTML text/attribute interpolation. */
+function escapeText(value) {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/**
+ * @description The content area's treatment for a view the kernel marked `locked` under ADR-149:
+ * the target package is not discoverable for this person, so opening its surface would render the
+ * kernel's role-guidance 403 inside the frame. The panel names the package and offers the same
+ * link the rail tile carries, which is where that 403 page would have sent them. Returns null for
+ * any view that is not locked, so the caller renders exactly as before.
+ * @param {object} viewDef - A registered view (profile item shape: id, label, icon, toolUi, locked?).
+ * @returns {string|null} HTML for the locked panel, or null when the view is not locked.
+ */
+export function lockedSurfacePanel(viewDef) {
+  // ribbonTilePresentation reads view.label for its tooltip, so an unregistered view never reaches
+  // it — renderToolView is called with ids that have no view definition.
+  if (!viewDef?.locked) return null;
+  const { locked, roleGuidanceUrl } = ribbonTilePresentation(viewDef, false);
+  if (!locked) return null;
+  const label = escapeText(viewDef?.toolUi?.sidebarLabel || viewDef?.label || viewDef?.id);
+  const app = escapeText(viewDef?.locked?.app || 'this application');
+  const guidance = roleGuidanceUrl
+    ? `<p><a class="locked-surface-guidance" href="${escapeText(roleGuidanceUrl)}">Request access to ${app}</a></p>`
+    : `<p>Ask an administrator for a role on <strong>${app}</strong>.</p>`;
+  return `
+        <div class="locked-surface" style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--vscode-descriptionForeground,#999);">
+          <div style="text-align:center;">
+            <i class="codicon codicon-lock" style="font-size:48px;margin-bottom:16px;display:block;"></i>
+            <h3>${label}</h3>
+            <p>This surface belongs to <strong>${app}</strong>, which you do not have a role on.</p>
+            ${guidance}
+          </div>
+        </div>`;
+}
 
 /**
  * @description Manage cockpit main-content view routing, ticket handoffs, and bot-to-rail context transitions.
@@ -337,6 +375,12 @@ export class CockpitViewController {
     const viewDef = ribbon?.views?.find(v => v.id === viewId);
     const iframeUrl = viewDef?.toolUi?.iframeUrl;
     const label = viewDef?.toolUi?.sidebarLabel || viewDef?.label || viewId;
+
+    // ADR-149: the kernel marked this view's target package undiscoverable for this person. Every
+    // route into a tool view lands here — the landing defaultView, a rail click, an embedded
+    // surface's app-navigate — so the refusal belongs here rather than on the button alone.
+    const locked = lockedSurfacePanel(viewDef);
+    if (locked) { container.innerHTML = locked; return; }
 
     if (iframeUrl) {
       // The Jarvis surface needs the microphone (getUserMedia), which Chrome refuses inside a
