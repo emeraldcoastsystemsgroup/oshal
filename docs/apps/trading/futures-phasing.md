@@ -82,7 +82,7 @@ below depends on his reply arriving. The private repo is the only place they are
 
 ### 1.4 Evidence so far — and why it gates everything
 
-All numbers in [futures-backtester.md](./futures-backtester.md#current-honest-numbers-2026-07-27-second-pass)
+All numbers in [futures-backtester.md](./futures-backtester.md#current-honest-numbers-re-measured-2026-09-16)
 are **in-sample, un-optimized, paper, no walk-forward**, on panama-adjusted hourly ES and CL
 2021→2025 with 1 tick slippage/side and $2.50/contract/side. The reading recorded there: at default
 parameters the entries carry no fixed-horizon edge (stage-1 AvgMFE/AvgMAE ≈ 1.0 on both markets);

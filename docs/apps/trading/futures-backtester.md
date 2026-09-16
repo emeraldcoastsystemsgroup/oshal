@@ -154,6 +154,13 @@ Read it as "what the combined book would have looked like", not as a capital-eff
 
 ## What his answers did to the numbers
 
+> **HISTORY — measured 2026-07-28, do not quote.** Two cells below are already stale against the
+> re-measurement in [Current honest numbers](#current-honest-numbers-re-measured-2026-09-16): row B's
+> CL stage-1 reads −$115,660 where it now measures **−$113,245**, and its CL full-stack reads
+> −$74,504 where it now measures **−$77,544**. Row A's +$42,115 is the figure this document declares
+> superseded further down. Kept because the A→B→C comparison is what the answers changed, not because
+> the cells are current.
+
 The source trader answered the five open questions on 2026-07-28, and three of those answers move
 defaults that the backtester consumes. Same 5-year panama-adjusted front-month series, same costs
 (1 tick/side, $2.50/contract/side), $500K, 2% risk, hourly chart with a daily LTF filter:
@@ -195,11 +202,15 @@ Three things worth saying out loud, all in-sample and un-optimized:
    *saves* about $31K (−$98K → −$68K) by cutting losers fast. Market-dependent, and his own spec
    gives ranges (85–95 / 90–96) — so those two percentages are optimizer inputs, not constants.
 
-Stage-1 sanity check worth noting: on CL, configurations A and B produce the *identical* 125 trades
+Stage-1 sanity check worth noting: on CL, configurations A and B produce an *identical* stage-1 book (125 trades when measured 2026-07-28; the 2026-09-16 re-measurement puts it at **126** — the point is that the two configurations agree, not the count)
 and identical MFE/MAE while differing in net P&L. That is exactly right — stage-1 suppresses stops
 but still sizes from the estimated stop, so a wider stop changes contracts, not entries.
 
 ## Current honest numbers (re-measured 2026-09-16)
+
+**Posture: PAPER, simulated fills. No live futures rail exists.** Every figure in this document and in the sweeps below is simulated; none of it is a live track record.
+
+**Posture: PAPER, simulated fills, no live futures rail exists.** Every figure in this document and in the sweeps below is simulated; none of it is a live track record.
 
 Defaults everywhere (no per-market optimization), 1 tick slippage/side, $2.50/contract/side,
 $500K equity, 2% risk, hourly chart / daily LTF, panama-adjusted front-month series. Measured on
@@ -255,7 +266,9 @@ npx tsx scripts/oshal-futures-backtest.ts --roots ES,CL --source kibot-file \
   --walk-forward --is-months 24 --oos-months 6 --step-months 6 --out wf.json
 ```
 
-**ES** — paper, in-sample column trained, out-of-sample column unseen:
+**ES** — paper, in-sample column measured (nothing is trained — no optimizer is involved), out-of-sample column unseen:
+
+> The in-sample **all** row below is a SUM OVER OVERLAPPING WINDOWS, not a period: five 24-month windows stepped by 6 months = 120 window-months across a 48-month span, with 2023-01..2023-07 counted four times. The single-pass 2021→2025 figure for the same span is 123 trades / +$23,367. The out-of-sample **all** row IS a contiguous sum — the windows do not overlap, and the runner refuses a step smaller than the out-of-sample length so they cannot. The degradation ratio normalises per month on both sides, so it is unaffected.
 
 | win | in-sample period | IS trades | IS net | out-of-sample period | OOS trades | OOS net | OOS maxDD |
 |---|---|---|---|---|---|---|---|
@@ -269,6 +282,8 @@ npx tsx scripts/oshal-futures-backtest.ts --roots ES,CL --source kibot-file \
 Degradation (OOS $/month ÷ IS $/month): **−0.411**.
 
 **CL** — same split, same frozen config:
+
+> The in-sample **all** row below is a SUM OVER OVERLAPPING WINDOWS, not a period: five 24-month windows stepped by 6 months = 120 window-months across a 48-month span, with 2023-01..2023-07 counted four times. The single-pass 2021→2025 figure for the same span is 123 trades / +$23,367. The out-of-sample **all** row IS a contiguous sum — the windows do not overlap, and the runner refuses a step smaller than the out-of-sample length so they cannot. The degradation ratio normalises per month on both sides, so it is unaffected.
 
 | win | in-sample period | IS trades | IS net | out-of-sample period | OOS trades | OOS net | OOS maxDD |
 |---|---|---|---|---|---|---|---|
