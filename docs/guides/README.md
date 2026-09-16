@@ -27,6 +27,7 @@ the URL is authoritative — bookmark it and you land in the same place every ti
 | See every account I've connected, and fix an expired one | [Identity Hub](./identity-hub.md) |
 | Find where my files live and where new ones get saved | [Files](./files.md) |
 | Send a file or image to another app without downloading it | [Send to…](./send-to.md) |
+| Print a document into the swarm and choose where it is filed | [Printing to the swarm](./printing.md) |
 | See my schedule and the work planned against it | [Calendar](./calendar.md) |
 | Spend less on model calls without losing quality | [Optimizer (Token Chase)](./optimizer.md) |
 | Test how a bot behaves before trusting it | [AI Test Lab](./ai-test-lab.md) |

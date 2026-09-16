@@ -14,6 +14,16 @@ The active `/api/send-message` path can request this mode for a dedicated applic
 existing user-brain resolver supplies the hosted connection. Both the bot permission and any
 specialist read permission must already allow the verified caller.
 
+Queued manifest-worker dispatch requests the same mode. A queue has no HTTP request of its own to
+resolve a brain from, so the controller resolves the ticket owner's HOSTED connection and builds the
+identical direct, non-agentic body. It is deliberately the hosted resolver, not the full user-brain
+ladder: that ladder answers with a local CLI brain first for a configured operator on a demo box,
+and a CLI brain cannot satisfy this mode. When the owner has no usable hosted connection the
+dispatch is refused before anything is signed, and the refusal names the missing requirement on the
+ticket rather than escalating without one. Connector credentials and deterministic provider intents
+are refused on this path rather than dropped, and the controller's authoritative provider pin is not
+carried: the resolved hosted connection is the request's provider authority.
+
 Each protected worker run has isolated history. The runtime supplies an empty tool set and
 operation scope list, excludes global project context and layered swarm memory, and rechecks
 permission immediately before inference and before storing or returning the answer. It retains

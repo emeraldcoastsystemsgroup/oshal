@@ -18,6 +18,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — bespoke-write-goes-through-executor (audit-down refuses the post, both audit rows land, params hash matches, skip paths preserved), the declared-action confirm gate, and the caller-scoped audit read.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A connector's declared headers must travel on the WRITE: linkedin.yaml requires X-Restli-Protocol-Version on UGC Posts and the executor sent none, so the declared-action rail would have dropped what the bespoke fetch was sending.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
@@ -130,6 +131,35 @@ describe('bespoke-write-goes-through-executor', () => {
     expect(posted).toHaveLength(1);
     expect(posted[0].url).toBe('https://api.linkedin.com/v2/ugcPosts');
     expect(posted[0].body).toMatchObject({ author: 'urn:li:person:li-123', lifecycleState: 'PUBLISHED' });
+  });
+
+  it('sends the connector-declared protocol headers on the write, not only on reads', async () => {
+    // swarm-apps/connectors/linkedin.yaml declares X-Restli-Protocol-Version: 2.0.0 — "required on
+    // the UGC Posts endpoint". buildClientFromSpec merged spec.headers for the READ tier only, so a
+    // declared write action went out without them: moving publishing off its bespoke fetch (which
+    // DID send the header) and onto the declared rail would have silently broken it.
+    vi.stubEnv('SESSION_SECRET', 'write-action-guard-secret');
+    const sent: Array<Record<string, string>> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { headers?: HeadersInit } = {}) => {
+      const headers: Record<string, string> = {};
+      new Headers(init.headers as HeadersInit).forEach((value, key) => { headers[key.toLowerCase()] = value; });
+      sent.push(headers);
+      return new Response(JSON.stringify({ id: 'urn:li:share:hdr' }), { status: 201, headers: { 'content-type': 'application/json' } });
+    }));
+    const { pool } = await poolFor();
+    const outcome = await buildPublisher(ctxFor(pool))(SUB, 'header guard');
+    expect(outcome.ok).toBe(true);
+    expect(sent).toHaveLength(1);
+
+    // Declared by the spec, so it must be on the wire.
+    const declared = loadConnectorSpec(LINKEDIN_SPEC).headers || {};
+    expect(Object.keys(declared).length, 'the spec under test no longer declares headers').toBeGreaterThan(0);
+    for (const [name, value] of Object.entries(declared)) {
+      expect(sent[0][name.toLowerCase()], `declared header ${name} did not travel on the write`).toBe(value);
+    }
+    // And the auth/content headers the client owns are still there — this adds, never replaces.
+    expect(sent[0].authorization).toMatch(/^Bearer /);
+    expect(sent[0]['content-type']).toMatch(/application\/json/);
   });
 
   it('keeps the clean no-connection SKIP — never a faked success, never an audit row', async () => {

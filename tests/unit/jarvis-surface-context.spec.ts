@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the screen-aware Jarvis loop: the `context` op travels the REAL relay to EVERY assistant frame (the floating orb panel included — the frame the relay originally didn't know about), normalizeAskSurfaceContext validates with the real contract and rejects a snapshot that never came through the bridge, buildSurfaceContextPrompt tells a drivable surface from a read-only one, and the producer's emitOps/consumeContext stamp the trusted app binding rather than trusting the model.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Success-path log guard: an /ask turn that returns surface ops (driven through the real authenticated router with only the model and persistence doubled) logs op count, op names as custom:<name>, the target app and the surface's declared custom names at INFO — the BUG-18 shape (an invented custom name) is now one grep in the api log; a context-free turn still only warns.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Repair the database mock: a FIXED factory omitted createPersistenceActivation, which both in-memory stores now call, so the two /ask cases threw on construction and this file was red on main with nobody acting on it. Spread the real module and override only what the spec controls, so a new export cannot disarm the guard again.
  */
 
 import express, { type RequestHandler } from 'express';
@@ -24,7 +25,11 @@ vi.mock('@/features/user-model', () => ({
   withHavenContext: vi.fn(async (_pool: unknown, _sub: string, prompt: string) => prompt),
   learnFromExchange: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('@/shared/services/database', () => ({
+// PARTIAL mock on purpose. A fixed factory here listed four exports, and when the in-memory stores
+// began calling createPersistenceActivation from the same barrel, constructing one threw and both
+// /ask cases died before their first assertion - the guard for this entry, silently disarmed.
+vi.mock('@/shared/services/database', async (importOriginal) => ({
+  ...await importOriginal<object>(),
   createOptionalPostgresPool: () => null, ensureConversationStoreSchema: async () => {},
   runRuntimeSchemaBootstrap: vi.fn().mockResolvedValue(undefined), buildOwnerRlsPolicyStatements: vi.fn().mockReturnValue([]),
 }));

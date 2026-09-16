@@ -295,9 +295,11 @@ COPY docs/guides/ ./docs/guides/
 # is auto-loaded at boot by SwarmAppService (see src/features/swarm-apps).
 COPY swarm-apps/ ./swarm-apps/
 
-# Any-bot runtime — the bot node execution layer (any-bot-swarm-separation-design.md).
-# Bot containers run `node any-bot/server/app.js` which handles LLM execution,
-# credential management, CLI spawning, and cost capture.
+# Any-bot server tree — the provider/task layer the canonical bot-node runtime
+# executes through (LLM execution, credential management, CLI spawning, cost
+# capture), plus the app-modules/* route registrars it mounts.
+# Bot containers run `node dist/app/bot-node-server.js` (BOT_RUNTIME=bot-node);
+# `any-bot/server/app.js` is demoted and is not a selectable runtime.
 COPY any-bot/server/ ./any-bot/server/
 
 # Cockpit/static assets are served directly by the API server at runtime.

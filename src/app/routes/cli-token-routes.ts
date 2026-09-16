@@ -10,12 +10,18 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | PER-NODE WORKER-PLANE TOKENS (docs/backlog/hardening.md #7 - retire the swarm-wide REMOTE_CLIENT_SHARED_SECRET). A token may now be BOUND to one device (node_client_id; migration 102 plus the lazy-DDL ALTER): the auth middleware admits such a token ONLY on the paths decideNodeTokenScope allows (its own /api/remote-clients/<clientId> plane plus the two enrollment-handshake paths) and stamps the binding on the request, so a credential lifted off an edge machine is NOT the account credential an unbound PAT is - it cannot reach /api/content, cannot mint tokens, and cannot touch a sibling device. rotateNodeToken revokes every live token for a device and mints its successor in ONE call (the rotation a compose-file secret structurally cannot offer). Unbound PATs behave identically. Guard: tests/unit/remote-client-node-token.spec.ts.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve the verified principal issuer on newly minted PATs and rotated node credentials. Bearer authentication now replays the original (issuer, subject) namespace; legacy rows remain usable by core routes but carry no invented issuer, so issuer-bound applications fail closed instead of rebinding an old token to a newly configured IdP.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact owner subjects during node-token rotation. The required non-empty validation remains, but subject case/whitespace is no longer trimmed before owner-scoped revocation and successor minting.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | The boot bootstrap takes ONE advisory-locked client (SCHEMA_LOCK_KEYS.cliTokens) instead of issuing its eight idempotent statements as eight separate pool acquires against a pool of 8 while 83 manifests load — that contention is what made it fail on a cold boot; the statements, including the per-boot owner-RLS/policy re-assert, are unchanged. And its catch now RE-PROBES before it names an impact: table present -> warn that PAT auth is unaffected, absent -> the unavailable wording, probe failed -> say the effect is unverified. The old handler asserted "PAT auth unavailable until it exists" on every failure without checking; migration 100 creates the table before the process starts and the auth middleware queries it directly, so that line described a functional loss that had not happened and cost a day of investigation. Guard: tests/unit/cli-token-schema-bootstrap.spec.ts.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | The failure report probes the COLUMNS PAT auth reads, not just the table. findLiveCliToken selects node_client_id and principal_issuer, which the failed bootstrap own ALTERs add - so a database that never ran migration 102 has the table, has broken PAT auth, and was being told unaffected. Four branches now: present-and-complete warns, present-with-missing-columns reports at ERROR and names them, absent and unprobeable unchanged.
  */
 import { Router, type RequestHandler, type Request, type Response } from 'express';
 import crypto from 'crypto';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
-import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import {
+  buildOwnerRlsPolicyStatements,
+  runRuntimeSchemaBootstrap,
+  SCHEMA_LOCK_KEYS,
+} from '@/shared/services/database';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { getCaller, getTrustedServiceUserSub, isOperator, isOperatorIdentity } from '@/shared/middleware/authz';
 import {
@@ -73,6 +79,13 @@ export function hashCliToken(token: string): string {
  * @description Creates the PAT store if absent (lazy-DDL chokepoint, mirroring
  * tv_token_revocations) with owner RLS applied at creation so a fresh database
  * enforces isolation immediately. Inert while the runtime connects as a superuser.
+ *
+ * Every statement runs on ONE advisory-locked client. Issued straight at the pool these eight
+ * idempotent statements are eight separate acquires, each able to wait out the acquire timeout
+ * against a pool of 8 while the manifests load — that contention, not a missing table, is what
+ * made this fail on a cold boot. The RLS/policy statements stay in the list on purpose: they are
+ * the per-boot self-heal on a FORCE-RLS credential table, and a verify-first early return would
+ * quietly retire them (its column checks cost the same eight acquires anyway).
  * @param pool - Postgres pool.
  * @returns resolves when the table + policies exist.
  */
@@ -80,6 +93,7 @@ export async function ensureCliTokenSchema(pool: Pool): Promise<void> {
   await runRuntimeSchemaBootstrap({
     pool,
     moduleName: 'cli token routes',
+    lockKey: SCHEMA_LOCK_KEYS.cliTokens,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_cli_tokens (
         id           TEXT PRIMARY KEY,
@@ -112,6 +126,77 @@ export async function ensureCliTokenSchema(pool: Pool): Promise<void> {
       columns: ['id', 'user_sub', 'token_hash', 'revoked_at', 'expires_at', 'node_client_id', 'principal_issuer'],
     }],
   });
+}
+
+/**
+ * The columns `findLiveCliToken` reads. A failure report may only call PAT auth unaffected if the
+ * table carries these: the table existing says nothing about the ALTERs that add them.
+ */
+const PAT_AUTH_COLUMNS = ['id', 'user_sub', 'email', 'node_client_id', 'principal_issuer'];
+
+/**
+ * @description Reports a failed PAT-store bootstrap with an impact it has CHECKED. The handler
+ * this replaces hardcoded "PAT auth unavailable until it exists" on every failure — a consequence
+ * it never verified, and one that is usually false: migration 100 creates the table before the
+ * server process starts, this bootstrap is fire-and-forget, and the PAT auth middleware is built
+ * separately and queries the table directly. So the line sent readers after a functional loss that
+ * had not happened. One re-probe decides which of three things to say, and the third says plainly
+ * that it does not know.
+ *
+ * The probe runs under the SYSTEM sentinel because an identity-less read is refused outright when
+ * OSHAL_DB_GUC_STRICT=deny, which would make every failure report "unverifiable".
+ * @param pool - Postgres pool, re-probed for the table.
+ * @param err - the bootstrap failure being reported.
+ * @returns resolves once the single line is logged; never rejects.
+ */
+async function reportCliTokenSchemaBootstrapFailure(pool: Pool, err: unknown): Promise<void> {
+  let present: boolean;
+  let missing: string[] = [];
+  try {
+    // Probe what the CLAIM is about. The table existing is not enough to call PAT auth unaffected:
+    // findLiveCliToken reads node_client_id and principal_issuer, and those columns arrive in ALTER
+    // statements belonging to the very bootstrap that just failed — so on a database that never ran
+    // migration 102 the table is present, PAT auth is broken, and "unaffected" would be exactly the
+    // unprobed impact this reporter exists to stop.
+    const { rows } = await runWithSystemIdentity(() => pool.query<{ present: boolean; missing: string[] | null }>(
+      `SELECT to_regclass($1) IS NOT NULL AS present,
+              (SELECT array_agg(needed) FROM unnest($2::text[]) AS needed
+                WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                   WHERE table_schema = 'public' AND table_name = $3
+                                     AND column_name = needed)) AS missing`,
+      ['public.oshal_cli_tokens', PAT_AUTH_COLUMNS, 'oshal_cli_tokens'],
+    ));
+    present = Boolean(rows[0]?.present);
+    missing = rows[0]?.missing ?? [];
+  } catch (probeErr) {
+    logger.error(
+      { err, probeErr },
+      'oshal_cli_tokens schema bootstrap failed and the table could not be probed — the effect on ' +
+      'PAT auth is UNVERIFIED; check whether the table exists before assuming either way',
+    );
+    return;
+  }
+  if (present && missing.length) {
+    logger.error(
+      { err, missing },
+      'oshal_cli_tokens schema bootstrap failed and the table is missing columns PAT auth reads — ' +
+      'authentication with a personal access token WILL fail until the bootstrap completes',
+    );
+    return;
+  }
+  if (present) {
+    logger.warn(
+      { err },
+      'oshal_cli_tokens schema bootstrap failed but the table carries every column PAT auth reads — ' +
+      'PAT auth is unaffected; what did not complete is this boot\'s idempotent re-assert of the ' +
+      'index and owner RLS',
+    );
+    return;
+  }
+  logger.error(
+    { err },
+    'oshal_cli_tokens schema bootstrap failed and the table is absent — PAT auth unavailable until it exists',
+  );
 }
 
 /** Caller identity: OIDC session first, else the trusted-service assertion (same order as message-routes). */
@@ -382,9 +467,7 @@ export async function rotateNodeToken(
  */
 export function createCliTokenRoutes(pool: Pool): Router {
   const router = Router();
-  void ensureCliTokenSchema(pool).catch((err) => {
-    logger.error({ err }, 'oshal_cli_tokens schema bootstrap failed — PAT auth unavailable until it exists');
-  });
+  void ensureCliTokenSchema(pool).catch((err) => reportCliTokenSchemaBootstrapFailure(pool, err));
 
   /** GET /whoami — the caller's resolved identity; what `swarm-cli login` verifies against. */
   router.get('/whoami', (req: Request, res: Response) => {

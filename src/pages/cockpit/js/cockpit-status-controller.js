@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted cockpit status-bar metrics and cost-indicator orchestration from app.js to enforce shell file-size governance without changing operator behavior
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "One slow boot drops the task, message and memory stores to in-memory for the life of the process": the status bar now carries the persistence indicator. The retry/registry work made the degraded state real and visible at GET /api/readiness and in oshal-verify.sh, but an operator watching the cockpit still saw a box that looked entirely healthy while a store advertised as durable was writing to a Map. The indicator is silent while persistence is ok/off and speaks only for the two states that need an operator: MEMORY, and unreadable.
  */
 
 import { createUiLogger } from '../../shared/ui-debug.js';
@@ -72,6 +73,74 @@ export class CockpitStatusController {
   }
 
   /**
+   * @description Read readiness and render the status-bar persistence indicator.
+   *
+   * The state this exists for: a store that advertises durable storage, lost its database
+   * at boot, and is serving from an in-memory Map. Before this, that fact reached only a
+   * boot-log ERROR line, GET /api/readiness and scripts/oshal-verify.sh - never the surface
+   * the operator actually watches.
+   *
+   * @returns {Promise<void>} Resolves once the indicator reflects the latest read.
+   */
+  async loadPersistence() {
+    const report = await this.api.getReadiness();
+    this.renderPersistenceIndicator(report);
+  }
+
+  /**
+   * @description Write one readiness report into the status-bar persistence indicator.
+   *
+   * Three outcomes, kept apart on purpose:
+   *   - `null` report            -> UNKNOWN. Readiness could not be read, so the cockpit does
+   *                                 NOT get to imply storage is fine; "could not look" is not
+   *                                 "found nothing wrong".
+   *   - persistence leg `fail`   -> DEGRADED. A configured store is serving from memory; the
+   *                                 leg detail (store, attempts, reason) becomes the tooltip.
+   *   - anything else (ok / off) -> hidden. A healthy box, and a deliberately database-less
+   *                                 one, add no noise to a four-item status bar.
+   *
+   * @param {Record<string, unknown>|null} report - The readiness report, or null when unreadable.
+   * @returns {void}
+   */
+  renderPersistenceIndicator(report) {
+    const item = document.getElementById('statusPersistenceItem');
+    const label = document.getElementById('statusPersistence');
+    if (!item || !label) {
+      return;
+    }
+
+    const leg = report && report.legs ? report.legs.persistence : null;
+    const state = leg && typeof leg.state === 'string' ? leg.state : null;
+
+    if (report === null || !state) {
+      item.classList.remove('hidden');
+      item.dataset.persistenceState = 'unknown';
+      label.textContent = 'Storage: unknown';
+      label.className = 'status-persistence status-warning';
+      item.title = 'Readiness could not be read, so durable storage is unverified — not confirmed healthy.';
+      logger.warn('Cockpit persistence indicator unreadable', { hasReport: report !== null });
+      return;
+    }
+
+    if (state === 'fail') {
+      item.classList.remove('hidden');
+      item.dataset.persistenceState = 'degraded';
+      label.textContent = 'Storage: IN MEMORY';
+      label.className = 'status-persistence status-error';
+      item.title = `Degraded persistence — writes are lost on restart. ${leg.detail || 'no detail'}`;
+      logger.warn('Cockpit persistence indicator degraded', { detail: leg.detail });
+      return;
+    }
+
+    item.classList.add('hidden');
+    item.dataset.persistenceState = state;
+    label.textContent = '';
+    label.className = 'status-persistence';
+    item.title = leg.detail || '';
+    logger.debug('Cockpit persistence indicator healthy', { state });
+  }
+
+  /**
    * @description Start the recurring cockpit polling cadence for metrics and live bot refreshes.
    *
    * @param {{ refreshBots?: () => Promise<void> | void }} [options] - Optional polling callbacks.
@@ -81,7 +150,13 @@ export class CockpitStatusController {
     logger.info('Starting cockpit status polling', {
       hasRefreshBots: typeof options.refreshBots === 'function',
     });
-    const timers = [window.setInterval(() => void this.loadMetrics(), 30000)];
+    const timers = [
+      window.setInterval(() => void this.loadMetrics(), 30000),
+      // Readiness is heavier than the metrics summary (redis, disk, a db ping), so the
+      // persistence indicator runs on its own slower cadence rather than doubling the
+      // 30s metrics poll.
+      window.setInterval(() => void this.loadPersistence(), 60000),
+    ];
     if (typeof options.refreshBots === 'function') {
       timers.push(window.setInterval(() => {
         void options.refreshBots();

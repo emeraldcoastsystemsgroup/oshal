@@ -108,9 +108,16 @@ Built, type-clean (0 tsc errors), unit-tested (scorecard math), and Python-synta
   the cyclops).
 - **Box (`scripts/comfyui-edge/`):** `setup-kohya.ps1`, `train-lora.py` (kohya SD1.5 LoRA, 8GB params),
   `validate-lora.py` (LoraLoader + fixed matrix + CLIP scoring + gallery + ingest), `make-targeted-batch.py`
-  (weak-cell biased regen), `overnight-loop.py` (autonomous improve→plateau→review).
+  (weak-cell biased regen), `overnight-loop.py` (autonomous improve→plateau→review),
+  `curation_judge.py` (the rejection half of #4 — identity, single-eye, crowd, quality and
+  caption-agreement checks decide keep/reject BEFORE training, fail-closed on an unmeasured
+  candidate, with a per-candidate human override that always wins) wired into `make-curate.py`,
+  so a rejected pair reaches neither the curated folder nor `curated.zip`.
 
 **Not yet run end-to-end** — requires the GPU edge box reconnected (ComfyUI + the oshal-chat worker node),
 `oshal-api` rebuilt to load the new routes, and `setup-kohya.ps1` run once. Phasing and the remaining work
-(P6 generalize-to-any-character, gallery image hosting, automated curation judge, schedule-runtime trigger
-for autonomous) are tracked in `docs/BACKLOG.md`.
+(P6 generalize-to-any-character, gallery image hosting, schedule-runtime trigger
+for autonomous) are tracked in `docs/BACKLOG.md`. The curation judge's decision boundary is
+pinned by a LABELLED fixture (`scripts/comfyui-edge/fixtures/curation-labels.json`) whose
+false-accept/false-reject rates `tests/unit/lora-curation-judge.spec.ts` measures against the
+real `curated.zip`; those vectors are hand-specified, not yet a GPU CLIP run's output.

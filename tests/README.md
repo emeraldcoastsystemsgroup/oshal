@@ -110,3 +110,32 @@ The autonomous backlog suites have matching Lab registrations and local commands
 
 Docker-backed suites create their own temporary databases. Do not substitute a deployment DSN or
 run the unrestricted historical unit collection against a live application database.
+
+## Line coverage is measured, and the figure carries its scope
+
+`npm run test:coverage` is the only place a coverage percentage for this repo comes from. It runs
+`vitest` with `vitest.coverage.config.ts` and the `@vitest/coverage-v8` provider, prints the measured
+statement/branch/function/line percentages, and exits non-zero when any of them falls below the
+floors in `tests/coverage-scope.mjs`. Do not write a coverage percentage into prose, a README, a deck
+or an ADR: run the command and quote what it printed, together with the scope it printed beside it.
+
+The first scope is deliberately narrow so the gate can be held rather than admired:
+
+| | |
+|---|---|
+| Source files measured | `src/shared/security/**/*.ts` - the security decision paths, every file in the glob whether or not a spec imports it |
+| Specs that produce the figure | the explicit list in `tests/coverage-scope.mjs` |
+| Floors that fail the run | the `COVERAGE_THRESHOLDS` block in the same file |
+
+The figure is **not** a whole-tree number and must never be quoted as one. The command prints the
+scope above and below the figure for exactly that reason. Widening the scope means adding globs and
+specs to `tests/coverage-scope.mjs` and re-running the command to set the new floors from what it
+reports - never from an estimate.
+
+`tests/unit/test-coverage-gate.spec.ts` is the guard. It runs the real command - the real vitest
+runner, the real `@vitest/coverage-v8` provider, the real config - and injects a breach through the
+committed wiring rather than a CLI flag: `OSHAL_COVERAGE_FLOOR_OVERRIDE` raises a floor inside
+`tests/coverage-scope.mjs`, so the failure has to travel that module, `vitest.coverage.config.ts`
+and the runner to reach a non-zero exit. One run then proves four things - the figure is produced,
+the scope is printed beside it, a breached threshold exits non-zero, and the floors this repo
+actually commits to are met by that same measurement. Nothing outside the guard sets that variable.

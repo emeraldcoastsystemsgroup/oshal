@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The in-product help hub (BACKLOG "End-user guides and an in-app way to reach them"): docs/guides/*.md rendered to themed HTML at /api/help, with /api/help/:slug per guide and a ?for=<surface> deep link so a screen can hand the reader straight to its own page. Guides were unreachable from inside the product — no /help route existed, /docs serves Swagger, and the first-run strip hides itself on the full framework profile — so the docs existed but nobody in the cockpit could find them. Markdown is rendered server-side with `marked`; the guide corpus is trusted repo content, but output is still escaped-by-construction for the pieces we interpolate (title, nav labels) and the slug is allowlisted against the on-disk set so no path can be traversed. The surface links surface-themes.css and derives every colour from framework tokens — the pattern BUG-12 exists to enforce, applied here rather than adding a 21st themeless page.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Per-surface affordance support (BACKLOG "In-app help: per-surface affordances and first-run"): `?for=` now normalises the cockpit ribbon's `tool-<id>` spelling onto the documented surface vocabulary, so the id a screen actually carries resolves instead of falling through to the index; `devices`, `global-search` and `notify` were reachable screens with no mapping at all. GET /api/help/surfaces answers the surfaces that reach a guide PRESENT on this deployment (both spellings), so the header affordance can claim "help for this screen" only when that is true, rather than re-implementing the mapping in the browser and drifting from it. Registered before /:slug — the slug route would otherwise swallow it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Thirteen more ribbon ids reach the guide that documents them. Files, Cloud, Kalshi Edge, Sports Edge and the nine maker-lab tiles all ship a guide, but the ribbon spells them `tool-storage-files`/`tool-kalshi-home`/`tool-circuit-lab` and the map keyed the slug, so their help button quietly fell through to the index - the screens with the MOST to explain were the ones the affordance helped least. Drone Ops stays unmapped on purpose: maker-labs.md documents Drone Relay, and pointing a reader at a page about a different screen is worse than the index.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -57,6 +59,37 @@ const SURFACE_TO_GUIDE: Record<string, string> = {
   notifications: 'platform-tools',
   'my-data': 'platform-tools',
   dlq: 'platform-tools',
+  // The cockpit ribbon's own ids for the same screens. The ribbon names its platform tools
+  // `tool-<id>` (RibbonNav PLATFORM_TOOLS) and those ids are what the per-surface affordance
+  // hands us, so the two vocabularies have to meet here rather than in the browser.
+  devices: 'devices',
+  'global-search': 'platform-tools',
+  notify: 'platform-tools',
+  // Core swarm-apps manifests register their screens as `tool-<toolName>` (swarm-app-group.ts),
+  // so the toolName is the id the affordance carries for those surfaces.
+  'intelligent-processing-queue': 'intelligent-processing',
+  'devops-vault-console': 'devops-vault',
+  'jarvis-home': 'jarvis',
+  'security-center-home': 'security-center',
+  // Screens that ship a guide but whose ribbon id never matched its slug, so their '?' landed on
+  // the index. Each one is mapped onto the guide that names it by name: files.md documents the
+  // Files icon, cloud-and-connections.md the Cloud/Connections tab, kalshi.md the Kalshi Edge
+  // tile, fantasy-football.md the Fantasy tab of Sports Edge.
+  'storage-files': 'files',
+  'cloud-accounts': 'cloud-and-connections',
+  'kalshi-home': 'kalshi',
+  'sports-edge-home': 'fantasy-football',
+  // One guide, eight labs, nine rail tiles - the set maker-labs.md "Where they are" enumerates.
+  // Drone Ops is deliberately NOT here: that guide covers Drone RELAY, a different screen.
+  embodied: 'maker-labs',
+  animatronics: 'maker-labs',
+  'drone-relay': 'maker-labs',
+  'cad-studio': 'maker-labs',
+  'circuit-lab': 'maker-labs',
+  'scan-to-print': 'maker-labs',
+  'aero-lab': 'maker-labs',
+  'ocean-lab-harvest-console': 'maker-labs',
+  'ocean-lab-blade-studio': 'maker-labs',
 };
 
 /** One guide as listed in the hub nav. */
@@ -130,7 +163,27 @@ export function resolveGuideFile(dir: string, slug: string): string | null {
 
 /** Map a `?for=<surface>` hint onto a guide slug (null when the surface has no guide yet). */
 export function guideForSurface(surface: string): string | null {
-  return SURFACE_TO_GUIDE[surface.toLowerCase().trim()] ?? null;
+  const key = surface.toLowerCase().trim();
+  // A cockpit platform tool arrives as `tool-<id>`; the bare id is the documented vocabulary.
+  return SURFACE_TO_GUIDE[key] ?? SURFACE_TO_GUIDE[key.replace(/^tool-/, '')] ?? null;
+}
+
+/**
+ * @description The surface identifiers that actually reach a guide PRESENT on this deployment —
+ * both the bare id and the cockpit ribbon's `tool-<id>` spelling, so a caller only has to test
+ * membership rather than re-implement the normalisation rule. A surface whose guide file is not
+ * installed is deliberately absent: the affordance must not promise a page that 404s.
+ * @param dir - The resolved guides directory.
+ * @returns Sorted surface identifiers, each of which resolves to an existing guide.
+ */
+export function coveredSurfaces(dir: string): string[] {
+  const covered = new Set<string>();
+  for (const [surface, slug] of Object.entries(SURFACE_TO_GUIDE)) {
+    if (!resolveGuideFile(dir, slug)) continue;
+    covered.add(surface);
+    if (!surface.startsWith('tool-')) covered.add(`tool-${surface}`);
+  }
+  return [...covered].sort();
 }
 
 /** The page chrome — framework theme tokens only (no bespoke palette; see BUG-12). */
@@ -228,6 +281,12 @@ export function createHelpRoutes(): Router {
       logger.error({ err }, 'Failed to render help index');
       res.status(500).send('Failed to render help.');
     }
+  });
+
+  // Registered BEFORE '/:slug' on purpose — otherwise the slug route swallows it and answers 404.
+  router.get('/surfaces', (_req: Request, res: Response): void => {
+    const dir = resolveGuidesDir();
+    res.json({ surfaces: dir ? coveredSurfaces(dir) : [] });
   });
 
   router.get('/:slug', (req: Request, res: Response): void => {

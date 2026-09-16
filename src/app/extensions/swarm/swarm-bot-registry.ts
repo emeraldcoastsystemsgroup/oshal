@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Close cross-variant registry drift: the default/local registry is the authoritative identity, capability, access, and current deployment definition; full mode is now its deterministic superset plus six full-only legacy catalog entries, while kernel remains a UUID-filtered subset. This prevents full mode from dropping promoted/default or kernel-required bots and prevents duplicate declarations from silently redefining shared UUIDs.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Fleet default -> codex (operator directive 2026-08-12): every LLM-harness bot flipped to harnessType codex-cli / apiType openai-codex (was a mix of claude-code, cline, gemini-cli). a2a untouched - an external-agent boundary, not an LLM harness. Model rides CODEX_MODEL (floor gpt-5.5, the ChatGPT-login model verified live; gpt-5.4 is the documented $20-plan self-install economy pick; gpt-5.6-sol stays interactive-only). claude-code remains a per-bot override and the runtime-failover secondary. Mirrored in swarm-bot-registry-local.ts (the mirrored-registry rule cuts both ways).
  * 19 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. Doc-only here: the inline-bot comments said '(claude-code)' while the fleet has run codex since 2026-08-12 — corrected to '(codex)'. No registry entry changed.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com  | Signed delegation, core queued ticket types (BACKLOG "Signed delegation refuses every ticket whose worker bot runs inline"): with controller signing on, a worker with no dedicated bot-node endpoint is refused - dispatch-manifest-worker throws 'Signed HTTP delegation requires a dedicated bot-node endpoint' and the incident path rethrows 'No endpoint found for agent ...' for the same missing endpoint (the first appears five times in this box's api log in the 24h to 2026-09-16). rca-specialist, system-architect and queue-bot already NAME a running compose node and were forced inline only by the codex rule, so they take requiresOwnNode (the remedy resolve-bot-node-endpoint.ts already logs). workflow-assistant owns the queued 'workflow-build' ticket type and moves off container oshal-api onto its own node (security-analyst has no definition in this registry) - a queued type must cross the signed hop, and triaging untrusted scanner output inside the control-plane container was the blast radius controller-inline-scope.ts names. Guard: tests/unit/signed-delegation-core-ticket-types.spec.ts. These four catalog rows are shadowed at runtime by their LOCAL counterparts (SWARM_BOT_REGISTRY dedupes by agentId with local first), so the edit is for consistency under the mirrored-registry rule, not a behaviour change in full mode.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -271,6 +272,10 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     name: 'queue-bot',
     port: 3055,
     container: 'queue-bot',
+    // Signed delegation (docs/security/http-delegation.md): this bot OWNS a core queued ticket
+    // type, so it must dispatch over the signed bot-node hop. Without this flag the codex rule in
+    // resolve-bot-node-endpoint.ts forces it inline and the dispatch is refused once signing is on.
+    requiresOwnNode: true,
     role: 'project-manager',
     capabilities: ['orchestration', 'quality-review', 'deliverable-assessment', 'feedback-generation'],
     // claude-code CLI blocks --dangerously-skip-permissions when running as root in
@@ -532,14 +537,19 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     accessRoles: ['operator', 'swarm', 'jarvis'],
   },
   {
-    // Workflow Studio (ADR-039) — inline concierge run via the orchestrator; the BRAIN turns a
+    // Workflow Studio (ADR-039) — runs on its OWN node (it owns the queued
+    // 'workflow-build' ticket type); the BRAIN turns a
     // spoken/typed process description into a workflow graph, the authenticated studio surface
     // persists + renders it. Reason-only (no shell-out); BYOK on the swarm default login. Reached
     // via POST /api/workflow-studio/chat and selectable on the general /chat path.
     agentId: 'a0000000-0000-0000-0000-000000000051',
     name: 'workflow-assistant',
-    port: 3010,
-    container: 'oshal-api',
+    port: 3057,
+    // Owns the queued 'workflow-build' ticket type (swarm-apps/workflow-studio.yaml). Queued work
+    // dispatches over signed HTTP delegation, so the worker needs a dedicated node; the studio's
+    // interactive /chat turn takes the same node through executeBotOrInline.
+    container: 'workflow-assistant',
+    requiresOwnNode: true,
     role: 'workflow/orchestration-specialist',
     capabilities: ['workflow-design', 'process-architecture', 'orchestration', 'workflow-validation'],
     harnessType: 'codex-cli',
@@ -762,6 +772,10 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     name: 'rca-specialist',
     port: 3014,
     container: 'rca-specialist',
+    // Signed delegation (docs/security/http-delegation.md): this bot OWNS a core queued ticket
+    // type, so it must dispatch over the signed bot-node hop. Without this flag the codex rule in
+    // resolve-bot-node-endpoint.ts forces it inline and the dispatch is refused once signing is on.
+    requiresOwnNode: true,
     role: 'localhost/worker',
     capabilities: ['debugging', 'investigation', 'root-cause', 'incident', 'analysis'],
     harnessType: 'codex-cli',
@@ -855,6 +869,10 @@ const FULL_REGISTRY_CATALOG: ReadonlyArray<SwarmBotDefinition> = [
     name: 'system-architect',
     port: 3023,
     container: 'system-architect',
+    // Signed delegation (docs/security/http-delegation.md): this bot OWNS a core queued ticket
+    // type, so it must dispatch over the signed bot-node hop. Without this flag the codex rule in
+    // resolve-bot-node-endpoint.ts forces it inline and the dispatch is refused once signing is on.
+    requiresOwnNode: true,
     role: 'localhost/worker',
     capabilities: ['architecture', 'design', 'system-modeling', 'diagrams', 'patterns', 'review'],
     harnessType: 'codex-cli',

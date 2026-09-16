@@ -1,0 +1,135 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the coverage gate. Coverage
+ *   had never been measured in this repo, so any figure quoted was invented. This spec
+ *   runs the REAL `test:coverage` command - the real vitest runner, the real
+ *   @vitest/coverage-v8 provider, the real config - with the statements threshold
+ *   overridden to 100 and proves three things at once from one run: the figure is
+ *   produced by the command, the scope is printed next to it, and a breached threshold
+ *   exits non-zero. It also proves the committed floors are met by the same measured
+ *   figure, so the gate it enforces is green as committed.
+ */
+import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+const repoRoot = process.cwd();
+
+/**
+ * @description Read a repo file as text.
+ * @param relative - Repo-relative path.
+ * @returns The file contents.
+ */
+function readRepoFile(relative: string): string {
+  return fs.readFileSync(path.join(repoRoot, relative), 'utf8');
+}
+
+/**
+ * @description Pull a measured percentage out of the command's own trailing figure
+ * block, which is the text an operator would copy a number from.
+ * @param output - Combined stdout/stderr of the coverage command.
+ * @param metric - statements | branches | functions | lines.
+ * @returns The percentage the command reported.
+ */
+function measuredPercent(output: string, metric: string): number {
+  const line = output
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith(`${metric} `) && entry.includes('% (') && entry.includes('floor'));
+  expect(line, `the command did not print a measured ${metric} figure`).toBeTruthy();
+  const percent = /([0-9.]+)%/.exec(String(line));
+  expect(percent, `the measured ${metric} figure had no percentage`).not.toBeNull();
+  return Number((percent as RegExpExecArray)[1]);
+}
+
+describe('test-coverage gate', () => {
+  it('is wired as a command with a coverage provider, not asserted in prose', () => {
+    const pkg = JSON.parse(readRepoFile('package.json'));
+    expect(pkg.scripts['test:coverage']).toBe('node scripts/test-coverage.mjs');
+    expect(pkg.devDependencies['@vitest/coverage-v8']).toBeTruthy();
+
+    const lock = JSON.parse(readRepoFile('package-lock.json'));
+    expect(lock.packages['node_modules/@vitest/coverage-v8']).toBeTruthy();
+  });
+
+  it('keeps the printed scope and the measured scope on one source of truth', () => {
+    const scope = readRepoFile('tests/coverage-scope.mjs');
+    expect(scope).toMatch(/export const COVERAGE_SOURCE_GLOBS/);
+    expect(scope).toMatch(/export const COVERAGE_SPEC_FILES/);
+    expect(scope).toMatch(/export const COVERAGE_THRESHOLDS/);
+    expect(scope).toMatch(/export function resolveCoverageThresholds/);
+
+    // Both the config that measures and the script that prints must read the SAME
+    // module, or the banner can describe a scope the figure was never taken over.
+    const config = readRepoFile('vitest.coverage.config.ts');
+    expect(config).toMatch(/from '\.\/tests\/coverage-scope\.mjs'/);
+    expect(config).toMatch(/thresholds: resolveCoverageThresholds\(\)/);
+    expect(readRepoFile('scripts/test-coverage.mjs')).toMatch(/from '\.\.\/tests\/coverage-scope\.mjs'/);
+  });
+
+  it(
+    'produces the figure, states its scope beside it, and exits non-zero when a threshold is breached',
+    async () => {
+      // No VITEST* inheritance: a nested runner that borrows this run's worker identity
+      // can report a status that is not its own.
+      const childEnv: NodeJS.ProcessEnv = { ...process.env };
+      for (const key of Object.keys(childEnv)) {
+        if (key.startsWith('VITEST')) delete childEnv[key];
+      }
+
+      // The breach is injected through the COMMITTED wiring - tests/coverage-scope.mjs
+      // into vitest.coverage.config.ts - and not through a vitest CLI flag, which would
+      // bypass that wiring and prove nothing about whether the repo's own config gates.
+      childEnv.OSHAL_COVERAGE_FLOOR_OVERRIDE = JSON.stringify({ statements: 100 });
+
+      const run = spawnSync(process.execPath, ['scripts/test-coverage.mjs'], {
+        cwd: repoRoot,
+        env: childEnv,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+      });
+
+      expect(run.error, `coverage command could not run: ${run.error?.message}`).toBeUndefined();
+      const output = `${run.stdout ?? ''}${run.stderr ?? ''}`;
+
+      // The run must have actually executed - a command that could not look is not a
+      // command that found nothing.
+      expect(output, 'the coverage command produced no vitest run').toMatch(/Test Files\s+\d+ passed/);
+
+      // 1. The figure is generated by the command.
+      expect(output).toMatch(/Coverage report from v8/);
+      expect(output).toMatch(/Statements\s+:\s+[0-9.]+% \(\s*\d+\/\d+\s*\)/);
+
+      // 2. The scope is stated wherever the figure appears.
+      const scopeBanners = output.match(/=+ Coverage scope =+/g) ?? [];
+      expect(scopeBanners.length).toBeGreaterThanOrEqual(2);
+      expect(output).toContain('src/shared/security/**/*.ts');
+      expect(output).toMatch(/Produced by\s+: \d+ specs/);
+      expect(output).toContain('It is not a whole-tree coverage number.');
+      expect(output).toMatch(/Measured over .+ \[src\/shared\/security\/\*\*\/\*\.ts\]:/);
+
+      // 3. A breached threshold fails the run, and the floor the run enforced is the
+      //    one the banner named - the module, the config and the printed scope are one
+      //    source of truth rather than three that can drift.
+      expect(output).toMatch(/Thresholds\s+: statements 100%/);
+      expect(run.status, 'a breached coverage threshold did not fail the run').not.toBe(0);
+      expect(output).toMatch(
+        /ERROR: Coverage for statements \([0-9.]+%\) does not meet global threshold \(100%\)/,
+      );
+
+      // 4. The floors the repo actually commits to are met by this same measurement,
+      //    so the gate as shipped is green rather than red-on-arrival.
+      const committed = await import('../coverage-scope.mjs');
+      for (const metric of ['statements', 'branches', 'functions', 'lines'] as const) {
+        const floor = (committed.COVERAGE_THRESHOLDS as Record<string, number>)[metric];
+        expect(typeof floor).toBe('number');
+        expect(measuredPercent(output, metric)).toBeGreaterThanOrEqual(floor);
+      }
+    },
+    300000,
+  );
+});

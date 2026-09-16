@@ -15,6 +15,10 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add a closed typed authorization feed adapter with caller-scoped operations and targets.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Advertise current-user package proposals through the authenticated panel with explicit approval and workspace metadata.
  *
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The typed access tools list their exact operations and targets only when the ask is about access (or when there is no ask to judge). That JSON was 39,185 of the 71,817 characters in a live Jarvis prompt and rode every turn, pushing the app catalog, the tool proposals and the user's own question out of the node's untrusted-content window.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | assembleJarvisBotMessage: the turn's prompt leads with the user's words, then the tool guardrails, then the screen/attachment framing, so neither the ask nor the guardrails can be truncated away by a large attachment.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: the access gate matches whole words, so "remember that I…" is no longer read as a membership question and does not re-spend the window on the operations/targets JSON; and a single surviving section is returned rather than discarded.
+ *
  * @module jarvis-tool-catalog
  */
 
@@ -144,9 +148,32 @@ export function buildToolsBlock(context: { message?: string; surface?: string; a
     'These are your ONLY shell tools; a script not listed here is off-limits even if you can see it.',
     'Ask which tool or account the user intends when context leaves multiple plausible choices. Preserve existing confirmation requirements.',
     ...lines,
-    ...typedAuthorizationLines(catalog, context.authorizationTools),
+    ...typedAuthorizationLines(catalog, context.authorizationTools, input),
     ...packageProposalLines(context.packageTools),
   ].join('\n');
+}
+
+/**
+ * @description Assemble what Jarvis sends the bot node for one turn, in the order that survives the
+ * node's containment: the user's words, then the tool guardrails and catalog, then the screen and
+ * attachment framing, then the words again.
+ *
+ * The node keeps only the first MAX_UNTRUSTED_BLOCK_CHARS of a direct prompt (prompt-containment).
+ * On 2026-09-15 the context blocks alone reached 71,817 characters with the operator's question in
+ * the final 41, so it was cut off and the model answered an empty prompt ("Ready. Jarvis is
+ * online.") while he waited. Framing can be just as large — attachments are clipped per document,
+ * not in aggregate — so it goes AFTER the guardrails: whatever is dropped, the ask and the rules
+ * about which tools exist are still in the window. The closing repeat is a convenience for turns
+ * that fit; a turn large enough to truncate loses it, which is why the ask leads as well.
+ * @param ctxBlocks - Tools, catalog, open work and plan guidance; may be empty.
+ * @param framing - Screen context and attachment digests; may be empty.
+ * @param message - The user's words.
+ * @returns The assembled bot message.
+ */
+export function assembleJarvisBotMessage(ctxBlocks: string, framing: string, message: string): string {
+  const sections = [message, ctxBlocks, framing].filter(Boolean);
+  if (sections.length <= 1) return sections[0] ?? '';
+  return `${sections.join('\n\n---\n\n')}\n\n---\n\nThe user's message again (answer THIS):\n\n${message}`;
 }
 
 function packageProposalLines(tools: JarvisPackageToolDiscovery[] = []): string[] {
@@ -159,14 +186,67 @@ function packageProposalLines(tools: JarvisPackageToolDiscovery[] = []): string[
     ...tools.map(tool => '- ' + JSON.stringify(tool))];
 }
 
-function typedAuthorizationLines(catalog: ToolCatalog, available: AuthorizationToolDiscovery[] = []): string[] {
+/** Access wording the typed-tool keywords miss on their own; kept next to the gate that uses it. */
+const ACCESS_STEMS = ['access', 'permission', 'authoriz', 'role', 'grant', 'revoke', 'admin', 'member',
+  'who can see', 'who can use', 'entitle', 'privilege'];
+
+/**
+ * @description Does the ask mention this word as a WORD? A bare substring test made "remember" an
+ * access question by way of "member", which re-spent the whole window on the operations/targets
+ * JSON this gate exists to withhold — and "remember that I…" is first-class phrasing for an
+ * assistant. Matching is still prefix-tolerant so "permissions" matches the stem "permission".
+ * @param ask - The lowercased request plus surface.
+ * @param word - One keyword or stem.
+ * @returns Whether the ask uses that word.
+ */
+function mentionsWord(ask: string, word: string): boolean {
+  if (!word) return false;
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}`, 'i').test(ask);
+}
+
+/**
+ * @description Match a catalog keyword against an ask by stem, so a plural keyword still matches the
+ * singular a person actually types (and the reverse).
+ * @param ask - The lowercased request plus surface.
+ * @param keyword - One catalog keyword.
+ * @returns Whether the ask mentions that keyword.
+ */
+function matchesAccessStem(ask: string, keyword: string): boolean {
+  const word = keyword.toLowerCase().trim();
+  if (!word) return false;
+  const stem = word.endsWith('s') ? word.slice(0, -1) : word;
+  return mentionsWord(ask, word) || mentionsWord(ask, stem);
+}
+
+function typedAuthorizationLines(
+  catalog: ToolCatalog, available: AuthorizationToolDiscovery[] = [], input = '',
+): string[] {
   const metadata = catalog.typedTools?.find((entry) => entry.name === AUTHORIZATION_TOOL);
   if (!metadata) return [];
   const tools = available.filter((tool) => tool.name === AUTHORIZATION_TOOL || tool.name === AUTHORIZATION_READ_TOOL);
   if (!tools.length) return [];
+  // The full operations/targets JSON is by far the largest thing in this prompt — 39,185 of 71,817
+  // characters in a live turn on 2026-09-15 — and the bot node keeps only the first
+  // MAX_UNTRUSTED_BLOCK_CHARS of the assembled message. Spending that budget on every turn pushed
+  // the tool proposals, the app catalog and the user's own question out of the window. The exact
+  // operations are listed when the ask is about access (the same keyword match the shell tools are
+  // ranked by); otherwise the tool is named with its size, so the model still knows it exists.
+  // No ask to judge (a bare catalog render) gets the full lists: relevance cannot be decided, and a
+  // caller that asked for nothing in particular is not spending a turn's window. Otherwise match by
+  // STEM, because the live wording rarely matches a catalog keyword exactly — "revoke Sarah's role"
+  // and "make Bob an admin on the CRM" are access asks that the plural keywords alone would miss.
+  const ask = input.trim();
+  const asksAboutAccess = ask.length === 0
+    || (metadata.keywords ?? []).some((word) => matchesAccessStem(ask, word))
+    || ACCESS_STEMS.some((stem) => mentionsWord(ask, stem));
+  const detail = (tool: AuthorizationToolDiscovery): string => (asksAboutAccess
+    ? `- ${tool.name}: operations=${JSON.stringify(tool.operations)}; targets=${JSON.stringify(tool.targets)}`
+    : `- ${tool.name}: ${tool.operations.length} registered operations over ${tool.targets.length} targets`
+      + ' (the exact lists are given when the request is about access, permissions or grants)');
   return ['TYPED APPLICATION ACCESS TOOLS: call only the registered typed operation; do not construct a shell command.',
     `Keywords: ${metadata.keywords.join(', ')}. Use when: ${metadata.useWhen} Context: ${metadata.context}`,
-    ...tools.map((tool) => `- ${tool.name}: operations=${JSON.stringify(tool.operations)}; targets=${JSON.stringify(tool.targets)}`),
+    ...tools.map(detail),
     'Read operations use swarm_authorization_read when granted AUTO. Changes use the authenticated /access preview and apply flow.',
     'Only the user can approve the exact preview in Access Administration. Never claim an access change succeeded before an apply receipt.',
   ];
