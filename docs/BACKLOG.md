@@ -1846,6 +1846,15 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ## Provisioning and operator experience
 
+### Six host scheduled tasks predate the platform scheduler and should move into it
+
+- **Operator, 2026-09-16:** *"should there be scheduled vbs tasks really shouldnt this be done via cron"*. Windows has no cron — but this platform has its own scheduler and it is already running: twelve-plus distinct `scheduleId`s in six hours of api log, including `daily-trade-recap-…-recorded-reports`, `trading-assess_…`, `marketing-engine-weekly-campaign-review`, `venture-plan-rebaseline-policy-tick` and `social-daily-digest`. So the question is not cron versus Task Scheduler; it is **host versus platform**.
+- **Must stay on the host** — a schedule inside the stack cannot start the stack, build its image, or write the operator's own credentials: `OSHAL Stack Watchdog`, `OSHAL Local CI`, `OSHAL Claude token keepalive` (writes `~/.claude`).
+- **Should move into the platform** — domain work whose siblings already schedule internally: `OSHAL Signal Labeler`, `OSHAL Kalshi Forward Test`, `OSHAL Trading Watchdog`, `OSHAL Lab Report Publish`, `OSHAL Weekly Report`, `OSHAL-Store-Publish`. Each one that moves also stops depending on a checkout path, which is the class of failure that left three tasks running a 55-day-old tree until 2026-09-16.
+- **The `.vbs` wrappers are a symptom, not a design.** All eleven tasks are `LogonType: Interactive` (measured), so they run on the operator's desktop session and a bare `powershell.exe` action flashes a console window — the `.vbs` exists only to suppress it. Registering them `-LogonType S4U` ("run whether user is logged on or not") runs them in session 0 with no window and no wrapper. **Test the keepalive first:** S4U has no stored password, so anything needing network-share auth or an interactive token can behave differently, and that task touches `~/.claude`.
+- **Remaining:** decide the split above task by task, move the six, and retire each `.vbs` whose only job is hiding a window. `OSHAL-Evidence-Nightly` stays on the archive by design and is out of scope (see [the runbook](runbooks/scheduled-tasks-trunk-vs-archive.md)).
+- **Done when:** every moved task runs as a platform schedule with its outcome visible where the others are, no launcher in `scripts/` exists solely to hide a console window, and the host task list contains only entries that genuinely cannot run inside the stack — with the reason for each written next to it.
+
 ### First-run provisioning wizard
 - **Source proof:** trusted source selection, reviewed package install/retry, saved progress and existing-account links pass isolated HTTP/Chromium checks; [the provisioning guide](testing/first-run-provisioning.md) records the implemented flow.
 - **Remaining:** prove the promoted flow on a fresh installed swarm and complete the separate safe backup/secret-default setup acceptance; third-party sources continue through the existing explicit registry trust controls.
