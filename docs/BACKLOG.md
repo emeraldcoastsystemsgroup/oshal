@@ -52,6 +52,36 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   `scripts/image-freshness.js` reports `current` against the published image on that box.
 
 
+### The bot's ownership helper answers about an app the caller merely named (2026-09-16)
+
+- **Measured 2026-09-16, during the adversarial review of #459 (merged).** `oshal_application_execution_claims(p_kind, p_id, p_app, p_enforce)`
+  is `SECURITY DEFINER` and owned by the bootstrap superuser, so its own SQL is the entire boundary.
+  Two properties follow, both reproduced on a disposable PostgreSQL: `p_app` is a caller-controlled
+  existence-and-protection oracle — `('bots','junk-not-an-id','tenant-b-secret-pkg',true)` returns
+  `[{"app":"tenant-b-secret-pkg","protected":true}]`, and a name that does not exist returns `[]` —
+  and when BOTH `p_id` and `p_app` are supplied, **`p_app` wins outright and `p_id` is ignored**.
+- **The leak is small and is not the reason to fix this.** The return type is
+  `TABLE(app text, protected boolean)` and there is no other channel: no agent ids, tenants, users,
+  manifests or memberships. `oshal_bot` is one fleet-wide role, not per-tenant, so this is not a
+  tenant crossing. And the marginal information is near zero — the bot contract already grants
+  `SELECT` on `agents(metadata)`, which carries `manifestApp` for every stamped bot.
+- **The override is the reason.** A future caller who reasonably writes "check this bot id, within
+  this app" gets an answer about the app and not about the bot, silently, with no error, in an
+  authorization path — on a repo whose bug log already holds three ownership-read defects that all
+  looked like correct code. It is a trap with no current trigger; every call site today passes
+  either no `app` or `app === id`.
+- **The shape the reviewer proposed:** keep the four-argument helper for `oshal_app`, whose
+  controller path genuinely needs the name lookup ([application-authorization-wiring.ts](../src/app/composition/application-authorization-wiring.ts)),
+  and add a three-argument `oshal_application_execution_claims(p_kind, p_id, p_enforce)` that
+  delegates with `p_app => NULL`. Grant the bot only the narrow one: move the wide signature out of
+  `BOT_HELPERS` in [provision-app-role.mjs](../scripts/governance/provision-app-role.mjs), add the
+  narrow signature to `EXPECTED_HELPERS` and `BOT_HELPERS`, and have the reader pick the overload on
+  `input.app === undefined`.
+- **Done when:** a real `oshal_bot` login gets `42501` calling the four-argument form; the same login
+  gets answers identical to the controller's through the three-argument form; and `verifyBotAcl` goes
+  RED if the wide signature is granted back to the bot. The guard runs against a disposable
+  PostgreSQL, never `oshal-local-db`.
+
 ### No gate typechecks a test file, so "typecheck clean" says nothing about one
 
 - **Found 2026-09-16** reviewing PR #579. `tsconfig.json` has `include: ["src/**/*.ts", "src/**/*.tsx"]` and `exclude: ["node_modules", "dist", "tests", "**/*.spec.ts", "**/*.test.ts"]`; `tsconfig.server.json` includes only four `src/` subtrees. So `npx tsc --noEmit` never reads a spec, and neither does the pre-push hook, which runs that same command against committed HEAD. Vitest transpiles with esbuild, which strips types without checking them.
