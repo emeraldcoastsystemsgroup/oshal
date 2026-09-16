@@ -46,6 +46,27 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   artifacts are wanted later. B spends nothing of the constrained resource and reuses an image the
   nightly gate builds anyway; the gate already has the build, the smoke test and the Trivy scan in
   front of the push, which is a better pre-publish bar than the hosted pipeline applies.
+- **Built 2026-09-16 — option B's mechanism, not yet a published image.** `scripts/ci-local.sh`
+  takes `--publish-image`, and `scripts/ci/publish-image.sh` pushes the image THAT RUN built and
+  scanned as `:sha-<pinned commit>` and `:latest`. It is fail-closed on every input: no flag
+  publishes nothing, a red run is refused (checked both in the caller and inside the script that
+  holds the credential), `--skip-image` is refused because that run built nothing, a `--sha` that
+  is not a commit is refused, and an absent `OSHAL_GHCR_TOKEN`/`OSHAL_GHCR_USER` is refused. The
+  registry path is DERIVED from the repository's own `origin` remote (`OSHAL_CI_GHCR_IMAGE`
+  overrides), so no owner is hardcoded. The immutable `sha-` tag is pushed BEFORE `latest`, so a
+  run that dies between the two never leaves `latest` naming an image the registry has no record
+  of. The credential reaches `docker login` only on stdin — never on a command line, never in the
+  log — and only its length is ever reported.
+  [ci-publish-image.spec.ts](../tests/unit/ci-publish-image.spec.ts) drives the real script through
+  a real bash with a recording stand-in for `docker`: 8/8 green, and three mutations kill exactly
+  the cases that should die — deleting the red-run refusal reds the red-run case, swapping the push
+  order reds the ordering case, and moving the token from stdin onto the command line reds the
+  secret case.
+- **What is left, and the first part is the operator's:** mint a GHCR PAT with `write:packages`
+  and put it in the environment the nightly task runs under as `OSHAL_GHCR_TOKEN` +
+  `OSHAL_GHCR_USER` (an agent never mints secret material), add `--publish-image` to the scheduled
+  invocation, then prove a fresh `--mode 1` install on a clean machine comes up with the App Loader
+  present and the wizard's app selections actually installed.
 - **Done when:** a mechanism exists that publishes `latest` from the current trunk without a human
   remembering to; a fresh `--mode 1` install on a clean machine is shown to come up with the App
   Loader present and the wizard's app selections actually installed; and
