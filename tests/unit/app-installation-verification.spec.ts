@@ -261,3 +261,35 @@ it('still fails a package that declared active and is inactive anyway', async ()
   expect(result.body).toMatchObject({ success: false, verificationStatus: 'failed' });
   expect(result.body.apps[0]).toMatchObject({ status: 'failed', error: 'App is inactive.' });
 });
+
+it('keeps a group pending when the runtime held it inactive for an opt-in member, naming the member', async () => {
+  const optIn = packageManifest('optin-member');
+  optIn.status = 'inactive';
+  const member = fixture.add(optIn); member.status = 'inactive';
+
+  const group = packageManifest('held-group');
+  group.kind = 'group'; group.routes = []; group.smoke = [];
+  group.dependencies = { apps: ['optin-member'] };
+  const groupRecord = fixture.add(group, false);
+  groupRecord.status = 'inactive';          // the runtime refused to activate it
+
+  const result = await report(['held-group']);
+  expect(result.body).toMatchObject({ success: true, verificationStatus: 'pending' });
+  expect(result.body.apps[0]).toMatchObject({ status: 'pending', verified: false });
+  expect(result.body.apps[0].error).toContain('optin-member');
+});
+
+it('still fails a group held inactive for any other reason', async () => {
+  const healthy = packageManifest('active-member');
+  fixture.add(healthy);                      // member is active: not an opt-in case
+
+  const group = packageManifest('broken-group');
+  group.kind = 'group'; group.routes = []; group.smoke = [];
+  group.dependencies = { apps: ['active-member'] };
+  const groupRecord = fixture.add(group, false);
+  groupRecord.status = 'inactive';
+
+  const result = await report(['broken-group']);
+  expect(result.body).toMatchObject({ success: false, verificationStatus: 'failed' });
+  expect(result.body.apps[0]).toMatchObject({ status: 'failed', error: 'App is inactive.' });
+});

@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps, read through @/shared/app-dependencies (dependencies.required.apps or the legacy dependencies.apps).
  * 3 | maintainer@emeraldcoastsystemsgroup.com | A service-auth smoke with no bound operator transport reports PENDING instead of being executed unauthenticated. createServiceSmokeFetch only binds a transport for a cookie-bearing operator browser session, so the CLI verifier (scripts/oshal-verify.sh --apps, which the installer runs) got undefined, fell through to a bare fetch and collected 403 authorization_app_admin_required for EVERY service smoke — a fresh install could never pass its own postflight.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | A package that DECLARES status: inactive is pending, not failed — and so is a group whose only blocker is such a member. brand-graphics, print-ingest and youtube-kids ship opt-in (status: inactive in their own manifest); the verifier read the runtime status alone, called them 'App is inactive.' and failed the install, taking the intelligent-career and marketing-suite groups down with them. An app that declared active and is inactive anyway is still a failure — that is a real defect, and calendar (missing kernel module) must keep failing.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | ... and so is the GROUP the runtime holds inactive because of such a member: its own record reports only 'App is inactive.', so the member check never ran. intelligent-career (print-ingest) and marketing-suite (brand-graphics) failed clean installs for a condition one operator click resolves. The cause is now named in the message.
  */
 import { requiredAppDependencies } from '@/shared/app-dependencies';
 import type { SwarmApplicationRecord } from '../types';
@@ -142,6 +143,14 @@ export async function verifyInstalledApplications(records: RecordEntry[], catalo
     const registered = registrations.get(entry.requestedName);
     let issue = registrationIssue(entry.record, registered);
     const members = entry.record?.manifest.kind === 'group' ? requiredAppDependencies(entry.record.manifest) : [];
+    // A group holding an opt-in member is itself held inactive by the runtime: its own record says
+    // only "App is inactive." while the CAUSE sits in the member. Name the member and keep the
+    // group pending — enabling that member is the one operator action that activates both.
+    const optIn = members.filter(name => resolved.get(name)?.manifest.status === 'inactive');
+    if (issue && !issue.pending && optIn.length && entry.record?.status !== 'active') {
+      issue = { pending: true,
+        message: `Group waits on opt-in member(s) ${optIn.join(', ')}: activate them to verify this group.` };
+    }
     for (const name of members) {
       const memberIssue = registrationIssue(resolved.get(name) ?? null, registrations.get(name));
       // A group cannot activate while a member is opt-in: that waits on the same operator action.
