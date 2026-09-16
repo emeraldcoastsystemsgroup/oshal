@@ -586,75 +586,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** closed-PR refs `refs/pull/N/head` still reach the old commits (verified on core #426 and #430 after the push) and old SHAs stay viewable at `/commit/<sha>` until GitHub garbage-collects. Only GitHub Support can purge unreachable objects; nothing on any branch carries the attribution and the contributors graph is computed from `main`.
 - **Done when:** either a support request is filed for the three repos and a sample old SHA returns 404 while `git ls-remote origin 'refs/pull/*/head'` no longer reaches an attributed commit, or the operator records here that the residue is accepted.
 
-### One slow boot drops the task, message and memory stores to in-memory for the life of the process (2026-09-15)
-- **Observed on the 00:25:11Z api boot** (deploy of `aba0e31f`, a clean deploy that reported healthy in
-  28 s): three stores logged `persistence init failed; falling back to memory` at ERROR within the same
-  second — `in-memory-task-store`, the message store and the memory layer — each on
-  `Connection terminated due to connection timeout` from `gucConnect`
-  (`shared/services/database/guc-pool.js:172`) inside `applyLockedSchema`, while the api's own migration
-  and ADR-076 provisioning burst was still finishing against the same Postgres.
-- **Why it does not heal:** `initializePersistence`
-  (`src/entities/task/services/in-memory-task-store.ts:258`, and the same shape in
-  `src/entities/message/services/in-memory-message-store.ts:182` and
-  `src/features/memory/services/memory-layer-service.ts:274`) catches the failure, sets
-  `persistentMode = false`, **ends the pool and nulls it**, and never retries. One transient timeout at
-  boot therefore means A2A task state, message history and the memory layer are non-persistent until
-  someone restarts the container — and the only signal is three ERROR lines in a boot log nobody reads.
-  Two sibling stores (`postgres-subtask-lifecycle-store`, `postgres-swarm-escalation-store`) carry the
-  same shape and were not observed failing tonight.
-- **Not established:** how often this happens (this container's log does not reach earlier boots), and
-  whether the timeout is pool contention with the migration burst or a connection cap.
-- **Done when:** a store that cannot reach Postgres at boot either retries with backoff until it
-  succeeds or fails the boot, rather than silently serving from memory for the process lifetime; if the
-  fallback is kept deliberately for a named deployment mode, the process reports degraded persistence
-  where an operator sees it (health payload and the cockpit status surface), not only in a log line; a
-  spec proves a transient failure followed by a healthy database ends with the store persistent; and the
-  same treatment covers all five stores that share this shape.
-- **Largely closed (2026-09-15, branch `fix/persistence-init-retry`).** Activation moved to
-  `createPersistenceActivation` (`src/shared/services/database/persistence-activation.ts`), which wraps
-  the existing `createRetryableReady` memo: concurrent callers share one in-flight attempt, a failed
-  attempt is dropped so the next operation re-attempts it, and a cooldown
-  (`OSHAL_PERSISTENCE_RETRY_COOLDOWN_MS`, default 30s) keeps a genuinely down database from costing a
-  connect timeout per call. **The pool is kept rather than ended and nulled** - ending it was what left a
-  retry nothing to retry with. The memory fallback is deliberately retained, so the process still comes
-  up with no database; what changed is that it is now a state the next operation can leave. Six stores
-  carry the treatment: the three observed plus `postgres-subtask-lifecycle-store`,
-  `postgres-swarm-escalation-store` and `postgres-swarm-run-store`. Signal: a per-store persistence-mode
-  registry (`src/shared/observability/persistence-mode-registry.ts`) drives a new `persistence` leg on
-  `GET /api/readiness` that FAILS while a store with Postgres configured is serving from memory, and
-  `scripts/oshal-verify.sh` names the store, the attempt count and the reason. Guards:
-  `tests/unit/store-persistence-recovery.spec.ts` (disposable `postgres:16-alpine`, a real connection
-  shortage, recovery asserted by reading the row back out of Postgres) and
-  `tests/unit/persistence-mode-readiness.spec.ts`.
-- **Still open from the original criteria:** the cockpit status surface does not show degraded
-  persistence - only `/api/readiness` and `oshal-verify.sh` do. And the entry's "how often does this
-  happen" question is still unanswered: the registry makes the state visible from now on, but no
-  history of past boots was recovered.
-
-### The Windows purge abandon can say it could not enumerate, but still cannot enumerate
-- **Context:** closing "The purge watchdog cannot tell 'no descendants' from 'cannot look'" gave
-  `purge_tree_abandon` (`scripts/ci/ci-purge.sh`) three outcomes and a distinct UNCHECKED exit, so an
-  inability to look is no longer printed as a checked absence. What it did not do is give Windows a
-  working enumerator: `ps -eo pid=,ppid=` still answers `ps: unknown option -- o` and exits 1 here
-  (re-run 2026-09-15), so when `taskkill /T` is unavailable or refused the abandon reports UNCHECKED
-  rather than a descendant list. That is the honest answer, not a complete one.
-- **The material that was deliberately not used, and what was measured of it (2026-09-15):** Git Bash's
-  bare `ps` prints `PID PPID PGID WINPID ... COMMAND`, and it does list NATIVE children — a
-  `node.exe` under `/usr/bin/timeout` under a backgrounded wrapper appeared with its parent's pid,
-  which is the exact shape of `robocopy.exe` / `rm.exe` under `timeout` that the orphaned-delete
-  defect is about. So a Windows table reader is buildable from output this box already produces; it
-  was left out of the closing change as scope its done-when did not ask for. Not measured: whether a
-  native process that spawns its own native grandchild outside the MSYS tree is listed — check that
-  before relying on bare `ps` alone rather than `tasklist` parented by WINPID.
-- **Why it is narrow:** `taskkill /T` is tried first and does the work on every observed Windows
-  abandon; this fallback matters only when it is absent or refused. Nothing here weakens fail-closed —
-  a timed-out purge is FAIL either way.
-- **Done when:** on Windows `purge_tree_process_table` answers with a usable table instead of refusing,
-  the abandon kills the delete's native descendants deepest-first, its UNCHECKED exit is reached only
-  when that reader genuinely cannot answer, and a case in `tests/unit/ci-local-purge.spec.ts` drives a
-  real native grandchild through it — with the existing mutation property preserved: collapsing the
-  could-not-look branch must still turn cases red.
-
 ### An abort inside the local embedding runtime takes the whole api process down (2026-09-15)
 - **Observed:** the api container restarted three times in 45 minutes on a loaded box (01:47:33Z,
   02:26:47Z, 02:33:08Z). For the last two the container log ends the same way: the entire
@@ -753,11 +684,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### Inline controller bot isolation
 - **Remaining:** move Codex-harness inline bots out of the controller, remove unnecessary `DATABASE_URL` inheritance, and attack each deployed harness for controller and cross-user secrets.
 - **Done when:** no controller-resident bot can read platform credentials or another user's tokens, and all required work runs through a dedicated least-privilege runtime.
-
-### One bot-invocation chokepoint — the INLINE half of /api/send-message (+ the missing ADR)
-- **Landed (2026-08-12, #186):** the NODE half is done — `handleSendMessage` routes any bot with a dedicated node endpoint through `executeBotOrInline` (budget gate + ADR-090 skills + the ADR-127 remote-brain stamp), with controller-side thread persistence so `GET /api/:taskId/messages` replays node threads. Live-verified: a career chat turn dispatches to `career-bot` and answers on the mounted CLI (`provider: claude-code`, `providerConfigAction: match`, cost event under cb…0001). ADR-093 Tier-2 mechanics were decided as a `profiles:`-gated first-party compose service (`career-bot`, profile `career-node`) + `bots[].container/port` in the manifest — no cross-file fragment, no anchor copying.
-- **Remaining:** INLINE bots' send-message turns still call `ctx.orchestrator.processMessage` directly (budget gate, skills, credential refusals still bypassed for them); node-off dispatch is fail-visible by design (manifest comment) — if a degrade-to-hosted posture is ever wanted it needs an explicit decision; write the "bot invocation — one chokepoint" ADR, enumerating as migration debt the ~11 store packages calling `processMessage` directly (dnd, spotify, travel, purchasing, movies, aero-lab, camera, drone, sat-ops, game-show, bake-off engines) and `swarm-control.js`'s browser→bot direct POST.
-- **Done when:** a cockpit chat turn to any bot (inline included) passes the budget gate and credential refusals (guard proves a HARD-cap breach blocks it), the ADR is in the index, and the Tier-C call-site list is tracked with owners.
 
 ### Inline chat spend is invisible to windowed budget enforcement
 - **Remaining:** `BudgetService` reads `oshal_cost_events`, but no inline chat path writes it — only bot-node/A2A/Argo/vision paths call `recordCost`. Inline orchestrator turns land usage in `chat_tasks` only, so the HARD per-user cap at the executeBotOrInline chokepoint can never see spend that chokepoint's own inline branch generates (nor any cockpit chat turn). Related unit mismatch: the BYO hosted lane records $0 cost by design (tokens only), and a CLI turn's cost is a price-equivalent, not a bill (ADR-127).
@@ -910,10 +836,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** the same Jarvis question ("how many opportunities are in docs out?") returns the
   live count through the handoff rail on a box whose CRM holds a known stage distribution, with the
   read executed by the package's own operation — never by handing the model a credential.
-
-### Bot runtime consolidation
-- **Remaining:** choose one canonical implementation across `app.js`, `swarm-node.js`, and `bot-node-server.ts`; remove or explicitly demote the others.
-- **Done when:** config, dispatch, result, heartbeat, and authorization behavior are covered once and no supported deployment silently omits a capability because it selected a different runtime.
 
 ### Embedded LLM tools as a formal tier
 - **Remaining:** model provider-native embedded tools beside framework-registry and harness-native tools with per-agent policy and audit semantics.
