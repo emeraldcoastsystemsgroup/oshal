@@ -62,6 +62,7 @@
  * 55 | maintainer@emeraldcoastsystemsgroup.com   | Codex fleet default: the boot-sync codexModel fallback gpt-5.3-codex -> gpt-5.5. 5.3-codex is the API-key model name and 400s on the ChatGPT-account login this deployment mounts, so the old fallback seeded the DB with a model no bot could actually run when CODEX_MODEL was unset.
  * 56 | maintainer@emeraldcoastsystemsgroup.com   | Extracted codexResolveEndpoint's body to ./resolve-bot-node-endpoint so the branch that sends a dedicated-node bot inline is unit-testable, and made that branch WARN instead of returning null silently. The silence hid a live misroute: career-hunter won its bid, ran on the controller instead of its career-bot node, and reported the user's resume data as missing because the inline session has neither the package's tools nor its workspace.
  * 57 | maintainer@emeraldcoastsystemsgroup.com   | Removed the Tier-2 LLM routing wiring (entry 35). It called codexQuickCall, which asserts the audited-harness guard and throws UNBROKERED_AUTONOMOUS_PROVIDER before any spawn, so the function threw on EVERY task ticket and AgentRouter caught it and returned null - Tier 2 has been dead since that guard landed, costing one WARN plus one INFO per routing decision and hiding the fact that Tier 3 was doing all the work. The router is now constructed with no llmRoutingFunction, which is the behavior that was already running. Not revived on a hosted rail: a controller-local LLM call is exactly what CLAUDE.md forbids. codex-quick-call.ts and its refusal test are untouched.
+ * 58 | maintainer@emeraldcoastsystemsgroup.com   | Wire resolveHostedConnection for queued dispatch: a protected application worker only admits a direct request carrying a server-resolved hosted connection, so the queue now resolves the ticket owner's HOSTED ladder (resolveUserLlmConnection) for it. Deliberately not resolveUserBrain - that ladder answers with a local CLI brain first for a configured operator on a demo box, and a CLI brain can never satisfy the worker's hosted-reasoning contract.
  */
 
 import type { Pool } from 'pg';
@@ -180,6 +181,7 @@ import { resolveHarnessForAgent } from '@/app/composition/provider-runtime';
 import { waitForBootstrapComplete } from '@/app/composition/app-runtime-factory';
 import { registerShutdownHook } from '@/shared/services/shutdown-hooks';
 import { resolveServerOperationCreds } from '@/app/routes/connector-token-broker';
+import { resolveUserLlmConnection } from '@/app/routes/free-tier-rotation';
 import { buildQueueDlqOperatorNotifier } from '@/app/routes/queue-dlq-routes';
 import {
   canUseRuntimeRegistry,
@@ -799,6 +801,19 @@ export function createSwarmExtensionBindings(
               return providers.length > 0
                 ? resolveServerOperationCreds(pool, ownerSub, providers, 'trusted-provider-intent')
                 : {};
+            }
+          : undefined,
+        // Protected application dispatch (docs/security/remote-application-execution.md): the
+        // worker admits only a direct, non-agentic request carrying a server-resolved hosted
+        // connection. This is the queue's resolver for it. HOSTED ladder on purpose — the full
+        // user-brain ladder returns a local CLI brain first for a configured operator on a demo
+        // box, and the worker refuses a CLI brain, which is the same denial this closes.
+        resolveHostedConnection: pool
+          ? async (ownerSub: string) => {
+              const connection = await resolveUserLlmConnection(pool, ownerSub);
+              return connection
+                ? { baseUrl: connection.baseUrl, apiKey: connection.apiKey, model: connection.model }
+                : null;
             }
           : undefined,
         workflowRunRecorder,

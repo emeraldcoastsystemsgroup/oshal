@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Replaced cockpit API client silent catches with structured warning logs and shared response-error parsing to satisfy governance during bot-selector hardening
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Kept cockpit selectors on the registry roster even when swarm heartbeats are offline so standalone hosts stop falling back to stale persisted bots like devops-bot
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: surface the canonical ai_disabled message instead of reducing the deployment state to its machine code.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Added getReadiness(): the readiness report is read WITHOUT getSafe, because /api/readiness answers 503 exactly when a capability is degraded and getSafe discards a non-2xx body - reading it through getSafe would hide the degraded persistence the cockpit status bar exists to show.
  */
 
 /**
@@ -165,6 +166,47 @@ class ApiClient {
       error: error instanceof Error ? error.message : String(error),
       ...context,
     }));
+  }
+
+  /**
+   * @description Read GET /api/readiness, the per-capability readiness report.
+   *
+   * Deliberately NOT routed through getSafe. Readiness answers **503** precisely when a
+   * capability it advertises is degraded (a store with Postgres configured serving from
+   * memory, for one), and getSafe discards the body of any non-2xx response - reading
+   * readiness through it would return the "everything is fine" fallback in exactly the
+   * situation the caller is looking for. Both 200 and 503 carry the same report shape, so
+   * both are parsed.
+   *
+   * The three outcomes stay distinguishable on purpose: a report (looked, and it says what
+   * it says), or `null` (could NOT look - transport failure, timeout, or a body that is not
+   * a readiness report). A caller must never render `null` as healthy.
+   *
+   * @param {number} [timeoutMs=8000] - Abort budget for the read.
+   * @returns {Promise<Record<string, unknown>|null>} The report, or null when unreadable.
+   */
+  async getReadiness(timeoutMs = 8000) {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const res = await fetch(`${this.baseURL}/api/readiness`, controller ? { signal: controller.signal } : undefined);
+      // 503 is the readiness contract's "not ready", not a transport failure: it carries the report.
+      if (res.status !== 200 && res.status !== 503) {
+        this.logWarning('get-readiness', new Error(`unexpected status ${res.status}`), { status: res.status });
+        return null;
+      }
+      const report = await res.json();
+      if (!report || typeof report !== 'object' || !report.legs) {
+        this.logWarning('get-readiness', new Error('payload is not a readiness report'), { status: res.status });
+        return null;
+      }
+      return report;
+    } catch (error) {
+      this.logWarning('get-readiness', error, { endpoint: '/api/readiness' });
+      return null;
+    } finally {
+      if (timer) window.clearTimeout(timer);
+    }
   }
 
   // API Methods with cost tracking

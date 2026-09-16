@@ -122,7 +122,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
   steps: [{ id: 'sources', app: 'jarvis', label: 'Caller-visible sources', run: briefingSources }],
 }, {
   id: 'protected-remote-application-execution', title: 'Protected remote application execution', group: 'tool',
-  description: 'Current per-user application rights across signed controller dispatch, hosted worker reasoning, immutable queued initiators, history, caches and SSE. Isolated HTTP/SQLite/PostgreSQL fixtures cover allowed, forged, replayed, revoked and stale requests.',
+  description: 'Current per-user application rights across signed controller dispatch, hosted worker reasoning, immutable queued initiators, history, caches and SSE. Isolated HTTP/SQLite/PostgreSQL fixtures cover allowed, forged, replayed, revoked and stale requests. Queued dispatch is covered in the same supported direct/hosted shape, including the refusal that names a missing owner connection.',
   regressionTests: [
     { level: 'integration', path: 'tests/unit/application-remote-execution.spec.ts' },
     { level: 'integration', path: 'tests/unit/application-remote-execution-postgres.spec.ts' },
@@ -147,6 +147,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/jarvis-task-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/specialist-context-dispatch.spec.ts' },
     { level: 'integration', path: 'tests/unit/manifest-worker-bot-node-boundary.spec.ts' },
+    { level: 'integration', path: 'tests/unit/queued-protected-dispatch.spec.ts' },
     { level: 'unit', path: 'tests/unit/autonomous-test-lab-registration.spec.ts' },
   ],
   steps: [{ id: 'runner', app: 'test-lab', label: 'Protected remote authorization fixtures', run: async () => ({
