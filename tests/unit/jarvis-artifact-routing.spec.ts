@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove selected-artifact routing through real owner handles, registry, YAML and authenticated Jarvis HTTP routes; model and persistence are isolated fixtures.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Partial-mock the database barrel instead of listing its exports. createPersistenceActivation arrived in the barrel and both in-memory stores call it, so this file's mock threw on construction and the suite was red on main with nobody acting on it.
  */
 import type { AddressInfo } from 'node:net';
 import express, { type Request, type RequestHandler } from 'express';
@@ -16,7 +17,11 @@ vi.mock('@/features/user-model', () => ({
   withHavenContext: vi.fn(async (_pool: unknown, _sub: string, prompt: string) => prompt),
   learnFromExchange: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('@/shared/services/database', () => ({
+// PARTIAL mock: a factory that LISTS the barrel's exports goes red the moment the barrel grows one
+// the spec never asked about - which is how six files were left red on main at once.
+vi.mock('@/shared/services/database', async (importOriginal) => ({
+  ...await importOriginal<object>(),
+
   runRuntimeSchemaBootstrap: vi.fn().mockResolvedValue(undefined), buildOwnerRlsPolicyStatements: vi.fn().mockReturnValue([]),
 }));
 
