@@ -25,6 +25,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-136 D4 follow-up: the leg fires EVERY MINUTE across the extended session (TRADING_EVENTS_CRON, default '* 7-19 * * 1-5' ET — Schwab's SEAMLESS session opens 07:00) so dated orders fire at minute precision; plans + pinned lots step only on a FULL tick (the fire minute divisible by TRADING_EVENTS_FULL_TICK_MINUTES, default 5 — stateless, minute-aligned, no in-process memory, so a restart or a second replica cannot double- or skip-step). legWindowFromCron() derives the accepted dated-order window from this cron so there is ONE source of truth; a plans/lots failure no longer skips the dated tick; migrateEventLegSchedules() rewrites existing per-user 'trading-events:<sub>' rows to the current cron/timezone at scheduler boot (create-or-replace keeps id/status/executionCount) so users never re-arm.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-136 D5: the earnings-reaction rules tick rides this leg's FULL tick (EDGAR reads for held names in their window), gated by TRADING_EARNINGS_RULES on top of this leg's own gate, and dynamic-imported for the same cycle reason as the lots.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | TRADING_CORE_SYMBOLS is honoured at the ENTRY: a plan whose ticker the operator has ring-fenced is cancelled at stepListed instead of opening a position. This module is the ONE of the four outer dispatchers that does NOT sweep the venue's positions — its EventBroker interface is configured/getAccount/getOrder/cancelOrder with no getPositions, and every sell quantity comes from `entry.filledQty` / `exits.qty`, the shares this plan's own entry bought through placeDecisionOrder. The ADR-159 `unmanaged` mark is therefore structurally inapplicable here: the engine's ledger accounts for that quantity by construction. The exits are deliberately left ungated for the same reason — withholding a take-profit or a stop on a position the plan itself opened would strip a filled position of its protection, which is strictly worse than the exposure being prevented. Refusing the entry is what stops such a position from ever existing.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  *
  * @module trading-event-plans
  */
@@ -34,7 +35,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
 import type { ScheduleRecord, ScheduleDispatchResult, ScheduleService } from '@/features/scheduling';
-import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import {
   getBrokerAdapter, getMarketData, liveTradingEnabled, tradingSession, isTickStale,
   type TradingBook, type OrderResult,
@@ -163,7 +164,7 @@ export function normalizeEventPlanParams(raw: unknown): EventPlanParams {
 /** @description Create the FORCE-RLS plan table (idempotent; runs at first use). */
 export async function ensureEventPlansSchema(pool: AppContext['pool']): Promise<void> {
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading event plans',
+    pool, moduleName: 'trading event plans', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_event_plans (
         plan_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

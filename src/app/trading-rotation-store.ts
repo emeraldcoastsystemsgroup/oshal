@@ -16,20 +16,21 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-(sub,mode) last-rotated timestamp + load/save for the gravity sleeve-rotation cadence gate.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book re-key (PR1): book_id column (trigger-before-backfill) + book-scoped unique index; load/save keyed (user_sub, book_id) — book-blind cadence would let one book's rebalance suppress another's weekly rotation. Accepts TradingBook or legacy mode.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  *
  * @module trading-rotation-store
  */
 
 import type { AppContext } from './composition-root';
 import type { TradingBook, TradingMode } from '@/features/trading';
-import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { ensureBooksSchema, legacyBook } from './trading-books-store';
 
 /** @description Create the rotation-state table if absent (self-healing, like the peaks/equity stores). */
 export async function ensureRotationStateTable(pool: AppContext['pool']): Promise<void> {
   await ensureBooksSchema(pool);
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading rotation state',
+    pool, moduleName: 'trading rotation state', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_rotation_state (
         user_sub TEXT NOT NULL, mode TEXT NOT NULL,

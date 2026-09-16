@@ -12,20 +12,21 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-(user,mode) equity high-water-mark store + drawdown-halt evaluation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Tier-1 RLS at the lazy-DDL chokepoint (A1.2 follow-up): ensureEquityGuardTable now appends buildOwnerRlsPolicyStatements for oshal_trading_equity_hwm so a fresh database is never left policy-less between table creation and a migration-060 re-run.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book re-key (PR1): rows carry book_id (backfilled IN PLACE — a fresh row would re-baseline the breaker, disarming it or re-arming buys mid-halt), the upsert arbiters on (user_sub, book_id), and evaluateEquityGuard accepts a TradingBook or the legacy mode (store-twin back-compat; a mode normalizes to the legacy book, byte-identical behavior). `mode` is still written on every row.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  *
  * @module trading-equity-guard
  */
 
 import type { AppContext } from './composition-root';
 import { drawdownHaltTriggered, type RiskPolicy, type TradingBook, type TradingMode } from '@/features/trading';
-import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { ensureBooksSchema, legacyBook } from './trading-books-store';
 
 /** Ensure the equity high-water-mark table exists (self-healing, like the trading schema). */
 export async function ensureEquityGuardTable(pool: AppContext['pool']): Promise<void> {
   await ensureBooksSchema(pool);
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading equity guard',
+    pool, moduleName: 'trading equity guard', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_equity_hwm (
         user_sub TEXT NOT NULL, mode TEXT NOT NULL,

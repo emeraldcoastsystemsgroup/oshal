@@ -16,12 +16,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — books table (deterministic legacy ids, composite (user_sub, account_id) FK, learn-book partial unique), legacy mint/backfill helpers, loadBook keyed (user_sub, book_id) — the WHERE is the wall under system identity — lifecycle invariants (createBook disabled-live + ownership check, deleteBook ledger/HWM/position refusal, updateBook account_id immutability), resetBreaker, and the per-fire multiAccountEnabled() flag read (never a module constant).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cash-account settlement (ADR-134 D8): the runtime rail adds oshal_trading_books.settlement_policy TEXT CHECK (refuse|warn) — the per-book override of TRADING_CASH_SETTLEMENT_POLICY; 'off' is deliberately NOT a column value (only the env can disarm the guard) and the CHECK is the DB-side pin. loadBook/listBooks join the bound account's account_type so TradingBook.accountType ('cash'|'margin'|null) rides every loaded book; updateBook accepts settlementPolicy (null clears it). No numbered migration: this rail IS the live path (dual-rail convergence, ADR-134 D1) and 126 is claimed by another item.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 pin retirement: loadLegacyBook(pool, sub, kind) - the legacy 'paper'/'live' books resolved through their DB ROW, which is what carries the account binding (and the enabled flag / capital cap / settlement policy). It falls back to the pure legacyBook() constructor ONLY when the row is genuinely ABSENT; a loadBook THROW (book_binding_undecryptable) propagates, because degrading an undecryptable binding into an UNBOUND book is exactly how a caller ends up addressing whichever account the venue happens to enumerate first. Callers that used `loadBook(...).catch(() => null) ?? legacyBook(...)` must use this instead.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  */
 
 import crypto from 'crypto';
 import type { AppContext } from './composition-root';
 import type { TradingBook, TradingMode } from '@/features/trading';
-import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { ensureAccountsSchema } from './trading-accounts-store';
 import { createChildLogger } from '@/shared/logger';
 
@@ -87,7 +88,7 @@ export async function ensureBooksSchema(pool: AppContext['pool']): Promise<void>
 async function bootstrapBooks(pool: AppContext['pool']): Promise<void> {
   await ensureAccountsSchema(pool);
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading books',
+    pool, moduleName: 'trading books', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_books (
         book_id         UUID PRIMARY KEY,

@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register the local CI export-purge and partial-secret-scan guards (Git Bash runs of the production script pieces) on the isolated nightly regression scenario.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register the protected derived-result return guard on the protected remote application execution scenario.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the three trading guards that now start and destroy their own PostgreSQL (earnings rules, event plans, engine cost basis). They are the same disposable-container class this scenario already covers, and it is the only registered gate that executes them - they read no database address, so nothing else can point them anywhere.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Register the trading schema bootstrap race guard on the same isolated nightly scenario. It starts its own PostgreSQL and drives several independent copies of the trading bootstrap modules at it concurrently, so like its three neighbours it reads no address and executes only where Docker is present.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Register the inherited-export guard next to the purge guard it completes. The purge guard runs purge_tree alone; this one runs ci-local.sh's own gate sequence over a state directory that already holds the previous run's export, which is the state the 2026-09-09 nightly wedged in.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -64,6 +65,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/trading-engine-cost-basis-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-event-plans.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-earnings-rules.spec.ts' },
+    { level: 'integration', path: 'tests/unit/trading-schema-bootstrap-race.spec.ts' },
   ],
   steps: [{ id: 'runner', app: 'test-lab', label: 'Local isolated runner', run: async () => ({
     app: 'test-lab', label: 'Local isolated runner', state: 'degraded',

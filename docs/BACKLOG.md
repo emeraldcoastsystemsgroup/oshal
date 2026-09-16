@@ -257,8 +257,40 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   more than one ticket type with its n and limits kept in the same sentence as the number.
 
 ### Trading DB specs race on schema bootstrap
-- **Remaining:** running the trading unit specs WITHOUT `--no-file-parallelism` fails three pre-existing specs (trading-books-schema, trading-event-plans, trading-pinned-lots) in `beforeAll` with `trigger "trg_trd_signals_book_fill" … already exists` — the trading schema bootstrap takes the no-lock path, so two concurrent bootstraps collide. Observed 2026-09-06. The dispatch golden-plan spec works around it locally with a single retry; the underlying files were outside that item's ownership.
-- **Done when:** the bootstrap takes an advisory lock (or tolerates the concurrent create) and the same ten-file trading set is green without `--no-file-parallelism`.
+- **The bootstrap half is CLOSED (2026-09-16).** All seventeen `oshal_trading_*` lazy bootstraps now
+  pass `lockKey: SCHEMA_LOCK_KEYS.trading` to `runRuntimeSchemaBootstrap`, so the family applies its
+  DDL through `applyLockedSchema` under one transaction-scoped advisory lock. `ensurePeaksTable` was
+  converted from eleven bare `pool.query` statements onto the same path — it is the only trading
+  bootstrap with no memo, so it re-ran on every fire and was the family's most frequent racer. ONE
+  key, not one per module: six stores arm a trigger on the `oshal_trading_book_id_fill()` function the
+  books module owns, and the books legacy-mint reads three other modules' tables.
+- **The mechanism, measured rather than reasoned about.** Fourteen DSN-backed trading specs run against
+  one disposable `postgres:16-alpine` on a fresh schema, without `--no-file-parallelism`, failed six of
+  fourteen files on each of three runs — with a DIFFERENT set of files each time. The errors were
+  `23505` on `pg_type_typname_nsp_index` (`oshal_trading_signals`, `oshal_trading_orders`,
+  `oshal_trading_strategy_journal`) and on `pg_class_relname_nsp_index` (`idx_trd_peaks_book`) —
+  `CREATE TABLE/INDEX IF NOT EXISTS` is NOT race-safe in PostgreSQL — plus `42710`
+  `trigger "trg_trd_daily_equity_book_fill" … already exists` from the `DROP TRIGGER IF EXISTS` /
+  `CREATE TRIGGER` pair, and `40P01` deadlock detected. After the lock: five consecutive runs, byte-identical (`2 failed | 107 passed | 41 skipped`), zero occurrences of any of those codes.
+- **Guard:** `tests/unit/trading-schema-bootstrap-race.spec.ts` starts its own PostgreSQL and drives
+  four independent copies of the trading modules (`vi.resetModules()` — a second vitest worker in
+  everything but the process boundary) at it at once, on an empty database and again on a built one.
+  Red on the unlocked tree in 3 of 3 runs, green in 5 of 5 after. Registered in the isolated nightly
+  set (`scripts/ci/run-nightly-isolated.mjs`) and on the Test Lab `nightly-isolated-regression`
+  scenario, which is the only gate that executes a Docker-owning spec.
+- **Remaining:** the trading set is not GREEN on a bare cluster, for reasons that are not the race and
+  were not touched here. Five files fail identically before and after, on prerequisites nothing in the
+  trading bootstrap creates: `trading-book-report-scripts` needs `OSHAL_TEST_APP_DSN` (the enforcing
+  `oshal_app` role); `trading-books-schema` and `trading-settlement` need `oshal_user_deks`
+  (connector-token-crypto, `42P01`); `trading-dispatch-golden-plan` needs `trading_config_overrides`
+  (`42P01`); `trading-watchdog-books` needs `OSHAL_TEST_DB_CONTAINER`. That is the 'whether the whole
+  set survives on a bare cluster is still unmeasured' clause of the disposable-PostgreSQL entry below
+  — now measured, and it belongs there. The golden-plan spec's single-retry workaround
+  (`bootstrapOnce`) is now redundant but was left in place; removing it is a separate change.
+- **Done when:** ~~the bootstrap takes an advisory lock (or tolerates the concurrent create)~~ DONE,
+  and the same ten-file trading set is green without `--no-file-parallelism` — PARTIAL: no file fails
+  for the race any more and the run is deterministic, but five fail on the bare-cluster prerequisites
+  listed above.
 
 ### The DB-backed unit specs need a disposable PostgreSQL to run against
 - **What changed:** 23 `tests/unit/*.spec.ts` resolved their DSN with a fallback onto the local

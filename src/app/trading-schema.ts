@@ -10,11 +10,12 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from trading-routes.ts (1000-line cap decomposition): ensureTradingSchema + the DDL bootstrap and its once-per-process memoization. Code moved verbatim — zero behavior change.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Moved routes/trading-routes-schema.ts → app/trading-schema.ts (trading engine extraction, ADR-085 pre-carve): the schema bootstrap is ENGINE, not surface — 8 kernel dispatch/reconcile loops await it, so it can't live under the routes family the surface carve will take. Code unchanged — pure motion, zero behavior change.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book_id re-key (PR1): books registry bootstraps first; signals/decisions/orders/predictions gain a nullable book_id with trigger-BEFORE-backfill ordering (the BEFORE INSERT fill trigger arms before the backfill sweep so concurrent writers — reconcile fires while closed, un-redeployed store twins — can never mint NULL-book rows); book-scoped unique arbiters coexist with the mode-scoped ones until the PR4 cutover. `mode` is retained and always written.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  *
  * @module trading-schema
  */
 
-import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import type { AppContext } from '@/app/composition/app-context';
 import { ensureBooksSchema } from './trading-books-store';
 
@@ -45,6 +46,7 @@ async function bootstrapTradingSchema(pool: AppContext['pool']): Promise<void> {
   await runRuntimeSchemaBootstrap({
     pool,
     moduleName: 'trading routes',
+    lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_signals (
         signal_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

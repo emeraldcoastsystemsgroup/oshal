@@ -30,13 +30,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — config accessors (TRADING_COTP_URL → the Schwab client login root, TRADING_COTP_REMINDER_HOUR_ET → 9, TRADING_COTP_REMINDER_DAYS → 3,1,0), trading-day arithmetic (weekday step-back), the pure schedule (due/closes instants via etWallToInstant, DST-safe), date-derived reminder text, the FORCE-RLS reminders table, setEventPlanPricingDate, and tickEventReminders (claim-first per key, expired past the window, never throws for one plan's sake) delivered through announceEventAlert (Jarvis shelf + per-user NotificationRouter).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review round 2: memoized ensureEventRemindersSchema (the leg fires every minute and listEventReminders re-ensured per plan, so the DDL + two ACCESS EXCLUSIVE RLS ALTERs ran N+1 times per user per tick); the T-n body now measures the distance to pricing at FIRE time instead of restating entry.daysBefore (stale when the leg runs late); the timeline-note fallback logs instead of swallowing.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Review round 3: the outward hop is bounded — fireReminder delivers through withDeliveryDeadline (env TRADING_EVENT_NOTIFY_TIMEOUT_MS, default 20s), so a wedged Gmail/Twilio/Telegram sender can no longer stall the trading-events leg for every other plan of that user; the claim row is already written before delivery, so a timed-out send is recorded and never re-fires. Plus the JSDoc @param/@returns the review asked for on the config accessors and the store helpers.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  *
  * @module trading-event-reminders
  */
 
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
-import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { TradingError } from './trading-engine';
 import { etWallParts, etWallToInstant, formatEt } from './trading-dated-orders';
 import { announceEventAlert, normalizePricingDate, withDeliveryDeadline, type EventAlert } from './trading-event-alerts';
@@ -215,7 +216,7 @@ let remindersSchemaReady = false;
 export async function ensureEventRemindersSchema(pool: AppContext['pool']): Promise<void> {
   if (remindersSchemaReady) return;
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading event reminders',
+    pool, moduleName: 'trading event reminders', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_event_reminders (
         reminder_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
