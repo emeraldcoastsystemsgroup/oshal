@@ -6,14 +6,17 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise real default-profile sidebar delegation and admitted Federal CRM navigation while preserving application pages and iframe state.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify the admitted Finance workspace and brand-adjacent searchable OSHAL menu without broad financial-tool delegation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Verify isolated browser process exit without swallowing assertion or cleanup failures.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { startWorkspaceNavigationFixture } from '../fixtures/workspace-navigation';
-import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
+import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
 import type { UIProfileRibbonItem } from '@/features/ui-profile/types';
+
+vi.setConfig({ hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 
 let fixture: Awaited<ReturnType<typeof startWorkspaceNavigationFixture>>;
 let browser: Browser, context: BrowserContext, page: Page;

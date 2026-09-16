@@ -28,6 +28,13 @@ browser teardown allowance. Its registration test verifies that the referenced f
 are included in the command. The two Lab scenarios are `artifact-discovery` and
 `jarvis-artifact-handoff`; [the Test Lab guide](../docs/test-lab.md) describes their live effects.
 
+Suites that own a fixture browser through `tests/fixtures/isolated-browser.ts` set their hook timeout
+from the fixture's own `BROWSER_HOOK_TIMEOUT_MS`, so the runner's hook deadline can never fire before
+the fixture reaches a verdict about the browser process. The fixture gives that process one exit
+budget - 45 s by default, raised for a slower host with `OSHAL_FIXTURE_BROWSER_EXIT_TIMEOUT_MS` - and
+a browser that misses it still fails the suite by name. `tests/unit/isolated-browser.spec.ts` guards
+both halves, including against a real headless Chromium.
+
 Keep local regression results separate from deployed acceptance. A model fixture proves routing
 and enforcement, while a live-model scenario measures semantic selection. Report both honestly.
 

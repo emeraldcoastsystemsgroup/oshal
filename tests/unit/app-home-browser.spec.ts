@@ -6,12 +6,15 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove daily Home geometry, stable real Jarvis draft, authorized directory, saved choices and honest probe failures in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify exact canonical palette colors in the actual parent and Jarvis frame as well as layout geometry.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Assert real populated and unavailable directory centering with the full Cockpit reset at desktop and phone widths.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { type Browser, type BrowserContext, type Page } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { startAppHomeBrowserFixture, homeEntry } from '../fixtures/app-home-browser';
-import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
+import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
+
+vi.setConfig({ hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 
 let browser: Browser, context: BrowserContext, page: Page;
 let fixture: Awaited<ReturnType<typeof startAppHomeBrowserFixture>>;

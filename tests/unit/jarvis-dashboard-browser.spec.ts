@@ -5,14 +5,15 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove compact Jarvis layout, grouped real task actions and retained voice/stage flows in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove the page rolls a refused persisted thread id to a fresh one and resends the turn exactly once (the 'Sorry — I couldn't do that just now' regression after issuer provenance landed).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  */
 import { type Browser, type Page, type Frame } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { dashboardGate, dashboardState, dashboardMediaFile, startJarvisDashboardFixture, type DashboardTask } from '../fixtures/jarvis-dashboard';
-import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
+import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
 
-vi.setConfig({ testTimeout: 20_000 });
+vi.setConfig({ testTimeout: 20_000, hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 let browser: Browser, fixture: Awaited<ReturnType<typeof startJarvisDashboardFixture>>;
 let media: Awaited<ReturnType<typeof dashboardMediaFile>>;
 let owned: Awaited<ReturnType<typeof launchIsolatedBrowser>>;

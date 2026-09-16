@@ -8,15 +8,18 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify the existing chooser through relocated header controls with keyboard and pointer dismissal.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Exercise the chooser inside the OSHAL menu alongside the compact daily Home composition.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove first-screen appearance controls and keyboard-expandable runtime help through the complete Settings view.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  * =============================================================================
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { type Browser, type BrowserContext, type Page } from 'playwright';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { startWorkspaceThemeFixture } from '../fixtures/workspace-theme';
 import { startWorkspaceNavigationFixture } from '../fixtures/workspace-navigation';
-import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
+import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
+
+vi.setConfig({ hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 
 declare global {
   interface Window {
