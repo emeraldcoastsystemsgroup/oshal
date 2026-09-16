@@ -4,12 +4,20 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove bounded fixture cleanup reports forced ownership and refuses crashes, missing exit evidence and shutdown errors.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Guard the one exit budget: an owned browser that finishes its exit long after the graceful and kill deadlines still passes, one that never exits still fails loudly and names the budget, the budget is settable, every suite that owns a fixture browser gives its hooks at least that budget, and a REAL headless Chromium proves both the receipt and the loud deadline against the actual Playwright server.
  */
-import { afterEach, expect, it, vi } from 'vitest';
-import type { BrowserServer } from 'playwright';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { chromium, type BrowserServer } from 'playwright';
 import { EventEmitter } from 'node:events';
+import { readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
-import { closeOwnedBrowser, observeBrowserExit } from '../fixtures/isolated-browser';
+import {
+  BROWSER_EXIT_BUDGET_MS, BROWSER_HOOK_TIMEOUT_MS, closeOwnedBrowser, launchIsolatedBrowser,
+  observeBrowserExit, resolveExitBudgetMs,
+} from '../fixtures/isolated-browser';
+
+vi.setConfig({ testTimeout: BROWSER_HOOK_TIMEOUT_MS, hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
@@ -18,6 +26,9 @@ function server(close: () => Promise<void>, kill = async () => {}) {
   const value = { process: () => ({ pid: 12345 }), close: vi.fn(close), kill: vi.fn(kill) };
   return { value, handle: value as unknown as BrowserServer };
 }
+
+/** @description A cleanup step that never settles — the shape a loaded box produces. */
+function never<T>(): Promise<T> { return new Promise<T>(() => {}); }
 
 it('accepts normal zero exit without forced cleanup', async () => {
   const s = server(async () => {});
@@ -30,12 +41,42 @@ it('terminates only the supplied owned server after a real deadline and reports 
   vi.useFakeTimers(); const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
   let finish!: (value: { code: number; signal: null; premature: boolean; afterKill: boolean }) => void;
   const exit = new Promise<{ code: number; signal: null; premature: boolean; afterKill: boolean }>(resolve => { finish = resolve; });
-  const s = server(() => new Promise(() => {}), async () => { finish({ code: 1, signal: null, premature: false, afterKill: true }); });
+  const s = server(never, async () => { finish({ code: 1, signal: null, premature: false, afterKill: true }); });
   const result = closeOwnedBrowser(s.handle, exit);
   await vi.advanceTimersByTimeAsync(4999); expect(s.value.kill).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1);
   expect(await result).toMatchObject({ forced: true, graceful: false, exitVerified: true, code: 1 });
   expect(s.value.kill).toHaveBeenCalledOnce(); expect(warning).toHaveBeenCalledOnce();
+});
+
+// The 2026-09-15 failure shape: both five-second deadlines elapsed while two lanes ran, the suite was failed,
+// and the pid had exited when it was checked a minute later. The exit event, not kill() resolving, ends cleanup.
+it('passes a slow box whose owned browser exits long after the graceful and kill deadlines', async () => {
+  vi.useFakeTimers(); const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const exit = new Promise<{ code: number; signal: null; premature: boolean; afterKill: boolean }>(resolve => {
+    setTimeout(() => resolve({ code: 1, signal: null, premature: false, afterKill: true }), 20_000);
+  });
+  const s = server(never, never);
+  const result = closeOwnedBrowser(s.handle, exit);
+  await vi.advanceTimersByTimeAsync(19_999);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await result).toMatchObject({ forced: true, graceful: false, exitVerified: true, durationMs: 20_000 });
+  expect(s.value.kill).toHaveBeenCalledOnce(); expect(warning).toHaveBeenCalledOnce();
+});
+
+it('still fails loudly, naming the budget, when the owned browser never exits', async () => {
+  vi.useFakeTimers(); const s = server(never, never);
+  const result = expect(closeOwnedBrowser(s.handle, never())).rejects
+    .toThrow(`Owned fixture browser 12345 did not exit within ${BROWSER_EXIT_BUDGET_MS} ms of explicit cleanup.`);
+  await vi.advanceTimersByTimeAsync(BROWSER_EXIT_BUDGET_MS); await result;
+  expect(s.value.kill).toHaveBeenCalledOnce();
+});
+
+it('reports a refused scoped kill in the deadline it caused', async () => {
+  vi.useFakeTimers();
+  const s = server(never, async () => { throw new Error('synthetic kill refused'); });
+  const result = expect(closeOwnedBrowser(s.handle, never())).rejects.toThrow('Scoped kill reported: Error: synthetic kill refused');
+  await vi.advanceTimersByTimeAsync(BROWSER_EXIT_BUDGET_MS); await result;
 });
 
 it.each([{ code: 0, premature: true }, { code: 1, premature: false }])('refuses unexpected exit evidence %j', async exit => {
@@ -48,12 +89,6 @@ it('does not swallow a graceful shutdown error', async () => {
   const s = server(async () => { throw new Error('synthetic shutdown rejected'); });
   await expect(closeOwnedBrowser(s.handle, Promise.resolve({ code: 0, signal: null, premature: false })))
     .rejects.toThrow('synthetic shutdown rejected');
-});
-
-it('refuses success when process exit cannot be confirmed', async () => {
-  vi.useFakeTimers(); const s = server(async () => {});
-  const result = expect(closeOwnedBrowser(s.handle, new Promise(() => {}))).rejects.toThrow('exit was not confirmed');
-  await vi.advanceTimersByTimeAsync(5000); await result;
 });
 
 it('remembers premature exit even if cleanup begins later', async () => {
@@ -70,8 +105,88 @@ it('captures a child that already exited before its listener could be attached',
 });
 
 it('does not reclassify a crash during stalled graceful cleanup as a successful forced shutdown', async () => {
-  vi.useFakeTimers(); const s = server(() => new Promise(() => {}));
+  vi.useFakeTimers(); const s = server(never);
   const exit = Promise.resolve({ code: 1, signal: null, premature: false, afterKill: false });
   const result = expect(closeOwnedBrowser(s.handle, exit)).rejects.toThrow('exited unexpectedly');
   await vi.advanceTimersByTimeAsync(5000); await result;
+});
+
+it.each([
+  [undefined, BROWSER_EXIT_BUDGET_MS], ['', BROWSER_EXIT_BUDGET_MS], ['nonsense', BROWSER_EXIT_BUDGET_MS],
+  ['0', BROWSER_EXIT_BUDGET_MS], ['-1', BROWSER_EXIT_BUDGET_MS], ['90000', 90_000],
+])('resolves the exit budget from %j', (value, expected) => {
+  expect(resolveExitBudgetMs(value === undefined ? {} : { OSHAL_FIXTURE_BROWSER_EXIT_TIMEOUT_MS: value })).toBe(expected);
+});
+
+/**
+ * @description The timeout argument on the hook that awaits an owned browser's close(), when it
+ * passes one. A per-hook argument OVERRIDES vi.setConfig, so this - not the setConfig line - is what
+ * decides whether the runner's deadline can fire before the fixture reaches its verdict.
+ * @param text - A spec file's source.
+ * @returns The argument as written, or null when the hook passes none (setConfig then governs).
+ */
+function ownedCloseHookTimeout(text: string): string | null {
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!/(owned|isolated)\??\.close\(\)/.test(lines[i])) continue;
+    for (let j = i; j < Math.min(i + 6, lines.length); j += 1) {
+      const tail = /\}\s*,\s*([A-Za-z_\d]+)\s*\)\s*;\s*$/.exec(lines[j]);
+      if (tail) return tail[1];
+      if (/\}\s*\)\s*;\s*$/.test(lines[j])) return null;
+    }
+  }
+  return null;
+}
+
+// A longer fixture budget only moves the failure to the runner's hook deadline unless the suites that own a
+// browser give their hooks at least as much room, so that pairing is checked against the real spec files.
+it('every suite that owns a fixture browser gives its hooks the fixture cleanup budget', () => {
+  const dir = path.resolve('tests/unit');
+  const owners = readdirSync(dir).filter(name => name.endsWith('.spec.ts'))
+    .map(name => ({ name, text: readFileSync(path.join(dir, name), 'utf8') }))
+    .filter(spec => spec.text.includes('launchIsolatedBrowser'));
+  expect(owners.length, 'no suite was read; the discovery, not the suites, is broken').toBeGreaterThanOrEqual(11);
+  for (const { name, text } of owners) {
+    const setting = /hookTimeout:\s*(BROWSER_HOOK_TIMEOUT_MS|[\d_]+)/.exec(text);
+    expect(setting, `${name} owns a fixture browser but gives its hooks no budget`).not.toBeNull();
+    const declared = setting![1];
+    if (declared === 'BROWSER_HOOK_TIMEOUT_MS') {
+      expect(text, `${name} must import the budget it names`).toMatch(/BROWSER_HOOK_TIMEOUT_MS[\s\S]*?from '\.\.\/fixtures\/isolated-browser'/);
+    } else {
+      expect(Number(declared.replace(/_/g, '')), `${name} hook budget`).toBeGreaterThanOrEqual(BROWSER_HOOK_TIMEOUT_MS);
+    }
+    // setConfig is not the last word: a per-hook timeout ARGUMENT overrides it, so the hook that
+    // actually awaits the owned close() is what has to carry the budget. Without this, a
+    // `}, 20000);` two lines under the setConfig line left this case green while the runner's
+    // deadline fired 25 s before the fixture's own — and the operator saw vitest's generic
+    // "Hook timed out", not the fixture's named budget error.
+    // setConfig is not the last word. A per-hook timeout ARGUMENT overrides it, and a `}, 20000);`
+    // two lines under the setConfig line is how seven suites kept a deadline 25 s SHORTER than the
+    // fixture's own cleanup budget while this case stayed green - the operator then saw vitest's
+    // generic "Hook timed out" instead of the fixture's named budget error.
+    const hookArgument = ownedCloseHookTimeout(text);
+    if (hookArgument && hookArgument !== 'BROWSER_HOOK_TIMEOUT_MS') {
+      expect(Number(hookArgument.replace(/_/g, '')), `${name}: the hook awaiting close() overrides hookTimeout with a SMALLER budget`)
+        .toBeGreaterThanOrEqual(BROWSER_HOOK_TIMEOUT_MS);
+    }
+  }
+});
+
+// Real boundary: an actual headless Chromium behind the real Playwright BrowserServer, because the deadline
+// arithmetic above is the only part a double can prove. Nothing in this block is mocked.
+describe('against a real headless Chromium', () => {
+  it('confirms a real owned browser exited, inside the budget', async () => {
+    const owned = await launchIsolatedBrowser();
+    expect(owned.browser.isConnected()).toBe(true);
+    const receipt = await owned.close();
+    expect(receipt).toMatchObject({ exitVerified: true, premature: false });
+    expect(receipt.durationMs).toBeLessThan(BROWSER_EXIT_BUDGET_MS);
+  });
+
+  it('fails loudly on a real server whose exit is not confirmed inside the budget', async () => {
+    const real = await chromium.launchServer({ host: '127.0.0.1', headless: true });
+    try {
+      await expect(closeOwnedBrowser(real, never(), () => {}, 250)).rejects.toThrow(/did not exit within 250 ms of explicit cleanup/);
+    } finally { await real.kill(); }
+  });
 });

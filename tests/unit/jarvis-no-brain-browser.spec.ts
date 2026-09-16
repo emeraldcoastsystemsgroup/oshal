@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | End-to-end guard for BACKLOG "Jarvis must fail honestly when the operator has no hosted brain": the unchanged jarvis.html in real Chromium asks the REAL Jarvis router (runJarvisBot → executeBotOrInline → stampRemoteBrain over the shipped registry) while resolveUserLlmConnection resolves to nothing, and must WRITE and SPEAK "Jarvis has no AI engine connected … Bring Your Own LLM" — the spoken line observed at /api/voice/synthesize, the boundary the page actually asks — while the briefing shelf, which needs no live model, still lists its row. An ordinary failure through the same router still shows its own message and speaks the apology.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  */
 import type { Browser, Page } from 'playwright';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
@@ -35,13 +36,13 @@ vi.mock('@/shared/services/database', async (importOriginal) => ({
 }));
 
 import { dashboardState, startJarvisDashboardFixture, type DashboardTask } from '../fixtures/jarvis-dashboard';
-import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
+import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
 import { createNoBrainJarvisRouter, NO_BRAIN_SUB } from '../fixtures/jarvis-no-brain';
 import { purgeJarvisAskJobsForOwner } from '../../src/app/routes/jarvis-routes';
 import { BotNodeClient } from '../../src/features/agent-management';
 import { warmBotEndpointRegistry } from '../../src/features/agent-management/services/bot-node-client';
 
-vi.setConfig({ testTimeout: 60_000 });
+vi.setConfig({ testTimeout: 60_000, hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 
 // Tripwire on the node transport (see the route-level guard): the no-brain turn is refused before the
 // dedicated-node hop, and any dispatch that does happen is recorded and failed here, never sent.
@@ -81,7 +82,7 @@ beforeEach(() => {
 
 afterAll(async () => {
   try { await owned?.close(); } finally { await fixture?.stop(); }
-}, 40_000);
+}, BROWSER_HOOK_TIMEOUT_MS);
 
 /**
  * @description Open the unchanged page with every other origin blocked. Records what it asked the

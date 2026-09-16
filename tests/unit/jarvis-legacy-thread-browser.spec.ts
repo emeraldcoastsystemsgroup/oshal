@@ -5,12 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove in real Chromium, against the real Jarvis router and an isolated PostgreSQL, that a persisted thread the server cannot attribute to the current sign-in is refused, the page rolls to a fresh thread and resends the turn once, the answer renders, and the new thread carries the caller's issuer.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Search the recorded bot call through plain objects only. The first execution threw "Converting circular structure to JSON": the AppContext argument carries the pg pool's timers, and its in-memory task store also holds the planted legacy row, so stringifying the whole call could never prove the turn ran clean of it. The assertion now names the missing thread id when it fails.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import type { Browser } from 'playwright';
 import { createProtectedJarvisFixture } from '../fixtures/protected-jarvis-results';
 import { DisposableAlertPostgres } from '../helpers/disposable-alert-postgres';
-import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
+import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 
 const bot = vi.hoisted(() => vi.fn());
@@ -21,7 +22,7 @@ vi.mock('@/app/routes/jarvis-orchestrator', async importOriginal => ({ ...await 
   runJarvisBot: bot, buildCatalogBlock: async () => '', loadEffectiveRoutes: async () => [],
   maskPendingComplexSummaries: async () => {}, repairCompletedTaskTableVisuals: async () => {} }));
 
-vi.setConfig({ testTimeout: 40_000 });
+vi.setConfig({ testTimeout: 40_000, hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 const database = new DisposableAlertPostgres();
 let fixture: Awaited<ReturnType<typeof createProtectedJarvisFixture>>;
 let owned: Awaited<ReturnType<typeof launchIsolatedBrowser>>;
@@ -33,7 +34,7 @@ beforeAll(async () => {
   await database.start();
   owned = await launchIsolatedBrowser(); browser = owned.browser;
 }, 90_000);
-afterAll(async () => { try { await owned?.close(); } finally { await database.stop(); } }, 40_000);
+afterAll(async () => { try { await owned?.close(); } finally { await database.stop(); } }, BROWSER_HOOK_TIMEOUT_MS);
 beforeEach(async () => {
   vi.stubEnv('OSHAL_NO_AI', 'false');
   fixture = await createProtectedJarvisFixture(database);
