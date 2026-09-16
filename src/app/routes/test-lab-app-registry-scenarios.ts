@@ -2,6 +2,7 @@
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register multi-store discovery and its isolated installation/browser regression suites in the existing AI Test Lab.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register explicit focused-application entry and host-default regression coverage.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Attach the ADR-147 D10 fetch-fence suite to multi-store discovery: the hostname half of the fence is a registry-read behaviour, so it belongs to the scenario that reads registries rather than to a new live step - a Lab step that proved it would have to make the running swarm resolve a name into private space.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register the dependency-tier scenario: a read-only live step checks one install preview reports required/optional tiers with closed states and never offers an install the installer would refuse; its contract, installer and App Loader browser suites are attached.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -66,9 +67,10 @@ async function dependencyTierPreview(cookie: string): Promise<StepResult> {
 
 export const APP_REGISTRY_SCENARIOS: Scenario[] = [{
   id: 'multi-store-discovery', title: 'Application stores and source selection', group: 'tool',
-  description: 'Read trusted store discovery. Local regression suites prove source replacement confirmation, legacy install refusal, dependency preservation and browser trust controls using disposable stores.',
+  description: 'Read trusted store discovery. Local regression suites prove source replacement confirmation, legacy install refusal, dependency preservation, browser trust controls and the fetch fence (a registry hostname that resolves into private space is refused, and the approved address is what the connection reaches) using disposable stores and a local DNS server.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/app-registries.spec.ts' },
+    { level: 'unit', path: 'tests/unit/app-registry-dns-fence.spec.ts' },
     { level: 'integration', path: 'tests/unit/multi-store-installer.spec.ts' },
     { level: 'browser', path: 'tests/unit/multi-store-routes-browser.spec.ts' },
   ],

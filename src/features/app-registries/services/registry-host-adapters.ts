@@ -3,14 +3,21 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-147 D10: the fence now resolves the hostname of the URL it is ABOUT TO FETCH and pins the approved address for the connection. Two gaps closed. (a) The fence judged URL text only, so an address literal was refused and a NAME pointing at the same box was not - which is the entire SSRF case. (b) The catalog URL is not always the registry URL (a github registry is read from raw.githubusercontent.com), so the check now runs on the address actually dialled. fetch() is replaced by https.request because only the request API accepts a `lookup`, and pinning is what makes this a fence rather than an advisory check - fetch would resolve the name a second time and hand a DNS rebind the race. The clone path carries the same pin through `http.curloptResolve`.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147: the host adapters that make "any git location" literally true. The single-store rail hard-wired GitHub in four places — marketplaceUrl built a raw.githubusercontent URL, install-remote refused any non-github.com source, and buildStoreGitAuth only attached credentials for github.com — so a GitLab or self-hosted repo could not even be READ, let alone installed from. This replaces those chokepoints with three strategies behind one interface: github (raw CDN), gitlab (files API, works for gitlab.com AND self-hosted), and generic-git (a sparse clone, the fallback that assumes no raw-file API at all and therefore covers Gitea, Bitbucket, and a plain HTTPS git server). Credentials keep riding `git --config-env` and an Authorization header, never argv and never the remote URL, so a token cannot leak through a process list or an error string.
  */
 
 import { execFile } from 'child_process';
 import fs from 'fs';
+import https from 'https';
+import net from 'net';
 import os from 'os';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import {
+  gitResolveArgs, isBlockedAddress, pinnedLookup, resolveHostFence,
+  type HostResolver, type PinnedAddress,
+} from './registry-dns-fence';
 
 const logger = createChildLogger({ module: 'registry-host-adapters' });
 
@@ -87,9 +94,10 @@ export function normalizeRepoUrl(url: string): string {
  * loopback/link-local/private-range host unless the registry explicitly opts in (a self-hosted
  * internal GitLab is a real case, so this is a per-registry flag rather than a ban).
  *
- * DNS is deliberately NOT resolved here. Resolving to validate invites a TOCTOU rebind between
- * the check and the fetch, and the check would still be advisory; the durable fence is the
- * explicit opt-in flag plus not following cross-host redirects.
+ * This half judges the URL TEXT only and is synchronous, because the registry store validates a
+ * row on save. The NAME is judged by resolveHostFence at fetch time, which resolves once and
+ * pins the approved address — the durable answer to the TOCTOU that made an earlier version of
+ * this comment argue against resolving at all.
  *
  * @param url - the URL to validate
  * @param allowPrivateHost - whether this registry may target a private/internal host
@@ -106,18 +114,10 @@ export function fetchFenceProblem(url: string, allowPrivateHost: boolean): strin
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
     return 'private host — enable "allow private host" for a self-hosted registry';
   }
-  // IPv4 literal in a private, loopback, link-local or carrier-grade-NAT range.
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    const isPrivate = a === 10 || a === 127 || a === 0
-      || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31)
-      || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
-    if (isPrivate) return 'private address — enable "allow private host" for a self-hosted registry';
-  }
-  // IPv6 loopback / unique-local / link-local, in bracketed or bare form.
-  const v6 = host.replace(/^\[|\]$/g, '');
-  if (v6 === '::1' || /^f[cd][0-9a-f]{2}:/i.test(v6) || /^fe80:/i.test(v6)) {
+  // One judgement for every literal form — IPv4, IPv6, and the IPv4-mapped spelling that slips
+  // 10.x past an IPv4-only regex. A NAME is not judged here: resolveHostFence does that.
+  const literal = host.replace(/^\[|\]$/g, '');
+  if (net.isIP(literal) && isBlockedAddress(literal)) {
     return 'private address — enable "allow private host" for a self-hosted registry';
   }
   return null;
@@ -156,56 +156,111 @@ function catalogAuthHeaders(source: RegistrySource): Record<string, string> {
   return headers;
 }
 
+/** The pinned address for a URL about to be fetched, or the reason that host is refused. */
+type FetchTargetGuard = { ok: true; pinned: PinnedAddress | null } | { ok: false; reason: string };
+
 /**
- * @description Reads a registry's marketplace.json over its host's raw-file API.
+ * @description Applies the DNS half of the fence to the URL that will ACTUALLY be dialled — for a
+ * github registry that is raw.githubusercontent.com, not the repo URL — and returns the address the
+ * connection must be pinned to. A registry carrying the explicit private-host opt-in skips both
+ * halves: the operator has already said that host is theirs.
+ * @param url - the URL about to be fetched or cloned
+ * @param allowPrivateHost - the registry's opt-in
+ * @param resolver - the resolver seam; production uses the process resolver
+ * @returns the pinned address (or null when opted out), or the refusal reason
+ */
+async function guardFetchTarget(
+  url: string, allowPrivateHost: boolean, resolver?: HostResolver,
+): Promise<FetchTargetGuard> {
+  if (allowPrivateHost) return { ok: true, pinned: null };
+  let host: string;
+  try { host = new URL(url).hostname; } catch { return { ok: false, reason: 'not a valid URL' }; }
+  const fence = await resolveHostFence(host, resolver);
+  return fence.ok ? { ok: true, pinned: fence.pinned } : { ok: false, reason: fence.reason };
+}
+
+/** What one catalog request came back with. A redirect is reported as a status, never followed. */
+interface CatalogResponse { status: number; body: string | null; tooLarge: boolean }
+
+/**
+ * @description Issues the catalog GET against the PINNED address, capping the body as it arrives.
+ * https.request rather than fetch because only the request API takes a `lookup`: fetch would
+ * resolve the hostname a second time, which is exactly the race the fence exists to close. TLS is
+ * unaffected — the certificate is still validated against the hostname.
+ * @param url - the catalog URL
+ * @param headers - the host's auth headers
+ * @param pinned - the approved address, or null when the registry opted out
+ * @returns the status and the capped body
+ */
+function requestCatalog(
+  url: string, headers: Record<string, string>, pinned: PinnedAddress | null,
+): Promise<CatalogResponse> {
+  const target = new URL(url);
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: target.hostname,
+      port: target.port || 443,
+      path: `${target.pathname}${target.search}`,
+      method: 'GET',
+      headers,
+      servername: target.hostname,
+      ...(pinned ? { lookup: pinnedLookup(pinned) } : {}),
+    }, (res) => {
+      const status = res.statusCode ?? 0;
+      // A redirect that changes host would step around the fence entirely.
+      if (status >= 300 && status < 400) { res.resume(); resolve({ status, body: null, tooLarge: false }); return; }
+      if (Number(res.headers['content-length'] ?? '0') > MAX_CATALOG_BYTES) {
+        res.destroy(); resolve({ status, body: null, tooLarge: true }); return;
+      }
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      res.on('data', (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (bytes > MAX_CATALOG_BYTES) { res.destroy(); resolve({ status, body: null, tooLarge: true }); return; }
+        chunks.push(chunk);
+      });
+      res.on('end', () => resolve({ status, body: Buffer.concat(chunks).toString('utf8'), tooLarge: false }));
+      res.on('error', reject);
+    });
+    req.setTimeout(FETCH_TIMEOUT_MS, () => req.destroy(new Error(`timed out after ${FETCH_TIMEOUT_MS}ms`)));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+/** Turns a non-2xx catalog status into the sentence an operator can act on. */
+function httpCatalogReason(status: number, hasToken: boolean): string {
+  if (status >= 300 && status < 400) return `registry redirected (HTTP ${status}) — refusing to follow`;
+  if (status !== 404 && status !== 401 && status !== 403) return `catalog fetch failed (HTTP ${status})`;
+  return `catalog not ${hasToken ? 'readable with the saved key' : 'publicly readable'} (HTTP ${status})`
+    + `${hasToken ? '' : ' — add an access key if this registry is private'}`;
+}
+
+/**
+ * @description Reads a registry's marketplace.json over its host's raw-file API, through the
+ * resolved-and-pinned address.
  * Never throws — an unreachable or unauthorized registry is a row that renders as broken, not
  * an exception that takes down the whole aggregated catalog.
  * @param source - the registry
+ * @param deps - the resolver seam
  * @returns the raw text, or an honest reason
  */
-async function fetchCatalogOverHttp(source: RegistrySource): Promise<CatalogFetchResult> {
+async function fetchCatalogOverHttp(source: RegistrySource, deps: CatalogFetchDeps): Promise<CatalogFetchResult> {
   const url = catalogUrlFor(source);
   if (!url) return { ok: false, reason: `cannot build a catalog URL for ${source.hostKind} repo ${source.url}` };
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  timer.unref?.();
+  const guard = await guardFetchTarget(url, source.allowPrivateHost, deps.resolver);
+  if (!guard.ok) return { ok: false, reason: guard.reason };
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: catalogAuthHeaders(source),
-      // A redirect that changes host would step around the fence entirely.
-      redirect: 'manual',
-    });
-    if (res.status >= 300 && res.status < 400) {
-      return { ok: false, reason: `registry redirected (HTTP ${res.status}) — refusing to follow` };
+    const res = await requestCatalog(url, catalogAuthHeaders(source), guard.pinned);
+    if (res.status < 200 || res.status >= 300) {
+      return { ok: false, reason: httpCatalogReason(res.status, Boolean(source.token)) };
     }
-    if (!res.ok) {
-      const priv = res.status === 404 || res.status === 401 || res.status === 403;
-      return {
-        ok: false,
-        reason: priv
-          ? `catalog not ${source.token ? 'readable with the saved key' : 'publicly readable'} (HTTP ${res.status})${source.token ? '' : ' — add an access key if this registry is private'}`
-          : `catalog fetch failed (HTTP ${res.status})`,
-      };
-    }
-    const text = await readCapped(res);
-    return text === null
-      ? { ok: false, reason: `catalog exceeds ${MAX_CATALOG_BYTES} bytes` }
-      : { ok: true, text };
+    if (res.tooLarge) return { ok: false, reason: `catalog exceeds ${MAX_CATALOG_BYTES} bytes` };
+    return { ok: true, text: res.body ?? '' };
   } catch (err) {
     logger.warn({ err, slug: source.slug }, 'catalog fetch failed');
     return { ok: false, reason: `registry unreachable: ${(err as Error).message}` };
-  } finally {
-    clearTimeout(timer);
   }
-}
-
-/** Reads a response body, refusing anything over the cap without buffering the whole thing. */
-async function readCapped(res: Response): Promise<string | null> {
-  const declared = Number(res.headers.get('content-length') ?? '0');
-  if (declared > MAX_CATALOG_BYTES) return null;
-  const text = await res.text();
-  return Buffer.byteLength(text, 'utf8') > MAX_CATALOG_BYTES ? null : text;
 }
 
 /**
@@ -241,15 +296,19 @@ export function buildRegistryGitAuth(source: RegistrySource): { argsPrefix: stri
  * GitHub/GitLab statement: it assumes no raw-file API, no vendor, and no web UI — just git
  * over https.
  * @param source - the registry
+ * @param deps - the resolver seam
  * @returns the raw text, or an honest reason
  */
-async function fetchCatalogOverClone(source: RegistrySource): Promise<CatalogFetchResult> {
-  const auth = buildRegistryGitAuth(source);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-registry-'));
+async function fetchCatalogOverClone(source: RegistrySource, deps: CatalogFetchDeps): Promise<CatalogFetchResult> {
   const repo = normalizeRepoUrl(source.url);
+  const guard = await guardFetchTarget(repo, source.allowPrivateHost, deps.resolver);
+  if (!guard.ok) return { ok: false, reason: guard.reason };
+  const auth = buildRegistryGitAuth(source);
+  const pin = gitResolveArgs(repo, guard.pinned);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-registry-'));
   const ref = source.ref || 'main';
   try {
-    await git(['clone', '--depth', '1', '--filter=blob:none', '--sparse', '-b', ref, repo, tmp], auth);
+    await git([...pin, 'clone', '--depth', '1', '--filter=blob:none', '--sparse', '-b', ref, repo, tmp], auth);
     await git(['-C', tmp, 'sparse-checkout', 'set', '--no-cone', 'marketplace.json'], auth);
     const file = path.join(tmp, 'marketplace.json');
     if (!fs.existsSync(file)) return { ok: false, reason: 'no marketplace.json at the repository root' };
@@ -280,17 +339,27 @@ function git(args: string[], auth: { argsPrefix: string[]; env: NodeJS.ProcessEn
   });
 }
 
+/** The seam a caller may inject. Production omits it and the process resolver is used. */
+export interface CatalogFetchDeps {
+  /** Resolver used by the DNS half of the fence. */
+  resolver?: HostResolver;
+}
+
 /**
  * @description Reads a registry's catalog by whichever route its host supports, applying the
- * SSRF fence first. Fence failures are returned as a reason, never thrown, so one misconfigured
- * registry row cannot fail the aggregated page.
+ * SSRF fence first — the literal-URL half here, the resolve-and-pin half inside each route,
+ * against the address it will actually dial. Fence failures are returned as a reason, never
+ * thrown, so one misconfigured registry row cannot fail the aggregated page.
  * @param source - the registry
+ * @param deps - the resolver seam
  * @returns the raw marketplace.json text, or an honest reason
  */
-export async function fetchRegistryCatalog(source: RegistrySource): Promise<CatalogFetchResult> {
+export async function fetchRegistryCatalog(
+  source: RegistrySource, deps: CatalogFetchDeps = {},
+): Promise<CatalogFetchResult> {
   const fence = fetchFenceProblem(normalizeRepoUrl(source.url), source.allowPrivateHost);
   if (fence) return { ok: false, reason: fence };
   return source.hostKind === 'generic-git'
-    ? fetchCatalogOverClone(source)
-    : fetchCatalogOverHttp(source);
+    ? fetchCatalogOverClone(source, deps)
+    : fetchCatalogOverHttp(source, deps);
 }

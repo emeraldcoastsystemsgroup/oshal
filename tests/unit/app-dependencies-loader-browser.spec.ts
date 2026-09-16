@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The catalog transport fixture follows ADR-147 D10 from global fetch to https.request - the registry rail had to leave fetch to pin the address the fence resolved - and the resolver seam answers so the suite never asks the box's real DNS about github.
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers in the App Loader over real HTTP routes, a real local Git store, the real installer child and real Chromium: the preview resolves each dependency app the way the installer does and refuses an unresolvable required one; the confirm screen offers optional apps as checkboxes and sends only the chosen ones; install hot-loads the pulled dependencies before the package; a required dependency that fails to load keeps the package unloaded while an optional one is reported. Only persistence/auth and the remote catalog transport are fixtures.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -13,7 +14,10 @@ import type { AddressInfo } from 'node:net';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
+import http from 'http';
+import https from 'https';
 import { chromium, type Browser } from 'playwright';
+import { DEFAULT_HOST_RESOLVER } from '@/features/app-registries';
 import { createAppRegistryRoutes } from '@/app/routes/app-registry-routes';
 import { APP_REGISTRY_SCENARIOS } from '@/app/routes/test-lab-app-registry-scenarios';
 import { createStore } from '../fixtures/multi-store';
@@ -86,6 +90,21 @@ beforeAll(async () => {
     if (url.startsWith(base)) return nativeFetch(input, init);
     throw new Error('Fixture prevented external network: ' + url);
   });
+  // ADR-147 D10 moved the registry catalog rail off global fetch onto https.request, because only
+  // the request API takes a `lookup` and the fence now pins the address it resolved. The transport
+  // fixture moved with it: the same raw.githubusercontent.com reads are answered by the local
+  // express fixture over plain http. The DNS half of the fence still runs on the production path -
+  // the resolver seam answers with a public address so this suite stays offline instead of asking
+  // the box's real DNS about github.
+  vi.spyOn(DEFAULT_HOST_RESOLVER, 'resolve4').mockResolvedValue(['93.184.216.34']);
+  vi.spyOn(DEFAULT_HOST_RESOLVER, 'resolve6').mockRejectedValue(Object.assign(new Error('ENODATA'), { code: 'ENODATA' }));
+  vi.spyOn(https, 'request').mockImplementation(((options: https.RequestOptions, callback?: (res: http.IncomingMessage) => void) => {
+    const host = String(options.hostname ?? options.host ?? '');
+    const path = String(options.path ?? '');
+    if (host !== 'raw.githubusercontent.com') throw new Error(`Fixture prevented external network: ${host}${path}`);
+    const local = new URL(`${base}/catalog-fixture`);
+    return http.request({ hostname: local.hostname, port: local.port, path: local.pathname, method: 'GET' }, callback);
+  }) as unknown as typeof https.request);
   browser = await chromium.launch({ headless: true });
 }, 30000);
 
