@@ -1712,10 +1712,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** the database container's published port is configured but not live, and a new bind reports "port is already allocated" for a free port, so every real-database spec (this one and the trading/authorization ones) fails loudly from the host. `scripts/person-model-gate-in-container.js` is the hand-kept twin of `tests/unit/person-model-parity-postgres.spec.ts`.
 - **Done when:** either the engine is repaired and `npx vitest run tests/unit/person-model-parity-postgres.spec.ts` is green from the host, or `ci-local.sh --head` runs the gate inside the api container when the host port is dead; and the twin shares its assertion list with the spec so they cannot drift.
 
-### `jarvis-routes.ts` is over the decomposition threshold
-- **Remaining:** the file counts 802 code lines (the Phase 2 change was net −2). CLAUDE.md requires a decomposition plan before any addition; the person-model hook was routed through the slice for that reason.
-- **Done when:** the file is below 800 code lines with the existing jarvis specs green, and the recall hook is unchanged.
-
 ### Ambient Recall — prosody tone via a sidecar model (optional, ADR-100 Phase 4)
 - **Remaining:** tone today is text-level (analyst inference). The ADR allows an acoustic sidecar writing the same tone column with a different `model` string.
 - **Done when:** a sidecar writes tone with its own `model` and confidence for at least one owner, renders as OSHAL's read beside the quote, and is purged by the same triggers and consent decline.
