@@ -379,8 +379,8 @@ gate_alert_residue() {
 # (and only max-lines) to src JS, tests/, and scripts/, and this gate has to look there to enforce it.
 gate_lint() {
   # eslint 9 flat config (eslint.config.mjs); --ext was removed in v9.
-  (cd "$GATE_SRC" && timeout 900 npx eslint src tests scripts --max-warnings 0) \
-    || { log "lint: eslint reported findings (BLOCKING — drive to zero: npx eslint src tests scripts)"; return 1; }
+  (cd "$GATE_SRC" && timeout 900 npx eslint src tests scripts bench --max-warnings 0) \
+    || { log "lint: eslint reported findings (BLOCKING — drive to zero: npx eslint src tests scripts bench)"; return 1; }
   return 0
 }
 

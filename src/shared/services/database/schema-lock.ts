@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added spatialScans lock key (ADR-111) so the Spaces scan store's lazy schema bootstrap serializes across concurrent api starts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Reserve a distinct advisory-lock key for the durable remote-task journal so concurrent controller starts cannot interleave table, trigger, index, and RLS creation.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Per-statement savepoints, and report privilege-denied statements instead of losing the whole bootstrap to one of them. Under ADR-076 the runtime connects as oshal_app, which is deliberately NOT the schema owner, so owner-only DDL (CREATE OR REPLACE FUNCTION, CREATE POLICY, ALTER TABLE … ENABLE RLS) raises 42501. One transaction meant the FIRST such statement rolled back every statement before it and skipped every statement after it — on the remote-task journal that was the immutability trigger plus the owner-RLS policies for five tables, silently never attempted, while the caller caught the error and the app served traffic. Savepoints make each statement independently skippable, so a non-owner runtime applies everything it is entitled to and reports what it could not. Callers assert their requirements afterwards, so a genuinely missing schema still fails loudly rather than passing as "skipped".
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Reserved a key for the PAT store (oshal_cli_tokens). Its bootstrap issued eight idempotent statements as eight SEPARATE pool acquires, each able to wait out the acquire timeout against a pool of 8 while the manifests load — that contention is why it failed on a cold boot. One key, one locked client, same statements. The owner-RLS block it applies is a check-then-CREATE POLICY pair, which is precisely the interleaving this lock exists to prevent.
  */
 
 import type { Pool } from 'pg';
@@ -31,6 +32,7 @@ export const SCHEMA_LOCK_KEYS = {
   batchJobTelemetry: 47110005,
   spatialScans: 47110006,
   remoteTaskJournal: 47110007,
+  cliTokens: 47110008,
 } as const;
 
 /**

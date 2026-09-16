@@ -1828,25 +1828,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   hostname resolving to `10.0.0.0/8` is refused through a real local resolver seam; and ADR-147's
   As built section records the completed behavior and evidence.
 
-### One place that answers "what am I allowed to do"
-- **Context:** [swarm administration — as built, and how to continue](architecture/swarm-administration.md) section 3.
-- **Remaining:** three authorization axes now exist and each is correct in isolation:
-  `swarm_roles` (who administers the SWARM, ADR-148), the governance RBAC role + permissions
-  (`features/governance/rbac/policy.ts`, which as of 2026-09-13 reads `swarm_roles` first and
-  then the env allowlists), and `application-authorization` (who may use each INSTALLED APP,
-  released 2026-09-11, surfaced at `/access`). Nobody — operator or user — can see all
-  three together, so "why can't I open this?" is answered by checking three surfaces and an
-  environment file. The axes must NOT be merged: folding per-app access into swarm
-  administration would make "may use the photo app" and "may administer the swarm" one
-  decision. What is missing is a READ-ONLY view that joins them for one identity and names the
-  source of each grant (`swarm-role` | `break-glass` | `idp-claim` | `app-assignment`), which
-  `/api/governance/whoami` already reports for the first two.
-- **Done when:** one authenticated surface shows, for the caller and — for an admin — for any
-  chosen subject: their swarm role and where it came from, their governance permissions, and
-  their per-app assignments; every value is read from the existing stores with no new grant
-  path; and a guard proves a break-glass-only operator is labelled as such rather than
-  rendering identically to a granted admin.
-
 ### `swarm-cli` zsh completion
 - **Remaining:** execute the current completion in real zsh, covering sourced/autoloaded modes, command/state dispatch, and saved context completion.
 - **Done when:** `zsh -n` and real tab completion pass for top-level commands, completion shells, token actions, and `--context`; append evidence to the existing 2026-07-12 proof or delete the unsupported script.
@@ -1891,7 +1872,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** a Windows machine with no oshal checkout runs a freshly downloaded `install-oshal-node.cmd`, the node appears owned under "Your computers" on `/cockpit/tools/devices.html`, its Config screen's "Log in + push" opens a console running `claude auth login` from the PUBLISHED build, and the in-node print service is reachable — recorded in the real-boundary audit as the first bare-machine proof of the npm path.
 
 ### Node app — one-click installer for macOS and Linux
-- **Remaining:** `GET /api/join/node-installer` renders a Windows `.cmd` only, and the Get oshal Desktop tile says so. The node app itself installs from npm on macOS and Linux, and the five values the Windows script seeds (`OSHAL_CONTROL_PLANE_URL`, `OSHAL_SHARED_SECRET`, `OSHAL_ENROLLMENT_TOKEN`, `OSHAL_CLIENT_ID`, `OSHAL_CLIENT_NAME`) are platform-neutral, but no script renders them for a shell and the path has never been run on a Mac or Linux box.
+- **Built 2026-09-16 on `feat/node-installer-posix`.** `GET /api/join/node-installer?platform=macos|linux` now renders a POSIX `.sh` carrying the same per-device token and nothing swarm-wide, refusing the same loopback and quotable-character cases, and the Get oshal Desktop tile detects the platform and offers it. Guarded by `tests/unit/node-installer-platforms.spec.ts` - 16 of its 19 cases go red when the two source files are reverted, and the rendered script was executed under bash 5.2, bash 3.2 (what macOS actually ships) and busybox ash across seven branches. **Remaining:** the bare-machine run. The node app itself installs from npm on macOS and Linux, and the five values the Windows script seeds (`OSHAL_CONTROL_PLANE_URL`, `OSHAL_SHARED_SECRET`, `OSHAL_ENROLLMENT_TOKEN`, `OSHAL_CLIENT_ID`, `OSHAL_CLIENT_NAME`) are platform-neutral, but no script renders them for a shell and the path has never been run on a Mac or Linux box.
 - **Done when:** the route renders a platform-appropriate script (`?platform=macos|linux` → a `.sh` carrying the same per-device token and nothing swarm-wide, refusing the same loopback and quotable-character cases), the Desktop tile offers it by detected platform, and one real macOS or Linux machine with no checkout registers owned through that file — recorded in the real-boundary audit.
 
 ### Node enrolment is the blocker for every remote-node capability

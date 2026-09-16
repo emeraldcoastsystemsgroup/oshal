@@ -4,17 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Take the view on screen somewhere else: the current scope as a Mermaid block (erDiagram for tables, flowchart for the owner graph, the same shape scripts/schema-docs/render.js writes into the committed pages so a paste into markdown renders unchanged), as scoped JSON, and as a standalone SVG. Entirely client-side - the snapshot is already in the page, so nothing new is asked of the server and no scope can escape the operator gate that fetched it. Refuses by name when the view drew nothing, rather than emitting a diagram that will not parse.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Stop carrying a second copy of the erDiagram renderer. The entity/attribute/relationship rendering now comes from ./er-diagram.mjs, the same module scripts/schema-docs/render.js requires, so the block a reader copies out of the explorer and the block committed into docs/architecture/data-model are the SAME code rather than two implementations a parity test notices have diverged. What stays here is what is the page's own: the refusals, the owner flowchart, the scoped JSON, the standalone SVG and the download.
  */
 
-const TYPE_ALIASES = [
-  [/^timestamp(\(\d+\))? with time zone/, 'timestamptz'],
-  [/^timestamp(\(\d+\))? without time zone/, 'timestamp'],
-  [/^time(\(\d+\))? with time zone/, 'timetz'],
-  [/^character varying/i, 'varchar'],
-  [/^character\b/i, 'char'],
-  [/^double precision/i, 'float8'],
-  [/^bit varying/i, 'varbit'],
-];
+import { mermaidDiagram, mermaidName, mermaidType } from './er-diagram.mjs';
+
+// Re-exported so a reader of this module - and its guards - reach the renderer the page actually
+// uses, not a lookalike.
+export { mermaidName, mermaidType };
 
 /** Colours and strokes the page gets from data-model.css, frozen for a file that travels alone. */
 const SVG_STYLE = `
@@ -47,33 +44,6 @@ export function exportRefusal(message) {
 }
 
 /**
- * @description Reduce a Postgres/SQLite type to a Mermaid-legal attribute token. Kept identical to
- * the committed-docs generator so a block pasted beside a generated page reads the same.
- * @param {string} type - e.g. `timestamp with time zone`, `character varying(64)`, `text[]`
- * @returns {string} e.g. `timestamptz`, `varchar`, `text_array`
- */
-export function mermaidType(type) {
-  const raw = String(type || 'unknown').trim();
-  const isArray = /\[\]$/.test(raw);
-  let base = raw.replace(/\[\]$/, '');
-  const alias = TYPE_ALIASES.find(([re]) => re.test(base));
-  base = alias ? alias[1] : base.replace(/\(.*\)/, '');
-  base = base.replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'unknown';
-  return isArray ? `${base}_array` : base;
-}
-
-/**
- * @description Make any identifier safe as a Mermaid entity or attribute name — a table named with
- * a dot or a leading digit would otherwise break the whole diagram, not just its own line.
- * @param {string} name - raw identifier
- * @returns {string} identifier of only [A-Za-z0-9_-], never digit-initial
- */
-export function mermaidName(name) {
-  const safe = String(name).replace(/[^A-Za-z0-9_-]/g, '_');
-  return /^[A-Za-z_]/.test(safe) ? safe : `_${safe}`;
-}
-
-/**
  * @description Text safe inside a double-quoted Mermaid label: one line, no quotes, bounded.
  * @param {string} text - raw label
  * @returns {string} label text
@@ -84,76 +54,15 @@ function mermaidLabel(text) {
 }
 
 /**
- * @description Which of a relation's columns carry a key role. Owner columns come from the
- * snapshot's own RLS summary rather than a second classifier, so the page cannot disagree with the
- * server about who owns a row.
- * @param {object} relation - a snapshot relation record
- * @returns {Map<string, string[]>} column -> roles among PK / FK / UK / owner
- */
-function keyRoles(relation) {
-  const roles = new Map();
-  const add = (col, role) => { if (!roles.has(col)) roles.set(col, []); if (!roles.get(col).includes(role)) roles.get(col).push(role); };
-  (relation.primaryKey || []).forEach((c) => add(c, 'PK'));
-  (relation.foreignKeys || []).forEach((fk) => (fk.columns || []).forEach((c) => add(c, 'FK')));
-  (relation.uniques || []).filter((u) => u.length === 1).forEach((u) => add(u[0], 'UK'));
-  ((relation.access && relation.access.ownerColumns) || []).forEach((c) => add(c, 'owner'));
-  return roles;
-}
-
-/**
- * @description Attribute lines for one entity: key columns only, so a forty-table scope stays
- * legible; a keyless relation still shows one column so its box is not empty.
- * @param {object} relation - a snapshot relation record
- * @returns {string[]} indented attribute lines
- */
-function diagramAttributes(relation) {
-  const roles = keyRoles(relation);
-  const columns = relation.columns || [];
-  const cols = columns.filter((c) => roles.has(c.name));
-  const shown = cols.length ? cols : columns.slice(0, 1);
-  return shown.map((c) => {
-    const r = roles.get(c.name) || [];
-    const keys = r.filter((x) => x !== 'owner').join(', ');
-    const note = r.includes('owner') ? ' "owner"' : '';
-    return `    ${mermaidType(c.type)} ${mermaidName(c.name)}${keys ? ` ${keys}` : ''}${note}`;
-  });
-}
-
-/**
- * @description Relationship line for one foreign key, parent on the left. Cardinality is read from
- * the real column nullability and key set, not assumed.
- * @param {object} relation - child relation record
- * @param {object} fk - `{columns, refTable}`
- * @returns {string} e.g. `  tickets ||--o{ work_items : "ticket_id"`
- */
-function relationshipLine(relation, fk) {
-  const cols = fk.columns || [];
-  const columns = relation.columns || [];
-  const nullable = cols.some((c) => (columns.find((x) => x.name === c) || {}).nullable !== false);
-  const unique = [relation.primaryKey || [], ...(relation.uniques || [])].some((k) => k.length === cols.length && cols.every((c) => k.includes(c)));
-  return `  ${mermaidName(fk.refTable)} ${nullable ? '|o' : '||'}--${unique ? 'o|' : 'o{'} ${mermaidName(relation.name)} : "${cols.join(', ')}"`;
-}
-
-/**
- * @description A fenced `erDiagram` for exactly the relations given, in the shape
- * `scripts/schema-docs/render.js` writes into the committed pages.
+ * @description A fenced `erDiagram` for exactly the relations given, drawn by the one renderer
+ * `scripts/schema-docs/render.js` also uses, so a block pasted beside a generated page is the same
+ * text that page holds.
  * @param {object[]} relations - snapshot relation records, in draw order
  * @returns {string} a fenced mermaid block
  */
 export function toErDiagram(relations) {
   if (!relations.length) throw exportRefusal('This view drew no tables, so there is no erDiagram to copy.');
-  const lines = ['```mermaid', 'erDiagram'];
-  for (const r of relations) lines.push(`  ${mermaidName(r.name)} {`, ...diagramAttributes(r), '  }');
-  const seen = new Set();
-  for (const r of relations) {
-    for (const fk of r.foreignKeys || []) {
-      if (!fk.refTable) continue;
-      const line = relationshipLine(r, fk);
-      if (!seen.has(line)) { seen.add(line); lines.push(line); }
-    }
-  }
-  lines.push('```');
-  return lines.join('\n');
+  return mermaidDiagram(relations);
 }
 
 /**
