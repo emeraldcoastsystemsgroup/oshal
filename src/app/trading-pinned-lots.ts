@@ -22,6 +22,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — FORCE-RLS lot table, rules normalizer (pct XOR price per leg; stop XOR trailing), intent/list/get/release, pinnedQtyBySymbol + the pure overlay, the tick state machine with injectable venue deps (shared with the event-plan leg), and the `lot-` request-id convention.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | createPinnedLotIntent accepts `notBefore` (ADR-136 D4: a TIMED entry is placed later by the leg) and stepPendingFill's "entry never placed within 2 days" release clock starts at max(createdAt, notBefore) — a protected order dated a week out is no longer released before it can fire.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  *
  * @module trading-pinned-lots
  */
@@ -29,7 +30,7 @@
 import * as crypto from 'crypto';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
-import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import type { TradingBook, Position, OrderResult } from '@/features/trading';
 import { loadBook } from './trading-books-store';
 import { guardrails, TradingError } from './trading-engine';
@@ -87,7 +88,7 @@ export function isLotOrderClientId(clientOrderId: unknown): boolean { return Str
 /** @description Create the FORCE-RLS lot table (idempotent). */
 export async function ensurePinnedLotsSchema(pool: AppContext['pool']): Promise<void> {
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading pinned lots',
+    pool, moduleName: 'trading pinned lots', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_pinned_lots (
         lot_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

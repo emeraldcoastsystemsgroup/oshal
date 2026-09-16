@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The wash-sale guard measured from the VENUE ADAPTER, which is where the defect enters. Every existing spec hands exitsToRun a hand-built Position, so all of them stay green if the Schwab mapping stops carrying `averagePrice` onto `avgEntryPrice` or starts carrying something else - and the veto is then measuring a number the adapter no longer produces. This drives a RECORDED Schwab `?fields=positions` payload through SchwabBrokerAdapter.getPositions() and then through the fire's own computeExits, and asserts: a position whose venue average exceeds the engine's own fill price (the wash-sale adjustment folded into the replacement shares) emits NO stop and NO trim; a real decline past the stop measured from the engine's OWN fill price still emits one; and a holding the engine has no fill for emits nothing at all even though it breaches both the stop and the per-name cap. Scoped double: the pool. The ledger query has its own real-PostgreSQL companion in trading-engine-cost-basis-postgres.spec.ts; the boundary THIS spec exists to cross is the adapter, and that one is real.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The stand-in pool answers `connect()` too. A bootstrap that names an advisory lock key checks out ONE client and issues every statement on it, so a stand-in pool has to answer `connect()` as well as `query()`. The client shares the same reader, so the two reads this spec depends on - the engine's own filled orders and the empty trailing-peak table - are answered identically however the path reaches them.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -66,18 +67,21 @@ function venuePosition(symbol: string, qty: number, averagePrice: number, last: 
  * @returns The stand-in pool.
  */
 function poolFor(fills: Fill[]): AppContext['pool'] {
+  const query = async (sql: string) => {
+    if (/FROM oshal_trading_orders/i.test(sql)) {
+      return {
+        rows: fills.map((f) => ({
+          symbol: f.symbol.toUpperCase(), side: f.side,
+          filled_qty: f.filled_qty, filled_avg_price: f.filled_avg_price,
+        })),
+      };
+    }
+    return { rows: [], rowCount: 0 };
+  };
   return {
-    query: async (sql: string) => {
-      if (/FROM oshal_trading_orders/i.test(sql)) {
-        return {
-          rows: fills.map((f) => ({
-            symbol: f.symbol.toUpperCase(), side: f.side,
-            filled_qty: f.filled_qty, filled_avg_price: f.filled_avg_price,
-          })),
-        };
-      }
-      return { rows: [], rowCount: 0 };
-    },
+    query,
+    // The advisory-lock bootstrap path runs its statements on a checked-out client, not the pool.
+    connect: async () => ({ query, release: () => { /* a fake pool has nothing to reclaim */ } }),
   } as unknown as AppContext['pool'];
 }
 
