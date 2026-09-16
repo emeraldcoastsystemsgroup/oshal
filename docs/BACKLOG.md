@@ -274,7 +274,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   `CREATE TRIGGER` pair, and `40P01` deadlock detected. After the lock: five consecutive runs, byte-identical (`2 failed | 107 passed | 41 skipped`), zero occurrences of any of those codes.
 - **Guard:** `tests/unit/trading-schema-bootstrap-race.spec.ts` starts its own PostgreSQL and drives
   four independent copies of the trading modules (`vi.resetModules()` — a second vitest worker in
-  everything but the process boundary) at it at once, on an empty database and again on a built one.
+  everything but the process boundary) at it at once, on an empty database and again on a built one - after a repair: as first written the four copies were constructed with `Promise.all`, and `vi.resetModules()` clears the registry synchronously, so all four shared ONE module instance and only the un-memoised `ensurePeaksTable` actually raced. That is why coverage of the other sixteen is now asserted STATICALLY by `tests/unit/trading-schema-lock-coverage.spec.ts`, which names any trading bootstrap missing the family lock key and fails on it - the concurrency spec cannot, because the locked books/accounts prologue staggers cold workers enough to hide a single downstream miss. Three trading modules issue bare DDL outside that helper and hold no lock at all (`trading-bar-store`, `trading-config-overrides`, `trading-strategy-lab-store`); they are named by that guard so a fourth cannot join them quietly.
   Red on the unlocked tree in 3 of 3 runs, green in 5 of 5 after. Registered in the isolated nightly
   set (`scripts/ci/run-nightly-isolated.mjs`) and on the Test Lab `nightly-isolated-regression`
   scenario, which is the only gate that executes a Docker-owning spec.

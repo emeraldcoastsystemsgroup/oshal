@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The guard for the trading schema bootstrap race. Running the trading unit specs without `--no-file-parallelism` failed three of them in `beforeAll` with `trigger "trg_trd_signals_book_fill" for relation "oshal_trading_signals" already exists`: every trading bootstrap took the NO-LOCK path of runRuntimeSchemaBootstrap, so two vitest workers sharing one database interleaved their DDL. This spec reproduces that against a REAL PostgreSQL it starts itself - `vi.resetModules()` mints independent copies of the memoizing modules, which is what a second worker process is - and asserts every concurrent bootstrapper succeeds, on an empty database and again on an already-built one. On the unlocked tree it reports the three collision classes by SQLSTATE: 42710 on the DROP/CREATE TRIGGER pair and on the check-then-CREATE POLICY pair, and 23505 on pg_type_typname_nsp_index / pg_class_relname_nsp_index because CREATE TABLE IF NOT EXISTS is not race-safe. It is green under the advisory lock, so the race cannot come back unnoticed.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Correct SEQ 1 and build the workers ONE AT A TIME. vi.resetModules() clears the registry synchronously, so constructing four copies with Promise.all left all four sharing ONE module instance - measured as one distinct copy per ensure function. The eight memoised bootstraps therefore ran once each and could not race themselves; the only genuine concurrency was ensurePeaksTable, the one with no memo, which is why this file stayed green with the lock removed from sixteen of seventeen modules including trading-schema.ts. Sequential construction measures four. And because even four real workers are staggered by the locked books/accounts prologue, coverage of the OTHER sixteen is asserted statically in trading-schema-lock-coverage.spec.ts rather than hoped for here.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { Pool } from 'pg';
@@ -40,26 +41,28 @@ interface TradingBootstrapModules {
 }
 
 /**
- * @description Load a FRESH copy of every trading schema module, the way a second vitest worker
- * process would have one. `vi.resetModules()` clears the module registry, so the per-module
- * `schemaReady` memo that normally makes the bootstrap run once is minted anew — which is exactly
- * the state a separate process is in, and the only way to make two bootstraps of the same schema
- * race inside one test run.
+ * @description Load a FRESH copy of every trading schema module, so its per-module `schemaReady`
+ * memo is minted anew and two bootstraps of the same schema can race inside one test run.
+ *
+ * MUST be awaited one at a time. `vi.resetModules()` clears the registry synchronously, so calling
+ * it four times before any import resolves leaves all four callers sharing ONE instance — measured
+ * as one distinct copy per ensure function, which is why this guard once passed with the lock
+ * removed from sixteen of seventeen modules. Sequential construction measures four.
  * @returns The ensure functions of one independent module instance, named for failure messages.
  */
 async function freshTradingModules(): Promise<TradingBootstrapModules> {
   vi.resetModules();
-  const [schema, pinned, plans, dated, equity, daily, gate, rotation, peaks] = await Promise.all([
-    import('../../src/app/trading-schema'),
-    import('../../src/app/trading-pinned-lots'),
-    import('../../src/app/trading-event-plans'),
-    import('../../src/app/trading-dated-orders'),
-    import('../../src/app/trading-equity-guard'),
-    import('../../src/app/trading-daily-equity-store'),
-    import('../../src/app/trading-gate-block-store'),
-    import('../../src/app/trading-rotation-store'),
-    import('../../src/app/trading-peaks-store'),
-  ]);
+  // Sequential on purpose: Promise.all here resolves every import against whichever registry state
+  // the last resetModules left, collapsing the workers into one instance.
+  const schema = await import('../../src/app/trading-schema');
+  const pinned = await import('../../src/app/trading-pinned-lots');
+  const plans = await import('../../src/app/trading-event-plans');
+  const dated = await import('../../src/app/trading-dated-orders');
+  const equity = await import('../../src/app/trading-equity-guard');
+  const daily = await import('../../src/app/trading-daily-equity-store');
+  const gate = await import('../../src/app/trading-gate-block-store');
+  const rotation = await import('../../src/app/trading-rotation-store');
+  const peaks = await import('../../src/app/trading-peaks-store');
   return {
     ensure: [
       { name: 'ensureTradingSchema', run: schema.ensureTradingSchema },
@@ -98,7 +101,9 @@ async function bootstrapConcurrently(workers: readonly TradingBootstrapModules[]
 
 describe('the trading schema bootstrap is safe to run concurrently against one database', () => {
   it('four independent bootstrappers build the schema on an EMPTY database without colliding', async () => {
-    const workers = await Promise.all(Array.from({ length: WORKERS }, () => freshTradingModules()));
+    const workers: TradingBootstrapModules[] = [];
+    // One at a time — see freshTradingModules: parallel construction yields one shared copy.
+    for (let i = 0; i < WORKERS; i += 1) workers.push(await freshTradingModules());
     const failures = await bootstrapConcurrently(workers);
     expect(failures, `concurrent bootstrap failed:\n${failures.join('\n')}`).toEqual([]);
 
@@ -120,7 +125,9 @@ describe('the trading schema bootstrap is safe to run concurrently against one d
   it('four more bootstrappers re-run over the ALREADY-built schema without colliding', async () => {
     // The reported failure shape: the trigger already exists, so every worker issues
     // `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER` and two of them interleave.
-    const workers = await Promise.all(Array.from({ length: WORKERS }, () => freshTradingModules()));
+    const workers: TradingBootstrapModules[] = [];
+    // One at a time — see freshTradingModules: parallel construction yields one shared copy.
+    for (let i = 0; i < WORKERS; i += 1) workers.push(await freshTradingModules());
     const failures = await bootstrapConcurrently(workers);
     expect(failures, `concurrent re-bootstrap failed:\n${failures.join('\n')}`).toEqual([]);
 
