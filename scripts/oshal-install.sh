@@ -266,14 +266,13 @@ require_auth_mode() {
   [ "$AUTH_MODE" = "basic" ] || return 0
   [ -n "$ADMIN_PASSWORD" ] && return 0
   if [ ! -t 0 ]; then
-    ADMIN_PASSWORD="$(rand | cut -c1-20)"
-    GENERATED_PASSWORD=1
+    GENERATED_PASSWORD=1                              # generated in seed_first_admin, once rand() exists
     return 0
   fi
   while : ; do
     printf '   password for %s (min 10 chars, input hidden, Enter to generate one): ' "$ADMIN_EMAIL"
     stty -echo 2>/dev/null; read -r _pw1 || true; stty echo 2>/dev/null; echo
-    if [ -z "$_pw1" ]; then ADMIN_PASSWORD="$(rand | cut -c1-20)"; GENERATED_PASSWORD=1; return 0; fi
+    if [ -z "$_pw1" ]; then GENERATED_PASSWORD=1; return 0; fi
     if [ "${#_pw1}" -lt 10 ]; then echo "   too short — the store requires at least 10 characters" >&2; continue; fi
     printf '   confirm: '; stty -echo 2>/dev/null; read -r _pw2 || true; stty echo 2>/dev/null; echo
     [ "$_pw1" = "$_pw2" ] && { ADMIN_PASSWORD="$_pw1"; return 0; }
@@ -828,6 +827,8 @@ seed_first_admin() {
     return 0
   fi
   say "creating the administrator account"
+  # rand() is in scope by now; the prompt block deliberately did not reach for it.
+  if [ -z "$ADMIN_PASSWORD" ]; then ADMIN_PASSWORD="$(rand | cut -c1-20)"; GENERATED_PASSWORD=1; fi
   _proof="$(docker exec oshal-local-api node scripts/oshal-setup-root.mjs --origin "$_origin" 2>/dev/null     | sed -n 's/^Installer setup code: //p' | tr -d '
 ')"
   if [ -z "$_proof" ]; then
