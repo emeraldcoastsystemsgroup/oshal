@@ -12,16 +12,19 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Compare rendered menu backdrops and retain accessible utilities and applications in full and short viewports.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Retain navigation, draft, timeout and menu regressions with the shared OSHAL menu beside the brand in both layouts.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Require bounded, verified cleanup of only the isolated browser process after every retained assertion completes.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  * =============================================================================
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import sharp from 'sharp';
 import { startWorkspaceNavigationFixture } from '../fixtures/workspace-navigation';
-import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
+import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
+
+vi.setConfig({ hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 
 let fixture: Awaited<ReturnType<typeof startWorkspaceNavigationFixture>>;
 let browser: Browser, context: BrowserContext, page: Page;

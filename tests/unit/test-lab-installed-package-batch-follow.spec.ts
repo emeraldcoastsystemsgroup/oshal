@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the batch-history follow on the real server with the real Create package: a local admin session, disposable pgvector Postgres, Docker runners, real Chromium, no refresh click.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  */
 // The live api admits only a signed-in session to the Test Lab data routes, so the native
 // observation cannot be scripted against it. This spec is the local-host equivalent: the REAL
@@ -14,7 +15,7 @@
 // identity cannot be used here: under MOCK_OIDC no login provider is configured, so the server-owned
 // batch cannot re-derive its operator and cancels itself. Nothing here touches the live api,
 // database, Redis or Chroma: every address the server would dial is pinned to a closed port.
-import { afterAll,beforeAll,expect,it } from 'vitest';
+import { afterAll,beforeAll,expect,it,vi } from 'vitest';
 import { type APIRequestContext,type Browser,type BrowserContext,type Page } from 'playwright';
 import { execFileSync,spawn,type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -24,7 +25,9 @@ import { join,relative,resolve } from 'node:path';
 import { Pool } from 'pg';
 import { bootstrapFirstAdmin,ensureLocalUserSchema,localSubForEmail } from '@/features/local-auth';
 import { DatabaseBootstrapService } from '@/features/tool-registry/services/database-bootstrap-service';
-import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
+import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
+
+vi.setConfig({ hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 
 /** OSHAL_STORE_REPO is what scripts/ci-local.sh exports to the unit gate; OSHAL_STORE_DIR is its kernel-skills sibling. */
 const STORE = resolve(process.env.OSHAL_STORE_DIR ?? process.env.OSHAL_STORE_REPO ?? join(process.cwd(),'..','oshal-applications'));

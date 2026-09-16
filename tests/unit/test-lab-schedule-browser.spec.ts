@@ -9,8 +9,9 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Exercise catalog refresh during an actual pending schedule creation and correlate refreshed rows with their created identifier.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Prove single-package batch admission, selector preservation and uncertain-response refusal with real services and exact-owned browser cleanup.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove run history stays current across the gaps between batch children, a selection change and the terminal read without a manual refresh.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  */
-import { afterAll,afterEach,beforeAll,beforeEach,expect,it } from 'vitest';
+import { afterAll,afterEach,beforeAll,beforeEach,expect,it,vi } from 'vitest';
 import { type Browser,type BrowserContext,type Page } from 'playwright';
 import { readFileSync,writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -18,8 +19,10 @@ import type { Pool } from 'pg';
 import { DisposableAlertPostgres } from '../helpers/disposable-alert-postgres';
 import { SCHEDULE_ACTOR,startTestLabScheduleFixture } from '../fixtures/test-lab-schedules';
 import type { TestLabScheduleService } from '@/app/routes/test-lab-schedule-service';
-import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
+import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
 import yaml from 'js-yaml';
+
+vi.setConfig({ hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 
 const database = new DisposableAlertPostgres();
 let pool: Pool,browser: Browser,context: BrowserContext,page: Page;
@@ -37,7 +40,7 @@ afterAll(async () => {
     if (cleanup && process.env.OSHAL_BATCH_CLEANUP_DIR) writeFileSync(resolve(process.env.OSHAL_BATCH_CLEANUP_DIR,
       `package-batch-browser-cleanup-${cleanup.pid}-${Date.now()}.json`),JSON.stringify(cleanup,null,2)+'\n',{ flag: 'wx' });
   } finally { await database.stop(); }
-},30000);
+}, BROWSER_HOOK_TIMEOUT_MS);
 beforeEach(async () => {
   await pool.query('TRUNCATE oshal_test_lab_schedule_batches,oshal_test_lab_schedules,oshal_test_lab_runs');
   fixture = await startTestLabScheduleFixture(pool); packageSource = fixture.addPackage({ name: 'schedule-browser' });

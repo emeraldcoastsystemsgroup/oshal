@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Cover the watchdog's abandon with a delete whose work is a NATIVE child that outlives its bash wrapper, the shape of robocopy.exe under `timeout`. The existing timeout case overrides the primitive with a bash `sleep`, so it proves the watchdog unblocks but cannot see an orphaned native process: against the old `kill "$pid"` the child was still running (and still deleting) after the FAIL line. The new case asserts the child is gone, and its heartbeat frozen, shortly after purge_tree returns.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Judge the abandon's three outcomes separately, because the one thing it could not do was tell them apart: found descendants, enumerated and genuinely none, and could not enumerate at all were two messages for three facts, and on this box - where Git Bash's ps rejects `-eo` - the third was printed as the second. The walk itself is driven over a fixture process table so the POSIX descendants-then-parent branch is exercised on any box (it kills real spawned processes, and its deepest-first order is asserted), while the real reader is judged against the platform it is actually running on. Reverting either could-not-look branch turns these cases red, which is the property that makes them a guard rather than a description.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Drive a real native GRANDCHILD under a `timeout` through the abandon, and judge the process-table reader by whether it ANSWERS. Entry 3 pinned the honest refusal, and on Windows that refusal was every abandon that fell past taskkill - nothing was ever killed by enumeration here, and the reader case asserted that refusal as the contract. The new case is the exact shape of the production primitive (`timeout` wrapping a native binary, which then spawns its own native child) and it goes red against either half of the reader alone: measured 2026-09-15, Windows' own table answers with an EMPTY descendant list for it because an MSYS exec leaves a dead parent pid on the `timeout` row, and Git Bash's `ps` cannot see the grandchild at all. The grandchild is spawned detached on purpose - libuv otherwise puts it in a job object that dies with its parent, which would let a walk that never reached it look like it had. The could-not-look cases are unchanged and still go red when their branch is collapsed.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Follow the prepare_head_src call site to its new shape. A purge FAIL no longer returns from the gate: the inherited export is moved aside and the run keeps going, so the text pinned here is the `if ! purge_tree` head rather than `|| return 1`. What that pin used to stand in for - what the run actually DOES with an export it cannot clear - is now run rather than read, in tests/unit/ci-local-inherited-export.spec.ts.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -424,9 +425,9 @@ describe('ci-local.sh purges its exports through the bounded helper', () => {
     expect(CI_SOURCE).toMatch(/^\. "\$REPO_DIR\/scripts\/ci\/ci-purge\.sh"$/m);
   });
 
-  it('prepare_head_src purges the previous ci-src export with purge_tree and fails the gate when it cannot', () => {
+  it('prepare_head_src purges the previous ci-src export with purge_tree, never a bare rm -rf', () => {
     const body = functionBody('prepare_head_src');
-    expect(body).toContain('purge_tree "$GATE_SRC" || return 1');
+    expect(body).toContain('if ! purge_tree "$GATE_SRC"; then');
     expect(body).not.toMatch(/rm -rf "\$GATE_SRC"/);
   });
 
