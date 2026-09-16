@@ -9,6 +9,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | BUG-20 guards join the fixed isolated set: a re-drained alert event changes the world once, and consolidateLanded applies each effect once, both on disposable PostgreSQL.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | The local CI export-purge and partial-secret-scan guards join the fixed isolated set: both run production pieces of scripts/ci-local.sh in Git Bash against disposable trees and a stand-in scanner.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | The three trading guards that now own their PostgreSQL join the fixed isolated set. They used to take a DSN from the environment, and this runner deliberately blanks every database variable it passes down - so they could only ever have refused here. Now they start and destroy their own container, which is exactly what this gate is for, and it is the only place they actually EXECUTE: the plain unit gate has nothing to point them at. isolatedEnvironment needs no new key for them, because they read no address at all.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | The trading schema bootstrap race guard joins the fixed isolated set. It starts its own PostgreSQL and bootstraps the trading family from several independent module copies at once, so it needs Docker and no address - the same shape as the three trading guards above, and the only gate that can execute it.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | The inherited-export guard joins the fixed isolated set beside the purge guard. It runs ci-local.sh's own gate sequence in Git Bash over a state directory that already holds the previous run's export - the state the 2026-09-09 nightly wedged nine hours in - so the run that has to survive a leftover is executed here rather than reasoned about.
  */
 import { spawn, execFileSync } from 'node:child_process';
@@ -35,6 +36,7 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/trading-engine-cost-basis-postgres.spec.ts',
   'tests/unit/trading-event-plans.spec.ts',
   'tests/unit/trading-earnings-rules.spec.ts',
+  'tests/unit/trading-schema-bootstrap-race.spec.ts',
 ]);
 
 /**

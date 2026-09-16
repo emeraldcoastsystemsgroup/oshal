@@ -19,13 +19,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-(sub,mode,gate,symbol,ET-day) blocked-entry ledger so the earnings blackout (and future gates) accumulate scoreable counterfactual evidence instead of vanishing into recreate-wiped logs.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 book re-key (PR1) + the RLS this table was missing by omission (schema-map finding): book_id column (trigger-before-backfill), book-scoped unique index, owner RLS at the DDL chokepoint. Accepts TradingBook or legacy mode.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  *
  * @module trading-gate-block-store
  */
 
 import type { AppContext } from './composition-root';
 import type { TradingBook, TradingMode } from '@/features/trading';
-import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { ensureBooksSchema, legacyBook } from './trading-books-store';
 import { createChildLogger } from '@/shared/logger';
 
@@ -40,7 +41,7 @@ function etDay(ms: number = Date.now()): string {
 export async function ensureGateBlockTable(pool: AppContext['pool']): Promise<void> {
   await ensureBooksSchema(pool);
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading gate blocks',
+    pool, moduleName: 'trading gate blocks', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_gate_blocks (
         user_sub TEXT NOT NULL, mode TEXT NOT NULL, gate TEXT NOT NULL,
