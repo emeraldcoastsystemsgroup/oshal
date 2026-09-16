@@ -26,6 +26,7 @@
   20 | maintainer@emeraldcoastsystemsgroup.com | Load optional top workspace navigation styling independently from the selected color skin.
   21 | maintainer@emeraldcoastsystemsgroup.com | Keep one Home destination and group labeled secondary controls outside the top workspace row.
   22 | maintainer@emeraldcoastsystemsgroup.com | Load locked local Markdown and icon assets so external CDNs cannot block shell parsing; remove the unused parent graph preload.
+  23 | maintainer@emeraldcoastsystemsgroup.com | Added the status-bar durable-storage indicator, hidden until a store advertised as durable is serving from memory or readiness cannot be read.
 -->
 <html lang="en" data-theme="workspace">
 <head>
@@ -308,6 +309,13 @@
     <div class="status-item" title="Queue Size">
       <i class="ph ph-hourglass"></i>
       <span id="statusQueue">Q: --</span>
+    </div>
+    <!-- Durable-storage indicator. Hidden while persistence is healthy (or deliberately
+         database-less) so the bar stays quiet; shown only when a store that advertises
+         durable storage is serving from memory, or when readiness could not be read. -->
+    <div class="status-item hidden" id="statusPersistenceItem" data-persistence-state="unread">
+      <i class="ph ph-database"></i>
+      <span id="statusPersistence" class="status-persistence"></span>
     </div>
   </footer>
 

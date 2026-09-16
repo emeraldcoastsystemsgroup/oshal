@@ -53,6 +53,7 @@
  * 47 | maintainer@emeraldcoastsystemsgroup.com | Apply profile colors only on explicit opt-in so the portal chooser remains authoritative across applications.
  * 48 | maintainer@emeraldcoastsystemsgroup.com | Bind relocated workspace options to the existing settings and action handlers.
  * 49 | maintainer@emeraldcoastsystemsgroup.com | Route OSHAL directory intent through the normal Home lifecycle and keep the duplicate chat rail closed beside its embedded Jarvis.
+ * 50 | maintainer@emeraldcoastsystemsgroup.com | Read the durable-storage indicator once at boot alongside the first metrics read, so a box that came up with a store stranded in memory says so on the first paint rather than at the first 60s poll.
  */
 
 import { ThemeManager } from './theme-manager.js';
@@ -202,6 +203,7 @@ class CockpitApp {
     await this.botSelectorController.loadBots();
     await this.preselectActiveAppBot();
     this.statusController.loadMetrics();
+    this.statusController.loadPersistence();
     this.startPolling();
     if (!this.chatDisabled) {
       await this.chatPanel.restoreSession();
