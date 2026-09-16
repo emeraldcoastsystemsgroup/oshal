@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147 D10, the half that did not ship: the fence read the URL TEXT only, so it refused `https://10.0.0.7/x` and waved through `https://registry.example.test/x` that resolves to the same box - which is the whole SSRF case, because an attacker who can publish a DNS record does not need to type an address literal. The original note said resolving was a TOCTOU and therefore not worth doing; that is only true of validate-then-fetch. This resolves ONCE, judges every answer, and then PINS the approved address for the connection (a `lookup` that returns it, and `http.curloptResolve` for the clone), so there is no second resolution for a rebind to win. Refusal is on ANY private answer, not just the one that would be used, and an empty answer is a refusal rather than a blind fetch.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Close four gaps this fence still had. The CLONE path followed the first redirect straight past the pin - curloptResolve maps only host:port and gits http.followRedirects defaults to initial - so it now refuses redirects, measured with git 2.51.2 against a redirecting origin. NAT64 64:ff9b::/96 was admitted, and on an IPv6-only network with NAT64 the gateway translates 64:ff9b::10.0.0.1 into 10.0.0.1 and the connection succeeds; 6to4, site-local and IPv4-compatible forms join it. And the pinned read used https.globalAgent, whose pool key ignores lookup, so a pooled keep-alive socket never consulted the pin.
  */
 
 import dns from 'dns';
@@ -80,7 +81,16 @@ function isBlockedV6(address: string): boolean {
   return text === '::' || text === '::1'
     || /^f[cd][0-9a-f]{2}:/.test(text)
     || /^fe[89ab][0-9a-f]:/.test(text)
-    || /^ff[0-9a-f]{2}:/.test(text);
+    || /^ff[0-9a-f]{2}:/.test(text)
+    // 64:ff9b::/96 is the RFC 6052 NAT64 well-known prefix. On an IPv6-only network with NAT64 -
+    // a deployment target this project documents - the gateway translates 64:ff9b::10.0.0.1 into
+    // 10.0.0.1 and the connection SUCCEEDS, so admitting it hands over the private range wholesale.
+    || /^64:ff9b:/i.test(text)
+    // 2002::/16 (6to4) and fec0::/10 (deprecated site-local) reach the same way on a host that
+    // still honours them; ::a.b.c.d (IPv4-compatible) is the older sibling of ::ffff:a.b.c.d.
+    || /^2002:/i.test(text)
+    || /^fec[0-9a-f]:/i.test(text)
+    || /^::(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(text);
 }
 
 /**
@@ -211,5 +221,12 @@ export function gitResolveArgs(url: string, pinned: PinnedAddress | null): strin
   try { target = new URL(url); } catch { return []; }
   const port = target.port || '443';
   const address = pinned.family === 6 ? `[${pinned.address}]` : pinned.address;
-  return ['-c', `http.curloptResolve=${target.hostname}:${port}:${address}`];
+  // curloptResolve maps only host:port, and git's http.followRedirects defaults to `initial` -
+  // so the FIRST request is followed and its target resolved freely, straight past this pin.
+  // Measured with git 2.51.2: the unmapped redirect target was hit. Refusing redirects is what
+  // makes "the clone path carries the same pin" true; the HTTP path already refuses them.
+  return [
+    '-c', 'http.followRedirects=false',
+    '-c', `http.curloptResolve=${target.hostname}:${port}:${address}`,
+  ];
 }

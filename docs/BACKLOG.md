@@ -1883,9 +1883,22 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   restore it. Local CLI, HTTP and browser regressions cover these paths.
 - **Remaining:** **D7** — dependencies resolve only from the origin registry;
   cross-registry resolution (exactly-one-other-trusted-registry, shown in the preview) and the
-  two-registries fail-closed rule are not built. **D10** — a public hostname that resolves to a
-  private address is not refused; the durable fix pins the resolved address for the fetch rather
-  than validating then fetching.
+  two-registries fail-closed rule are not built.
+- **Built 2026-09-16 — D10.** A registry hostname that resolves into private space is refused, and
+  the approved address is PINNED for the fetch: `fetchRegistryCatalog` hands `https.request` a
+  `lookup` returning the validated address, so the connection cannot be moved by a second DNS answer.
+  Verified against a loopback DNS server and a real resolver seam: 22 address spellings refused
+  (loopback, RFC1918, `169.254.169.254` and its IPv6 form, IPv4-mapped IPv6 in both spellings,
+  decimal/octal/hex integer forms, trailing-dot names, CGNAT, broadcast, multicast), a rebinding name
+  resolved exactly once, HTTP redirects refused, and TLS still validated against the NAME rather than
+  the pinned address. The clone path refuses redirects too (`http.followRedirects=false`), because
+  `http.curloptResolve` maps only `host:port` and git's default follows the first hop straight past
+  the pin — measured with git 2.51.2. NAT64 (`64:ff9b::/96`), 6to4, site-local and IPv4-compatible
+  IPv6 forms are refused as well: on an IPv6-only network with NAT64 the gateway translates
+  `64:ff9b::10.0.0.1` into `10.0.0.1` and the connection succeeds.
+- **Still unfenced, deliberately out of scope here:** the installer child (`scripts/oshal-app.js`)
+  and the preview clone (`app-registry-routes.ts` `entry.source?.url ?? registry.url`), whose nested
+  sparse checkout does fetch.
 - **Done when:** a two-registry dependency spec fails closed on ambiguity; a fence spec where a
   hostname resolving to `10.0.0.0/8` is refused through a real local resolver seam; and ADR-147's
   As built section records the completed behavior and evidence.

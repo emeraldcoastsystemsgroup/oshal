@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147 D10 guard. The defect this covers is a NAME, not a literal: the fence only ever read the URL text, so `https://registry.example.test/acme/apps` sailed through and the controller then fetched whatever that name resolved to - an internal 10.x box, or 169.254.169.254. A spec that stubs DNS proves nothing about that, because the step that was missing IS the resolver step; so this runs a REAL DNS server on loopback (hand-encoded A/AAAA answers over UDP) and a REAL node dns.Resolver pointed at it, and drives the production catalog fetch through it. The pin half is proven at the socket: pinnedLookup sends https.request to a real local listener under a hostname that does not resolve, and the same request without the pin cannot resolve at all - so the address the fence approved, not a second lookup, is what the connection uses.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the pin's WIRING, which was the one control here with no guard: deleting `lookup: pinnedLookup(pinned)` from the catalog read and the curloptResolve args from the clone left this file 15/15 green while the fence silently degraded to validate-then-fetch. This drives the real fetchRegistryCatalog and asserts the lookup it hands https.request yields the approved address, and that the name is resolved exactly once.
  */
 
 import dgram from 'dgram';
@@ -216,6 +217,50 @@ describe('the registry fence resolves the hostname, through a real resolver', ()
     } finally {
       await rebind.close();
     }
+  });
+});
+
+describe('the production read is wired to the pin, not merely validated by it', () => {
+  it('hands https.request a lookup that yields the approved address, and resolves the name once', async () => {
+    // Deleting the pin from fetchRegistryCatalog left the rest of this file green: the fence then
+    // validates an address and fetches whatever DNS says next, which is the TOCTOU it exists to
+    // close. This case fails if the wiring goes away, not just if the helper does.
+    const queries: string[] = [];
+    const server = await startDnsServer((name, qtype) => {
+      queries.push(`${qtype}:${name}`);
+      return qtype === TYPE_A && name === 'wired.test' ? ['203.0.113.77'] : [];
+    });
+    const wire = new dns.promises.Resolver({ timeout: 2000, tries: 1 });
+    wire.setServers([`127.0.0.1:${server.port}`]);
+    const resolver: HostResolver = { resolve4: (h) => wire.resolve4(h), resolve6: (h) => wire.resolve6(h) };
+
+    const seen: Array<Record<string, unknown>> = [];
+    const realRequest = https.request;
+    (https as { request: unknown }).request = ((options: Record<string, unknown>, ...rest: unknown[]) => {
+      seen.push(options);
+      // Fail the connection immediately; the assertion is about what was ASKED for, not the body.
+      const bad = { ...options, host: '127.0.0.1', hostname: '127.0.0.1', port: 1, lookup: undefined };
+      return (realRequest as (o: unknown, ...r: unknown[]) => unknown)(bad, ...rest);
+    }) as typeof https.request;
+
+    try {
+      await fetchRegistryCatalog(source({ url: 'https://wired.test/acme/apps' }), { resolver }).catch(() => undefined);
+    } finally {
+      (https as { request: unknown }).request = realRequest;
+      await server.close();
+    }
+
+    expect(seen.length, 'the catalog read never reached https.request').toBeGreaterThan(0);
+    const lookup = seen[0].lookup as ((h: string, o: unknown, cb: (e: Error | null, a?: string, f?: number) => void) => void) | undefined;
+    expect(lookup, 'fetchRegistryCatalog did not pass a pinned lookup — the fence is validate-then-fetch').toBeTypeOf('function');
+
+    const resolved = await new Promise<string>((done, fail) => {
+      lookup!('wired.test', {}, (err, address) => (err ? fail(err) : done(String(address))));
+    });
+    expect(resolved, 'the pinned lookup did not yield the approved address').toBe('203.0.113.77');
+    // One resolution for the whole read: a second would be the rebinding window reopening.
+    expect(queries.filter((q) => q.endsWith(':wired.test') && q.startsWith(String(TYPE_A))))
+      .toHaveLength(1);
   });
 });
 

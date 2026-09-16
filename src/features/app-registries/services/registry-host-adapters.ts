@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-147 D10: the fence now resolves the hostname of the URL it is ABOUT TO FETCH and pins the approved address for the connection. Two gaps closed. (a) The fence judged URL text only, so an address literal was refused and a NAME pointing at the same box was not - which is the entire SSRF case. (b) The catalog URL is not always the registry URL (a github registry is read from raw.githubusercontent.com), so the check now runs on the address actually dialled. fetch() is replaced by https.request because only the request API accepts a `lookup`, and pinning is what makes this a fence rather than an advisory check - fetch would resolve the name a second time and hand a DNS rebind the race. The clone path carries the same pin through `http.curloptResolve`.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147: the host adapters that make "any git location" literally true. The single-store rail hard-wired GitHub in four places — marketplaceUrl built a raw.githubusercontent URL, install-remote refused any non-github.com source, and buildStoreGitAuth only attached credentials for github.com — so a GitLab or self-hosted repo could not even be READ, let alone installed from. This replaces those chokepoints with three strategies behind one interface: github (raw CDN), gitlab (files API, works for gitlab.com AND self-hosted), and generic-git (a sparse clone, the fallback that assumes no raw-file API at all and therefore covers Gitea, Bitbucket, and a plain HTTPS git server). Credentials keep riding `git --config-env` and an Authorization header, never argv and never the remote URL, so a token cannot leak through a process list or an error string.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Close four gaps this fence still had. The CLONE path followed the first redirect straight past the pin - curloptResolve maps only host:port and gits http.followRedirects defaults to initial - so it now refuses redirects, measured with git 2.51.2 against a redirecting origin. NAT64 64:ff9b::/96 was admitted, and on an IPv6-only network with NAT64 the gateway translates 64:ff9b::10.0.0.1 into 10.0.0.1 and the connection succeeds; 6to4, site-local and IPv4-compatible forms join it. And the pinned read used https.globalAgent, whose pool key ignores lookup, so a pooled keep-alive socket never consulted the pin.
  */
 
 import { execFile } from 'child_process';
@@ -204,7 +205,13 @@ function requestCatalog(
       method: 'GET',
       headers,
       servername: target.hostname,
-      ...(pinned ? { lookup: pinnedLookup(pinned) } : {}),
+      // A pooled keep-alive socket never consults `lookup` — the agent's pool key ignores it — so the
+      // pin would only hold on a fresh connection. This read happens once per catalog fetch, so a
+      // private agent costs nothing and keeps the guarantee whole.
+      ...(pinned ? {
+        agent: new https.Agent({ keepAlive: false }),
+        lookup: pinnedLookup(pinned),
+      } : {}),
     }, (res) => {
       const status = res.statusCode ?? 0;
       // A redirect that changes host would step around the fence entirely.
