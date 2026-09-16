@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Export registered installation verification reports and the shared portable formatter.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Export the ADR-149 rail-tile discoverability resolver, its per-person port and the lock shape a synthesised ribbon item may carry.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Export SwarmAppServiceRouteScheduleDeclaration so the ADR-157 activation wiring can narrow a manifest's schedules to the deterministic ones before reading runsAs/requires.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Export the ADR-145 D4 per-name status plan and its D5 jarvis_tasks fallback composer/reader.
  */
 
 export type {
@@ -102,8 +103,28 @@ export {
   atPointer,
   MAX_SUMMARY_TILES,
   MAX_SUMMARY_ITEMS,
+  humaniseReadinessSlug,
 } from './services';
 export type { HomePlanEntry, HomePlanSummaryProbe, HomePlanTodo } from './services';
+// ADR-145 D4/D5 — a group OR a plain app resolved to one status plan, and the kernel-owned
+// jarvis_tasks fallback for an app that declares no `summary:`.
+export {
+  getAppStatusPlan,
+  readAppTaskFallback,
+  composeAppTaskItems,
+  appTaskTitlePrefixes,
+  APP_STATUS_FALLBACK_ITEMS,
+  APP_STATUS_FALLBACK_ROWS,
+  APP_STATUS_FALLBACK_TEXT_CHARS,
+} from './services';
+export type {
+  AppStatusPlan,
+  AppStatusSummaryProbe,
+  AppStatusUndeclaredApp,
+  AppStatusFallbackApp,
+  AppStatusFallbackItem,
+  AppStatusTaskRow,
+} from './services';
 export type { AppAccessAssignment, AppAccessResolver, ResolvedAppAccess } from './services';
 export type {
   AppSmokeApplicationResult,
