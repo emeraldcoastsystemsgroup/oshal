@@ -548,45 +548,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** a scheduled run completes without any `cannot allocate memory` in its log and with per-gate durations within the same order of magnitude as a manual run on an idle box; and resource-exhaustion failures are reported as a distinct outcome from gate failures, so an out-of-memory night can never again be read as a code regression.
 
 
-### The nightly can wedge for hours deleting its own previous export
-- **Built 2026-09-14 on `fix/ci-local-secret-scan-and-purge`.** The 2026-09-09 23:30 run never got past `head-src`: its first line, `rm -rf "$GATE_SRC"`, was deleting the `ci-src` export (a full `node_modules`) left by the previous night's failed run and sat there from 00:00:50 until it was killed at ~10:00 — 9 hours, 16 CPU-seconds, no progress across a 20-second sample, no file lock, no process on the path — so one hung delete held `ci-local.lock` all night and the run wrote no outcome line and no alert. Every run leaves such an export for the next one to delete. The cause of the hang is not established (MSYS `rm` over a deep `node_modules` tree is the leading candidate, not a finding). Now `prepare_head_src` and `gate_secrets` purge through `scripts/ci/ci-purge.sh` (`purge_tree`): the delete runs in the background under a watchdog (`CI_PURGE_TIMEOUT_SECONDS`, default 600) and ends in exactly one `purge: OK|FAIL|REFUSED` line written through `log`, so it lands in `ci-local.log`; a FAIL fails the gate (`|| return 1`), `run_gate` records it, and the run continues to `secret-scan`, `unpushed-commits` and its outcome line instead of holding the lock. On Windows the primitive is `robocopy /MIR` from an empty directory (the 39 s measurement) followed by `rm -rf` on the emptied shell; elsewhere `rm -rf`; each native call is itself `timeout`-bounded. Abandoning a delete ends the native process tree rather than the bash wrapper that spawned it (`taskkill /T` on the wrapper's Windows pid under Git Bash, descendants-then-parent elsewhere, plain `kill` as the last resort) and the FAIL line names what it killed: signalling the wrapper alone left the delete running unsupervised, free to race a manual cleanup or the next run's purge of the same well-known path — measured on a 26,180-file synthetic export with a 2 s limit, where `purge: FAIL ... the tree is still present` was printed with `Robocopy.exe` still in `tasklist` and the tree still shrinking afterwards (24,121 files at return, 23,058 eight seconds later). Guard: `tests/unit/ci-local-purge.spec.ts` runs the helper in Git Bash on a synthetic 364-directory / 1,092-file tree (one `purge: OK` line, tree gone), proves the watchdog path (`purge: FAIL ... (timeout after 1s; ...`, exit 1, returned in under 15 s, tree left in place for the operator), the abandon of a delete whose work is a native child that outlives its bash wrapper (the child's pid is gone and its heartbeat frozen within seconds of `purge_tree` returning — red against the wrapper-only `kill`), the returned-but-still-present path, the refusal of `/`, a drive root and `$HOME`, and pins that both gates call `purge_tree ... || return 1` with no bare `rm -rf` on either export.
-- **Remaining:** the `git archive | tar` export step after the purge is still unbounded (only `npm ci` carries its own timeout); it was outside this entry's done-when and is untouched.
-- **Done when:** met for the purge — bounded and fail-loud (helper + spec timeout case); clears a real `node_modules` export on this box in minutes (measured on the real leftover `ci-src` from the 2026-09-14 00:15 run — `%LOCALAPPDATA%\oshal\ci-src`, 36,048 files / 4,719 directories counted by `find` immediately before the purge, then one `purge: OK ... (70s)` line, rc=0, path gone); a run that inherits a leftover export reaches its gates and writes an outcome line (a purge FAIL is a `head-src` gate FAIL, which today already continues to the remaining gates and the outcome line).
-### `secret-scan` reports PASS even when gitleaks could not read part of the tree
-- **Built 2026-09-14 on `fix/ci-local-secret-scan-and-purge`.** `gitleaks detect` exits 0 when it fails to read files (measured 2026-09-10 against `origin/main`: 5 of 5077 exported files logged `could not read file: ... cannot allocate memory` and the gate passed; reproduced 2026-09-14 in the installed `zricethezav/gitleaks` v8.30.1 image, which writes `WRN skipping file: permission denied path=...` / `WRN skipping directory error="permission denied" path=...` and exits 0). `gate_secrets` now runs the unchanged scanner invocation (`gitleaks_container_scan`) through `scripts/ci/ci-secret-scan.sh` → `run_secret_scan`, which keeps the scanner's stderr (still replayed into the run log), counts its skipped/unread lines (`could not read file`, `skipping file`, `skipping directory`, `permission denied`, `cannot allocate memory`, matched case-insensitively after stripping the color codes the image emits without a tty) and writes one verdict line — `secret-scan: PASS unread=0 of M exported files (scanner rc=0)` or `secret-scan: FAIL unread=N of M exported files (scanner rc=0) - gitleaks skipped paths it could not read; a partial scan is not a clean scan` — failing the gate on any N above zero and on any non-zero scanner rc. Guard: `tests/unit/ci-local-secret-scan.spec.ts` runs the production `gate_secrets` body in Git Bash against a disposable git repository with a stand-in `docker` first on PATH that replays the image's exact stderr and exits 0: red on `origin/main` (the gate returned 0 on two skipped paths), green now (`FAIL unread=2 of 3 exported files`; `FAIL unread=1 of 3` for the 2026-09-10 wording); a clean scan still passes with `unread=0`; findings still fail with `scanner rc=1`; `ci-scan-src` is purged on every path; the production scanner arguments (`--network none`, `:/scan:ro`, `--no-git --config=/scan/.gitleaks.toml --redact`) are pinned.
-- **Done when:** met — the gate fails on any unreadable path rather than inheriting the exit code; a run with a deliberately unreadable path is shown not to pass (the stand-in replays the real wording because Windows cannot make a file unreadable to the root-running scanner container); the unread count is in the gate's log line.
-### Publish gate: refuse model-attribution trailers at push time
-- **Built 2026-09-14 on `fix/publish-gate-attribution`.** `scripts/publish-gate.sh` check 5b refuses a
-  push whose commits carry model attribution in the MESSAGE: a `-by:` trailer (`Co-Authored-By` in any
-  casing, `Assisted-by`, `Signed-off-by`, ...) naming Claude or Anthropic, the vendor no-reply address
-  anywhere, or "generated with / by / using / via" followed by Claude (the tool footer, link or no
-  link). It matches case-insensitively on the identifier and names each offending commit by short SHA
-  and subject, with the matched line and the reword command. It does not reuse check 5's credential
-  exclusion filter, which drops every line holding `<...>` — the angle brackets every trailer's address
-  sits in.
-- **Scope:** exactly the commits the push publishes. The pre-push hook now calls the gate with
-  `--pre-push` and passes git's ref-update lines on stdin. Before this, check 5 read only
-  `HEAD --not --remotes`, so a push BY SHA (the private-index recipe) with HEAD on another branch
-  published commits the gate never looked at. History the remote already holds stays out of scope —
-  by remote-tracking refs and by git's `<remote sha>` — so the 45 attributed commits reachable from
-  `main` at `d679b696` (the runbook's step-6 query) do not block anyone's push; removing them remains the operator-run scrub in
-  [the runbook](runbooks/model-attribution-scrub.md). The credential / identifier scan keeps HEAD and
-  adds the pushed commits, so it only widened.
-- **Guard:** `tests/unit/publish-gate.spec.ts`, 26 new cases (43 in the file): 13 attribution
-  spellings refused, each row tripping exactly one rule; a clean message, a human co-author, the
-  maintainer and prose naming the model all pass; the fix instructions; the unpushed-range and
-  already-published scope; the pre-push scope (by SHA with HEAD clean, unrelated work on HEAD, git's
-  `<remote sha>` with no remote-tracking refs, a deletion, fail-closed enumeration); and one real
-  `git push` through the real hook. Against origin/main's gate and hook all 26 failed and a demo push
-  landed an attributed commit on the remote, both from HEAD and by SHA; with the change, 43/43 pass
-  and both pushes are refused. 14 of 15 single-point mutations of the gate and hook turned their test
-  red; the survivor re-cased a pattern that `grep -i` folds anyway.
-- **Live when:** `core.hooksPath` points at the shared checkout's `.githooks`, and the hook runs
-  `scripts/publish-gate.sh` from that same working tree, so the wall is up once that tree carries the
-  merged files — not at merge time.
-- **Still a remedy, not a guard:** a PR description is invisible to every hook;
-  `scripts/governance/attribution-scrub/strip_pr_footers.py` (runbook step 7) is how bodies are cleaned.
-
 ### GitHub-side residue of the 2026-09-12 attribution scrub
 - **Remaining:** closed-PR refs `refs/pull/N/head` still reach the old commits (verified on core #426 and #430 after the push) and old SHAs stay viewable at `/commit/<sha>` until GitHub garbage-collects. Only GitHub Support can purge unreachable objects; nothing on any branch carries the attribution and the contributors graph is computed from `main`.
 - **Done when:** either a support request is filed for the three repos and a sample old SHA returns 404 while `git ls-remote origin 'refs/pull/*/head'` no longer reaches an attributed commit, or the operator records here that the residue is accepted.
@@ -639,6 +600,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   passing, while two lanes ran on the box; the pid had exited when checked about a minute later.
 - **Done when:** browser suites that use the fixture pass five consecutive runs while two lanes run on the box,
   and a browser that never exits still fails the suite loudly.
+
+### The ci-local export step after the purge is still unbounded
+
+- **Carried over 2026-09-16** from "The nightly can wedge for hours deleting its own previous export", which closed on its own done-when (the purge is bounded, fail-loud and proven). Its last line named this remainder and left it untouched: the `git archive | tar` export that follows the purge has no timeout of its own — only `npm ci` carries one. A hang there holds `ci-local.lock` exactly the way the unbounded delete did, and produces the same silence: no outcome line, no alert.
+- **Remaining:** bound the export the way `purge_tree` is bounded — a watchdog, one verdict line through `log`, a failure that fails its gate and lets the run continue to its outcome line rather than holding the lock.
+- **Done when:** an export that cannot finish inside its limit ends in a named FAIL line in `ci-local.log`, the run still reaches its outcome line, and a spec proves the timeout path the way `tests/unit/ci-local-purge.spec.ts` proves the purge's.
 
 ## Security, tenancy, and trust boundaries
 
@@ -774,6 +741,13 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Why the obvious fix is wrong:** the same null actor is how an unauthorised reader is refused. `tests/unit/protected-jarvis-thread-return.spec.ts` ("never derives or returns the answer for a principal carrying no verified issuer") pins that a PAT-shaped principal polling the owner's task must NOT cause a summary — so handing every unbound task to the automatic summarizer turns the refusal into a leak. The two cases have to be told apart at the source: "this reader may not have it" versus "this source has no lineage anyone could bind".
 - **Remaining:** distinguish the two at the point of decision (the authority already knows which it answered), return the genuinely unbindable set to the caller, and give it an honest outcome — the automatic summarizer when the work product is not protected at all, otherwise a stated sentence in the thread rather than silence. Leave the refusal path exactly as it is.
 - **Done when:** a protected-classified task whose source has NO executions ends with either an answer or a sentence in the thread it was asked in, proven against the real authority and real PostgreSQL in the existing fixture; and the unauthorised-reader case still produces nothing — same spec file, both cases green.
+
+### The spec-database gate cannot see the live database reached through `docker exec`
+
+- **Found 2026-09-16** verifying the fix for "Two trading specs default their DSN to the operator's LIVE database". The new gate (`scripts/ci/check-spec-database-default.sh`) catches the live databases as a DSN host, a `host:` field and an `env || 'oshal-local-db'` fallback, and catches port 55433 in every careless spelling — but a spec that runs `execFileSync('docker', ['exec', 'oshal-local-db', 'psql', '-c', '...'])` passes clean. That is the same defect class in the spelling the fixed file itself used, and it can WRITE, not just read.
+- **Why it was left:** the exemption is deliberate and written into the script's header — `tests/dynamic-agent-live-e2e.spec.ts` legitimately drives the running deployment that way, and telling the two apart needs a path distinction the gate does not have. The hole is that the exemption is not scoped: a brand-new `tests/unit/*.spec.ts` gets it too.
+- **Remaining:** scope the exemption to the suites whose purpose IS the live stack (an explicit, reviewed list or a directory rule), and refuse the shape everywhere else.
+- **Done when:** a new `tests/unit/` spec that reaches `oshal-local-db` through `docker exec` fails the gate; the live-stack e2e suites still pass it; and the guard spec carries a case for each side.
 
 ## Workflow, agent, and model runtime
 
