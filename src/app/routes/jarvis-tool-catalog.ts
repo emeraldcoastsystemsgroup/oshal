@@ -15,9 +15,10 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Add a closed typed authorization feed adapter with caller-scoped operations and targets.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Advertise current-user package proposals through the authenticated panel with explicit approval and workspace metadata.
  *
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The typed access tools list their exact operations and targets only when the ask is about access (or when there is no ask to judge). That JSON was 39,185 of the 71,817 characters in a live Jarvis prompt and rode every turn, pushing the app catalog, the tool proposals and the user's own question out of the node's untrusted-content window.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | assembleJarvisBotMessage: the turn's prompt leads with the user's words, then the tool guardrails, then the screen/attachment framing, so neither the ask nor the guardrails can be truncated away by a large attachment.
+ *
  * @module jarvis-tool-catalog
- * 6 | maintainer@emeraldcoastsystemsgroup.com   | The typed access tools list their exact operations and targets only when the ask is about access. That JSON was 39,185 of the 71,817 characters in a live Jarvis prompt and rode every turn, pushing the app catalog, the tool proposals and the user's own question out of the node's untrusted-content window.
- * 7 | maintainer@emeraldcoastsystemsgroup.com   | assembleJarvisBotMessage: the turn's prompt leads with the user's words and repeats them last, so the ask survives the node's untrusted-content window no matter how large the context blocks grow.
  */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
@@ -152,21 +153,26 @@ export function buildToolsBlock(context: { message?: string; surface?: string; a
 }
 
 /**
- * @description Assemble what Jarvis sends the bot node for one turn. The user's words lead and are
- * repeated last: the node keeps only the first MAX_UNTRUSTED_BLOCK_CHARS of a direct prompt
- * (prompt-containment), and the context blocks alone reached 71,817 characters on 2026-09-15 —
- * the operator's question sat in the final 41 and was cut off, so the model answered an empty
- * prompt ("Ready. Jarvis is online.") while he waited. Leading with the question keeps the ask
- * inside the window however large the context grows, and the tail repeat keeps it the most recent
- * line the model sees. Never re-order this so the context blocks come first.
+ * @description Assemble what Jarvis sends the bot node for one turn, in the order that survives the
+ * node's containment: the user's words, then the tool guardrails and catalog, then the screen and
+ * attachment framing, then the words again.
+ *
+ * The node keeps only the first MAX_UNTRUSTED_BLOCK_CHARS of a direct prompt (prompt-containment).
+ * On 2026-09-15 the context blocks alone reached 71,817 characters with the operator's question in
+ * the final 41, so it was cut off and the model answered an empty prompt ("Ready. Jarvis is
+ * online.") while he waited. Framing can be just as large — attachments are clipped per document,
+ * not in aggregate — so it goes AFTER the guardrails: whatever is dropped, the ask and the rules
+ * about which tools exist are still in the window. The closing repeat is a convenience for turns
+ * that fit; a turn large enough to truncate loses it, which is why the ask leads as well.
  * @param ctxBlocks - Tools, catalog, open work and plan guidance; may be empty.
- * @param userPart - Screen context, attachments and the user's message, already joined.
- * @param message - The user's words alone, repeated as the closing line.
+ * @param framing - Screen context and attachment digests; may be empty.
+ * @param message - The user's words.
  * @returns The assembled bot message.
  */
-export function assembleJarvisBotMessage(ctxBlocks: string, userPart: string, message: string): string {
-  if (!ctxBlocks) return userPart;
-  return `${userPart}\n\n---\n\n${ctxBlocks}\n\n---\n\nThe user's message again (answer THIS):\n\n${message}`;
+export function assembleJarvisBotMessage(ctxBlocks: string, framing: string, message: string): string {
+  const sections = [message, ctxBlocks, framing].filter(Boolean);
+  if (sections.length === 1) return message;
+  return `${sections.join('\n\n---\n\n')}\n\n---\n\nThe user's message again (answer THIS):\n\n${message}`;
 }
 
 function packageProposalLines(tools: JarvisPackageToolDiscovery[] = []): string[] {
@@ -177,6 +183,24 @@ function packageProposalLines(tools: JarvisPackageToolDiscovery[] = []): string[
     'ASK actions require the user to review the exact input and click Approve. Model approval or confirmation is never authority.',
     'Do not claim success or invent records. Current results appear only in a temporary panel after the real operation; they are not supplied to your model context.',
     ...tools.map(tool => '- ' + JSON.stringify(tool))];
+}
+
+/** Access wording the typed-tool keywords miss on their own; kept next to the gate that uses it. */
+const ACCESS_STEMS = ['access', 'permission', 'authoriz', 'role', 'grant', 'revoke', 'admin', 'member',
+  'who can see', 'who can use', 'entitle', 'privilege'];
+
+/**
+ * @description Match a catalog keyword against an ask by stem, so a plural keyword still matches the
+ * singular a person actually types (and the reverse).
+ * @param ask - The lowercased request plus surface.
+ * @param keyword - One catalog keyword.
+ * @returns Whether the ask mentions that keyword.
+ */
+function matchesAccessStem(ask: string, keyword: string): boolean {
+  const word = keyword.toLowerCase().trim();
+  if (!word) return false;
+  const stem = word.endsWith('s') ? word.slice(0, -1) : word;
+  return ask.includes(word) || ask.includes(stem);
 }
 
 function typedAuthorizationLines(
@@ -192,7 +216,14 @@ function typedAuthorizationLines(
   // the tool proposals, the app catalog and the user's own question out of the window. The exact
   // operations are listed when the ask is about access (the same keyword match the shell tools are
   // ranked by); otherwise the tool is named with its size, so the model still knows it exists.
-  const asksAboutAccess = (metadata.keywords ?? []).some((word) => input.includes(word.toLowerCase()));
+  // No ask to judge (a bare catalog render) gets the full lists: relevance cannot be decided, and a
+  // caller that asked for nothing in particular is not spending a turn's window. Otherwise match by
+  // STEM, because the live wording rarely matches a catalog keyword exactly — "revoke Sarah's role"
+  // and "make Bob an admin on the CRM" are access asks that the plural keywords alone would miss.
+  const ask = input.trim();
+  const asksAboutAccess = ask.length === 0
+    || (metadata.keywords ?? []).some((word) => matchesAccessStem(ask, word))
+    || ACCESS_STEMS.some((stem) => ask.includes(stem));
   const detail = (tool: AuthorizationToolDiscovery): string => (asksAboutAccess
     ? `- ${tool.name}: operations=${JSON.stringify(tool.operations)}; targets=${JSON.stringify(tool.targets)}`
     : `- ${tool.name}: ${tool.operations.length} registered operations over ${tool.targets.length} targets`

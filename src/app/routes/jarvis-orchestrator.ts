@@ -746,7 +746,10 @@ async function summarizeComplexTask(
     // provider facts or prevent the visual. Ordinary work products still use Jarvis's summarizer.
     const trustedSummary = summarizeProviderBoundRecords(automaticProviderRecords);
     const answer = trustedSummary
-      || (await runJarvisBot(ctx, sub, prompt, `jarvis-summary-${taskId}`, true)).answer;
+      // The summary prompt opens with fixed boilerplate, so its first 512 characters are identical
+      // on every summary: pass the task's own title as the retrieval query instead, or the long-tail
+      // search runs the same meaningless query every time.
+      || (await runJarvisBot(ctx, sub, prompt, `jarvis-summary-${taskId}`, true, title)).answer;
     const directives = extractJarvisDirectives(answer);
     const cleanSummary = directives.cleanAnswer;
     const finalSummary = cleanSummary || readableDeliverable.slice(0, 4000);

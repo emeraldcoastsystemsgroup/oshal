@@ -704,9 +704,12 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         // The live screen sits with the attached media: both are authoritative context for THIS turn,
         // and both belong immediately before the user's words so they frame the question being asked.
         const screenBlock = buildSurfaceContextPrompt(surfaceContext);
-        const userPart = [screenBlock, attachments.hasAny ? attachments.promptBlock : '', message]
+        // Framing (the live screen + attachment digests) no longer carries the message itself: the
+        // assembly places the ask ahead of everything, because an attachment-heavy turn can exceed
+        // the node's whole window on its own (documents are clipped per attachment, not in total).
+        const framing = [screenBlock, attachments.hasAny ? attachments.promptBlock : '']
           .filter(Boolean).join('\n\n');
-        botMessage = assembleJarvisBotMessage(ctxBlocks, userPart, message);
+        botMessage = assembleJarvisBotMessage(ctxBlocks, framing, message);
       }
     } catch (err) {
       logger.error({ err, sessionId }, 'jarvis: tool context unavailable');
