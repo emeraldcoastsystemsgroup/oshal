@@ -112,13 +112,18 @@ export class ToolAuthInterceptor {
     toolInput: Record<string, unknown>,
     providerId?: string,
   ): Promise<AuthorizationResult> {
-    if (getEmbeddedTool(toolName)) {
-      return this.checkEmbeddedTool(agentId, toolName, providerId);
-    }
-
     const lookup = await this.lookupAuthMode(agentId, toolName);
 
+    // The REGISTRY decides for any name the registry knows, and the embedded tier is the fallback
+    // for names it does not. Checking embedded first inverted that: `google_search` normalises onto
+    // the shipped `google-search` registry tool (defaultAuthMode 'off'), so a persona file beat the
+    // database and the cockpit toggle stopped working in BOTH directions for the 57 personas that
+    // declare it. An operator's explicit 'off' or 'ask' is not something a provider tier may
+    // overrule.
     if (!lookup) {
+      if (getEmbeddedTool(toolName)) {
+        return this.checkEmbeddedTool(agentId, toolName, providerId);
+      }
       return this.handleUnregisteredTool(toolName);
     }
 

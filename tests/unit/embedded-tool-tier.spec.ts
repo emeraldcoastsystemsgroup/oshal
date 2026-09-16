@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the provider-embedded tool tier. Crosses the boundaries the change claims: a REAL persona YAML file on disk read by the REAL persona loader decides the per-agent grant, the REAL ToolAuthInterceptor decides execution, and the REAL runAgenticLoop produces the run trace. Nothing between the persona file and the ProcessResult is doubled; only the model provider itself is a fixture, because the model is the one thing a unit run must not call.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin the tier ORDER. `google_search` normalises onto the shipped `google-search` registry tool (defaultAuthMode 'off'), and checking embedded first let a persona file beat the database - the tool executed where the registry said off, and 'ask' never reached the approval workflow. Two cases: a registered name keeps the registry's answer, and an unregistered one still reaches the embedded tier so the fallback is not lost.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -255,6 +256,49 @@ class ScriptedProvider extends LLMService {
     };
   }
 }
+
+describe('a name the registry knows is decided by the registry, never by the embedded tier', () => {
+  // google_search normalises onto `google-search`, a shipped baseline registry tool whose
+  // defaultAuthMode is 'off'. Checking embedded FIRST let a persona file beat the database: the
+  // tool executed where the registry said off, and with 'ask' the approval workflow was never
+  // reached. 57 shipped personas name it, so the cockpit toggle was dead in both directions.
+  const COLLIDING = 'google-search';
+
+  it('refuses a registry tool the registry has switched off, even when a persona grants the name', async () => {
+    const executed: string[] = [];
+    const interceptor = new ToolAuthInterceptor({
+      approvalService: {} as unknown as ApprovalWorkflowService,
+      embeddedToolPolicy: createPersonaEmbeddedToolPolicy({ personaDir }),
+      // The registry KNOWS this name and says off. That answer is the whole point of the tier order.
+      lookupAuthMode: async (_agentId, toolName) => (toolName === COLLIDING
+        ? { authMode: AuthMode.OFF, tool: { toolId: 'baseline-google-search', name: COLLIDING } as never }
+        : null),
+    });
+    const executor = interceptor.createInterceptedExecutor(
+      async (name) => { executed.push(name); return `EXECUTED:${name}`; },
+      GRANTED_AGENT,
+      'task-embedded-collide-1',
+      'anthropic',
+    );
+
+    const result = await executor(COLLIDING, {});
+    expect(executed, 'the persona grant overruled the registry and the tool ran').toEqual([]);
+    expect(String(result)).not.toContain('EXECUTED:');
+  });
+
+  it('still reaches the embedded tier for a name the registry does NOT know', async () => {
+    // The fallback must survive the fix, or embedded tools stop working entirely.
+    const { interceptor, executed } = buildInterceptor();
+    const executor = interceptor.createInterceptedExecutor(
+      async (name) => { executed.push(name); return `EXECUTED:${name}`; },
+      GRANTED_AGENT,
+      'task-embedded-collide-2',
+      'anthropic',
+    );
+    expect(String(await executor('web-search', {}))).toContain('EXECUTED:');
+    expect(executed).toEqual(['web-search']);
+  });
+});
 
 describe('the run trace identifies the tier and the provider operation', () => {
   it('traces an embedded tool with its provider operation and a registry tool without one', async () => {

@@ -84,10 +84,11 @@ export function createPersonaEmbeddedToolPolicy(
       if (!descriptor) return null;
 
       const authorizations = loadAuthorizations(agentId);
-      const accepted = new Set<string>([
-        normalizeToolIdentifier(descriptor.name),
-        ...Object.values(descriptor.providerOperations).map(normalizeToolIdentifier),
-      ]);
+      // ONLY the tool's own name. Accepting every provider operation id as a grant key meant one
+      // persona line - `google_search`, which is also the platform authorization key for the Google
+      // Custom Search registry tool - silently granted Anthropic's and OpenAI's server-side web
+      // search too. A grant names the thing it grants.
+      const accepted = new Set<string>([normalizeToolIdentifier(descriptor.name)]);
 
       for (const [declaredName, declaredMode] of Object.entries(authorizations)) {
         if (!accepted.has(normalizeToolIdentifier(declaredName))) continue;
