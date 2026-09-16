@@ -945,11 +945,15 @@ so both `not.toHaveBeenCalled()` assertions could never fail. Nothing in the nod
   3. **A green suite is not a working feature.** This was found in the first live run and could not
      have been found otherwise; the honest posture is that a feature is unproven until it has been
      exercised end to end. See also the observability gap below.
-- **Related gap, not yet fixed.** There is a log line when surface ops are *dropped* for lack of
-  context, but none when they are successfully emitted. Proving this bug required reading the raw
-  pre-strip reply out of the bot container log, because the clean answer and the persisted turn
-  both have the fence already removed. A success-path log line would have made the mismatch
-  visible in one grep.
+- **Related gap, CLOSED.** There was a log line when surface ops are *dropped* for lack of context
+  but none when they are successfully emitted, so proving this bug meant reading the raw pre-strip
+  reply out of the bot container log — the clean answer and the persisted turn both have the fence
+  already removed. `src/app/routes/jarvis-routes.ts` now logs the success path at INFO with the op
+  count, the op names as `custom:<name>`, the target app/screen and the custom names the surface
+  declared, so the mismatch that caused this bug is one grep over the api log. Guarded by
+  `tests/unit/jarvis-surface-context.spec.ts` (`/ask — an emitted-ops turn is diagnosable from the
+  api log alone`), which drives the real router and greps the NDJSON the real pino pipeline writes
+  at the level the compose anchor runs the api at.
 
 ## BUG-19 — A stale-revision incident patch is discarded, leaving the incident permanently unlinked with no error and no log
 - **Type:** Bug (silent data loss) · **Priority:** High · **Status:** **FIXED 2026-09-14** — see the closing note.

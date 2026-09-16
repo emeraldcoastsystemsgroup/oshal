@@ -5,15 +5,16 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise actual Profile markup, account session states, palette geometry and modal lifecycle in isolated Chromium.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  * =============================================================================
  */
 import { type Browser, type BrowserContext, type Page, type Request } from 'playwright';
 import { writeFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { profileGate, signedInProfile, startCockpitProfileFixture } from '../fixtures/cockpit-profile';
-import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
+import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
 
-vi.setConfig({ testTimeout: 20_000 });
+vi.setConfig({ testTimeout: 20_000, hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 let fixture: Awaited<ReturnType<typeof startCockpitProfileFixture>>;
 let owned: Awaited<ReturnType<typeof launchIsolatedBrowser>>, browser: Browser;
 let context: BrowserContext, page: Page;
@@ -29,7 +30,7 @@ afterEach(async () => {
 afterAll(async () => {
   try { await writeFile('temp/cockpit-profile-browser-cleanup.json', JSON.stringify(await owned?.close(), null, 2)); }
   finally { await fixture?.close(); }
-}, 30_000);
+}, BROWSER_HOOK_TIMEOUT_MS);
 
 /** @description Load the real application and retain its synthetic editor as an unsaved-draft witness. */
 async function open(theme = 'workspace', width = 1280, height = 800) {

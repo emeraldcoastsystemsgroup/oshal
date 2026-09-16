@@ -6,16 +6,24 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the screen-aware Jarvis loop: the `context` op travels the REAL relay to EVERY assistant frame (the floating orb panel included — the frame the relay originally didn't know about), normalizeAskSurfaceContext validates with the real contract and rejects a snapshot that never came through the bridge, buildSurfaceContextPrompt tells a drivable surface from a read-only one, and the producer's emitOps/consumeContext stamp the trusted app binding rather than trusting the model.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Success-path log guard: an /ask turn that returns surface ops (driven through the real authenticated router with only the model and persistence doubled) logs op count, op names as custom:<name>, the target app and the surface's declared custom names at INFO — the BUG-18 shape (an invented custom name) is now one grep in the api log; a context-free turn still only warns.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Repair the database mock: a FIXED factory omitted createPersistenceActivation, which both in-memory stores now call, so the two /ask cases threw on construction and this file was red on main with nobody acting on it. Spread the real module and override only what the spec controls, so a new export cannot disarm the guard again.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Measure the success-path claim on the api log itself: the logger is now REAL pino built from the shipped LOG_REDACT_OPTIONS at the level the deployment runs the api at (the compose x-bot-env anchor oshal-api merges), with only its destination captured, and a new case greps the emitted NDJSON the way an operator greps `docker logs`. The previous recorder stored whatever it was handed, so a line hidden below the deployed level or censored by a redact path still read as "logged".
  */
 
 import express, { type RequestHandler } from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import pino from 'pino';
 
 const executeBot = vi.hoisted(() => vi.fn());
 /** Every line the routes logged, by module + level, so the success path can be asserted on. */
 const logLines = vi.hoisted(() => [] as Array<{ module: string; level: string; payload: Record<string, unknown>; msg: string }>);
+/**
+ * The api log itself: the raw NDJSON pino serialized, plus what the compose file says about the
+ * level the api is actually run at. "Diagnosable from the api log alone" is a claim about THIS
+ * text, so the guard greps it rather than a recorder's in-memory objects.
+ */
+const apiLog = vi.hoisted(() => ({ ndjson: '', composeLogLevels: [] as string[], apiMergesBotEnv: false }));
 vi.mock('@/app/routes/inline-bot-execution', () => ({ executeBotOrInline: executeBot }));
 vi.mock('@/app/routes/connector-token-broker', () => ({ resolveBotCreds: vi.fn().mockResolvedValue({}) }));
 vi.mock('@/app/routes/free-tier-rotation', () => ({
@@ -33,12 +41,36 @@ vi.mock('@/shared/services/database', async (importOriginal) => ({
   createOptionalPostgresPool: () => null, ensureConversationStoreSchema: async () => {},
   runRuntimeSchemaBootstrap: vi.fn().mockResolvedValue(undefined), buildOwnerRlsPolicyStatements: vi.fn().mockReturnValue([]),
 }));
-vi.mock('@/shared/logger', () => ({
-  createChildLogger: (bindings: { module: string }) => {
-    const record = (level: string) => (payload: Record<string, unknown>, msg: string) => { logLines.push({ module: bindings.module, level, payload, msg }); };
-    return { info: record('info'), warn: record('warn'), error: record('error'), debug: record('debug') };
-  },
-}));
+// The logger is REAL pino, built from the SHIPPED redact config at the level the DEPLOYMENT runs
+// the api at (docker-compose x-bot-env, which oshal-api merges). Only the DESTINATION is a double -
+// an in-memory buffer instead of the container's stdout/file transport. Serialization, level
+// filtering, redaction and the child `module` binding are the production ones, so a line that is
+// dropped below the deployed level or censored by a redact path can no longer read as "logged".
+// The previous stand-in recorded whatever it was handed and could report neither failure.
+vi.mock('@/shared/logger', async (importOriginal) => {
+  const [{ default: pino }, { readFileSync }, { resolve }, original] = await Promise.all([
+    import('pino'), import('node:fs'), import('node:path'),
+    importOriginal<typeof import('@/shared/logger')>(),
+  ]);
+  const compose = readFileSync(resolve(process.cwd(), 'docker-compose.oshal-local.yml'), 'utf8');
+  apiLog.composeLogLevels = [...compose.matchAll(/^\s+LOG_LEVEL:\s*([A-Za-z]+)\s*$/gm)].map(match => match[1]);
+  // Bounded to the oshal-api block itself: the span may not cross into the next top-level service.
+  apiLog.apiMergesBotEnv = /\n {2}oshal-api:(?:(?!\n {2}\S)[\s\S])*?\n {4}environment:\n {6}<<: \*bot-env\b/.test(compose);
+  const destination = {
+    write(chunk: string): void {
+      apiLog.ndjson += chunk;
+      for (const line of chunk.split('\n').filter(Boolean)) {
+        const record = JSON.parse(line) as Record<string, unknown> & { level: number; msg: string; module?: string };
+        logLines.push({ module: String(record.module ?? ''), level: pino.levels.labels[record.level], payload: record, msg: record.msg });
+      }
+    },
+  };
+  const root = pino(
+    { level: apiLog.composeLogLevels.length === 1 ? apiLog.composeLogLevels[0] : 'info', redact: original.LOG_REDACT_OPTIONS, timestamp: pino.stdTimeFunctions.isoTime },
+    destination as unknown as import('pino').DestinationStream,
+  );
+  return { ...original, logger: root, createChildLogger: (bindings: Record<string, unknown>) => root.child(bindings) };
+});
 
 import { InMemoryTaskStore } from '../../src/entities/task';
 import { InMemoryMessageStore } from '../../src/entities/message';
@@ -56,6 +88,8 @@ import {
   buildSurfaceContextPrompt,
 } from '../../src/app/routes/jarvis-surface-context';
 import { extractSurfaceDirectives } from '../../src/app/routes/jarvis-directives';
+// The shipped censor token, through the (partially mocked) barrel — never a copy of the string.
+import { LOG_REDACT_OPTIONS } from '@/shared/logger';
 import { apiOrigin } from '../helpers';
 // @ts-expect-error — browser ESM without type declarations
 import { createSurfaceBridgeRelay } from '../../src/pages/cockpit/js/surface-bridge-relay.js';
@@ -299,6 +333,7 @@ describe('/ask — an emitted-ops turn is diagnosable from the api log alone', (
 
   beforeEach(async () => {
     logLines.length = 0;
+    apiLog.ndjson = '';
     executeBot.mockReset();
     executeBot.mockResolvedValue({ response: reply });
     // Only the model, persistence and the test identity rail are doubles; the router is real.
@@ -360,6 +395,30 @@ describe('/ask — an emitted-ops turn is diagnosable from the api log alone', (
       opNames: ['custom:update_master_resume_summary'], declaredCustomOps: ['resume_action'],
     });
     expect(surfaceLines('warn')).toHaveLength(0);
+  });
+
+  it('is one grep over the api log TEXT — the line survives the deployed level and the shipped redaction', async () => {
+    await ask({ ...envelope, customOps: [{ name: 'resume_action', description: 'Edit this resume.' }] });
+    // The level is not a test constant: the deployment sets it once in the compose anchor the api
+    // merges, and the logger under test was built at that value. Hiding INFO there deletes the only
+    // server-side trace of an emitted-ops turn, so it takes this case red instead of passing quietly.
+    expect(apiLog.composeLogLevels).toHaveLength(1);
+    expect(apiLog.apiMergesBotEnv).toBe(true);
+    // Exactly the grep an operator runs against `docker logs oshal-local-api`.
+    const grepped = apiLog.ndjson.split('\n').filter(line => line.includes('jarvis: surface ops returned to the surface'));
+    expect(grepped).toHaveLength(1);
+    const record = JSON.parse(grepped[0]) as Record<string, unknown>;
+    expect(record.level).toBe(pino.levels.values.info);
+    expect(record).toMatchObject({
+      module: 'jarvis-routes', sessionId: SESSION, app: APP, screen: 'resume-studio', ops: 1,
+      opNames: ['custom:update_master_resume_summary'], declaredCustomOps: ['resume_action'],
+    });
+    // A field name colliding with a redact path would censor the diagnosis while still "logging" it.
+    expect(grepped[0]).not.toContain(LOG_REDACT_OPTIONS.censor);
+    // The BUG-18 diagnosis, read off that one line: the emitted custom name is not one the surface
+    // declared it could honour, so the op was delivered and silently discarded.
+    const emitted = (record.opNames as string[]).map(name => name.replace(/^custom:/, ''));
+    expect(record.declaredCustomOps).not.toContain(emitted[0]);
   });
 
   it('stays silent on the success path when the turn had no screen context — the ops are dropped and only the warning fires', async () => {
