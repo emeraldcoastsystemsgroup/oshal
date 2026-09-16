@@ -10,7 +10,9 @@ migration 126. Highlights select visible facts; they do not generate new conclus
 explicitly hidden metrics through related items. See the [delivery plan](../apps/configurable-app-home-plan.md)
 and [authoring contract](../apps/authoring-app-packages.md#selectable-data-points-on-home).
 
-- Status: Accepted — BUILT 2026-09-09 (core: the `summary:` contract, the Home plan, and the cockpit Home view)
+- Status: Accepted — BUILT 2026-09-09 (core: the `summary:` contract, the Home plan, and the cockpit Home view);
+  D3/D4/D5 BUILT 2026-09-16 (core: the highlights section on the kernel page, the dashboard route addressing
+  an app OR a group, and the `jarvis_tasks` fallback for an app that declares nothing)
 - **Amendment A (2026-09-09, recorded at build time): the manifest key is `summary:`, not `status:`.**
   `status` is already a field on `SwarmAppManifest` — the app's install state (`active` | `inactive`) —
   so the name in the original draft could not be used; TypeScript caught it as a duplicate identifier on

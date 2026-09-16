@@ -8,6 +8,7 @@
  * @module app-home-plan
  * Home customization | Codex | Carry selectable metric pointers and allowed same-app destinations to Home.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps, read through @/shared/app-dependencies (dependencies.required.apps or the legacy dependencies.apps).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | humanise is exported as humaniseReadinessSlug: the ADR-145 D4 per-app status plan needs the same label for an app whose readiness slug no group setup[] names, and two copies of a labelling rule is how two pages start disagreeing about what a step is called.
  */
 
 import type {
@@ -77,7 +78,7 @@ export interface HomePlanEntry {
  * @param slug - The readiness declaration's name.
  * @returns A sentence-cased label.
  */
-function humanise(slug: string): string {
+export function humaniseReadinessSlug(slug: string): string {
   const spaced = slug.replace(/[-_]+/g, ' ').trim();
   return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : slug;
 }
@@ -112,7 +113,7 @@ function probesFor(
     const named = labels.get(`${manifest.name}/${probe.name}`);
     return {
       app: manifest.name,
-      label: named?.label ?? humanise(probe.name),
+      label: named?.label ?? humaniseReadinessSlug(probe.name),
       path: probe.path,
       readyPointer: probe.readyPointer,
       detailPointer: probe.detailPointer,
