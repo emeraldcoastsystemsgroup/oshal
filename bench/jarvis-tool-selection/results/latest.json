@@ -1,0 +1,130 @@
+{
+  "corpus": {
+    "items": 34,
+    "provenance": {
+      "contract": 13,
+      "synthetic": 21,
+      "recorded": 0
+    }
+  },
+  "tokenizer": {
+    "status": "not-run",
+    "reason": "no tokenizer: set JARVIS_BENCH_TOKENIZER to a module exporting encode(text)"
+  },
+  "candidates": [
+    {
+      "name": "baseline",
+      "family": "baseline",
+      "describe": "the shipped selector, unchanged - every accessible mounted tool, really ranked",
+      "status": "measured",
+      "graded": 34,
+      "toolItems": 21,
+      "recall": 1,
+      "falseMatches": 0,
+      "missedIntents": 0,
+      "inputBytes": 167484,
+      "inputBytesDelta": 0,
+      "inputTokens": null,
+      "inputTokensDelta": null,
+      "regressions": 0,
+      "improvements": 0,
+      "regressedItems": [],
+      "gate": "pass",
+      "verdict": "neutral"
+    },
+    {
+      "name": "top-3",
+      "family": "tool-cut",
+      "describe": "keep the 3 highest-ranked tools of the real ordering, drop the rest",
+      "status": "measured",
+      "graded": 34,
+      "toolItems": 21,
+      "recall": 0.8571428571428571,
+      "falseMatches": 0,
+      "missedIntents": 0,
+      "inputBytes": 40097,
+      "inputBytesDelta": -127387,
+      "inputTokens": null,
+      "inputTokensDelta": null,
+      "regressions": 3,
+      "improvements": 0,
+      "regressedItems": [
+        "tool-jazz",
+        "tool-spend",
+        "tool-balance"
+      ],
+      "gate": "fail",
+      "verdict": "reject"
+    },
+    {
+      "name": "top-6",
+      "family": "tool-cut",
+      "describe": "keep the 6 highest-ranked tools of the real ordering, drop the rest",
+      "status": "measured",
+      "graded": 34,
+      "toolItems": 21,
+      "recall": 0.8571428571428571,
+      "falseMatches": 0,
+      "missedIntents": 0,
+      "inputBytes": 61504,
+      "inputBytesDelta": -105980,
+      "inputTokens": null,
+      "inputTokensDelta": null,
+      "regressions": 3,
+      "improvements": 0,
+      "regressedItems": [
+        "tool-jazz",
+        "tool-spend",
+        "tool-balance"
+      ],
+      "gate": "fail",
+      "verdict": "reject"
+    },
+    {
+      "name": "scored-floor-3",
+      "family": "tool-cut",
+      "describe": "keep every tool with at least one keyword hit, topped up to 3 by the real ranking",
+      "status": "measured",
+      "graded": 34,
+      "toolItems": 21,
+      "recall": 0.8571428571428571,
+      "falseMatches": 0,
+      "missedIntents": 0,
+      "inputBytes": 40297,
+      "inputBytesDelta": -127187,
+      "inputTokens": null,
+      "inputTokensDelta": null,
+      "regressions": 3,
+      "improvements": 0,
+      "regressedItems": [
+        "tool-jazz",
+        "tool-spend",
+        "tool-balance"
+      ],
+      "gate": "fail",
+      "verdict": "reject"
+    },
+    {
+      "name": "fast-lane-calendar",
+      "family": "fast-lane",
+      "describe": "widen the deterministic shortcut to any message mentioning a calendar",
+      "status": "measured",
+      "graded": 34,
+      "toolItems": 21,
+      "recall": 1,
+      "falseMatches": 1,
+      "missedIntents": 0,
+      "inputBytes": 162558,
+      "inputBytesDelta": -4926,
+      "inputTokens": null,
+      "inputTokensDelta": null,
+      "regressions": 1,
+      "improvements": 0,
+      "regressedItems": [
+        "model-calendar"
+      ],
+      "gate": "fail",
+      "verdict": "reject"
+    }
+  ]
+}
