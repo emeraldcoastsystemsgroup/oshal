@@ -11,6 +11,14 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ## Promotion, deployment, and regression proof
 
+### No gate typechecks a test file, so "typecheck clean" says nothing about one
+
+- **Found 2026-09-16** reviewing PR #579. `tsconfig.json` has `include: ["src/**/*.ts", "src/**/*.tsx"]` and `exclude: ["node_modules", "dist", "tests", "**/*.spec.ts", "**/*.test.ts"]`; `tsconfig.server.json` includes only four `src/` subtrees. So `npx tsc --noEmit` never reads a spec, and neither does the pre-push hook, which runs that same command against committed HEAD. Vitest transpiles with esbuild, which strips types without checking them.
+- **The consequence, measured on our own reporting:** a great many test-only changes have been landed this week with "typecheck clean" recorded as evidence. The claim is true of the command and vacuous about the file that changed - a spec can carry a type error onto main and the only thing that can notice is an assertion happening to fail at runtime. A wrong `as` cast, a doubled object missing a field the production type requires, a helper whose return shape drifted: all invisible.
+- **Remaining:** typecheck the test tree. The shape that fits this repo is a second project (for example `tsconfig.tests.json`) that includes `tests/**` with the same path aliases, run as its own step beside the existing typecheck gate in `scripts/ci-local.sh` - not a widening of `tsconfig.json`, which would pull specs into the build's own project and change what `dist/` compiles.
+- **Expect a backlog of existing errors.** This has never run, so the first pass will not be green; the entry is not done until it is, or until each remaining error is quarantined with a reason rather than silenced wholesale.
+- **Done when:** a gate typechecks `tests/**` and fails on a type error there, a deliberately broken spec is shown to redden it, and the existing errors are either fixed or individually recorded.
+
 ### Government contracting CRM and contract management
 - **Delivered:** connected CRM pages, reviewed source import, proposal/award and post-award lifecycle with scoped UI/API/tools and registered tests. Installed import acceptance preserves source records, ownership and documents. See [the scoped backlog](backlog/government-contracting-crm.md); detailed package work stays private.
 - **Remaining:** prove website-origin intake and the source-implemented reviewed deadline tasks through the installed workflow; extend conversion to unlinked intake/no-bid history and add a unified decisions/obligations dashboard. External financial and submission operations retain their separate approval scopes.
