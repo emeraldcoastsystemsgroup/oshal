@@ -551,7 +551,11 @@ if [ "$MODE" = "4" ]; then
   note "setup:   $WELCOME"
   note "cockpit: $BASE/cockpit/   (after setup)"
   case "$(uname -s 2>/dev/null)" in
-    MINGW*|MSYS*|CYGWIN*|Windows*) start "" "$WELCOME" 2>/dev/null || cmd.exe /c start "$WELCOME" 2>/dev/null || true ;;
+    # cmd's `start` reads a lone quoted argument as the WINDOW TITLE, not a URL: the fallback
+    # opened an interactive cmd.exe that sat at a prompt and blocked the installer forever —
+    # the closing instructions, including the generated password, never printed. Empty title
+    # first, and detach stdin so nothing can wait on a console that has no operator.
+    MINGW*|MSYS*|CYGWIN*|Windows*) start "" "$WELCOME" 2>/dev/null \n      || cmd.exe /c start "" "$WELCOME" </dev/null >/dev/null 2>&1 || true ;;
     Darwin*) open "$WELCOME" 2>/dev/null || true ;;
     *) xdg-open "$WELCOME" 2>/dev/null || true ;;
   esac
@@ -914,7 +918,11 @@ docker ps --format '{{.Names}}' | grep -c oshal | xargs -I{} echo "   containers
 note "setup:   $WELCOME"
 note "cockpit: http://localhost:35457/cockpit/   (after setup)"
 case "$(uname -s 2>/dev/null)" in
-  MINGW*|MSYS*|CYGWIN*|Windows*) start "" "$WELCOME" 2>/dev/null || cmd.exe /c start "$WELCOME" 2>/dev/null || true ;;
+  # cmd's `start` reads a lone quoted argument as the WINDOW TITLE, not a URL: the fallback
+    # opened an interactive cmd.exe that sat at a prompt and blocked the installer forever —
+    # the closing instructions, including the generated password, never printed. Empty title
+    # first, and detach stdin so nothing can wait on a console that has no operator.
+    MINGW*|MSYS*|CYGWIN*|Windows*) start "" "$WELCOME" 2>/dev/null \n      || cmd.exe /c start "" "$WELCOME" </dev/null >/dev/null 2>&1 || true ;;
   Darwin*) open "$WELCOME" 2>/dev/null || true ;;
   *) xdg-open "$WELCOME" 2>/dev/null || true ;;
 esac
