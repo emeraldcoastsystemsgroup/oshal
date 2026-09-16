@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147: registries become ROWS. The store was one module constant read from OSHAL_STORE_REPO with a single module-level catalog cache, so a swarm could read exactly one git location and GitHub was assumed in four places. This table holds N registries, each with its own host kind, ref, trust record and access key. The built-in row is seeded FROM the existing env vars so an established deployment adopts this with zero configuration change and its store keeps working untouched. Keys are stored Vault-first (the operator asked for vault) with an encrypted Postgres column as the durable fallback — Vault runs in dev mode here (in-memory, ADR-040), so a key written ONLY to Vault would evaporate on restart; secret_backend records which one actually holds it so the UI can say where the key lives instead of leaving a vanished key mysterious.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Seed the built-in registry's KEY beside its URL. OSHAL_STORE_REPO set the private trunk as the source while OSHAL_STORE_TOKEN — the credential the install had just staged 61 packages with — was never written to the row, so every catalog read 404'd ('not publicly readable — add an access key') and the cockpit demanded a credential the deployment already held. Key failures warn and continue: a registry without a key is recoverable from the cockpit, a boot that dies over one is not.
  */
 
 import type { Pool } from 'pg';
@@ -425,6 +426,20 @@ export async function seedBuiltinRegistry(pool: Pool): Promise<AppRegistry> {
      ON CONFLICT (slug) DO NOTHING`,
     [crypto.randomUUID(), url, ref, inferHostKind(url)],
   ));
+  // A private store seeded WITHOUT its key is a registry that can never read itself: the
+  // installer stages packages with OSHAL_STORE_TOKEN, then every catalog read 404s and the
+  // cockpit asks the operator for a credential the install already had.
+  const token = (process.env.OSHAL_STORE_TOKEN || '').trim();
+  if (token) {
+    try {
+      const backend = await storeRegistryKey(pool, 'oshal-store', token);
+      logger.info({ backend }, 'built-in app registry key seeded from the environment');
+    } catch (err) {
+      // Never fail the boot over a credential: the registry still exists and the cockpit can
+      // set a key by hand. Say so once, loudly enough to explain the 404 that follows.
+      logger.warn({ err }, 'built-in app registry key could not be seeded — set it in the cockpit');
+    }
+  }
   logger.info({ url, ref }, 'built-in app registry seeded from the environment');
   const created = await getRegistry(pool, 'oshal-store');
   if (!created) throw new AppRegistryError(500, 'built-in registry could not be seeded');
