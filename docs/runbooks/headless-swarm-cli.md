@@ -15,7 +15,14 @@ image, so `docker exec <container> swarm-cli ask "…"` works out of the box.
 **Live proof:** docs/evidence/swarm-cli-live-2026-07-12.md
 — 23/23 assertions against the running swarm (including PAT mint → revoke → 401, proving revocation
 is enforced), banner/color on a real TTY, and TAB completion driven through bash, PowerShell, and
-readline's own engines. Known gaps are in [BACKLOG](../BACKLOG.md) (zsh completion unexecuted).
+readline's own engines. zsh completion was proven separately on 2026-09-15 (zsh 5.9.2, MSYS2 build):
+`tests/unit/swarm-cli-zsh-completion.spec.ts` runs the script `swarm-cli completion zsh` prints
+through `zsh -n`, then presses TAB in an interactive zsh on a pseudo-terminal with the script
+installed both ways (`eval` from `~/.zshrc`, and `_swarm-cli` on `$fpath`). Each install offered
+exactly the top-level commands, `bash`/`zsh`/`powershell` for `completion`, `revoke` for
+`tokens`, and the two contexts `swarm-cli login` had just saved for `--context`, before and after
+the subcommand. The spec fails rather than skips when no zsh with `zsh/zpty` is on PATH or in
+`OSHAL_ZSH`.
 
 ## Auth — `swarm-cli login` and personal access tokens
 
@@ -111,7 +118,8 @@ Flags: `--url --token --secret --sub --context --session <id> --new --json --tim
   # bash
   eval "$(swarm-cli completion bash)"                          # this shell
   swarm-cli completion bash | sudo tee /etc/bash_completion.d/swarm-cli   # persist
-  # zsh
+  # zsh (either one)
+  eval "$(swarm-cli completion zsh)"                           # in ~/.zshrc, after compinit
   swarm-cli completion zsh > "${fpath[1]}/_swarm-cli"          # then restart zsh
   # PowerShell (Windows)
   swarm-cli completion powershell | Out-String | Invoke-Expression
