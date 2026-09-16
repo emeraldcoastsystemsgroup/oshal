@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Tier-3 owner-routing guard. Crosses the REAL boundary the defect lived on: the REAL declared corpus (capabilities from LOCAL_BOT_REGISTRY, routing keywords read off the on-disk persona YAML the boot seeders read) -> the REAL tokenizer -> the REAL AgentRouter, with bids:[] and no llmRoutingFunction so Tiers 1-2 are absent by construction and only Tier 3 can answer. It pins the 2026-09-15 live misroute (a trading P&L question claimed by a communications owner because the declared phrase 'what did i miss' was shredded into the bare token 'did'), the email-shaped ask that must STILL reach the comms owner, once-per-phrase counting, and - the case that fails loudly if anyone later adds a minimum-claim threshold - the bots whose whole vocabulary is single words and therefore win Tier 3 on a single hit.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extended to pin the OTHER half of the contract: a declared phrase must never cost a bot the words inside it. Six asks measured misrouting when phrase matching REPLACED token matching - 'find idle gce instances' and 'check my storage buckets for a missing owner label' off cloud-ops-bot, 'turn off the kitchen plug' off home-bot, 'update my linkedin headline' off linkedin-profile-operator, 'run a survey flight pattern' off drone-operator, 'review this false positive alert' off security-analyst - are now cases, as are the ranking rules that make phrase matching additive (an exact phrase outscores one loose token but never its own word count, and an unmatched phrase still lends its tokens) and the stop-list that actually kills the misroute (a bare auxiliary or interrogative must not be routable on its own).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -24,6 +25,21 @@ const TRADING_ANALYST = 'a0000000-0000-0000-0000-000000000046';
 const WEATHER_BOT = 'a0000000-0000-0000-0000-000000000036';
 const SPOTIFY_CONCIERGE = 'b00a0000-0000-0000-0000-000000000001';
 const MOVIES_CONCIERGE = 'b00b0000-0000-0000-0000-000000000001';
+
+/**
+ * The phrase-heavy owners. Their vocabulary is mostly (for two of them ENTIRELY) multi-word, so
+ * they are the bots a phrase rule can silently disown; each case below names the one it protects.
+ */
+const PHRASE_HEAVY_OWNERS = [
+  'cloud-ops-bot',
+  'home-bot',
+  'linkedin-profile-operator',
+  'drone-operator',
+  'security-analyst',
+  'system-architect',
+  'spaces-operator',
+  'identity-advisor',
+] as const;
 
 /**
  * Persona file per bot, resolved the way the runtime resolves it: a bot with its own
@@ -99,6 +115,13 @@ async function routeAsk(text: string, candidates: RouteCandidate[] = LIVE_CORPUS
 
 const named = (decision: RouteDecision): string => decision.winner.name ?? decision.winner.agentId;
 
+/** The registered agentId for a bot name — throws if the bot is renamed, so the guard rots loudly. */
+function agentIdOf(botName: string): string {
+  const candidate = LIVE_CORPUS.find((entry) => entry.name === botName);
+  if (!candidate) throw new Error(botName + ' is not in LOCAL_BOT_REGISTRY — this guard names a bot that no longer exists');
+  return candidate.agentId;
+}
+
 describe('Tier-3 owner routing: the corpus this guard is asserting against', () => {
   it('carries both declarations for the bots the cases name', () => {
     const byId = new Map(LIVE_CORPUS.map((candidate) => [candidate.agentId, candidate]));
@@ -113,6 +136,15 @@ describe('Tier-3 owner routing: the corpus this guard is asserting against', () 
     for (const agentId of [COMMUNICATIONS_BOT, FEEDS_CURATOR]) {
       const keywords = LIVE_CORPUS.find((candidate) => candidate.agentId === agentId)?.routingKeywords ?? [];
       expect(keywords.map((keyword) => keyword.toLowerCase())).toContain('what did i miss');
+    }
+  });
+
+  it('carries a mostly-phrase vocabulary for every owner the phrase cases protect', () => {
+    for (const botName of PHRASE_HEAVY_OWNERS) {
+      const keywords = LIVE_CORPUS.find((candidate) => candidate.name === botName)?.routingKeywords ?? [];
+      expect(keywords.length, botName + ' declares no routing keywords').toBeGreaterThan(0);
+      const phraseCount = keywords.filter((keyword) => /\s/.test(keyword)).length;
+      expect(phraseCount, botName + ' no longer declares multi-word keywords — this case protects nothing').toBeGreaterThan(0);
     }
   });
 });
@@ -152,34 +184,125 @@ describe('Tier-3 owner routing: the email-shaped ask still reaches the email own
   });
 });
 
-describe('Tier-3 owner routing: a phrase keyword counts once, not once per token', () => {
-  const phraseOwner: RouteCandidate = {
-    agentId: 'f0000000-0000-0000-0000-0000000000aa',
-    name: 'phrase-owner',
+describe('Tier-3 owner routing: a declared phrase never costs a bot the words inside it', () => {
+  // Every ask here is a natural rephrasing of a keyword its owner declares as a PHRASE. When
+  // phrase matching REPLACED token matching (rather than adding to it) all six were measured
+  // landing on an unrelated bot, because the declared phrase does not appear verbatim:
+  //   'gce instance' / 'cloud storage bucket' / 'iam owners' -> cloud-ops-bot
+  //   'smart plug' + 'turn off'                              -> home-bot
+  //   'headline update'                                      -> linkedin-profile-operator
+  //   'survey pattern'                                       -> drone-operator
+  //   'false positive review'                                -> security-analyst
+  // linkedin-profile-operator and system-architect declare NOTHING but phrases, so for them a
+  // phrase rule that subtracts tokens is total vocabulary loss.
+  const REPHRASED_ASKS: ReadonlyArray<{ ask: string; owner: string; declared: string }> = [
+    { ask: 'find idle gce instances and shut them down', owner: 'cloud-ops-bot', declared: 'gce instance' },
+    { ask: 'check my storage buckets for a missing owner label', owner: 'cloud-ops-bot', declared: 'cloud storage bucket' },
+    { ask: 'turn off the kitchen plug', owner: 'home-bot', declared: 'smart plug' },
+    { ask: 'update my linkedin headline', owner: 'linkedin-profile-operator', declared: 'headline update' },
+    { ask: 'run a survey flight pattern over the north field', owner: 'drone-operator', declared: 'survey pattern' },
+    { ask: 'review this false positive alert', owner: 'security-analyst', declared: 'false positive review' },
+  ];
+
+  for (const { ask, owner, declared } of REPHRASED_ASKS) {
+    it('routes "' + ask + '" to ' + owner + ' (declares "' + declared + '")', async () => {
+      const decision = await routeAsk(ask);
+      expect(decision.strategy).toBe('keyword');
+      expect(decision.winner.agentId, ask + ' routed to ' + named(decision)).toBe(agentIdOf(owner));
+    });
+  }
+
+  it('leaves the other phrase-only owner able to win on a rephrasing at all', async () => {
+    // system-architect declares six phrases and ZERO single words ('system architecture',
+    // 'integration architecture', ...). None appears verbatim here, so it can only be reached
+    // because an unmatched phrase still lends its tokens; measured landing on code-reviewer when
+    // it did not.
+    const decision = await routeAsk('write the architecture for the new integration');
+    expect(decision.strategy).toBe('keyword');
+    expect(decision.winner.agentId, 'routed to ' + named(decision)).toBe(agentIdOf('system-architect'));
+  });
+});
+
+describe('Tier-3 owner routing: phrase matching is additive and ranked', () => {
+  const synthetic = (name: string, suffix: string, routingKeywords: string[]): RouteCandidate => ({
+    agentId: 'f0000000-0000-0000-0000-0000000000' + suffix,
+    name,
     score: 0,
     reason: 'synthetic',
     capabilities: [],
-    routingKeywords: ['profit and loss'],
-  };
+    routingKeywords,
+  });
 
-  it('loses to a bot that genuinely matches two separate single-word keywords', async () => {
-    const twoWordOwner: RouteCandidate = {
-      agentId: 'f0000000-0000-0000-0000-0000000000bb',
-      name: 'two-word-owner',
-      score: 0,
-      reason: 'synthetic',
-      capabilities: [],
-      routingKeywords: ['profit', 'loss'],
-    };
-    // phraseOwner is FIRST, so it wins any tie: it can only lose if its one phrase scored 1
-    // while twoWordOwner scored 2. Counting the phrase per constituent token would tie at 2.
-    const decision = await routeAsk('quarterly profit and loss review', [phraseOwner, twoWordOwner]);
+  it('scores an exact phrase hit ABOVE a single loose token hit', async () => {
+    const tokenOwner = synthetic('token-owner', 'aa', ['review']);
+    const phraseOwner = synthetic('phrase-owner', 'bb', ['profit and loss']);
+    // tokenOwner is FIRST, so it takes any tie: phraseOwner can only win by scoring strictly more.
+    const decision = await routeAsk('quarterly profit and loss review', [tokenOwner, phraseOwner]);
     expect(decision.strategy).toBe('keyword');
-    expect(decision.winner.agentId, 'routed to ' + named(decision)).toBe(twoWordOwner.agentId);
+    expect(decision.winner.agentId, 'routed to ' + named(decision)).toBe(phraseOwner.agentId);
+  });
+
+  it('never lets one phrase out-score the independent keywords it is made of', async () => {
+    const phraseOwner = synthetic('phrase-owner', 'cc', ['quarterly profit and loss report']);
+    const multiOwner = synthetic('multi-owner', 'dd', ['quarterly', 'profit', 'loss', 'report']);
+    // phraseOwner is FIRST, so it takes any tie; multiOwner wins only if four token hits beat one
+    // phrase. A phrase scored once per constituent token would tie or win here.
+    const decision = await routeAsk('the quarterly profit and loss report', [phraseOwner, multiOwner]);
+    expect(decision.strategy).toBe('keyword');
+    expect(decision.winner.agentId, 'routed to ' + named(decision)).toBe(multiOwner.agentId);
+  });
+
+  it('still counts a phrase that does NOT appear verbatim, through its tokens', async () => {
+    const phraseOwner = synthetic('phrase-owner', 'ee', ['survey pattern']);
+    const decision = await routeAsk('run a survey flight pattern over the north field', [phraseOwner]);
+    expect(decision.strategy).toBe('keyword');
+    expect(decision.winner.agentId).toBe(phraseOwner.agentId);
   });
 
   it('still lets a phrase owner claim the ask when the phrase is actually present', async () => {
+    const phraseOwner = synthetic('phrase-owner', 'ff', ['profit and loss']);
     const decision = await routeAsk('quarterly profit and loss review', [phraseOwner]);
+    expect(decision.strategy).toBe('keyword');
+    expect(decision.winner.agentId).toBe(phraseOwner.agentId);
+  });
+
+  it('answers an ask made ENTIRELY of stop words when a declared phrase matches it verbatim', async () => {
+    // rides-concierge declares 'get me to'. Every token in it is filtered, so Tier 3 must not bail
+    // on an empty token bag before it has tried the phrase.
+    const decision = await routeAsk('get me to the airport');
+    expect(decision.strategy).toBe('keyword');
+    expect(decision.winner.agentId, 'routed to ' + named(decision)).toBe(agentIdOf('rides-concierge'));
+  });
+});
+
+describe('Tier-3 owner routing: a bare auxiliary or interrogative is not routable', () => {
+  // This is what actually killed the 2026-09-15 misroute. 'did' and 'what' are long enough to
+  // survive the length filter, so while they were routable ANY bot declaring a conversational
+  // phrase containing one claimed every ticket that merely used that word.
+  const phraseOwner: RouteCandidate = {
+    agentId: 'f0000000-0000-0000-0000-000000000099',
+    name: 'conversational-owner',
+    score: 0,
+    reason: 'synthetic',
+    capabilities: [],
+    routingKeywords: ['what did i miss', 'can you', 'get me to'],
+  };
+
+  const BARE_ASKS = [
+    'what did the team get',
+    'how much can we have',
+    'who will make it',
+  ];
+
+  for (const ask of BARE_ASKS) {
+    it('does not let "' + ask + '" claim a keyword match on function words alone', async () => {
+      const decision = await routeAsk(ask, [phraseOwner]);
+      expect(decision.strategy, 'claimed by ' + named(decision)).not.toBe('keyword');
+    });
+  }
+
+  it('leaves the same owner claiming the ask once a real phrase is present', async () => {
+    const decision = await routeAsk('what did i miss today', [phraseOwner]);
     expect(decision.strategy).toBe('keyword');
     expect(decision.winner.agentId).toBe(phraseOwner.agentId);
   });

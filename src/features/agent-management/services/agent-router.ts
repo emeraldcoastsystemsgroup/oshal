@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Replaced fuzzy phrase substring matching with normalized token overlap so QA phrases stop overmatching build tickets
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Tier 3 matches MULTI-WORD routing keywords as phrases instead of shredding them into tokens. A declared phrase such as 'what did i miss' was flattened to the routable token 'did' (3 chars, absent from ROUTING_STOP_WORDS), so the comms owners claimed any ticket merely containing that word - the reason a trading P&L question routed to the email bot. Phrases are now tested with includes() against the lowercased title+taskText, exactly as the Tier-1 self-score does, and are counted ONCE; single-word keywords and all capabilities keep token matching. Deliberately NO minimum-claim threshold: swept against the registry+persona corpus a threshold silently disowns every bot whose vocabulary is single words (weather, music, movies, calendar).
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Made phrase matching ADDITIVE instead of a replacement, and moved the 'did' class into the stop list. Entry 7 removed a phrase's constituent tokens from the candidate's token bag, so a bot whose vocabulary is mostly phrases lost it whenever the caller rephrased: 'find idle gce instances' no longer reached cloud-ops-bot (declares 'gce instance'), 'run a survey flight pattern' no longer reached drone-operator (declares 'survey pattern'), and five more owners were measured losing their ticket. Now an EXACT phrase hit scores PHRASE_MATCH_WEIGHT (worth more than one token), while an unmatched phrase still contributes its tokens, so nothing is taken away. The actual cause of the email misroute - the bare auxiliary 'did' being routable at all - is fixed where it belongs: ROUTING_STOP_WORDS gains the auxiliaries and interrogatives, measured against the real corpus as costing one declared keyword versus 31 for the minimum-token-length lever, which is why that lever was rejected. Tier 3 also no longer bails on an empty token bag alone, or an ask made entirely of stop words would skip phrase matching it can still answer. Still NO minimum-claim threshold - it disowns every single-word corpus (weather, career, spotify, calendar, movies).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -27,6 +28,14 @@ const PROJECT_MANAGER_AGENT_ID = 'a0000000-0000-0000-0000-000000000001';
  * @description Minimum bid confidence threshold. Bids below this are not considered.
  */
 const BID_CONFIDENCE_THRESHOLD = 0.5;
+
+/**
+ * @description Score a declared multi-word routing keyword earns when it appears VERBATIM in the
+ * ticket text. It is deliberately greater than a single token hit (1): an exact phrase is stronger
+ * evidence of ownership than one loose word. It is deliberately LESS than the phrase's word count,
+ * so a long declared phrase can never out-score a bot that matched that many independent keywords.
+ */
+const PHRASE_MATCH_WEIGHT = 2;
 
 /**
  * @description Route context assembled from task, tenant, and workspace state.
@@ -203,9 +212,11 @@ export class AgentRouter {
    */
   private tryKeywordMatching(context: RouteContext, ranked: RouteCandidate[]): RouteDecision | null {
     const searchTerms = buildSearchTerms(context);
-    if (searchTerms.length === 0) return null;
-
     const phraseText = buildPhraseMatchText(context);
+    // An all-stop-word ask ('get me to ...') still has phrases to match, so this tier may only
+    // bail when there is NOTHING to compare against - bailing on empty tokens alone would
+    // silently disown every keyword a bot declares purely as a phrase of common words.
+    if (searchTerms.length === 0 && phraseText.trim().length === 0) return null;
     const scored = ranked
       .map((candidate) => ({
         candidate,
@@ -284,10 +295,10 @@ function buildPhraseMatchText(context: RouteContext): string {
 }
 
 /**
- * @description Splits declared routing keywords into multi-word PHRASES and single words.
- * A phrase is the bot's claim on a whole expression; shredding it hands every constituent
- * word the same claim, which is how 'what did i miss' let the comms owners win on the bare
- * token 'did'. Phrases are de-duplicated so a repeated declaration cannot inflate a score.
+ * @description Splits declared routing keywords into multi-word PHRASES and single words, so the
+ * scorer can test a phrase verbatim first. This split does NOT cost a phrase its tokens — an
+ * unmatched phrase is handed back to token matching by computeKeywordScore. Phrases are
+ * de-duplicated so a repeated declaration cannot inflate a score.
  * @param values - The candidate's declared routing keywords (persona routing_keywords).
  * @returns Lowercased unique phrases and the untouched single-word keywords.
  */
@@ -307,21 +318,33 @@ function splitRoutingKeywords(values: string[] | undefined): { phrases: string[]
 }
 
 /**
- * @description Scores a candidate based on keyword overlap with search terms.
- * Capabilities and single-word routing keywords are compared as normalized tokens;
- * multi-word routing keywords are matched as whole phrases against the ticket text and
- * count ONCE each — never once per constituent token, which would make a long phrase
- * out-bid a bot that genuinely owns the domain.
+ * @description Scores a candidate on its overlap with the ticket, phrase-aware and ADDITIVE.
+ * A declared multi-word keyword is first tested VERBATIM against the ticket text — the same string
+ * Tier 1 self-scores against in mesh-bid-responder.computeBidConfidence — and an exact hit is worth
+ * PHRASE_MATCH_WEIGHT, more than any single loose word. A phrase that does NOT appear verbatim is not
+ * discarded: its constituent tokens rejoin the candidate's token bag, so a caller who rephrases
+ * ('find idle gce instances' against the declared 'gce instance') still reaches the owner. Phrase
+ * matching therefore only ever ADDS evidence; it never removes vocabulary a bot already had.
+ * Capabilities and single-word routing keywords are token-matched exactly as before.
+ * @param candidate - The agent candidate carrying its declared capabilities and routing keywords.
+ * @param searchTerms - Normalized tokens drawn from the ticket title, labels and task text.
+ * @param phraseText - The raw lowercased ticket text a phrase is tested against verbatim.
+ * @returns The candidate's Tier-3 score: one point per distinct token hit plus PHRASE_MATCH_WEIGHT per exact phrase hit.
  */
 function computeKeywordScore(candidate: RouteCandidate, searchTerms: string[], phraseText: string): number {
   const { phrases, singles } = splitRoutingKeywords(candidate.routingKeywords);
+  const matchedPhrases: string[] = [];
+  const unmatchedPhrases: string[] = [];
+  for (const phrase of phrases) {
+    (phraseText.includes(phrase) ? matchedPhrases : unmatchedPhrases).push(phrase);
+  }
   const candidateTerms = new Set([
     ...flattenRoutingTerms(candidate.capabilities),
     ...flattenRoutingTerms(singles),
+    ...flattenRoutingTerms(unmatchedPhrases),
   ]);
   const tokenScore = searchTerms.reduce((score, term) => score + (candidateTerms.has(term) ? 1 : 0), 0);
-  const phraseScore = phrases.reduce((score, phrase) => score + (phraseText.includes(phrase) ? 1 : 0), 0);
-  return tokenScore + phraseScore;
+  return tokenScore + matchedPhrases.length * PHRASE_MATCH_WEIGHT;
 }
 
 /**
@@ -383,4 +406,30 @@ const ROUTING_STOP_WORDS = new Set([
   'while',
   'must',
   'should',
+  // Auxiliaries and interrogatives. These carry no domain signal, yet they are long enough to
+  // survive the length filter, so ANY bot that declares a conversational phrase containing one
+  // ('what did i miss') used to claim every ticket merely containing that word - the token 'did'
+  // sent a trading P&L question to the email bot, and the token 'what' sent 'what's the weather
+  // tomorrow' to a feed curator. Measured against the registry+persona corpus this costs ONE
+  // declared keyword ('get me to'), which phrase matching recovers verbatim. The alternative
+  // lever - raising the minimum routable token length to 4 - was measured and rejected: it
+  // silently disowns 31 declared keywords, among them 'gcp', 'rtl' and 'dim'.
+  // Words that cannot survive normalizeRoutingToken ('does'/'do', 'was', 'has', 'made') are not
+  // listed: they are already dropped by the length filter and an entry for them would be dead.
+  'did',
+  'were',
+  'have',
+  'had',
+  'will',
+  'can',
+  'get',
+  'got',
+  'make',
+  'what',
+  'how',
+  'who',
+  'whom',
+  'whose',
+  'which',
+  'why',
 ]);
