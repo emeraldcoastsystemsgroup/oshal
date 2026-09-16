@@ -6,11 +6,12 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial agent status controller for enable/disable
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Governance closeout: documented session continuity for status toggle controller wiring and runtime route adoption
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Track B S4: Wire BotContainerSpawnerService — start/stop docker compose service on status toggle
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Toggle through the substrate-agnostic BotRuntimeLauncher instead of BotContainerSpawnerService. The compose service was hard-wired, so on Kubernetes disabling a bot ran `docker compose stop` inside a pod that has neither a compose file nor a docker socket: the DB row flipped, the pod kept running, and the operator saw a container error with no explanation. It also passed the agent UUID where the spawner expects the compose SERVICE NAME, so even under compose the stop targeted a service that does not exist. Now it calls setRunning(name, active) on the resolved launcher and reports which substrate answered.
  */
 
 import { Request, Response } from 'express';
 import { AgentProfileRepository } from '@/entities/agent';
-import { BotContainerSpawnerService } from '../services';
+import type { BotRuntimeLauncher } from '../services';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'agent-status-controller' });
@@ -25,13 +26,14 @@ type AgentStatus = typeof VALID_STATUSES[number];
 
 /**
  * @description Controller for agent status management endpoints.
- * Handles enabling/disabling bots in the swarm and triggers docker compose
- * container start/stop via BotContainerSpawnerService.
+ * Handles enabling/disabling bots in the swarm and starts/stops the bot's runtime
+ * through the substrate-agnostic BotRuntimeLauncher — compose start/stop on a
+ * docker host, a Deployment scaled to 0/1 on Kubernetes.
  */
 export class AgentStatusController {
   constructor(
     private readonly repo: AgentProfileRepository,
-    private readonly spawner: BotContainerSpawnerService,
+    private readonly launcher: BotRuntimeLauncher,
   ) {}
 
   /**
@@ -79,15 +81,16 @@ export class AgentStatusController {
         'Agent status updated',
       );
 
-      // Trigger docker compose container lifecycle based on new status
-      const containerResult = status === 'active'
-        ? await this.spawner.startBot(String(agentId))
-        : await this.spawner.stopBot(String(agentId));
+      // Drive the runtime on whichever substrate this controller is running on.
+      // Keyed on the bot NAME: that is the compose service key and the Deployment
+      // name alike — the agent UUID names neither.
+      const running = status === 'active';
+      const runtimeResult = await this.launcher.setRunning(updated.name, running);
 
-      if (!containerResult.success) {
+      if (!runtimeResult.success) {
         logger.warn(
-          { agentId, operation: containerResult.operation, error: containerResult.error },
-          'Container operation did not succeed — status persisted but container may be in unexpected state',
+          { agentId, runtime: runtimeResult.runtime, error: runtimeResult.error },
+          'Runtime operation did not succeed — status persisted but the bot runtime may be in an unexpected state',
         );
       }
 
@@ -99,9 +102,10 @@ export class AgentStatusController {
           status: updated.status,
         },
         container: {
-          operation: containerResult.operation,
-          success: containerResult.success,
-          output: containerResult.output,
+          runtime: runtimeResult.runtime,
+          operation: running ? 'start' : 'stop',
+          success: runtimeResult.success,
+          error: runtimeResult.error,
         },
         message: `Bot '${updated.name}' is now ${status}`,
       });

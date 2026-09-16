@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment 2) — the substrate-agnostic seam for launching a bot RUNTIME. The dynamic-bot path (an app package or the Bot Forge contributing a bot that needs its own node) was hard-wired to docker compose: DynamicComposeService wrote a compose overlay and BotContainerSpawnerService shelled `docker compose up -d`. On Kubernetes the api pod has no compose file and no docker socket, so createAndStartAgent could only fail and roll the creation back — an app could never bring its own bot-node with it, which is the whole point of the store model. This interface is what AgentFactoryService talks to; ComposeBotRuntimeLauncher preserves the existing behavior exactly, KubernetesBotRuntimeLauncher is its cluster sibling.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added setRunning to the seam. Creating a runtime was substrate-agnostic but ENABLING/DISABLING one was not: the cockpit status toggle still went straight to DynamicComposeService + BotContainerSpawnerService, so on Kubernetes disabling a bot shelled `docker compose stop` inside a pod with no compose file and no docker socket — it reported an error and the bot kept running. setRunning is start/stop WITHOUT teardown (the runtime definition survives), which is what a toggle means on both substrates: compose start/stop here, a Deployment scale 0/1 in the Kubernetes sibling.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -51,6 +52,12 @@ export interface BotRuntimeLauncher {
   launch(spec: BotLaunchSpec): Promise<BotLaunchResult>;
   /** @description Remove the runtime. Used by create-and-start rollback. */
   remove(agentName: string): Promise<BotLaunchResult>;
+  /**
+   * @description Start or stop an EXISTING runtime without destroying its
+   * definition — what the cockpit enable/disable toggle means. Distinct from
+   * remove(), which tears the runtime down for good.
+   */
+  setRunning(agentName: string, running: boolean): Promise<BotLaunchResult>;
 }
 
 /**
@@ -127,5 +134,27 @@ export class ComposeBotRuntimeLauncher implements BotRuntimeLauncher {
     }
     const removed = this.dynamicCompose.removeService(agentName);
     return { success: removed.success, runtime: this.runtime, error: removed.error };
+  }
+
+  /**
+   * @description Start or stop the container, leaving its compose service block in
+   * place so re-enabling is a plain start rather than a re-registration.
+   * @param agentName bot slug — also the compose service key
+   * @param running true to start, false to stop
+   * @returns {Promise<BotLaunchResult>}
+   */
+  async setRunning(agentName: string, running: boolean): Promise<BotLaunchResult> {
+    if (!BOT_NAME_PATTERN.test(agentName)) {
+      return { success: false, runtime: this.runtime, error: `invalid bot name: ${agentName}` };
+    }
+    const result = running
+      ? await this.spawner.startBot(agentName)
+      : await this.spawner.stopBot(agentName);
+    if (!result.success) {
+      logger.error({ name: agentName, running, error: result.error }, 'bot container start/stop failed');
+      return { success: false, runtime: this.runtime, error: result.error };
+    }
+    logger.info({ name: agentName, running }, 'bot runtime running-state changed (compose)');
+    return { success: true, runtime: this.runtime };
   }
 }
