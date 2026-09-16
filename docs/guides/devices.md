@@ -9,7 +9,7 @@ The page is three tiles: **Desktop**, **Phone**, **TV**. The line under the titl
 you are signed in to, and every link and QR on the page points back at that same address. Nothing
 here needs an operator.
 
-## Desktop — a Windows PC as a worker node
+## Desktop — a Windows, Mac or Linux computer as a worker node
 
 A worker node is a computer that does work *for* you: the swarm can run a browser on it (the
 job-application flow uses this), execute shell tasks, and capture or drive the screen. Work is
@@ -19,17 +19,22 @@ inbound port is opened on the PC.
 **Steps**
 
 1. Type a name for the computer (it is how the computer is labelled on this page and in pickers
-   such as the Job Board's *On …* menu) and click **Download installer**.
+   such as the Job Board's *On …* menu). The picker beside it starts on the kind of computer you
+   are reading the page from; change it if you are downloading for a different machine. Then
+   click **Download installer**.
 2. A notice says what the file contains before it is created: a credential for that one computer,
-   tied to your account. Accept it and `install-oshal-node.cmd` lands in your Downloads folder.
-3. Copy the file to the PC if you downloaded it elsewhere, and double-click it. Windows may ask
-   whether to run a file from the internet; choose **Run**.
-4. Node.js 20 or newer must already be installed on that PC (the LTS build from nodejs.org). The
-   installer stops with a clear message if it is missing.
+   tied to your account. Accept it and the installer lands in your Downloads folder —
+   `install-oshal-node.cmd` for Windows, `install-oshal-node.sh` for macOS and Linux.
+3. Copy the file to that computer if you downloaded it elsewhere, and run it. On Windows,
+   double-click it; Windows may ask whether to run a file from the internet, so choose **Run**.
+   On macOS and Linux, open a terminal and run `bash ~/Downloads/install-oshal-node.sh` — going
+   through `bash` means there is nothing to make executable and no `sudo`.
+4. Node.js 20 or newer must already be installed on that computer (the LTS build from
+   nodejs.org). The installer stops with a clear message if it is missing.
 5. The installer pulls the node app from npm (a few minutes; it downloads Electron), binds it to
-   your account, and starts it hidden. **Your computers** on the page lists it within about a
-   minute, with its status and last heartbeat. The list refreshes on its own.
-6. Delete the `.cmd` file afterwards.
+   your account, and starts it. **Your computers** on the page lists it within about a minute,
+   with its status and last heartbeat. The list refreshes on its own.
+6. Delete the installer file afterwards.
 
 **If the download is refused**, the page shows the server's reason. The two you may see: you opened
 the cockpit over `localhost`, so the installer would point the new PC at itself (open the cockpit
@@ -45,9 +50,15 @@ curl -fsS -b "$OSHAL_COOKIE_JAR" https://<swarm>/api/cli-tokens            # fin
 curl -fsS -b "$OSHAL_COOKIE_JAR" -X DELETE https://<swarm>/api/cli-tokens/<id>
 ```
 
-**macOS and Linux.** The tile is honest about this: the one-click installer is Windows-only today.
-The same node app (`@oshal/chat` on npm) runs on those platforms, but that path has not been proven
-end to end on a Mac or Linux box, so it is not offered as a button.
+**macOS and Linux.** The shell installer carries exactly what the Windows one carries — the same
+per-device token, the same five seeded values, no swarm-wide credential — and the same two
+refusals apply (`localhost` cockpit, swarm-wide secret still accepted). Two differences worth
+knowing: on Linux the script stops before the Electron download if it finds no graphical session
+(`DISPLAY` and `WAYLAND_DISPLAY` both unset), because the node app opens a window and cannot run
+over a plain SSH connection; and if your global npm prefix is owned by root, the script prints the
+two `npm config set prefix` lines that move it somewhere you own rather than asking for `sudo`.
+**Posture:** the route and the tile are built and covered by guards; what has not happened yet is
+a run on a real Mac or Linux machine with no checkout.
 
 ## Phone — the cockpit as an app
 
