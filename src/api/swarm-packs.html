@@ -107,14 +107,17 @@ async function viewFlow(name, i){
   } catch (e) { el.innerHTML = '<div class="meta">Couldn\'t load flow.</div>'; }
 }
 async function deploy(name, i, btn){
-  if (!confirm('Deploy "'+name+'" into the swarm? This registers its bots, a new ticket type, and an isolated ticket queue.')) return;
+  if (!confirm('Deploy "'+name+'" into the swarm? This registers its bots, its ticket type, and an isolated ticket queue. A pack that is already live is UPDATED in place, not duplicated.')) return;
   const t = document.getElementById('t-'+i); btn.disabled = true; btn.textContent = 'Deploying…';
   try {
     const r = await fetch('/api/swarm/packs/'+encodeURIComponent(name)+'/deploy', { method:'POST' });
     const j = await r.json();
     if (r.ok && j.ok) {
-      t.className = 'toast'; t.innerHTML = '✓ Deployed — '+j.bots.length+' bots, ticket type "'+esc(j.ticketType)+'"'+(j.gated?' (gated)':'')+'. <a href="'+esc(j.openUrl)+'" target="_top">Open app →</a>';
-      btn.textContent = 'Deployed ✓';
+      // `edited` tells the operator this re-emitted the SAME pack (same bots, same queue) rather
+      // than standing a second one up next to it.
+      const verb = j.edited ? 'Updated in place' : 'Deployed';
+      t.className = 'toast'; t.innerHTML = '✓ '+verb+' — '+j.bots.length+' bots, ticket type "'+esc(j.ticketType)+'"'+(j.version?' · v'+esc(j.version):'')+(j.gated?' (gated)':'')+'. <a href="'+esc(j.openUrl)+'" target="_top">Open app →</a>';
+      btn.textContent = (j.edited ? 'Updated ✓' : 'Deployed ✓');
     } else { t.className='toast err'; t.textContent = 'Deploy failed: '+esc(j.error||r.status); btn.disabled=false; btn.textContent='🚀 Deploy to swarm'; }
   } catch (e) { t.className='toast err'; t.textContent='Deploy error.'; btn.disabled=false; btn.textContent='🚀 Deploy to swarm'; }
 }
