@@ -4,14 +4,15 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove one shared STL renderer through both actual application pages: real shaders, first frame, parsing, controls, lifecycle and clear upgrade errors.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  */
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { type BrowserContext, type Page } from 'playwright';
 import { writeFile } from 'node:fs/promises';
 import { boxStl, CONSUMERS, hasStore, observeStlRendering, observeViewerListeners, startStlViewerFixture } from '../fixtures/stl-viewer';
-import { launchIsolatedBrowser } from '../fixtures/isolated-browser';
+import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
 
-vi.setConfig({ testTimeout: 20_000 });
+vi.setConfig({ testTimeout: 20_000, hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 let fixture: Awaited<ReturnType<typeof startStlViewerFixture>>, owned: Awaited<ReturnType<typeof launchIsolatedBrowser>>;
 let context: BrowserContext, page: Page;
 let pageErrors: string[];
@@ -30,7 +31,7 @@ afterAll(async () => {
     try { expect(fixture.requests.filter(value => !value.startsWith('GET '))).toEqual([]); }
     finally { await writeFile(`temp/shared-stl-viewer-cleanup-${process.pid}.json`, JSON.stringify(await owned.close(), null, 2)); }
   } finally { await fixture.close(); }
-}, 30_000);
+}, BROWSER_HOOK_TIMEOUT_MS);
 
 /** @description Open unmodified shipped HTML and app boot, revealing its existing empty preview for component checks. */
 async function open(slug: string) {

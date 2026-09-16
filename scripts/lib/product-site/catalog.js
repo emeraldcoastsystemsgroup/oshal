@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Catalog model for the multi-page product site. Reads the kernel manifests, the store registry AND each store package's own oshal-app.yaml, because a marketing page built from the one-paragraph registry blurb is exactly the thin page that has fallen flat three times. The per-package manifest is where the substance lives: the screens the app actually gives you (ui.static), the bot that runs it and what it is accountable for (bots[].capabilities), and the accounts it needs.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Record the publish-state decision where it is enforced (BACKLOG "print-to-rag has no user guide and no page on the site"). A store package's own oshal-app.yaml `status:` is INSTALL state — what a fresh install does — and collectStore deliberately never reads it; publish state is the registry's `status: ready`. print-ingest installs inactive because printing into a corpus must be switched on by an operator (ADR-135 D11), and flipping its manifest to active to earn a page would have traded that safety default for a marketing page. Comment only, no behaviour change; guarded by tests/unit/print-to-rag-docs.spec.ts.
  */
 
 const fs = require('fs');
@@ -199,6 +200,12 @@ function collectKernel() {
 /**
  * The store catalog. Returns null (not an empty list) when the trunk is absent, so the caller can
  * refuse to regenerate rather than silently publishing a site with 47 pages missing.
+ *
+ * Publish state is the REGISTRY's `status` (`ready`), never the package manifest's `status:`.
+ * The manifest's field is install state — what a fresh install does — and some packages ship
+ * default-off on purpose (print-ingest, ADR-135 D11: nothing is ingested until an operator enables
+ * it). Reading it here would hide exactly the apps whose safety default is to wait for a person.
+ * Kernel manifests have no registry, which is why collectKernel does read their `status:`.
  */
 function collectStore() {
   const registry = path.join(STORE_DIR, 'marketplace.json');

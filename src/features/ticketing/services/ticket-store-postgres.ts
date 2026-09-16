@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Normalized historical Change Log attribution to the mandated project author identifier
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Queue DLQ: deriveStateFields maps 'dead_letter' → state_group 'escalated' (would otherwise fall through to 'backlog' and violate the state-group CHECK); linkedChatTaskStatusForTerminalTicket treats dead_letter like escalated (linked chat task → failed).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): added findLatestByMetadataKey (newest match, any status) — the consolidation stage's open-vs-recurrence decision needs the newest ticket per incident key, not findActiveByMetadataKey's oldest non-cancelled
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | buildTicketRowStatusMetadataPatch always returns a patch now, so the metadata-merging UPDATE is the only one left: the no-metadata variant it guarded is unreachable
  */
 
 import type { Pool, PoolClient, QueryResult } from 'pg';
@@ -296,23 +297,16 @@ export class PostgresTicketStore implements ITicketStore {
         [ticketId],
       );
       const prev = currentResult.rows[0]?.status ?? null;
-      if (ticketMetadataPatch) {
-        await q.query(
-          `UPDATE tickets
-           SET status = $1,
-               state_group = $2,
-               execution_phase = $3,
-               updated_at = $4,
-               metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb
-           WHERE ticket_id = $5`,
-          [status, stateGroup, executionPhase, now, ticketId, JSON.stringify(ticketMetadataPatch)],
-        );
-      } else {
-        await q.query(
-          `UPDATE tickets SET status = $1, state_group = $2, execution_phase = $3, updated_at = $4 WHERE ticket_id = $5`,
-          [status, stateGroup, executionPhase, now, ticketId],
-        );
-      }
+      await q.query(
+        `UPDATE tickets
+         SET status = $1,
+             state_group = $2,
+             execution_phase = $3,
+             updated_at = $4,
+             metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb
+         WHERE ticket_id = $5`,
+        [status, stateGroup, executionPhase, now, ticketId, JSON.stringify(ticketMetadataPatch)],
+      );
       const linkedTaskStatus = linkedChatTaskStatusForTerminalTicket(status);
       if (linkedTaskStatus) {
         const linkedTaskResult = await q.query(

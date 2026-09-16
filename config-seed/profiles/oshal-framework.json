@@ -225,6 +225,30 @@
         "toolUi": { "iframeUrl": "/api/spaces/app", "sidebarLabel": "Spaces" }
       },
       {
+        "id": "tool-embodied",
+        "icon": "codicon codicon-robot",
+        "label": "Embodied Swarm",
+        "section": "top",
+        "group": "Robotics & Space",
+        "toolUi": { "iframeUrl": "/api/embodied/app", "sidebarLabel": "Embodied Swarm" }
+      },
+      {
+        "id": "tool-animatronics",
+        "icon": "codicon codicon-eye",
+        "label": "Animatronics",
+        "section": "top",
+        "group": "Robotics & Space",
+        "toolUi": { "iframeUrl": "/api/animatronics/app", "sidebarLabel": "Animatronics" }
+      },
+      {
+        "id": "tool-drone-relay",
+        "icon": "codicon codicon-radio-tower",
+        "label": "Drone Relay",
+        "section": "top",
+        "group": "Robotics & Space",
+        "toolUi": { "iframeUrl": "/api/drone-relay/app", "sidebarLabel": "Drone Relay" }
+      },
+      {
         "id": "tool-aero-lab",
         "icon": "codicon codicon-symbol-structure",
         "label": "Aero Lab",
@@ -247,6 +271,30 @@
         "section": "top",
         "group": "Engineering",
         "toolUi": { "iframeUrl": "/api/ocean-lab/blade-studio", "sidebarLabel": "Ocean Lab · Blade Studio" }
+      },
+      {
+        "id": "tool-cad-studio",
+        "icon": "codicon codicon-symbol-structure",
+        "label": "CAD Studio",
+        "section": "top",
+        "group": "Engineering",
+        "toolUi": { "iframeUrl": "/api/cad-studio/app", "sidebarLabel": "CAD Studio" }
+      },
+      {
+        "id": "tool-circuit-lab",
+        "icon": "codicon codicon-circuit-board",
+        "label": "Circuit Lab",
+        "section": "top",
+        "group": "Engineering",
+        "toolUi": { "iframeUrl": "/api/circuit-lab/app", "sidebarLabel": "Circuit Lab" }
+      },
+      {
+        "id": "tool-scan-to-print",
+        "icon": "codicon codicon-package",
+        "label": "Scan to Print",
+        "section": "top",
+        "group": "Engineering",
+        "toolUi": { "iframeUrl": "/api/scan-to-print/app", "sidebarLabel": "Scan to Print" }
       },
       {
         "id": "tool-camera-ops",

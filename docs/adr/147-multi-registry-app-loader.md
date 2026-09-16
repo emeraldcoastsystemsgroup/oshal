@@ -58,7 +58,22 @@ The decisions below are the design. This section is the truth about the code.
   never returned by any read.
 - **D10** — https only, no embedded credentials, no redirect following, literal private/loopback/
   link-local/CGNAT addresses refused unless the registry opts in, per-registry catalog cache,
-  per-registry fenced aggregation.
+  per-registry fenced aggregation. **The hostname half landed 2026-09-16:** the fence resolves
+  the host of the URL it is about to dial — for a github registry that is
+  `raw.githubusercontent.com`, not the repo URL, which the literal check never saw — refuses the
+  read when **any** answer is private, loopback, link-local, CGNAT or an IPv4-mapped form of one,
+  refuses a name that answers nothing rather than fetching it blind, and **pins** the approved
+  address for the connection: a `lookup` on the https request, and `http.curloptResolve` on the
+  `generic-git` clone. Pinning is why the catalog read left `fetch`, whose API takes no `lookup`
+  and would resolve the name a second time — the race the earlier note argued made resolving
+  pointless. TLS is unaffected: the certificate is still validated against the hostname. A
+  registry carrying `allow_private_host` skips both halves, as before.
+  *Evidence:* [`tests/unit/app-registry-dns-fence.spec.ts`](../../tests/unit/app-registry-dns-fence.spec.ts)
+  — 15 cases against a real loopback DNS server (hand-encoded A/AAAA answers) read through a real
+  `dns.Resolver` aimed at it, plus a real socket proving the pinned address is where the
+  connection lands. 7 of the 15 fail against the pre-fix fence (measured: `10.0.0.7` was fetched
+  as `registry unreachable`, never refused) and the same 7 fail again when the resolve step is
+  removed. Recorded in [the real-boundary audit](../governance/real-boundary-regression-audit.md).
 - The single-store catalog remains available. `/install-remote` preserves ordinary installs and
   same-source upgrades; a source collision now returns `409` and directs the operator to the
   App Loader preview. The `APP_REGISTRIES_ENABLED` flag in the P0 row was not built.
@@ -73,8 +88,11 @@ The decisions below are the design. This section is the truth about the code.
 
 - **D7** — dependencies resolve only within the origin registry (and fail closed when absent there);
   cross-registry resolution and its preview line are not built.
-- **D10** — hostnames are not resolved, so a public name that resolves to a private address is not
-  refused. The code documents why validate-then-fetch DNS is a TOCTOU and names the durable fix.
+- **D10, the installer clone** — reading a registry is fenced and pinned (above), but the install
+  route hands the catalog entry's own `source.url` to the installer child
+  (`scripts/oshal-app.js`) without either half, so a package's clone target is still unfenced.
+  The legacy `/install-remote` rail is bounded instead by its `^https://github\.com/` source
+  check; the registry rail has no equivalent.
 - **P3 provisioning** — first-run wizard trusted-store selection remains separate work.
 - **Guard 6** — the two-registry dependency-resolution spec belongs with D7.
 
@@ -436,6 +454,9 @@ Each of these goes red if the corresponding control is removed — they are not 
 6. **A transitive dependency available from two registries fails closed** (D7 rule 4).
 7. **One unreachable registry does not fail the aggregate catalog** — the other rows still render.
 8. **With `APP_REGISTRIES_ENABLED` off, catalog + install behave exactly as today.**
+9. **A hostname that resolves into private space is refused, and the approved address is what
+   the socket reaches** — a real loopback DNS server answers through a real `dns.Resolver`, and
+   the pin is proven at a real listener rather than asserted from the argument list.
 
 ---
 

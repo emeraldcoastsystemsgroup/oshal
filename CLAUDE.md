@@ -506,7 +506,7 @@ At any handover point the system must be operable by a human from `localhost` wi
 
 ## Bot registry (mix-mode)
 
-Bots are declared in [src/app/extensions/swarm/swarm-bot-registry.ts](src/app/extensions/swarm/swarm-bot-registry.ts) (and `swarm-bot-registry-local.ts` for the local variant) with `harnessType` and provider. Bots without an explicit harness fall back to the process-level `FORCE_LLM_PROVIDER` (default `openai-codex`). UUIDs must match across: compose file, registry, Redis heartbeats (`oshal:runtime-agent:{agentId}`), and Postgres. When adding a bot, update registry + compose + persona YAML together.
+Bots are declared in [src/app/extensions/swarm/swarm-bot-registry.ts](src/app/extensions/swarm/swarm-bot-registry.ts) (and `swarm-bot-registry-local.ts` for the local variant) with `harnessType` and provider. Bots without an explicit harness fall back to the process-level `FORCE_LLM_PROVIDER` (default `openai-codex`). UUIDs must match across: compose file, registry, Redis heartbeats (`oshal:runtime-agent:{agentId}`), and Postgres. When adding a bot, update registry + compose + persona YAML together. Monitoring is inherited, not registered: a bot service in `docker-compose.oshal-local.yml` that inherits `x-bot-common` carries the `oshal.tier: worker` label and is scraped automatically, because the monitoring overlay's Prometheus discovers containers by that label — so adding a bot has no scrape-target step, and nobody edits `ops/monitoring/prometheus.yml` for it.
 
 **Before adding a bot, read [docs/building-a-bot.md](docs/building-a-bot.md).** A bot must be either a
 dedicated bot-node (isolation, long work, dedicated storage, or a validated deterministic provider

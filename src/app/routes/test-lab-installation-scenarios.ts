@@ -13,6 +13,8 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register catalog-driven local package and UX batch runner regression coverage.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Register the real-server batch-history follow proof over the exported Create package.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Classify the sandbox suite at the browser level: it now drives the image Chromium inside the disposable container.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Register the harness:core-test-fixtures guard: the staged core fixture closure, its Dockerfile COPY and allowlist, and the probe-only advertisement.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Register the post-deploy live verification guard alongside the other deploy-contract regressions: a deploy that reports DEPLOYED while Jarvis answers nothing and no ticket can be dispatched is reporting the wrong thing, and this is the suite that keeps that gate from decaying back into an advisory.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -68,6 +70,7 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/package-test-host.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-wiring.spec.ts' },
     { level: 'browser', path: 'tests/unit/package-test-sandbox.spec.ts' },
+    { level: 'unit', path: 'tests/unit/package-test-core-fixtures.spec.ts' },
     { level: 'integration', path: 'tests/unit/package-test-runner.spec.ts' },
     { level: 'integration', path: 'tests/unit/test-lab-run-history.spec.ts' },
     { level: 'browser', path: 'tests/unit/test-lab-run-browser.spec.ts' },
@@ -77,6 +80,7 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'browser', path: 'tests/unit/test-lab-installed-package-batch-follow.spec.ts' },
     { level: 'integration', path: 'tests/unit/deploy-preview-source.spec.ts' },
     { level: 'unit', path: 'tests/unit/deploy-rollback-outcome.spec.ts' },
+    { level: 'integration', path: 'tests/unit/deploy-live-verification.spec.ts' },
     { level: 'integration', path: 'tests/unit/managed-postgres-pool-budget.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'test-lab', label: 'Installed package cases', run: installedCatalog }],

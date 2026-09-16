@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the complete known roster and reviewed metadata import under fresh swarm administration.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Ask readiness per request. Holding it as one derived promise made a boot-time bootstrap failure refuse every later roster read, long after the bootstrap itself had recovered.
  */
 import { Router, json, type ErrorRequestHandler } from 'express';
 import { z } from 'zod';
@@ -14,7 +15,8 @@ import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'user-directory-routes' });
 export interface UserDirectoryPorts {
-  ready: Promise<unknown>;
+  /** Re-requestable schema readiness, asked once per request so a failed bootstrap is retried. */
+  ready(): Promise<unknown>;
   registrations: PrincipalRegistrationStore;
   roster(actor: AuthorizationActor): Promise<unknown>;
 }
@@ -23,7 +25,7 @@ export function createUserDirectoryRoutes(ports: UserDirectoryPorts, options: Au
   const router = Router(); router.use(options.requiresAuth);
   router.use((_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); });
   router.use(async (req, res, next) => {
-    try { const actor = await options.resolveActor(req); requireRosterAdmin(actor); res.locals.rosterActor = actor; await ports.ready; next(); }
+    try { const actor = await options.resolveActor(req); requireRosterAdmin(actor); res.locals.rosterActor = actor; await ports.ready(); next(); }
     catch (error) { next(error); }
   });
   router.get('/', async (req, res, next) => {

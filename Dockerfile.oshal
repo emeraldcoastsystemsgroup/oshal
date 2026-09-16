@@ -57,6 +57,20 @@
 #                      |                          | local Trivy gate caught; the
 #                      |                          | daily rebuild now self-heals
 #                      |                          | fixable OS CVEs.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | Carry the two shared Test
+# 8 | maintainer@emeraldcoastsystemsgroup.com   | Bake scripts/image-freshness.js. The installer's freshness gate runs INSIDE the pulled image on mode 1, where there is no repository on the host and no guaranteed node - without this COPY the check silently degrades to a skip on exactly the install path it exists to protect.
+#                      |                          | Lab browser fixtures
+#                      |                          | (tests/fixtures/isolated-
+#                      |                          | browser.ts and stl-viewer.ts)
+#                      |                          | at /app/tests/fixtures. The
+#                      |                          | sealed sandbox runs THIS
+#                      |                          | image with OSHAL_CORE_ROOT=
+#                      |                          | /app on a read-only root, and
+#                      |                          | three store browser cases
+#                      |                          | require them from there; the
+#                      |                          | runner probe loads them
+#                      |                          | through tsx before it
+#                      |                          | advertises the prerequisite.
 # =============================================================================
 #
 # Why this image exists:
@@ -245,6 +259,9 @@ COPY scripts/record-cost.sh ./scripts/
 COPY scripts/oshal-verify.sh ./scripts/
 COPY scripts/swarm-routability-check.sh ./scripts/
 COPY scripts/routability-critical-bots.txt ./scripts/
+# The installer runs this INSIDE the pulled image to report how far behind the image is.
+# It has to be baked: mode 1 has no repository on the host and no guaranteed node there.
+COPY scripts/image-freshness.js ./scripts/
 # ALL OSHAL connector/app CLIs (walmart, uber, uber-rides, spotify, duffel, gcp,
 # plaid, trading, …) — baked so app search/booking survives a container recreate.
 # Glob picks up new oshal-*.js automatically (allowlisted in .dockerignore).
@@ -282,9 +299,11 @@ COPY docs/guides/ ./docs/guides/
 # is auto-loaded at boot by SwarmAppService (see src/features/swarm-apps).
 COPY swarm-apps/ ./swarm-apps/
 
-# Any-bot runtime — the bot node execution layer (any-bot-swarm-separation-design.md).
-# Bot containers run `node any-bot/server/app.js` which handles LLM execution,
-# credential management, CLI spawning, and cost capture.
+# Any-bot server tree — the provider/task layer the canonical bot-node runtime
+# executes through (LLM execution, credential management, CLI spawning, cost
+# capture), plus the app-modules/* route registrars it mounts.
+# Bot containers run `node dist/app/bot-node-server.js` (BOT_RUNTIME=bot-node);
+# `any-bot/server/app.js` is demoted and is not a selectable runtime.
 COPY any-bot/server/ ./any-bot/server/
 
 # Cockpit/static assets are served directly by the API server at runtime.
@@ -327,6 +346,17 @@ COPY config-seed/ ./config-seed.dist/
 COPY src/api/chat.html ./dist/chat.html
 
 COPY ai-lab/bot-personas/ ./ai-lab/bot-personas/
+
+# Test Lab: the shared browser fixtures three store browser cases (cad-studio, embodied, scan-to-print)
+# require from the core root — the `harness:core-test-fixtures` prerequisite. The sealed sandbox runs
+# THIS image with OSHAL_CORE_ROOT=/app on a read-only root, so the only way a store spec can require
+# /app/tests/fixtures/<name>.ts is for the image to carry it. Exactly the measured closure and nothing
+# else from tests/: two files, no relative imports, runtime dependencies only (playwright, express,
+# loaded through tsx). The runner probe loads each one through tsx before advertising the prerequisite.
+# Needs the matching `!tests/fixtures/<name>.ts` allowlist entries in .dockerignore (tests/ is excluded
+# wholesale). Guard: tests/unit/package-test-core-fixtures.spec.ts holds this COPY, the allowlist and
+# the staged set (CORE_TEST_FIXTURES) to one another.
+COPY tests/fixtures/isolated-browser.ts tests/fixtures/stl-viewer.ts ./tests/fixtures/
 
 RUN chmod +x /app/scripts/container-start.sh 2>/dev/null || true && \
     chmod +x /app/scripts/bot-entrypoint.sh 2>/dev/null || true && \

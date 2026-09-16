@@ -39,14 +39,23 @@ your roster, your opponents' rosters, the schedule and your league's scoring rul
 **Path B — let the desktop node capture them** (Config → Accounts → ESPN Fantasy → *Log in + push*).
 The node opens a real ESPN sign-in window and pushes the pair for you.
 
-> **In that window, do not use the person icon in the top-right.** Its dropdown opens, and its
-> **Log In** item closes the dropdown and does nothing — verified 2026-09-09 by reproducing it in the
-> node's own Electron window and screenshotting the result. Use the **Log In** button in the
-> **Customize ESPN** card down the right-hand side of the page instead. That one hands you to
-> MyDisney and redirects back signed in, and it is the path that produced this swarm's first working
-> ESPN connection. The window closes itself once the pair is captured. This path is built but is not
-yet running on any machine here — see the BACKLOG entry *"The ESPN 'Log in + push' button has not
-reached a running node"* for exactly what is missing.
+> **The window opens on ESPN's own Log In form** — email and password, with nothing to find first.
+> Sign in there. ESPN then sends the window to the Fantasy home page, and the window closes itself
+> once the pair is captured.
+>
+> The node opens ESPN's sign-in page (`www.espn.com/login`) rather than the Fantasy home page because
+> on the home page the first control you reach for is dead in this window: the person icon's
+> **Log In** closes its dropdown and does nothing (reproduced 2026-09-09 in the node's own Electron
+> window). The control that does work there, the **Log In** button in the **Customize ESPN** card,
+> is not shown at all at the window's opening size.
+>
+> If you close the form with its **×**, the window goes to the Fantasy home page instead. Close the
+> window and press *Log in + push* again to get the form back — or maximise the window and use the
+> **Log In** button in the **Customize ESPN** card that appears in the side rail, never the person
+> icon. That card is the path that produced this swarm's first working ESPN connection.
+
+This path is built but is not yet running on any machine here — see the BACKLOG entry *"The ESPN
+'Log in + push' button has not reached a running node"* for exactly what is missing.
 
 **Where the cookies go.** They are stored by the connector broker, resolved per request, used on the
 one outbound ESPN call that needs them, and discarded. They are never logged, never returned in a
@@ -127,14 +136,23 @@ never has to be right.
 
 ## When it cannot reach ESPN
 
-The app degrades rather than lying, but the messages are worth knowing:
+The app degrades rather than lying, but the messages are worth knowing. **This table describes
+Sports Edge 0.8.0 and later.** Before that build, an unreachable ESPN and an unconnected account
+produce the SAME first message, and a failed schedule read is reported as a bye - so on an older
+install, do not read a connect prompt as proof that your cookies are the problem.
+
+Check the version on the app tile; the behaviour below is what 0.8.0 introduced:
 
 | what you see | what it means |
 |---|---|
-| *"Connect ESPN Fantasy to read a private league."* | You have no ESPN connection stored — **or** ESPN could not be reached at all. Those two are not yet told apart; if you know you are connected, suspect the network before re-pasting cookies. |
-| The sign-in window's account dropdown closes when you click **Log In** | Known: the person-icon path does not work in the node's window. Use the **Log In** button in the Customize ESPN card instead (above). |
-| *"ESPN would not return that league right now."* | You are connected, and ESPN refused or did not answer. Usually transient; the league id being wrong looks the same. |
-| *"No opponent could be read for this week"* | Either a genuine bye, or the schedule read failed. The lineup shown is then simply the highest-projected one — safe, just not opponent-aware. |
+| *"Connect ESPN Fantasy to read a private league."* | ESPN answered, and refused the league. You have no ESPN connection stored, and a private league needs one — this message now means only that, so re-pasting your cookies is the right move. |
+| *"Could not reach ESPN at all (…)."* | The read never produced an HTTP response: DNS, the network, or the timeout. **No credential can fix it**, so do not re-paste anything — check connectivity, starting with the DNS command below. Answered as a 503. |
+| *"Could not reach ESPN for that league — it answered HTTP 5xx."* | ESPN answered but could not serve it. Also not your account; usually transient. Answered as a 503. |
+| The sign-in window shows the ESPN Fantasy home page, not a Log In form | The form's **×** sends the window there. Close the window and press *Log in + push* again for the form, or maximise the window and use **Log In** in the Customize ESPN card (above). Not the person icon: its **Log In** does nothing in the node's window. |
+| *"ESPN would not return that league right now."* | You are connected and ESPN answered, refusing the league — the id or the season is wrong, or this ESPN account is not in it. A read that never answered at all has its own message above. |
+| *"You have a BYE this week."* | A real bye: the league's schedule has your week's fixture and there is nobody on the other side. The lineup shown is the highest-projected one, which is the right lineup when there is nobody to beat. |
+| *"This week’s schedule could not be read from ESPN (…)."* | The schedule read failed, which is **not** a bye. The lineup shown is still safe — it falls back to the highest-projected one — but it is not opponent-aware, so re-run it once ESPN is reachable. |
+| *"The league schedule carries no fixture for this week."* | The schedule came back and simply does not cover that week (a week past the end of the season, or a playoff format whose matchup periods run differently). |
 | Projection date in the footer is old | ESPN's ~39 MB player feed could not be refreshed, so a cached one is being used. A stale cache beats a blank screen, and the date is there so you can judge. |
 
 **Before blaming ESPN, check your own DNS.** On 2026-09-09 every ESPN endpoint on this box returned

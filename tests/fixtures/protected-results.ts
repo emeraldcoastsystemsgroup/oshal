@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise protected result routes with real policy, signed execution lifecycle, canonical stores and loopback SSE.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Expose the authority's linkResult through the fixture's protected-result port so derived-lineage recording is proved against the real service, not a double.
  */
 import express, { type Request } from 'express';
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
@@ -73,7 +74,7 @@ function authorityFixture(policy: ApplicationAuthorizationService, resolve: (sub
     effective: (actor, app, tenantId) => policy.effective(actor, { app, tenantId }) });
   configureProtectedResultAccess({ assertResultAccess: (...args) => authority.assertResultAccess(...args),
     assertTaskResultAccess: (...args) => authority.assertTaskResultAccess(...args), hasTaskResults: taskId => authority.hasTaskResults(taskId),
-    isProtectedAgent: agent => agent === RESULT_AGENT });
+    linkResult: (...args) => authority.linkResult(...args), isProtectedAgent: agent => agent === RESULT_AGENT });
   return { authority, records, keys };
 }
 

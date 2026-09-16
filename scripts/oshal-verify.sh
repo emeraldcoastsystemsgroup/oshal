@@ -7,6 +7,7 @@
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the `catalogs` leg check. This script's governing rule is "a deployment must not report success while a capability it advertises has no credential behind it" — and on 2026-08-01 it passed a box that had registered ZERO connector tools after an ENOMEM scandir, because no leg could see a catalog that loaded nothing. Never PENDING even in --pre-onboarding: an empty catalog is not something the browser wizard goes on to satisfy. An empty leg value is reported as off, so this script stays usable against an api image that predates the leg.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: --apps executes manifest-owned package smokes through the canonical verifier API; explicit --live requires OSHAL_VERIFY_PAT and proves exactly one real generation plus persisted cost attribution. --skip-containers lets the native PowerShell installer invoke this exact verifier inside the shipped image.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | Consume the canonical installed-case report, print Lab links and distinguish pending verification from a passed deployment.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | Report the `persistence` leg. A store that can fall back to in-memory storage now records whether it is actually durable, and this script names the store, the attempt count and the reason when one is serving from memory with Postgres configured - the 2026-09-15 boot that dropped three stores to memory passed every check this script had.
 #
 # Usage:
 #   bash scripts/oshal-verify.sh                          # strict operational check
@@ -125,6 +126,18 @@ else
     off) off "catalogs: $(printf '%s' "$BODY" | sed -n 's/.*"catalogs":{"state":"off","detail":"\([^"]*\)".*/\1/p')" ;;
     "")  off "catalogs: leg absent — this api image predates the catalog-load registry" ;;
     *)   bad "catalogs: $(problem_for catalogs)" ;;
+  esac
+
+  # persistence - a store that advertises durable storage and is serving from an in-memory
+  # Map. Never waivable and never PENDING: on 2026-09-15 three stores lost a pool acquire
+  # inside the boot migration burst, fell back to memory for the life of the process, and
+  # the box reported healthy - there was no leg that could see it.
+  PERSIST="$(leg persistence)"
+  case "$PERSIST" in
+    ok)  ok "persistence: $(printf '%s' "$BODY" | sed -n 's/.*"persistence":{"state":"ok","detail":"\([^"]*\)".*/\1/p')" ;;
+    off) off "persistence: $(printf '%s' "$BODY" | sed -n 's/.*"persistence":{"state":"off","detail":"\([^"]*\)".*/\1/p')" ;;
+    "")  off "persistence: leg absent - this api image predates the persistence-mode registry" ;;
+    *)   bad "persistence: $(problem_for persistence)" ;;
   esac
 
   # voice — configured:true, or explicitly not declared.

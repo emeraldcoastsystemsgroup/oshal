@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The dispatch ledger reader/writer over oshal_alert_dispatch: the append-only record of every outbound decision, the row-computed hourly apply cap and once-per-identity refusal (both therefore restart-proof and replica-safe), and the three-bucket read model whose buckets are disjoint AND exhaustive so a failing handler surfaces as failures rather than as zeros.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-20: record() takes the landed event it works; the dispatch row then records the event's `dispatch:<channel>` effect in the same statement, so re-draining the event never appends a second row.
  */
 
 import type { Pool } from 'pg';
@@ -14,6 +15,23 @@ import {
   type DispatchChannel,
   type DispatchRecord,
 } from './alert-pipeline-types';
+
+/** One dispatch row. */
+const RECORD_DISPATCH_SQL = `INSERT INTO oshal_alert_dispatch (
+  incident_id, dedup_key, target_channel, action,
+  attempted, suppressed, success, status_code, error,
+  ticket_id, ttl_seconds, payload, owner_sub
+) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)`;
+
+/** The same row, recording the landed event's `dispatch:<channel>` effect in the same statement. $14 is the event. */
+const RECORD_DISPATCH_RECORDED_SQL = `
+WITH w AS (${RECORD_DISPATCH_SQL}
+  RETURNING dispatch_id, target_channel, owner_sub),
+recorded AS (
+  INSERT INTO oshal_alert_event_effect (event_id, effect, owner_sub, detail)
+  SELECT $14::uuid, 'dispatch:' || w.target_channel, w.owner_sub, jsonb_build_object('dispatchId', w.dispatch_id) FROM w
+)
+SELECT 1 FROM w`;
 
 const logger = createChildLogger({ module: 'dispatch-log' });
 
@@ -157,17 +175,15 @@ export class DispatchLog {
    * a decision not to act is evidence, and a ledger that records only the actions taken cannot
    * explain why the pipeline went quiet.
    * @param entry - The decision, with exactly one of `attempted` / `suppressed` set.
+   * @param eventId - The landed event this row works, when there is one: its `dispatch:<channel>`
+   *   effect is recorded in the same statement, so a re-drained event never appends twice (BUG-20).
    * @returns Nothing. Throws when the invariant is broken or the append fails.
    */
-  async record(entry: DispatchRecord): Promise<void> {
+  async record(entry: DispatchRecord, eventId?: string): Promise<void> {
     assertExactlyOneBucket(entry);
     try {
       await this.pool.query(
-        `INSERT INTO oshal_alert_dispatch (
-           incident_id, dedup_key, target_channel, action,
-           attempted, suppressed, success, status_code, error,
-           ticket_id, ttl_seconds, payload, owner_sub
-         ) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)`,
+        eventId ? RECORD_DISPATCH_RECORDED_SQL : RECORD_DISPATCH_SQL,
         [
           entry.incidentId,
           entry.dedupKey,
@@ -182,6 +198,7 @@ export class DispatchLog {
           entry.ttlSeconds,
           entry.payload === undefined || entry.payload === null ? null : JSON.stringify(entry.payload),
           PIPELINE_OWNER_SUB,
+          ...(eventId ? [eventId] : []),
         ],
       );
     } catch (err) {

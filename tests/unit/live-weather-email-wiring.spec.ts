@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Backfilled the missing change-log header. Compose alignment check updated for the security-audit port de-publish: weather-bot's 5000 is now expose-only (internal Docker network), no longer host-published as 127.0.0.1:3032:5000 — the test now asserts the INTERNAL-ONLY posture so a re-published port fails loudly.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extended the internal-only posture guard to the alternate swarm stacks (docker-compose.swarm-local.yml + docker-compose.incident-lab.yml): the security-audit de-publish only covered oshal-local.yml, leaving those variants publishing bot 5000s on the host; the new case fails loudly if any bot service in them host-publishes :5000 again.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "Bot runtime consolidation": the any-bot runtime case no longer asserts that the entrypoint STARTS any-bot/server/app.js. That runtime is retired (the entrypoint refuses BOT_RUNTIME=any-bot outright) and any-bot/server/swarm-node.js is deleted, so the case now pins the demoted posture instead; the behavioural proof lives in tests/unit/bot-runtime-consolidation.spec.ts, which evaluates the shipped selection block under sh.
  */
 
 import fs from 'node:fs';
@@ -106,16 +107,15 @@ describe('live weather and email data-path wiring', () => {
     expect(appSource).toContain('providerRecords: Array.isArray(result.providerRecords) ? result.providerRecords : []');
   });
 
-  it('starts the canonical hardened any-bot server for the optional any-bot runtime', () => {
+  it('keeps the hardened any-bot server out of the runtime switch entirely', () => {
+    // BACKLOG "Bot runtime consolidation": app.js is demoted and swarm-node.js is gone, so
+    // this file's hardened wiring is reached only through the canonical bot-node runtime.
+    // The behavioural proof (the shell actually refusing) is
+    // tests/unit/bot-runtime-consolidation.spec.ts; this keeps the wiring claim honest.
     const entrypoint = fs.readFileSync('scripts/bot-entrypoint.sh', 'utf8');
-    const anyBotBranch = entrypoint.slice(
-      entrypoint.indexOf('if [ "$BOT_RUNTIME" = "any-bot" ]'),
-      entrypoint.indexOf('elif [ "$BOT_RUNTIME" = "bot-node" ]'),
-    );
-    expect(anyBotBranch).toContain('exec node any-bot/server/app.js');
-    expect(anyBotBranch).not.toContain('exec node any-bot/server/swarm-node.js');
-    const legacySource = fs.readFileSync('any-bot/server/swarm-node.js', 'utf8');
-    expect(legacySource).toContain('owner-scoped execution is unsupported by the legacy swarm-node runtime');
+    expect(entrypoint).not.toContain('exec node any-bot/server/app.js');
+    expect(entrypoint).not.toContain('exec node any-bot/server/swarm-node.js');
+    expect(fs.existsSync('any-bot/server/swarm-node.js')).toBe(false);
   });
 
   it('preserves Gmail IDs, receive time, and provider priority flags without adding a body', () => {

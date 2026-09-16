@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Persist immutable authenticated queue creators behind controller-only row security.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Take readiness as a re-requestable thunk so a bootstrap that lost the boot-time pool acquire is retried by the next capture rather than refusing every one.
  */
 import type { Pool } from 'pg';
 import type { AuthorizationActor } from '@/shared/application-authorization';
@@ -34,13 +35,13 @@ export async function ensureQueuedApplicationPrincipalSchema(pool: Pool): Promis
 /** @description Insert-only authority store; ordinary ticket edits cannot alter captured identity or directory freshness. */
 export class PostgresQueuedApplicationPrincipalStore implements QueuedApplicationPrincipalStore {
   /** @description Hold the controller pool and installation readiness barrier.
-   * @param pool Controller database. @param ready Schema readiness. */
-  constructor(private readonly pool: Pool, private readonly ready: Promise<unknown>) {}
+   * @param pool Controller database. @param ready Re-requestable schema readiness, asked per operation. */
+  constructor(private readonly pool: Pool, private readonly ready: () => Promise<unknown>) {}
   /** @description Persist once; reusing a ticket identifier never replaces authority.
    * @param ticketId Newly created ticket. @param actor Verified creator snapshot. @returns Completion after insert.
    */
   async capture(ticketId: string, actor: AuthorizationActor): Promise<void> {
-    await this.ready;
+    await this.ready();
     await runWithSystemIdentity(() => this.pool.query(
       'INSERT INTO oshal_queued_application_principals(ticket_id,actor) VALUES($1,$2::jsonb) ON CONFLICT(ticket_id) DO NOTHING',
       [ticketId, JSON.stringify(actor)]));
@@ -49,7 +50,7 @@ export class PostgresQueuedApplicationPrincipalStore implements QueuedApplicatio
    * @param ticketId Durable ticket identifier. @returns Original actor evidence, or null for legacy/unqualified work.
    */
   async read(ticketId: string): Promise<AuthorizationActor | null> {
-    await this.ready;
+    await this.ready();
     const result = await runWithSystemIdentity(() => this.pool.query<{ actor: AuthorizationActor }>(
       'SELECT actor FROM oshal_queued_application_principals WHERE ticket_id=$1', [ticketId]));
     return result.rows[0]?.actor ?? null;

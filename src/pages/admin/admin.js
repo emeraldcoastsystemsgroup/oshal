@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Render the governance API's actual CSP mode, rate-limit coverage, connector envelope posture, and Alertmanager HMAC state instead of obsolete binary flags.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Warn when the explicit shared-HKDF DEK-store break-glass is active instead of presenting it as normal per-user isolation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Name the IdP-claim role source. /whoami can now report it, and the page used to fall into the break-glass copy for it, telling a directory-granted admin to ask for a role that would survive an edit to an environment file they are not named in.
  */
 const state = {
   whoami: null,
@@ -131,6 +132,13 @@ function renderRoleSource(me) {
     el.textContent = me.isRoot
       ? 'You hold swarm root. This is a role on this swarm, manageable from Users.'
       : 'Granted as a swarm role — manageable from Users, and it survives a change to the environment file.';
+    return;
+  }
+  if (me.source === 'idp-claim') {
+    el.className = 'role-source warn';
+    el.innerHTML = 'Your access comes from a <strong>role claim on your identity-provider token</strong>, not from a role on this swarm. '
+      + 'It disappears the moment your directory stops sending that claim, and nobody here can see or revoke it. '
+      + '<a href="/access-review">See every source</a>';
     return;
   }
   if (me.source === 'break-glass') {

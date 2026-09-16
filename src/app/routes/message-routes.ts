@@ -23,6 +23,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Close seq 17's blind spot (live 2026-08-11: the 429 STILL became the answer on THIS route): agentic turns catch provider errors inside task-orchestrator.handleError and RESOLVE with { success:false, error }, so the catch never fired. swallowedTurnFailure inspects the resolved result and feeds the same retryHostedBrainTurn; a non-retryable failure (reportResolvedLlmFailure's gate) keeps the original failed result.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | ONE-CHOKEPOINT node dispatch: when the resolved agent has a dedicated node endpoint, this route now executes the turn through executeBotOrInline (budget gate + ADR-090 skills + the ADR-127 REMOTE brain stamp — the demo operator's mounted CLI, a guest's hosted lane) instead of calling the controller orchestrator directly with the hosted-ONLY ladder — which is exactly how a node-backed bot's chat turns kept dying on an exhausted hosted key while a healthy CLI login sat mounted at its node. The controller persists both turns (persistJarvisTurn, the shared chat-turn writer) so GET /api/:taskId/messages replays node threads; ticket/chat-task bookkeeping and guest chatOnly containment are identical to the inline path. Inline bots are byte-identical to seq 18.
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Require current exact-principal authorization for protected thread writes and history reads, including after asynchronous history retrieval.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com | ONE-CHOKEPOINT admission on the INLINE half (BACKLOG "One bot-invocation chokepoint - the INLINE half of /api/send-message"). Seq 19 routed the NODE half through executeBotOrInline, so a chat turn to a bot with its own node endpoint has cleared the cost-governance gate since then; a bot the registry binds to the controller took the other branch and called ctx.orchestrator.processMessage DIRECTLY - no budget check, no specialist-context or credential-carrier refusal. A user sitting on a tripped HARD daily cap could therefore keep spending through the cockpit chat panel indefinitely, as long as the bot they were talking to was inline, which is most of the concierge fleet. That branch now calls the SAME decision executeBotOrInline applies (assertBotInvocationAdmissible, extracted for exactly this caller - this route's turn carries a ticketContext and an interactionMode BotNodeRequest cannot hold), ahead of the hosted-brain ladder and ticket creation, and BudgetBlockedError maps to 402 budget_cap_exceeded so the refusal names its reason instead of arriving as an anonymous 500. Guard: tests/unit/send-message-budget-gate.spec.ts.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -35,7 +36,7 @@ import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-s
 import { requireAiEnabled } from '@/shared/middleware/ai-availability';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
-import { NoHostedBrainError, executeBotOrInline, hostedBrainWire, resolveHostedBrainMeta, retryHostedBrainTurn, swallowedTurnFailure } from './inline-bot-execution';
+import { BudgetBlockedError, NoHostedBrainError, assertBotInvocationAdmissible, executeBotOrInline, hostedBrainWire, resolveHostedBrainMeta, retryHostedBrainTurn, swallowedTurnFailure } from './inline-bot-execution';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { persistJarvisTurn } from './jarvis-task-store';
 import type { AppContext } from '../composition-root';
@@ -325,6 +326,15 @@ function handleSendMessage(ctx: AppContext) {
         });
         return;
       }
+      // ONE-CHOKEPOINT admission, the INLINE half: this branch cannot hand the turn to
+      // executeBotOrInline (it carries a ticketContext and an interactionMode BotNodeRequest
+      // has no room for), so it clears that function's OWN admission decision instead — the
+      // specialist-context refusal, the credential-carrier refusals, and the cost-governance
+      // HARD cap. Without this an inline bot was the way around the cap: the node half has been
+      // gated since #186, the inline half went straight to the orchestrator. FIRST, ahead of
+      // the brain ladder and ticket creation — a refused turn must not consume a free-tier
+      // slot or open a ticket on its way to being refused.
+      await assertBotInvocationAdmissible(ctx, resolvedAgentId, { userSub: callerSub }, false);
       // ADR-127 inline hosted brain: direct chat runs in-process on the controller, where an
       // unbrokered-CLI registry harness is refused unconditionally (SEC-05) — so when the target
       // bot declares one, resolve the caller's hosted brain via the SAME shared helper
@@ -434,6 +444,17 @@ function handleSendMessage(ctx: AppContext) {
           'send-message refused: caller is not entitled to the named agent',
         );
         res.status(403).json({ success: false, error: error.code });
+        return;
+      }
+      // Cost governance refused this turn (HARD cap / runaway halt). A 500 would tell the
+      // cockpit the server broke; 402 with the machine code tells it — and the person — that
+      // the daily cap is the reason, which is the only actionable version of that answer.
+      if (error instanceof BudgetBlockedError) {
+        logger.warn(
+          { taskId, agentId: req.body?.agentId ?? null, verdict: error.verdict, durationMs: Date.now() - startTime },
+          'send-message refused: cost governance blocked the turn',
+        );
+        res.status(error.statusCode).json({ success: false, error: error.message, code: error.code });
         return;
       }
       // No hosted brain anywhere on the caller's ladder (ADR-127): a clean 422 whose `error`

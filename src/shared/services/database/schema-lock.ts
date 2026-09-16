@@ -9,6 +9,8 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added spatialScans lock key (ADR-111) so the Spaces scan store's lazy schema bootstrap serializes across concurrent api starts.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Reserve a distinct advisory-lock key for the durable remote-task journal so concurrent controller starts cannot interleave table, trigger, index, and RLS creation.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Per-statement savepoints, and report privilege-denied statements instead of losing the whole bootstrap to one of them. Under ADR-076 the runtime connects as oshal_app, which is deliberately NOT the schema owner, so owner-only DDL (CREATE OR REPLACE FUNCTION, CREATE POLICY, ALTER TABLE … ENABLE RLS) raises 42501. One transaction meant the FIRST such statement rolled back every statement before it and skipped every statement after it — on the remote-task journal that was the immutability trigger plus the owner-RLS policies for five tables, silently never attempted, while the caller caught the error and the app served traffic. Savepoints make each statement independently skippable, so a non-owner runtime applies everything it is entitled to and reports what it could not. Callers assert their requirements afterwards, so a genuinely missing schema still fails loudly rather than passing as "skipped".
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Reserved a key for the PAT store (oshal_cli_tokens). Its bootstrap issued eight idempotent statements as eight SEPARATE pool acquires, each able to wait out the acquire timeout against a pool of 8 while the manifests load — that contention is why it failed on a cold boot. One key, one locked client, same statements. The owner-RLS block it applies is a check-then-CREATE POLICY pair, which is precisely the interleaving this lock exists to prevent.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Reserved ONE key for the whole trading family. The trading bootstraps took the no-lock path, so two processes sharing a database interleaved their `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER` pairs, their `CREATE TABLE IF NOT EXISTS` (which Postgres does NOT make race-safe — it raises 23505 on pg_type_typname_nsp_index) and their check-then-`CREATE POLICY` pairs; three trading specs failed in beforeAll on exactly that whenever the unit suite ran without --no-file-parallelism. One key rather than one per module because the trading tables are a single schema, not neighbours: six of them arm a BEFORE INSERT trigger on the `oshal_trading_book_id_fill()` function that the books module owns, and the books bootstrap reads oshal_trading_orders / _signals / _equity_hwm to mint legacy books. Serialising the family makes that dependency graph irrelevant instead of something each new store has to reason about.
  */
 
 import type { Pool } from 'pg';
@@ -31,6 +33,14 @@ export const SCHEMA_LOCK_KEYS = {
   batchJobTelemetry: 47110005,
   spatialScans: 47110006,
   remoteTaskJournal: 47110007,
+  cliTokens: 47110008,
+  /**
+   * The whole oshal_trading_* family, deliberately under ONE key. Its modules are not independent
+   * schemas: the books bootstrap owns `oshal_trading_book_id_fill()` and six sibling stores arm a
+   * trigger on it, and the books legacy-mint reads three other modules' tables. Serialising the
+   * family is what makes a new trading store safe by default.
+   */
+  trading: 47110009,
 } as const;
 
 /**

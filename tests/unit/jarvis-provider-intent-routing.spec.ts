@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Exercise Jarvis provider-intent routing through an authenticated user principal so polling follows the SEC-01 rule that legacy fleet credentials cannot read owner-scoped results.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Partial-mock the database barrel instead of listing its exports. createPersistenceActivation arrived in the barrel and both in-memory stores call it, so this file's mock threw on construction and the suite was red on main with nobody acting on it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Correct a stale assumption this file carried about the session-ownership gate, which is why it answered 404 session_not_found. Its task-store double resolved create() to undefined and get() to null forever; that satisfied ensureSessionTask while the check read `return !created || created.ownerSub === sub` (a store that returned nothing was treated as agreement), and stopped satisfying it when the 2026-09-11 ownership hardening made a store that cannot hand back an owner-bound task a refusal instead. Both halves of the gate now run against the REAL InMemoryTaskStore with Postgres configuration withheld, so the contract cannot drift out from under this file again. Nothing is loosened: the cross-owner case, which used to assert that another owner reaching the same session id got an ordinary model answer, now asserts the stricter truth - the ask is refused 404 before the model is reached - and the direct-model call count follows that refusal down from four to three.
  */
 
 import type { AddressInfo } from 'node:net';
@@ -22,7 +24,11 @@ vi.mock('@/features/user-model', () => ({
   withHavenContext: vi.fn(async (_pool: unknown, _sub: string, prompt: string) => prompt),
   learnFromExchange: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('@/shared/services/database', () => ({
+// PARTIAL mock: a factory that LISTS the barrel's exports goes red the moment the barrel grows one
+// the spec never asked about - which is how six files were left red on main at once.
+vi.mock('@/shared/services/database', async (importOriginal) => ({
+  ...await importOriginal<object>(),
+
   runRuntimeSchemaBootstrap: vi.fn().mockResolvedValue(undefined),
   buildOwnerRlsPolicyStatements: vi.fn().mockReturnValue([]),
 }));
@@ -34,6 +40,7 @@ import {
   resolveWeatherLocationFollowUp,
 } from '../../src/app/routes/jarvis-routes';
 import { serviceSecretOr } from '../../src/shared/middleware/authz';
+import { createMemoryOnlyTaskStore } from '../helpers/jarvis-session-task-store';
 
 const SERVICE_SECRET = 'jarvis-provider-intent-secret';
 const OWNER = 'auth0|jarvis-provider-intent-owner';
@@ -234,11 +241,9 @@ describe('Jarvis /ask provider-bound routing', () => {
     const ctx = {
       pool,
       orchestrator: { processMessage: vi.fn() },
-      taskStore: {
-        get: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue(undefined),
-        updateStatus: vi.fn().mockResolvedValue(undefined), incrementMessageCount: vi.fn().mockResolvedValue(undefined),
-        incrementTurnCount: vi.fn().mockResolvedValue(undefined),
-      },
+      // The REAL store, memory-backed and poolless: /ask only reaches the router when a session task
+      // was written owner-bound AND read back, so a double that answers nothing cannot prove either.
+      taskStore: createMemoryOnlyTaskStore(),
       messageStore: {
         save: vi.fn(async (message: Record<string, unknown>) => { messages.push(message); }),
         getByTask: vi.fn().mockResolvedValue([]),
@@ -264,15 +269,19 @@ describe('Jarvis /ask provider-bound routing', () => {
     await new Promise<void>((resolve) => server.once('listening', resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/jarvis`;
 
-    const ask = async (message: string, sessionId: string, owner = OWNER) => {
+    const askRaw = async (message: string, sessionId: string, owner = OWNER) => {
       const response = await fetch(`${base}/ask`, {
         method: 'POST',
         headers: { ...authHeaders(owner), 'Content-Type': 'application/json' },
         body: JSON.stringify({ message, sessionId }),
       });
-      expect(response.status).toBe(202);
-      const { jobId } = await response.json() as { jobId: string };
-      return waitForResult(base, jobId, owner);
+      return { status: response.status, body: await response.json() as Record<string, unknown> };
+    };
+
+    const ask = async (message: string, sessionId: string, owner = OWNER) => {
+      const accepted = await askRaw(message, sessionId, owner);
+      expect(accepted.status).toBe(202);
+      return waitForResult(base, String(accepted.body.jobId), owner);
     };
 
     try {
@@ -288,7 +297,9 @@ describe('Jarvis /ask provider-bound routing', () => {
       const unrelatedEmail = await ask('Show me my important emails.', 'provider-unrelated-session');
       const clearedLocation = await ask('Destin, Florida', 'provider-unrelated-session');
       await ask('the weather today where I live.', 'provider-cross-owner-session');
-      const otherOwnerLocation = await ask('Destin, Florida', 'provider-cross-owner-session', OTHER_OWNER);
+      // A session id its owner opened is not an append channel for anyone else: the ownership gate
+      // refuses before any routing decision is made, so the other owner never reaches the model.
+      const otherOwnerRefusal = await askRaw('Destin, Florida', 'provider-cross-owner-session', OTHER_OWNER);
       const ownerResolvedLocation = await ask('Destin, Florida', 'provider-cross-owner-session');
       const greeting = await ask('Hello Jarvis', 'provider-greeting-session');
       const build = await ask('Build a weather app for our cockpit.', 'provider-build-session');
@@ -318,7 +329,7 @@ describe('Jarvis /ask provider-bound routing', () => {
         dispatched: [expect.objectContaining({ title: expect.stringContaining('Priority inbox:') })],
       });
       expect(clearedLocation).toMatchObject({ status: 'done', answer: 'Hello. What can I help with?' });
-      expect(otherOwnerLocation).toMatchObject({ status: 'done', answer: 'Hello. What can I help with?' });
+      expect(otherOwnerRefusal).toEqual({ status: 404, body: { error: 'session_not_found' } });
       expect(ownerResolvedLocation).toMatchObject({
         status: 'done', answer: "I'll check the live weather data and report back here.",
         dispatched: [expect.objectContaining({ title: expect.stringContaining('Live weather:') })],
@@ -329,7 +340,9 @@ describe('Jarvis /ask provider-bound routing', () => {
       expect(greeting).toMatchObject({ status: 'done', answer: 'Hello. What can I help with?' });
       expect(build).toMatchObject({ status: 'done', answer: 'I can help design that weather app.' });
 
-      expect(executeBot).toHaveBeenCalledTimes(4);
+      // Three direct turns: the cleared follow-up, the greeting and the build ask. The cross-owner
+      // attempt is NOT among them - it is refused at the ownership gate, upstream of the model.
+      expect(executeBot).toHaveBeenCalledTimes(3);
       const modelInputs = executeBot.mock.calls.map((call) => String(call[3]?.text || ''));
       expect(modelInputs.some((text) => text.includes('Hello Jarvis'))).toBe(true);
       expect(modelInputs.some((text) => text.includes('Build a weather app'))).toBe(true);

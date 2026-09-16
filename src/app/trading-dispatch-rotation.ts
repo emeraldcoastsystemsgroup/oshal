@@ -15,6 +15,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — decomposition of trading-schedule-dispatch.ts (890 code lines) along its section seams: rotationConfig, rankUniverse, buildEntryGuard (private), rotateSleeve and rotateBlendSleeve move here unchanged (rotationConfig/rankUniverse keep their exported names for the lab routes, lab sim and rotation backtest through the entry barrel). Env names unchanged: TRADING_SLEEVE_ROTATION, TRADING_ROTATION_EVERY_DAYS, TRADING_ROTATION_TOPN, TRADING_ROTATION_RANK, TRADING_ROTATION_WEIGHTING, TRADING_ROTATION_EXT_HOURS. rotateSleeve and rotateBlendSleeve remain over the 50-line function guideline exactly as in the monolith (pre-existing; a body change would be a behavior change). Golden-plan guard: tests/unit/trading-dispatch-golden-plan.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Comment-only: rotationConfig's section banner opened with `/*` so its @description/@param/@returns tags were invisible to JSDoc tooling; opened as `/**`. No code line changed.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 — both rotation paths withhold every decision for a held long the engine cannot account for from its own filled orders: it is not rotated out, not trimmed to target weight and not topped up. This is the path that actually traded the operator's hand-bought shares — rotation OWNS the sleeve wherever TRADING_SLEEVE_ROTATION is on, and a name it no longer targets is sold in full. Withholding the drop-out sell deliberately leaves the name in `heldNow`, so the buy leg still sees the shares and cannot mistake it for a fresh entry. The withheld BUY notional is reserved out of `cashAvail`, so withholding can only ever REMOVE orders from the plan — no other name's order can grow because of it.
  *
  * @module trading-dispatch-rotation
  */
@@ -22,7 +23,7 @@
 import type { AppContext } from './composition-root';
 import {
   getBrokerAdapter, latestPrice, symbolBlocklist, deriveMasses, displacement, barsBatch, barsBatchSince, scoreSymbol, ensemble,
-  maxGapDownPct, priorSessionClose, etSessionDate, selectEntryTargets, entryBlock, sectorTiltConfig, applySectorTilt,
+  maxGapDownPct, priorSessionClose, etSessionDate, selectEntryTargets, entryBlock, sectorTiltConfig, applySectorTilt, unmanagedSymbols,
   type Position, type TradingMode, type TradingBook, type BrokerAccount, type RiskPolicy, type EntryGuardInput, type EntryBlock,
 } from '@/features/trading';
 import { legacyBook } from './trading-books-store';
@@ -247,10 +248,20 @@ export async function rotateSleeve(
 
   // SELLS — rotate OUT every held sleeve name that is no longer in the target leaderboard.
   const currentSleeve = positions.filter((p) => p.qty > 0 && !coreSet.has(p.symbol.toUpperCase()));
+  // ADR-159 — held longs the engine cannot account for from its own fills. Rotation withholds every
+  // decision for them below: no drop-out sell, no trim to target weight, no top-up.
+  const unaccounted = unmanagedSymbols(positions);
+  if (unaccounted.size) {
+    logger.info({ scheduleId: sub, mode, unmanaged: [...unaccounted] },
+      'rotation WITHHELD — the engine cannot account for these holdings from its own fills; monitored, not managed');
+  }
   const sold = new Set<string>();
   for (const p of currentSleeve) {
     const sym = p.symbol.toUpperCase();
     if (targetSet.has(sym)) continue; // still a leader — keep holding
+    // Deliberately NOT added to `sold`: the shares stay in heldNow below, so the buy leg still sees
+    // them and can never read the withheld name as a fresh entry.
+    if (unaccounted.has(sym)) continue;
     await placeManaged(ctx, sub, book, {
       symbol: p.symbol, action: 'sell', side: 'sell', qty: p.qty, confidence: 1,
       rationale: `Rotation (${cfg.rank}) — dropped out of the top ${N}; rotating capital to stronger names.`,
@@ -287,6 +298,7 @@ export async function rotateSleeve(
   //    Guard-refused names are skipped here too: a name the stop is already selling must not also get a
   //    rotation trim (two sells for one position), and a gap-down name's "goal" is meaningless today.
   for (const sym of buyTargets) {
+    if (unaccounted.has(sym.toUpperCase())) continue; // ADR-159 — no trim on an unaccounted basis
     const cur = heldNow.get(sym) ?? 0; const goal = goalOf(sym);
     if (cur - goal <= dust || cur <= 0) continue;
     const px = await priceOf(sym); if (!px) continue;
@@ -313,6 +325,9 @@ export async function rotateSleeve(
     const px = await priceOf(sym); if (!px) continue;
     const notional = Math.min(goal - cur, Math.max(0, cashAvail));
     const qty = Math.floor(notional / px); if (qty < 1) continue;
+    // ADR-159 — withheld, and its dollars RESERVED rather than recycled: every later target sees the
+    // same cash it sees today, so withholding can only remove an order, never enlarge one.
+    if (unaccounted.has(sym.toUpperCase())) { cashAvail -= qty * px; continue; }
     await placeManaged(ctx, sub, book, {
       symbol: sym, action: 'buy', side: 'buy', qty, confidence: 1,
       rationale: `Rotation (${cfg.rank}/${cfg.weighting}) — size into top-${N} at target weight ($${Math.round(goal)}; score ${(scoreBySym.get(sym) ?? 0).toFixed(2)}).`,
@@ -369,10 +384,18 @@ export async function rotateBlendSleeve(
 
   // SELLS — rotate OUT every held sleeve name no component targets anymore.
   const currentSleeve = positions.filter((p) => p.qty > 0 && !coreSet.has(p.symbol.toUpperCase()));
+  // ADR-159 — same contract as rotateSleeve: a held long the engine cannot account for is monitored,
+  // never managed, so it is not sold out, not trimmed and not topped up.
+  const unaccounted = unmanagedSymbols(positions);
+  if (unaccounted.size) {
+    logger.info({ scheduleId: sub, mode, unmanaged: [...unaccounted] },
+      'blend rotation WITHHELD — the engine cannot account for these holdings from its own fills; monitored, not managed');
+  }
   const sold = new Set<string>();
   for (const p of currentSleeve) {
     const sym = p.symbol.toUpperCase();
     if (plan.targetSet.has(sym)) continue;
+    if (unaccounted.has(sym)) continue; // not added to `sold`: the shares stay in heldNow below
     await placeManaged(ctx, sub, book, {
       symbol: p.symbol, action: 'sell', side: 'sell', qty: p.qty, confidence: 1,
       rationale: `Blend rotation — no component targets ${sym} anymore; rotating capital to the merged leaders.`,
@@ -406,7 +429,7 @@ export async function rotateBlendSleeve(
   };
   // 1) TRIM every target held ABOVE its merged goal (frees real cash before the buys).
   for (const [sym, g] of plan.goals) {
-    if (refused.has(sym.toUpperCase())) continue;
+    if (refused.has(sym.toUpperCase()) || unaccounted.has(sym.toUpperCase())) continue; // ADR-159
     const cur = heldNow.get(sym) ?? 0;
     if (cur - g.goal <= dust || cur <= 0) continue;
     const px = await priceOf(sym); if (!px) continue;
@@ -431,6 +454,8 @@ export async function rotateBlendSleeve(
     const px = await priceOf(sym); if (!px) continue;
     const notional = Math.min(g.goal - cur, Math.max(0, cashAvail));
     const qty = Math.floor(notional / px); if (qty < 1) continue;
+    // ADR-159 — withheld, dollars reserved so no later target can grow because of the withholding.
+    if (unaccounted.has(sym.toUpperCase())) { cashAvail -= qty * px; continue; }
     await placeManaged(ctx, sub, book, {
       symbol: sym, action: 'buy', side: 'buy', qty, confidence: 1,
       rationale: `Blend rotation — size into merged target ($${Math.round(g.goal)}; strongest component score ${g.score.toFixed(2)}).`,

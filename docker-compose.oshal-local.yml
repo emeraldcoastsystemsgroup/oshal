@@ -31,6 +31,9 @@
 # 24 | maintainer@emeraldcoastsystemsgroup.com   | Supply the API bootstrap provisioner with the same least-privilege bot DSN as workers, preserving separate app and owner credentials.
 # 25 | maintainer@emeraldcoastsystemsgroup.com   | x-bot-env: forward OSHAL_APPLICATION_AUTHORIZATION_MODE (ADR-149). Without the passthrough the api silently ran the default `enforce` mode with zero approved assignments, so every package surface answered 403 to a signed-in operator; the documented `legacy` compatibility mode could not be set from .env at all.
 # 26 | maintainer@emeraldcoastsystemsgroup.com | Budget only the API's main, optional and RAG pools at the existing managed 8/2/2 defaults so ordinary concurrent reads fit the 24-connection application role; preserve explicit deployment overrides.
+# 27 | maintainer@emeraldcoastsystemsgroup.com | Forward the world series-store load knobs (WORLD_SERIES_READ_CONCURRENCY, WORLD_ROLLUP_CONCURRENCY, WORLD_PULSE_WINDOW_MS, WORLD_PULSE_WARN_FRACTION) to the api, which is where the world schedules dispatch. Unforwarded they would be the documented silent-env-var class: the operator turns the knob in .env, the container keeps the compiled default, and the series store keeps saturating.
+# 28 | maintainer@emeraldcoastsystemsgroup.com | Hot-swap bind mount for src/api/jarvis-speaker-profile-links.js (the Manage Voices → Ambient Recall bridge), beside the other Jarvis speaker siblings, so it updates without a rebuild.
+# 29 | maintainer@emeraldcoastsystemsgroup.com | Signed delegation, core queued ticket types (BACKLOG "Signed delegation refuses every ticket whose worker bot runs inline"): security-analyst and workflow-assistant get dedicated bot-node services. They own the queued 'security-finding' and 'workflow-build' ticket types, and with OSHAL_DELEGATION_SIGNING_* configured a worker without a dedicated endpoint is refused before execution. Both inherit x-bot-common/x-bot-env, so they receive the public verification ring and the service secret with no extra wiring, and neither takes a `profiles:` key — a core queued ticket type must not depend on an opt-in profile.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -1032,6 +1035,10 @@ services:
       # disclosure surfaces are rewritten to match. Only consented voices enrich (own voice implicit,
       # others need an explicit granted consent), so with no consent UI yet only the owner is modeled.
       OSHAL_AMBIENT_ENRICH: ${OSHAL_AMBIENT_ENRICH:-1}
+      # ADR-100 maintenance (retention purge + orphan-chunk backstop): the first pass runs this long
+      # after boot plus up to the jitter, then daily. Empty = the code's defaults (2 min + 30 s).
+      PERSON_MODEL_MAINTENANCE_INITIAL_DELAY_MS: ${PERSON_MODEL_MAINTENANCE_INITIAL_DELAY_MS:-}
+      PERSON_MODEL_MAINTENANCE_JITTER_MS: ${PERSON_MODEL_MAINTENANCE_JITTER_MS:-}
       SPEAKER_PROFILE_SECRET: ${SPEAKER_PROFILE_SECRET:-oshal-local-speaker-profile-secret-do-not-use-in-prod}
       SPEAKER_PROFILE_SECRET_PREVIOUS: ${SPEAKER_PROFILE_SECRET_PREVIOUS:-}
       SPEAKER_DIARIZATION_TIMEOUT_MS: ${SPEAKER_DIARIZATION_TIMEOUT_MS:-45000}
@@ -1080,6 +1087,18 @@ services:
       # cost); lower = cheaper, 0 = all-lean.
       WORLD_CLASSIFY_DISABLED: ${WORLD_CLASSIFY_DISABLED:-false}
       WORLD_PULSE_DEEP_SLICE: ${WORLD_PULSE_DEEP_SLICE:-2}
+      # SERIES-STORE load controls (2026-09-14). The pulse rolls features up for 184 entities, four
+      # indexed aggregates each, and a fire the scheduler abandons keeps running while the next one
+      # starts — 19 concurrent aggregates put oshal-local-tsdb at 282% CPU and timed the pulse out six
+      # times in ten minutes. WORLD_SERIES_READ_CONCURRENCY is the PROCESS-WIDE statement cap (it holds
+      # across overlapping fires; identical in-flight reads coalesce onto one statement).
+      # WORLD_ROLLUP_CONCURRENCY is the per-fire entity fan-out.
+      WORLD_SERIES_READ_CONCURRENCY: ${WORLD_SERIES_READ_CONCURRENCY:-4}
+      WORLD_ROLLUP_CONCURRENCY: ${WORLD_ROLLUP_CONCURRENCY:-4}
+      # The pulse's window (its cron cadence) and the fraction of it above which a completed pulse is
+      # logged as an overrun — the warning that precedes fires stacking.
+      WORLD_PULSE_WINDOW_MS: ${WORLD_PULSE_WINDOW_MS:-300000}
+      WORLD_PULSE_WARN_FRACTION: ${WORLD_PULSE_WARN_FRACTION:-0.8}
       # GLOBAL classify-call ceiling (the 2026-06-29 burn guard): max LLM classify calls per clock hour /
       # UTC day across ALL world paths (per-subject ingest + firehose deep-dive + backtests). Exhausted →
       # lexicon fallback until the window rolls; denials are logged once per window and counted in the
@@ -1500,6 +1519,7 @@ services:
       - ./src/api/jarvis-speakers.css:/app/src/api/jarvis-speakers.css:ro
       - ./src/api/jarvis-speaker-capture.js:/app/src/api/jarvis-speaker-capture.js:ro
       - ./src/api/jarvis-person-consent.js:/app/src/api/jarvis-person-consent.js:ro
+      - ./src/api/jarvis-speaker-profile-links.js:/app/src/api/jarvis-speaker-profile-links.js:ro
       # Mobile-responsive surface fixes — per-file mounts so we DON'T shadow the image's built
       # src/api/dist chat bundles (ui-chat-window.js etc.), which are NOT present on the host.
       - ./src/api/chat.html:/app/src/api/chat.html:ro
@@ -2877,6 +2897,74 @@ services:
       oshal-api:
         condition: service_healthy
 
+  # ── Security triage + Workflow Studio brains (signed-delegation routing) ────
+  # Both of these OWN a core queued ticket type ('security-finding' from
+  # swarm-apps/security.yaml, which the Trivy scan auto-files; 'workflow-build' from
+  # swarm-apps/workflow-studio.yaml). Queued work dispatches over the signed
+  # controller→bot-node hop (docs/security/http-delegation.md), and a worker with no
+  # dedicated node is refused once OSHAL_DELEGATION_SIGNING_* is configured. They ran
+  # inline in oshal-api until then, which also meant a prompt injection carried by Trivy
+  # output executed inside the control-plane container — the blast radius
+  # src/features/llm-provider/services/controller-inline-scope.ts names. No `profiles:`
+  # key on purpose: a core queued ticket type must not depend on an opt-in profile.
+  security-analyst:
+    <<: *bot-common
+    container_name: oshal-local-security-analyst
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: security-analyst
+      AGENT_ID: a0000000-0000-0000-0000-000000000047
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/security-analyst.yaml
+      AGENT_CAPABILITIES: "finding-triage,threat-assessment,attack-scenario-analysis,remediation-recommendation"
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - security-analyst-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
+  workflow-assistant:
+    <<: *bot-common
+    container_name: oshal-local-workflow-assistant
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: workflow-assistant
+      AGENT_ID: a0000000-0000-0000-0000-000000000051
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/workflow-assistant.yaml
+      AGENT_CAPABILITIES: "workflow-design,process-architecture,orchestration,workflow-validation"
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
+    volumes:
+      - oshal_workspace:/app/workspace-shared:rw
+      - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
+      - ./config-seed:/app/config-seed:ro
+      - *codex-auth-volume
+      - *claude-auth-volume
+      - *gemini-auth-volume
+      - *claude-auth-json
+      - workflow-assistant-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
   # ── Cloudflare Tunnel (profile: tunnel) ─────────────────────────────────────
   # Exposes the OSHAL api at a public domain (e.g. https://littlemonster.example.com)
   # so real OIDC login (Google/Microsoft) works — the IdP redirects the browser to
@@ -2967,6 +3055,8 @@ volumes:
   architect-output:
   incident-remediation-output:
   queue-bot-output:
+  security-analyst-output:
+  workflow-assistant-output:
   facebook-output:
   email-output:
   weather-output:

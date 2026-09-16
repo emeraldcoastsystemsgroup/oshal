@@ -945,11 +945,15 @@ so both `not.toHaveBeenCalled()` assertions could never fail. Nothing in the nod
   3. **A green suite is not a working feature.** This was found in the first live run and could not
      have been found otherwise; the honest posture is that a feature is unproven until it has been
      exercised end to end. See also the observability gap below.
-- **Related gap, not yet fixed.** There is a log line when surface ops are *dropped* for lack of
-  context, but none when they are successfully emitted. Proving this bug required reading the raw
-  pre-strip reply out of the bot container log, because the clean answer and the persisted turn
-  both have the fence already removed. A success-path log line would have made the mismatch
-  visible in one grep.
+- **Related gap, CLOSED.** There was a log line when surface ops are *dropped* for lack of context
+  but none when they are successfully emitted, so proving this bug meant reading the raw pre-strip
+  reply out of the bot container log — the clean answer and the persisted turn both have the fence
+  already removed. `src/app/routes/jarvis-routes.ts` now logs the success path at INFO with the op
+  count, the op names as `custom:<name>`, the target app/screen and the custom names the surface
+  declared, so the mismatch that caused this bug is one grep over the api log. Guarded by
+  `tests/unit/jarvis-surface-context.spec.ts` (`/ask — an emitted-ops turn is diagnosable from the
+  api log alone`), which drives the real router and greps the NDJSON the real pino pipeline writes
+  at the level the compose anchor runs the api at.
 
 ## BUG-19 — A stale-revision incident patch is discarded, leaving the incident permanently unlinked with no error and no log
 - **Type:** Bug (silent data loss) · **Priority:** High · **Status:** **FIXED 2026-09-14** — see the closing note.
@@ -1023,8 +1027,8 @@ called with `await` alone.** Worth a lint rule if a second instance turns up.
   the incident writes use. That is BUG-20.
 
 ## BUG-20 — Incident writes run on the pool inside the claiming transaction, so they survive a rollback that reverts the claim
-- **Type:** Bug (lost atomicity) · **Priority:** Medium · **Status:** OPEN — reproduced 2026-09-14; the fix needs a
-  design decision (see the note at the end).
+- **Type:** Bug (lost atomicity) · **Priority:** Medium · **Status:** FIXED 2026-09-14 — option (c), an idempotent
+  consumer keyed on the event (see the end).
 - **Discovered:** 2026-08-13, split out of BUG-16's verification. **The verifier corrected the
   documented rationale as well as the code**, and both halves are recorded here.
 
@@ -1107,6 +1111,39 @@ reverse orphan.
 The corrected wording of the `envelope-store.ts` comment depends on that choice, so the comment was
 not changed either. No guard was committed: a spec that is red today would turn the unit gate red for
 a known and undecided defect. The reproduction above is the record instead.
+
+**Fixed (2026-09-14): option (c), an idempotent consumer keyed on the event.**
+- **The effect ledger.** Migration 141 adds `oshal_alert_event_effect (event_id, effect)`, same
+  operator-or-owner RLS as the other alert tables, cascading with the event. Working a landed event
+  first reads which of its effects are recorded — `intake`, `consolidate`, `member`,
+  `dispatch:<channel>` — and applies only the rest. The claim's row lock on the event serializes
+  that read-then-apply for any one event; the primary key is the backstop, because a duplicate
+  record is a violation that rolls back the write it travels with.
+- **Each write records itself atomically.** The live-incident upsert (arms A and B), the member
+  upsert and the dispatch append record their effect in the same statement, and only when they
+  wrote, so an eligibility refusal still reaches arm C. Arm C records inside its own transaction.
+  `IncidentStore.consolidateLanded` is the one path both drains use: the Alertmanager receiver and
+  the replay claim stage. A replay returns the recorded arm on the current row. So a re-drained
+  event is still decided `created`, not `consolidated`.
+- **The ticket.** The intake decision is recorded on the pool right after triage and replayed on a
+  re-drain, so the ticket is neither opened nor bubbled a second time. **One window remains:** a
+  crash between the ticket write and that record re-triages on the next drain, and the ticket store
+  dedups by identity, so the cost is at most one extra bubble. Closing it means putting the ticket
+  store on the event key: option (b), which crosses into the ticketing slice.
+- **The deadlock was real after all, for one kind of write.** The first run of this fix hung: the
+  effect record's foreign key takes KEY SHARE on the event row, which the claim held FOR UPDATE, and
+  the pool insert and the claim then waited on each other. The claim now takes `FOR NO KEY UPDATE
+  SKIP LOCKED`. It never changes an event's key, two claims still exclude each other, and
+  foreign-key checks pass. The note above was right that the incident writes never touch those
+  rows. The envelope-store comment now states what actually holds.
+- **Guards.** `tests/unit/alert-event-replay-idempotency.spec.ts` is the reproduction above, now
+  committed: the real receiver over a disposable migrated PostgreSQL, the claim connection lost
+  after the handler wrote. It was red before (occurrence 2 for one delivery) and is green now,
+  alongside a new delivery that still counts. It also hangs red if the claim goes back to FOR
+  UPDATE. `tests/unit/alert-consolidate-landed-postgres.spec.ts` covers the shared path on a real
+  database: a replay counts nothing; a crash between consolidation and member write leaves the member
+  to be applied once; the recurrence arm records inside its transaction; a second record is refused
+  by the primary key. The whole alert-pipeline set passes (21 files, 200 tests).
 
 ## BUG-21 — The monitoring overlay is not running, nothing starts it, and nothing notices it is gone
 - **Type:** Bug (observability / operational) · **Priority:** High · **Status:** **FIXED 2026-08-14** (#213) — see the closing note at the end.

@@ -15,6 +15,7 @@
  *   - jarvis-tool-catalog.ts        — the auto tool-feed + the image-deliverable contract.
  *   - jarvis-overview.ts            — the Command Center glance panels.
  *   - jarvis-task-store.ts          — the durable jarvis_tasks store + turn persistence.
+ *   - jarvis-thread-tickets.ts      — the per-thread chat-ticket + session-task registration.
  *
  * The public symbols those siblings own are RE-EXPORTED from here so existing importers and the unit
  * tests keep resolving them from `jarvis-routes` unchanged.
@@ -47,6 +48,13 @@
  *
  * @module jarvis-routes
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2/3: the deterministic ambient hook now answers open asks, weekly trends and person connections through the person-model front door (detectPersonModelIntent / answerPersonModelIntent); recall phrasing is unchanged. Net -2 code lines on this over-cap file.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Decomposition: the per-thread chat-ticket + session-task registration moves to jarvis-thread-tickets.ts, taking this file from 804 code lines to under the 800-line threshold; the person-model recall hook is untouched.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Emitted surface ops log op count, names (custom:<name>) and the target app + its declared custom names at INFO on the success path, so a BUG-18 custom-name mismatch is diagnosable from the api log alone.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | No-hosted-brain honesty: the /ask catch runs describeJarvisAskFailure, so a turn whose user-brain ladder resolved to nothing on an unbrokered-harness bot records "Jarvis has no AI engine connected — add one under Settings → Connections → Bring Your Own LLM." with code NO_HOSTED_BRAIN, and /ask/result returns that code for the surface to speak. Every other failure keeps its own message and carries no code; the refusal, the ladder and the SEC-05 preflight are untouched.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted jarvis-speaker-profile-links.js in JARVIS_CLIENT_ASSETS: the Manage Voices → Ambient Recall bridge serves from the same authenticated /assets route as the other speaker siblings.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | GET /tasks claims the return leg's FAILURE half beside the success half: a task whose ticket reached a terminal failure is closed in the durable shelf and the honest sentence is written into its thread (returnFailedComplexTasks). The ticket map now carries the whole ticket rather than its status alone, because the recorded escalation reason lives in its metadata and re-reading it per task would turn one list into an N+1.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | GET /tasks now claims the PROTECTED success half too. Protected rows were dropped out of the summarize/repair pass and nothing else ever picked them up, so a protected ticket that finished correctly produced no summary, no finishTask and no thread turn - it simply went quiet. They are split out instead of discarded and handed to returnProtectedComplexSummaries, which records the derived lineage before it claims. The automatic half and the table-visual repair pass keep exactly the rows they had.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | Record WHICH half of the /ask session gate refused. The 404 session_not_found was emitted with no log line at all, so an operator reading the api log could not tell a foreign-owned session id from a store that failed to answer - the same indistinguishability that let a Jarvis ownership fault read as an empty conversation for three days. The decision, the status, the body and the short-circuit order are all unchanged; only the refusal is now written down.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -62,7 +70,6 @@ import {
   rejectLegacyServiceIdentityForUserRead,
 } from '@/features/security';
 import type { AppContext } from '@/app/composition/app-context';
-import type { InternalTicket } from '@/entities/ticket';
 import {
   VisualResponseService,
   inferVisualSpec,
@@ -93,6 +100,7 @@ import {
   runJarvisBot,
   compileAndDispatchPlan,
   maskPendingComplexSummaries,
+  returnProtectedComplexSummaries,
   repairCompletedTaskTableVisuals,
 } from './jarvis-orchestrator';
 import {
@@ -112,13 +120,12 @@ import { visualSpecForDirectRequest } from './jarvis-visuals';
 import { visibleArtifactActions } from './artifact-action-visibility';
 import type { PickerVisibleApps } from './artifact-picker-routes';
 import { resolveJarvisArtifact, buildArtifactRoutingPrompt, resolveJarvisArtifactAnswer, type JarvisArtifactAction } from './jarvis-artifact-routing';
-import { buildToolsBlock, withImageDeliverableContract } from './jarvis-tool-catalog';
+import { assembleJarvisBotMessage, buildToolsBlock, withImageDeliverableContract } from './jarvis-tool-catalog';
 import { createJarvisPackageToolRoutes } from './jarvis-package-tool-routes';
 import { resolveJarvisPackageToolDirective } from './jarvis-package-tool-directives';
 import type { JarvisPackageToolDiscovery, JarvisPackageToolProposal, JarvisPackageToolService } from './jarvis-package-tool-service';
 import { getApplicationAuthorizationActor, runWithApplicationAuthorizationActor } from '@/shared/application-authorization-context';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
-import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY, readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import { runWithRemoteExecutionResults } from '@/shared/remote-execution-results';
 import { persistProtectedResultTask } from './protected-result-persistence';
 import { canReadJarvisSession, filterJarvisResultRows, hasProtectedJarvisSource } from './jarvis-result-access';
@@ -131,9 +138,14 @@ import {
   markJarvisSessionTaskStatus,
   mapJarvisTaskStatusFromTicketStatus,
   jarvisFailureNoteForTicketStatus,
+  returnFailedComplexTasks,
+  type JarvisFailedTaskCandidate,
   storedVisual,
   storedFiles,
 } from './jarvis-task-store';
+import { deriveTicketEscalationDetail } from '@/entities/ticket';
+import { threadTicketKey, ensureSessionTask, ensureThreadChatTicket, closeThreadChatTicket } from './jarvis-thread-tickets';
+import { describeJarvisAskFailure } from './jarvis-no-brain-notice';
 
 // ── Re-exports: keep the public surface the unit tests + external importers resolve from here. ──
 export {
@@ -167,6 +179,7 @@ export {
   persistJarvisTurn,
   markJarvisSessionTaskStatus,
   mapJarvisTaskStatusFromTicketStatus,
+  jarvisFailureSentence,
   storedVisual,
 } from './jarvis-task-store';
 export { maskPendingComplexSummaries, JARVIS_AGENT_ID } from './jarvis-orchestrator';
@@ -195,6 +208,11 @@ function registerLegacyReadContainment(router: Router): void {
  *  owner the queue manager resolves by call-out — Jarvis never names a bot. */
 function ticketTypeForHandoff(h: Pick<HandoffDirective, 'platform'>): string {
   return h.platform ? 'oshal-dev' : 'task';
+}
+
+/** The identifier a surface actually matches on: `custom:<name>` for a custom op, else the op. */
+function describeSurfaceOp(op: SurfaceDirectiveOp): string {
+  return op.op === 'custom' ? `custom:${op.name}` : op.op;
 }
 
 /** Caller's sub: independently authenticated user first, verified SEC-01 delegation second, then
@@ -251,6 +269,9 @@ interface AskJob {
     packageToolProposal?: JarvisPackageToolProposal;
   };
   error?: string;
+  // Machine code for a failure the surface answers specifically (today only NO_HOSTED_BRAIN): it lets
+  // the page SPEAK what is wrong instead of a contentless apology. Absent for ordinary failures.
+  code?: string;
   createdAt: number;
   finishedAt?: number;
 }
@@ -327,110 +348,9 @@ export function purgeJarvisAskJobsForOwner(userSub: string): number {
   return deleted;
 }
 
-/**
- * Open chat-ticket per conversation thread (sessionId → ticketId). A direct Jarvis chat thread gets
- * ONE workflow-less `chat`-ticket in the "Chat" queue (targeted at jarvis), opened on its first turn
- * and kept `in_process` until the user closes it (POST /thread/close). In-memory like askJobs — a
- * controller restart forgets the mapping (worst case: a new chat-ticket opens for an old thread).
- */
-const threadTickets = new Map<string, string>();
+/** Per-thread weather clarification state (city/ZIP follow-ups), keyed like the chat-ticket map. */
 const PENDING_WEATHER_TTL_MS = 10 * 60 * 1000;
 const pendingWeatherClarifications = new Map<string, { request: string; createdAt: number }>();
-
-/** Keep in-memory chat-ticket ownership explicit; a client-supplied session id is not globally unique. */
-function threadTicketKey(ownerSub: string, sessionId: string): string {
-  return `${ownerSub}\u0000${getApplicationAuthorizationActor()?.issuer ?? ''}\u0000${sessionId}`;
-}
-
-/**
- * @description Registers the Jarvis thread (sessionId) as a `chat_tasks` row. The chat-ticket link
- * (ticket_task_links) AND conversation persistence (chat_messages) both FK-reference this task id;
- * without it every persistence write fails (observed live: history never saved). Idempotent + best-effort.
- */
-async function ensureSessionTask(ctx: AppContext, sub: string, issuer: string | null, sessionId: string, message: string): Promise<boolean> {
-  try {
-    if (await getJarvisBriefingDelivery()?.service.isProducerSession(sessionId)) return false;
-    const existing = await ctx.taskStore.get(sessionId);
-    if (existing) return existing.ownerSub === sub && (readOwnerPrincipalIssuer(existing.metadata) === issuer
-      || !issuer && !ctx.applicationAuthorization);
-    const created = await ctx.taskStore.create({
-      taskId: sessionId,
-      title: (message.split('\n')[0] || message).slice(0, 90) || 'Jarvis chat',
-      processingMode: 'agentic',
-      agentId: JARVIS_AGENT_ID,
-      ownerSub: sub, // per-owner budget attribution (Phase 2)
-      metadata: { origin: 'jarvis-chat', ...(issuer ? { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: issuer } : {}) },
-    });
-    // `create` returns an existing row when a concurrent caller wins the task-id race. Re-check the
-    // returned owner so a guessed session id can never become a cross-tenant append channel.
-    return Boolean(created && created.ownerSub === sub && (readOwnerPrincipalIssuer(created.metadata) === issuer
-      || !issuer && !ctx.applicationAuthorization));
-  } catch (err) {
-    logger.warn({ err, sessionId }, 'jarvis: ensureSessionTask failed (non-fatal)');
-    return false;
-  }
-}
-
-/**
- * @description Opens the thread's chat-ticket on its first turn (idempotent per sessionId). Fast —
- * a single insert — and never throws: a failure just means no board card, never a blocked chat.
- * @returns The chat-ticket id, or null if it couldn't be opened.
- */
-async function ensureThreadChatTicket(
-  ctx: AppContext, sub: string, sessionId: string, message: string,
-): Promise<string | null> {
-  const key = threadTicketKey(sub, sessionId);
-  const existing = threadTickets.get(key);
-  if (existing) return existing;
-  const durableTicketId = await findOpenThreadChatTicket(ctx, sub, sessionId);
-  if (durableTicketId) {
-    threadTickets.set(key, durableTicketId);
-    return durableTicketId;
-  }
-  try {
-    const firstLine = message.split('\n')[0]?.trim() || message;   // raw request leads the payload
-    const ticket = await ctx.ticketService.openChatTicket({
-      taskId: sessionId, ownerSub: sub, agentId: JARVIS_AGENT_ID, text: firstLine, targetBot: 'jarvis',
-    });
-    threadTickets.set(key, ticket.ticketId);
-    return ticket.ticketId;
-  } catch (err) {
-    logger.warn({ err, sessionId }, 'jarvis chat-ticket open failed (non-fatal)');
-    return null;
-  }
-}
-
-async function findOpenThreadChatTicket(ctx: AppContext, sub: string, sessionId: string): Promise<string | null> {
-  try {
-    const tickets = await ctx.ticketService.listTickets({ ownerSub: sub, ticketType: 'chat', limit: 500 });
-    const matches = tickets
-      .filter((ticket) => isOpenThreadChatTicket(ticket, sessionId))
-      .sort((left, right) => ticketUpdatedAtMs(right) - ticketUpdatedAtMs(left));
-    return matches[0]?.ticketId ?? null;
-  } catch (err) {
-    logger.warn({ err, sessionId }, 'jarvis durable chat-ticket lookup failed (non-fatal)');
-    return null;
-  }
-}
-
-function isOpenThreadChatTicket(ticket: InternalTicket, sessionId: string): boolean {
-  if (ticket.status !== 'in_process' || ticket.ticketType !== 'chat') {
-    return false;
-  }
-  const metadata = ticketMetadata(ticket);
-  return metadata.taskId === sessionId
-    && (metadata.kind === 'chat-thread' || metadata.origin === 'bot-chat' || metadata.targetBot === 'jarvis');
-}
-
-function ticketMetadata(ticket: InternalTicket): Record<string, unknown> {
-  return ticket.metadata && typeof ticket.metadata === 'object'
-    ? ticket.metadata as Record<string, unknown>
-    : {};
-}
-
-function ticketUpdatedAtMs(ticket: InternalTicket): number {
-  return Date.parse(ticket.updatedAt || ticket.createdAt || '') || 0;
-}
 
 const JARVIS_CLIENT_ASSETS = new Map([
   ['jarvis-dashboard.js', 'application/javascript; charset=utf-8'],
@@ -447,6 +367,7 @@ const JARVIS_CLIENT_ASSETS = new Map([
   ['jarvis-speakers.css', 'text/css; charset=utf-8'],
   ['jarvis-speaker-capture.js', 'application/javascript; charset=utf-8'],
   ['jarvis-person-consent.js', 'application/javascript; charset=utf-8'],
+  ['jarvis-speaker-profile-links.js', 'application/javascript; charset=utf-8'],
 ]);
 
 /** Serve only the explicit Jarvis client assets; the parent router is authentication-gated. */
@@ -604,23 +525,32 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
       if (briefings) rows = await briefings.service.listTasks(sub, await briefings.resolveActor(req), 50);
       rows = await filterJarvisResultRows(ctx, sub, rows, () => resultActor(req));
       // For complex tasks (filed with the swarm), the live status lives on the ticket — map it in.
+      // The whole ticket is carried, not just its status: the recorded escalation reason lives in
+      // its metadata, and re-reading it per task would turn one list into an N+1.
       const hasComplex = rows.some((r) => r.kind === 'complex' && r.ticket_id);
-      let ticketStatus = new Map<string, string>();
+      let ticketsById = new Map<string, { status: string; metadata: Record<string, unknown> }>();
       if (hasComplex) {
         try {
           const tickets = await ctx.ticketService.listTickets({ ownerSub: sub, limit: 200 });
-          ticketStatus = new Map(tickets.map((t) => [String(t.ticketId), String(t.status)]));
+          ticketsById = new Map(tickets.map((t) => [String(t.ticketId), { status: String(t.status), metadata: t.metadata }]));
         } catch { /* fall back to the stored status */ }
       }
+      // Tasks whose ticket is terminally dead and whose row has not been closed yet. Collected in
+      // this same owner-filtered pass so the return leg costs no extra read.
+      const failedComplex: JarvisFailedTaskCandidate[] = [];
       const tasks = rows.map((r) => {
         let status = r.status;
         let error = r.error as string | null;
-        if (r.kind === 'complex' && r.ticket_id && ticketStatus.has(r.ticket_id)) {
-          const ts = ticketStatus.get(r.ticket_id)!;
+        if (r.kind === 'complex' && r.ticket_id && ticketsById.has(r.ticket_id)) {
+          const ts = ticketsById.get(r.ticket_id)!.status;
           status = mapJarvisTaskStatusFromTicketStatus(ts);
           // A ticket that escalated never wrote to the shelf row's error column, so a failed
           // multi-app plan arrived as status 'error' with a null message. Say what happened.
           if (!error) error = jarvisFailureNoteForTicketStatus(ts);
+          if (status === 'error') {
+            failedComplex.push({ id: r.id, kind: r.kind, ticketId: r.ticket_id, ticketStatus: ts,
+              storedStatus: String(r.status || ''), createdAt: r.created_at });
+          }
         }
         const visual = storedVisual({ visual: r.visual });
         // Deliverables the task produced, already copied into THIS caller's private folder. The
@@ -635,13 +565,30 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
           ...(files.length ? { files } : {}),
         };
       });
+      // The return leg's failure half, claimed here alongside the success half below. A dead
+      // ticket has no work product to summarize, so the honest sentence is derived from its own
+      // recorded status and reason code and written straight into the thread the user asked in —
+      // otherwise the row sits at 'queued' forever and Jarvis keeps calling it "in progress".
+      await returnFailedComplexTasks(ctx, sub, failedComplex, new Map(failedComplex.map((task) => [
+        task.ticketId ?? '',
+        deriveTicketEscalationDetail(null, ticketsById.get(task.ticketId ?? '')?.metadata),
+      ])));
       // For finished complex tasks, have Jarvis READ the deliverable and summarize it in his voice
       // (once, in the background). Until that lands, the task stays masked as in-flight — see
       // maskPendingComplexSummaries for why it must never surface as 'done' early.
       const automaticTasks = [];
+      const protectedTasks = [];
       const sourceSessions = new Map(rows.map(row => [row.id, row.session_id]));
-      for (const task of tasks) if (!await hasProtectedJarvisSource(ctx, [task.id, task.ticketId, sourceSessions.get(task.id)].filter((id): id is string => Boolean(id)))) automaticTasks.push(task);
+      for (const task of tasks) {
+        if (!await hasProtectedJarvisSource(ctx, [task.id, task.ticketId, sourceSessions.get(task.id)].filter((id): id is string => Boolean(id)))) automaticTasks.push(task);
+        else protectedTasks.push(task);
+      }
       await maskPendingComplexSummaries(ctx, sub, automaticTasks);
+      // The protected half of the return leg. It is NOT the automatic path: the source's execution
+      // lineage is bound to this row and its conversation first, so the summary that lands answers to
+      // the same authority as the work product. Without this a protected ticket that SUCCEEDED was
+      // dropped here and the thread it was asked in stayed silent forever.
+      await returnProtectedComplexSummaries(ctx, sub, protectedTasks, sourceSessions, () => resultActor(req));
       // Older completed rows may already contain a useful Markdown table but predate persisted
       // visual metadata. Repair at most three per owner poll; ordinary prose remains text-only.
       await repairCompletedTaskTableVisuals(ctx, visualResponseService, sub, automaticTasks);
@@ -720,7 +667,15 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     // Register the thread as a chat_task FIRST — the chat-ticket link + saveTurn (chat_messages) both
     // FK-reference it; without it every persistence write fails (no durable history). Idempotent.
     const ownsSession = await ensureSessionTask(ctx, sub, issuer, sessionId, message);
-    if (!ownsSession || !await canReadJarvisSession(ctx, sub, issuer, sessionId, () => resultActor(req))) {
+    const readsSession = ownsSession
+      && await canReadJarvisSession(ctx, sub, issuer, sessionId, () => resultActor(req));
+    if (!readsSession) {
+      // The refusal is correct either way and its wording stays deliberately uninformative to the
+      // caller. The LOG is where the two halves separate: `ownership` means the session task could
+      // not be written owner-bound (a foreign owner, or a store that answered nothing), `read-back`
+      // means it was written and then would not read back. Answering 404 with no record at all is
+      // how an ownership fault becomes indistinguishable from an empty conversation.
+      logger.warn({ sessionId, refusedBy: ownsSession ? 'read-back' : 'ownership' }, 'jarvis /ask refused: session_not_found');
       res.status(404).json({ error: 'session_not_found' }); return;
     }
     await markJarvisSessionTaskStatus(ctx, sessionId, 'processing');
@@ -791,9 +746,12 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         // The live screen sits with the attached media: both are authoritative context for THIS turn,
         // and both belong immediately before the user's words so they frame the question being asked.
         const screenBlock = buildSurfaceContextPrompt(surfaceContext);
-        const userPart = [screenBlock, attachments.hasAny ? attachments.promptBlock : '', message]
+        // Framing (the live screen + attachment digests) no longer carries the message itself: the
+        // assembly places the ask ahead of everything, because an attachment-heavy turn can exceed
+        // the node's whole window on its own (documents are clipped per attachment, not in total).
+        const framing = [screenBlock, attachments.hasAny ? attachments.promptBlock : '']
           .filter(Boolean).join('\n\n');
-        botMessage = ctxBlocks ? `${ctxBlocks}\n\n---\n\n${userPart}` : userPart;
+        botMessage = assembleJarvisBotMessage(ctxBlocks, framing, message);
       }
     } catch (err) {
       logger.error({ err, sessionId }, 'jarvis: tool context unavailable');
@@ -879,7 +837,7 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         let answer: string;
         try {
           const raced = await Promise.race([
-            runJarvisBot(ctx, sub, botMessage, sessionId, true),
+            runJarvisBot(ctx, sub, botMessage, sessionId, true, message),
             new Promise<never>((_, rej) => setTimeout(() => rej(new Error('DECISION_TIMEOUT')), DECISION_TIMEOUT_MS)),
           ]);
           answer = raced.answer;
@@ -966,6 +924,16 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         const artifactReply = await resolveJarvisArtifactAnswer(stripPlanDirective(surface.cleanAnswer), artifactSelection, req, sub, artifactActions, artifactVisibleApps);
         const cleanAnswer = artifactReply.cleanAnswer;
         if (artifactReply.hadDirective) surfaceOps = [];
+        if (surfaceOps.length && surfaceContext) {
+          // The success-path twin of the "dropped" warning above. BUG-18 (a well-formed `custom` op
+          // whose name no surface handles) was only provable from a bot container's raw reply,
+          // because the clean answer and the persisted turn both have the fence stripped. Naming
+          // the emitted ops beside the names the surface declared makes that mismatch one grep.
+          logger.info({
+            sessionId, app: surfaceContext.app, screen: surfaceContext.surface, ops: surfaceOps.length,
+            opNames: surfaceOps.map(describeSurfaceOp), declaredCustomOps: (surfaceContext.customOps ?? []).map((op) => op.name),
+          }, 'jarvis: surface ops returned to the surface');
+        }
         const dispatched = !artifactSelection && !artifactReply.hadDirective && handoffs.length ? await dispatchHandoffs(ctx, sub, sessionId, handoffs) : [];
         const directAnswerSource = `jarvis-answer:${jobId}`;
         // An explicit "show me a diagram" request wins; otherwise the deterministic default picker
@@ -1001,10 +969,14 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
           },
         });
       } catch (err) {
-        logger.error({ err }, 'jarvis ask failed');
+        // No admissible brain is not a mystery failure: the operator needs the Settings pointer, not
+        // whichever string reached this catch. Every other failure keeps its own message.
+        const failure = describeJarvisAskFailure(err);
+        logger.error({ err, code: failure.code ?? null }, 'jarvis ask failed');
         await markJarvisSessionTaskStatus(ctx, sessionId, 'failed');
         const j = askJobs.get(jobId);
-        askJobs.set(jobId, { sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'error', error: (err as Error).message, createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now() });
+        askJobs.set(jobId, { sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'error', error: failure.message,
+          ...(failure.code ? { code: failure.code } : {}), createdAt: j?.createdAt ?? Date.now(), finishedAt: Date.now() });
       }
     });
     res.status(202).json({ jobId, sessionId, chatTicketId });
@@ -1016,14 +988,10 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     const sessionId = String((req.body as { sessionId?: string })?.sessionId || '').trim();
-    const key = sessionId ? threadTicketKey(sub, sessionId) : '';
-    if (key) pendingWeatherClarifications.delete(key);
-    const ticketId = key ? threadTickets.get(key) : undefined;
-    if (!ticketId) { res.json({ ok: true, closed: false }); return; }
+    if (!sessionId) { res.json({ ok: true, closed: false }); return; }
+    pendingWeatherClarifications.delete(threadTicketKey(sub, sessionId));
     try {
-      await ctx.ticketService.updateStatus(ticketId, 'complete' as never);
-      threadTickets.delete(key);
-      res.json({ ok: true, closed: true });
+      res.json({ ok: true, closed: await closeThreadChatTicket(ctx, sub, sessionId) });
     } catch (err) {
       logger.error({ err, sessionId }, 'jarvis thread close failed');
       res.status(500).json({ error: (err as Error).message });
@@ -1039,7 +1007,10 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     if (!job || job.sub !== sub || job.issuer !== resultIssuer(req)
       || !await canReadJarvisSession(ctx, sub, job.issuer, job.taskId, () => resultActor(req))) { res.json({ status: 'expired' }); return; }
     if (job.status === 'pending') { res.json({ status: 'pending', label: job.label }); return; }
-    if (job.status === 'error') { res.json({ status: 'error', error: job.error, label: job.label, taskId: job.taskId }); return; }
+    if (job.status === 'error') {
+      res.json({ status: 'error', error: job.error, ...(job.code ? { code: job.code } : {}), label: job.label, taskId: job.taskId });
+      return;
+    }
     const { packageToolProposal: pendingProposal, ...result } = job.result ?? {};
     const packageToolProposal = pendingProposal && packageTools ? await packageTools.readProposal(await resultActor(req), pendingProposal.id) : undefined;
     res.json({ status: 'done', label: job.label, taskId: job.taskId, ...result, ...(packageToolProposal ? { packageToolProposal } : {}) });

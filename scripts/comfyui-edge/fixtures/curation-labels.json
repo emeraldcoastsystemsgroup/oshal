@@ -1,0 +1,232 @@
+{
+  "fixture": "lora-curation-judge",
+  "character": "oshbrainrot",
+  "provenance": "Hand-specified measurement vectors, NOT the output of a GPU CLIP run. Each row states the failure shape a real candidate of that kind shows and places its measurements on the side of the declared decision boundary it belongs on, including deliberately borderline rows either side of every threshold. That is what the rates below measure: loosening or dropping a check moves a borderline row across and the false-accept or false-reject rate rises off zero. The rows carry the same measurement keys curation.json writes, so a real box run's measurements can replace these vectors in place once the GPU loop has run (BACKLOG: LoRA end-to-end GPU run).",
+  "thresholds": {
+    "min_identity": 0.78,
+    "min_quality": 0.45,
+    "min_caption_agreement": 0.6,
+    "max_two_eye_margin": 0.0,
+    "max_multi_character_margin": 0.0
+  },
+  "max_false_accept_rate": 0.0,
+  "max_false_reject_rate": 0.0,
+  "candidates": [
+    {
+      "id": "pool_two_eyes_sharp",
+      "label": "reject",
+      "failure": "two eyes on a one-eyed character - sharp, well lit and on-palette, so a quality-only filter admits it",
+      "measurements": {
+        "identity": 0.842,
+        "quality": 0.731,
+        "caption_agreement": 0.672,
+        "two_eye_margin": 0.041,
+        "multi_character_margin": -0.052
+      }
+    },
+    {
+      "id": "pool_two_eyes_borderline",
+      "label": "reject",
+      "failure": "a second eye only just wins the contrastive probe",
+      "measurements": {
+        "identity": 0.811,
+        "quality": 0.662,
+        "caption_agreement": 0.651,
+        "two_eye_margin": 0.004,
+        "multi_character_margin": -0.048
+      }
+    },
+    {
+      "id": "pool_off_identity_other_creature",
+      "label": "reject",
+      "failure": "a different creature entirely - the prompt drifted off the trigger word",
+      "measurements": {
+        "identity": 0.706,
+        "quality": 0.688,
+        "caption_agreement": 0.641,
+        "two_eye_margin": -0.061,
+        "multi_character_margin": -0.044
+      }
+    },
+    {
+      "id": "pool_off_identity_borderline",
+      "label": "reject",
+      "failure": "morphed towards the hero but still short of the identity floor",
+      "measurements": {
+        "identity": 0.776,
+        "quality": 0.612,
+        "caption_agreement": 0.633,
+        "two_eye_margin": -0.038,
+        "multi_character_margin": -0.041
+      }
+    },
+    {
+      "id": "pool_deformed_melted_limbs",
+      "label": "reject",
+      "failure": "melted limbs and fused geometry",
+      "measurements": {
+        "identity": 0.802,
+        "quality": 0.281,
+        "caption_agreement": 0.618,
+        "two_eye_margin": -0.029,
+        "multi_character_margin": -0.037
+      }
+    },
+    {
+      "id": "pool_quality_borderline",
+      "label": "reject",
+      "failure": "soft, smeared render just under the quality floor",
+      "measurements": {
+        "identity": 0.824,
+        "quality": 0.441,
+        "caption_agreement": 0.627,
+        "two_eye_margin": -0.033,
+        "multi_character_margin": -0.045
+      }
+    },
+    {
+      "id": "pool_multi_character_crowd",
+      "label": "reject",
+      "failure": "three copies of the character in one frame - the LoRA would learn the crowd",
+      "measurements": {
+        "identity": 0.797,
+        "quality": 0.654,
+        "caption_agreement": 0.612,
+        "two_eye_margin": -0.026,
+        "multi_character_margin": 0.063
+      }
+    },
+    {
+      "id": "pool_multi_character_borderline",
+      "label": "reject",
+      "failure": "a second figure half out of frame, only just winning the crowd probe",
+      "measurements": {
+        "identity": 0.806,
+        "quality": 0.639,
+        "caption_agreement": 0.608,
+        "two_eye_margin": -0.031,
+        "multi_character_margin": 0.002
+      }
+    },
+    {
+      "id": "pool_caption_mismatch",
+      "label": "reject",
+      "failure": "a clean frame whose caption describes a different pose - a wrong association to train on",
+      "measurements": {
+        "identity": 0.833,
+        "quality": 0.701,
+        "caption_agreement": 0.541,
+        "two_eye_margin": -0.044,
+        "multi_character_margin": -0.05
+      }
+    },
+    {
+      "id": "pool_blurry_lowres",
+      "label": "reject",
+      "failure": "out of focus and under-resolved",
+      "measurements": {
+        "identity": 0.789,
+        "quality": 0.332,
+        "caption_agreement": 0.604,
+        "two_eye_margin": -0.022,
+        "multi_character_margin": -0.039
+      }
+    },
+    {
+      "id": "pool_clean_front_grin",
+      "label": "keep",
+      "failure": null,
+      "measurements": {
+        "identity": 0.884,
+        "quality": 0.742,
+        "caption_agreement": 0.694,
+        "two_eye_margin": -0.091,
+        "multi_character_margin": -0.058
+      }
+    },
+    {
+      "id": "pool_clean_side_scream",
+      "label": "keep",
+      "failure": null,
+      "measurements": {
+        "identity": 0.861,
+        "quality": 0.715,
+        "caption_agreement": 0.681,
+        "two_eye_margin": -0.077,
+        "multi_character_margin": -0.055
+      }
+    },
+    {
+      "id": "pool_identity_just_above",
+      "label": "keep",
+      "failure": null,
+      "measurements": {
+        "identity": 0.781,
+        "quality": 0.618,
+        "caption_agreement": 0.642,
+        "two_eye_margin": -0.036,
+        "multi_character_margin": -0.043
+      }
+    },
+    {
+      "id": "pool_quality_just_above",
+      "label": "keep",
+      "failure": null,
+      "measurements": {
+        "identity": 0.828,
+        "quality": 0.459,
+        "caption_agreement": 0.631,
+        "two_eye_margin": -0.034,
+        "multi_character_margin": -0.046
+      }
+    },
+    {
+      "id": "pool_caption_just_above",
+      "label": "keep",
+      "failure": null,
+      "measurements": {
+        "identity": 0.839,
+        "quality": 0.667,
+        "caption_agreement": 0.601,
+        "two_eye_margin": -0.041,
+        "multi_character_margin": -0.049
+      }
+    },
+    {
+      "id": "pool_two_eye_margin_just_below",
+      "label": "keep",
+      "failure": null,
+      "measurements": {
+        "identity": 0.817,
+        "quality": 0.673,
+        "caption_agreement": 0.655,
+        "two_eye_margin": -0.002,
+        "multi_character_margin": -0.047
+      }
+    },
+    {
+      "id": "pool_dim_lighting_valid",
+      "label": "keep",
+      "failure": null,
+      "measurements": {
+        "identity": 0.803,
+        "quality": 0.512,
+        "caption_agreement": 0.624,
+        "two_eye_margin": -0.028,
+        "multi_character_margin": -0.042
+      }
+    },
+    {
+      "id": "pool_low_angle_valid",
+      "label": "keep",
+      "failure": null,
+      "measurements": {
+        "identity": 0.849,
+        "quality": 0.688,
+        "caption_agreement": 0.663,
+        "two_eye_margin": -0.055,
+        "multi_character_margin": -0.051
+      }
+    }
+  ]
+}

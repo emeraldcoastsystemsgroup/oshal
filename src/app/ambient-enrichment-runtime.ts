@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 2: micro-batch ambient enrichment runtime. OFF by default (OSHAL_AMBIENT_ENRICH); when on, sweeps unenriched, consent-eligible, attributed segments per owner and hands one bounded batch to the ambient-analyst concierge via executeBotOrInline (ADR-036 — cost lands in chat_tasks under the analyst's agentId; the controller never calls an LLM). The nightly rollup/retention pass is a separate future step.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Ran the enrichment sweep + person-model maintenance under runWithSystemIdentity — cross-owner background work over the FORCE-RLS ambient and person-model tables + chat_tasks; SYSTEM keeps it visible once OSHAL_DB_GUC_STRICT denies the identity-less case.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 3: the sweep also projects consent-eligible segments into ambient-recall chunks (local embedder, no LLM), and the nightly pass adds the orphan-chunk anti-join backstop beside the retention purge.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The first maintenance pass now runs a bounded, jittered delay after boot (PERSON_MODEL_MAINTENANCE_INITIAL_DELAY_MS + up to PERSON_MODEL_MAINTENANCE_JITTER_MS, clamped, defaults two minutes + thirty seconds) before the daily interval takes over. A 24-hour setInterval with no initial tick never fired on a box recreated more often than daily, so the retention purge and the orphan-chunk backstop never ran there; the shutdown hook clears both timers.
  */
 
 import type { Pool } from 'pg';
@@ -27,13 +28,18 @@ const DEFAULT_SWEEP_MS = 300_000;      // 5 min, ADR-100 §3
 const BATCH_SIZE = 50;                  // utterances per owner per sweep (one LLM call)
 const MAX_OWNERS_PER_SWEEP = 5;
 const MAINTENANCE_MS = 86_400_000;     // daily retention purge
+const DEFAULT_MAINTENANCE_INITIAL_DELAY_MS = 120_000;  // first pass: after the lazy DDL and the boot burst
+const DEFAULT_MAINTENANCE_JITTER_MS = 30_000;          // spreads a fleet that boots together
+const MIN_MAINTENANCE_INITIAL_DELAY_MS = 1_000;
 const started = new WeakSet<object>();
 const maintenanceStarted = new WeakSet<object>();
 
 /**
  * @description Starts the daily person-model retention purge. Unlike enrichment this is ALWAYS on
  * (pure SQL, no LLM, controller-permitted) so aggregate rollups stay bounded to each owner's
- * transcript retention even if enrichment was enabled then later turned off.
+ * transcript retention even if enrichment was enabled then later turned off. The first pass runs
+ * a bounded, jittered delay after boot: a box recreated more often than daily never reached a
+ * 24-hour interval's first tick, so retention never ran there.
  * @param pool - Shared GUC-aware pool.
  * @returns Void after the singleton scheduler is registered.
  */
@@ -43,10 +49,34 @@ export function startPersonModelMaintenanceRuntime(pool: Pool): void {
   const tick = () => void runWithSystemIdentity(() => runMaintenancePass(pool)).catch((error: unknown) => {
     logger.error({ err: error, operation: 'runMaintenancePass' }, 'person-model maintenance failed');
   });
+  const initialDelayMs = readMaintenanceInitialDelay();
+  const first = setTimeout(tick, initialDelayMs);
+  first.unref();
   const timer = setInterval(tick, MAINTENANCE_MS);
   timer.unref();
-  registerShutdownHook('person-model-maintenance', () => clearInterval(timer));
-  logger.info({ operation: 'startPersonModelMaintenanceRuntime' }, 'person-model maintenance runtime started');
+  registerShutdownHook('person-model-maintenance', () => { clearTimeout(first); clearInterval(timer); });
+  logger.info({ operation: 'startPersonModelMaintenanceRuntime', initialDelayMs, intervalMs: MAINTENANCE_MS }, 'person-model maintenance runtime started');
+}
+
+/**
+ * @description The delay before the first maintenance pass: PERSON_MODEL_MAINTENANCE_INITIAL_DELAY_MS
+ * clamped to [1 s, 24 h] (default two minutes) plus uniform jitter of up to
+ * PERSON_MODEL_MAINTENANCE_JITTER_MS (default thirty seconds, clamped to [0, 24 h]) so a fleet that
+ * boots together does not purge in lockstep. Unset, empty or garbage values fall back to the defaults.
+ * @param random - Uniform [0, 1) source; injectable so a spec can pin the jitter.
+ * @returns Milliseconds until the first pass.
+ */
+export function readMaintenanceInitialDelay(random: () => number = Math.random): number {
+  const base = clampMs(process.env.PERSON_MODEL_MAINTENANCE_INITIAL_DELAY_MS, DEFAULT_MAINTENANCE_INITIAL_DELAY_MS, MIN_MAINTENANCE_INITIAL_DELAY_MS, MAINTENANCE_MS);
+  const jitter = clampMs(process.env.PERSON_MODEL_MAINTENANCE_JITTER_MS, DEFAULT_MAINTENANCE_JITTER_MS, 0, MAINTENANCE_MS);
+  return base + Math.floor(random() * jitter);
+}
+
+/** Parses an env millisecond value: unset/empty/garbage -> fallback, otherwise floored and clamped to [min, max]. */
+function clampMs(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const configured = raw === undefined || raw.trim() === '' ? fallback : Number(raw);
+  if (!Number.isFinite(configured)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(configured)));
 }
 
 /** Whether enrichment is enabled. Default OFF — the whole inference layer is inert until switched on. */

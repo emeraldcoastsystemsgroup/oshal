@@ -14,6 +14,12 @@ import type { AddressInfo } from 'net';
 import type { AppAccessService, SwarmAppService } from '../../src/features/swarm-apps';
 import { createSwarmAppRoutes } from '../../src/app/routes/swarm-app-routes';
 
+/** Home admission is not this suite's boundary: discovery always admits, so nothing here changes shape. */
+const admitEveryApplication = {
+  canDiscover: async () => true,
+  resolveActor: async () => ({ sub: 'route-fixture-subject', issuer: 'https://route.fixture.test', isActive: true, isSwarmAdmin: false }),
+};
+
 const APP_RECORD = {
   name: 'test-access',
   displayName: 'Test Access',
@@ -57,6 +63,7 @@ async function boot(overrides: { app?: typeof APP_RECORD | null;
   });
   app.use('/api/swarm/apps', createSwarmAppRoutes(service, appAccess, {
     isAuthorizationProtected: overrides.isAuthorizationProtected,
+    authorization: admitEveryApplication,
   }));
   const server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

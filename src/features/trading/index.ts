@@ -17,6 +17,8 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export the Globex session + holiday calendar (futures-session-calendar): session-bucket predicate/counters, trading-day count, and the rule-computed US futures holiday schedule that expectedBarCount, the gap detector, and the mock source now share.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the three backtester modelling additions (BACKLOG rows 402/414/415): futures-targets (Export-generation Target-1 partial + post-target MFE stop move), futures-margin (cited performance-bond spec, fundable-size cap, maintenance call, notional/leverage), and futures-regime-gate (the R10 daily-ADX gate), plus the stop engine's %ATR buffer resolver.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Export the NYSE full-closure calendar (nyse-holidays): the static 2026/2027 table, nyseHolidayOn() with the additive TRADING_MARKET_HOLIDAYS override, and the horizon constants the refresh-guard spec reads — consumed by the kernel's validateFireAt so a timed order on an exchange holiday is refused by name at scheduling time (ADR-136 D4 follow-up).
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-143 D5 REST screener (alpaca-screener): screenerMovers / screenerMostActives over the owned key, the SCREENER_LABEL the surface prints verbatim, moversMinPrice() and the board/row/filter types. Fail-soft by contract — every failure answers null so the movers report falls back to its bounded board instead of blanking.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Export the ADR-116 Phase 1 walk-forward evidence rail (futures-walk-forward): walkForwardWindows/walkForward for the project's first out-of-sample futures measurement at frozen constants, scoreBacktest, and the shared experiment plumbing mergeBacktestConfig / patchFromDottedKey / expandGrid / resolveFitness that the backtest and sweep runners both consume.
  *
  * @module trading
  */
@@ -40,6 +42,9 @@ export { deriveWorldMasses, defaultGravity2Config, GRAVITY2_METRICS } from './se
 export type { Timeframe, NewsItem, Session, TradeTick, DatedClose, OhlcvBar, DatedOhlcvBar, SessionBlockReason, TradableSessionResult } from './services/market-data';
 export { dailyCloses, latestPrice, latestTrade, isTickStale, maxTickAgeSec, marketDataConfigured, closesForTimeframe, barsBatch, barsBatchSince, barsBatchOhlcv, barsBatchSinceOhlcv, isMarketOpen, recentNews, tradingSession, tradableSession, tradableSessionDetailed, searchSymbols, assetDirectory } from './services/market-data';
 export type { AssetHit } from './services/market-data';
+// Whole-market movers over the owned key's REST screener (ADR-143 D5) — fail-soft: null, never a throw.
+export type { ScreenerBoard, ScreenerRow, ScreenerFilter, ScreenerSide, ActivesBy } from './services/alpaca-screener';
+export { screenerMovers, screenerMostActives, moversMinPrice, SCREENER_LABEL, DEFAULT_MOVERS_MIN_PRICE } from './services/alpaca-screener';
 // Rotation entry guards — never re-buy a name the stop is selling this fire; never buy a gap-down.
 export type { EntryBlock, EntryBlockReason, EntryGuardInput } from './services/entry-guards';
 export { maxGapDownPct, gapPct, priorSessionClose, etSessionDate, entryBlock, selectEntryTargets, DEFAULT_MAX_GAP_DOWN_PCT } from './services/entry-guards';
@@ -69,7 +74,7 @@ export { prefilterHeadline, buildReaderPrompt, parseReaderVerdicts } from './ser
 
 // Portfolio money-manager (sizing, exposure caps, stop-loss/take-profit/trailing, daily-loss breaker).
 export type { RiskPosture, RiskPolicy, PolicyOverride, ExitOrder, SizingResult, NameStrength } from './services/portfolio';
-export { RISK_POLICIES, riskPolicy, sectorOf, exitsToRun, trailingExits, nextPeaks, sizeEntry, rotationBenches, rebalanceTrims, drawdownHaltTriggered, dipExits, symbolBlocklist } from './services/portfolio';
+export { RISK_POLICIES, riskPolicy, sectorOf, exitsToRun, trailingExits, nextPeaks, sizeEntry, rotationBenches, rebalanceTrims, drawdownHaltTriggered, dipExits, symbolBlocklist, unmanagedSymbols } from './services/portfolio';
 
 // Sector tilt — "lean harder on <sector>" as a rank multiplier (TRADING_SECTOR_TILT), so a lean is a
 // dial that can be turned back down rather than percentages baked into TRADING_CORE_SYMBOLS.
@@ -149,3 +154,13 @@ export { KibotFileDataSource, resampleBars } from './services/futures-data-sourc
 // Continuous futures series — front-month stitching + panama back-adjustment with seam provenance.
 export type { RollSeam, ContinuousContractUse, ContinuousSeries, ContinuousSeriesOptions } from './services/futures-continuous';
 export { buildContinuousSeries } from './services/futures-continuous';
+// ADR-116 Phase 1 walk-forward evidence rail — the in-sample/out-of-sample splitter, the
+// frozen-constant driver, and the config/grid/fitness plumbing the evidence scripts share.
+export type {
+  WalkForwardSplit, WalkForwardWindow, WalkForwardSeries, WalkForwardOptions,
+  WalkForwardWindowEvidence, WalkForwardReport, BacktestRunner, ConfigPatch,
+} from './services/futures-walk-forward';
+export {
+  walkForwardWindows, walkForward, scoreBacktest, mergeBacktestConfig, patchFromDottedKey,
+  expandGrid, resolveFitness,
+} from './services/futures-walk-forward';

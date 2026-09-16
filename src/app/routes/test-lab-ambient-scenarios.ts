@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2-4 Test Lab scenario: seeds one clearly-labelled transcript line through the REAL ambient ingest route, then proves the deterministic person-model reads end to end as the signed-in user — the themed surface, an exact recall count for that line, the asks / people / trends / projection reads, and Jarvis chat answering the open-asks shape without a model turn. Registered in test-lab-scenarios.ts; regression files attached at unit + integration levels.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attached the Manage Voices → Ambient Recall bridge regressions: the four-point wiring pin (unit) and the Chromium proof that every voice row opens its profile page (browser).
  */
 
 import { randomUUID } from 'node:crypto';
@@ -127,6 +128,10 @@ export const AMBIENT_SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/person-model-surface.spec.ts' },
       { level: 'unit', path: 'tests/unit/person-model-recall-guard.spec.ts' },
       { level: 'integration', path: 'tests/unit/person-model-parity-postgres.spec.ts' },
+      { level: 'unit', path: 'tests/unit/person-model-maintenance-runtime.spec.ts' },
+      { level: 'unit', path: 'tests/unit/lazy-ddl-guard-convergence.spec.ts' },
+      { level: 'unit', path: 'tests/unit/jarvis-speaker-wiring.spec.ts' },
+      { level: 'browser', path: 'tests/unit/jarvis-speaker-profile-links-browser.spec.ts' },
     ],
     steps: [
       { id: 'surface', app: APP, label: 'Surface follows the cockpit theme', run: (cookie) => surface(cookie) },

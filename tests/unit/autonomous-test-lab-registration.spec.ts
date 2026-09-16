@@ -6,6 +6,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Include protected remote authorization in exact local-runner and Lab registration parity.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Include the fixed package tool runner in registration parity.
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Keep autonomous suite registration aligned with runnable local commands and prevent browser claims of host test execution.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Hold the provider-embedded tool tier scenario to the same runner parity as the rest.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -28,6 +29,7 @@ describe('autonomous Test Lab registration', () => {
         'manifest-bot-initialization': scripts['test:bot-initialization'],
         'specialist-application-context': scripts['test:specialist-context'],
         'jarvis-briefing-preferences': scripts['test:briefings'],
+        'embedded-llm-tool-tier': scripts['test:embedded-tools'],
         'nightly-isolated-regression': readFileSync('scripts/ci/run-nightly-isolated.mjs', 'utf8'),
       };
       const command = commands[scenario.id];

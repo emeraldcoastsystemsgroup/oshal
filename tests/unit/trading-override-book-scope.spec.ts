@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-134 PR2 per-book strategy guards on the REAL database: the clone-backfill turns a pre-book active row into identical per-legacy-book actives (rollback-benign); an apply to book A never deactivates book B (the cross-revert trap); revert is book-scoped; one-active-per-(user, book) is a DB invariant; a legacy-shaped book-less ACTIVE insert still succeeds until PR4 (the deferred CHECK — rollback shape); the journal carries book_ref; and the single-learning-book rule is a partial-unique DB invariant with the review dispatch source-gated on it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
@@ -15,9 +16,9 @@ import {
 import { ensureLegacyBooks, legacyBookId } from '../../src/app/trading-books-store';
 import { recordStrategyJournal } from '../../src/app/trading-strategy-journal';
 import type { StrategyConfig } from '../../src/app/trading-strategy-lab-sim';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-const DSN = process.env.OSHAL_TEST_DSN
-  || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-adr134o-${RUN}`;
 const SUB_PRE = `spec-adr134o-${RUN}-pre`;

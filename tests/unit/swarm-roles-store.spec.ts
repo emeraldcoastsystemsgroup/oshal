@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Swarm root (ADR-148) guards. These run against the LIVE Postgres on purpose: the claim this feature makes is "exactly one root, enforced by the database", and that claim is about a partial unique index — a mocked pool would prove only that the code calls query(). Per the integration-boundary corollary a database fix needs a real store/query against the enforcing schema, so a missing DB FAILS these specs loudly rather than skipping (a spec that skips is a guard that does not exist).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 
 import { Pool } from 'pg';
@@ -14,11 +15,9 @@ import {
 } from '@/features/swarm-roles';
 import { isOperatorIdentity, isBreakGlassOnlyOperator } from '@/shared/middleware/authz';
 import { clearPrivilegedIdentities, getRootSub } from '@/shared/middleware/privileged-identities';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-const DSN =
-  process.env.SWARM_ROLES_TEST_DSN ??
-  process.env.TEST_DATABASE_URL ??
-  `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const DSN = specDatabaseUrl(['SWARM_ROLES_TEST_DSN', 'TEST_DATABASE_URL']);
 
 /** Strips the password out of a DSN so a connection failure message is safe to print. */
 function safeDsn(dsn: string): string {

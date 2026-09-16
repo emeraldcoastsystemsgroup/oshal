@@ -7,6 +7,9 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Adopt existing local and verified provider accounts without conflating subjects or granting new operator roles.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Compose durable remote execution and scoped result authority behind schema readiness.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Compose reviewed roster registration, delegated management and exact external business memberships.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: compose the scheduled-service activation authority beside the policy it reads, and refresh an application service principal to itself — it has no account or session to revalidate, and its liveness is the activation row the runner re-resolves on every tick.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Make schema readiness re-requestable and sequence its DDL. One eagerly created promise cached its own rejection for the life of the process, so a bootstrap that lost the boot-time pool race made every later authorization operation refuse forever while the controller still reported healthy.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Give the RETURNED readiness the same re-requestable shape. It was a plain promise derived once from the recovered thunk, so the four modules chaining off it - queued ticket provenance, the user directory, Jarvis briefings and Test Lab runs - still inherited the first bootstrap failure forever, and authenticated ticket creation threw for the life of the process.
  */
 /** Assemble the control plane without granting it authority over business records. */
 import type { Request } from 'express';
@@ -24,10 +27,13 @@ import { createApplicationPrincipalDirectory } from './application-principal-dir
 import type { AppAccessService, SwarmAppService } from '@/features/swarm-apps';
 import { LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import { createRetryableReady } from '@/shared/services/database';
 import { createChildLogger } from '@/shared/logger';
 import { configureApplicationExecutionPolicy } from '@/shared/application-authorization-execution';
 import { ensureRemoteExecutionSchema } from '@/features/application-remote-execution';
 import { createApplicationRemoteExecutionWiring } from './application-remote-execution-wiring';
+import { createApplicationServiceActivationWiring } from '../application-service-activation-wiring';
+import { APPLICATION_SERVICE_PRINCIPAL_ISSUER } from '@/features/application-authorization';
 
 const logger = createChildLogger({ module: 'application-authorization-wiring' });
 function createActorPorts(ctx: AppContext, directory: ReturnType<typeof createApplicationPrincipalDirectory>, memberships: PostgresExternalTenantMembershipStore) {
@@ -40,6 +46,13 @@ function createActorPorts(ctx: AppContext, directory: ReturnType<typeof createAp
     return account ? { ...account, tenantIds: account.isActive ? await tenants(sub,issuer) : [] } : null;
   };
   const refreshActor = async (original: AuthorizationActor) => {
+      // ADR-157: an application service principal is minted by the kernel on activation, not by a
+      // login. There is no account or session to revalidate, and it never holds swarm administration
+      // or management scopes; what keeps it live is the activation row, which the runner re-resolves
+      // on every tick and which authorize() still evaluates against current assignments.
+      if (original.issuer === APPLICATION_SERVICE_PRINCIPAL_ISSUER) {
+        return { ...original, isSwarmAdmin: false, managementScopes: [] };
+      }
       const account = original.issuer === LOCAL_AUTH_PRINCIPAL_ISSUER ? await getSessionSnapshot(ctx.pool, original.sub) : null;
       if (original.issuer === LOCAL_AUTH_PRINCIPAL_ISSUER && account?.status !== 'active') return null;
       // Recheck account, tenant and administration stores for an already authenticated identity.
@@ -68,16 +81,46 @@ function createPolicyOptions(ctx: AppContext, appAccess: AppAccessService, getAp
   };
 }
 
-/** @description Await schema readiness before any policy store operation. @param ctx Core services. @param ready Schema initialization. @returns Durable store ports. */
-function readyPolicyStore(ctx: AppContext, ready: Promise<unknown>): AuthorizationStore {
+/** @description Await schema readiness before any policy store operation. @param ctx Core services. @param ready Re-requestable schema initialization. @returns Durable store ports. */
+function readyPolicyStore(ctx: AppContext, ready: () => Promise<unknown>): AuthorizationStore {
   const durable = new PostgresAuthorizationStore(ctx.pool);
   return {
-    readPreview: async id => { await ready; return durable.readPreview(id); },
-    readAudit: async input => { await ready; return durable.readAudit(input); },
-    publishAppPosture: async (app, protectedApp, agentIds, toolNames) => { await ready; return durable.publishAppPosture(app, protectedApp, agentIds, toolNames); },
-    read: async () => { await ready; return durable.read(); },
-    transaction: async operation => { await ready; return durable.transaction(operation); },
+    readPreview: async id => { await ready(); return durable.readPreview(id); },
+    readAudit: async input => { await ready(); return durable.readAudit(input); },
+    publishAppPosture: async (app, protectedApp, agentIds, toolNames) => { await ready(); return durable.publishAppPosture(app, protectedApp, agentIds, toolNames); },
+    read: async () => { await ready(); return durable.read(); },
+    transaction: async operation => { await ready(); return durable.transaction(operation); },
   };
+}
+
+/** @description Bring every authorization schema up one at a time.
+ * Four of these ran together inside one `Promise.all`. Each takes a transaction-scoped advisory
+ * lock and holds a pool client for its whole DDL transaction, so a controller loading its
+ * manifests against a pool of 8 was asked for four more clients at the worst moment and could
+ * lose the acquire. The four are order-independent, so sequencing them costs a little boot
+ * latency and cuts concurrent client demand from four to one. External memberships stay last:
+ * that schema references the tenant and authorization tables the earlier statements require.
+ * @param pool Control-plane pool. @param bootstrap Core schema readiness. @returns Completion once every schema is present.
+ */
+async function bootstrapAuthorizationSchemas(pool: AppContext['pool'], bootstrap: Promise<unknown>): Promise<void> {
+  await bootstrap;
+  await ensureApplicationAuthorizationSchema(pool);
+  await ensurePrincipalDirectorySchema(pool);
+  await ensurePrincipalRegistrationSchema(pool);
+  await ensureRemoteExecutionSchema(pool);
+  await ensureExternalTenantMembershipSchema(pool);
+}
+
+/** @description Hand out schema readiness that a later caller can ask for again.
+ * A single eagerly created promise kept its own rejection: one lost pool acquire at boot made
+ * every authorization operation await the same dead promise for the life of the process, and the
+ * only tell was one log line. Dropping the memo on failure is the shape already used by the Entra
+ * local identity bridge and the ops pipeline routes — the next caller starts a fresh attempt while
+ * concurrent callers still share one in-flight bootstrap.
+ * @param ctx Core services. @param bootstrap Core schema readiness. @returns Re-requestable readiness.
+ */
+function createSchemaReady(ctx: AppContext, bootstrap: Promise<unknown>): () => Promise<unknown> {
+  return createRetryableReady(() => bootstrapAuthorizationSchemas(ctx.pool, bootstrap));
 }
 
 /** @description Wire one durable authority into UI, tools and package execution.
@@ -87,11 +130,11 @@ function readyPolicyStore(ctx: AppContext, ready: Promise<unknown>): Authorizati
  */
 export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess: AppAccessService,
   getApps: () => SwarmAppService, bootstrap: Promise<unknown>) {
-  const policyReady = bootstrap.then(() => Promise.all([ensureApplicationAuthorizationSchema(ctx.pool), ensurePrincipalDirectorySchema(ctx.pool),
-    ensurePrincipalRegistrationSchema(ctx.pool), ensureRemoteExecutionSchema(ctx.pool)]));
-  const ready = policyReady.then(() => ensureExternalTenantMembershipSchema(ctx.pool));
-  // Observe rejection immediately; each operation still waits and refuses on the same failure.
-  void ready.catch(error => logger.error({ err: error }, 'Application authorization unavailable'));
+  const ready = createSchemaReady(ctx, bootstrap);
+  // Observe the first attempt immediately. A failure refuses the operations waiting on it, but is
+  // not kept: the next authorization operation asks again and retries the bootstrap.
+  void ready().catch(error => logger.error({ err: error },
+    'Application authorization unavailable; the next authorization operation retries the schema bootstrap'));
   const store = readyPolicyStore(ctx, ready);
   const directory = createApplicationPrincipalDirectory(ctx.pool,ready);
   const membershipStore = new PostgresExternalTenantMembershipStore(ctx.pool, ready);
@@ -102,24 +145,43 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
   const runtime = new ApplicationAuthorizationRuntime(service, resolveActor, process.env, name => getApps().getApp(name));
   const remoteExecution = createApplicationRemoteExecutionWiring(ctx.pool, ready, runtime, actors.refreshActor);
   const isProtected = async (app: string) => {
-    await ready;
+    await ready();
     return (await readApplicationExecutionOwnership(ctx.pool, { kind: 'tools', id: app, app, mode: applicationAuthorizationMode() }))?.protected
       || runtime.protectedApp(app);
   };
   configureApplicationExecutionPolicy({
     owner: async (kind, id) => {
-      await ready;
+      await ready();
       return (await readApplicationExecutionOwnership(ctx.pool, { kind, id, mode: applicationAuthorizationMode() }))?.app
         ?? runtime.owner(kind, id);
     },
     protectedApp: isProtected,
     authorize: (actor, operation) => runtime.authorize(actor, operation),
   });
+  createApplicationServiceActivationWiring({
+    pool: ctx.pool, ready, policy: store, getApps,
+    describeApp: app => {
+      const summary = service.getApp(app);
+      return summary ? { source: summary.source, catalogRevision: summary.catalogRevision, catalog: summary.catalog } : null;
+    },
+    authorize: (actor, operation) => runtime.authorize(actor, operation),
+    resolveActor: (req: Request) => resolveActor(req),
+  });
   const authorizationTool = new AuthorizationToolRuntime(service);
   ctx.applicationAuthorization = runtime;
   ctx.authorizationTool = authorizationTool;
-  const registered = ready.then(() => registerAuthorizationTools(ctx.toolRegistryService, ctx.dynamicToolExecutorRegistry, service));
-  void registered.catch(error => logger.error({ err: error }, 'Authorization tool registration failed'));
+  // The readiness this wiring HANDS OUT, not the one it awaits internally. Derived once with
+  // `.then()`, it kept the first bootstrap failure even after the thunk above had recovered, and
+  // every module chaining off it stayed dead - including the queued-principal capture that
+  // authenticated ticket creation performs on every ticket. Registration is idempotent (it seeds
+  // code-owned tool metadata and re-registers fixed executors on each startup), so a retry after a
+  // failed attempt repeats it safely.
+  const registered = createRetryableReady(async () => {
+    await ready();
+    await registerAuthorizationTools(ctx.toolRegistryService, ctx.dynamicToolExecutorRegistry, service);
+  });
+  void registered().catch(error => logger.error({ err: error },
+    'Authorization tool registration failed; the next consumer of authorization readiness retries it'));
   return { service, runtime, remoteExecution, directory: { registrations: directory.registrations, roster: directory.roster }, memberships,
     refreshActor: actors.refreshActor, authorizationTool, isProtected, observePrincipal: directory.observePrincipal,
     resolveActor: (req: Request) => resolveActor(req), targetActor: actors.targetActor, ready: registered };

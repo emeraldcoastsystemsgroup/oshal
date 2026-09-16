@@ -13,6 +13,12 @@ docs
 # the build outright — `COPY failed: file not found in build context or excluded by
 # .dockerignore` — so every `COPY docs/<x>/` in Dockerfile.oshal needs its `!docs/<x>/` here.
 !docs/guides/
+# ...and the two shared Test Lab browser fixtures Dockerfile.oshal COPYs to /app/tests/fixtures/
+# (the `harness:core-test-fixtures` prerequisite three store browser cases declare). Exact files,
+# never the directory: the rest of tests/ stays out of the image.
+# Guard: tests/unit/package-test-core-fixtures.spec.ts.
+!tests/fixtures/isolated-browser.ts
+!tests/fixtures/stl-viewer.ts
 examples
 .github
 .claude

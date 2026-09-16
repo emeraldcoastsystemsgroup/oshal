@@ -24,6 +24,12 @@ const GUEST_SUB = 'guest-subject-fixture';
 /** An ordinary signed-in user who owns nothing here. */
 const OTHER_USER_SUB = 'other-user-subject-fixture';
 
+/** Home admission is not this suite's boundary: discovery always admits, so nothing here changes shape. */
+const admitEveryApplication = {
+  canDiscover: async () => true,
+  resolveActor: async () => ({ sub: 'route-fixture-subject', issuer: 'https://route.fixture.test', isActive: true, isSwarmAdmin: false }),
+};
+
 function record(over: Record<string, unknown> = {}) {
   return {
     name: 'brand-graphics',
@@ -62,7 +68,7 @@ async function boot(records: ReturnType<typeof record>[]): Promise<{ server: Ser
     (req as typeof req & { oidc: unknown }).oidc = { isAuthenticated: () => true, user: { sub } };
     next();
   });
-  app.use('/api/swarm/apps', createSwarmAppRoutes(serviceOver(records)));
+  app.use('/api/swarm/apps', createSwarmAppRoutes(serviceOver(records), undefined, { authorization: admitEveryApplication }));
   const server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   return { server, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };

@@ -26,6 +26,7 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Harden loadActiveBotEndpointRegistry: the raw registry require has no .js on disk under the ESM/vitest transform (the exact gap inline-bot-execution seq 6 documents for its own loader) and it had NO catch — so the first route that called hasEndpoint() in a spec threw a 500 instead of resolving. Now: require works as before in the compiled dist; on failure the loader kicks warmBotEndpointRegistry() (dynamic-import cache, exported so specs and boot paths can await it) and reports no endpoints until warm — the caller falls back to the inline path, exactly the pre-loader behaviour, never an exception.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Append caller-authorized bounded package facts before signing and recheck bot permission after the read.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com   | Say why a protected dispatch cannot be recorded. The recorded issuer is derived from controller signing material, so a controller with none refused every protected package dispatch with the bare code `authorization_recorded_delegation_required` — a queued ticket escalated carrying that string and nothing an operator could act on (ticket aaa86e48 on 2026-09-15). The refusal stays fail-closed and keeps the code as its first token; it now names the unset configuration and logs the agent, package and prepared execution at ERROR.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -53,6 +54,7 @@ import {
   SWARM_EXECUTE_DELEGATION_SCOPE,
   delegationAudienceFromEnvironment,
   delegationIssuerFromEnvironment,
+  describeUnconfiguredDelegationSigning,
   hasDelegationSigningConfiguration,
   isExplicitSystemSubject,
 } from '@/shared/security/delegation-http-policy';
@@ -347,6 +349,8 @@ export class BotNodeClient {
   private readonly delegationTokenIssuerName: string | null;
   private readonly delegationAudience: string | null;
   private readonly recordedDelegationIssuer: RecordedDelegationTokenIssuer | null;
+  /** Why this client cannot record a delegation, resolved once so the refusal can say it. */
+  private readonly recordedDelegationUnavailable: string | null;
   private readonly remoteExecutionAuthority?: ApplicationRemoteExecutionAuthority;
 
   constructor(resolveEndpoint: BotEndpointResolver, timeoutMs?: number, options: BotNodeClientOptions = {}) {
@@ -363,6 +367,9 @@ export class BotNodeClient {
       || hasDelegationSigningConfiguration(delegationEnv);
     this.recordedDelegationIssuer = options.recordedDelegationIssuer
       ?? (delegationEnabled && !options.delegationIssuer ? createRecordedDelegationTokenIssuer({ env: delegationEnv }) : null);
+    this.recordedDelegationUnavailable = this.recordedDelegationIssuer ? null
+      : describeUnconfiguredDelegationSigning(delegationEnv)
+        ?? 'this client was constructed with a string-only delegation issuer and no recorded issuer';
     this.delegationIssuer = delegationEnabled
       ? options.delegationIssuer ?? { issue: grant => this.recordedDelegationIssuer!.issue(grant).token }
       : null;
@@ -414,8 +421,25 @@ export class BotNodeClient {
     const actor = getApplicationAuthorizationActor();
     const prepared = authority ? await authority.prepare(actor ?? { sub: '', issuer: '', isActive: false, isSwarmAdmin: false },
       { agentId, taskId: request.taskId, workspaceId: request.workspaceFolderId }) : null;
-    if (prepared && !this.recordedDelegationIssuer) throw new Error('authorization_recorded_delegation_required');
+    if (prepared && !this.recordedDelegationIssuer) this.refuseUnrecordableDispatch(agentId, request, prepared);
     return { authority, actor, prepared };
+  }
+
+  /**
+   * @description Refuses a protected dispatch the controller cannot record, naming the missing
+   * configuration. The refusal itself is correct and stays fail-closed; only the reason is new.
+   * The stable code stays the first token of the message so existing callers keep matching it,
+   * and the escalation metadata a ticket carries now tells the operator what to set.
+   * @param agentId - Target bot whose package requires a recorded delegation.
+   * @param request - Dispatch being refused; only its task identifier is logged.
+   * @param prepared - Durable execution the authority already prepared for this dispatch.
+   * @returns Never; always throws.
+   */
+  private refuseUnrecordableDispatch(agentId: string, request: BotNodeRequest, prepared: PreparedRemoteExecution): never {
+    const reason = this.recordedDelegationUnavailable ?? 'no recorded delegation issuer is available';
+    logger.error({ agentId, taskId: request.taskId, app: prepared.binding.app, executionId: prepared.executionId, reason },
+      'Protected application dispatch refused: the controller cannot record a delegation');
+    throw new Error(`authorization_recorded_delegation_required: ${reason}`);
   }
 
   private async sendAuthorized(agentId: string, url: string, request: BotNodeRequest,

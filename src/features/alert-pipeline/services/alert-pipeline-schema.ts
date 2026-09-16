@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ensureAlertPipelineSchema — the Operations Stream schema as executable DDL, grouped core/incident/evidence/config-topology/metering and applied in dependency order. Runs once per process so a fresh install or a hot-swapped container reaches a working pipeline without an out-of-band migration step.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-20: mirror migration 141's oshal_alert_event_effect (with the same operator-or-owner RLS) as its own group right after core, the only table it depends on.
  */
 
 import type { Pool } from 'pg';
@@ -196,6 +197,38 @@ END $$;
  * The event -> incident foreign key is created here rather than with the event table because this
  * is where its target exists.
  */
+/**
+ * BUG-20 (migration 141): the side effects of working a landed alert event, recorded once per event.
+ * Depends only on oshal_alert_event, so it runs right after the core group.
+ */
+const EVENT_EFFECTS_DDL = `
+CREATE TABLE IF NOT EXISTS oshal_alert_event_effect (
+  event_id   UUID        NOT NULL REFERENCES oshal_alert_event (event_id) ON DELETE CASCADE,
+  effect     TEXT        NOT NULL
+             CHECK (effect IN ('intake', 'consolidate', 'member') OR effect ~ '^dispatch:[a-z][a-z-]*$'),
+  owner_sub  TEXT        NOT NULL,
+  detail     JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (event_id, effect)
+);
+
+COMMENT ON TABLE oshal_alert_event_effect IS
+  'BUG-20: each side effect of working a landed alert event, recorded once per event with what a replay needs to reproduce its result. RETENTION: follows oshal_alert_event (ON DELETE CASCADE).';
+
+ALTER TABLE oshal_alert_event_effect ENABLE ROW LEVEL SECURITY;
+ALTER TABLE oshal_alert_event_effect FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS oshal_alert_event_effect_operator_or_owner ON oshal_alert_event_effect;
+CREATE POLICY oshal_alert_event_effect_operator_or_owner ON oshal_alert_event_effect
+  USING (
+    current_setting('oshal.is_operator', true) = 'on'
+    OR owner_sub = current_setting('oshal.current_sub', true)
+  )
+  WITH CHECK (
+    current_setting('oshal.is_operator', true) = 'on'
+    OR owner_sub = current_setting('oshal.current_sub', true)
+  );
+`;
+
 const INCIDENT_DDL = `
 CREATE TABLE IF NOT EXISTS oshal_incident (
   incident_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -686,6 +719,7 @@ CREATE POLICY oshal_alert_funnel_write ON oshal_alert_funnel_snapshot
  */
 const DDL_GROUPS: ReadonlyArray<readonly [string, string]> = [
   ['core', CORE_DDL],
+  ['event-effects', EVENT_EFFECTS_DDL],
   ['incident', INCIDENT_DDL],
   ['evidence', EVIDENCE_DDL],
   ['config-topology', CONFIG_TOPOLOGY_DDL],

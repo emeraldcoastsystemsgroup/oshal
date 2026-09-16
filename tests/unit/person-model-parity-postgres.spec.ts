@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2-4 real-Postgres gate on a scratch database created for the run: (1) the fresh-database enable gate — the full migration chain, then the lazy person-model DDL twice (every object once, rerun changes nothing, consent ledger refuses UPDATE but stays DELETE-clean); (2) deletion/re-projection parity through the migration-138 triggers — a segment delete removes its ambient-recall chunk, a merge re-points asks + chunk tags and rebuilds rollups in the same transaction, forgetting a voice leaves zero derived rows, and the discovered data-lifecycle delete leaves zero rag_chunks rows for the sub while the other owner survives; (3) rebuild idempotency. Fails LOUDLY without a live Postgres — a skipping guard is no guard.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary half of the lazy-DDL guard inventory (tests/helpers/lazy-ddl-guards.ts): after the lazy DDL, every known by-name trigger/function guard must render on a real Postgres exactly as its pinned live definition (pg_get_triggerdef / prosrc), so a pin that drifts from the engine is red here and a definition that drifts from the pin is red in the static spec.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 
 import { randomUUID } from 'crypto';
@@ -14,9 +16,10 @@ import { DatabaseBootstrapService } from '@/features/tool-registry';
 import { personModelSchemaStatements } from '@/features/person-model';
 import { SpeakerProfileStore } from '@/features/speaker-diarization';
 import { discoverSubKeyedExporters, executeDeleteAll } from '@/features/data-lifecycle';
+import { KNOWN_BY_NAME_GUARDS, normalizeSql } from '../helpers/lazy-ddl-guards';
+import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-const ADMIN_DSN = process.env.PERSON_MODEL_TEST_DSN ?? process.env.TEST_DATABASE_URL
-  ?? `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
+const ADMIN_DSN = specDatabaseUrl(['PERSON_MODEL_TEST_DSN', 'TEST_DATABASE_URL']);
 const RUN = randomUUID().slice(0, 8);
 const SCRATCH_DB = `pm_gate_${RUN}`;
 const A = `spec-adr100-${RUN}-a`;
@@ -145,6 +148,17 @@ describe('person-model fresh-database gate + deletion/re-projection parity (ADR-
     expect(Number(converged.rows[0].tgtype) & 8, 'DELETE no longer blocked').toBe(0);
     expect(String(converged.rows[0].def)).toContain('BEFORE UPDATE ON');
     expect(String(converged.rows[0].def)).toContain('ambient_speaker_consents_no_flip()');
+  });
+
+  it('renders every known by-name guard on a real Postgres exactly as its pinned live definition', async () => {
+    await applyLazyDdl();
+    for (const guard of KNOWN_BY_NAME_GUARDS) {
+      const label = `${guard.kind} ${guard.object} (${guard.file}:${guard.line})`;
+      const { rows } = guard.kind === 'trigger'
+        ? await pool.query('SELECT pg_get_triggerdef(oid) AS def FROM pg_trigger WHERE tgname = $1 AND NOT tgisinternal', [guard.object])
+        : await pool.query('SELECT prosrc AS def FROM pg_proc WHERE proname = $1', [guard.object]);
+      expect(rows.map((row) => normalizeSql(String(row.def))), label).toEqual([guard.liveDefinition]);
+    }
   });
 
   it('keeps the consent ledger append-only for UPDATE while DELETE stays cascade-clean', async () => {

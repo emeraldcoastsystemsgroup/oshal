@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Memoize the service per TSDB url — the factory built a new un-ended pg Pool on every scheduler tick (every 5 min via trading-assess-dispatch), a steady connection leak (2026-07-05 leak audit)
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | scheduledEventsBetween(eventType, fromIso, toIso) — ranged sibling of upcomingEvents (now()-anchored) for the Strategy Lab earnings-gate walks, which need "who prints between session D and D+N" for past walk dates; ingested calendar rows persist, so pinned regression windows replay identically.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Read the windowed averages and the subject catalog from the pre-aggregated HEAD (world-preaggregate) instead of re-scanning the running stream on every call. The trading autopilot's 100-name basket read cost 10.5s every 5 minutes and listEntities cost 7.8s to return 402 rows; both are now sub-200ms. Means are recovered as sum/count, which is arithmetically identical to avg over the same rows — verified equal across 6,714 (entity,metric) pairs.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Put the rollup's four per-entity reads behind the bounded, coalescing series gate, and answer a whole-day sentiment window from the daily HEAD instead of scanning the stream per source. The 2026-09-14 saturation had both shapes: 19 concurrent sessions on oshal-local-tsdb (282% CPU) all running perSourceSentimentHours, and overlapping pulses recomputing the same aggregate twice. Measured read-only on the live store: the 24h stream read is 786ms planning + 366ms execution and the 168h one 810 + 651, against 245 + 16 and 303 + 20 for the same answers off world_metrics_daily — which carries `source`, so it can answer the per-source question. Whole-day windows are now day-aligned, matching the head-backed metricAvg the trading gate already reads these features back through.
  */
 
 /**
@@ -33,6 +34,7 @@ import {
   ensureMetricsPreaggregate,
   ensureSubjectsHead,
 } from './world-preaggregate';
+import { runSeriesRead, seriesReadKey } from './world-series-gate';
 
 const logger = createChildLogger({ module: 'world-intelligence-service' });
 const WORLD_TENANT = 'world';
@@ -530,15 +532,50 @@ export class WorldIntelligenceService {
   }
 
   /** Per-source average sentiment over the last N HOURS (the rollup's window read; the days-based
-   *  sentimentBreakdown is the interactive read). Feeds computeSentimentBreakdown for the bias-aware family. */
+   *  sentimentBreakdown is the interactive read). Feeds computeSentimentBreakdown for the bias-aware family.
+   *
+   *  A WHOLE number of days is answered from the daily HEAD, which buckets by (day, entity, metric,
+   *  SOURCE) — so it can answer a per-source question, and answers it off a relation ~3 orders of
+   *  magnitude smaller than the stream. The cost is the head's day alignment (see alignedWindowStart):
+   *  a 24h window becomes "since midnight of yesterday", so it can reach up to one extra day back.
+   *  That is the same window every other head-backed read already uses — including metricAvg, which
+   *  is how the trading gate reads these very features back — so the producer now matches its
+   *  consumer's granularity instead of being finer than it. Anything not a whole day still scans the
+   *  stream, which is the only place a sub-day window exists. */
   private async perSourceSentimentHours(entity: string, hours: number): Promise<SentimentRow[]> {
+    return hours >= 24 && hours % 24 === 0
+      ? this.perSourceSentimentDays(entity, hours / 24)
+      : this.perSourceSentimentStream(entity, hours);
+  }
+
+  /** Per-source sentiment over N whole days, read from the daily HEAD. The mean is recovered as
+   *  sum/count, arithmetically identical to avg(value) over the same rows (see world-preaggregate). */
+  private async perSourceSentimentDays(entity: string, days: number): Promise<SentimentRow[]> {
     await this.ensureSeries();
-    const r = await this.tsdb.query(
+    const r = await runSeriesRead(seriesReadKey('sentiment-days', entity, days), () => this.tsdb.query(
+      `SELECT source, sum(cnt)::int AS points, sum(sum_v) / NULLIF(sum(cnt), 0) AS avg
+         FROM ${METRICS_DAILY_VIEW}
+        WHERE entity=$1 AND metric='sentiment' AND bucket >= ${alignedWindowStart('$2')}
+        GROUP BY source`,
+      [entity, days],
+    ));
+    return (r.rows as Array<{ source: string; points: number; avg: string | number | null }>)
+      // A head row always carries cnt >= 1, so avg is never null in practice — but Number(null) is 0,
+      // and a fabricated 0.00 sentiment reads as "neutral coverage" rather than "no coverage".
+      .filter((row) => row.avg != null)
+      .map((row) => ({ source: String(row.source), points: row.points, avg: Number(row.avg) }));
+  }
+
+  /** Per-source sentiment over a sub-day window, straight off the running stream (the head cannot
+   *  answer below day granularity). Gated like every other series read. */
+  private async perSourceSentimentStream(entity: string, hours: number): Promise<SentimentRow[]> {
+    await this.ensureSeries();
+    const r = await runSeriesRead(seriesReadKey('sentiment-hours', entity, hours), () => this.tsdb.query(
       `SELECT source, count(*)::int AS points, avg(value) AS avg
          FROM world_metrics WHERE entity=$1 AND metric='sentiment' AND ts >= now() - ($2 || ' hours')::interval
          GROUP BY source`,
       [entity, String(hours)],
-    );
+    ));
     return (r.rows as Array<{ source: string; points: number; avg: string | number }>)
       .map((row) => ({ source: String(row.source), points: row.points, avg: Number(row.avg) }));
   }
@@ -566,7 +603,7 @@ export class WorldIntelligenceService {
     const src = opts.source ?? 'feature-rollup';
 
     // 1) Attention + novelty from the archive: new vs re-sighted items in the window, and the baseline rate.
-    const mq = await this.tsdb.query(
+    const mq = await runSeriesRead(seriesReadKey('items-attention', entity, win, base), () => this.tsdb.query(
       `SELECT
          count(*) FILTER (WHERE first_seen_at >= now() - ($2 || ' hours')::interval)::int AS new_win,
          count(*) FILTER (WHERE last_seen_at  >= now() - ($2 || ' hours')::interval
@@ -574,7 +611,7 @@ export class WorldIntelligenceService {
          count(*) FILTER (WHERE first_seen_at >= now() - ($3 || ' hours')::interval)::int AS new_base
        FROM world_items WHERE entity_id=$1`,
       [entity, String(win), String(base)],
-    );
+    ));
     const newWin = Number(mq.rows[0]?.new_win) || 0;
     const reseen = Number(mq.rows[0]?.reseen_win) || 0;
     const newBase = Number(mq.rows[0]?.new_base) || 0;
@@ -594,14 +631,14 @@ export class WorldIntelligenceService {
     try { degree = (await this.neighbors(entity, 1)).length; } catch { degree = 0; }
 
     // 4) Catalysts: the strongest intensity of each event_* type seen in the window (the KIND of news).
-    const eq = await this.tsdb.query(
+    const eq = await runSeriesRead(seriesReadKey('items-events', entity, win), () => this.tsdb.query(
       `SELECT event_type, max(event_intensity) AS intensity
          FROM world_items
         WHERE entity_id=$1 AND event_type IS NOT NULL
           AND first_seen_at >= now() - ($2 || ' hours')::interval
         GROUP BY event_type`,
       [entity, String(win)],
-    );
+    ));
     const eventFeatures: Record<string, number | null> = {};
     for (const row of eq.rows as Array<{ event_type: string; intensity: string | number }>) {
       eventFeatures[`event_${String(row.event_type)}`] = round3(Number(row.intensity));

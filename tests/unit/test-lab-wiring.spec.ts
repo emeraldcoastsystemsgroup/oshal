@@ -37,7 +37,7 @@ function fixture() {
     state.checked.push(name); if (name === 'unrelated') await state.hold;
     return { tier: state.legacy };
   } } as unknown as AppAccessService;
-  const authorization = { ready: Promise.resolve(), targetActor: async () => state.actor, refreshActor: async () => state.actor,
+  const authorization = { ready: () => Promise.resolve(), targetActor: async () => state.actor, refreshActor: async () => state.actor,
     resolveActor: async () => { state.reads++; return state.actor; },
     runtime: { protectedApp: () => true, canDiscover: async () => state.discovered } };
   const ctx = { pool: { query: async (sql: string) => {

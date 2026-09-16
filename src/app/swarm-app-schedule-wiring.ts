@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from server.ts (1000-line cap decomposition): swarm-app manifest schedule registrar/deregistrar factories, the per-user schedule reconciler, and the nightly oshal-dev docs-quality schedule (ADR-081). Verbatim moves — server.ts calls these at the exact same points in createApp, so wiring order and env handling are unchanged.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Register deterministic service-route targets separately from prompt jobs and retract their active registry entries before persisted schedule teardown.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fail activation closed when a deterministic service-route schedule cannot reach the scheduler; prompt schedules retain their historical best-effort boot behavior.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-157: tear down the per-user instances of a deterministic service-route schedule too (`app-route:{app}-{id}:{sub}`). A user activation registers one of these; toggling the app off has to remove them, exactly as it already removes the per-user prompt polls.
  */
 
 import type { Pool } from 'pg';
@@ -102,7 +103,8 @@ export function createManifestScheduleDeregistrar(
       const owned = scheduleIds.some((sid) =>
         t === `app:${appName}-${sid}` ||
         t.startsWith(`app:${appName}-${sid}:`) ||
-        t === manifestServiceRouteTaskType(`${appName}-${sid}`),
+        t === manifestServiceRouteTaskType(`${appName}-${sid}`) ||
+        t.startsWith(`${manifestServiceRouteTaskType(`${appName}-${sid}`)}:`),
       );
       if (!owned) continue;
       try {

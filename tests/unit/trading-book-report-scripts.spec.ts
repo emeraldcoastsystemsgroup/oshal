@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Public posture is now ONE rule (2026-09-06 review): the weekly page rendered every book with a close — including a DISABLED account — while the journal clause deliberately omitted them, and quoted an "all books" total that counted the book it was about to hide. Both go through lib.enabledOnly(), so this spec pins that the disabled b-spec-off appears in the operator-facing OK line and in the deck JSON but NEVER in the rendered page, its footer, or the total's book count.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-134 D2 #7 report guard. Proves, against the live Postgres AS THE ENFORCING ROLE (oshal_app, force-RLS; self-validated: current_user + rolsuper=false + rolbypassrls=false), that the shared scripts/lib/trading-book-report.js SQL prints a per-book breakdown + a sum across books under the is_operator GUC the scripts stamp; that without the GUC the roster is empty and the summarizer still never dresses a non-paper ref as paper; that a book with no prior close reports pl/pct null (never 0); and — via REAL CLI runs of the three scripts — that site-oshal-report.js renders every ref + 'all books' with live refs percent-only by default, oshal-deck-data.js scopes its headline/orders to ONE book (OSHAL_TRADING_BOOK) with two live books seeded and fails loud on an unknown ref, and oshal-report-journal.js writes exactly one 'daily-report' row naming every ENABLED ref + 'all books' inside the 500-char cap, right after the headline figures. Also proves the per-book reads fail LOUD by real failure injection: the same CLI pointed at a throwaway EMPTY database prints BOOKS_READ_FAIL for each read and still renders the rest of the page (a silent fallback would drop the books section AND the paper week sentence with only 'books=none' as a hint). Static pins: Dockerfile COPYs site-oshal-report.js and .dockerignore allowlists it (a COPY of an excluded path fails the build).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -14,12 +15,14 @@ import { join } from 'node:path';
 import crypto from 'node:crypto';
 import { Pool } from 'pg';
 import { ensureLegacyBooks, legacyBookId } from '../../src/app/trading-books-store';
+import { specDatabaseUrl, specDatabaseHost } from '../helpers/spec-database-url';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const lib = require('../../scripts/lib/trading-book-report') as typeof import('../../scripts/lib/trading-book-report');
 
 const root = join(__dirname, '..', '..');
-const PG_PORT = process.env.OSHAL_PG_PORT ?? '55433';
-const SUPER_DSN = process.env.OSHAL_TEST_DSN || `postgresql://oshal:oshal@127.0.0.1:${PG_PORT}/oshal`;
+const SUPER_DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+/** The enforcing role connects to the SAME cluster the run named — never a second address. */
+const PG_HOST = specDatabaseHost(['OSHAL_TEST_DSN']);
 /**
  * The enforcing role's DSN. OSHAL_TEST_APP_DSN is THE supported path (set it in CI and on any box
  * whose password is not the dev default); the operator-local .env read is a convenience for this
@@ -30,9 +33,9 @@ function appDsn(): string {
   if (process.env.OSHAL_TEST_APP_DSN) return process.env.OSHAL_TEST_APP_DSN;
   try {
     const m = /^DATABASE_URL=(postgresql:\/\/oshal_app:\S+)$/m.exec(readFileSync(join(root, '.env'), 'utf8'));
-    if (m) return m[1].trim().replace(/@[^/]+\//, `@127.0.0.1:${PG_PORT}/`);
+    if (m) return m[1].trim().replace(/@[^/]+\//, `@${PG_HOST}/`);
   } catch { /* no .env here */ }
-  return `postgresql://oshal_app:oshal-app-dev@127.0.0.1:${PG_PORT}/oshal`;
+  return `postgresql://oshal_app:oshal-app-dev@${PG_HOST}/oshal`;
 }
 const APP_DSN = appDsn();
 const RUN = crypto.randomUUID().slice(0, 8);

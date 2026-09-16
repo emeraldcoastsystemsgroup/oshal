@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Replace the hardcoded pair of admitted kinds with a sealed-profile runner table (capability, container profile, levels, harness per kind) and name, as the operator-visible pending reason, which kinds are deliberately out of scope and which boundary admitting them would move.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Stage a package's catalog/ directory. Packages ship data their routes read at runtime there (animatronics' servos.json, circuit-lab's drivers.json); without it the sealed sandbox ran a snapshot that differed from the installed package, and the route and browser suites of both failed on ENOENT in the Test Lab while passing on a host checkout. The allowlist stays an allowlist: runtime data, credentials and every other directory are still excluded.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Stage a package's personas/ directory too. A package suite that loads its manifest through the framework's own loader reads the persona files the manifest names; without them animatronics' routes-http failed one case in the Test Lab (ENOENT personas/animatronics-director.yaml) while passing on a host checkout. Persona YAML is shipped, reviewed package source - 41 of the 59 store packages carry the directory.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Admit harness:core-test-fixtures as a probe-verified browser prerequisite. Three store browser cases (cad-studio, embodied, scan-to-print) declare it because they require the core's shared browser fixtures from OSHAL_CORE_ROOT; the image now carries that closure and the probe loads it, so the name is something the image can prove rather than a permanent pending reason.
  */
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync } from 'node:fs';
@@ -29,9 +30,10 @@ const MAX_BYTES = 32 * 1024 * 1024;
 const MAX_FILES = 4096;
 /** @description What the closed Node profile satisfies without any probe: the only capabilities before the image is verified. */
 export const NODE_RUNNER_CAPABILITIES: ReadonlySet<string> = new Set(['runner:node-test', 'fixture:core-checkout']);
-/** @description Prerequisites the browser profile can satisfy, each admitted only once the sandbox probe has verified it on the image. */
+/** @description Prerequisites the browser profile can satisfy, each admitted only once the sandbox probe has verified it on the image.
+ * `harness:core-test-fixtures` is the core's shared browser fixtures (CORE_TEST_FIXTURES) loading through tsx from the core root. */
 export const BROWSER_RUNNER_PREREQUISITES: ReadonlySet<string> = new Set(['runner:playwright', 'browser:chromium',
-  'core:shared-theme-assets', 'core:surface-bridge', 'core:dependencies', 'harness:oshal-core-root']);
+  'core:shared-theme-assets', 'core:surface-bridge', 'core:dependencies', 'harness:oshal-core-root', 'harness:core-test-fixtures']);
 /** @description Every prerequisite a probe may verify on the runner image. Membership here is permission to ASK the image,
  * never an assumption about it: an unverified name keeps its runner kind explicitly unavailable. */
 export const PROBE_VERIFIED_PREREQUISITES: ReadonlySet<string> = new Set([...BROWSER_RUNNER_PREREQUISITES, 'runner:vitest']);

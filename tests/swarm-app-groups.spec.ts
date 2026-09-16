@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups, end to end: a group loads active, its synthesised ribbon is the kernel setup-dashboard tile followed by every toolbar surface borrowed BY REFERENCE from the member's own manifest, the setup plan resolves each member's declared readiness probe, the probes answer as the caller, and the dashboard page serves. Real loader, real routes, real gate — the unit spec doubles the repository; this one doubles nothing. Runs against the Playwright-managed server on the permanent fixture group by default; point SWARM_APPS_TEST_BASE_URL + SWARM_APP_GROUP_UNDER_TEST (+ SWARM_APPS_TEST_PAT on a real-OIDC box) at a live stack to prove a real group such as intelligent-career.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-145 D4: an ordinary member app no longer 404s on /setup. The plan route addresses an active app as well as an active group, so this asserts the app's own one-member plan instead of its absence; a name nothing installed is what still 404s.
  */
 
 import { test, expect, request, type APIRequestContext } from '@playwright/test';
@@ -135,7 +136,12 @@ test('the setup plan resolves each member readiness probe, the probes answer as 
   expect(page.headers()['content-type']).toContain('text/html');
   expect(await page.text()).toContain('ADR-141');
 
-  // An ordinary app is not a group: no plan, no dashboard — never an empty checklist.
+  // ADR-145 D4 supersedes ADR-141 here: an ordinary app is not a group, but it DOES get a plan —
+  // itself as its only member — so an app that belongs to no group can still report. A name that
+  // nothing installed is what 404s.
   const member = (group.dependencies?.apps ?? [])[0];
-  expect((await api.get(`/api/swarm/apps/${member}/setup`)).status()).toBe(404);
+  const memberPlan = await api.get(`/api/swarm/apps/${member}/setup`);
+  expect(memberPlan.ok(), `${member}/setup -> ${memberPlan.status()}`).toBeTruthy();
+  expect(await memberPlan.json()).toMatchObject({ name: member, kind: 'app', members: [member] });
+  expect((await api.get('/api/swarm/apps/oshal-ci-not-installed/setup')).status()).toBe(404);
 });

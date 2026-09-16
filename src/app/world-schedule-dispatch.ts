@@ -25,6 +25,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — deterministic world-refresh loop (enumerate tracked subjects → re-ingest+classify each via ingestFeeds), replacing the subject-less LLM dispatch that never pulled.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Log the global classify-budget snapshot in the completion line — the 2026-06-29 burn ran 9 HOURS before a human noticed because spend was invisible; now every cycle's record says how much of the LLM budget the world layer has used and whether it was denied any.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bound the rollup fan-out from config (WORLD_ROLLUP_CONCURRENCY, default 4 instead of a compiled-in 8) and record what each fire costs the series store: entity count, statements issued, statements coalesced and wall time at INFO, plus a WARN once a pulse crosses a configured fraction of its window. On 2026-09-14 the 184-entity fan-out put 19 concurrent aggregates on oshal-local-tsdb (282% CPU) because an abandoned dispatch keeps running while the next fire starts, and the only evidence a human had was pg_stat_activity while it was happening.
  *
  * @module world-schedule-dispatch
  */
@@ -42,6 +43,7 @@ import {
   DEFAULT_FEED_IDS, FINANCE_FEED_IDS, PULSE_FEED_IDS,
   firehoseEnabled, firehoseFeeds, firehoseLimit, firehoseEveryNPulses,
   deepDiveEnabled, deepDiveBudget, deepDiveMetered, feedBudgetMs, classifyBudgetSnapshot,
+  seriesReadStats, seriesReadConcurrency, type SeriesReadStats,
   DEFAULT_WORLD_TOPICS, tickerSubject, type WorldSubject,
   MARKET_SUBJECTS,
 } from '@/features/world-data';
@@ -71,8 +73,46 @@ const PULSE_SUBJECT_CONCURRENCY = 3;
 // 0 = all-lean (no full fan-out → minimal classify). Default 12.
 const PULSE_DEEP_SLICE_SIZE = Math.max(0, Number(process.env.WORLD_PULSE_DEEP_SLICE) || 12);
 /** Concurrency for the post-refresh feature rollup. DB-only (TSDB reads + inserts, no Arango graph
- *  write-conflict risk), so it can run wider than the ingest concurrency. */
-const FEATURE_ROLLUP_CONCURRENCY = 8;
+ *  write-conflict risk), so it can run wider than the ingest concurrency — but only as wide as the
+ *  series store can answer. Read per fire so an operator can throttle it in .env without a rebuild;
+ *  the process-wide bound in the series gate is what holds when two pulses overlap. */
+const FEATURE_ROLLUP_CONCURRENCY_DEFAULT = 4;
+
+/** @description How many entities the feature rollup may work on at once within ONE fire.
+ *  @param env - Environment to read.
+ *  @returns The configured fan-out, or the default when unset/invalid. */
+function featureRollupConcurrency(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.WORLD_ROLLUP_CONCURRENCY);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : FEATURE_ROLLUP_CONCURRENCY_DEFAULT;
+}
+
+/** The pulse's cadence — the window one fire has to finish in before the next one lands on top of
+ *  it. Matches the manifest's every-5-minutes market-hours cron, and is env-tunable with it. */
+const PULSE_WINDOW_MS_DEFAULT = 5 * 60 * 1000;
+/** Fraction of the window above which a completed pulse is logged as an overrun. */
+const PULSE_WARN_FRACTION_DEFAULT = 0.8;
+
+/**
+ * @description Whether a finished pulse ran long enough to be worth warning about — the run before
+ * the one that actually overruns, so a regression is visible in the journal before the scheduler
+ * starts abandoning dispatches and pulses start stacking.
+ * @param elapsedMs - Wall time the fire took.
+ * @param env - Environment to read (WORLD_PULSE_WINDOW_MS, WORLD_PULSE_WARN_FRACTION).
+ * @returns The verdict plus the window and threshold it was judged against.
+ */
+export function pulseOverrun(
+  elapsedMs: number,
+  env: NodeJS.ProcessEnv = process.env,
+): { over: boolean; budgetMs: number; fraction: number; thresholdMs: number } {
+  const parsedBudget = Number(env.WORLD_PULSE_WINDOW_MS);
+  const budgetMs = Number.isFinite(parsedBudget) && parsedBudget > 0 ? parsedBudget : PULSE_WINDOW_MS_DEFAULT;
+  const parsedFraction = Number(env.WORLD_PULSE_WARN_FRACTION);
+  const fraction = Number.isFinite(parsedFraction) && parsedFraction > 0 && parsedFraction <= 1
+    ? parsedFraction
+    : PULSE_WARN_FRACTION_DEFAULT;
+  const thresholdMs = budgetMs * fraction;
+  return { over: elapsedMs > thresholdMs, budgetMs, fraction, thresholdMs };
+}
 
 /** @description The rotating set of ticker entity ids that get the full finance fan-out THIS pulse.
  *  Time-derived (advances every 5 min) so it needs no persisted cursor and is stable across restarts. */
@@ -170,6 +210,47 @@ async function refreshSubject(
   }
 }
 
+/** What one completed fire did — the numbers the completion record is built from. */
+interface FireOutcome {
+  scheduleId: string;
+  pulse: boolean;
+  entities: number;
+  deepSlice: number;
+  rolled: number;
+  elapsedMs: number;
+  seriesBefore: SeriesReadStats;
+  totals: { fetched: number; newItems: number; errors: number };
+}
+
+/**
+ * @description Record what one fire cost — not just what it FETCHED but what it cost the series
+ * store. `seriesStatements` is the delta of the gate's cumulative counter, so it is this fire's own
+ * share even while another fire is still running, and `seriesCoalesced` is the statements the gate
+ * did not have to issue because an identical read was already in flight. Without these numbers a
+ * regression is only visible in `pg_stat_activity`, and only while it is happening. A pulse that has
+ * eaten most of its window also gets a WARN, because the next thing that happens is fires stacking.
+ * @param o - The completed fire's counts and timings.
+ * @returns Nothing; this only writes the journal.
+ */
+function logFireOutcome(o: FireOutcome): void {
+  const series = seriesReadStats();
+  const seriesStatements = series.issued - o.seriesBefore.issued;
+  logger.info({
+    scheduleId: o.scheduleId, mode: o.pulse ? 'ticker-pulse' : 'depth-refresh', entities: o.entities,
+    deepSlice: o.deepSlice, rolled: o.rolled, elapsedMs: o.elapsedMs, seriesStatements,
+    seriesCoalesced: series.coalesced - o.seriesBefore.coalesced,
+    seriesMaxInFlight: series.maxInFlight, seriesReadConcurrency: seriesReadConcurrency(),
+    classifyBudget: classifyBudgetSnapshot(), ...o.totals,
+  }, 'world refresh complete');
+  if (!o.pulse) return;
+  const budget = pulseOverrun(o.elapsedMs);
+  if (!budget.over) return;
+  logger.warn({
+    scheduleId: o.scheduleId, entities: o.entities, elapsedMs: o.elapsedMs, seriesStatements,
+    thresholdMs: budget.thresholdMs, budgetMs: budget.budgetMs, fraction: budget.fraction,
+  }, 'world ticker pulse used most of its window — the next fire will start on top of this one if it grows');
+}
+
 /**
  * @description Dispatch a world-intelligence schedule that just came due. Two modes, keyed off taskType,
  * BOTH bounded so neither hogs the single-flight scheduler cycle (which would starve the other):
@@ -191,6 +272,8 @@ export async function dispatchWorldSchedule(_ctx: AppContext, schedule: Schedule
     return { success: true, scheduleId: schedule.id };
   }
 
+  const startedAt = Date.now();
+  const seriesBefore = seriesReadStats();
   const pulse = isTickerPulse(schedule.taskType);
   const td = (schedule.taskData || {}) as Record<string, unknown>;
   const sources = Array.isArray(td.sources) && td.sources.length ? (td.sources as unknown[]).map(String) : DEFAULT_FEED_IDS;
@@ -268,15 +351,19 @@ export async function dispatchWorldSchedule(_ctx: AppContext, schedule: Schedule
     }
 
     // Feature rollup (trading signal dataset §1): turn the raw archive we just refreshed into the queryable
-    // signal-vector metrics in world_metrics. DB-only (no feeds/LLM) so it's cheap; safe to run concurrently
-    // (TSDB inserts, not the Arango graph that needs the write-conflict retry).
+    // signal-vector metrics in world_metrics. No feeds and no LLM — but four indexed aggregates per entity
+    // over 184 entities is not "cheap" to the series store, which is what 2026-09-14 proved. This mapPool
+    // bounds ONE fire; the series gate inside the service is what bounds the sum of every fire still running.
     let rolled = 0;
-    await mapPool(subjects, FEATURE_ROLLUP_CONCURRENCY, async (s) => {
+    await mapPool(subjects, featureRollupConcurrency(), async (s) => {
       try { await svc.rollupFeatures(s.entity); rolled += 1; }
       catch (e) { logger.warn({ err: e, entity: s.entity }, 'feature rollup failed'); }
     });
 
-    logger.info({ scheduleId: schedule.id, mode: pulse ? 'ticker-pulse' : 'depth-refresh', subjects: subjects.length, deepSlice: deep.size, rolled, classifyBudget: classifyBudgetSnapshot(), ...totals }, 'world refresh complete');
+    logFireOutcome({
+      scheduleId: schedule.id, pulse, entities: subjects.length, deepSlice: deep.size, rolled,
+      elapsedMs: Date.now() - startedAt, seriesBefore, totals,
+    });
     return { success: true, scheduleId: schedule.id, taskId: `world-refresh-${schedule.id}` };
   } catch (e) {
     logger.error({ err: e, scheduleId: schedule.id }, 'world refresh failed');

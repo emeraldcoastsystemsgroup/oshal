@@ -92,14 +92,21 @@ See [connector-backed-apps.md](connector-backed-apps.md) for the complete operat
 2. **Compose:** add a `BOT_RUNTIME=bot-node` service using the common bot image/environment. Set
    `BOT_NAME`, `AGENT_ID`, `BOT_PERSONA_FILE`, and capabilities. Do not add connector keys or a
    writable CLI-auth propagation path.
-3. **Persona:** create `ai-lab/bot-personas/<name>.yaml` with matching `agent_id`, bounded purpose,
+3. **Monitoring:** nothing to register. In `docker-compose.oshal-local.yml`, a service that
+   inherits `x-bot-common` (`<<: *bot-common`) is scraped automatically: the anchor labels it
+   `oshal.tier: worker`, and the monitoring overlay's Prometheus (`docker-compose.monitoring.yml`)
+   discovers containers by that label (`docker_sd_configs`, job `oshal-swarm-bots`) and scrapes
+   the runtime's `/metrics` on port 5000. There is no scrape-target step; do not edit
+   `ops/monitoring/prometheus.yml` to add a bot. Discovery keys on that label and on the `oshal`
+   network, so a service that overrides `labels:` or `networks:` must keep both.
+4. **Persona:** create `ai-lab/bot-personas/<name>.yaml` with matching `agent_id`, bounded purpose,
    output contract, capabilities, routing terms, and only the tools it is allowed to see.
-4. **Provider operation, if needed:** extend the closed provider-intent parser/executor and its
+5. **Provider operation, if needed:** extend the closed provider-intent parser/executor and its
    dedicated identity mapping. Do not create a generic CLI wrapper or pass a credential map.
-5. **Transport:** call `BotNodeClient.execute(agentId, request)` through the existing authenticated
+6. **Transport:** call `BotNodeClient.execute(agentId, request)` through the existing authenticated
    route. Owner identity, task/workspace identity, capabilities, and authority bindings are
    server-derived and immutable for that dispatch.
-6. **Evidence:** test denial before side effects, caller ownership, allowed/denied tools, prompt
+7. **Evidence:** test denial before side effects, caller ownership, allowed/denied tools, prompt
    containment, deterministic operation parsing, redaction, and cost attribution.
 
 ## Inline concierge recipe
@@ -135,6 +142,8 @@ a dedicated audited handler.
 
 - [ ] One UUID/name across persona, both registries, and manifest; duplicate validation passes.
 - [ ] Dedicated node or inline concierge chosen explicitly; no bespoke third execution path.
+- [ ] A dedicated node's compose service inherits `x-bot-common`, so it is scraped automatically;
+      no scrape target is added by hand.
 - [ ] Exact caller ownership and access roles enforced at every entry point.
 - [ ] Hosted/BYO inference or a closed deterministic provider intent selected.
 - [ ] No unattended Cline/Claude Code/Codex/Gemini CLI assumption.

@@ -16,6 +16,10 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Require protected application assignments to use authorization preview/apply instead of the legacy tier mutation API.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | GET /:name/uninstall-impact reports optionalDependents (apps that list this one as an OPTIONAL dependency); only required dependents block.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | POST /import re-enters the caller's RLS request identity after multer (preserveRequestIdentity). When the manifest's last bytes reached multer on a later socket chunk, loadApp ran with no AsyncLocalStorage identity and the owner-stamped swarm_applications write was refused by RLS (400). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-157: mount the kernel-served Scheduled services surface (GET /:name/services, POST /:name/services/:id/activate, DELETE /:name/services/:id/activation) on this router, which already carries requiresAuth at its mount. Registered before the router's own /:name routes so the literal segments match first.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com  | GET /home-plan now admits a card through current application policy (discovery + the explicit coarse deny tier), the same test /api/ui/workspaces applies. It filtered on INSTALL SCOPE alone, so a protected package stayed on Home — named area plus an Open button in All applications — for a caller holding no grant, and survived revocation while its top-navigation tab disappeared. The authorization port is a REQUIRED construction option so a caller cannot silently re-open the gap.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | A GUEST session degrades to the unprotected applications instead of being refused. The actor resolver throws for the guest issuer by design, and routing that refusal to the surface as 401 left AppsHomeView rendering "The application list could not be read" on a deployment running ENABLE_GUEST_MODE=true. A guest is now admitted with NO actor, which the runtime already reads as refusing every protected application - stricter than main, which showed a guest those same framework apps without asking policy at all.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com  | ADR-145 D4/D5: GET /:name/setup and /:name/setup-dashboard address an ACTIVE GROUP **or** an ACTIVE APP, so an app that belongs to no group can finally report. The plan comes from getAppStatusPlan over the manifests THIS caller may see (the /:name visibility rule, so an invisible app 404s like a missing one) and carries each app's summary probe; for a member that declares no `summary:` the response also carries D5's fallbackItems, composed from this user's own recent jarvis_tasks rows through the injected recentAppTasks port (the router owns no pool). Manifest data only — the page still asks every probe itself in the viewer's own session.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
@@ -23,6 +27,8 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { isGuestRequest } from '@/shared/middleware/guest-session';
+import { registerApplicationServiceActivationRoutes } from './application-service-activation-routes';
 import {
   SwarmAppService,
   APP_ACCESS_TIERS,
@@ -33,10 +39,14 @@ import {
   serializeManifest,
   compileWorkflowSpec,
   buildHomePlan,
+  getAppStatusPlan,
   type SwarmAppScope,
   type SwarmAppManifest,
   type SwarmApplicationRecord,
+  type AppStatusFallbackApp,
+  type AppStatusFallbackItem,
 } from '@/features/swarm-apps';
+import type { AuthorizationActor } from '@/shared/application-authorization';
 import { getCaller, isOperator } from '@/shared/middleware/authz';
 import { preserveRequestIdentity } from '@/shared/middleware/multipart-identity';
 import { GUEST_TIERS, isGuestTier } from '@/shared/middleware/guest-capability-matrix';
@@ -80,6 +90,66 @@ const upload = multer({
 });
 
 /**
+ * @description The current application-policy ports this router needs to decide what a caller may
+ * be SHOWN. Deliberately the narrow discovery pair — a coarse discovery answer hides what the
+ * caller could not open and authorizes nothing, so nothing here can stand in for the per-operation
+ * checks the owning package still performs.
+ */
+export interface SwarmAppRouteAuthorization {
+  /** Coarse "could this caller open it at all" answer for one installed application. An absent actor
+   *  is a caller with no verified principal (a guest session): the runtime refuses every PROTECTED
+   *  application for one, which is the honest answer rather than an invented identity. */
+  canDiscover(appName: string, actor: AuthorizationActor | undefined): Promise<boolean>;
+  /** Verified current principal for one original request; throws rather than inventing an anonymous one. */
+  resolveActor(req: Request): Promise<AuthorizationActor>;
+}
+
+/**
+ * @description Admit a Home card only where current application policy would admit the application
+ * itself. Home used to filter on INSTALL SCOPE alone (public + own person-scoped), which is a
+ * strictly weaker test than the one /api/ui/workspaces applies to the same installations — so a
+ * protected package with no `scope:` stayed in Home's named area and in the All-applications list,
+ * with a working Open button, for a caller who held no grant, and stayed there after a revocation
+ * that removed its top-navigation tab. Both surfaces now ask the same two questions.
+ * @param manifests - caller-visible ACTIVE manifests, in render order
+ * @param req - the original verified request
+ * @param authorization - current discovery ports
+ * @param appAccess - legacy explicit coarse ceilings, when wired
+ * @returns the manifests current policy admits, in the order they were given
+ */
+async function admittedHomeManifests(
+  manifests: readonly SwarmAppManifest[],
+  req: Request,
+  authorization: SwarmAppRouteAuthorization,
+  appAccess?: AppAccessService,
+): Promise<SwarmAppManifest[]> {
+  // A guest session carries the guest issuer, for which the resolver refuses to mint an actor - by
+  // design, since a guest has no verified principal. That refusal must not become a blank Home on a
+  // deployment running with guests enabled, so a guest is admitted WITHOUT an actor: the runtime
+  // then refuses every protected application and only the unprotected framework ones survive. Main
+  // showed a guest those same apps having asked policy nothing at all, so this is stricter, not
+  // looser.
+  const guest = isGuestRequest(req);
+  let actor: AuthorizationActor | undefined;
+  if (!guest) {
+    actor = await authorization.resolveActor(req);
+    if (!actor.isActive || !actor.sub || !actor.issuer) {
+      throw Object.assign(new Error('Verified application actor unavailable'), { status: 401 });
+    }
+  }
+  const admitted: SwarmAppManifest[] = [];
+  for (const manifest of manifests) {
+    if (!(await authorization.canDiscover(manifest.name, actor))) continue;
+    const access = manifest.access;
+    // The coarse ceiling is keyed on a subject. A guest has none, and canDiscover has already
+    // refused everything protected, so there is nothing left for this tier to judge.
+    if (actor && access && appAccess && (await appAccess.resolve(manifest.name, actor.sub, access)).tier === 'deny') continue;
+    admitted.push(manifest);
+  }
+  return admitted;
+}
+
+/**
  * @description Swarm application management routes.
  *
  *   GET    /api/swarm/apps                      list installed apps
@@ -95,9 +165,37 @@ const upload = multer({
  * @param service - SwarmAppService instance
  * @returns Express Router
  */
-export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAccessService,
-  options: { isAuthorizationProtected?: (app: SwarmApplicationRecord) => boolean | Promise<boolean> } = {}): Router {
+export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAccessService | undefined,
+  options: {
+    isAuthorizationProtected?: (app: SwarmApplicationRecord) => boolean | Promise<boolean>;
+    /** Home admits an application through the same discovery the top navigation uses. Required:
+     *  omitting it would silently un-gate the landing view. */
+    authorization: SwarmAppRouteAuthorization;
+    /**
+     * ADR-145 D5 — the kernel-owned `jarvis_tasks` read behind a card for an app that declares no
+     * `summary:`. Injected by the composition root because this router owns no pool; omitted, the
+     * status plan simply carries no fallback items (never a fabricated one).
+     */
+    recentAppTasks?: (sub: string, apps: readonly AppStatusFallbackApp[]) => Promise<AppStatusFallbackItem[]>;
+  }): Router {
   const router = Router();
+  // ADR-157: the kernel-served Scheduled services surface. Registered first so its literal
+  // segments are matched before this router's own /:name routes.
+  registerApplicationServiceActivationRoutes(router);
+
+  /**
+   * @description The ACTIVE manifests this caller may see — the same visibility rule GET /:name
+   * applies, so a status plan can never confirm that someone else's app exists.
+   * @param req - The authenticated request.
+   * @returns Active manifests visible to the caller.
+   */
+  const visibleActiveManifests = async (req: Request): Promise<SwarmAppManifest[]> => {
+    const { sub } = getCaller(req);
+    const visible = new Set(
+      (await service.listApps('active', { ownerSub: sub, isOperator: isOperator(req) })).map((app) => app.name),
+    );
+    return (await service.getActiveManifests()).filter((manifest) => visible.has(manifest.name));
+  };
 
   router.get('/', async (req: Request, res: Response) => {
     try {
@@ -262,17 +360,26 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAc
    * itself, in the signed-in user's own session, exactly as the group setup dashboard does. Core
    * neither impersonates the caller nor reads an app's tables (ADR-145 D6).
    *
+   * Install scope decides what the caller can SEE EXISTS; current application policy decides what
+   * is admitted onto Home — the same discovery + explicit-deny tests /api/ui/workspaces applies.
+   * Not the SAME answer, though: the top navigation additionally tests the initial surface path
+   * (canNavigateHttpPath), which Home does not, so a card can still appear for an application whose
+   * first screen the navigation withholds. Opening it is then refused at the mount guard with the
+   * role guidance — the card is reachable, the application is not.
+   *
    * Declared BEFORE /:name so "home-plan" can never be captured as an app name.
    */
   router.get('/home-plan', async (req: Request, res: Response) => {
+    res.set('Cache-Control', 'no-store');
     try {
       const { sub } = getCaller(req);
       const visible = new Set((await service.listApps('active', { ownerSub: sub, isOperator: isOperator(req) })).map(app => app.name));
-      res.set('Cache-Control', 'no-store');
-      res.json({ apps: buildHomePlan((await service.getActiveManifests()).filter(app => visible.has(app.name))) });
+      const active = (await service.getActiveManifests()).filter(app => visible.has(app.name));
+      res.json({ apps: buildHomePlan(await admittedHomeManifests(active, req, options.authorization, appAccess)) });
     } catch (err: any) {
+      const identity = err && typeof err === 'object' && err.status === 401;
       logger.error({ err }, 'Failed to build the home plan');
-      res.status(500).json({ error: 'home plan unavailable' });
+      res.status(identity ? 401 : 500).json({ error: identity ? 'authorization_identity_required' : 'home plan unavailable' });
     }
   });
 
@@ -552,43 +659,52 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAc
    * as the impact list + component picker before the user confirms an uninstall.
    */
   /**
-   * GET /:name/setup — the ADR-141 setup-dashboard plan for an active GROUP: its steps with each
-   * member's readiness probe (path + RFC 6901 pointers) resolved against the ACTIVE members, and the
-   * ribbon surface to open per step. Manifest data only — the dashboard page fetches every probe
-   * itself, in the signed-in user's own session, so nothing here impersonates the caller. 404 for
-   * anything that is not an active group (indistinguishable from not-found, like GET /:name).
+   * GET /:name/setup — the status-dashboard plan for an ACTIVE GROUP **or** an ACTIVE APP
+   * (ADR-145 D4, generalising ADR-141's group-only plan): the setup steps with each member's
+   * readiness probe (path + RFC 6901 pointers), each app's declared `summary:` probe, and — for an
+   * app that declares none — D5's `fallbackItems`, composed from THIS user's own recent
+   * `jarvis_tasks` rows. Everything else is manifest data: the page fetches every probe itself, in
+   * the signed-in user's own session, so nothing here impersonates the caller. 404 for a name that
+   * is not an active app or group VISIBLE TO THIS CALLER (indistinguishable from not-found, like
+   * GET /:name).
    */
   router.get('/:name/setup', async (req: Request, res: Response) => {
     const name = String(req.params.name);
     try {
-      const plan = await service.getGroupSetupPlan(name);
-      if (!plan) { res.status(404).json({ error: 'no active application group of that name' }); return; }
-      res.json(plan);
+      const plan = getAppStatusPlan(name, await visibleActiveManifests(req));
+      if (!plan) { res.status(404).json({ error: 'no active application or group of that name' }); return; }
+      const { sub } = getCaller(req);
+      const fallbackItems = sub && options.recentAppTasks && plan.undeclared.length
+        ? await options.recentAppTasks(sub, plan.undeclared)
+        : [];
+      res.set('Cache-Control', 'no-store');
+      res.json({ ...plan, fallbackItems });
     } catch (err: any) {
-      logger.error({ err, name }, 'Failed to build group setup plan');
+      logger.error({ err, name }, 'Failed to build app status plan');
       res.status(500).json({ error: 'setup plan unavailable' });
     }
   });
 
   /**
-   * GET /:name/setup-dashboard — the ONE kernel-served setup / connection-status page every group
-   * gets (ADR-141 D4). Self-contained HTML; it reads ?group=, fetches /setup, then probes each
-   * member in the viewer's session and opens the fix surface through the ribbon's app-navigate
-   * message. No group writes its own dashboard.
+   * GET /:name/setup-dashboard — the ONE kernel-served status / setup page every group AND every
+   * app gets (ADR-141 D4, widened by ADR-145 D3/D4). Self-contained HTML; it resolves its own name
+   * from the URL, fetches /setup, then asks every summary and readiness probe in the viewer's own
+   * session and opens a fix surface through the ribbon's app-navigate message. No app writes its
+   * own version of this page.
    */
   router.get('/:name/setup-dashboard', async (req: Request, res: Response) => {
     const name = String(req.params.name);
     try {
-      const plan = await service.getGroupSetupPlan(name);
-      if (!plan) { res.status(404).type('text/plain').send('no active application group of that name'); return; }
+      const plan = getAppStatusPlan(name, await visibleActiveManifests(req));
+      if (!plan) { res.status(404).type('text/plain').send('no active application or group of that name'); return; }
       res.sendFile(path.resolve(process.cwd(), 'src/pages/cockpit/tools/app-group-setup.html'), (err) => {
         if (err) {
-          logger.error({ err, name }, 'failed to serve group setup dashboard');
+          logger.error({ err, name }, 'failed to serve the app status dashboard');
           if (!res.headersSent) res.status(404).type('text/plain').send('setup dashboard not found');
         }
       });
     } catch (err: any) {
-      logger.error({ err, name }, 'Failed to serve group setup dashboard');
+      logger.error({ err, name }, 'Failed to serve the app status dashboard');
       res.status(500).type('text/plain').send('setup dashboard unavailable');
     }
   });

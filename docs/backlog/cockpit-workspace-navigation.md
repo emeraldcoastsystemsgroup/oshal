@@ -188,6 +188,23 @@ Done when:
    remains reachable. AI Test Lab links these source suites separately from its
    native readiness checks; installed presentation acceptance is recorded above.
 
+**Home admission closed 2026-09-16.** Item 1's "admitted" and item 4's "every
+remaining *authorized* tool" were true of the top navigation only. Home's named
+areas and its All-applications directory both read
+`GET /api/swarm/apps/home-plan`, which filtered on INSTALL SCOPE alone — public
+plus the caller's own person-scoped installations. A protected package with no
+`scope:` therefore stayed on Home, with a working Open button, for a caller who
+held no grant, and stayed there after a revocation that removed its top tab.
+That route now asks the same two questions `/api/ui/workspaces` asks: current
+application discovery, then the explicit coarse deny tier. Unprotected framework
+applications are unaffected — discovery admits them without a grant, so the
+kernel apps and the searchable directory keep every tool they had.
+[`tests/unit/app-home-plan-authorization.spec.ts`](../../tests/unit/app-home-plan-authorization.spec.ts)
+drives both routers side by side over loopback HTTP against the real
+authorization runtime and asserts they agree across grant, revocation and deny;
+it is registered on the **Jarvis and daily dashboard** Lab card and runs in
+`npm run test:daily-dashboard`.
+
 This is presentation and navigation work. It does not complete Finance provider
 setup, initiate transactions, create an umbrella application or implement the
 compact Jarvis dashboard by itself.

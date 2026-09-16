@@ -41,6 +41,8 @@
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | synthesiseProfile forwards ribbon.hideStatusBar (true → true, else undefined) exactly like hideChatPanel/hideAssistant, so the cockpit can drop the operational status bar for apps that are not ticket/queue-shaped.
  * 35 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups: activate() fail-closes a `kind: group` whose borrowed toolbar surfaces or setup readiness do not resolve against its ACTIVE members (member + surface named; the record lands inactive); synthesiseProfile renders a group as its kernel setup-dashboard tile followed by the member surfaces its toolbar borrows (resolved at synthesis, so a member that moves a surface is followed); getGroupSetupPlan() hands the dashboard route the steps with each member's probe. autoLoadAll loads groups AFTER every app (orderGroupsLast) so directory order cannot fail-close a group's first boot. Resolution logic lives in swarm-app-group.ts (this file is over its 800-line budget); the static-item map moved there as staticRibbonItems.
  * 38 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers: only a REQUIRED app dependency blocks an uninstall and counts toward orphans; apps that list the target as OPTIONAL are reported (optionalDependents) and never block. Group members and the connector allow-list read through @/shared/app-dependencies so the tiered and legacy forms agree.
+ * 39 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 rail discoverability: synthesiseProfile takes an optional per-person discovery port (the ui-profile route binds it to the verified actor) and, when given, hands the static tiles plus every installed record to lockUndiscoverableTiles — a tile under ANOTHER active package's mount that the person cannot discover comes back `locked` (kept in place; the cockpit renders the guest-disabled style with the role-guidance link) instead of a dead frame. No port = the manifest-static rail exactly as before. The logic lives in swarm-app-tile-discoverability.ts; this file is over its size budget.
+ * 40 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 landing half: the synthesised defaultView now comes from openableDefaultView, so a locked tile is never the view the cockpit opens on. Locking only the rail button left a launcher whose ribbon.defaultView names another package's surface opening straight onto the kernel's role-guidance 403 inside the frame.
  */
 
 import type { Pool } from 'pg';
@@ -83,6 +85,7 @@ import {
   staticRibbonItems,
   type ResolvedGroupSetupStep,
 } from './swarm-app-group';
+import { lockUndiscoverableTiles, openableDefaultView, type RibbonTileDiscovery, type RibbonTileLock } from './swarm-app-tile-discoverability';
 import { readManifest, listManifestFiles, serializeManifest } from './swarm-app-loader';
 import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type SummaryViewer } from './swarm-app-record-view';
 import {
@@ -701,14 +704,18 @@ export class SwarmAppService {
    * manifest's ribbon state fully predictable from the YAML alone.
    *
    * @param name - application name
+   * @param discovery - ADR-149: the per-person discovery port the route binds to the verified
+   *   actor. When present, a static tile under ANOTHER active package's mount that this person
+   *   cannot discover is returned `locked` (kept in place) instead of opening a dead frame.
+   *   Absent (internal callers) = the manifest-static rail, exactly as declared.
    * @returns a UIProfile-shaped object, or null if no such app is loaded
    */
-  async synthesiseProfile(name: string): Promise<null | {
+  async synthesiseProfile(name: string, discovery?: RibbonTileDiscovery): Promise<null | {
     name: string;
     displayName: string;
     description?: string;
     ribbon: {
-      items: Array<string | { id: string; icon: string; label: string; section: 'top' | 'bottom'; group?: string; toolUi?: { iframeUrl: string; sidebarLabel: string } }>;
+      items: Array<string | { id: string; icon: string; label: string; section: 'top' | 'bottom'; group?: string; toolUi?: { iframeUrl: string; sidebarLabel: string }; locked?: RibbonTileLock }>;
       dynamicTools: { allow: string[]; section?: 'top' | 'bottom' };
     };
     defaultView?: string;
@@ -773,7 +780,10 @@ export class SwarmAppService {
     // manifest-only `group:` edit a silent no-op, since nothing else reads ui.static.
     // ADR-141: a group's tiles are its kernel setup dashboard plus surfaces BORROWED from its
     // active members — resolved now, so a member that moved a surface is followed, never copied.
-    const staticItems = staticRibbonItems(await this.ribbonSurfaces(record));
+    // ADR-149: with a per-person port, a tile under ANOTHER active package's mount follows that
+    // package's discoverability (locked, kept in place); without one the rail is manifest-static.
+    const declared = staticRibbonItems(await this.ribbonSurfaces(record));
+    const staticItems = discovery ? await lockUndiscoverableTiles(record, declared, await this.repo.list(), discovery) : declared;
 
     const FRAMEWORK_ITEMS = ['tickets', 'chat', 'calendar', 'addressbook', 'dashboard', 'logs', 'settings', 'operations'];
     const frameworkItems = FRAMEWORK_ITEMS.filter(id => !hide.has(id));
@@ -850,12 +860,10 @@ export class SwarmAppService {
       // The manifest's ribbon.defaultView uses the raw toolName; since we
       // prefix static items with `tool-`, normalise here so the initial
       // ribbon highlight lines up with the rendered content.
-      defaultView: (() => {
-        const declared = ribbon.defaultView;
-        if (!declared) return staticItems[0]?.id;
-        const matchingStatic = staticItems.find(s => s.id === `tool-${declared}` || s.id === declared);
-        return matchingStatic?.id ?? declared;
-      })(),
+      // ADR-149: a locked tile is kept in the rail but is never the landing view — otherwise the
+      // shell iframes its surface before the person clicks, which is the dead frame the lock exists
+      // to remove. openableDefaultView keeps the previous choice whenever nothing is locked.
+      defaultView: openableDefaultView(ribbon.defaultView, staticItems, frameworkItems),
     };
   }
 

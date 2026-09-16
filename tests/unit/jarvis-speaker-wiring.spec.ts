@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added Jarvis surface, authenticated-asset, hot-swap, and push-to-talk speaker-capture wiring tests.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Loader update for the jarvis-ambient decomposition: `ambient` is now the concatenation of the four load-ordered classic scripts, and a wiring test pins each sibling into the asset allowlist, the compose hot-swap mounts, and jarvis.html in core→ui→recognition→coordinator order.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pins the Manage Voices → Ambient Recall profile bridge at its four registration points: the JARVIS_CLIENT_ASSETS entry, the compose hot-swap mount, the jarvis.html script tag (after the panel it decorates) and the jarvis.html mount (after the panel mount, pointed at the profile page). Its behavior is proven in Chromium by jarvis-speaker-profile-links-browser.spec.ts.
  */
 
 import { readFileSync } from 'node:fs';
@@ -84,5 +85,21 @@ describe('Jarvis speaker surface wiring', () => {
     expect(html).toContain('/api/jarvis/assets/jarvis-person-consent.js');
     expect(html).toContain('window.JarvisPersonConsent.mount');
     expect(html).toContain("apiBase: '/api/jarvis/ambient/person'");
+  });
+
+  it('registers the Manage Voices → Ambient Recall profile bridge at all four points', () => {
+    const file = 'jarvis-speaker-profile-links.js';
+    // (1) allowlisted asset and (2) hot-swap bind mount, so it serves and updates without a rebuild
+    expect(routes).toContain(`['${file}'`);
+    expect(compose).toContain(`./src/api/${file}:/app/src/api/${file}:ro`);
+    // (3) loaded after the Voice & Speakers panel it decorates
+    const panelScript = html.indexOf('/api/jarvis/assets/jarvis-speakers.js"');
+    expect(panelScript).toBeGreaterThan(-1);
+    expect(html.indexOf(`/api/jarvis/assets/${file}"`)).toBeGreaterThan(panelScript);
+    // (4) mounted after the panel mount, on the panel's own root, pointed at the profile page
+    const bridgeMount = html.indexOf('window.JarvisSpeakerProfileLinks.mount({');
+    expect(bridgeMount).toBeGreaterThan(html.indexOf('window.JarvisSpeakers.mount({'));
+    expect(html.slice(bridgeMount, bridgeMount + 200)).toContain('root: speakerPanelController?.element');
+    expect(html.slice(bridgeMount, bridgeMount + 200)).toContain("profileBase: '/api/jarvis/ambient/person/'");
   });
 });

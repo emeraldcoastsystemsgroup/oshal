@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Barrel for the observability slice — the Prometheus exposition both runtimes serve at GET /metrics, so the ADR-119 self-healing rules key on series the swarm itself guarantees rather than on a host collector that cannot see Docker Desktop containers.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the catalog-load registry + the retrying catalog-directory read: a subsystem that reads a directory of definitions at boot now records what it actually loaded, so /api/readiness can refuse to call a box ready when a capability loaded NOTHING (the 2026-08-01 ENOMEM connector-catalog incident).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added the persistence-mode registry: a store that can fall back to in-memory storage now records whether it is actually durable, so /api/readiness can refuse to call a box ready while a store advertised as durable is writing to a Map (the 2026-09-15 boot-burst fallback that was signalled only by three ERROR lines).
  */
 
 /**
@@ -20,6 +21,14 @@ export {
   type CatalogLoadRecord,
   type CatalogSourceState,
 } from './catalog-load-registry';
+export {
+  degradedPersistence,
+  listPersistenceModes,
+  recordPersistenceMode,
+  resetPersistenceModes,
+  type PersistenceMode,
+  type PersistenceModeRecord,
+} from './persistence-mode-registry';
 export {
   TRANSIENT_DIR_READ_CODES,
   readCatalogDir,

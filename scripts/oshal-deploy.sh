@@ -11,6 +11,8 @@
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | npm publish parity is REPORTED in preflight (scripts/npm-parity-check.sh). The client packages ship to the world on a different rail than this stack, so npm staleness must never block a container deploy - but it went unnoticed for three weeks: @oshal/chat sat at 0.2.0 on npm while #300 (node print service) and #302 (satellite login push) landed IN that package and package.json was never bumped, so the version numbers MATCHED while the code differed and nothing could notice. The deploy is where that now gets said out loud. Publishing stays an explicit, irreversible act: bash scripts/npm-publish.sh --publish.
 # 6 | maintainer@emeraldcoastsystemsgroup.com | Add explicit authorized feature-branch previews with fresh published-tip checks and strict image labels even when skipping build; archive the captured commit rather than mutable HEAD.
 # 7 | maintainer@emeraldcoastsystemsgroup.com | Drain startup logs when matching auto-load readiness so an early grep exit cannot turn a found marker into a Docker pipe failure; retain refusal on actual log-read errors.
+# 8 | maintainer@emeraldcoastsystemsgroup.com | A deploy is not finished until Jarvis answers and a ticket moves. Every gate this script already had measures the STACK — containers healthy, image parity clean, /health 200, zero unhealthy — and on 2026-09-15 all of them were green while Jarvis answered nothing and an operator ticket raised at 00:51Z escalated on manifest_worker_dispatch_failed instead of being worked. The run said DEPLOYED. Post-deploy live verification (scripts/lib/deploy-verify.sh) now runs after those gates and before the DEPLOYED line: the bot role can still SELECT the table its own ADR-149 posture guard reads, Jarvis answers a fixed question as the operator, and one synthetic ticket leaves the queue without parking in a failed state. A failure carries its own exit code (4) and deliberately does NOT roll back — the new image is already live and serving, and swapping it for the previous one would add a version surprise to a product outage. OSHAL_DEPLOY_SKIP_LIVE_VERIFY=1 is the one documented skip, for a box with no operator identity. Guard: tests/unit/deploy-live-verification.spec.ts.
+# 9 | maintainer@emeraldcoastsystemsgroup.com   | wait_api waits on a DEADLINE (OSHAL_DEPLOY_API_HEALTH_SECONDS, default 900) and fails fast only on unhealthy/exited/dead/restarting. A fixed 40x3s window rolled back a healthy deploy on 2026-09-16 because this box loads 83 swarm apps at boot and took about eight minutes under load; the rollback's api needed more than 120 s for the same reason, so the script then reported a DEGRADED stack that was serving fine minutes later. A slow boot is not a failed boot, and the elapsed time is now logged so the difference is visible.
 # =============================================================================
 #
 # Usage:  bash scripts/oshal-deploy.sh [--preview] [--skip-build] [--no-rollback] [--allow-unpushed] [--dry-run]
@@ -31,11 +33,19 @@
 #   - Touches ONLY services whose compose image is oshal-bot:latest (api + bots).
 #     Infra (db/redis/chroma/arango/tsdb/vault/cloudflared/...) is never recreated.
 #   - Success = api fully up (healthy + swarm-app auto-load) + bots recreated +
-#     parity clean + /health 200 + zero unhealthy app containers.
+#     parity clean + /health 200 + zero unhealthy app containers + the post-deploy
+#     live verification passing (bot-role grant, a Jarvis answer, a ticket that moves).
 #   - Any post-recreate failure triggers rollback to the pre-deploy image
 #     (tagged oshal-bot:deploy-rollback at start) unless --no-rollback.
 # EXIT:   0 deployed+verified   1 failed, rollback restored a SERVING stack   2 preflight error
 #         3 failed AND the rollback did not restore a serving stack — the box needs hands
+#         4 deployed and SERVING, but the post-deploy live verification failed — the product
+#           is down on a healthy stack. Deliberately NOT rolled back; fix the named check.
+#
+# Env:    OSHAL_DEPLOY_SKIP_LIVE_VERIFY=1  skip the post-deploy live verification entirely.
+#         The ONLY switch that skips it, and it exists for a deployment that carries no
+#         operator identity (empty OSHAL_OPERATOR_SUBS) to ask Jarvis a question as.
+#         See docs/runbooks/deploy-parity.md.
 
 set -uo pipefail
 
@@ -79,8 +89,13 @@ trap 'rm -rf "$LOCK"' EXIT
 trap 'rm -rf "$LOCK"; exit 130' INT TERM
 
 # ── Preflight ────────────────────────────────────────────────────────────────
-SOURCE_HELPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib/deploy-source.sh"
+SCRIPT_LIB="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib"
+SOURCE_HELPER="$SCRIPT_LIB/deploy-source.sh"
 source "$SOURCE_HELPER" || fail2 "deployment source helper unavailable"
+# Fail CLOSED at preflight if the post-deploy verification helper is missing: a deploy that
+# cannot verify the product must refuse before it touches a container, never quietly skip.
+VERIFY_HELPER="$SCRIPT_LIB/deploy-verify.sh"
+source "$VERIFY_HELPER" || fail2 "post-deploy verification helper unavailable ($VERIFY_HELPER)"
 oshal_deploy_source_preflight "$PREVIEW" "$ALLOW_UNPUSHED" || fail2 "$DEPLOY_SOURCE_ERROR"
 [ "$PREVIEW" -eq 1 ] && log "authorized preview source: ${HEAD_SHA:0:12} (fresh origin branch tip)"
 docker info >/dev/null 2>&1 || fail2 "docker daemon not reachable"
@@ -219,18 +234,35 @@ rollback() {
   exit 1
 }
 
+# How long the api may take to become healthy and finish loading its apps. A box that loads 80+
+# swarm apps at boot, or is busy, takes minutes - and a deploy that rolls back a HEALTHY image
+# because it was impatient is worse than one that waits: it recreates the whole bot tier twice and
+# ends up reporting a degraded stack that was never degraded (2026-09-16).
+API_HEALTH_SECONDS=${OSHAL_DEPLOY_API_HEALTH_SECONDS:-900}
+
 wait_api() {
-  local i s
-  for i in $(seq 1 40); do
+  local deadline s waited
+  deadline=$(( $(date +%s) + API_HEALTH_SECONDS ))
+  while :; do
     s=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$API_CONTAINER" 2>/dev/null || echo missing)
-    [ "$s" = healthy ] && break; sleep 3
-  done
-  [ "$s" = healthy ] || { log "api never went healthy (last: $s)"; return 1; }
-  for i in $(seq 1 50); do
-    docker logs "$API_CONTAINER" 2>&1 | grep -F "Swarm app auto-load complete" >/dev/null && { log "api fully up (healthy + auto-load)"; return 0; }
+    [ "$s" = healthy ] && break
+    # These mean a real failure. 'starting' and a missing container mid-recreate do not, so they
+    # only ever run the clock down.
+    case "$s" in
+      unhealthy|exited|dead|restarting)
+        log "api reported '$s' — that is a failed boot, not a slow one"; return 1 ;;
+    esac
+    [ "$(date +%s)" -lt "$deadline" ] || { log "api never went healthy within ${API_HEALTH_SECONDS}s (last: $s)"; return 1; }
     sleep 3
   done
-  log "api healthy but auto-load never completed"; return 1
+  waited=$(( API_HEALTH_SECONDS - (deadline - $(date +%s)) ))
+  log "api healthy after ${waited}s"
+  while :; do
+    docker logs "$API_CONTAINER" 2>&1 | grep -F "Swarm app auto-load complete" >/dev/null && {
+      log "api fully up (healthy + auto-load) after $(( API_HEALTH_SECONDS - (deadline - $(date +%s)) ))s"; return 0; }
+    [ "$(date +%s)" -lt "$deadline" ] || { log "api healthy but auto-load never completed within ${API_HEALTH_SECONDS}s"; return 1; }
+    sleep 3
+  done
 }
 
 log "recreating api"
@@ -266,7 +298,33 @@ done
 [ -z "$UNHEALTHY" ] || { log "unhealthy after grace window: $UNHEALTHY"; rollback; }
 log "census: $(docker ps --filter "ancestor=$IMAGE" --format '{{.Status}}' | grep -c healthy) healthy / $(docker ps --filter "ancestor=$IMAGE" --format '{{.Names}}' | wc -l) app containers"
 
-log "DEPLOYED ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots, parity clean, 0 unhealthy"
+# ── Verify the PRODUCT, not just the stack ──────────────────────────────────
+# Everything above measures containers. On 2026-09-15 every line above was green while
+# Jarvis answered nothing and a ticket escalated on manifest_worker_dispatch_failed, and
+# the run still printed DEPLOYED. These three checks run LAST, after the health/parity/
+# census gates, and their verdict decides whether DEPLOYED is printed at all.
+# A failure NEVER rolls back: the new image is already live and serving, and returning to
+# the previous one would add a version surprise to a product outage.
+if ! oshal_deploy_post_verify; then
+  log ""
+  log "✗ deployed ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots healthy, parity clean,"
+  log "  but the POST-DEPLOY LIVE VERIFICATION above FAILED. The stack is up; the product is not."
+  log "  The new image IS live and serving and was deliberately NOT rolled back."
+  log "  Fix the named check, then re-verify without redeploying:"
+  log "    bash -c 'source scripts/lib/deploy-verify.sh && oshal_deploy_post_verify'"
+  log "  Runbook: docs/runbooks/deploy-parity.md   Full log: $RUN_LOG"
+  exit 4
+fi
+
+# The verification can now end in a third state, and this line is what an operator reads. Saying
+# "live verification passed" over a run where the two product checks proved NOTHING is the exact
+# dishonesty the third state exists to remove, so the tail follows the tally.
+if [ "${OSHAL_VERIFY_UNVERIFIED:-0}" -eq 0 ]; then
+  VERIFY_TAIL="live verification passed"
+else
+  VERIFY_TAIL="${OSHAL_VERIFY_UNVERIFIED} check(s) UNVERIFIED — UNPROVEN as a product (see above)"
+fi
+log "DEPLOYED ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots, parity clean, 0 unhealthy, ${VERIFY_TAIL}"
 log "advisory error scan (api, this boot):"
 docker logs "$API_CONTAINER" 2>&1 | grep -c '"level":50' | xargs -I{} echo "  error-level lines: {}" | tee -a "$RUN_LOG"
 exit 0

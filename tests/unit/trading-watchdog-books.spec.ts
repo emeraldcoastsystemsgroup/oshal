@@ -6,6 +6,8 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fail-open on PROTECTIVE EXITS (2026-09-06 round-4 review): a DISABLED live book was invisible to the watchdog end to end - the roster filtered `AND enabled` in SQL, the leg read dropped any leg whose book was not in that set, and the evaluation returned early on an empty set. But disabling a book stops NEW risk only (trading-schedule-dispatch logs "book disabled - new entries skipped (exits/sells still ran)"), so its autopilot leg keeps running the hard stops / take-profits / trailing exits: a disabled book's leg could die and take the real-money stops with it, silently. The roster now returns every live book with an Enabled flag and the states are alerted apart - 'live-exits-silent-<ref>' for a DISABLED book whose ACTIVE leg shows no beat, while a DISABLED book with a paused leg or no leg stays SILENT (both switches off). New cases prove (a) the disabled+active+silent report, (b) the disabled+legless / disabled+paused silence against an ENABLED contrast that does alert, (c) every enabled-book expectation unchanged, plus the all-disabled roster split (honest empty leg map = quiet, leg-read FAILURE = still 'legs-unreadable'), the disabled book's ACTIVE leg mapped through the REAL Redis store, and a source pin on the dispatch lines that make the premise true.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fail-open coverage hole (2026-09-06 review): a PAUSED autopilot leg for an ENABLED live book used to fall through to the legless bucket and be satisfied by the per-sub events tick whenever some OTHER book still had an active leg - the exact silence the old '_live' grep paged on. Get-AutopilotLegRefs now returns Legs + Paused separately and Test-LiveBookBeats raises 'live-leg-paused-<ref>' for those books; a third seeded book (b-spec-paused, enabled, leg status 'paused') proves it through the real Redis store. Also: cleanup DELs the seeded schedule records BY PATTERN (the run's own prefix) rather than only the keys it remembers, and the real-boundary timeouts are 90s (three runs on a loaded box put a 60s PowerShell+docker case on the edge).
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-134 D2 #7 watchdog guard. Proves, through the REAL PowerShell 5.1 boundary, that scripts/trading-watchdog.ps1 derives its expected live set FROM oshal_trading_books (docker exec psql against the live Postgres: enabled live books in, disabled/paper out), maps autopilot legs from the REAL Redis schedule store (seeded records in the real shape: legacy no-bookId+mode live -> 'live', taskData.bookId -> its book, inactive/foreign ignored), evaluates beats per book on the leg's own "scheduleId", and FAILS CLOSED (books unreadable -> 'books-unreadable' + legacy live assumed; empty leg map -> 'legs-unreadable' + the legacy live beat still required; legless book -> the per-sub trading-events tick). Also executes scripts/trading-books-cutover.sh's check_observability_pair under bash with stub docker/schtasks for every refuse branch and one pass, source-pins the two cross-module log strings the watchdog depends on, pins that the leg read is attempted even when the books read failed (so 'legs-unreadable' never names a schedule store the run did not consult), and pins that every docker/psql target is a parameter rather than a literal container name.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The two CONTAINER names had the same defect the DSN had, and SEQ 4 did not close it: OSHAL_TEST_DB_CONTAINER and OSHAL_TEST_REDIS_CONTAINER each fell back to the local stack's own container, so the `docker exec psql` target was the deployment even on a run whose DSN was correctly pointed at a throwaway — the harness wrote through the deployment's own credentials while the resolver reported the run safe. Both now resolve through specContainerName, which has no default and refuses the local stack's containers outright.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -15,6 +17,7 @@ import { join } from 'node:path';
 import crypto from 'node:crypto';
 import { Pool } from 'pg';
 import { ensureLegacyBooks, legacyBookId } from '../../src/app/trading-books-store';
+import { specContainerName, specDatabaseUrl } from '../helpers/spec-database-url';
 
 const root = join(__dirname, '..', '..');
 const watchdogPath = join(root, 'scripts', 'trading-watchdog.ps1');
@@ -23,9 +26,9 @@ const watchdogSource = readFileSync(watchdogPath, 'utf8');
 const cutoverSource = readFileSync(cutoverPath, 'utf8');
 const powershell = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
 const scratch = mkdtempSync(join(tmpdir(), 'oshal-watchdog-books-'));
-const DSN = process.env.OSHAL_TEST_DSN || `postgresql://oshal:oshal@127.0.0.1:${process.env.OSHAL_PG_PORT ?? '55433'}/oshal`;
-const DB_CONTAINER = process.env.OSHAL_TEST_DB_CONTAINER || 'oshal-local-db';
-const REDIS_CONTAINER = process.env.OSHAL_TEST_REDIS_CONTAINER || 'oshal-local-redis';
+const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+const DB_CONTAINER = specContainerName('OSHAL_TEST_DB_CONTAINER');
+const REDIS_CONTAINER = specContainerName('OSHAL_TEST_REDIS_CONTAINER');
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-adr134wd-${RUN}`;
 const B_ON = crypto.randomUUID();

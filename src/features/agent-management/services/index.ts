@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Exported delegation-aware BotNodeClient construction options through the feature barrel.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 memory namespace, ACL, provenance, and promotion contracts.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Exported resolveBotRuntimeLauncher so every bot-runtime caller picks the substrate the same way
  */
 
 export { RedisMeshTransport, type RedisMeshTransportOptions } from './redis-mesh-transport';
@@ -128,6 +129,10 @@ export {
   buildBotService,
   readClusterAccess,
 } from './kubernetes-bot-launcher';
+export {
+  resolveBotRuntimeLauncher,
+  UnavailableBotRuntimeLauncher,
+} from './bot-runtime-launcher-resolver';
 export {
   StartupConfigValidator,
   type AgentConfigValidationResult,

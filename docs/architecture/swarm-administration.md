@@ -92,6 +92,21 @@ Axes 1 and 2 were aligned because they answer the *same* question at different l
 answers a different question. Folding it in would make "can administer the swarm" and "may use the
 photo app" the same decision, which is wrong.
 
+**They are joined for READING, never for deciding.** `GET /api/access-review` (page:
+`/access-review`) reports all three for one identity and names the source of every grant —
+`swarm-role` | `idp-claim` | `break-glass` for the swarm axis, `app-assignment` | `app-default` |
+`none` per application. It holds no decision of its own: the swarm axis comes from
+`resolveSwarmRoleGrant` (the same stores `resolveRole` reads) and each application row is one
+`effective()` call through the ADR-149 authority, under that authority's own management checks.
+Any signed-in person reads their own; naming another subject is admin-only, and that subject is
+described from their SUBJECT IDENTIFIER alone — they have no session here, so no IdP claim and no
+email is available and the payload says so (`emailEvaluated: false`) rather than implying an
+email-only break-glass entry was checked.
+
+Why provenance is the point: a break-glass operator and an admin granted on `/users` resolve the
+**same** role, so without a source label they render identically — and the one that cannot be
+audited or revoked from a browser is the one ADR-148 exists to end.
+
 ## 4. The constraints that are expensive to rediscover
 
 - **`isOperatorIdentity` is ONE synchronous chokepoint for ~159 call sites**, many inside Express
@@ -180,8 +195,12 @@ Each has a BACKLOG entry with done-when criteria. Ordered by what a reader would
    not refused. The durable fix pins the resolved address for the fetch rather than validating
    and then fetching, which is a TOCTOU.
 6. **First-run provisioning.** The wizard's trusted-store selection step is still separate work.
-7. **One place that answers "what am I allowed to do."** The three axes are each correct and each
-   partial; nobody can see their swarm role, their app access and their permissions together.
+7. **~~One place that answers "what am I allowed to do."~~ CLOSED** — `/access-review` and
+   `GET /api/access-review` join the three axes read-only for one identity (see section 3).
+   `tests/unit/access-review.spec.ts` proves it over the real boundaries: the real `swarm_roles`
+   snapshot, the real environment allowlists and the real ADR-149 service over a real policy store
+   with a really applied grant. Its load-bearing case is that a break-glass-only operator and a
+   swarm-role admin come back with the same role and different sources.
 
 > **Closed by other sessions on this branch since ADR-147 was written, verified in the code on
 > 2026-09-13:** a cross-source replacement now returns `409` and requires explicit confirmation
@@ -201,5 +220,7 @@ Each has a BACKLOG entry with done-when criteria. Ordered by what a reader would
 | Role API | `src/app/routes/swarm-roles-routes.ts` |
 | Registries + host adapters | `src/features/app-registries/` |
 | Registry API, preview, install decision | `src/app/routes/app-registry-routes.ts` |
-| Pages | `src/pages/users/`, `src/pages/app-loader/`, `src/pages/admin/`, `src/pages/cockpit/tools/devices.html` |
-| Guards | `tests/unit/swarm-roles-store.spec.ts`, `app-registries.spec.ts`, `admin-console-access.spec.ts`, `cockpit-tool-surfaces.spec.ts`, `swarm-admin-route-chain-authorization.spec.ts` (the route chain end to end) |
+| Grant provenance (which axis granted the role) | `src/features/governance/rbac/grant-sources.ts` (`resolveSwarmRoleGrant`) |
+| The joined read-only review | `src/app/routes/access-review-routes.ts` |
+| Pages | `src/pages/users/`, `src/pages/app-loader/`, `src/pages/admin/`, `src/pages/access-review/`, `src/pages/cockpit/tools/devices.html` |
+| Guards | `tests/unit/swarm-roles-store.spec.ts`, `app-registries.spec.ts`, `admin-console-access.spec.ts`, `cockpit-tool-surfaces.spec.ts`, `swarm-admin-route-chain-authorization.spec.ts` (the route chain end to end), `access-review.spec.ts` (the joined view and its grant sources) |

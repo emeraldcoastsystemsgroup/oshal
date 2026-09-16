@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Connect briefing delivery to current exact identities and existing application authorization.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Ask the authorization readiness per briefing operation. Chaining off it once inherited a boot-time bootstrap failure permanently, and briefings stayed dead after authorization itself recovered.
  */
 import type { AppContext } from './app-context';
 import type { createApplicationAuthorizationWiring } from './application-authorization-wiring';
@@ -15,6 +16,7 @@ import { runWithSystemIdentity } from '@/shared/services/database/request-identi
 import { principalLoginProviders } from '../middleware/principal-provider-policy';
 import { configureJarvisBriefingDelivery } from '../routes/jarvis-briefing-delivery';
 import { createChildLogger } from '@/shared/logger';
+import { createRetryableReady } from '@/shared/services/database';
 import { JarvisBriefingService } from './jarvis-briefing-service';
 import { ensureJarvisBriefingSchema } from './jarvis-briefing-schema';
 
@@ -66,8 +68,12 @@ export function createBriefingRecipientResolver(store: Pick<PrincipalDirectorySt
  * @returns The delivery service, readiness promise and authenticated route actor resolver.
  */
 export function createJarvisBriefingWiring(ctx: AppContext, authorization: Authorization, env: NodeJS.ProcessEnv = process.env) {
-  const ready = authorization.ready.then(() => runWithSystemIdentity(() => ensureJarvisBriefingSchema(ctx.pool)));
-  void ready.catch(error => logger.error({ err: error }, 'Jarvis briefings unavailable'));
+  const ready = createRetryableReady(async () => {
+    await authorization.ready();
+    await runWithSystemIdentity(() => ensureJarvisBriefingSchema(ctx.pool));
+  });
+  void ready().catch(error => logger.error({ err: error },
+    'Jarvis briefings unavailable; the next briefing operation retries the schema bootstrap'));
   const service = new JarvisBriefingService(ctx.pool, {
     resolveRecipient: createBriefingRecipientResolver(new PrincipalDirectoryStore(ctx.pool), authorization.targetActor, env),
     canAccess: createBriefingAccessCheck(authorization),

@@ -7,11 +7,17 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed row mapping and snapshot helper logic into memory-layer-utils to keep the service within governance limits
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Persist owner_sub on knowledge documents and make listKnowledgeDocuments permission-aware (agent filter + operator-or-owner scope) so the Settings RAG visibility surface never lists another user's private docs
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Close the owned Postgres pool when persistence initialization fails before falling back to memory
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Re-attempt persistence instead of ending the pool and nulling it: one lost acquire during the boot migration burst made checkpoints, agent memory and the knowledge catalog non-persistent for the whole process lifetime. Activation now runs through the shared re-attemptable helper, the pool is kept so a retry has something to retry with, and the memory fallback is a state the next operation can leave.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
-import { createOptionalPostgresPool, ensureConversationStoreSchema } from '@/shared/services/database';
+import {
+  createOptionalPostgresPool,
+  createPersistenceActivation,
+  ensureConversationStoreSchema,
+  type PersistenceActivation,
+} from '@/shared/services/database';
 import type {
   AgentMemoryRecord,
   CreateCheckpointInput,
@@ -61,9 +67,9 @@ export class MemoryLayerService {
   private readonly agentMemoryIndex = new Map<string, string[]>();
   private readonly knowledgeDocuments = new Map<string, KnowledgeMemoryDocument>();
   private readonly knowledgeIndex = new Map<string, string[]>();
-  private pool: Pool | null;
+  private readonly pool: Pool | null;
   private persistentMode: boolean;
-  private readonly initPromise: Promise<void>;
+  private readonly activation: PersistenceActivation;
 
   constructor(
     private readonly taskStore: ITaskStore,
@@ -71,7 +77,14 @@ export class MemoryLayerService {
   ) {
     this.pool = createOptionalPostgresPool('memory-layer-service');
     this.persistentMode = false;
-    this.initPromise = this.initializePersistence();
+    this.activation = createPersistenceActivation({
+      store: 'memory-layer',
+      pool: this.pool,
+      activate: ensureConversationStoreSchema,
+    });
+    // Attempt activation at boot exactly as before. The difference is what a failure means:
+    // it is observed here rather than cached, and the next operation re-attempts it.
+    void this.activation.ready();
     logger.info({ hasPool: Boolean(this.pool) }, 'Memory layer service initialized');
   }
 
@@ -261,29 +274,13 @@ export class MemoryLayerService {
     return applyLimit(filtered, options.limit);
   }
 
-  private async initializePersistence(): Promise<void> {
-    if (!this.pool) {
-      return;
-    }
-    const candidatePool = this.pool;
-    try {
-      await ensureConversationStoreSchema(candidatePool);
-      this.persistentMode = true;
-      logger.info('Memory layer persistence mode enabled (postgres)');
-    } catch (error) {
-      logger.error({ err: error }, 'Memory layer persistence init failed; falling back to memory');
-      this.persistentMode = false;
-      try {
-        await candidatePool.end();
-      } catch (cleanupError) {
-        logger.warn({ err: cleanupError }, 'Failed to close memory layer Postgres pool after persistence init failure');
-      }
-      this.pool = null;
-    }
-  }
-
+  /**
+   * @description Settle persistence mode before an operation runs, re-attempting activation
+   * when an earlier attempt failed and its cooldown has elapsed. Never throws: a store that
+   * cannot reach Postgres answers from memory rather than refusing the caller.
+   */
   private async awaitInitialization(): Promise<void> {
-    await this.initPromise;
+    this.persistentMode = await this.activation.ready();
   }
 
   private async requireTask(taskId: string): Promise<StoredTask> {

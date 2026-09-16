@@ -4,12 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the wash-sale stop-loss veto. On 2026-09-14 the live book stop-lossed 10 names and all 10 were spurious: each was measured against Schwab's reported averagePrice, which is the WASH-SALE-ADJUSTED basis (a disallowed loss folded into the replacement shares), so a name the engine had bought at 244.47 and could sell at 252.39 read as "-5.07%" and was sold. Fixtures here are those real fills, to the cent. The veto may only SUPPRESS a venue-basis stop; it must never create one.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | replayEngineRealized: a symbol back to flat realizes exactly sells minus buys (the identity the stored venue-basis column fails); a re-buy is priced at its own cost; partial sells close at the running average; an uncovered sell gets no figure; unusable rows are skipped.
  */
 
 import { describe, expect, it } from 'vitest';
 import { exitsToRun, RISK_POLICIES } from '../../src/features/trading/services/portfolio';
 import type { Position } from '../../src/features/trading/services/broker-adapter';
-import { replayEngineCost, engineCostBasisFor } from '../../src/app/trading-engine-cost-basis';
+import { replayEngineCost, engineCostBasisFor, replayEngineRealized } from '../../src/app/trading-engine-cost-basis';
 
 // The LIVE book runs the `active` posture (5% hard stop, 8% take-profit). Testing under the 9%-stop
 // posture made every veto case vacuous: a -5% to -8% venue loss never reaches a 9% stop, so the
@@ -122,5 +123,45 @@ describe('engineCostBasisFor — only trusted when the engine accounts for the W
 
   it('tolerates fractional-share rounding in the comparison', () => {
     expect(engineCostBasisFor({ qty: 5.0000004, avg: 100 }, 5)).toBe(100);
+  });
+});
+
+describe('replayEngineRealized — realized P&L on the engine’s own cost', () => {
+  const row = (order_id: string, side: 'buy' | 'sell', filled_qty: number, filled_avg_price: number) =>
+    ({ order_id, side, filled_qty, filled_avg_price });
+
+  it('a symbol that goes back to flat realizes exactly its sells minus its buys', () => {
+    const rows = [row('b1', 'buy', 6, 202.195), row('s1', 'sell', 6, 192.6), row('b2', 'buy', 6, 193.2),
+      row('s2', 'sell', 6, 184.99), row('b3', 'buy', 6, 201.11), row('s3', 'sell', 6, 199.225)];
+    const sales = replayEngineRealized(rows);
+    const cash = rows.reduce((sum, r) => sum + (r.side === 'sell' ? 1 : -1) * r.filled_qty * r.filled_avg_price, 0);
+    const realized = [...sales.values()].reduce((sum, s) => sum + s.realizedPnl, 0);
+    expect(realized).toBeCloseTo(cash, 6);
+  });
+
+  it('prices a re-buy at what it cost, not that plus the disallowed loss the venue folds in', () => {
+    const sales = replayEngineRealized([row('b1', 'buy', 6, 201.11), row('s1', 'sell', 6, 199.225),
+      row('b2', 'buy', 6, 187.595), row('s2', 'sell', 6, 190.0)]);
+    expect(sales.get('s2')!.costBasis).toBeCloseTo(187.595, 6);
+    expect(sales.get('s2')!.realizedPnl).toBeCloseTo((190.0 - 187.595) * 6, 6);
+  });
+
+  it('closes partial sells at the running average cost', () => {
+    const sales = replayEngineRealized([row('b1', 'buy', 10, 10), row('b2', 'buy', 10, 20), row('s1', 'sell', 5, 18),
+      row('s2', 'sell', 15, 12)]);
+    expect(sales.get('s1')).toEqual({ costBasis: 15, realizedPnl: 15 });
+    expect(sales.get('s2')!.realizedPnl).toBeCloseTo((12 - 15) * 15, 6);
+  });
+
+  it('gives no figure for a sell the ledger cannot cover, and starts fresh after it', () => {
+    const sales = replayEngineRealized([row('b1', 'buy', 6, 100), row('s1', 'sell', 12, 110),
+      row('b2', 'buy', 3, 50), row('s2', 'sell', 3, 60)]);
+    expect(sales.has('s1')).toBe(false);
+    expect(sales.get('s2')).toEqual({ costBasis: 50, realizedPnl: 30 });
+  });
+
+  it('skips unusable rows rather than dividing by them', () => {
+    const sales = replayEngineRealized([row('b0', 'buy', 0, 100), row('b1', 'buy', 2, Number.NaN), row('s0', 'sell', 1, 10)]);
+    expect(sales.size).toBe(0);
   });
 });

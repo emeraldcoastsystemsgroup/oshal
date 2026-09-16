@@ -25,6 +25,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: creds now resolve LAZILY after validation+confirm gate via an injected broker-only resolver (resolver throw/not-connected are audited 401s, not unaudited 500s), and executed writes are fail-closed on the audit trail — an 'attempt' row must persist BEFORE the provider call or the write is refused with 503 audit_unavailable.
  *
  * @module connectors/runtime/action-executor
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A declared action carries the connector's declared headers. spec.headers reached the read tier only, so a write went out without them - LinkedIn's UGC Posts endpoint requires X-Restli-Protocol-Version and the bespoke fetch that the store's publish path replaced was sending it.
  */
 
 import * as crypto from 'crypto';
@@ -329,7 +330,16 @@ async function performConnectorActionHttp(
     onCall: (m) => { lastStatus = m.status; creds.onCall?.(m); },
   });
   const { path, rest } = splitConnectorActionInputs(action, params);
-  const opts: RequestOptions = { method: action.method, retry: { maxRetries: 0 }, emptyOk: [204] };
+  // A connector's declared headers are part of its protocol, not a read-tier convenience: LinkedIn's
+  // UGC Posts endpoint requires X-Restli-Protocol-Version on the WRITE. buildClientFromSpec merges
+  // spec.headers for reads; this path built its options with none, so a declared action silently
+  // went out without them. ConnectorClient.applyAuth still owns Accept/Authorization/Content-Type.
+  const opts: RequestOptions = {
+    method: action.method,
+    retry: { maxRetries: 0 },
+    emptyOk: [204],
+    ...(spec.headers ? { headers: { ...spec.headers } } : {}),
+  };
   if (action.method === 'DELETE') {
     if (Object.keys(rest).length > 0) {
       opts.query = Object.fromEntries(Object.entries(rest).map(([k, v]) => [k, v === null ? undefined : String(v)]));

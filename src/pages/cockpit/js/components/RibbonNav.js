@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | ADR-147/148: App Loader and Users join Dead Letters as operator-only platform-tray entries (iframe tool views over /app-loader and /users). Operator asked why the store was not reachable from the default /cockpit/ page — it was reachable only by typing the URL. Gated by the same _loadOperatorState flag, which reads whoami -> isOperator(), so a role granted on the Users page surfaces them without an env-file edit; the routes self-gate with requiresOperator regardless.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | app-navigate may carry a `query` (sanitizeToolQuery: k=v&k=v, URL-safe, bounded) that the view controller appends to that tool's OWN iframeUrl — so the Create front door can open AI Office on a purpose (kind/starter/theme). A query onto the already-active tile re-renders it. Nothing here can point a frame anywhere but the tile's own URL.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Delegate explicitly marked default-sidebar pages to admitted top workspaces while keeping active pages, focused app navigation and registered iframe targets available.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 locked tiles: a synthesised profile item may carry `locked` (the target package is not discoverable for this person). The item is forwarded into the view, rendered in the existing guest-disabled treatment (lock glyph, dimmed) with the kernel's role-guidance link on the button, and a click follows that link top-level — where the 403 page would have sent the person — instead of opening a dead frame. ribbonTilePresentation is the pure, exported decision so it can be tested against real view shapes.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
@@ -87,6 +88,30 @@ export function computeBottomTray(views, opts) {
   );
   const hub = views.find(v => v.id === PLATFORM_HUB_ID);
   return hub ? [...kept, hub] : kept;
+}
+
+/**
+ * @description Decide how one rail button presents. A Tier-C guest block and an ADR-149 lock
+ * share the guest-disabled treatment (lock glyph, dimmed), but a locked tile names the missing
+ * application role and carries the kernel's role-guidance link — the same page the 403 body
+ * offers — so the click goes there instead of into a dead frame. Only a same-origin,
+ * root-relative link is honoured; anything else renders the tile as a plain guest block.
+ *
+ * Pure and exported so it can be unit-tested against real synthesised item shapes.
+ *
+ * @param {object} view - A registered view (profile item shape: label, icon, locked?).
+ * @param {boolean} guestBlocked - Whether the guest tier blocks this view's app segment.
+ * @returns {{blocked:boolean,locked:boolean,title:string,icon:string,roleGuidanceUrl:string|null}}
+ */
+export function ribbonTilePresentation(view, guestBlocked) {
+  const url = view?.locked?.roleGuidanceUrl;
+  const roleGuidanceUrl = typeof url === 'string' && /^\/(?!\/)[A-Za-z0-9/_.~-]*$/.test(url) ? url : null;
+  const locked = !!view?.locked && !guestBlocked;
+  const blocked = guestBlocked || locked;
+  const title = guestBlocked ? `${view.label} — not available in guest mode`
+    : locked ? `${view.label} — application role required${roleGuidanceUrl ? ' (opens access guidance)' : ''}`
+    : view.label;
+  return { blocked, locked, title, icon: blocked ? 'codicon codicon-lock' : view.icon, roleGuidanceUrl: locked ? roleGuidanceUrl : null };
 }
 
 /** Resolve active profile name from URL ?app= or ?profile= only.
@@ -502,10 +527,10 @@ export class RibbonNav {
         label: 'Help',
         section: 'bottom',
         // The in-product user guides (/api/help renders docs/guides). Before this entry the guides
-        // existed but nothing in the cockpit linked to them: there is no /help route on the shell,
-        // /docs serves Swagger, and first-run.js suppresses its own strip on the full framework
-        // profile — so a user stuck on a screen had no way in. Pinned here so every profile that
-        // shows platform tools carries it.
+        // existed but nothing in the cockpit linked to them: there is no /help route on the shell
+        // and /docs serves Swagger — so a user stuck on a screen had no way in. Pinned here so
+        // every profile that shows platform tools carries the whole library; the header's
+        // per-surface "?" (surface-help.js) is the shortcut to THIS screen's page.
         toolUi: { iframeUrl: '/api/help', sidebarLabel: 'Help' },
       },
       {
@@ -656,6 +681,9 @@ export class RibbonNav {
           group: section === 'top' ? (item.group || '') : '',
           workspace: item.workspace,
           toolUi: item.toolUi || null,
+          // ADR-149: the kernel says this tile's target package is not discoverable for this
+          // person; the button renders locked and carries the role-guidance link.
+          locked: item.locked || null,
         });
       }
     }
@@ -776,7 +804,16 @@ export class RibbonNav {
 
     this.container.querySelectorAll('.ribbon-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        if (btn.classList.contains('guest-disabled')) return; // Tier-C app, blocked for guests
+        if (btn.classList.contains('guest-disabled')) {
+          // ADR-149: a locked tile carries the kernel's role-guidance link; follow it top-level,
+          // exactly where the denied frame's own page would have sent the person. A Tier-C
+          // guest block carries none and stays inert.
+          const guidance = btn.dataset.roleGuidance;
+          if (!guidance) return;
+          logger.info('Locked rail tile — opening role guidance', { view: btn.dataset.view, guidance });
+          window.location.assign(guidance);
+          return;
+        }
         this.setActive(btn.dataset.view);
       });
     });
@@ -823,13 +860,15 @@ export class RibbonNav {
 
   _btn(view) {
     const active = view.id === this.activeView ? ' active' : '';
-    const blocked = this._isGuestBlocked(view);
-    const cls = `ribbon-btn${active}${blocked ? ' guest-disabled' : ''}`;
-    const title = blocked ? `${view.label} — not available in guest mode` : view.label;
-    const style = blocked ? ' style="opacity:.35;cursor:not-allowed;" aria-disabled="true"' : '';
+    const { blocked, locked, title, icon, roleGuidanceUrl } = ribbonTilePresentation(view, this._isGuestBlocked(view));
+    const cls = `ribbon-btn${active}${blocked ? ' guest-disabled' : ''}${locked ? ' tile-locked' : ''}`;
+    // A locked tile keeps the dimmed treatment but stays a real control: its click follows the
+    // role-guidance link, so it is neither aria-disabled nor cursor:not-allowed.
+    const style = locked ? ' style="opacity:.35;"' : blocked ? ' style="opacity:.35;cursor:not-allowed;" aria-disabled="true"' : '';
+    const guidance = roleGuidanceUrl ? ` data-role-guidance="${roleGuidanceUrl}"` : '';
     return `
-      <button class="${cls}" data-view="${view.id}"${style} title="${title}">
-        <i class="${blocked ? 'codicon codicon-lock' : view.icon}"></i>
+      <button class="${cls}" data-view="${view.id}"${style}${guidance} title="${title}">
+        <i class="${icon}"></i>
         <span class="ribbon-label">${view.label}</span>
       </button>`;
   }

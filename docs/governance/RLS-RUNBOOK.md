@@ -113,9 +113,24 @@ Core multipart routes as of 2026-09-14:
 | `POST /api/artifacts/handles/upload` | in-memory handle; authorization reads run under `runWithSystemIdentity` | no |
 
 Diagnosis: the api log shows `DB access with NO request identity DENIED` naming the post-upload
-call site. Guard: `tests/unit/multipart-request-identity-postgres.spec.ts` streams chunked bodies
-through the real routers into a FORCE-RLS table as the NOBYPASSRLS `oshal_app` role — add a case
-there when a new multipart route writes under the caller's identity.
+call site.
+
+Guards — there are two, and a new multipart route that writes under the caller's identity needs a
+case in **both**:
+
+- `tests/unit/multipart-request-identity.spec.ts` streams chunked bodies through the real routers
+  and the real production GUC pool wrapper, and asserts the `oshal.current_sub` /
+  `oshal.is_operator` stamp each post-upload write would carry. The pg driver is a recording
+  double, so it runs in the plain `npm run test:unit` gate with **no database and no Docker** —
+  this is the one that actually executes today. It carries a control route mounted WITHOUT
+  `preserveRequestIdentity`, so a green run also proves the fixture can still see the defect.
+- `tests/unit/multipart-request-identity-postgres.spec.ts` is its real-PostgreSQL companion: the
+  same bodies into a FORCE-RLS table as the NOBYPASSRLS `oshal_app` role, which is the only one
+  of the two that proves row-level security itself refuses an identity-less write. It resolves
+  its cluster through `specDatabaseUrl` and therefore THROWS at module load unless the run sets
+  `OSHAL_TEST_DSN` to a disposable cluster; nothing in the repo sets it yet, so on every current
+  gate it reports `Tests no tests`. Wiring it is tracked by the "DB-backed unit specs need a
+  disposable PostgreSQL" entry in `docs/BACKLOG.md`.
 
 ## Rollout
 

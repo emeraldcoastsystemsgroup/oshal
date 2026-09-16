@@ -8,12 +8,13 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove unavailable image preflight certifies that no container requires cleanup.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove the browser profile on the real image: the probe verifies Chromium, a Node-harness Playwright recipe drives loopback only, and Node recipes see no browser environment.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Hold the flooding fixture to the current capture contract: still bounded, still killed, still non-zero, and now reported as truncated rather than through the retired overflow marker.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove on the real image that harness:core-test-fixtures is advertised exactly when the image carries the staged fixture closure and loads it through tsx — true on an image built with the Dockerfile COPY, false on one built before it, never assumed either way.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
 import { PackageTestSandbox } from '@/features/swarm-apps/services/package-test-sandbox';
-import { sandboxPayload } from '@/features/swarm-apps/services/package-test-sandbox-launcher';
+import { CORE_TEST_FIXTURES, sandboxPayload } from '@/features/swarm-apps/services/package-test-sandbox-launcher';
 import { dockerControl } from '@/features/swarm-apps/services/package-test-sandbox-process';
 
 const configuredImage = process.env.OSHAL_TEST_RUNNER_IMAGE || 'oshal-bot:latest';
@@ -195,6 +196,18 @@ test('drives the image Chromium against a loopback fixture only',async()=>{
   expect(result.output, result.output).toContain('ok 1');
   expect(result.exitCode, result.output).toBe(0);
   expect(result.cleanupVerified).toBe(true);
+}, 240000);
+
+dockerTest('advertises harness:core-test-fixtures exactly when the image carries the staged fixture closure and loads it through tsx', async () => {
+  const sandbox = new PackageTestSandbox();
+  const verified = await sandbox.probe(image);
+  // Ask the same image, under the plain Node profile, whether it carries every staged file at the core root.
+  const result = await sandbox.run(input(`const {test}=require('node:test'),fs=require('node:fs'),path=require('node:path');
+test('fixture closure presence',()=>{console.log('CLOSURE_PRESENT '+JSON.stringify(${JSON.stringify(CORE_TEST_FIXTURES)}.every(file=>fs.existsSync(path.join('/app',file)))));});`));
+  expect(result.exitCode, result.output).toBe(0);
+  const carried = /CLOSURE_PRESENT (true|false)/.exec(result.output)?.[1];
+  expect(carried, result.output).toBeDefined();
+  expect(verified.has('harness:core-test-fixtures'), `image carries the closure: ${carried}; verified: ${[...verified].join(', ')}`).toBe(carried === 'true');
 }, 240000);
 
 dockerTest('keeps the browser environment out of a Node recipe that did not declare it', async () => {

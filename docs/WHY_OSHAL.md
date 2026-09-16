@@ -43,8 +43,10 @@ work in a 2-bot review pipeline.
 | **Working real-world incident RCA out of the box** | Yes — the `incident` ticket type ships with persona + corpus + tests | No — bring your own | No — bring your own | No — bring your own |
 | **Per-call cost tracking with vendor attribution** | Yes — `chat_tasks.total_cost` keyed by `agent_id` | partial — through callbacks | No — operator builds it | No — operator builds it |
 | **Live cockpit UI** | Yes — ticket workbench, RCA tab, queue dashboard | No | No | No |
-| **OSS license** | MIT | MIT | MIT | CC-BY-4.0 (docs) + MIT (code) |
+| **OSS license** | **AGPL-3.0-or-later** (copyleft) | MIT | MIT | CC-BY-4.0 (docs) + MIT (code) |
 | **Stack** | TypeScript + Docker | Python | Python | Python |
+
+The licence row is the one deliberate difference in kind, not degree. The three alternatives are permissive; oshal is copyleft, so a hosted derivative owes its source back. Verify it against [`LICENSE`](../LICENSE) and the `license` field of `package.json` rather than this table — that table said MIT until 2026-09-15, which was simply wrong.
 
 ---
 

@@ -1,6 +1,6 @@
 # oswarm.ai — production website
 
-Source for the public Open Swarm product site — live at **https://oswarm.ai** and
+Source for the public oshal product site — live at **https://oswarm.ai** and
 **https://oshal.ai** (both apexes serve the same build).
 
 - `index.html` — the entire site: self-contained (inline CSS/JS, no build step, no external
@@ -28,6 +28,13 @@ Source for the public Open Swarm product site — live at **https://oswarm.ai** 
   | Install / build guide prose | `scripts/lib/product-site/guides-content.js` |
   | Layout, CSS, page shell | `scripts/lib/product-site/theme.js` / `render.js` |
 
+  **Which applications get a page.** A store package is published when its `marketplace.json`
+  entry says `status: ready` and it is not a carved commercial package. The package's own
+  `oshal-app.yaml` `status:` is *install* state — what a fresh install does — and is deliberately
+  not read: Print Ingest installs `inactive` because printing into a corpus must be switched on by an
+  operator (ADR-135 D11), and it still gets a page. Kernel manifests in `swarm-apps/` have no
+  registry, so their own `status: inactive` is what withholds them.
+
   Counts are read off the tree and substituted into prose through `%token%`, so no number is ever
   typed. If the sibling store trunk is not checked out the generator warns and leaves the committed
   pages alone rather than publishing a site with 47 application pages missing — point it elsewhere
@@ -36,14 +43,16 @@ Source for the public Open Swarm product site — live at **https://oswarm.ai** 
   (`docs/evidence/cockpit-foreground-capture-2026-06-23/`). Refresh them from newer
   evidence captures after major cockpit changes — never stage or mock screenshots.
 - Brand tokens follow `docs/assets/oshal/visual-identity.md` (Night `#0B1020`, Runtime Cyan
-  `#7DD3FC`, Mesh Green `#34D399`), carried forward into the Open Swarm rebrand.
+  `#7DD3FC`, Mesh Green `#34D399`), carried forward into the current oshal brand.
 - Content rules: this is an MIT open-source project site — **no pricing, no sales funnel**.
   Capability claims are split into "Shipped" vs "On the roadmap"; keep that split honest
   when editing (see the `/built-vs-roadmap` section). If the page and the repo disagree,
   the repo wins.
-- Naming: brand is **Open Swarm** (wordmark `openswarm`), domain oswarm.ai. Internal
-  jargon (bot-node, OSHAL) stays out of user-facing copy except in the architecture diagram
-  where it is explained.
+- Naming: the brand is **oshal** (lowercase), or **open swarm oshal** — "open swarm" never stands
+  alone (operator directive 2026-07-24; see [CLAUDE.md](../../CLAUDE.md) "Naming"). Canonical domain
+  **oshal.ai**; `oswarm.ai` and the `oswarm` wordmark are the secondary alias and infrastructure
+  identifiers, kept as-is. Internal jargon (bot-node, OSHAL) stays out of user-facing copy except in
+  the architecture diagram where it is explained.
 - The `#requests` section is the public front door for application/core requests and defects. Keep
   its repository links, prerelease-access notice, security-reporting warning, and release-close
   policy synchronized with `docs/operations/requests-and-defects.md`.
@@ -68,6 +77,7 @@ reporting success**.
   `www.` hosts are NOT configured (e.g. `www.oshal.ai` does not resolve) — apex only. The deploy
   script's hash gate verifies against `oswarm-ai.pages.dev`; every attached custom domain serves that
   same build, so no per-domain re-verify is needed.
-- **The brand domain is `oswarm.ai`, NOT `openswarm.ai`** — openswarm.ai sits on atom.com
-  marketplace nameservers (someone else's / parked), and openswarm.com is a live competitor.
+- **The canonical domain is `oshal.ai`; the alias apex is `oswarm.ai`, NOT `openswarm.ai`** —
+  openswarm.ai sits on atom.com marketplace nameservers (someone else's / parked), and
+  openswarm.com is a live competitor.
   `oswarm` is the distinctive mark; don't chase the longer names.

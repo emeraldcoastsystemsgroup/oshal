@@ -31,7 +31,7 @@ it('persists exact identities after review and restart without verifying sign-in
   expect(await store.list()).toEqual([]);
   expect(await store.apply(admin, { previewId: preview.previewId })).toMatchObject({ applied: true, revision: 1, count: 2 });
   expect(await new PrincipalRegistrationStore(database.runtime).list()).toHaveLength(2);
-  const directory = createApplicationPrincipalDirectory(database.runtime, Promise.resolve(), {
+  const directory = createApplicationPrincipalDirectory(database.runtime, () => Promise.resolve(), {
     OIDC_ISSUER_URL: google, OIDC_CLIENT_ID: 'fixture', OIDC_CLIENT_SECRET: 'fixture',
   });
   expect((await directory.inventory(admin)).users.filter(user => user.sub === entry.sub)).toHaveLength(2);
@@ -106,7 +106,7 @@ it('never adopts imported operator-looking labels as verified email, account act
   const observed = new PrincipalDirectoryStore(database.runtime);
   await observed.observe({ issuer: google,sub: entry.sub,provider: 'google',email: 'untrusted@example.test',emailVerified: false,
     displayName: 'Verified account label',canonicalLocalSub: null });
-  const directory = createApplicationPrincipalDirectory(database.runtime,Promise.resolve(),{ OIDC_ISSUER_URL: google,
+  const directory = createApplicationPrincipalDirectory(database.runtime,() => Promise.resolve(),{ OIDC_ISSUER_URL: google,
     OIDC_CLIENT_ID: 'fixture',OIDC_CLIENT_SECRET: 'fixture',OSHAL_OPERATOR_EMAILS: 'operator@example.test' });
   const preview = await store.preview(admin,{ ...input(),entries: [{ ...entry,email: 'operator@example.test',displayName: 'Swarm Administrator' }] });
   await store.apply(admin,{ previewId: preview.previewId });
@@ -117,7 +117,7 @@ it('never adopts imported operator-looking labels as verified email, account act
   await store.apply(admin,{ previewId: update.previewId });
   expect(await directory.nativePrincipal(entry.sub,google)).toEqual({ isActive: false,isSwarmAdmin: false });
   await database.owner.query("UPDATE oshal_verified_principals SET status='active' WHERE issuer=$1 AND user_sub=$2",[google,entry.sub]);
-  const disabledProvider = createApplicationPrincipalDirectory(database.runtime,Promise.resolve(),{ LOCAL_AUTH: 'true' });
+  const disabledProvider = createApplicationPrincipalDirectory(database.runtime,() => Promise.resolve(),{ LOCAL_AUTH: 'true' });
   expect(await disabledProvider.nativePrincipal(entry.sub,google)).toEqual({ isActive: false,isSwarmAdmin: false });
   expect((await database.owner.query('SELECT * FROM swarm_roles')).rowCount).toBe(2);
 });

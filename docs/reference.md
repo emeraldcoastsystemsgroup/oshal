@@ -232,7 +232,7 @@ any-bot/server/
   stores/                        — TaskStore, MessageStore (SQLite)
 
 scripts/
-  bot-entrypoint.sh              — BOT_RUNTIME switch (swarm | bot-node | any-bot)
+  bot-entrypoint.sh              — BOT_RUNTIME switch (swarm | bot-node; anything else fails closed)
   setup-cline-auth.sh            — Cline CLI credential setup
   migrations/                    — Postgres schema migrations
 
@@ -298,6 +298,19 @@ curl http://localhost:35457/api/tickets/{ticketId}/activity
 | `AGENT_ID` | — | Bot UUID (must match registry) |
 | `BOT_NAME` | — | Bot display name |
 | `BOT_PERSONA_FILE` | — | Path to persona YAML |
+
+### Futures market data (ADR-116 research runners)
+
+Read by the offline `scripts/oshal-futures-*.ts` runners only — bars in, numbers out. None of these
+can place an order.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `KIBOT_DATA_DIR` | `C:\MarketData\kibot` | Bulk-download root (`minute/` + `daily/`) for `--source kibot-file` |
+| `KIBOT_USER` | — | Credentialed Kibot HTTP source; absent ⇒ `configured() === false`, no fetch |
+| `KIBOT_PASSWORD` | — | As above |
+| `KIBOT_API_BASE` | `http://api.kibot.com` | HTTP source base URL |
+| `KIBOT_FETCH_TIMEOUT_MS` | `15000` | Per-request abort timeout for the HTTP source |
 
 ### Update Check ([runbook](runbooks/update-check.md))
 

@@ -27,6 +27,7 @@ the URL is authoritative — bookmark it and you land in the same place every ti
 | See every account I've connected, and fix an expired one | [Identity Hub](./identity-hub.md) |
 | Find where my files live and where new ones get saved | [Files](./files.md) |
 | Send a file or image to another app without downloading it | [Send to…](./send-to.md) |
+| Print a document into the swarm and choose where it is filed | [Printing to the swarm](./printing.md) |
 | See my schedule and the work planned against it | [Calendar](./calendar.md) |
 | Spend less on model calls without losing quality | [Optimizer (Token Chase)](./optimizer.md) |
 | Test how a bot behaves before trusting it | [AI Test Lab](./ai-test-lab.md) |
@@ -36,6 +37,7 @@ the URL is authoritative — bookmark it and you land in the same place every ti
 | Change my theme, provider, model, or notifications | [Settings](./settings.md) |
 | Search my data, trace a run's cost, set a budget, export or delete my data, or rescue a stuck ticket | [Platform tools](./platform-tools.md) |
 | Put oshal on my desktop, phone, or TV | [Get oshal on your devices](./devices.md) |
+| Design a robot arm, a part, a circuit, a prop or a blade — and see it in 3-D | [The maker labs](./maker-labs.md) |
 | See whether the Kalshi scan is winning, read its record, and cross-reference the ledger | [Kalshi](./kalshi.md) |
 | Connect my ESPN league and set the lineup with the best chance of winning this week | [Fantasy football](./fantasy-football.md) |
 

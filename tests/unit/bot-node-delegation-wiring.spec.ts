@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pin production composition for service-secret-first signed HTTP authorization, verified identity forwarding, replay shutdown, key-role separation, and unsigned runtime/fallback prohibition.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin canonical encoded trusted-user headers on unsigned compatibility fallbacks.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "Bot runtime consolidation": the unsigned legacy any-bot runtime is now refused unconditionally rather than only when delegation material is configured, so the prohibition case pins the unconditional refusal and that the entrypoint no longer execs any-bot/server/app.js at all.
  */
 
 import { readFileSync } from 'node:fs';
@@ -61,7 +62,11 @@ describe('bot-node delegation production wiring', () => {
     const incident = source('src/features/swarm-orchestration/services/dispatch-incident-worker.ts');
     const engine = source('src/features/swarm-orchestration/services/engine-services-adapter.ts');
     expect(batch).toContain('assertDelegationBatchRuntimeAllowed()');
-    expect(legacy).toContain('BOT_RUNTIME=any-bot cannot run while HTTP delegation enforcement is configured');
+    // The legacy runtime is now refused unconditionally, not only when delegation material is
+    // configured (BACKLOG "Bot runtime consolidation"), which is strictly stronger than the
+    // conditional refusal this case originally pinned.
+    expect(legacy).toContain('BOT_RUNTIME=any-bot is retired');
+    expect(legacy).not.toContain('exec node any-bot/server/app.js');
     expect(manifest).toContain('deps.botNodeClient.isDelegationEnforced()');
     expect(incident).toContain('botNodeClient.isDelegationEnforced()');
     expect(engine.match(/isDelegationEnforced\(\)/g)).toHaveLength(2);

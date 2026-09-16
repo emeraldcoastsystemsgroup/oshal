@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Real HTTP, local Git, and Chromium exercise registry discovery, trust, and explicit source replacement. Only persistence/auth and remote catalog transport are fixtures.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The catalog transport fixture follows ADR-147 D10 from global fetch to https.request - the registry rail had to leave fetch to pin the address the fence resolved. The legacy single-store rail still reads through fetch, so both fixtures stand; and the DNS half of the fence stays on the production path here, with the resolver seam answering so the suite never asks the box's real DNS about github.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import express, { type RequestHandler } from 'express';
@@ -10,7 +11,10 @@ import type { AddressInfo } from 'node:net';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import http from 'http';
+import https from 'https';
 import { chromium, type Browser } from 'playwright';
+import { DEFAULT_HOST_RESOLVER } from '@/features/app-registries';
 import { createAppRegistryRoutes } from '@/app/routes/app-registry-routes';
 import { registerAppStoreRemoteRoutes } from '@/app/routes/app-store-remote';
 import { createStore } from '../fixtures/multi-store';
@@ -92,6 +96,21 @@ beforeAll(async () => {
     if (url.startsWith(base)) return nativeFetch(input, init);
     throw new Error('Fixture prevented external network: ' + url);
   });
+  // ADR-147 D10 moved the registry catalog rail off global fetch onto https.request, because only
+  // the request API takes a `lookup` and the fence now pins the address it resolved. The transport
+  // fixture moved with it: the same raw.githubusercontent.com reads are answered by the local
+  // express fixture over plain http. The DNS half of the fence still runs on the production path -
+  // the resolver seam answers with a public address so this suite stays offline instead of asking
+  // the box's real DNS about github.
+  vi.spyOn(DEFAULT_HOST_RESOLVER, 'resolve4').mockResolvedValue(['93.184.216.34']);
+  vi.spyOn(DEFAULT_HOST_RESOLVER, 'resolve6').mockRejectedValue(Object.assign(new Error('ENODATA'), { code: 'ENODATA' }));
+  vi.spyOn(https, 'request').mockImplementation(((options: https.RequestOptions, callback?: (res: http.IncomingMessage) => void) => {
+    const host = String(options.hostname ?? options.host ?? '');
+    const path = String(options.path ?? '');
+    if (host !== 'raw.githubusercontent.com') throw new Error(`Fixture prevented external network: ${host}${path}`);
+    const local = new URL(`${base}/catalog-fixture/${path.split('/')[2] ?? ''}`);
+    return http.request({ hostname: local.hostname, port: local.port, path: local.pathname, method: 'GET' }, callback);
+  }) as unknown as typeof https.request);
   browser = await chromium.launch({ headless: true });
 }, 30000);
 

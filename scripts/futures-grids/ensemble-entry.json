@@ -1,0 +1,6 @@
+{
+  "entry.generation": ["ensemble"],
+  "entry.ensembleEntryThresholdPct": [62, 66, 70, 74, 78],
+  "entry.ensembleConfirmation.retentionPct": [85, 90, 95],
+  "entry.ensembleConfirmation.drawdownPct": [90, 93, 96]
+}

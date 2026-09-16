@@ -4,9 +4,77 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the screen-aware Jarvis loop: the `context` op travels the REAL relay to EVERY assistant frame (the floating orb panel included — the frame the relay originally didn't know about), normalizeAskSurfaceContext validates with the real contract and rejects a snapshot that never came through the bridge, buildSurfaceContextPrompt tells a drivable surface from a read-only one, and the producer's emitOps/consumeContext stamp the trusted app binding rather than trusting the model.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Success-path log guard: an /ask turn that returns surface ops (driven through the real authenticated router with only the model and persistence doubled) logs op count, op names as custom:<name>, the target app and the surface's declared custom names at INFO — the BUG-18 shape (an invented custom name) is now one grep in the api log; a context-free turn still only warns.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Repair the database mock: a FIXED factory omitted createPersistenceActivation, which both in-memory stores now call, so the two /ask cases threw on construction and this file was red on main with nobody acting on it. Spread the real module and override only what the spec controls, so a new export cannot disarm the guard again.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Measure the success-path claim on the api log itself: the logger is now REAL pino built from the shipped LOG_REDACT_OPTIONS at the level the deployment runs the api at (the compose x-bot-env anchor oshal-api merges), with only its destination captured, and a new case greps the emitted NDJSON the way an operator greps `docker logs`. The previous recorder stored whatever it was handed, so a line hidden below the deployed level or censored by a redact path still read as "logged".
  */
 
-import { describe, expect, it } from 'vitest';
+import express, { type RequestHandler } from 'express';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import pino from 'pino';
+
+const executeBot = vi.hoisted(() => vi.fn());
+/** Every line the routes logged, by module + level, so the success path can be asserted on. */
+const logLines = vi.hoisted(() => [] as Array<{ module: string; level: string; payload: Record<string, unknown>; msg: string }>);
+/**
+ * The api log itself: the raw NDJSON pino serialized, plus what the compose file says about the
+ * level the api is actually run at. "Diagnosable from the api log alone" is a claim about THIS
+ * text, so the guard greps it rather than a recorder's in-memory objects.
+ */
+const apiLog = vi.hoisted(() => ({ ndjson: '', composeLogLevels: [] as string[], apiMergesBotEnv: false }));
+vi.mock('@/app/routes/inline-bot-execution', () => ({ executeBotOrInline: executeBot }));
+vi.mock('@/app/routes/connector-token-broker', () => ({ resolveBotCreds: vi.fn().mockResolvedValue({}) }));
+vi.mock('@/app/routes/free-tier-rotation', () => ({
+  resolveUserLlmConnection: vi.fn().mockResolvedValue(null), reportResolvedLlmFailure: vi.fn().mockResolvedValue(false),
+}));
+vi.mock('@/features/user-model', () => ({
+  withHavenContext: vi.fn(async (_pool: unknown, _sub: string, prompt: string) => prompt),
+  learnFromExchange: vi.fn().mockResolvedValue(undefined),
+}));
+// PARTIAL mock on purpose. A fixed factory here listed four exports, and when the in-memory stores
+// began calling createPersistenceActivation from the same barrel, constructing one threw and both
+// /ask cases died before their first assertion - the guard for this entry, silently disarmed.
+vi.mock('@/shared/services/database', async (importOriginal) => ({
+  ...await importOriginal<object>(),
+  createOptionalPostgresPool: () => null, ensureConversationStoreSchema: async () => {},
+  runRuntimeSchemaBootstrap: vi.fn().mockResolvedValue(undefined), buildOwnerRlsPolicyStatements: vi.fn().mockReturnValue([]),
+}));
+// The logger is REAL pino, built from the SHIPPED redact config at the level the DEPLOYMENT runs
+// the api at (docker-compose x-bot-env, which oshal-api merges). Only the DESTINATION is a double -
+// an in-memory buffer instead of the container's stdout/file transport. Serialization, level
+// filtering, redaction and the child `module` binding are the production ones, so a line that is
+// dropped below the deployed level or censored by a redact path can no longer read as "logged".
+// The previous stand-in recorded whatever it was handed and could report neither failure.
+vi.mock('@/shared/logger', async (importOriginal) => {
+  const [{ default: pino }, { readFileSync }, { resolve }, original] = await Promise.all([
+    import('pino'), import('node:fs'), import('node:path'),
+    importOriginal<typeof import('@/shared/logger')>(),
+  ]);
+  const compose = readFileSync(resolve(process.cwd(), 'docker-compose.oshal-local.yml'), 'utf8');
+  apiLog.composeLogLevels = [...compose.matchAll(/^\s+LOG_LEVEL:\s*([A-Za-z]+)\s*$/gm)].map(match => match[1]);
+  // Bounded to the oshal-api block itself: the span may not cross into the next top-level service.
+  apiLog.apiMergesBotEnv = /\n {2}oshal-api:(?:(?!\n {2}\S)[\s\S])*?\n {4}environment:\n {6}<<: \*bot-env\b/.test(compose);
+  const destination = {
+    write(chunk: string): void {
+      apiLog.ndjson += chunk;
+      for (const line of chunk.split('\n').filter(Boolean)) {
+        const record = JSON.parse(line) as Record<string, unknown> & { level: number; msg: string; module?: string };
+        logLines.push({ module: String(record.module ?? ''), level: pino.levels.labels[record.level], payload: record, msg: record.msg });
+      }
+    },
+  };
+  const root = pino(
+    { level: apiLog.composeLogLevels.length === 1 ? apiLog.composeLogLevels[0] : 'info', redact: original.LOG_REDACT_OPTIONS, timestamp: pino.stdTimeFunctions.isoTime },
+    destination as unknown as import('pino').DestinationStream,
+  );
+  return { ...original, logger: root, createChildLogger: (bindings: Record<string, unknown>) => root.child(bindings) };
+});
+
+import { InMemoryTaskStore } from '../../src/entities/task';
+import { InMemoryMessageStore } from '../../src/entities/message';
+import { createJarvisRoutes, purgeJarvisAskJobsForOwner } from '../../src/app/routes/jarvis-routes';
 import {
   SURFACE_BRIDGE_CHANNEL,
   SURFACE_BRIDGE_VERSION,
@@ -20,6 +88,8 @@ import {
   buildSurfaceContextPrompt,
 } from '../../src/app/routes/jarvis-surface-context';
 import { extractSurfaceDirectives } from '../../src/app/routes/jarvis-directives';
+// The shipped censor token, through the (partially mocked) barrel — never a copy of the string.
+import { LOG_REDACT_OPTIONS } from '@/shared/logger';
 import { apiOrigin } from '../helpers';
 // @ts-expect-error — browser ESM without type declarations
 import { createSurfaceBridgeRelay } from '../../src/pages/cockpit/js/surface-bridge-relay.js';
@@ -247,5 +317,115 @@ describe('producer — the client half stamps the trusted binding', () => {
   it('does NOT turn a context snapshot into a chat message (it is ambient state, not a user action)', () => {
     const { producer } = makeProducer();
     expect(producer.consumeInbound(envelope)).toBeNull();
+  });
+});
+
+describe('/ask — an emitted-ops turn is diagnosable from the api log alone', () => {
+  const OWNER = 'auth0|surface-log-owner';
+  const SESSION = 'surface-log-session';
+  // The BUG-18 shape exactly: a well-formed `custom` op whose name the surface never declared. It
+  // parses, it relays, the surface receives it and silently discards it — and before the success-path
+  // log line the only server-side trace was the raw pre-strip reply in a bot container's log.
+  const reply = 'Done — I made it shorter and centered the platform work.\n```oshal:surface\n'
+    + '{"ops":[{"op":"custom","name":"update_master_resume_summary","data":{"summary":"Shorter."}}]}\n```';
+  let server: Server;
+  let base: string;
+
+  beforeEach(async () => {
+    logLines.length = 0;
+    apiLog.ndjson = '';
+    executeBot.mockReset();
+    executeBot.mockResolvedValue({ response: reply });
+    // Only the model, persistence and the test identity rail are doubles; the router is real.
+    const ctx = {
+      pool: { query: vi.fn(async () => ({ rows: [], rowCount: 0 })) },
+      taskStore: new InMemoryTaskStore(),
+      messageStore: new InMemoryMessageStore(),
+      ticketService: {
+        listTickets: vi.fn().mockResolvedValue([]), openChatTicket: vi.fn().mockResolvedValue({ ticketId: 'surface-log-chat' }),
+        createTicket: vi.fn(), updateStatus: vi.fn(),
+      },
+    };
+    const auth: RequestHandler = (request, _response, next) => {
+      (request as unknown as { oidc: unknown }).oidc = { isAuthenticated: () => true, user: { sub: OWNER } };
+      next();
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api/jarvis', auth, createJarvisRoutes(ctx as never, process.cwd()));
+    server = app.listen(0, '127.0.0.1');
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/jarvis`;
+  });
+
+  afterEach(async () => {
+    purgeJarvisAskJobsForOwner(OWNER);
+    if (!server) return;
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  });
+
+  /** POST /ask with (or without) a screen snapshot, then poll the job to its settled result. */
+  async function ask(context?: unknown): Promise<Record<string, unknown>> {
+    const response = await fetch(base + '/ask', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'Tighten my resume summary', sessionId: SESSION, ...(context ? { context } : {}) }),
+    });
+    expect(response.status).toBe(202);
+    const { jobId } = await response.json() as { jobId: string };
+    let result: Record<string, unknown> = {};
+    for (let attempt = 0; attempt < 200; attempt++) {
+      result = await (await fetch(base + '/ask/result?jobId=' + jobId)).json() as Record<string, unknown>;
+      if (result.status !== 'pending') break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    return result;
+  }
+  const surfaceLines = (level: string) => logLines.filter(line => line.module === 'jarvis-routes' && line.level === level && /surface ops/.test(line.msg));
+
+  it('logs op count, op names and the target app at INFO when ops are returned to the surface', async () => {
+    const result = await ask({ ...envelope, customOps: [{ name: 'resume_action', description: 'Edit this resume.' }] });
+    expect(result).toMatchObject({ status: 'done', surfaceOps: [{ op: 'custom', name: 'update_master_resume_summary' }] });
+    expect(String(result.answer)).not.toContain('```');
+    const success = surfaceLines('info');
+    expect(success).toHaveLength(1);
+    // The emitted name sits beside the names the surface declared: the mismatch IS the diagnosis.
+    expect(success[0].payload).toMatchObject({
+      sessionId: SESSION, app: APP, screen: 'resume-studio', ops: 1,
+      opNames: ['custom:update_master_resume_summary'], declaredCustomOps: ['resume_action'],
+    });
+    expect(surfaceLines('warn')).toHaveLength(0);
+  });
+
+  it('is one grep over the api log TEXT — the line survives the deployed level and the shipped redaction', async () => {
+    await ask({ ...envelope, customOps: [{ name: 'resume_action', description: 'Edit this resume.' }] });
+    // The level is not a test constant: the deployment sets it once in the compose anchor the api
+    // merges, and the logger under test was built at that value. Hiding INFO there deletes the only
+    // server-side trace of an emitted-ops turn, so it takes this case red instead of passing quietly.
+    expect(apiLog.composeLogLevels).toHaveLength(1);
+    expect(apiLog.apiMergesBotEnv).toBe(true);
+    // Exactly the grep an operator runs against `docker logs oshal-local-api`.
+    const grepped = apiLog.ndjson.split('\n').filter(line => line.includes('jarvis: surface ops returned to the surface'));
+    expect(grepped).toHaveLength(1);
+    const record = JSON.parse(grepped[0]) as Record<string, unknown>;
+    expect(record.level).toBe(pino.levels.values.info);
+    expect(record).toMatchObject({
+      module: 'jarvis-routes', sessionId: SESSION, app: APP, screen: 'resume-studio', ops: 1,
+      opNames: ['custom:update_master_resume_summary'], declaredCustomOps: ['resume_action'],
+    });
+    // A field name colliding with a redact path would censor the diagnosis while still "logging" it.
+    expect(grepped[0]).not.toContain(LOG_REDACT_OPTIONS.censor);
+    // The BUG-18 diagnosis, read off that one line: the emitted custom name is not one the surface
+    // declared it could honour, so the op was delivered and silently discarded.
+    const emitted = (record.opNames as string[]).map(name => name.replace(/^custom:/, ''));
+    expect(record.declaredCustomOps).not.toContain(emitted[0]);
+  });
+
+  it('stays silent on the success path when the turn had no screen context — the ops are dropped and only the warning fires', async () => {
+    const result = await ask();
+    expect(result.status).toBe('done');
+    expect(result.surfaceOps).toBeUndefined();
+    expect(surfaceLines('info')).toHaveLength(0);
+    expect(surfaceLines('warn')).toHaveLength(1);
   });
 });

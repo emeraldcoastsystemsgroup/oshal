@@ -4,16 +4,21 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guards for "export the view you are looking at": the browser export module against the committed-docs generator it has to match byte for byte, the erDiagram naming exactly the relations the view drew (and nothing the view did not), the owner flowchart, the scoped JSON, the standalone SVG document, filenames, and the refusals - an empty scope, a view that draws no diagram, and a malformed relation record.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The byte-parity assertion below only ever caught drift AFTER it shipped, because the surface and the generator each carried their own renderer. They now share one - src/pages/data-model/js/er-diagram.mjs - and this guard is what holds that: the exported functions must be the SAME objects on both sides, and neither consumer may build an erDiagram block of its own again.
  */
 
 import { describe, expect, it } from 'vitest';
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { mermaidDiagram } = require('../../scripts/schema-docs/render.js');
+const docsRender = require('../../scripts/schema-docs/render.js');
+const { mermaidDiagram } = docsRender;
 const { summarizeRowAccess } = require('../../scripts/schema-docs/row-access.js');
 /* eslint-enable @typescript-eslint/no-require-imports */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   drawnRelations, exportFilename, mermaidName, mermaidType, svgDocument, toErDiagram, toFlowchart, toMermaid, toScopedJson,
 } from '../../src/pages/data-model/js/export-view.js';
+import * as erDiagram from '../../src/pages/data-model/js/er-diagram.mjs';
 import { CORE_OWNER, appGraph, indexSnapshot, tableGraph } from '../../src/pages/data-model/js/model-index.js';
 
 type Rec = Record<string, unknown>;
@@ -73,7 +78,7 @@ describe('Mermaid export matches the committed pages', () => {
 
   it('reduces types and identifiers exactly as the generator does', () => {
     for (const t of ['timestamp with time zone', 'character varying(64)', 'text[]', 'numeric(18,6)', 'vector(384)']) {
-      expect(mermaidType(t)).toBe(require('../../scripts/schema-docs/render.js').mermaidType(t));
+      expect(mermaidType(t)).toBe(docsRender.mermaidType(t));
     }
     expect(mermaidName('public.jobs')).toBe('public_jobs');
     expect(mermaidName('2fa_codes')).toBe('_2fa_codes');
@@ -182,5 +187,33 @@ describe('export refusals', () => {
     expect(out).toContain('  weird_name {');
     expect(out).toContain('  }');
     expect(out.split('\n').filter((l) => l.includes('--')).length).toBe(0);
+  });
+});
+
+describe('one erDiagram renderer, behind both the docs and the surface', () => {
+  /** A file's code lines, with licence/JSDoc/line comments stripped so prose cannot satisfy a guard. */
+  const codeLines = (path: string) => readFileSync(resolve(path), 'utf8').split(/\r?\n/)
+    .map((l) => l.trim()).filter((l) => !(l.startsWith('*') || l.startsWith('/*') || l.startsWith('*/') || l.startsWith('//')));
+
+  it('hands the surface the renderer module itself, and renders the generator the same bytes', () => {
+    expect(mermaidType).toBe(erDiagram.mermaidType);
+    expect(mermaidName).toBe(erDiagram.mermaidName);
+    expect(toErDiagram([tickets, workItems])).toBe(erDiagram.mermaidDiagram([tickets, workItems]));
+    // docsRender reaches the same file through CommonJS, so identity cannot be asserted across the
+    // two module graphs - what it must not have is a renderer of its own, which the next case pins.
+    expect(mermaidDiagram([tickets, workItems])).toBe(erDiagram.mermaidDiagram([tickets, workItems]));
+    expect(docsRender.mermaidType('character varying(64)')).toBe(erDiagram.mermaidType('character varying(64)'));
+  });
+
+  it('leaves neither consumer writing an erDiagram of its own: both load the one module', () => {
+    expect(codeLines('src/pages/data-model/js/er-diagram.mjs').some((l) => l.includes("'erDiagram'"))).toBe(true);
+    const loads: Record<string, string> = {
+      'src/pages/data-model/js/export-view.js': "from './er-diagram.mjs'",
+      'scripts/schema-docs/render.js': "require('../../src/pages/data-model/js/er-diagram.mjs')",
+    };
+    for (const [path, load] of Object.entries(loads)) {
+      expect(codeLines(path).filter((l) => l.includes("'erDiagram'")), path).toEqual([]);
+      expect(codeLines(path).some((l) => l.includes(load)), path).toBe(true);
+    }
   });
 });
