@@ -29,6 +29,7 @@
   5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: -Kubernetes — the codeless k8s install, lockstep with oshal-install.sh mode 4. kubectl/helm preflight (winget offers for both), cluster reachability check with crisp Docker-Desktop/kind guidance, chart from the published OCI package with a repo-fetch fallback, fleet presets kernel|full, the same AdminEmail→MOCK_OIDC identity wiring as the compose path (shared LocalSub, hoisted above the branch), NodePort exposure, /api/health postflight, /welcome open. New params: -Namespace, -K8sContext, -NodePort, -Chart, -Fleet.
   6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129 amendment: bundles/-Apps reach Kubernetes. The k8s branch moves BELOW bundle resolution so it installs the same curated app sets as compose (chart `packages:` staging + the fleet those bots need), auto-creating the private-store Secret when a token is present. Fixes a latent parameter bug found dry-running the new path: `-Apps a,b` is an ARRAY to PowerShell, so the [string] parameter threw a transformation error on the very syntax the bash installer and our closing instructions advertise — now [string[]], accepting both forms.
   7 | maintainer@emeraldcoastsystemsgroup.com   | The k8s path INSTALLS its prerequisites instead of printing links and exiting (operator: the installer should include the prereqs). kubectl/Helm/kind/Docker Desktop are offered via winget, and the session PATH is re-read from the registry after each install so the run CONTINUES rather than demanding a new terminal. With no cluster reachable it stands up a kind cluster with the cockpit port mapped — Docker Desktop's Kubernetes toggle is a GUI setting we deliberately do not poke at, and kind gives the same result scriptably on the engine already installed; it still refuses to create one beside a running compose swarm. New -Yes accepts every prerequisite step for unattended installs, and a non-interactive host DECLINES rather than surprise-installing.
+  8 | maintainer@emeraldcoastsystemsgroup.com   | Two gaps the 2026-09-16 remote install walked into. (1) WSL2 preflight: winget installs Docker Desktop successfully on a box whose WSL2 features are off, Docker Desktop then never starts, and every message here pointed at Docker - so the client wrote a patch script by hand to get past a Windows problem this installer never mentioned. Detection is by EXIT CODE (wsl.exe emits UTF-16LE; matching its text is a check that stops working silently), enabling needs elevation and ALWAYS needs a reboot, so it ends the run either way rather than pretending to continue. -SkipWslCheck for a Hyper-V backend. (2) Stale-image refusal: GHCR is published only by the manual-only CI workflow, so latest rots with nothing saying so - that box came up 52 days and 983 commits behind and its operator reported MISSING FEATURES, not an old image. Refuses past the threshold unless -AllowStaleImage, and fails open when it cannot check.
 #>
 [CmdletBinding()]
 param(
@@ -48,6 +49,10 @@ param(
   [switch]$Kubernetes,
   # Accept prerequisite installs (kubectl/Helm/kind/Docker Desktop) without prompting.
   [switch]$Yes,
+  # Install the old published image anyway when the freshness check refuses it.
+  [switch]$AllowStaleImage,
+  # Skip the WSL2 preflight entirely (Hyper-V backend, or a box you have already prepared).
+  [switch]$SkipWslCheck,
   [string]$Namespace = "oshal",
   [string]$K8sContext = "",
   [int]$NodePort = 30500,
@@ -326,7 +331,88 @@ nodes:
   exit 0
 }
 
+# -- WSL2: the engine Docker Desktop actually runs on -------------------------
+# The gap this closes: `winget install Docker.DockerDesktop` SUCCEEDS on a box whose WSL2
+# features are off. Docker Desktop then never starts, and every message this installer had
+# pointed at Docker ("start Docker Desktop and re-run"), so an operator spends the session
+# looking at the wrong product. Reported from a real remote install on 2026-09-16, where a
+# patch script had to be written by hand to get past it.
+#
+# Detection is by EXIT CODE only. wsl.exe emits UTF-16LE, so matching on its output text is a
+# check that silently stops working; `wsl --status` returns non-zero when WSL is not usable.
+function Test-Wsl2Ready {
+  $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+  if (-not $wsl) { return $false }
+  & wsl.exe --status *> $null
+  return ($LASTEXITCODE -eq 0)
+}
+
+# Confirm-Step lives inside the -Kubernetes branch and therefore does not exist here.
+# Same semantics: -Yes accepts, a non-interactive host declines rather than surprise-installing.
+function Confirm-WslStep([string]$prompt) {
+  if ($Yes) { return $true }
+  if (-not [Environment]::UserInteractive) { return $false }
+  $a = Read-Host "   $prompt [Y/n]"
+  return ($a -eq '' -or $a -match '^[Yy]')
+}
+
+function Test-IsElevated {
+  $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+  return (New-Object Security.Principal.WindowsPrincipal $id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Enabling the features needs elevation and ALWAYS needs a reboot, so this can never be a
+# transparent fix-and-continue: it either hands back a prepared machine that must restart, or
+# it prints the exact elevated command. Both end the run rather than pretending to proceed.
+function Invoke-Wsl2Preflight {
+  if ($SkipWslCheck) { return }
+  if (Test-Wsl2Ready) { return }
+  Say "WSL2 is not enabled - Docker Desktop cannot run without it"
+  Note "Docker Desktop uses WSL2 as its engine. Installing Docker on a machine without WSL2"
+  Note "appears to succeed and then never starts, which looks like a Docker problem and is not."
+  if (-not (Test-IsElevated)) {
+    Note ""
+    Note "This step needs an ADMINISTRATOR PowerShell. Open one and run:"
+    Note "    wsl --install --no-distribution"
+    Note "    # REBOOT, start Docker Desktop once, then re-run this installer"
+    Note ""
+    Note "Already on Hyper-V rather than WSL2? Re-run with -SkipWslCheck."
+    exit 1
+  }
+  if (-not (Confirm-WslStep "enable WSL2 now (Virtual Machine Platform + WSL + kernel)?")) {
+    Note "Skipped. Enable it yourself with: wsl --install --no-distribution"
+    exit 1
+  }
+  Say "enabling WSL2 (this installs the kernel and the two Windows features)"
+  & wsl.exe --install --no-distribution
+  Note ""
+  Note "WSL2 enabled. REBOOT THIS MACHINE, start Docker Desktop once, then re-run this installer."
+  Note "A reboot is not optional here - the features are not active until Windows restarts."
+  exit 2
+}
+
+# -- The published image can be far behind this repository --------------------
+# GHCR is published only by the manual-only CI workflow, so `latest` goes stale silently and a
+# stale image does not look stale: everything added since the build is simply ABSENT. Refuses
+# past the threshold unless -AllowStaleImage, and fails OPEN whenever it cannot check.
+function Test-ImageFreshness([string]$img) {
+  $created = (docker image inspect -f '{{.Created}}' $img 2>$null)
+  $sha = (docker image inspect -f '{{index .Config.Labels "oshal.git.commit"}}' $img 2>$null)
+  if ($sha -eq '<no value>') { $sha = '' }
+  if (-not $created) { Note "image freshness: no build date on the image - skipping the check"; return }
+  $local = Join-Path $PSScriptRoot 'image-freshness.js'
+  if ((Get-Command node -ErrorAction SilentlyContinue) -and (Test-Path $local)) {
+    & node $local --image-created $created --image-commit $sha
+  } else {
+    & docker run --rm --entrypoint node $img /app/scripts/image-freshness.js --image-created $created --image-commit $sha
+  }
+  if ($LASTEXITCODE -eq 3 -and -not $AllowStaleImage) {
+    throw "refusing to install a stale image - see above (or pass -AllowStaleImage)"
+  }
+}
+
 # -- Docker present? Offer winget when it isn't. -----------------------------
+Invoke-Wsl2Preflight
 $docker = Get-Command docker -ErrorAction SilentlyContinue
 if (-not $docker) {
   Say "Docker is not installed"
@@ -341,7 +427,13 @@ if (-not $docker) {
   exit 1
 }
 docker info *> $null
-if ($LASTEXITCODE -ne 0) { throw "Docker is installed but the engine is not running - start Docker Desktop and re-run." }
+if ($LASTEXITCODE -ne 0) {
+  if (-not $SkipWslCheck -and -not (Test-Wsl2Ready)) {
+    Note "The engine is down and WSL2 is not ready - that is the cause, not Docker itself."
+    Note "In an ADMINISTRATOR PowerShell:  wsl --install --no-distribution   then REBOOT."
+  }
+  throw "Docker is installed but the engine is not running - start Docker Desktop and re-run."
+}
 
 $Image = "$Registry/oshal-bot:$Tag"
 if ($DryRun) {
@@ -371,6 +463,7 @@ if ($FromArchive) {
   }
   docker pull $Image
   if ($LASTEXITCODE -ne 0) { throw "docker pull failed - is the package public / are you logged in?" }
+  Test-ImageFreshness $Image
 }
 
 # -- Extract the baked install artifacts -------------------------------------
