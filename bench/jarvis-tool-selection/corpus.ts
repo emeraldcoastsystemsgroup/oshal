@@ -8,7 +8,11 @@
  *   - `contract` — the fast-lane items, copied verbatim from the committed behaviour contract in
  *     tests/unit/jarvis-provider-intent-routing.spec.ts. Their expected outcome is what the
  *     deterministic guard is REQUIRED to do, including the negatives that must stay model-owned.
- *   - `synthetic` — the tool-lane items, hand-authored. `expectedTool` is the script the answer
+ *   - `synthetic` — the tool-lane items, hand-authored, plus `model-calendar`, which carried the
+ *     `contract` label until a review checked every one of the thirteen against that spec and found
+ *     no such string in it. It is the only item that makes `fast-lane-calendar` a false match, so
+ *     the precision axis rests on an authored judgement rather than on committed ground truth.
+ *     Hand-authored items: `expectedTool` is the script the answer
  *     has to reach. Several are deliberately worded so the needed tool's own keywords do NOT
  *     appear, because a selector that only survives keyword-shaped phrasing has proved nothing.
  *
@@ -60,11 +64,14 @@ const CONTRACT_ITEMS: ReadonlyArray<Omit<CorpusItem, 'provenance'>> = [
   { id: 'model-weather-app', message: 'Build a weather app for our cockpit.', expectedIntent: null, expectedTool: null },
   { id: 'model-walmart-order', message: 'Order fish food from Walmart.', expectedIntent: null, expectedTool: null },
   { id: 'model-walmart-compare', message: 'Compare fish food at Walmart and Target.', expectedIntent: null, expectedTool: null },
-  { id: 'model-calendar', message: 'What is on my calendar tomorrow?', expectedIntent: null, expectedTool: null },
 ];
 
 /** Tool-lane ground truth: the script the answer needs. Several avoid that tool's own keywords. */
 const SYNTHETIC_ITEMS: ReadonlyArray<Omit<CorpusItem, 'provenance'>> = [
+  // NOT from the contract spec. The closest committed string is 'What is on my calendar?' in a
+  // different assertion about a different function, so this one is authored - and it is the only
+  // item that makes fast-lane-calendar a false match, which is the whole precision axis.
+  { id: 'model-calendar', message: 'What is on my calendar tomorrow?', expectedIntent: null, expectedTool: null },
   { id: 'tool-jazz', message: 'Put on some jazz while I work.', expectedIntent: null, expectedTool: 'oshal-spotify.js' },
   { id: 'tool-nowplaying', message: 'What is playing on my Spotify right now?', expectedIntent: null, expectedTool: 'oshal-spotify.js' },
   { id: 'tool-flight', message: 'Book me a seat to Denver next Friday.', expectedIntent: null, expectedTool: 'oshal-duffel.js' },

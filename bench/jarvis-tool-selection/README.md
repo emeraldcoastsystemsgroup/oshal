@@ -63,10 +63,14 @@ on one false match even though bypassing the model is the largest saving availab
 
 - **n = 1, 34 items.** This is a harness with a first data point, not a statistically robust
   benchmark.
-- **The corpus is labelled by provenance and the report prints the mix.** 13 items are `contract` —
+- **The corpus is labelled by provenance and the report prints the mix.** 12 items are `contract` —
   verbatim from `tests/unit/jarvis-provider-intent-routing.spec.ts`, so their expected outcome is
-  the committed behaviour contract. 21 are `synthetic` — hand-authored, and their `expectedTool` is
-  a judgement about what the answer needs, not a recorded invocation. **Synthetic recall is not
+  the committed behaviour contract. 22 are `synthetic` — hand-authored, and their `expectedTool` is
+  a judgement about what the answer needs, not a recorded invocation. `model-calendar` is one of
+  them: it was labelled `contract` until a review checked all thirteen against that spec and found
+  no such string there. It matters more than the count, because it is the only item that makes
+  `fast-lane-calendar` a false match — the entire precision axis rests on an authored judgement,
+  not on committed ground truth. **Synthetic recall is not
   production recall.** Point `JARVIS_BENCH_CORPUS` at a JSONL of real traffic whose ground truth is
   the invocation that actually happened, and the report says `recorded`.
 - **The token axis needs a real tokenizer and never estimates.** With no `JARVIS_BENCH_TOKENIZER`

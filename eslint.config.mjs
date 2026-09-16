@@ -105,6 +105,12 @@ export default tseslint.config(
       'scripts/**/*.js',
       'scripts/**/*.mjs',
       'scripts/**/*.cjs',
+      // bench/ is committed, runnable and publishes numbers into a README, so it is linted like
+      // anything else here. Without a matching entry eslint reports these files as ignored and the
+      // gate passes over them silently.
+      'bench/**/*.ts',
+      'bench/**/*.js',
+      'bench/**/*.mjs',
     ],
     languageOptions: {
       // The TS parser reads plain JS too, so one parser covers every extension above.
