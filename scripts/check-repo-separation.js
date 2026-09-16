@@ -7,6 +7,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | trackedFiles() falls back to a filesystem walk when the target is not a git repo: ci-local --head runs this gate against a `git archive` EXPORT of HEAD (no .git), where the first --head run crashed 'fatal: not a git repository' — in an export, disk contents ARE HEAD's tracked files, so the walk judges the identical tree.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | resolveCoreDir() catches the SECOND git dependence the 07-23 fix missed: with no --core flag the script still ran an unconditional `git rev-parse --show-toplevel`, which crashed 'fatal: not a git repository' in the .git-less GATE_SRC export — redding BOTH the ci-local repo-separation gate and the unit spec on a healthy tree. In an export the process is launched at the tree root, so cwd IS the tree (same rationale as trackedFiles).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Structural guard for the two-trunk split (ADR-115): application code must never mix into the swarm/kernel repo, and kernel code must never mix into the store repo. ADR-085 carved 21 app surfaces OUT of core; nothing stopped one from walking back in. The public core trunk is a DERIVED, app-free artifact — a re-mixed app is a release-blocking defect discovered at publish time, which is far too late.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Package-build residue (check 5): the package builders stage application TypeScript INSIDE this checkout so the kernel's tsc can compile it, each relying on a `finally` a killed build never reaches. On 2026-09-09 seventeen sports-edge sources sat untracked in src/app/routes/ after an `oshal-app.js build`, passing every tracked-path check. The gate now fails on any untracked, non-ignored file under src/app/routes/ (the `git add -A` set) and on any src/__oshal_build_* or src/__oshal_store_parity_* staging directory, tracked or not.
  */
 
 /**
@@ -27,9 +28,13 @@
  *      application in the platform repo; it belongs in the store.
  *   3. No tracked files under `apps/` or `deployed-apps/` (installed-package staging dirs).
  *   4. No tracked `.oshal-install.json` (package install provenance — a runtime artifact).
+ *   5. No package-build residue: no UNTRACKED file under `src/app/routes/` (where `oshal-app.js
+ *      build` used to copy a package's sources) and no `src/__oshal_build_*` /
+ *      `src/__oshal_store_parity_*` staging directory (where the two builders stage them today).
+ *      Tracked-path checks cannot see either.
  *
  * STORE checks (run when a store checkout is given/found):
- *   5. No kernel-shaped paths (server entrypoint, the image, the compose stack, kernel skills).
+ *   6. No kernel-shaped paths (server entrypoint, the image, the compose stack, kernel skills).
  *
  * Usage:
  *   node scripts/check-repo-separation.js                 # core only
@@ -79,6 +84,27 @@ const KERNEL_SHAPED_PATHS = [
   'docker-compose.oshal-local.yml',
 ];
 
+/**
+ * Where the package builders stage a package's TypeScript INSIDE a framework checkout so the
+ * kernel's tsc can compile it with the `@/` type graph — and therefore where an interrupted build
+ * leaves it:
+ *   - core `scripts/oshal-app.js build` stages under `src/__oshal_build_<random>/`;
+ *   - the store's `scripts/security/rebuild-store-routes.mjs` stages under
+ *     `src/__oshal_store_parity_<random>/`.
+ * Both remove the directory in a `finally`, and a `finally` does not run through a kill, an OOM or
+ * a closed terminal. What remains is a real path in the kernel tree that `git status` shows and
+ * `git add -A` would land — so both prefixes are refused here, tracked or not.
+ *
+ * `src/app/routes/` is watched as well because that is where `oshal-app.js build` used to copy a
+ * package's sources flat: on 2026-09-09 seventeen untracked sports-edge sources sat there,
+ * byte-identical to the store package's src-routes/, passing every tracked-path check. The
+ * builder no longer stages there, and this check is what says so out loud — any file under the
+ * kernel's route directory that is neither committed nor ignored is application residue or
+ * uncommitted kernel work, and either way it must not reach a `git add -A` unseen.
+ */
+const BUILD_STAGING_ROUTES_DIR = 'src/app/routes';
+const BUILD_STAGING_DIR_PREFIXES = ['__oshal_build_', '__oshal_store_parity_'];
+
 const problems = [];
 const passes = [];
 
@@ -114,6 +140,25 @@ function trackedFiles(repoDir) {
   };
   walk(repoDir, '');
   return files;
+}
+
+/**
+ * @description List the untracked, non-ignored files under one subdirectory of a git checkout —
+ * exactly the set a `git add -A` would stage. In an export (no .git) nothing is untracked: the
+ * walk in trackedFiles() already judged every file on disk, so this returns nothing there rather
+ * than crashing the way the two earlier git dependences did.
+ * @param {string} repoDir - Repository root.
+ * @param {string} subdir - Repo-relative directory to inspect (forward slashes).
+ * @returns {string[]} Repo-relative paths (forward slashes).
+ */
+function untrackedFiles(repoDir, subdir) {
+  if (!fs.existsSync(path.join(repoDir, '.git'))) return [];
+  const out = execFileSync(
+    'git',
+    ['-C', repoDir, 'ls-files', '--others', '--exclude-standard', '--', subdir],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+  );
+  return out.split('\n').filter(Boolean);
 }
 
 /**
@@ -215,6 +260,52 @@ function checkCore(coreDir) {
 }
 
 /**
+ * @description Check 5 — fail on anything a package build staged inside the kernel tree and did
+ * not clear. The builders copy application sources INTO this checkout so the kernel's compiler
+ * can see them, and rely on a `finally` to remove them; a kill skips the `finally`, and from then
+ * on `git status` is the only thing between those sources and the kernel. Tracked-path checks
+ * cannot see them, so this one asks git for the untracked set under the kernel's route directory
+ * and looks for the staging prefixes on disk (tracked or not — a staging directory is a defect
+ * either way).
+ * @param {string} coreDir - Kernel repository root.
+ * @returns {void}
+ */
+function checkBuildResidue(coreDir) {
+  const strays = untrackedFiles(coreDir, BUILD_STAGING_ROUTES_DIR);
+  if (strays.length) {
+    fail(
+      `untracked file(s) under ${BUILD_STAGING_ROUTES_DIR}/ — a package build left sources behind`,
+      strays,
+      'This is where `oshal-app.js build` used to copy a package\'s src-routes/*.ts, deleting them in ' +
+        'a `finally` a killed build never reaches. If the file is a store package\'s source, delete it ' +
+        '(the package keeps its own copy); if it is new kernel work, `git add` it now. Nothing lives ' +
+        'here outside git — a `git add -A` would land application code in the kernel.',
+    );
+  } else {
+    passes.push(`no untracked files under ${BUILD_STAGING_ROUTES_DIR}/`);
+  }
+
+  const srcDir = path.join(coreDir, 'src');
+  const stages = fs.existsSync(srcDir)
+    ? fs
+      .readdirSync(srcDir)
+      .filter((name) => BUILD_STAGING_DIR_PREFIXES.some((prefix) => name.startsWith(prefix)))
+      .sort()
+    : [];
+  if (stages.length) {
+    fail(
+      'package-build staging directory(ies) left under src/',
+      stages.map((name) => `src/${name}/`),
+      'A package build stages sources under this prefix for one tsc pass and removes the directory in ' +
+        'a `finally` a killed build never reaches. Delete the directory — the package checkout holds ' +
+        'the sources.',
+    );
+  } else {
+    passes.push(`no ${BUILD_STAGING_DIR_PREFIXES.join('* / ')}* staging directories under src/`);
+  }
+}
+
+/**
  * @description Run the store-repo half of the split check.
  * @param {string} storeDir - Application store repository root.
  * @returns {void}
@@ -269,6 +360,7 @@ const coreFlag = args.indexOf('--core');
 const coreDir = coreFlag >= 0 ? path.resolve(args[coreFlag + 1]) : resolveCoreDir();
 
 checkCore(coreDir);
+checkBuildResidue(coreDir);
 
 let storeDir = storeFlag >= 0 ? args[storeFlag + 1] : process.env.OSHAL_STORE_DIR || '';
 // Autodetect the conventional sibling checkout, but never when --core points somewhere else: a

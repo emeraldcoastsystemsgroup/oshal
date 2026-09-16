@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export-shape guard: run the check from inside a .git-LESS fixture with NO --core flag — the exact ci-local --head GATE_SRC shape where the unconditional `git rev-parse --show-toplevel` (the second git dependence, missed by the 07-23 trackedFiles fix) crashed the gate on a healthy tree. Goes red if either git dependence returns.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give each disk/subprocess-heavy separation case a local 30-second ceiling. Concurrent full-suite load can exhaust Vitest's 5-second default on Windows even when the guard is healthy; a suite-local helper keeps every mutation case active without weakening unrelated unit-test budgets.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | CORE-06 timeout containment: retain a 20-second exception only for the real-repository tree walk; tiny fixture mutations return to the global unit-test budget.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Package-build residue: the gate now judges UNTRACKED state too. A fixture may plant files AFTER its commit, and five cases pin the rule: an untracked file under src/app/routes/ (the shape seventeen sports-edge sources took there on 2026-09-09) is red; a gitignored one is not (it is not what `git add -A` stages); a surviving src/__oshal_store_parity_* (store compiler) or src/__oshal_build_* (`oshal-app.js build`) staging directory is red; a tracked route file stays green. Each red case failed against the previous gate before the change.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -62,16 +63,25 @@ function runGuard(coreDir?: string): GuardResult {
  * build an EXPORT-shaped tree instead (no .git — the ci-local --head GATE_SRC shape, where disk
  * contents stand in for tracked state).
  *
+ * The fixture carries one TRACKED route file under src/app/routes/ — the directory a package build
+ * stages into — so every case also proves committed kernel routes are never mistaken for residue.
+ *
  * @param mutate - Optional hook to plant a violation before the files are committed.
- * @param opts - `git: false` skips git init/commit to model a `git archive` export.
+ * @param opts - `git: false` skips git init/commit to model a `git archive` export; `afterCommit`
+ *   plants UNTRACKED state once the commit exists (the residue a killed build leaves behind).
  * @returns The fixture checkout path.
  */
-function makeKernelFixture(mutate?: (dir: string) => void, opts: { git?: boolean } = {}): string {
+function makeKernelFixture(
+  mutate?: (dir: string) => void,
+  opts: { git?: boolean; afterCommit?: (dir: string) => void } = {},
+): string {
   const dir = mkdtempSync(join(tmpdir(), 'oshal-sep-'));
   mkdirSync(join(dir, 'swarm-apps'), { recursive: true });
   for (const name of KERNEL_MANIFESTS) {
     writeFileSync(join(dir, 'swarm-apps', name), `name: ${name.replace('.yaml', '')}\n`, 'utf8');
   }
+  mkdirSync(join(dir, 'src/app/routes'), { recursive: true });
+  writeFileSync(join(dir, 'src/app/routes/health-routes.ts'), 'export const health = true;\n', 'utf8');
   mutate?.(dir);
   if (opts.git === false) return dir;
   execFileSync('git', ['-C', dir, 'init', '-q'], { stdio: 'pipe' });
@@ -81,20 +91,23 @@ function makeKernelFixture(mutate?: (dir: string) => void, opts: { git?: boolean
     ['-C', dir, '-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-qm', 'fixture'],
     { stdio: 'pipe' },
   );
+  opts.afterCommit?.(dir);
   return dir;
 }
 
 /**
  * @description Run a fixture assertion and always clean the temp checkout up.
- * @param mutate - Violation planter.
+ * @param mutate - Violation planter (runs before the fixture commit, so the plant is tracked).
  * @param assertion - What the guard should report.
+ * @param afterCommit - Optional planter that runs after the commit, so the plant is untracked.
  * @returns void
  */
 function withFixture(
   mutate: ((dir: string) => void) | undefined,
   assertion: (r: GuardResult) => void,
+  afterCommit?: (dir: string) => void,
 ): void {
-  const dir = makeKernelFixture(mutate);
+  const dir = makeKernelFixture(mutate, { afterCommit });
   try {
     assertion(runGuard(dir));
   } finally {
@@ -109,8 +122,87 @@ describe('repo separation (ADR-115): application code never mixes into the swarm
     expect(code).toBe(0);
   }, TREE_WALK_TIMEOUT_MS);
 
-  it('passes on a compliant kernel fixture', () => {
-    withFixture(undefined, ({ code }) => expect(code).toBe(0));
+  it('passes on a compliant kernel fixture (a TRACKED route file under src/app/routes/ is not residue)', () => {
+    withFixture(undefined, ({ code, output }) => {
+      expect(output).toContain('no untracked files under src/app/routes/');
+      expect(code).toBe(0);
+    });
+  });
+
+  it('FAILS on an untracked file under src/app/routes/ — the residue a killed `oshal-app.js build` leaves', () => {
+    // `oshal-app.js build` copies <pkg>/src-routes/*.ts flat into the framework's src/app/routes/
+    // and removes them in a `finally`. A kill never reaches the `finally`; on 2026-09-09 seventeen
+    // such files (package-smoke.ts, sports-*.ts) sat untracked in core, invisible to every
+    // tracked-path check and one `git add -A` away from landing application code in the kernel.
+    withFixture(
+      undefined,
+      ({ code, output }) => {
+        expect(output).toContain('untracked file(s) under src/app/routes/');
+        expect(output).toContain('src/app/routes/package-smoke.ts');
+        expect(output).toContain('src/app/routes/sports-routes.ts');
+        expect(code).toBe(1);
+      },
+      (dir) => {
+        writeFileSync(join(dir, 'src/app/routes/package-smoke.ts'), 'export const smoke = 1;\n', 'utf8');
+        writeFileSync(join(dir, 'src/app/routes/sports-routes.ts'), 'export const sports = 1;\n', 'utf8');
+      },
+    );
+  });
+
+  it('passes when the only untracked file under src/app/routes/ is gitignored (not what `git add -A` stages)', () => {
+    // The dev box keeps an editor workspace file there under a `*.code-workspace` ignore rule; the
+    // gate judges the `git add -A` set, and an ignored file is not in it.
+    withFixture(
+      (dir) => writeFileSync(join(dir, '.gitignore'), '*.code-workspace\n', 'utf8'),
+      ({ code, output }) => {
+        expect(output).toContain('no untracked files under src/app/routes/');
+        expect(code).toBe(0);
+      },
+      (dir) => writeFileSync(join(dir, 'src/app/routes/agentic.code-workspace'), '{}\n', 'utf8'),
+    );
+  });
+
+  it('FAILS when a store-compiler staging directory survives under src/ (rebuild-store-routes.mjs shape)', () => {
+    // The store's rebuild-store-routes.mjs stages every package under a mkdtemp of
+    // src/__oshal_store_parity_ and removes it in a `finally` — the same kill hazard, one level up.
+    withFixture(
+      undefined,
+      ({ code, output }) => {
+        expect(output).toContain('package-build staging director');
+        expect(output).toContain('src/__oshal_store_parity_k1ll3d/');
+        expect(code).toBe(1);
+      },
+      (dir) => {
+        mkdirSync(join(dir, 'src/__oshal_store_parity_k1ll3d/sports-edge'), { recursive: true });
+        writeFileSync(
+          join(dir, 'src/__oshal_store_parity_k1ll3d/sports-edge/sports-routes.ts'),
+          'export const sports = 1;\n',
+          'utf8',
+        );
+      },
+    );
+  });
+
+  it('FAILS when an `oshal-app.js build` staging directory survives under src/ (the killed-build survivor)', () => {
+    // `oshal-app.js build` now stages under a mkdtemp of src/__oshal_build_ instead of copying into
+    // src/app/routes/: a killed build leaves kernel source untouched, and what it does leave is this
+    // directory. The gate is what turns that survivor into a red run rather than a `git status` line.
+    withFixture(
+      undefined,
+      ({ code, output }) => {
+        expect(output).toContain('package-build staging director');
+        expect(output).toContain('src/__oshal_build_k1ll3d/');
+        expect(code).toBe(1);
+      },
+      (dir) => {
+        mkdirSync(join(dir, 'src/__oshal_build_k1ll3d'), { recursive: true });
+        writeFileSync(
+          join(dir, 'src/__oshal_build_k1ll3d/sports-routes.ts'),
+          'export const sports = 1;\n',
+          'utf8',
+        );
+      },
+    );
   });
 
   it('passes when run from inside a .git-less EXPORT with no --core (ci-local --head GATE_SRC shape)', () => {
