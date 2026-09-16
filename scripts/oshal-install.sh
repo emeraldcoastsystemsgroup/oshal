@@ -430,7 +430,7 @@ if [ "$MODE" = "3" ]; then
   say "Leaf-node bot install (joins an existing swarm)"
   [ -n "$CONTROL_PLANE" ] || { printf '   swarm control-plane URL (e.g. http://192.0.2.10:35457): '; read -r CONTROL_PLANE; }
   [ -n "$JOIN_CODE" ] || { printf '   join code (operator: cockpit -> Add a computer -> join code): '; read -r JOIN_CODE; }
-  [ -n "$ENROLL_TOKEN" ] || { printf '   enrollment token (binds this computer to YOUR login; blank = skip): '; read -r ENROLL_TOKEN || true; }
+  [ -n "$ENROLL_TOKEN" ] || { printf '   enrollment token (binds this computer to YOUR login; REQUIRED - the node installer refuses without it): '; read -r ENROLL_TOKEN || true; }
   mkdir -p "$DIR"; cd "$DIR"
   say "fetching the node app source ($REPO_URL)"
   if command -v git >/dev/null 2>&1; then

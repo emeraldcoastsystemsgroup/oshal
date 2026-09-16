@@ -6,6 +6,8 @@
   1 | maintainer@emeraldcoastsystemsgroup.com   | One-click "join a swarm" path: decode join code -> reach controller -> ensure Node 20 -> build packages/oshal-chat -> seed config via env -> desktop shortcut -> launch.
   2 | maintainer@emeraldcoastsystemsgroup.com   | Accept v2 join codes: join the Headscale tailnet (installing Tailscale if needed) before probing the controller, so a node outside the swarm's LAN can reach it.
   3 | maintainer@emeraldcoastsystemsgroup.com   | Full-Jarvis is now the install default: seed OSHAL_FULL_JARVIS=true so a fresh satellite opens the swarm-hosted cockpit (OIDC sign-in on first launch). -OrbOnly opts a worker-only box out.
+  4 | maintainer@emeraldcoastsystemsgroup.com   | The swarm-wide shared secret is gone from this installer, and the node now starts with Windows. REMOTE_CLIENT_REQUIRE_NODE_TOKEN retired that secret as a worker credential, so a node configured with it installed cleanly and was then REFUSED at register - a silent dead end. Resolve-JoinTarget now requires a device-bound -EnrollmentToken: -SharedSecret is refused by name, and a join code contributes only the controller address and (v2) the tailnet credentials while the secret inside it is discarded. A Startup-folder shortcut goes in beside the Desktop one so a worker node comes back after a reboot without a human, and both are read back through the .lnk rather than trusted because Save() returned.
+  5 | maintainer@emeraldcoastsystemsgroup.com   | Say what a Startup entry actually does. It runs at LOGON, not at boot, so "comes back after a reboot with nobody present" was true only on an auto-logon machine - a claim the next reader would have paid for at the worst moment. The success line now says "when you next sign in" and names the locked-login-screen case.
 
   installer/lib/install-node.ps1 -- make THIS machine a worker node of someone else's swarm.
 
@@ -19,18 +21,21 @@
   as the local node console. Pass -OrbOnly for an unattended/worker-only box where nobody is
   present to sign in -- the mode can always be flipped later in Config -> Full Jarvis.
 
-    .\installer\lib\install-node.ps1 -JoinCode OSJOIN1.xxxxx
-    .\installer\lib\install-node.ps1 -ControlPlaneUrl http://192.168.1.5:35457 -SharedSecret abc...
+  EVERY form needs -EnrollmentToken: this computer's own credential, minted for it in the cockpit
+  (Get oshal -> Desktop -> Set up this computer). The swarm-wide shared secret is not a worker
+  credential any more, so no form of this installer configures one.
+
     .\installer\lib\install-node.ps1 -ControlPlaneUrl http://192.168.1.5:35457 -EnrollmentToken oshal_pat_...
-    .\installer\lib\install-node.ps1 -JoinCode OSJOIN1.xxxxx -OrbOnly
+    .\installer\lib\install-node.ps1 -JoinCode OSJOIN1.xxxxx -EnrollmentToken oshal_pat_...
+    .\installer\lib\install-node.ps1 -JoinCode OSJOIN2.xxxxx -EnrollmentToken oshal_pat_... -OrbOnly
 #>
 
 [CmdletBinding()]
 param(
-    [string]$JoinCode = '',        # the OSJOIN1.* token printed by the swarm installer
-    [string]$ControlPlaneUrl = '', # or supply the two halves directly
-    [string]$SharedSecret = '',
-    [string]$EnrollmentToken = '', # oshal_pat_... from the cockpit's "Add this computer" — binds this node to YOU
+    [string]$JoinCode = '',        # the OSJOIN1.*/OSJOIN2.* code printed by the swarm installer
+    [string]$ControlPlaneUrl = '', # or the swarm's address on its own
+    [string]$SharedSecret = '',    # RETIRED. Still declared so passing it gets an explanation, not a binding error
+    [string]$EnrollmentToken = '', # REQUIRED. oshal_pat_... from the cockpit's "Set up this computer" -- binds this node to YOU
     [string]$ClientId = '',        # the device id a DEVICE-BOUND token was minted for; the node adopts it
     [string]$NodeName = '',        # how this machine shows up in the cockpit mesh view
     [switch]$WithCliTools,         # also npm-install codex / claude / cline globally
@@ -51,41 +56,55 @@ $MinNodeMajor = 20
 # ---------------------------------------------------------------------------
 
 <#
-.SYNOPSIS Resolves the control-plane URL and the node's bearer credential from any input form.
-.DESCRIPTION Three complete forms. A join code is one paste. A URL plus the swarm-wide secret is
-the scripted install. A URL plus a DEVICE-BOUND enrollment token is what the cockpit's one-click
-installer supplies, and it is complete on its own once REMOTE_CLIENT_REQUIRE_NODE_TOKEN has
-retired the swarm-wide secret -- which is the whole point: no third value to go and ask for.
-.OUTPUTS [hashtable] @{ ControlPlaneUrl = ...; SharedSecret = ... }
+.SYNOPSIS Resolves the control-plane URL and this node's DEVICE-BOUND bearer credential.
+.DESCRIPTION There is one credential a node may hold: a token minted for THIS computer
+(oshal_cli_tokens.node_client_id), which authenticates only this device's worker plane and can
+be rotated or revoked without touching any other machine.
+
+The swarm-wide secret is not a second way in. REMOTE_CLIENT_REQUIRE_NODE_TOKEN retired it as a
+worker credential, so a node configured with it installs perfectly and is then refused at
+POST /api/remote-clients/register -- an install that reports success and produces a node that
+can never join. So it is refused HERE, by name, while the message can still be read.
+
+A join code still earns its place: it carries the controller's address, and a v2 code carries
+the tailnet credentials that make that address reachable at all. The secret inside it is
+discarded.
+.OUTPUTS [hashtable] @{ ControlPlaneUrl; SharedSecret; HeadscaleUrl; HeadscaleAuthKey }
 #>
 function Resolve-JoinTarget {
+    if ($SharedSecret) {
+        Stop-WithError "The swarm-wide shared secret is no longer a node credential." `
+            "Enrol this computer instead: in the cockpit open Get oshal -> Desktop -> Set up this computer, then run the file it downloads, or pass the token it shows here as -EnrollmentToken."
+    }
+    if (-not $EnrollmentToken) {
+        Stop-WithError "No enrolment token supplied." `
+            "Every node joins on a token bound to ONE computer. In the cockpit open Get oshal -> Desktop -> Set up this computer, then run the file it downloads, or pass its token here as -EnrollmentToken."
+    }
     if ($JoinCode) {
         try {
             $parsed = ConvertFrom-JoinCode -JoinCode $JoinCode
         } catch {
             Stop-WithError $_.Exception.Message "Re-copy the join code from the swarm machine's installer window."
         }
-        return $parsed
+        # Only the address halves are kept. $parsed.SharedSecret is the swarm-wide value and is
+        # deliberately dropped on the floor -- reading it here is what used to configure a node
+        # that the control plane then refused.
+        return @{
+            ControlPlaneUrl  = ([string]$parsed.ControlPlaneUrl).TrimEnd('/')
+            SharedSecret     = $EnrollmentToken
+            HeadscaleUrl     = [string]$parsed.HeadscaleUrl
+            HeadscaleAuthKey = [string]$parsed.HeadscaleAuthKey
+        }
     }
-    if ($ControlPlaneUrl -and $SharedSecret) {
-        return @{ ControlPlaneUrl = $ControlPlaneUrl.TrimEnd('/'); SharedSecret = $SharedSecret; HeadscaleUrl = ''; HeadscaleAuthKey = '' }
-    }
-    if ($ControlPlaneUrl -and $EnrollmentToken) {
-        # TOKEN-ONLY ENROLMENT — the one-click installer the cockpit hands out.
-        #
-        # Once REMOTE_CLIENT_REQUIRE_NODE_TOKEN retires the swarm-wide secret, a DEVICE-BOUND
-        # token is the worker-plane credential in its place, so a URL and a token are a
-        # COMPLETE target: there is no third value to go and fetch from an operator, which is
-        # the entire point of the one-click file.
-        #
-        # It goes in the SharedSecret slot because that slot is what the node sends as its
-        # bearer credential (`config.sharedSecret` in mesh-client.ts / worker.ts). The field
-        # names the slot, not the swarm-wide value that used to fill it. The same token is
-        # ALSO passed as OSHAL_ENROLLMENT_TOKEN below, which is what binds the node to a
-        # person; here it is what authenticates the node's calls.
+    if ($ControlPlaneUrl) {
+        # The token goes in the SharedSecret slot because that slot is what the node SENDS as its
+        # bearer credential (`config.sharedSecret` in mesh-client.ts / worker.ts). The field names
+        # the slot, not the swarm-wide value that used to fill it. The same token is also passed
+        # as OSHAL_ENROLLMENT_TOKEN below, which is what binds the node to a person; here it is
+        # what authenticates the node's calls.
         return @{ ControlPlaneUrl = $ControlPlaneUrl.TrimEnd('/'); SharedSecret = $EnrollmentToken; HeadscaleUrl = ''; HeadscaleAuthKey = '' }
     }
-    Stop-WithError "No join code supplied." "Use the cockpit's one-click installer (Job Board -> Set up this computer), or run the installer on your swarm machine, which prints a join code."
+    Stop-WithError "No swarm address supplied." "Pass -JoinCode from the swarm machine, or -ControlPlaneUrl http://<swarm-host>:35457, alongside your -EnrollmentToken."
     return $null  # unreachable; keeps the analyzer happy
 }
 
@@ -205,15 +224,23 @@ function Install-NodeApp {
 }
 
 <#
-.SYNOPSIS Creates a Desktop shortcut pointing at the launcher.
-.DESCRIPTION Best effort: a missing shortcut is cosmetic, and the launcher .cmd still works.
-.PARAMETER Name Shortcut display name.
+.SYNOPSIS Writes a shortcut to the launcher into one Windows folder.
+.DESCRIPTION Used twice: the Desktop copy (how a person opens the node) and the Startup copy
+(how the node comes back on its own at the next LOGON -- Startup is per-user, so a machine sitting
+at a locked login screen starts nothing until someone signs in). Both are READ BACK through the
+.lnk, because a Save() that returned can still have recorded nothing -- and a startup entry
+pointing nowhere is indistinguishable from one that works until the machine is restarted.
+.PARAMETER Directory Where the .lnk goes.
+.PARAMETER Name      Shortcut display name.
+.OUTPUTS [string] The .lnk path, or '' when it could not be written.
 #>
-function New-DesktopShortcut {
-    param([Parameter(Mandatory)][string]$Name)
+function New-LauncherShortcut {
+    param([Parameter(Mandatory)][string]$Directory, [Parameter(Mandatory)][string]$Name)
     try {
-        $desktop = [Environment]::GetFolderPath('Desktop')
-        $linkPath = Join-Path $desktop "$Name.lnk"
+        if (-not (Test-Path -LiteralPath $Directory)) {
+            New-Item -ItemType Directory -Path $Directory -Force | Out-Null
+        }
+        $linkPath = Join-Path $Directory "$Name.lnk"
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($linkPath)
         $shortcut.TargetPath = $LauncherCmd
@@ -221,10 +248,15 @@ function New-DesktopShortcut {
         $shortcut.Description = 'Open Swarm worker node'
         $shortcut.WindowStyle = 7   # start minimized; the Electron window is the real UI
         $shortcut.Save()
-        Write-Ok "Added '$Name' to your Desktop"
+        $written = $shell.CreateShortcut($linkPath)
+        if ($written.TargetPath -ne $LauncherCmd) {
+            throw "it recorded '$($written.TargetPath)' instead of '$LauncherCmd'"
+        }
+        return $linkPath
     } catch {
-        Write-Warn "Could not create the Desktop shortcut: $($_.Exception.Message)"
+        Write-Warn "Could not write the '$Name' shortcut in ${Directory}: $($_.Exception.Message)"
         Write-Info "Start the node any time with: $LauncherCmd"
+        return ''
     }
 }
 
@@ -249,15 +281,11 @@ function Start-NodeApp {
         $env:OSHAL_CLIENT_ID = $ClientId
     }
     $env:OSHAL_WORKER_ENABLED    = 'true'
-    if ($EnrollmentToken) {
-        # Exchanged ONCE on first launch for the enrolling user's verified sub, then cleared, so this
-        # node registers bound to a real person. Without it the node comes up UNOWNED, and the swarm's
-        # owner-scoped dispatch will not route that user's work to it.
-        $env:OSHAL_ENROLLMENT_TOKEN = $EnrollmentToken
-        Write-Info "Enrollment code supplied: this computer will register to your swarm account."
-    } else {
-        Write-Warn "No enrollment code: this node will be UNOWNED. Get one from the cockpit (Add a computer) so your own work can be routed here."
-    }
+    # Exchanged ONCE on first launch for the enrolling user's verified sub, then cleared, so this
+    # node registers bound to a real person -- which is what lets owner-scoped dispatch route that
+    # person's work here. Resolve-JoinTarget refuses without one, so it is always set.
+    $env:OSHAL_ENROLLMENT_TOKEN = $EnrollmentToken
+    Write-Info "Enrolment token supplied: this computer registers to your swarm account."
     if ($OrbOnly) {
         # Explicit 'false' (not merely unset) so a re-install can turn the mode off
         # on a node whose persisted config already has it on.
@@ -284,7 +312,22 @@ Connect-Tailnet -Target $target
 Assert-ControllerReachable -Url $target.ControlPlaneUrl
 Assert-NodeRuntime
 Install-NodeApp
-New-DesktopShortcut -Name 'Open Swarm Node'
+
+Write-Step "Shortcuts"
+if (New-LauncherShortcut -Directory ([Environment]::GetFolderPath('Desktop')) -Name 'Open Swarm Node') {
+    Write-Ok "Added 'Open Swarm Node' to your Desktop"
+}
+# The Startup copy is the difference between a node and a thing somebody has to remember to
+# open. Per-user Startup needs no elevation and no scheduled task, and a person removes it the
+# same way they remove any other startup item.
+$startupLink = New-LauncherShortcut -Directory ([Environment]::GetFolderPath('Startup')) -Name 'Open Swarm Node'
+if ($startupLink) {
+    Write-Ok "This node starts again by itself when you next sign in to Windows"
+    Write-Info "Startup is per-user: after a reboot it waits at the login screen until someone signs in."
+} else {
+    Write-Warn "This node will NOT come back on its own when you sign in."
+    Write-Info "Put a shortcut to $LauncherCmd in shell:startup to fix that."
+}
 
 if (-not $NoLaunch) { Start-NodeApp -Target $target -ClientName $clientName }
 
