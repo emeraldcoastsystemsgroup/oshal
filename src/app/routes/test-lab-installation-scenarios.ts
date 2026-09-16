@@ -81,6 +81,7 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/deploy-preview-source.spec.ts' },
     { level: 'unit', path: 'tests/unit/deploy-rollback-outcome.spec.ts' },
     { level: 'integration', path: 'tests/unit/deploy-live-verification.spec.ts' },
+    { level: 'integration', path: 'tests/unit/deploy-verify-exit-contract.spec.ts' },
     { level: 'integration', path: 'tests/unit/managed-postgres-pool-budget.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'test-lab', label: 'Installed package cases', run: installedCatalog }],

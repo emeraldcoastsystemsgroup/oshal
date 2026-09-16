@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Dev-mode promote step (ADR-077 gap 1): the missing link between a merged commit and a serving container. scripts/oshal-deploy.sh was referenced by docs, oshal-up.sh and tests but by NO code path — so self-development landed in git and the running api kept serving the previously baked dist indefinitely. This wraps that script as a single-flight host operation with its four-outcome exit contract preserved (0 deployed / 1 rolled back and serving / 2 preflight / 3 degraded, needs hands), because collapsing 1 and 3 into "failed" is the exact 2026-07-29 incident the script's exit codes exist to prevent.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Decode the two post-deploy-verification exit codes. The script grew exit 4 (deployed and SERVING, but the live verification proved the product broken) and now exit 5 (deployed and SERVING, but the product was never proved to work for more consecutive runs than the gate tolerates). Both fell into the default arm, which answers stackServing: false and needsHands: true - the precise inversion the entry above exists to prevent, sending an operator to oshal-up.sh for a stack that is up and serving. Neither needs hands: 4 needs the named check fixed, 5 needs an operator-minted PAT, and both leave the previous image untouched because the deploy deliberately does not roll back on a product verdict.
  */
 
 import { spawn } from 'node:child_process';
@@ -20,6 +21,8 @@ export type PromoteStatus =
   | 'failed-rolled-back'
   | 'preflight-failed'
   | 'degraded-needs-hands'
+  | 'deployed-product-broken'
+  | 'deployed-unproven'
   | 'unknown';
 
 /** The decoded meaning of one deploy exit code. */
@@ -121,7 +124,10 @@ export function resolveDeployShell(
  * @description Decodes one deploy exit code into its operational meaning. This mapping IS the
  * contract documented in scripts/oshal-deploy.sh: 1 and 3 are both "the deploy failed" but only
  * 3 means nothing is serving, and conflating them is what let a dead api sit unnoticed behind a
- * success-shaped failure on 2026-07-29. An unrecognized code fails closed — needs hands.
+ * success-shaped failure on 2026-07-29. 4 and 5 are the same distinction one layer up: both mean
+ * the image IS live and serving and was deliberately not rolled back, and they differ in whether
+ * the product was proved BROKEN (4) or never proved at all (5). An unrecognized code fails closed
+ * — needs hands.
  * @param exitCode - The script's exit code (null when it was killed or never ran).
  * @returns The decoded verdict.
  */
@@ -149,6 +155,22 @@ export function promoteVerdictForExit(exitCode: number | null): PromoteVerdict {
         needsHands: true,
         stackServing: false,
         summary: 'deploy failed AND the rollback did not restore a serving stack — run scripts/oshal-up.sh',
+      };
+    case 4:
+      return {
+        status: 'deployed-product-broken',
+        needsHands: false,
+        stackServing: true,
+        summary: 'deployed and serving, but the post-deploy live verification FAILED — the product is'
+          + ' down on a healthy stack; the image was deliberately not rolled back',
+      };
+    case 5:
+      return {
+        status: 'deployed-unproven',
+        needsHands: false,
+        stackServing: true,
+        summary: 'deployed and serving, but the product could not be PROVED to work and the grace for'
+          + ' that is spent — supply OSHAL_VERIFY_OPERATOR_PAT and re-verify; nothing was rolled back',
       };
     default:
       return {

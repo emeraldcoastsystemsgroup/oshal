@@ -128,6 +128,45 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   normal deploy; a deploy whose Jarvis check fails EXITS NON-ZERO rather than printing a headline and
   continuing; and a guard covers the exit-code contract so the gate cannot quietly regress to
   advisory. Until the first two are true, treat "deployed" as "installed", never as "working".
+- **Two of the three are MET on `fix/deploy-verify-unproven-exit-contract` (PR open, not merged).**
+  The gate's exit-code contract is now:
+  - **With `OSHAL_VERIFY_OPERATOR_PAT` set there is no third state.** `VERIFY UNVERIFIED` is
+    unreachable for both product checks: the check passes or it fails, and a failure exits 4. The
+    rule is enforced in `scripts/lib/deploy-verify.sh` and not only in the probe, because the two
+    sides know different things and the gap between them is reachable — `${!OSHAL_VERIFY_@}`
+    enumerates *non-exported* variables, so a PAT assigned without `export` is forwarded as a bare
+    `-e OSHAL_VERIFY_OPERATOR_PAT`, docker resolves that name against its own environment, finds
+    nothing, and the probe mints a service-secret PAT and refuses exactly as if no token existed
+    (measured in this host's Git Bash, 2026-09-16). Only the shell can see that, so only the shell
+    can refuse it; the remedy names both causes and puts the free one first.
+  - **An unproven run escalates rather than repeating itself.** One outcome line per completed run
+    goes to `${OSHAL_DEPLOY_STATE:-~/.oshal-deploy}/live-verify.log` and the gate counts consecutive
+    unproven runs back from it — the BUG-22 shape `scripts/ci/ci-gate-streak.mjs` proved, where the
+    history is a *parse* of the log the tool already writes rather than new state. Runs 1 and 2 stay
+    exit 0 but print a countdown that changes every run; run 3 returns 3 and the deploy **exits 5**.
+    A `PROVEN` or `FAILED` run resets it; a skipped run records nothing, so it neither grows nor
+    resets it. `OSHAL_VERIFY_REQUIRE_PROOF=1` removes the grace and is the intended steady state
+    once a PAT exists. There is deliberately no variable that *widens* it, and a guard asserts that.
+  - **`exit 4` and `exit 5` are different facts** — proved broken vs never proved — and
+    `promoteVerdictForExit` now decodes both as `stackServing: true, needsHands: false` instead of
+    dropping them into the unrecognized arm that sends an operator to `oshal-up.sh` for a stack that
+    is already up.
+  - **Guarded** by a new `tests/unit/deploy-verify-exit-contract.spec.ts` (**21 cases**) driving the
+    real library in a real Git Bash with docker shadowed, plus `tests/unit/deploy-promoter.spec.ts`
+    17 → **20**. `tests/unit/deploy-live-verification.spec.ts` stays at **57** and keeps the three
+    checks themselves; its shell harness moved to `tests/helpers/deploy-verify-shell.ts` so both
+    files drive the same one, because adding these cases to it would have pushed it past the
+    800-code-line decomposition threshold (718 → 918). Mutation-proved five ways: dropping the
+    supplied-PAT refusal turns 3 red, making the unproven branch return 0 turns 2 red, making the
+    exit-5 block unreachable turns 3 red, collapsing `exit 5` into `exit 4` turns 3 red, and
+    deleting the promoter's two new arms turns 3 red.
+- **STILL OPEN, and it is the first done-when:** the checks still report UNVERIFIED rather than
+  PASS/FAIL on this box, because no session-minted PAT exists yet. Verified 2026-09-16: `.env`
+  carries no `OSHAL_VERIFY_OPERATOR_PAT`, the 36 active `oshal_cli_tokens` rows are hashed, and the
+  58-char token in `~/.oshal/config.json` was tested against the real probe and rejected — *"carries no
+  verified principal issuer; only a mint made from a signed-in session records one"*. **An agent
+  cannot mint it.** Until an operator does, the next three deploys warn with a countdown and the
+  third one exits 5.
 
 ### A catalog-less protected app cannot have a working system service (2026-09-16)
 

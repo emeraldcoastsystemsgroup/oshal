@@ -41,11 +41,21 @@
 #         3 failed AND the rollback did not restore a serving stack — the box needs hands
 #         4 deployed and SERVING, but the post-deploy live verification failed — the product
 #           is down on a healthy stack. Deliberately NOT rolled back; fix the named check.
+#         5 deployed and SERVING, but the product could NOT BE PROVED to work for more
+#           consecutive runs than the gate tolerates. Nothing is known to be broken and
+#           nothing is known to work: supply OSHAL_VERIFY_OPERATOR_PAT. Not rolled back.
+#           4 and 5 are different facts — proved broken vs never proved — and a caller that
+#           collapses them loses the only distinction that says which one to go fix.
 #
 # Env:    OSHAL_DEPLOY_SKIP_LIVE_VERIFY=1  skip the post-deploy live verification entirely.
 #         The ONLY switch that skips it, and it exists for a deployment that carries no
 #         operator identity (empty OSHAL_OPERATOR_SUBS) to ask Jarvis a question as.
-#         See docs/runbooks/deploy-parity.md.
+#         OSHAL_VERIFY_OPERATOR_PAT=<session-minted PAT>  the identity the two product
+#         checks need to be answerable at all under delegation signing. With it set they
+#         are binary, pass or fail; without it they can only report UNVERIFIED, which is
+#         tolerated for a bounded number of consecutive runs and then exits 5.
+#         OSHAL_VERIFY_REQUIRE_PROOF=1  exits 5 on the FIRST unproven run — the intended
+#         steady state once a PAT exists. See docs/runbooks/deploy-parity.md.
 
 set -uo pipefail
 
@@ -305,7 +315,11 @@ log "census: $(docker ps --filter "ancestor=$IMAGE" --format '{{.Status}}' | gre
 # census gates, and their verdict decides whether DEPLOYED is printed at all.
 # A failure NEVER rolls back: the new image is already live and serving, and returning to
 # the previous one would add a version surprise to a product outage.
-if ! oshal_deploy_post_verify; then
+# Three outcomes, not two: 1 is "the product is proved broken" and 3 is "the product was never
+# proved at all, for longer than the gate tolerates". They demand different actions from whoever
+# reads this log, so they get different exit codes rather than one shared "the deploy failed".
+oshal_deploy_post_verify; VERIFY_RC=$?
+if [ "$VERIFY_RC" -eq 1 ]; then
   log ""
   log "✗ deployed ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots healthy, parity clean,"
   log "  but the POST-DEPLOY LIVE VERIFICATION above FAILED. The stack is up; the product is not."
@@ -316,13 +330,33 @@ if ! oshal_deploy_post_verify; then
   exit 4
 fi
 
+# The product was not proved to be broken. It was never proved to WORK, on more consecutive runs
+# than the gate tolerates — which between 2026-09-15 and 2026-09-16 was every run for two days,
+# printed in the same words each time, over a Jarvis that was answering 503 to everything. The one
+# thing that clears it cannot be done by any process on this box: only a signed-in operator session
+# can mint an identity that carries a verified principal issuer.
+if [ "$VERIFY_RC" -eq 3 ]; then
+  log ""
+  log "✗ deployed ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots healthy, parity clean,"
+  log "  but the product was NEVER PROVED to work, on ${OSHAL_VERIFY_UNPROVEN_STREAK:-?} consecutive run(s). Nothing above says"
+  log "  Jarvis answers or that a ticket moves. This is the ABSENCE of proof, not a proven failure"
+  log "  (which has its own code, above), and the grace for going unproven is spent."
+  log "  The new image IS live and serving and was deliberately NOT rolled back."
+  log "  One operator action clears it (no process on this box can do it):"
+  log "    1. in a SIGNED-IN cockpit browser session: POST /api/cli-tokens"
+  log "    2. export OSHAL_VERIFY_OPERATOR_PAT='<that token>'   (export — it is forwarded by NAME)"
+  log "    3. bash -c 'source scripts/lib/deploy-verify.sh && oshal_deploy_post_verify'"
+  log "  Runbook: docs/runbooks/deploy-parity.md   Full log: $RUN_LOG"
+  exit 5
+fi
+
 # The verification can now end in a third state, and this line is what an operator reads. Saying
 # "live verification passed" over a run where the two product checks proved NOTHING is the exact
 # dishonesty the third state exists to remove, so the tail follows the tally.
 if [ "${OSHAL_VERIFY_UNVERIFIED:-0}" -eq 0 ]; then
   VERIFY_TAIL="live verification passed"
 else
-  VERIFY_TAIL="${OSHAL_VERIFY_UNVERIFIED} check(s) UNVERIFIED — UNPROVEN as a product (see above)"
+  VERIFY_TAIL="${OSHAL_VERIFY_UNVERIFIED} check(s) UNVERIFIED — UNPROVEN as a product on ${OSHAL_VERIFY_UNPROVEN_STREAK:-1} consecutive run(s) (see above)"
 fi
 log "DEPLOYED ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots, parity clean, 0 unhealthy, ${VERIFY_TAIL}"
 log "advisory error scan (api, this boot):"
