@@ -47,6 +47,7 @@
  * 42 | maintainer@emeraldcoastsystemsgroup.com   | Docs-only: added the missing JSDoc block to dispatchTicket (the exported class's core swarm/build dispatch path) — every other method already carried one. Explains WHY it is the heavy path (owns child-ticket creation + parent-assembly + failure triage). No logic change (additive comment only).
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | ADR-119 P4 (A2): setAutoApplyGate — the bounded auto-apply hook threaded into the incident-RCA dispatch deps, wired at the app layer exactly like setBudgetService (optional; unset = unchanged Mode-A human gate). The hook is only ever consulted by the incident pipeline's Mode-A finalizer, never by the build/manifest/graph paths.
  * 44 | maintainer@emeraldcoastsystemsgroup.com   | Document the promoted default-on/fail-closed ADR-034 runtime-param rail threaded into manifest and incident dispatches.
+ * 45 | maintainer@emeraldcoastsystemsgroup.com   | Thread the ticket owner's hosted-connection resolver into manifest-worker dispatch so a protected application target can be sent in its supported direct/hosted shape instead of being signed, delegated and then denied at the worker.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -225,6 +226,14 @@ export interface QueueManagerPipelineDeps {
    * explicit flag-off restores legacy dispatch.
    */
   runtimeParamsResolver?: import('@/features/agent-management').RuntimeParamsResolver;
+  /**
+   * @description Resolves a ticket owner's HOSTED reasoning endpoint for a protected application
+   * dispatch. The protected worker admits only a direct, non-agentic request carrying a
+   * server-resolved `byoLlmConnection`, and a queued dispatch has no HTTP request of its own to
+   * resolve a brain from, so the controller supplies this. Unset → protected targets refuse naming
+   * the missing wiring; every unprotected dispatch is unaffected.
+   */
+  resolveHostedConnection?: import('./dispatch-manifest-worker').ManifestWorkerDispatchDeps['resolveHostedConnection'];
 }
 
 /**
@@ -725,6 +734,9 @@ export class QueueManagerService {
       // (default-on OSHAL_PUSH_ON_DISPATCH). An absent resolver becomes an explicit
       // unavailable-authority marker; flag-off is the compatibility rollback.
       runtimeParamsResolver: this.pipelineDeps?.runtimeParamsResolver,
+      // Protected application targets only accept a direct hosted request; this resolver is how a
+      // queued dispatch obtains the ticket owner's hosted endpoint for it.
+      resolveHostedConnection: this.pipelineDeps?.resolveHostedConnection,
     });
   }
 
