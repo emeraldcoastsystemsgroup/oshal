@@ -136,7 +136,12 @@ never has to be right.
 
 ## When it cannot reach ESPN
 
-The app degrades rather than lying, but the messages are worth knowing:
+The app degrades rather than lying, but the messages are worth knowing. **This table describes
+Sports Edge 0.8.0 and later.** Before that build, an unreachable ESPN and an unconnected account
+produce the SAME first message, and a failed schedule read is reported as a bye - so on an older
+install, do not read a connect prompt as proof that your cookies are the problem.
+
+Check the version on the app tile; the behaviour below is what 0.8.0 introduced:
 
 | what you see | what it means |
 |---|---|
