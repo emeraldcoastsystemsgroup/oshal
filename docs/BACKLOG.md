@@ -1809,32 +1809,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **The credential moved onto the critical path.** The draft engine needed none — pool, ADP and projections are public. Managing needs YOUR roster and your opponents', which in a private league means the two ESPN account cookies, and the operator has reported that team "having some issues". So **manual roster entry is a first-class input, not a fallback**: every weekly recommendation must be reachable from hand-typed rosters, with a guard that goes red if the connector ever becomes mandatory.
 - **Done when:** (P0) for a real league — connector-read or hand-typed — the weekly board produces a start/sit with the win probability it buys against the mean-maximising lineup, a waiver board ranked by rest-of-season swap value with a bid and a drop for each, and at least one two-sided trade showing both managers' gain; a guard proves an underdog is never handed the lower-variance lineup and that no proposal surfaces with `Δ_them ≤ 0`; and the ledger grades a completed week against what was actually started; (P1) a commissioner creates a league, sets scoring and roster slots, invites a member, and edits a roster, entirely from the surface, with every commissioner action in the audit trail and a spec proving a second league's admin can neither read nor write the first; (P2) a backtest over a completed season reports the draft engine's rosters against straight-ADP rosters across at least 100 simulated drafts with a loss reported as a loss, and a mock ESPN draft on an enrolled node feeds picks back with the recommendation updating within seconds, guarded so the session cookie never leaves the machine.
 
-### The node's ESPN sign-in window makes the user hunt for the one control that works
-
-- **Found 2026-09-09, with a live workaround already in hand.** `connectEspnFantasy` opens
-  `https://www.espn.com/fantasy/` and leaves the user to find a way in. The obvious control — the
-  **person icon** top-right — opens its dropdown and then does nothing at all when **Log In** is
-  clicked: the dropdown closes and no login appears. Reproduced inside the node's own Electron window
-  and screenshotted at +600 ms / +2 s / +5 s. The control that DOES work is the **Log In** button in
-  the *Customize ESPN* card in the right-hand rail, which hands off to MyDisney and redirects back;
-  that path produced this swarm's first working `espn-fantasy` connection (`connected`, SWID
-  resolved, 2026-09-09 22:45 UTC).
-- **Not ESPN being broken, and not the OneID error it logs.** The same page in a fresh real Chrome
-  opens the MyDisney overlay from the same click, and `[OneID] ERROR Session not established` appears
-  in the *working* Chrome run too — it is noise. Disabling `ThirdPartyStoragePartitioning`,
-  `TrackingProtection3pcd` and `PartitionedCookies` changed nothing. What differs is our window:
-  Electron's Client Hints carry no `Google Chrome` brand (`[Not;A=Brand, Chromium]`), which is the
-  untested remaining hypothesis rather than a conclusion.
-- **Remaining:** stop landing on a page where the first thing a user reaches for is dead. Either open
-  the login entry point directly (the Customize-ESPN button is a normal link into MyDisney with a
-  redirect back — capture that URL and load it), or keep the current landing page and put one line of
-  in-window guidance on it. Whichever, the person-icon path should not be the thing a first-time user
-  finds first.
-- **Done when:** a user who has never connected reaches an ESPN login form from *Log in + push*
-  without hunting, on a fresh node profile; the guide's instruction matches what the window actually
-  does; and if the direct-URL route is taken, a guard pins the URL so an ESPN change breaks a test
-  rather than the button.
-
 ### Fantasy — the app cannot tell "not connected" from "ESPN unreachable"
 
 - **Found 2026-09-09** while the box had no working DNS (the operator read it as an ESPN outage; it was the
@@ -1950,10 +1924,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** a read-only probe on 2026-09-07 with the paper key answered 200 on `GET /v1beta1/screener/stocks/movers` and `.../most-actives?by=volume` — whole-market movers can ride the OWNED key over REST; no paid screener is needed. `GET /api/trading/reports/movers` gains the screener as a second, labelled source (winners/losers ← `movers`, active ← `most-actives`; `volatile` stays on the bounded daily-bar board), printing the vendor's `last_updated` and the label "Alpaca screener" (the reference page calls the data "Real time SIP data" — the vendor's statement, not a measured guarantee), with a stated minimum-price / asset-directory filter because the raw board is dominated by sub-$1 warrants, and today's bounded report as the fail-soft fallback on any non-200.
 - **Done when:** with the paper key configured the movers report covers the whole US-equity board for winners/losers/active with source + `last_updated` shown on the surface; without it (or on a screener error) it degrades to today's bounded report, never a blank.
 
-### Trading — cash-account settlement: the autopilot clamp (ADR-134 D8 tail)
-- **Remaining:** wire the autopilot clamp. `settledBuyingPower(account, book)` is exported and unit-pinned but `capAccount` is untouched, because the dispatch module is being decomposed. CONSEQUENCE until it lands: an autonomous BUY on an ENABLED cash book that needs unsettled proceeds is REFUSED at the engine rather than sized down — noisy but safe, and moot today because the IRA book is disabled.
-- **Done when:** `capAccount` in the post-decomposition dispatch module starts with `account = settledBuyingPower(account, book);` and a spec pins that a rotation's post-sell re-read on a cash book sizes against settled cash only.
-
 ### Trading — cash settlement: three narrower gaps (ADR-134 D8)
 - **Remaining:** (1) `settlesOn` is weekday-only — it should skip NYSE holidays and share the calendar the ADR-136 D4 timed-order validator now carries. (2) Alpaca exposes no unsettled figure, so a cash-type Alpaca book falls back to the book's own ledger — reconcile it against the venue's non-trade activities or document it as ledger-only. (3) The legacy live book is typeless, so it pays one venue read per BUY and fails closed to a 503 when that read fails, even though it is a MARGIN account at the venue.
 - **Done when:** the settlement date skips exchange holidays; the Alpaca path is reconciled or explicitly documented as ledger-only on the surface; and the legacy live book carries a discovered `accountType` so neither the extra read nor the fail-closed refusal applies to it.
@@ -2008,17 +1978,9 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** one `/start` → browser → `:1455` round trip completes with the swarm logging a successful token exchange and `GET /api/openai-codex/oauth/status` reporting `authenticated:true` with an `expiresAt` that provably came from THAT exchange (not from a pre-existing credential or a refresh), captured in the real-boundary audit; and if the cause turns out to be the missing CLI flow parameters, the authorize URL carries them.
 - **Workaround meanwhile:** the file-push path works end to end — `codex login` on the machine, then **Push to swarm** in the node app (`POST /api/openai-codex/oauth/import`), verified 2026-09-08.
 
-### MOCK_OIDC truthiness — one predicate, three readings
-- **Remaining:** `isMockOidcEnabled()` (`src/shared/middleware/oidc.ts`) accepts `true|1|yes`, but `src/app/server.ts` tests `MOCK_OIDC === 'true'` exactly in two places — the demo-auth route mount and the `/api/auth/user` mode string. A deployment setting `MOCK_OIDC=1` gets the full auth bypass while reporting `mode:'oidc'` and missing the demo login routes. Every doc says `=true`, so doc-following deployments are unaffected. Found by the 2026-08-30 login-framework docs audit; flagged because SECURITY-POSTURE.md treats this flag as the bypass switch.
-- **Done when:** both `server.ts` call sites read the shared helper (or the helper narrows to exactly `'true'` — either way ONE source of truth), and a unit guard proves `MOCK_OIDC=1` and `MOCK_OIDC=true` behave identically across all three call sites.
-
 ### partner-app-registration.md covers about a third of the wired hub connectors
 - **Remaining:** the registration reference table omits ~19 providers that are wired in `connector-provider-registry.ts` (schwab, slack, square, paypal, plaid, jira, twilio, walmart, uber, uber-rides, duffel, ringcentral, kalshi, finnhub, bluesky, resend, plus the ADR-065 PAT batch). The generated per-spec pages under `docs/connectors/` do not cover partner registration (portal steps, env-var names, redirect overrides). Found by the 2026-08-30 connection-framework docs audit — the doc's own "every connector named here is wired" claim holds, but the reverse direction does not.
 - **Done when:** every `PROVIDERS` entry with auth `oauth`/`link` has a reference row (env keys verified against `providerCreds()`, redirect path/override named), or the doc explicitly lists which providers are PAT-paste-only and points at their `tokenHelpUrl`; any count in the doc derives from the registry, never typed.
-
-### Entra/local hybrid + identity bridge needs its decision record
-- **Remaining:** the composition is shipped (`application-auth.ts`, `entra-local-identity-bridge.ts`, `oshal_external_identity_links`; introduced 2026-08-17 per git log) and as of 2026-09-09 has an operator guide (`docs/security/entra-local-hybrid.md`), but no ADR: ADR-126 explicitly scoped LOCAL_AUTH out, and the design intent lives only in change-log headers and `.env.example`. Decisions worth recording, none of them derivable from the guide alone: link-once with no unlink/expiry rail, allowlist gating the FIRST link only, and an invited account being auto-accepted on link with the password invite left intact as rollback.
-- **Done when:** an `NNN-entra-local-identity-bridge.md` ADR records context/decision/consequences with a status line matching as-built, is indexed, ADR-126 carries a pointer to it, and the operator guide links it back.
 
 ### ADR-145 Home view: the browser render is still unverified (2026-09-09)
 - **Remaining:** the deploy half is CLOSED. `scripts/oshal-deploy.sh` ran unpiped to exit 0 on 2026-09-09 (image `4e6773a850c5`, label `b10f79f060eb` == HEAD), the `api fully up (healthy + auto-load)` gate that failed the two prior attempts passed in 26 s, census 35/35 healthy with parity clean and 0 restarts. The earlier failures were host memory pressure, not ADR-145: the box had ~1 GB available of 15.7 GB, and stopping the 34 bots the deploy recreates anyway (dropping the daemon's polled container count 46 -> 12) was enough for the gate to clear. `GET /api/swarm/apps/home-plan` was then verified AS A SIGNED-IN USER via a bootstrap-minted PAT (revoked by captured id immediately after, `revoked:true`): HTTP 200, 33 KB, **67 cards — 65 `kind:app` + 2 `kind:group`**. What is NOT verified is the part that needs a human at a browser: that the cockpit Home view actually RENDERS those cards, and that an app whose probe is broken degrades to "can't check" rather than showing a green state. Core returns manifest data only — every status/readiness probe is issued by the page in the viewer's own session (ADR-145 D6) — so no headless call can exercise the render or the degrade path.
@@ -2212,34 +2174,6 @@ deploy. The live proof was cut short by two Docker engine wedges on the host, so
   (expects `202` and a row with the caller's issuer), and deletes both — so the exact failure the operator hit
   is exercised live by the Lab on every run, not only by fixtures. Needs a server-side cleanup path for the
   rows it creates; it must never touch a thread the user actually uses.
-
-### Package-owned engine containers need a documented pattern (2026-09-14)
-
-**Context:** two packages now run their compute in a container the package owns, because the api image is
-Alpine and their Python stacks publish glibc-only wheels — `aero-lab` 1.2.0 (aerosim; casadi has no musl
-wheel) and `cad-studio` 0.1.0 (OCCT/CadQuery). Both arrived at the same shape independently: an
-`engine/container/Dockerfile` built locally from upstream images and PyPI pins (nothing third-party
-committed, no image published), an `engine/install-engine.sh` run from inside the api container, its own
-compose project so the core deploy's `--remove-orphans` cannot sweep it, a join to the stack network by
-alias with no published port, and a build-hash handshake so a container built from a different package
-tree is refused with the exact reinstall command instead of answering with stale physics. The store's
-[BUILDING-EXTENSIONS.md](https://github.com/emeraldcoastsystemsgroup/oshal-applications/blob/main/BUILDING-EXTENSIONS.md)
-has no section on any of it, so the third package will hand-roll it again from two sources that already
-disagree in small ways.
-
-**Done when:**
-- BUILDING-EXTENSIONS.md carries the pattern with both shipped precedents named, and a new package can
-  follow it without reading either package's source.
-- The three properties that are load-bearing are stated as requirements, not options: the compose project
-  name is the package's own and is asserted after `up` (an inherited `COMPOSE_PROJECT_NAME` silently put
-  the first one in the core project, where the next deploy swept it); the container carries no
-  `oshal.tier` label (that is the Prometheus docker_sd selector for core/worker tiers); and a stale
-  container is refused with the install command rather than served.
-- The capability route hands the surface the reason and the install command, so no surface hardcodes
-  setup instructions — the behaviour aero-lab's engine-down banner already has.
-- An installed package ends up with a working engine without an operator step, or the refusal path is
-  explicit: either the installer runs a declared post-install command, or the first engine call builds
-  and starts the container, and when it cannot, capabilities stay false with the exact command.
 
 ### A calendar-preparation agent: brief me before the meeting (2026-09-14)
 
@@ -2542,95 +2476,6 @@ work in `ocean-lab`, `aero-lab` and `embodied`; no core code.
   self-consistent, not that the machine is safe to build, fly or wet; and every run result carries its medium id
   and engine fingerprints or is not displayed. No slice buys, builds or tests hardware, and none attempts
   free-surface hydrodynamics, added mass, cavitation, or aerodynamics inside the physics plant.
-
-### The ticket-row escalation mirror outlives the escalation it describes (2026-09-15)
-
-**Context:** every ticket carries `metadata.lastStatusTransition`, a mirror of its most recent
-status transition, and `deriveTicketEscalationDetail` falls back to it when the append-only
-history cannot answer. Two rules combine so that the mirror is not replaced when a ticket leaves
-`escalated`: `buildTicketRowStatusMetadataPatch` returns `null` for empty transition metadata
-([ticket-status-row-metadata.ts:28](../src/entities/ticket/ticket-status-row-metadata.ts)), and
-`buildStatusTransitionMetadata` returns the caller's metadata unchanged for any target other than
-`escalated` or `dead_letter`
-([ticket-service.ts:489](../src/features/ticketing/services/ticket-service.ts)) — so a
-de-escalation raised with no metadata, which is what the cockpit's status route sends, writes a
-history row but leaves the escalation mirror in place on the ticket row.
-
-**Live instance:** ticket `104b11e1-cb27-450c-922e-0fbbd4dac4ec` on the operator box is
-`status='cancelled'`; its newest transition is `escalated → cancelled` at
-`2026-07-24 00:52:31.680879+00` carrying `reason='wrong_id_space'`, and the ticket row's
-`updated_at` is that same instant — yet `metadata.lastStatusTransition.status` still reads
-`escalated` with `reason='browser_submission_dispatch_failed'` and
-`escalatedAt='2026-07-24T00:45:53.950Z'`, and the row's top-level `reason` / `statusSource` /
-`nextAction` are likewise the escalation's. The ticket row was written by the cancelling call
-through the no-patch arm of `updateStatus`, while the history row for the same transition
-carries a reason — so the two came from different calls. What issued them is not established:
-the `wrong_id_space` text appears nowhere in the tree, and `recordStatusHistory` is a public
-store method any caller can use.
-
-**Why nothing is visibly wrong today:** the cockpit never reaches the mirror unless the ticket's
-live status is `escalated` — `readRecordedEscalation` returns `{ detail: null, escalatedAt: '' }`
-for every other status
-([cockpit-ticket-activity-route.ts](../src/app/routes/cockpit-ticket-activity-route.ts)) — and an
-escalation raised through `TicketService` is backstopped with `reason: 'unspecified_escalation'`,
-so a re-escalated ticket is answered by its history row before the mirror is consulted. The shape
-occurs on this database; it is currently unrenderable, not impossible. It becomes operator-facing
-the moment a ticket is escalated by a path that writes a history row without a reason — which
-has happened: 4,745 of the 5,153 all-time `→ escalated` history rows carry `metadata = {}`.
-4,712 of those belong to one ticket (`1d7763ce-b657-461f-9667-ce667effe2cb`) over ~20 hours of
-`system` escalate/de-escalate churn on 2026-06-21/22; the remaining 33 are single rows, 10 of
-which land inside 131 ms at `2026-06-22 14:27:24.243–.374` across 10 distinct tickets. What
-produced either group is not established — do not repeat a characterisation of them as a seed or
-a backfill without evidence.
-
-**Done when:** a transition that leaves `escalated` replaces or clears the ticket row's
-escalation mirror even when it carries no metadata, so `deriveTicketEscalationDetail` cannot
-return a reason belonging to an escalation the ticket is no longer in; and a unit guard proves
-it by escalating a ticket with a reason, de-escalating it with no metadata, and asserting the
-mirror no longer reports `status: 'escalated'` — proven red against today's code, which returns
-the stale reason. The guard asserts on the mirror directly rather than through the cockpit route,
-because the route's `status !== 'escalated'` gate hides the defect.
-
-### Downstream authorization readiness still caches a boot failure
-
-**Severity correction — the first version of this entry understated the blast radius.** It listed
-the consequences as "the authorization tools are never registered, Jarvis briefings and Test Lab
-run history never get their schema, and the user-directory routes refuse". It omitted the
-consequential one: **authenticated ticket creation throws for the entire life of the process.**
-`createQueuedApplicationPrincipalWiring` (`src/app/server.ts:1059`) builds the queued-principal
-store on this readiness; `TicketService.createTicket` called `captureQueuedApplicationPrincipal`
-unconditionally and without a `catch`
-([ticket-service.ts:142](../src/features/ticketing/services/ticket-service.ts)); and
-`PostgresQueuedApplicationPrincipalStore.capture` awaits that readiness directly. The global
-`createApplicationActorContext` middleware (`server.ts:1063`) binds an active actor on every
-authenticated request, so the early returns inside `captureQueuedApplicationPrincipal` do not
-apply to an ordinary authenticated creation. The capture runs AFTER the row is inserted, so the
-ticket is committed, the caller is told the request failed, and a retry duplicates it — while
-health checks stay green. Reproduced against disposable `postgres:16-alpine` in
-`tests/unit/authorization-readiness-consumers.spec.ts`: on `1f0978a0` both cases fail with
-`timeout exceeded when trying to connect`, the first of them raised out of `createTicket`.
-
-The cause is the defect `createSchemaReady` fixed, one level out. The bootstrap thunk is
-re-requestable, but the readiness the wiring RETURNED was `readySchemas().then(() =>
-registerAuthorizationTools(...))` — a plain promise, created once — and four modules chain off it:
-`createQueuedApplicationPrincipalWiring` and `createUserDirectoryRoutes` in
-`src/app/server.ts:1059,1144`, plus `jarvis-briefing-wiring.ts:69` and `test-lab-wiring.ts:78`,
-which each build their own schema on top of it. A failed first attempt was inherited by all four
-permanently, even though every authorization operation had since recovered.
-
-**Remaining:** nothing on the readiness itself (PR #498) — the returned value is now
-`createRetryableReady(...)` (`src/shared/services/database/retryable-ready.ts`, the shape
-`createSchemaReady` and the ADR-157 activation wiring each wrote by hand), every consumer asks it
-per operation, and ticket creation logs and degrades rather than losing a committed row to a
-supplementary capture. What the guard does NOT cover: the user-directory and Jarvis-briefing
-routes are proven only at their readiness seam, not driven over HTTP, because no unit-level HTTP
-harness exists for them; and `test-lab-schedule-wiring.ts` still starts polling off the first
-readiness attempt, so a first-attempt failure leaves schedule polling stopped until restart even
-though schedule reads themselves now recover.
-
-**Done when:** a first-attempt bootstrap failure leaves no consumer permanently dead — covered for
-ticket creation and tool registration by `tests/unit/authorization-readiness-consumers.spec.ts`,
-and still open for Test Lab schedule polling above.
 
 ### Event-plan EXITS are not ring-fenced, only the entry is
 
