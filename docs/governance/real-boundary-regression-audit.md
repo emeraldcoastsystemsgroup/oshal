@@ -43,6 +43,7 @@ provider claim still needs a separate live acceptance run.
 | `tests/unit/app-status-dashboard-route.spec.ts` + `tests/unit/app-status-dashboard-browser.spec.ts` (ADR-145 D3/D4 — the status dashboard for an APP, not only a group) | Scoped doubles OUTSIDE the boundary, all in `tests/fixtures/app-status-dashboard.ts`: the installation repository (in-memory records instead of Postgres — what PostgreSQL does with `swarm_applications` is not this claim), the `pg` driver behind the D5 `jarvis_tasks` read, and the caller's identity middleware. No resolver is doubled: the earlier ADR-145 harnesses stubbed `/api/swarm/apps/home-plan` with a hand-fed plan, which is exactly what this replaces. | REAL: one loopback express listener carrying the shipped `createSwarmAppRoutes` router, the real `SwarmAppService`, the real `getAppStatusPlan`, the shipped `src/pages/cockpit/tools/app-group-setup.html` served by the real `GET /:name/setup-dashboard`, the real `/shared/ui` assets, and synthetic packages answering at their OWN declared `mountPath`s. The plan is fetched over HTTP and the probe path THE PLAN NAMED is then fetched at that same origin. The browser half drives headless Chromium (isolated profile, loopback-only routing) against that page and asserts the render an operator sees: four tiles truncated from five, the same-app `fix` button kept and the foreign one dropped, the two readiness steps beneath them at `1 of 2 steps done`, and a deliberately broken probe (HTTP 500) painting `can't be checked right now` with no tile, no `tone-good` and no `step done`. Red on 11 of 12 against the unchanged route and page; the one green case is the 404 for an unknown name, which is unchanged behaviour. NOT evidence that a signed-in operator has seen this on the deployed box — that live check is its own BACKLOG entry. | Green 2026-09-16 |
 | `tests/unit/app-registry-dns-fence.spec.ts` (ADR-147 D10 — a registry hostname that resolves into private space) | None on the boundary that failed. The two App Loader browser fixtures (`multi-store-routes-browser`, `app-dependencies-loader-browser`) DO hold scoped doubles outside it — `https.request` bridged to their own loopback express catalog, and the `DEFAULT_HOST_RESOLVER` seam answering a public address so those suites stay offline instead of asking the box's real DNS about github. Neither claims anything about the fence. | REAL: a loopback DNS server built in the spec (hand-encoded A/AAAA answers over UDP) read through a real node `dns.Resolver` pointed at it, driving the shipped `fetchRegistryCatalog` on both routes (raw-file API and `generic-git`); and a real `net` listener proving `pinnedLookup` sends `https.request` to the approved address under a hostname that does not resolve, with the un-pinned control failing `ENOTFOUND` at the same listener. The measured quantity — what the resolver answers and where the socket lands — is the quantity that was missing. Red on 7 of 15 against the pre-fix fence (`10.0.0.7` came back as `registry unreachable`, never refused) and red on the same 7 when the resolve step is removed. NOT evidence about the installer child's own clone, which is still unfenced (recorded in ADR-147's Not built), and not an in-container observation. | Green 2026-09-16 |
 | `tests/unit/onnx-global-rethrow-handlers.spec.ts` (the ONNX wasm runtime's process-global rethrow listeners turning any stray rejection into an api exit) | No double on the boundary: the process listener registry, the ONNX runtime, `installProcessCrashGuards` and the stray rejection are all real, in real child processes. One case is NOT behavioural — a source-text pin that `local-embedding-service.ts` snapshots before the dynamic import and strips in `finally`. That pins WIRING only and is not closure evidence by itself; its real companion is the in-image case, which runs the real `load()`. | REAL: the installed `onnxruntime-web/dist/ort-web.node.js` (its own listener text is materialised and fed through the classifier the fix depends on); a real wasm init via a failing `InferenceSession.create(new Uint8Array([1,2,3,4,5,6,7,8]))`; the real crash guards; and an unawaited `Promise.reject` in a real child — survivable with the runtime absent, **fatal at exit 7** with it present and unstripped, survivable again after `stripRethrowGuards`. Plus two docker-gated cases inside `oshal-bot:latest`, where `Dockerfile.oshal:216-225` shims `onnxruntime-node` to `onnxruntime-web` and the defect is actually created: the real `load()` against the real model, pre-load 1/1 → 2/2 and exit 7 unfixed, 1/1 and exit 0 fixed, `embed(['x'])` = 384 dims both ways. The no-fix control is asserted, so a dependency that stops misbehaving fails the suite instead of passing it vacuously. NOT evidence about the running api container — no live process was observed, and the deploy-window `RestartCount` re-check is still owed. | Green 2026-09-16 |
+| `oshal-applications` sports-edge `sports_fantasy_player_weeks` (the scoring history a lineup's spreads are measured from) | Scoped double INSIDE the boundary: `sports-edge/tests/sports-fantasy-history.test.js` serves the table from memory, decoding the parameters the store's own `INSERT`/`SELECT` actually send. It proves the ROUTE writes the weeks and reads them back — which is what shipped broken — and it cannot prove PostgreSQL accepts the statements, because a double cannot refuse a bad one. | `sports-edge/tests/postgres/player-weeks-contract.mjs` runs the shipped migration, the runtime self-heal DDL over the migrated schema, the chunked upsert and its idempotence over a real primary key, the JSONB round trip and the read's season / week-exclusive / roster bounds, reading every row back over a second connection. | Real companion written and run (2026-09-16, disposable `postgres:16-alpine`); **OUTSTANDING: nothing runs it automatically** — see the section below. |
 
 ## Configurable Home (2026-09-09)
 
@@ -193,6 +194,49 @@ ticket-store and authorization RLS entries above.
 variable there is the retry arithmetic (one shared in-flight attempt, a dropped failed attempt, the
 cooldown) and the reporting surface (`/api/readiness` `persistence` leg), not the database. It is
 NOT closure evidence for the database seam; the file above is.
+
+## Store package: sports-edge player-weeks (2026-09-16)
+
+`sports_fantasy_player_weeks` is a new table in the `oshal-applications` sports-edge package. The
+defect it exists to prevent was a ROUTE that never read a scoring history — the lineup advisor
+served the highest-projected lineup every time because `pointsHistory` had no producer anywhere in
+the package — so the regression guard has to cross the route, and it does:
+`sports-edge/tests/sports-fantasy-history.test.js` drives the real compiled `GET /fantasy/lineup`
+and fails on either revert of the wiring.
+
+The database round trip inside that route is DOUBLED, and the double sits inside the boundary rather
+than outside it. It is honest about what it is: the pool records the `INSERT INTO
+sports_fantasy_player_weeks` parameters the store actually sent, decodes them four at a time in the
+order the store builds them, and answers the `SELECT` under the same season / week / roster bounds.
+That is enough to prove the route's wiring and nothing more. A double cannot reject a statement
+PostgreSQL would reject.
+
+**The real companion exists and passed.** `sports-edge/tests/postgres/player-weeks-contract.mjs`
+was run on 2026-09-16 against a disposable `postgres:16-alpine` on `127.0.0.1:55491` (never
+`oshal-local-db`; the container was destroyed after the run): the shipped
+`migrations/005-sports-fantasy-player-weeks.sql`, `ensureFantasySchema` re-run over the migrated
+schema, 1,007 rows written across 3 chunks and counted back over a second connection, the
+`ON CONFLICT` upsert re-applied with the row count unchanged, the JSONB round trip, the
+week-exclusive / prior-season / roster bounds, and the empty-roster short circuit — seven clauses,
+236 ms, all PASS. Self-validated per rule 2: deleting the `ON CONFLICT (season, week, player_id)
+DO UPDATE` clause turns it red with `duplicate key value violates unique constraint
+"sports_fantasy_player_weeks_pkey"`, so the server is genuinely enforcing rather than the fixture
+agreeing with itself.
+
+**What is outstanding is the wiring, not the test.** The sports-edge store-ci job is a
+dependency-free plain-node contract — `node --test "tests/*.test.js"` with no framework checkout, no
+`npm install` and no service container — so it has neither a `pg` driver nor a database. A case that
+SKIPS without one would be worse than this entry: the store's local gate exits non-zero on a skip,
+and the sanctioned-skip list in that repository's `CONTRIBUTING.md` does not include this package.
+The contract therefore lives in `tests/postgres/`, outside the job's glob, where it cannot pass
+vacuously. The done-when for closing this row is `sports-edge/BACKLOG.md` entry F: a PostgreSQL
+service container on that job, a step that runs the contract, the env var taught to
+`scripts/store-ci-local.mjs` as a capability, and the sanctioned-skip list extended to name it.
+
+This table has no RLS and no owner column by design — it is a shared, league-agnostic cache of raw
+stat lines keyed by `(season, week, player_id)`, the same posture as the existing
+`sports_fantasy_projections`. The tenancy boundary is therefore not what this row is about; the
+statement boundary is.
 
 ## Rules for future fixes
 
