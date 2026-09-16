@@ -6,7 +6,7 @@
      kernel composed for an app that declares no summary probe.
 
      It then asks every probe ITSELF, in this signed-in user's own session — never a service secret,
-     never a PAT. Bounds are ADR-145 D7: 3s per probe, at most 6 in flight, one probe's failure never
+     never a PAT. Bounds are ADR-145 D7: 3s per probe MEASURED TO THE BODY (a probe that sends headers and then stalls is aborted the same as one that never answers), at most 6 in flight, one probe's failure never
      blocks another. A step is done only when the member's readyPointer resolves to boolean true; an
      HTTP error, a missing pointer or a non-boolean renders "can't check", never as done, and a
      summary pointer that is missing or wrong-typed renders "can't check", never a fact and never a
@@ -126,15 +126,24 @@
     var timer = controller ? setTimeout(function () { controller.abort(); }, PROBE_TIMEOUT_MS) : null;
     var init = { credentials: 'same-origin', headers: { Accept: 'application/json' } };
     if (controller) init.signal = controller.signal;
+    // The timer must outlive the HEADERS. fetch resolves as soon as they arrive, so clearing it here
+    // left a probe that answers 200 and then never finishes its body with no bound at all - measured
+    // at 15 s and still waiting, while Promise.all held back every probe that HAD answered.
+    function done(value) { if (timer) clearTimeout(timer); return value; }
     return fetch(path, init).then(function (r) {
-      if (timer) clearTimeout(timer);
-      if (r.status === 401) return { ok: false, reason: 'Sign in again to check this.' };
-      if (!r.ok) return { ok: false, reason: 'answered HTTP ' + r.status + '.' };
-      return r.json().then(function (body) { return { ok: true, body: body }; },
-        function () { return { ok: false, reason: 'answered with something that is not JSON.' }; });
+      if (r.status === 401) return done({ ok: false, reason: 'Sign in again to check this.' });
+      if (!r.ok) return done({ ok: false, reason: 'answered HTTP ' + r.status + '.' });
+      return r.json().then(function (body) { return done({ ok: true, body: body }); },
+        function (err) {
+          // An abort DURING the body is the timeout doing its job, and reads like an unreachable
+          // probe to the person looking at the page - not like malformed JSON.
+          var aborted = err && (err.name === 'AbortError' || (controller && controller.signal.aborted));
+          return done(aborted
+            ? { ok: false, reason: 'did not finish answering.' }
+            : { ok: false, reason: 'answered with something that is not JSON.' });
+        });
     }, function () {
-      if (timer) clearTimeout(timer);
-      return { ok: false, reason: 'is not reachable.' };
+      return done({ ok: false, reason: 'is not reachable.' });
     });
   }
 

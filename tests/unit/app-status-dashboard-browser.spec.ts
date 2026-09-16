@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-145 D3 render guard, in a real browser against the real page. Chromium loads the SHIPPED src/pages/cockpit/tools/app-group-setup.html exactly as the real GET /:name/setup-dashboard route serves it, it fetches the real plan from the real GET /:name/setup, and it asks each synthetic package's summary and readiness probes itself over the same origin — the page's own fetch discipline, unmodified. The cases assert what an operator would see: one app's tiles and items in "What's going on" ABOVE its setup steps in "What still needs you", and a deliberately broken probe rendering "can't be checked" with no tile and no green mark. Isolated browser, loopback-only routing, no page script is stubbed.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | A probe that answers and then stalls, plus the D5 fallback RENDER. The first had no bound at all - fetch resolves on headers, so clearing the timer there left a stalled body waiting forever and Promise.all held back every probe that had answered (measured 15 s, undegraded). The second is the user-visible half of D5, asserted server-side and executed by nothing.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import type { Browser, BrowserContext, Page } from 'playwright';
@@ -115,6 +116,31 @@ it('renders one app\'s tiles and items beside its setup steps on the shipped pag
   ]);
   expect(view.count).toBe('1 of 2 steps done');
 });
+
+it('bounds a probe that answers and then stalls, instead of waiting on it forever', async () => {
+  // The bound has to outlive the HEADERS. Measured against this page before the fix: a dead socket
+  // degraded at 3.0 s, but headers-then-nothing was still undegraded at 15 s - and because the
+  // probes are joined with Promise.all, that one lane held back every probe that had answered.
+  const started = Date.now();
+  await open('fixture-slow');
+  const view = await rendered();
+  const elapsed = Date.now() - started;
+
+  expect(view.notice, 'the page must say it could not check, not stay blank').toMatch(/could not|can.t|not reachable|finish/i);
+  expect(elapsed, 'the 3 s probe bound did not apply to the body').toBeLessThan(12_000);
+  // And never invents a fact from a body it never received.
+  expect(view.tiles).toEqual([]);
+}, 30_000);
+
+it('renders the D5 fallback items for an app that declares nothing', async () => {
+  // The server side of the fallback is asserted elsewhere; this is the branch that turns those rows
+  // into what a person actually reads, and nothing executed it.
+  await open('fixture-quiet');
+  const view = await rendered();
+  const texts = view.items.map(item => item.text).join(' | ');
+  expect(view.items.length, 'an app with recent task history must not render as empty').toBeGreaterThan(0);
+  expect(texts).toMatch(/swept the queue|reconciled the ledger/);
+}, 30_000);
 
 it('a deliberately broken probe renders "can\'t be checked", never a green state and never a zero', async () => {
   await open('fixture-broken');

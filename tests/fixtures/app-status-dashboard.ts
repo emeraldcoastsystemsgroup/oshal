@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-145 REAL-BOUNDARY fixture. One express listener on 127.0.0.1 carrying the REAL swarm-app router (real SwarmAppService, real manifest resolution, real getAppStatusPlan, and the shipped app-group-setup.html served by the real /:name/setup-dashboard route) alongside synthetic packages answering at their OWN declared mountPaths and the real /shared/ui assets the page links. Nothing on the request path is mocked: the plan is fetched over HTTP and the probe path the plan names is answered at that same origin. Doubled, and named as such: the installation repository (in-memory records instead of Postgres), the pg driver behind the D5 jarvis_tasks read, and the caller's identity middleware.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | A probe that answers and then stalls, plus the D5 fallback RENDER. The first had no bound at all - fetch resolves on headers, so clearing the timer there left a stalled body waiting forever and Promise.all held back every probe that had answered (measured 15 s, undegraded). The second is the user-visible half of D5, asserted server-side and executed by nothing.
  */
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import { resolve } from 'node:path';
@@ -70,9 +71,12 @@ export const TYPED = manifest('fixture-typed', { summary: { path: '/api/fixture-
 export const QUIET = manifest('fixture-quiet');
 /** Owned by somebody else — must 404 exactly like a name nothing installed. */
 export const PRIVATE = manifest('fixture-private');
+/** Its summary sends headers and then never finishes the body — the shape that has no bound unless
+ *  the probe timer outlives the headers. */
+export const SLOW = manifest('fixture-slow', { summary: { path: '/api/fixture-slow/summary', tilesPointer: '/tiles' } });
 
 const RECORDS = [
-  record(OK), record(BROKEN), record(TYPED), record(QUIET),
+  record(OK), record(BROKEN), record(TYPED), record(QUIET), record(SLOW),
   record(PRIVATE, 'person', 'auth0|somebody-else'),
 ];
 
@@ -140,6 +144,12 @@ export async function startAppStatusDashboardFixture(): Promise<AppStatusDashboa
   app.get('/api/fixture-ok/history', (_req, res) => res.json({ ready: false, detail: 'No history imported yet' }));
   app.get('/api/fixture-broken/summary', (_req, res) => res.status(500).json({ error: 'the app is broken' }));
   app.get('/api/fixture-typed/summary', (_req, res) => res.json({ tiles: 'not an array at all' }));
+  // Headers immediately, body never. fetch() resolves the moment these arrive, so a timer cleared
+  // there leaves this probe unbounded - and Promise.all makes one of these hold back every other.
+  app.get('/api/fixture-slow/summary', (_req, res) => {
+    res.status(200).setHeader('Content-Type', 'application/json');
+    res.write('{"tiles":[');
+  });
 
   const server: Server = app.listen(0, '127.0.0.1');
   await new Promise<void>((done) => server.once('listening', () => done()));
