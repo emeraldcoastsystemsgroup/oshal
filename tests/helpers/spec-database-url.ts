@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add specContainerName, the same no-default rule for a spec that reaches a database through `docker exec` rather than a DSN. A container variable falling back to the local stack's own database container is the identical defect wearing a container name instead of a port: the resolver refused the live DSN while the psql the spec actually ran went to the live container anyway. Unset now throws and names the variable, and the live stack's own containers are refused outright — there is no acknowledgement flag here, because a spec that execs into a deployment container has no read-mostly case the way host-database-url.ts does.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Resolve the database a DESTRUCTIVE spec connects to, and REFUSE when nothing pointed it anywhere. 23 DB-backed specs ended their DSN expression in a hardcoded loopback fallback built from the compose published-port knob, and that port is the operator LIVE trading Postgres — so `npx vitest run tests/unit/trading-*.spec.ts` with no environment variable set created and dropped schema, and wrote order rows (some tagged mode=live), in production. It fired twice on 2026-09-14 from two lanes that had each been told in writing not to touch that database, and left 24 orphan spec-* rows in oshal_trading_books accumulating since 2026-09-07. A brief is not a guard; the DEFAULT had to change. This resolver has no default: unpointed throws and names the variables that would have answered, and a DSN that lands ON the live published port throws unless the run says out loud that it meant it. The published-port constant is imported from host-database-url.ts rather than restated — that module rewrites a compose DSN for a HOST-side Playwright run, which is a legitimate read-mostly use of the published port, and it is deliberately left byte-identical.
  */
 
@@ -94,4 +95,36 @@ export function specDatabaseHost(vars: readonly string[], env: NodeJS.ProcessEnv
     throw new Error(`${vars.join('/')} must be a URL-shaped DSN for this spec — it derives a second role's DSN from its host and port.`);
   }
   return url.host;
+}
+
+/** The local stack's own containers. A spec may never reach one of these, by any variable. */
+const LIVE_STACK_CONTAINERS = new Set(['oshal-local-db', 'oshal-local-tsdb', 'oshal-local-redis', 'oshal-local-api']);
+
+/**
+ * @description Resolve the CONTAINER a spec reaches a service in through `docker exec`. Same rule as
+ * {@link specDatabaseUrl} and for the same reason: the silent default that used to sit here named the
+ * live stack's own container, so a spec whose DSN was correctly pointed at a throwaway still ran its
+ * `psql` against the deployment. There is no default and no acknowledgement flag — an exec into a
+ * deployment container writes with the deployment's own credentials, which no spec has a case for.
+ * @param variable - The environment variable naming the container this spec should use.
+ * @param env - Environment to read (injectable so the guard can exercise both outcomes).
+ * @returns The container name the spec must use.
+ * @throws When the variable is unset, or names a container belonging to the local stack.
+ */
+export function specContainerName(variable: string, env: NodeJS.ProcessEnv = process.env): string {
+  const value = (env[variable] ?? '').trim();
+  if (!value) {
+    throw new Error(
+      `This spec runs commands INSIDE the container it is given, so it has no default: set ${variable} ` +
+      `to a DISPOSABLE container. It must not be one of the local stack's own ` +
+      `(${[...LIVE_STACK_CONTAINERS].join(', ')}) — those hold the operator's real data.`,
+    );
+  }
+  if (LIVE_STACK_CONTAINERS.has(value)) {
+    throw new Error(
+      `${variable} names ${value}, a container of the LIVE local stack, and this spec writes through ` +
+      `it. Point it at a disposable container instead.`,
+    );
+  }
+  return value;
 }

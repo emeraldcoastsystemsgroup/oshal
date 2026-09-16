@@ -5,9 +5,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D6 event playbooks against the REAL oshal Postgres (fail-loud when the stack is down): the FORCE-RLS table exists; params normalize/refuse; the state machine walks armed → watching → priced (EDGAR fakes: S-1 then 424B4 with a parseable price + ticker) → listed → entry_placed (a real 'event-playbook' decision row on the plan's book) → filled → exits_placed (TP limit GTC + stop GTC) → closed on the take-profit with the STOP CANCELLED and P&L recorded; the disarm path cancels working orders; delete refuses an active plan; the 424B4 parser reads price + ticker; the leg refuses to act while TRADING_EVENT_PLANS is off.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | This spec now STARTS its own PostgreSQL and removes it, the way the ADR-159 dispatch guards do, instead of taking an address from the environment at all. Refusing an unpointed run made the accident impossible but left the spec unrunnable, so it proved nothing in any gate; a private server makes it both safe and executable, and there is no longer any value a caller can supply that would reach a deployment. The DELETE-by-sub teardown is gone with it — the container is destroyed, so no cleanup SQL runs anywhere, which is the property that failed twice on 2026-09-14. The `ALTER TABLE ... OWNER TO oshal_app` handoff is gone too: that role exists only in the shared deployment this spec no longer touches.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import crypto from 'crypto';
 import {
   ensureEventPlansSchema, normalizeEventPlanParams, createEventPlan, armEventPlan, disarmEventPlan, deleteEventPlan, getEventPlan,
@@ -18,9 +19,14 @@ import { ensureBooksSchema, ensureLegacyBooks, legacyBook } from '../../src/app/
 import { ensureTradingSchema } from '../../src/app/trading-engine';
 import type { AppContext } from '../../src/app/composition/app-context';
 import type { OrderResult } from '../../src/features/trading';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+// A PostgreSQL this file owns: started here, removed in afterAll, reachable from nothing else.
+// `row_security=off` keeps the superuser's reads across the FORCE-RLS plan table explicit.
+const database = new DisposablePostgres({
+  purpose: 'trading-event-plans', database: 'trading_fixture', memory: '384m', max: 4,
+  statementTimeoutMs: 60_000, options: '-c row_security=off',
+});
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-evt-${RUN}`;
 let pool: Pool;
@@ -48,24 +54,13 @@ beforeAll(async () => {
   // Sizing is capped by the engine guardrails; pin them to the operator box's values so the share
   // counts below are deterministic (the code default of $1,000/order would cap the entry at 19 shares).
   process.env.TRADING_MAX_NOTIONAL_USD = '50000'; process.env.TRADING_MAX_QTY = '100000';
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try { await pool.query('SELECT 1'); } catch (error) {
-    throw new Error(`trading-event-plans requires the live oshal Postgres at ${DSN.replace(/:[^:@/]+@/, ':***@')} — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
+  pool = await database.start();
   await ensureBooksSchema(pool as never); await ensureTradingSchema(pool as never); await ensureEventPlansSchema(pool as never);
-  // The spec connects as the superuser; if IT creates the table first the api (oshal_app) gets 42501 on
-  // it. Hand ownership to the app role when that role exists (the 2026-09-01 spec-owned-table lesson).
-  await pool.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'oshal_app') THEN EXECUTE 'ALTER TABLE oshal_trading_event_plans OWNER TO oshal_app'; END IF; END $$;`);
   await ensureLegacyBooks(pool as never, SUB);
 }, 120_000);
 
-afterAll(async () => {
-  await pool.query(`DELETE FROM oshal_trading_decisions WHERE user_sub = $1`, [SUB]).catch(() => {});
-  await pool.query(`DELETE FROM oshal_trading_signals WHERE user_sub = $1`, [SUB]).catch(() => {});
-  await pool.query(`DELETE FROM oshal_trading_event_plans WHERE user_sub = $1`, [SUB]).catch(() => {});
-  await pool.query(`DELETE FROM oshal_trading_books WHERE user_sub = $1`, [SUB]).catch(() => {});
-  await pool.end();
-});
+// No DELETE pass: the whole server goes away, so there is nothing to clean and nowhere to clean it.
+afterAll(async () => { await database.stop(); });
 
 describe('schema + params', () => {
   it('the plan table is FORCE-RLS with an owner policy', async () => {
