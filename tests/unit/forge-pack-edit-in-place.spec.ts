@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Bot Forge edit-in-place guard: re-deploying an edited pack must re-emit the SAME pack (same bot agentIds, same ticketType, one manifest, bumped version) instead of minting a duplicate identity set. Drives the REAL swarm-pack router over HTTP against a real on-disk pack tree and the real emitted manifest.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A pack slug belongs to whoever deployed it. The pack tree is per-user but the emitted manifest path is not, so a second authenticated user deploying the same slug inherited the incumbent agent ids and ticket queue and overwrote their manifest - loadApp then registered the newcomer persona under the row the incumbent tickets point at. The emission now records packOwnerKey and a deploy that would take over another owner slug is refused 409. A manifest written before owners were stamped carries none and is adopted, because breaking the packs already deployed here would cost more than it saves.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -69,6 +70,7 @@ function emittedBots(manifest: Record<string, unknown>): Array<{ name: string; a
 }
 
 describe('Bot Forge edit-in-place — an edited pack re-emits the SAME pack', () => {
+  let currentSub = SUB;
   let server: Server;
   let baseUrl = '';
   const loaded: string[] = [];
@@ -77,7 +79,8 @@ describe('Bot Forge edit-in-place — an edited pack re-emits the SAME pack', ()
     const { createSwarmPackRoutes } = await import('../../src/app/routes/swarm-pack-routes');
     const app = express();
     app.use((req: Request, _res: Response, next: NextFunction) => {
-      (req as unknown as { oidc: { user: { sub: string } } }).oidc = { user: { sub: SUB } };
+      // Switchable, so one case can come back as a DIFFERENT authenticated user against the same slug.
+      (req as unknown as { oidc: { user: { sub: string } } }).oidc = { user: { sub: currentSub } };
       next();
     });
     app.use('/api/swarm/packs', createSwarmPackRoutes({
@@ -158,6 +161,44 @@ describe('Bot Forge edit-in-place — an edited pack re-emits the SAME pack', ()
     expect(second.body.edited).toBe(true);
     expect(second.body.version).toBe('1.0.1');
     expect(secondManifest.version).toBe('1.0.1');
+  });
+
+  it('refuses a deploy that would take over another owner\'s slug, instead of inheriting their identity', async () => {
+    // Packs are per-user; the emitted manifest path is not. Before this, a second user deploying the
+    // same slug inherited the first user's agent ids and ticket queue and overwrote their manifest -
+    // so loadApp registered the newcomer's persona under the incumbent's agent id, the row the
+    // incumbent's tickets and chat tasks point at.
+    const first = await deploy();
+    expect(first.status).toBe(200);
+
+    // B owns a pack of the SAME NAME in their own private subtree — the shape that hijacks, because
+    // the pack tree is per-user but the emitted manifest path is not.
+    const otherSub = 'a-different-authenticated-person';
+    const otherPack = path.join(workspaceRoot, 'packs', userKey(otherSub), SLUG);
+    fs.mkdirSync(path.join(otherPack, 'bots'), { recursive: true });
+    fs.writeFileSync(path.join(otherPack, 'pack.json'),
+      JSON.stringify({ name: SLUG, description: 'a second owner', ticketType: 'other-owner-queue' }, null, 2), 'utf8');
+    fs.writeFileSync(path.join(otherPack, 'bots', 'intruder.yml'),
+      yaml.dump({ name: 'intruder', role: 'intruder', perspective: 'not the incumbent' }), 'utf8');
+
+    currentSub = otherSub;
+    try {
+      const second = await deploy();
+      expect(second.status, 'a second owner took over the slug').toBe(409);
+      expect(JSON.stringify(second.body)).toMatch(/another user/i);
+    } finally {
+      currentSub = SUB;
+      fs.rmSync(path.join(workspaceRoot, 'packs', userKey(otherSub)), { recursive: true, force: true });
+    }
+
+    // And the incumbent's emission is untouched by the refusal: same identities, same queue. The
+    // version bumps on every deploy by design, so it is not part of the comparison.
+    const again = await deploy();
+    expect(again.status).toBe(200);
+    expect(again.body.agentIds, 'the refused deploy disturbed the incumbent identities')
+      .toEqual(first.body.agentIds);
+    expect(again.body.ticketType).toBe(first.body.ticketType);
+    expect(emittedManifest().packOwnerKey, 'the manifest changed hands').toBe(userKey(SUB));
   });
 });
 
