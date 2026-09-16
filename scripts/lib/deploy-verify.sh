@@ -58,6 +58,29 @@
 # environment - see the header above.
 OSHAL_VERIFY_UNPROVEN_GRACE_DEPLOYS=3
 
+# The operator's PAT lives in .env with every other secret on this box - nothing on the deploy
+# path sources that file, so a token added there was inert and the gate reported UNVERIFIED as if
+# none existed. Read it only when the environment does not already carry one (an explicit
+# OSHAL_VERIFY_OPERATOR_PAT=... on the command line still wins), and EXPORT it, because the probe
+# is reached through `docker exec -e NAME` which resolves the name in this shell's exported
+# environment. The value is never printed - only its length, and only on a refusal.
+oshal_verify_load_operator_pat() {
+  [ -n "${OSHAL_VERIFY_OPERATOR_PAT:-}" ] && return 0
+  local env_file="${OSHAL_VERIFY_ENV_FILE:-${REPO_DIR:-.}/.env}"
+  [ -f "$env_file" ] || return 0
+  local line
+  line=$(grep -m1 '^[[:space:]]*OSHAL_VERIFY_OPERATOR_PAT=' "$env_file" 2>/dev/null) || return 0
+  line=${line#*=}
+  # Tolerate the quoting people actually use in a .env, and a CRLF checkout.
+  line=${line%$'\r'}
+  case "$line" in
+    \"*\") line=${line#\"}; line=${line%\"} ;;
+    "'"*"'") line=${line#\'}; line=${line%\'} ;;
+  esac
+  [ -n "$line" ] || return 0
+  export OSHAL_VERIFY_OPERATOR_PAT="$line"
+}
+
 # Route output through the caller's run-log writer when there is one, so a deploy keeps
 # every verification line in $RUN_LOG, and print plainly when sourced on its own.
 oshal_verify_emit() {
@@ -336,6 +359,9 @@ oshal_deploy_post_verify() {
       oshal_verify_emit "  the stack is deployed but UNVERIFIED as a product - nothing proved Jarvis answers or a ticket moves"
       return 0 ;;
   esac
+  # Before anything reads the environment: a PAT the operator put in .env is inert unless it is
+  # loaded and exported here. Nothing else on the deploy path sources that file.
+  oshal_verify_load_operator_pat
   oshal_verify_emit "post-deploy live verification (bot-role grant, Jarvis ask, ticket dispatch)"
   oshal_verify_tally oshal_verify_bot_role_grant
   if oshal_verify_stage_probe; then
