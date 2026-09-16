@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Say plainly that the file belongs in an Open Swarm folder. The first version fetched an install script from a route that never existed, and even fetching it would have died on the missing packages/oshal-chat.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pass -ClientId through: a device-bound token names the device it may register as, and the node was minting its own id, so the control plane refused every one-click enrolment.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Install the node app from npm instead of building it from a checkout, so the download works on a machine that has never seen this repo. The package is configurable (OSHAL_NODE_PACKAGE).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Register the node to start with Windows. The download installed and launched a node that never came back after a reboot: nothing wrote a startup entry, and the app's own login item is tied to background wake (a microphone feature) rather than to being a worker. A per-user Startup shortcut needs no elevation and no scheduled task, is removable like any other startup item, and is verified by reading the .lnk back rather than trusted because Save() returned. A failure to write it is reported as what it is instead of being swallowed into a success message.
  */
 
 /**
@@ -24,6 +25,10 @@
  * `REMOTE_CLIENT_REQUIRE_NODE_TOKEN` has retired the shared secret — so this route REFUSES
  * when it has not, rather than emitting a script that cannot register, or worse, reaching for
  * the swarm-wide credential to make it work.
+ *
+ * The file is also what makes the machine a NODE rather than an app someone opens: it registers
+ * the launcher in the per-user Startup folder, so the node comes back after a reboot with nobody
+ * present. A worker that needs a human after every restart is not a worker.
  *
  * @module node-installer-routes
  */
@@ -166,6 +171,45 @@ export function renderNodeInstaller(options: {
     '    exit 1',
     '}',
     '',
+    '# 5. Come back after a reboot. A worker node that needs a human to double-click something',
+    '#    after every restart is not a worker. The per-user Startup folder needs no elevation',
+    '#    and no scheduled task, and the person removes it like any other startup item.',
+    'function New-OshalStartupShortcut {',
+    '    param(',
+    '        [Parameter(Mandatory)][string]$Launcher,',
+    '        [Parameter(Mandatory)][string]$StartupDir,',
+    '        [Parameter(Mandatory)][string]$LinkName)',
+    '    if (-not (Test-Path -LiteralPath $StartupDir)) {',
+    '        New-Item -ItemType Directory -Path $StartupDir -Force | Out-Null',
+    '    }',
+    '    $link = Join-Path $StartupDir ($LinkName + ".lnk")',
+    '    $shell = New-Object -ComObject WScript.Shell',
+    '    $shortcut = $shell.CreateShortcut($link)',
+    '    $shortcut.TargetPath = $Launcher',
+    '    $shortcut.WindowStyle = 7   # minimized: the node has a tray icon, not a console',
+    '    $shortcut.Description = "OSHAL worker node"',
+    '    $shortcut.Save()',
+    '    # Read it back THROUGH the shortcut. A Save() that returned can still have recorded',
+    '    # nothing, and a startup entry pointing nowhere looks exactly like one that works -',
+    '    # until the machine is restarted, which is the one moment nobody is watching.',
+    '    $written = $shell.CreateShortcut($link)',
+    '    if ($written.TargetPath -ne $Launcher) {',
+    '        throw "the startup entry recorded $($written.TargetPath) instead of $Launcher"',
+    '    }',
+    '    return $link',
+    '}',
+    '$startupLink = ""',
+    'try {',
+    '    $startupLink = New-OshalStartupShortcut -Launcher $launcher '
+      + '-StartupDir ([Environment]::GetFolderPath("Startup")) -LinkName "OSHAL Node"',
+    '} catch {',
+    '    Write-Host ""',
+    '    Write-Host "This computer will NOT restart the node after a reboot."'
+      + ' -ForegroundColor Yellow',
+    '    Write-Host "  $($_.Exception.Message)"',
+    '    Write-Host "  Put a shortcut to $launcher in shell:startup to fix that."',
+    '}',
+    '',
     '# Launch the .cmd shim BY PATH. npm writes three launchers per package - oshal-chat,',
     '# oshal-chat.cmd and oshal-chat.ps1 - and Start-Process on the bare name lets Windows',
     '# choose. It chose the .ps1, which has no association on a default Windows, so the user',
@@ -176,6 +220,10 @@ export function renderNodeInstaller(options: {
     'Write-Host ""',
     'Write-Host "Done. This computer should appear in the cockpit within a minute."'
       + ' -ForegroundColor Green',
+    'if ($startupLink) {',
+    '    Write-Host "It starts again by itself after a reboot: $startupLink"'
+      + ' -ForegroundColor DarkGray',
+    '}',
     'Write-Host "You can delete this file now." -ForegroundColor DarkGray',
     '',
   ];
