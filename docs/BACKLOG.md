@@ -615,18 +615,6 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   still serving afterwards; and a restart-count probe over a deploy window shows the api's
   `RestartCount` unchanged.
 
-### Post-deploy verification cannot pass with delegation signing on (2026-09-15)
-- **Remaining:** `scripts/lib/deploy-verify.sh` asks Jarvis through a PAT minted with the service secret, and
-  that path records no principal issuer by design (`cli-token-routes.ts`), so with signing on
-  `resolveDelegatedPrincipal` refuses with `User-bound delegation requires a verified principal issuer`
-  (`bot-node-client.ts`). Its ticket-dispatch check files a `task` ticket that routes to an inline bot (see
-  "Signed delegation refuses every ticket whose worker bot runs inline"). Both checks FAILED on the 2026-09-15
-  deploy, although every interactive login path stamps an issuer and the signing keys matched on all 34 bots.
-- **Done when:** with signing configured, the Jarvis check runs under an identity that carries a verified
-  issuer or reports "not verifiable from automation" as a result distinct from FAIL, the dispatch check targets
-  a ticket type whose worker is a dedicated bot node, and a spec proves each check passes under signing and
-  still fails on a real refusal.
-
 ### The isolated-browser fixture fails a passing suite when the browser takes over 5 s to exit (2026-09-15)
 - **Remaining:** `tests/fixtures/isolated-browser.ts` bounds the owned browser's exit at `CLOSE_TIMEOUT_MS = 5000`
   and throws `Owned fixture browser <pid> did not terminate after explicit cleanup` past it.

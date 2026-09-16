@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards the post-deploy live verification. On 2026-09-15 a deploy printed DEPLOYED while Jarvis answered nothing and an operator ticket escalated on manifest_worker_dispatch_failed: every existing gate measures containers, none measured the product. Two boundaries are crossed for real here — the actual scripts/lib/deploy-verify.sh executed by the real Git Bash with a stubbed docker binary (ordering, loudness, the skip switch, the exact remedy text), and the actual probe checks run by the real Node against a real loopback HTTP server speaking the api's contracts (verdicts, cleanup, and no secret in the output) — in ONE process, because this host's firewall refuses a cross-process connection to a Node listener. What is NOT crossed, and is stated rather than implied: the real api, the real queue manager and the real Jarvis bot. Only a deploy reaches those, which is why the deploy is where this runs. 
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the cleanup itself, in both directions. The Jarvis check used to close its thread and leave the chat-ticket, the chat_tasks row and its chat_messages behind on every deploy - and leave the row WITHOUT closing anything when the ask was refused, which is the path this gate exists to hit. So: the pass path must delete the thread's ticket and its task, the refused path must still delete the task it caused to be written, and a cleanup step that fails must report at error level naming what was left behind while the already-decided verdict survives untouched. Plus the runbook honesty the deploy's no-rollback policy depends on: what a deploy spends, and the manual rollback for the one failure class exit 4 does not cure.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cross the argument boundary the cases below are blind to. They shadow docker with a bash FUNCTION, so the command never leaves the shell and its arguments are never marshalled into a native process - which is exactly the boundary that broke the gate on its first real deploy: Git Bash rewrote the staged container path on its way into docker.exe, node resolved the Windows host path it received against the image's /app working directory, and both product checks died MODULE_NOT_FOUND while every case here stayed green. The new cases put a copy of the real node binary on PATH as `docker` - a genuine native executable, which is the property that makes the host runtime convert the argument at all - and assert that the path the runtime was handed resolves, under the image's own WORKDIR, to the file that was staged in the container. One case is the negative control: it drives the pre-fix call shape and requires the harness to SEE the rewrite, so the suite can never pass by being blind again.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard the third verdict, and guard it AGAINST ITSELF. With delegation signing configured this gate could not pass at all - the service-secret PAT it mints records no principal issuer by design, so the controller refuses the Jarvis ask AND the queued dispatch, and the 'task' ticket's call-out winner was an inline bot that signed delegation refuses outright. The fix adds an UNVERIFIED state, and the ONLY thing that makes an unverifiable state safe is how narrow it is: a third state wide enough to swallow a product outage reads as green and is worse than no check. So the cases below pin the narrowness from four sides - the byte-identical refusal is a FAIL when an operator token was supplied, a FAIL when no signing material is configured, and a FAIL for any other refusal under signing; only the self-minted-PAT-under-signing case is UNVERIFIED, and it is never printed as PASS and never masks a real failure in the same run. Plus the two halves the live box cannot demonstrate headlessly: a genuine PASS under signing on a session-minted token, and the knob forwarding that makes that remedy runnable at all (the probe reads its environment inside the container, not in the deploy's shell).
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -144,6 +145,60 @@ describe('scripts/lib/deploy-verify.sh — the three checks a deploy is not fini
     expect([...skipVars]).toEqual(['OSHAL_DEPLOY_SKIP_LIVE_VERIFY']);
   });
 
+  /* ── The third state, at the shell ────────────────────────────────────────────────────────────
+   * Exit 3 from the probe means "not verifiable from automation" - see the probe cases below for
+   * exactly how narrow that is. Here the question is only whether this library keeps it visibly
+   * distinct from both of the other two: a run that prints PASS for it is a lie, and a run that
+   * fails the deploy on it makes the gate permanently red on every signing-enabled box. */
+  it('prints UNVERIFIED - not PASS, not FAIL - when a product check exits 3, and does not fail the deploy', () => {
+    const run = verify({ DOCKER_STUB_JARVIS_RC: '3', DOCKER_STUB_JARVIS_OUT: 'NOT VERIFIABLE FROM AUTOMATION: ...' });
+    expect(run.stdout).toContain('RC=0');
+    expect(run.stdout).toContain('VERIFY UNVERIFIED  jarvis-ask');
+    expect(run.stdout, 'an unverified check must never be reported as a pass').not.toContain('VERIFY PASS  jarvis-ask');
+    expect(run.stdout).not.toContain('VERIFY FAIL  jarvis-ask');
+    // And the summary must not read as green either.
+    expect(run.stdout).toContain('1 check(s) NOT VERIFIABLE from automation - this deploy is UNPROVEN as a product');
+    expect(run.stdout, 'a run with an unverified check has not verified all of them').not.toContain('all checks passed');
+  });
+
+  it('names the remedy that makes an UNVERIFIED check verifiable, and why it is refused', () => {
+    const run = verify({ DOCKER_STUB_TICKET_RC: '3', DOCKER_STUB_TICKET_OUT: 'NOT VERIFIABLE FROM AUTOMATION: ...' });
+    expect(run.stdout).toContain('VERIFY UNVERIFIED  ticket-dispatch');
+    expect(run.stdout).toContain('OSHAL_VERIFY_OPERATOR_PAT');
+    expect(run.stdout).toContain('src/app/routes/cli-token-routes.ts');
+    expect(run.stdout, 'the operator has to be told where to get an issuer-carrying token').toContain('SIGNED-IN browser session');
+  });
+
+  it('never lets an UNVERIFIED check mask a real failure in the same run', () => {
+    const run = verify({
+      DOCKER_STUB_JARVIS_RC: '3', DOCKER_STUB_JARVIS_OUT: 'NOT VERIFIABLE FROM AUTOMATION: ...',
+      DOCKER_STUB_TICKET_RC: '1', DOCKER_STUB_TICKET_OUT: "landed in 'escalated'",
+    });
+    expect(run.stdout, 'a failure beside an unverified check is still a failure').toContain('RC=1');
+    expect(run.stdout).toContain('VERIFY UNVERIFIED  jarvis-ask');
+    expect(run.stdout).toContain('VERIFY FAIL  ticket-dispatch');
+    expect(run.stdout).toContain('post-deploy live verification: 1 check(s) FAILED');
+    expect(run.stdout).toContain('1 check(s) NOT VERIFIABLE');
+  });
+
+  it('forwards a caller-exported knob into the container BY NAME, never as a value on the command line', () => {
+    // The probe reads its configuration from the environment of the process it runs in - the api
+    // container - so without this the documented knobs, and the UNVERIFIED remedy that tells the
+    // operator to re-run with one, reached nothing at all. `-e NAME` with no `=value` is what keeps
+    // a token off the command line and out of `ps` and the run log.
+    const run = verify({ OSHAL_VERIFY_OPERATOR_PAT: 'fixture-operator-pat-never-printed' });
+    const probeCalls = run.calls.filter((call) => / (jarvis|ticket)$/.test(call));
+    expect(probeCalls.length, run.stdout).toBe(2);
+    for (const call of probeCalls) {
+      expect(call).toContain('-e OSHAL_VERIFY_OPERATOR_PAT');
+      expect(call, 'a forwarded token must never be spelled on the command line').not.toContain('fixture-operator-pat-never-printed');
+    }
+    // The grant check talks to psql, not to the probe, and has no business carrying the token.
+    const grantCall = run.calls.find((call) => call.includes('psql'));
+    expect(grantCall).toBeDefined();
+    expect(grantCall).not.toContain('OSHAL_VERIFY_OPERATOR_PAT');
+  });
+
   it('is named in the runbook the failure messages point at', () => {
     const runbook = readFileSync(path.resolve('docs/runbooks/deploy-parity.md'), 'utf8');
     expect(runbook).toContain('OSHAL_DEPLOY_SKIP_LIVE_VERIFY');
@@ -167,6 +222,26 @@ describe('scripts/lib/deploy-verify.sh — the three checks a deploy is not fini
     expect(runbook).toContain('CLEANUP FAILED');
     expect(runbook, 'the old "one chat row per deploy, by design" claim is no longer true')
       .not.toMatch(/one chat row per deploy/);
+  });
+
+  it('documents the third state, what it does NOT prove, and the one way to prove it', () => {
+    const runbook = readFileSync(path.resolve('docs/runbooks/deploy-parity.md'), 'utf8');
+    expect(runbook).toContain('VERIFY UNVERIFIED');
+    expect(runbook, 'an operator reading a green-looking run must be told it proved nothing')
+      .toContain('UNPROVEN as a product');
+    expect(runbook).toContain('OSHAL_VERIFY_OPERATOR_PAT');
+    expect(runbook).toContain('User-bound delegation requires a verified principal issuer');
+    // The narrowness is the safety property; a runbook that omits it invites widening the state.
+    // Prose wraps; the claim is what matters, so match it with the line breaks collapsed.
+    const prose = runbook.replace(/\s+/g, ' ');
+    expect(prose, 'a runbook that omits the narrowness invites widening the state')
+      .toContain('**Any** other refusal is still `VERIFY FAIL` and still exit 4');
+    expect(prose, 'including the case that is easiest to get wrong')
+      .toContain('this same refusal when an operator token *was* supplied');
+    // And the dispatch check's target has to be documented as a dedicated node, with the reason.
+    expect(runbook).toContain('dedicated bot node');
+    expect(runbook).toContain('Signed HTTP delegation requires a dedicated bot-node endpoint');
+    expect(runbook).toContain('OSHAL_VERIFY_TICKET_WORKER');
   });
 
   it('is syntactically valid bash', () => {
@@ -271,11 +346,20 @@ describe('scripts/lib/deploy-verify.sh - the path the container runtime is actua
   it('hands the probe runner a path that resolves, inside the container, to the staged probe', () => {
     const handed = handedToDocker('oshal_verify_run_probe jarvis');
     expect(handed.subcommand).toBe('exec');
-    expect(handed.args.slice(0, 2)).toEqual(['oshal-local-api', 'node']);
-    expect(handed.args[3], 'the check name has to survive the crossing too').toBe('jarvis');
+    // Caller-exported OSHAL_VERIFY_* knobs are forwarded ahead of the container as `-e NAME` pairs
+    // (no `=value`, so a token never reaches the command line). Everything before the container has
+    // to be exactly that shape - a stray bare argument here would be an injection, not a knob.
+    const container = handed.args.indexOf('oshal-local-api');
+    expect(container % 2, 'the forwarded flags must be whole -e NAME pairs').toBe(0);
+    for (let index = 0; index < container; index += 2) {
+      expect(handed.args[index]).toBe('-e');
+      expect(handed.args[index + 1]).toMatch(/^OSHAL_VERIFY_[A-Z_]+$/);
+    }
+    expect(handed.args.slice(container, container + 2)).toEqual(['oshal-local-api', 'node']);
+    expect(handed.args[container + 3], 'the check name has to survive the crossing too').toBe('jarvis');
     // THE assertion: node in the container resolves what it was handed against CONTAINER_CWD. A host
     // path resolves to /app/<host path> and dies MODULE_NOT_FOUND; the staged path resolves to itself.
-    expect(path.posix.resolve(CONTAINER_CWD, handed.args[2].replace(/\\/g, '/'))).toBe(STAGED_PROBE);
+    expect(path.posix.resolve(CONTAINER_CWD, handed.args[container + 2].replace(/\\/g, '/'))).toBe(STAGED_PROBE);
   }, NATIVE_CASE_TIMEOUT_MS);
 
   it('hands the staging copy a relative source and a destination that stays in the container', () => {
@@ -396,6 +480,12 @@ beforeAll(async () => {
     OSHAL_VERIFY_POLL_MS: '5',
     OSHAL_VERIFY_BUDGET_MS: '400',
     OSHAL_VERIFY_REQUEST_TIMEOUT_MS: '4000',
+    // Fixture baseline: no controller signing material, no operator token. Every case written
+    // before the third state existed therefore keeps exactly the meaning it had, and a case that
+    // wants the signing world has to say so through withEnv() below.
+    OSHAL_DELEGATION_SIGNING_KID: '',
+    OSHAL_DELEGATION_SIGNING_PRIVATE_KEY: '',
+    OSHAL_VERIFY_OPERATOR_PAT: '',
   });
 });
 
@@ -404,6 +494,29 @@ afterEach(() => { requests = []; replies = {}; });
 
 const MINT: Reply = { status: 201, body: { id: 'pat-1', token: 'never-printed-token-value' } };
 const ASK_ACCEPTED: Reply = { status: 202, body: { jobId: 'job-1' } };
+/** The registry lookup the dispatch check resolves its pinned worker through, BY NAME. */
+const AGENTS: Reply = { status: 200, body: { agents: [{ name: 'general-bot', agentId: 'agent-general-bot' }] } };
+/** Controller signing material, presence only - the probe never reads either value. */
+const SIGNING = { OSHAL_DELEGATION_SIGNING_KID: 'fixture-kid', OSHAL_DELEGATION_SIGNING_PRIVATE_KEY: 'fixture-key' };
+/** The refusal the controller raises for a user-bound delegation with no verified issuer. */
+const NO_ISSUER = 'User-bound delegation requires a verified principal issuer';
+/** The refusal signed delegation raises for a worker that runs inline on the api. */
+const INLINE_REFUSAL = 'Signed HTTP delegation requires a dedicated bot-node endpoint';
+/** Stands in for an operator's session-minted token; asserted never to reach any output. */
+const OPERATOR_PAT = 'fixture-operator-pat-never-printed';
+
+/** Run one case with extra environment, restoring exactly what was there before. */
+async function withEnv<T>(vars: Record<string, string>, run: () => Promise<T>): Promise<T> {
+  const previous = Object.fromEntries(Object.keys(vars).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, vars);
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+}
 
 describe('scripts/operations/deploy-live-verification.js — verdicts and cleanup', () => {
   it('passes when Jarvis answers, and closes the thread and revokes the token afterwards', async () => {
@@ -481,6 +594,7 @@ describe('scripts/operations/deploy-live-verification.js — verdicts and cleanu
   it('reports a failed synthetic-ticket delete at error level, and the verdict survives it untouched', async () => {
     replies = {
       'POST /api/cli-tokens': MINT,
+      'GET /api/agents': AGENTS,
       'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } },
       'GET /api/tickets/': [{ status: 200, body: { status: 'approved' } }, { status: 200, body: { status: 'complete' } }],
       'DELETE /api/tickets/': { status: 500, body: { error: 'Failed to delete ticket' } },
@@ -523,7 +637,7 @@ describe('scripts/operations/deploy-live-verification.js — verdicts and cleanu
 
   it('queues the synthetic ticket at the only state the queue manager polls', async () => {
     const bodies: unknown[] = [];
-    replies = { 'POST /api/cli-tokens': MINT, 'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } }, 'GET /api/tickets/': { status: 200, body: { status: 'complete' } } };
+    replies = { 'POST /api/cli-tokens': MINT, 'GET /api/agents': AGENTS, 'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } }, 'GET /api/tickets/': { status: 200, body: { status: 'complete' } } };
     const capture = createServer((request, response) => {
       const chunks: Buffer[] = [];
       request.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -545,6 +659,7 @@ describe('scripts/operations/deploy-live-verification.js — verdicts and cleanu
   it('passes when the queue moves the synthetic ticket, then cancels and deletes it', async () => {
     replies = {
       'POST /api/cli-tokens': MINT,
+      'GET /api/agents': AGENTS,
       'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } },
       'GET /api/tickets/': [{ status: 200, body: { status: 'approved' } }, { status: 200, body: { status: 'complete' } }],
     };
@@ -558,6 +673,7 @@ describe('scripts/operations/deploy-live-verification.js — verdicts and cleanu
   it('fails when the ticket escalates — the exact 2026-09-15 shape — and still cleans up', async () => {
     replies = {
       'POST /api/cli-tokens': MINT,
+      'GET /api/agents': AGENTS,
       'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } },
       'GET /api/tickets/': { status: 200, body: { status: 'escalated' } },
     };
@@ -570,6 +686,7 @@ describe('scripts/operations/deploy-live-verification.js — verdicts and cleanu
   it('fails when the queue never dispatches the ticket at all', async () => {
     replies = {
       'POST /api/cli-tokens': MINT,
+      'GET /api/agents': AGENTS,
       'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } },
       'GET /api/tickets/': { status: 200, body: { status: 'approved' } },
     };
@@ -587,6 +704,21 @@ describe('scripts/operations/deploy-live-verification.js — verdicts and cleanu
     expect(requests).toEqual(['POST /api/cli-tokens']);
   });
 
+  it('pins the refusal string against the probe\u2019s own constant, so the two cannot drift apart', () => {
+    // If the controller ever rewords that error, this guard and the classification it drives would
+    // silently start describing a refusal that no longer occurs - and every signing box would go
+    // back to a permanently red gate with no case failing to say so.
+    expect(probe.UNVERIFIABLE_REFUSAL).toBe(NO_ISSUER);
+    const clientSource = readFileSync(
+      path.resolve('src/features/agent-management/services/bot-node-client.ts'), 'utf8');
+    expect(clientSource, 'the refusal this gate classifies must still be the one the controller raises')
+      .toContain(`throw new Error('${NO_ISSUER}')`);
+    const dispatchSource = readFileSync(
+      path.resolve('src/features/swarm-orchestration/services/dispatch-manifest-worker.ts'), 'utf8');
+    expect(dispatchSource, 'and the inline refusal the FAIL path names must still exist too')
+      .toContain(`throw new Error('${INLINE_REFUSAL}')`);
+  });
+
   it('never puts the service secret, the minted token or the operator subject in its output', async () => {
     replies = {
       'POST /api/cli-tokens': MINT,
@@ -597,6 +729,167 @@ describe('scripts/operations/deploy-live-verification.js — verdicts and cleanu
     for (const secret of [SECRET, SUBJECT, 'never-printed-token-value']) {
       expect(verdict.detail, `the probe leaked ${secret.slice(0, 8)}…`).not.toContain(secret);
     }
+  });
+
+  /* -- The dispatch check's target: a DEDICATED bot node, chosen deterministically --------------
+   * Unpinned, a 'task' ticket routes by the ADR-083 call-out, and the bid winner is whichever
+   * knowledge owner happens to be online - an INLINE bot on this box on 2026-09-15 and 2026-09-16,
+   * which signed delegation refuses outright. The pin is what makes the check's target the
+   * workflow's own declared owner (general-bot, requiresOwnNode -> a real node endpoint), and the
+   * agent id comes from the deployment's registry by NAME so nothing here goes stale silently. */
+  it('pins the synthetic ticket to the worker it resolved BY NAME from the deployment registry', async () => {
+    const bodies: unknown[] = [];
+    replies = {
+      'POST /api/cli-tokens': MINT,
+      'GET /api/agents': AGENTS,
+      'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } },
+      'GET /api/tickets/': { status: 200, body: { status: 'complete' } },
+    };
+    const capture = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(chunk));
+      request.on('end', () => { bodies.push(Buffer.concat(chunks).toString('utf8')); handle(request, response); });
+    });
+    await new Promise<void>((resolve) => capture.listen(0, '127.0.0.1', resolve));
+    const previous = process.env.PORT;
+    process.env.PORT = String((capture.address() as { port: number }).port);
+    let verdict: { ok: boolean; code: number; detail: string };
+    try {
+      verdict = await probe.runCheck('ticket');
+    } finally {
+      process.env.PORT = previous;
+      await new Promise<void>((resolve) => { capture.close(() => resolve()); });
+    }
+    expect(verdict, verdict.detail).toMatchObject({ ok: true, code: 0 });
+    expect(requests, 'the worker is resolved from the registry, not written into the probe').toContain('GET /api/agents');
+    const created = JSON.parse(bodies.find((body) => String(body).includes('ticketType')) as string);
+    expect(created.metadata).toEqual({ targetAgentId: 'agent-general-bot' });
+    // The verdict line has to name the worker, or a gate that silently re-targets looks identical.
+    expect(verdict.detail).toContain('task -> general-bot');
+  });
+
+  it('fails loudly when the deployment has no agent under the pinned name, rather than filing an unpinned ticket', async () => {
+    replies = {
+      'POST /api/cli-tokens': MINT,
+      'GET /api/agents': { status: 200, body: { agents: [{ name: 'someone-else', agentId: 'other' }] } },
+    };
+    const verdict = await probe.runCheck('ticket');
+    expect(verdict.code).toBe(1);
+    expect(verdict.detail).toContain("no active agent named 'general-bot'");
+    expect(requests, 'no ticket may be filed when the target could not be resolved')
+      .not.toContain('POST /api/tickets/');
+  });
+
+  it('quotes the reason the queue recorded when a ticket parks, instead of only the status', async () => {
+    replies = {
+      'POST /api/cli-tokens': MINT,
+      'GET /api/agents': AGENTS,
+      'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } },
+      'GET /api/tickets/': { status: 200, body: { status: 'escalated',
+        metadata: { lastStatusTransition: { reason: 'manifest_worker_dispatch_failed', message: INLINE_REFUSAL } } } },
+    };
+    const verdict = await probe.runCheck('ticket');
+    expect(verdict.code).toBe(1);
+    expect(verdict.detail).toContain('manifest_worker_dispatch_failed');
+    expect(verdict.detail).toContain(INLINE_REFUSAL);
+  });
+
+  /* -- The third state, and the four sides that keep it narrow ----------------------------------
+   * Exit 3 says "not verifiable from automation". It exists because with controller signing on, the
+   * only identity this check can mint for itself - a service-secret PAT - records no principal
+   * issuer BY DESIGN, so the controller refuses the delegation and the gate can never pass. The
+   * danger is obvious: a third state that swallows anything else reads as green. These cases hold
+   * it to exactly one refusal, under exactly one set of conditions. */
+  const jarvisRefused = (error: string): Record<string, Reply | Reply[]> => ({
+    'POST /api/cli-tokens': MINT,
+    'POST /api/jarvis/ask': ASK_ACCEPTED,
+    'GET /api/jarvis/ask/result': { status: 200, body: { status: 'error', error } },
+  });
+
+  it('reports the missing-issuer refusal as NOT VERIFIABLE (exit 3) when signing is on and it minted its own PAT', async () => {
+    replies = jarvisRefused(NO_ISSUER);
+    const verdict = await withEnv(SIGNING, () => probe.runCheck('jarvis'));
+    expect(verdict.ok, 'exit 3 is not a pass').toBe(false);
+    expect(verdict.code).toBe(3);
+    expect(verdict.detail).toContain('NOT VERIFIABLE FROM AUTOMATION');
+    expect(verdict.detail, 'it must say what it did NOT prove').toContain('Nothing is proved either way');
+    expect(verdict.detail).toContain('OSHAL_VERIFY_OPERATOR_PAT');
+  });
+
+  it('reports the SAME refusal for the queued dispatch the same way - one rule, both product checks', async () => {
+    replies = {
+      'POST /api/cli-tokens': MINT,
+      'GET /api/agents': AGENTS,
+      'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } },
+      'GET /api/tickets/': { status: 200, body: { status: 'escalated',
+        metadata: { lastStatusTransition: { reason: 'manifest_worker_dispatch_failed', message: NO_ISSUER } } } },
+    };
+    const verdict = await withEnv(SIGNING, () => probe.runCheck('ticket'));
+    expect(verdict.code).toBe(3);
+    expect(verdict.detail).toContain('NOT VERIFIABLE FROM AUTOMATION');
+    expect(requests, 'the synthetic ticket is still removed on the unverifiable path').toContain('DELETE /api/tickets/ticket-1');
+  });
+
+  it('FAILS on the byte-identical refusal when an operator token was supplied - then the token is the fault', async () => {
+    replies = jarvisRefused(NO_ISSUER);
+    const verdict = await withEnv({ ...SIGNING, OSHAL_VERIFY_OPERATOR_PAT: OPERATOR_PAT },
+      () => probe.runCheck('jarvis'));
+    expect(verdict.code, 'an operator who supplied a token asserted a verified identity').toBe(1);
+    expect(verdict.detail).toContain('carries no verified principal issuer');
+    expect(verdict.detail).not.toContain('NOT VERIFIABLE FROM AUTOMATION');
+    // A supplied token is the operator's own credential: used as-is, never minted around, never revoked.
+    expect(requests).not.toContain('POST /api/cli-tokens');
+    expect(requests.some((route) => route.startsWith('DELETE /api/cli-tokens'))).toBe(false);
+    expect(verdict.detail).not.toContain(OPERATOR_PAT);
+  });
+
+  it('FAILS on the same refusal when this controller has no signing material - nothing should be demanding an issuer', async () => {
+    replies = jarvisRefused(NO_ISSUER);
+    const verdict = await probe.runCheck('jarvis');
+    expect(verdict.code).toBe(1);
+    expect(verdict.detail).toContain('no signing material configured');
+    expect(verdict.detail).not.toContain('NOT VERIFIABLE FROM AUTOMATION');
+  });
+
+  it.each([
+    ['a bot-posture outage', 'authorization_bot_posture_unavailable'],
+    ['an inline worker signed delegation refuses', INLINE_REFUSAL],
+    ['a subject that does not match the trusted identity', 'Delegation subject does not match the trusted request identity'],
+  ])('still FAILS under signing on %s - the third state swallows nothing else', async (_label, error) => {
+    replies = jarvisRefused(error);
+    const verdict = await withEnv(SIGNING, () => probe.runCheck('jarvis'));
+    expect(verdict.code, `${error} is a product failure, not an unverifiable one`).toBe(1);
+    expect(verdict.detail).toContain(error);
+    expect(verdict.detail).not.toContain('NOT VERIFIABLE FROM AUTOMATION');
+  });
+
+  it('PASSES for real under signing when the operator supplies a session-minted token', async () => {
+    // The half the live box cannot show headlessly: every PAT on it was minted from the service
+    // secret, and only a signed-in session mint records an issuer. Here the api answers the way it
+    // does for an issuer-carrying caller, and the check has to come back a plain, unqualified PASS.
+    replies = {
+      'POST /api/jarvis/ask': { status: 202, body: { jobId: 'job-1', chatTicketId: 'chat-ticket-1' } },
+      'GET /api/jarvis/ask/result': { status: 200, body: { status: 'done', answer: 'ready' } },
+    };
+    const verdict = await withEnv({ ...SIGNING, OSHAL_VERIFY_OPERATOR_PAT: OPERATOR_PAT },
+      () => probe.runCheck('jarvis'));
+    expect(verdict, verdict.detail).toMatchObject({ ok: true, code: 0 });
+    expect(verdict.detail).toContain('Jarvis answered');
+    expect(requests, 'a supplied token means no bootstrap mint at all').not.toContain('POST /api/cli-tokens');
+    expect(requests, 'and the thread is still cleaned up').toContain('DELETE /api/tickets/chat-ticket-1');
+  });
+
+  it('dispatches for real under signing on a supplied token, to the pinned dedicated node', async () => {
+    replies = {
+      'GET /api/agents': AGENTS,
+      'POST /api/tickets': { status: 201, body: { ticketId: 'ticket-1' } },
+      'GET /api/tickets/': [{ status: 200, body: { status: 'approved' } }, { status: 200, body: { status: 'in_process_build' } }],
+    };
+    const verdict = await withEnv({ ...SIGNING, OSHAL_VERIFY_OPERATOR_PAT: OPERATOR_PAT },
+      () => probe.runCheck('ticket'));
+    expect(verdict, verdict.detail).toMatchObject({ ok: true, code: 0 });
+    expect(verdict.detail).toContain("'approved' -> 'in_process_build'");
+    expect(requests).toContain('DELETE /api/tickets/ticket-1');
   });
 
   it('refuses an unknown check name rather than doing something', async () => {
