@@ -1545,6 +1545,12 @@ function createApp(): express.Application {
   }));
   app.use('/api/swarm/apps', requiresAuth, createSwarmAppRoutes(swarmAppService, appAccessService, {
     isAuthorizationProtected: app => applicationAuthorization.isProtected(app.name),
+    // Home asks the SAME discovery question /api/ui/workspaces asks below, so the landing view can
+    // never offer an application the top navigation has withdrawn.
+    authorization: {
+      canDiscover: (name, actor) => applicationAuthorization.runtime.canDiscover(name, actor),
+      resolveActor: (req: express.Request) => applicationAuthorization.resolveActor(req),
+    },
   }));
   app.use('/api/swarm/packs', requiresAuth, createSwarmPackRoutes(swarmAppService));
   // ADR-085 packaged skins: surfaces authored against core skins request

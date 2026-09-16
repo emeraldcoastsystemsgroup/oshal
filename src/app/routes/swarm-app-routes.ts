@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com | GET /:name/uninstall-impact reports optionalDependents (apps that list this one as an OPTIONAL dependency); only required dependents block.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | POST /import re-enters the caller's RLS request identity after multer (preserveRequestIdentity). When the manifest's last bytes reached multer on a later socket chunk, loadApp ran with no AsyncLocalStorage identity and the owner-stamped swarm_applications write was refused by RLS (400). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-157: mount the kernel-served Scheduled services surface (GET /:name/services, POST /:name/services/:id/activate, DELETE /:name/services/:id/activation) on this router, which already carries requiresAuth at its mount. Registered before the router's own /:name routes so the literal segments match first.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com  | GET /home-plan now admits a card through current application policy (discovery + the explicit coarse deny tier), the same test /api/ui/workspaces applies. It filtered on INSTALL SCOPE alone, so a protected package stayed on Home — named area plus an Open button in All applications — for a caller holding no grant, and survived revocation while its top-navigation tab disappeared. The authorization port is a REQUIRED construction option so a caller cannot silently re-open the gap.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
@@ -39,6 +40,7 @@ import {
   type SwarmAppManifest,
   type SwarmApplicationRecord,
 } from '@/features/swarm-apps';
+import type { AuthorizationActor } from '@/shared/application-authorization';
 import { getCaller, isOperator } from '@/shared/middleware/authz';
 import { preserveRequestIdentity } from '@/shared/middleware/multipart-identity';
 import { GUEST_TIERS, isGuestTier } from '@/shared/middleware/guest-capability-matrix';
@@ -82,6 +84,52 @@ const upload = multer({
 });
 
 /**
+ * @description The current application-policy ports this router needs to decide what a caller may
+ * be SHOWN. Deliberately the narrow discovery pair — a coarse discovery answer hides what the
+ * caller could not open and authorizes nothing, so nothing here can stand in for the per-operation
+ * checks the owning package still performs.
+ */
+export interface SwarmAppRouteAuthorization {
+  /** Coarse "could this caller open it at all" answer for one installed application. */
+  canDiscover(appName: string, actor: AuthorizationActor): Promise<boolean>;
+  /** Verified current principal for one original request; throws rather than inventing an anonymous one. */
+  resolveActor(req: Request): Promise<AuthorizationActor>;
+}
+
+/**
+ * @description Admit a Home card only where current application policy would admit the application
+ * itself. Home used to filter on INSTALL SCOPE alone (public + own person-scoped), which is a
+ * strictly weaker test than the one /api/ui/workspaces applies to the same installations — so a
+ * protected package with no `scope:` stayed in Home's named area and in the All-applications list,
+ * with a working Open button, for a caller who held no grant, and stayed there after a revocation
+ * that removed its top-navigation tab. Both surfaces now ask the same two questions.
+ * @param manifests - caller-visible ACTIVE manifests, in render order
+ * @param req - the original verified request
+ * @param authorization - current discovery ports
+ * @param appAccess - legacy explicit coarse ceilings, when wired
+ * @returns the manifests current policy admits, in the order they were given
+ */
+async function admittedHomeManifests(
+  manifests: readonly SwarmAppManifest[],
+  req: Request,
+  authorization: SwarmAppRouteAuthorization,
+  appAccess?: AppAccessService,
+): Promise<SwarmAppManifest[]> {
+  const actor = await authorization.resolveActor(req);
+  if (!actor.isActive || !actor.sub || !actor.issuer) {
+    throw Object.assign(new Error('Verified application actor unavailable'), { status: 401 });
+  }
+  const admitted: SwarmAppManifest[] = [];
+  for (const manifest of manifests) {
+    if (!(await authorization.canDiscover(manifest.name, actor))) continue;
+    const access = manifest.access;
+    if (access && appAccess && (await appAccess.resolve(manifest.name, actor.sub, access)).tier === 'deny') continue;
+    admitted.push(manifest);
+  }
+  return admitted;
+}
+
+/**
  * @description Swarm application management routes.
  *
  *   GET    /api/swarm/apps                      list installed apps
@@ -97,8 +145,9 @@ const upload = multer({
  * @param service - SwarmAppService instance
  * @returns Express Router
  */
-export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAccessService,
-  options: { isAuthorizationProtected?: (app: SwarmApplicationRecord) => boolean | Promise<boolean> } = {}): Router {
+export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAccessService | undefined,
+  options: { isAuthorizationProtected?: (app: SwarmApplicationRecord) => boolean | Promise<boolean>;
+    authorization: SwarmAppRouteAuthorization }): Router {
   const router = Router();
   // ADR-157: the kernel-served Scheduled services surface. Registered first so its literal
   // segments are matched before this router's own /:name routes.
@@ -267,17 +316,24 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess?: AppAc
    * itself, in the signed-in user's own session, exactly as the group setup dashboard does. Core
    * neither impersonates the caller nor reads an app's tables (ADR-145 D6).
    *
+   * Install scope decides what the caller can SEE EXISTS; current application policy decides what
+   * is admitted onto Home — the same discovery + explicit-deny test /api/ui/workspaces applies, so
+   * the named areas and the All-applications list can never offer a destination the top navigation
+   * has already withdrawn.
+   *
    * Declared BEFORE /:name so "home-plan" can never be captured as an app name.
    */
   router.get('/home-plan', async (req: Request, res: Response) => {
+    res.set('Cache-Control', 'no-store');
     try {
       const { sub } = getCaller(req);
       const visible = new Set((await service.listApps('active', { ownerSub: sub, isOperator: isOperator(req) })).map(app => app.name));
-      res.set('Cache-Control', 'no-store');
-      res.json({ apps: buildHomePlan((await service.getActiveManifests()).filter(app => visible.has(app.name))) });
+      const active = (await service.getActiveManifests()).filter(app => visible.has(app.name));
+      res.json({ apps: buildHomePlan(await admittedHomeManifests(active, req, options.authorization, appAccess)) });
     } catch (err: any) {
+      const identity = err && typeof err === 'object' && err.status === 401;
       logger.error({ err }, 'Failed to build the home plan');
-      res.status(500).json({ error: 'home plan unavailable' });
+      res.status(identity ? 401 : 500).json({ error: identity ? 'authorization_identity_required' : 'home plan unavailable' });
     }
   });
 
