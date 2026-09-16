@@ -18,6 +18,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — walk-forward backtest, per-param grid search, recommendations store + approve/reject, nightly dispatch + on-demand run.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Trading engine extraction (ADR-085 pre-carve): import repoint only — ensureTradingSchema now comes from app/trading-engine.ts instead of the carvable route surface. Zero behavior change.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  *
  * @module trading-optimize-dispatch
  */
@@ -25,7 +26,7 @@
 import type { AppContext } from './composition-root';
 import type { ScheduleRecord, ScheduleDispatchResult } from '@/features/scheduling';
 import { marketDataConfigured, barsBatch, scoreSymbol, ensemble, DEFAULT_UNIVERSE, type StrategyParams, type TradingMode } from '@/features/trading';
-import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { ensureTradingSchema } from './trading-engine';
 import { loadStrategyParams, upsertStrategyParam, clampParam, isTunableParam, TUNABLE_PARAMS, PARAM_LABELS } from './trading-strategy-params';
 import { createChildLogger } from '@/shared/logger';
@@ -84,7 +85,7 @@ function backtest(closesBySym: Map<string, number[]>, params: StrategyParams): B
 /** Ensure the recommendations store exists (self-healing). */
 export async function ensureRecommendationsTable(pool: AppContext['pool']): Promise<void> {
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading param recommendations',
+    pool, moduleName: 'trading param recommendations', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_param_recommendations (
         rec_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

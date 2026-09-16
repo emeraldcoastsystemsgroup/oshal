@@ -11,6 +11,14 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ## Promotion, deployment, and regression proof
 
+### No gate typechecks a test file, so "typecheck clean" says nothing about one
+
+- **Found 2026-09-16** reviewing PR #579. `tsconfig.json` has `include: ["src/**/*.ts", "src/**/*.tsx"]` and `exclude: ["node_modules", "dist", "tests", "**/*.spec.ts", "**/*.test.ts"]`; `tsconfig.server.json` includes only four `src/` subtrees. So `npx tsc --noEmit` never reads a spec, and neither does the pre-push hook, which runs that same command against committed HEAD. Vitest transpiles with esbuild, which strips types without checking them.
+- **The consequence, measured on our own reporting:** a great many test-only changes have been landed this week with "typecheck clean" recorded as evidence. The claim is true of the command and vacuous about the file that changed - a spec can carry a type error onto main and the only thing that can notice is an assertion happening to fail at runtime. A wrong `as` cast, a doubled object missing a field the production type requires, a helper whose return shape drifted: all invisible.
+- **Remaining:** typecheck the test tree. The shape that fits this repo is a second project (for example `tsconfig.tests.json`) that includes `tests/**` with the same path aliases, run as its own step beside the existing typecheck gate in `scripts/ci-local.sh` - not a widening of `tsconfig.json`, which would pull specs into the build's own project and change what `dist/` compiles.
+- **Expect a backlog of existing errors.** This has never run, so the first pass will not be green; the entry is not done until it is, or until each remaining error is quarantined with a reason rather than silenced wholesale.
+- **Done when:** a gate typechecks `tests/**` and fails on a type error there, a deliberately broken spec is shown to redden it, and the existing errors are either fixed or individually recorded.
+
 ### Government contracting CRM and contract management
 - **Delivered:** connected CRM pages, reviewed source import, proposal/award and post-award lifecycle with scoped UI/API/tools and registered tests. Installed import acceptance preserves source records, ownership and documents. See [the scoped backlog](backlog/government-contracting-crm.md); detailed package work stays private.
 - **Remaining:** prove website-origin intake and the source-implemented reviewed deadline tasks through the installed workflow; extend conversion to unlinked intake/no-bid history and add a unified decisions/obligations dashboard. External financial and submission operations retain their separate approval scopes.
@@ -257,8 +265,40 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   more than one ticket type with its n and limits kept in the same sentence as the number.
 
 ### Trading DB specs race on schema bootstrap
-- **Remaining:** running the trading unit specs WITHOUT `--no-file-parallelism` fails three pre-existing specs (trading-books-schema, trading-event-plans, trading-pinned-lots) in `beforeAll` with `trigger "trg_trd_signals_book_fill" … already exists` — the trading schema bootstrap takes the no-lock path, so two concurrent bootstraps collide. Observed 2026-09-06. The dispatch golden-plan spec works around it locally with a single retry; the underlying files were outside that item's ownership.
-- **Done when:** the bootstrap takes an advisory lock (or tolerates the concurrent create) and the same ten-file trading set is green without `--no-file-parallelism`.
+- **The bootstrap half is CLOSED (2026-09-16).** All seventeen `oshal_trading_*` lazy bootstraps now
+  pass `lockKey: SCHEMA_LOCK_KEYS.trading` to `runRuntimeSchemaBootstrap`, so the family applies its
+  DDL through `applyLockedSchema` under one transaction-scoped advisory lock. `ensurePeaksTable` was
+  converted from eleven bare `pool.query` statements onto the same path — it is the only trading
+  bootstrap with no memo, so it re-ran on every fire and was the family's most frequent racer. ONE
+  key, not one per module: six stores arm a trigger on the `oshal_trading_book_id_fill()` function the
+  books module owns, and the books legacy-mint reads three other modules' tables.
+- **The mechanism, measured rather than reasoned about.** Fourteen DSN-backed trading specs run against
+  one disposable `postgres:16-alpine` on a fresh schema, without `--no-file-parallelism`, failed six of
+  fourteen files on each of three runs — with a DIFFERENT set of files each time. The errors were
+  `23505` on `pg_type_typname_nsp_index` (`oshal_trading_signals`, `oshal_trading_orders`,
+  `oshal_trading_strategy_journal`) and on `pg_class_relname_nsp_index` (`idx_trd_peaks_book`) —
+  `CREATE TABLE/INDEX IF NOT EXISTS` is NOT race-safe in PostgreSQL — plus `42710`
+  `trigger "trg_trd_daily_equity_book_fill" … already exists` from the `DROP TRIGGER IF EXISTS` /
+  `CREATE TRIGGER` pair, and `40P01` deadlock detected. After the lock: five consecutive runs, byte-identical (`2 failed | 107 passed | 41 skipped`), zero occurrences of any of those codes.
+- **Guard:** `tests/unit/trading-schema-bootstrap-race.spec.ts` starts its own PostgreSQL and drives
+  four independent copies of the trading modules (`vi.resetModules()` — a second vitest worker in
+  everything but the process boundary) at it at once, on an empty database and again on a built one - after a repair: as first written the four copies were constructed with `Promise.all`, and `vi.resetModules()` clears the registry synchronously, so all four shared ONE module instance and only the un-memoised `ensurePeaksTable` actually raced. That is why coverage of the other sixteen is now asserted STATICALLY by `tests/unit/trading-schema-lock-coverage.spec.ts`, which names any trading bootstrap missing the family lock key and fails on it - the concurrency spec cannot, because the locked books/accounts prologue staggers cold workers enough to hide a single downstream miss. Three trading modules issue bare DDL outside that helper and hold no lock at all (`trading-bar-store`, `trading-config-overrides`, `trading-strategy-lab-store`); they are named by that guard so a fourth cannot join them quietly.
+  Red on the unlocked tree in 3 of 3 runs, green in 5 of 5 after. Registered in the isolated nightly
+  set (`scripts/ci/run-nightly-isolated.mjs`) and on the Test Lab `nightly-isolated-regression`
+  scenario, which is the only gate that executes a Docker-owning spec.
+- **Remaining:** the trading set is not GREEN on a bare cluster, for reasons that are not the race and
+  were not touched here. Five files fail identically before and after, on prerequisites nothing in the
+  trading bootstrap creates: `trading-book-report-scripts` needs `OSHAL_TEST_APP_DSN` (the enforcing
+  `oshal_app` role); `trading-books-schema` and `trading-settlement` need `oshal_user_deks`
+  (connector-token-crypto, `42P01`); `trading-dispatch-golden-plan` needs `trading_config_overrides`
+  (`42P01`); `trading-watchdog-books` needs `OSHAL_TEST_DB_CONTAINER`. That is the 'whether the whole
+  set survives on a bare cluster is still unmeasured' clause of the disposable-PostgreSQL entry below
+  — now measured, and it belongs there. The golden-plan spec's single-retry workaround
+  (`bootstrapOnce`) is now redundant but was left in place; removing it is a separate change.
+- **Done when:** ~~the bootstrap takes an advisory lock (or tolerates the concurrent create)~~ DONE,
+  and the same ten-file trading set is green without `--no-file-parallelism` — PARTIAL: no file fails
+  for the race any more and the run is deterministic, but five fail on the bare-cluster prerequisites
+  listed above.
 
 ### The DB-backed unit specs need a disposable PostgreSQL to run against
 - **What changed:** 23 `tests/unit/*.spec.ts` resolved their DSN with a fallback onto the local
@@ -330,8 +370,11 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** if Forge edit-in-place is commissioned, it re-emits the same pack rather than a duplicate.
 - **Commissioned (operator, 2026-09-15):** build Bot Forge edit-in-place. The done-when above now applies unconditionally: editing an existing pack re-emits the same pack, never a duplicate.
 
-### Nightly tasks still launched from the ADR-115 archive
-- **Remaining:** make keepalive, recap, and signal launchers self-locating, repoint their actual Task Scheduler actions to this trunk, and explicitly retain or relocate the private Evidence-Nightly job. (Kalshi done 2026-09-04: `kalshi-forward-daily.cmd` cd's to `%~dp0..`, the task action names `C:\Projects\oshal`, and it test-ran from there with exit 0. Still on the archive path: JobHunterSwarmSync, OSHAL Claude token keepalive, OSHAL Signal Labeler, OSHAL-Evidence-Nightly.)
+### Nightly tasks still launched from the ADR-115 archive — LAUNCHERS DONE 2026-09-16, one operator action left
+- **Done 2026-09-16 (code):** every scheduled-task launcher in `scripts/` now resolves its payload from its own directory. `claude-token-keepalive-hidden.vbs`, `oshal-signal-daily-hidden.vbs`, `oshal-signal-daily.cmd` and `make-trade-report.cmd` no longer name a checkout; `register-claude-token-keepalive.ps1` registers the windowless launcher with `-WorkingDirectory $repo` (the bare-powershell action it used to write is what got hand-edited into a hardcoded archive path), and a new `register-signal-labeler.ps1` gives the hand-made Signal Labeler a registrar it never had. Proven headless from an unrelated cwd: both chains ran the checkout they sit in, not the one they used to name. `tests/unit/scheduled-task-launchers-self-locating.spec.ts` holds the line over every `scripts/*.vbs`, `*.cmd` and `register-*.ps1`, gating on the shape of a typed `C:\Projects\<name>` path rather than the archive's name; mutation-proven red on a reintroduced path, on a silent "fix" of the deliberate exception, and on a registrar reverting to bare powershell. Inventory, drift measurements and the repoint commands: [scheduled-tasks-trunk-vs-archive.md](runbooks/scheduled-tasks-trunk-vs-archive.md). (Kalshi was done 2026-09-04 the same way.)
+- **Evidence-Nightly: RETAINED at the private archive, deliberately.** It writes its board to `docs/evidence/`, which is internal-only and refused by the publish gate, so this trunk cannot hold it. `run-evidence-nightly-hidden.vbs` declares the exception in-band (`OSHAL-INTENTIONAL-ARCHIVE-PATH`) and the guard asserts it is the *only* launcher on the archive and that it is not quietly made self-locating.
+- **Remaining (operator, one-time):** run the two registrars on the box so the live Task Scheduler actions name `C:\Projects\oshal`, then `Start-ScheduledTask` each once. Commands are in the runbook. Until then the keepalive and the signal labeler still execute the frozen archive tree — whose `oshal-signal-label.js` differs from this trunk's by 234 lines. `JobHunterSwarmSync` is disabled and not movable (its target lives under `apps/`, runtime staging that is never tracked — Rule 0c); unregister it or leave it disabled.
+- **Also still on the archive, separately:** `run-daily-recap.ps1` resolves `$REPO` (its asset/`out` root, `OSHAL_RECAP_REPO`-overridable) to the archive, so the recap's *launcher* is trunk-resident but `assemble-recap.js` and the vids-operator `out` directory are not. Moving it is its own coordinated change — `assemble-recap.js`, `oshal-recap-email.js`'s container path, `oshal-recap-render-remote.js`, `oshal-recap-agent-remote.js` and the compose `OSHAL_DOCKER_PROJECT_ROOT` default all encode that same root, and a partial move breaks the nightly recap. Not attempted here.
 - **Done when:** each movable task test-runs from `C:\Projects\oshal`, its scheduler action names that path, and Evidence-Nightly is documented at an intentional private location. See [ADR-115](adr/115-clean-trunk-branch-strategy.md).
 
 ### CI Playwright red-baseline retirement

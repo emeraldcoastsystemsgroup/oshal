@@ -8,7 +8,9 @@ REM  Output: packages/oshal-vids-operator/out/oshal-report-<date>.mp4
 REM  Optional arg %1 = a date the data script understands (yesterday | YYYY-MM-DD).
 REM ============================================================================
 setlocal
-cd /d "C:\Projects\open-shal-swarm-harness-agent-llm"
+REM Run from THIS checkout (ADR-115). The hardcoded pre-cutover archive path made this batch tool
+REM build its report from a tree frozen at the cutover commit, whichever checkout it was invoked from.
+cd /d "%~dp0.."
 
 echo [make-trade-report] killing any stray ffmpeg (file-lock trap)...
 powershell -NoProfile -Command "Get-Process | Where-Object { $_.Name -like 'ffmpeg*' } | Stop-Process -Force -ErrorAction SilentlyContinue"

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Tier-1 RLS for lazy app-store tables (A1.2 follow-up): asserts every lazy in-app DDL chokepoint that creates a migration-060-listed table also executes ENABLE/FORCE ROW LEVEL SECURITY + the create-if-absent owner_or_operator policy DO block, so a fresh database never has one of these tables policy-less.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The recording pool now answers `connect()` as well as `query()`. The trading bootstraps moved onto the advisory-lock path, which takes ONE client and issues every statement on it, so a pool that only implemented `query` failed these two cases with `pool.connect is not a function` rather than on anything about RLS. The client records into the same array, so the assertions below still read the real statement ORDER; BEGIN/SAVEPOINT/COMMIT are recorded alongside and ignored by the exact-match lookups.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
@@ -15,11 +16,17 @@ import { ensurePeaksTable } from '../../src/app/trading-peaks-store';
 /** Records every statement a schema-ensure function executes, in order. */
 function recordingPool(): { pool: Pool; statements: string[] } {
   const statements: string[] = [];
+  const record = async (sql: unknown) => {
+    const text = typeof sql === 'string' ? sql : String((sql as { text?: string })?.text ?? '');
+    statements.push(text);
+    return { rows: [] };
+  };
+  // `connect` matters: a bootstrap that names an advisory lock key runs its statements on ONE
+  // checked-out client, so the sequence this spec reads arrives through the client, not the pool.
   const pool = {
-    async query(sql: unknown) {
-      const text = typeof sql === 'string' ? sql : String((sql as { text?: string })?.text ?? '');
-      statements.push(text);
-      return { rows: [] };
+    query: record,
+    async connect() {
+      return { query: record, release() { /* nothing to return to a fake pool */ } };
     },
   } as unknown as Pool;
   return { pool, statements };

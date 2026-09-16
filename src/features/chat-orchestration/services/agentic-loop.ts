@@ -12,11 +12,13 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Passed agentId through provider calls so live startup manifests can resolve the active bot profile and tool context
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Routed per-turn cost through shared resolver so token-bearing zero-cost providers still contribute estimated model-level telemetry
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credentials from the model-provider loop; credentials are resolved only inside audited server-side operations.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | The run now carries a tier-aware tool trace beside the flat toolsUsed list: every invocation records which of the three tiers owned it and, for a provider-embedded tool, the provider operation the provider ran. toolsUsed alone could not tell a registry tool from a harness primitive from a provider-side operation.
  */
 
 import { createChildLogger } from '@/shared/logger';
 import type { LLMMessage, ContentBlock, ModelUsageStats, ProcessResult, TaskUsageSummary } from '@/shared/types';
 import { resolveUsageCost, type LLMService, type LLMToolDefinition, type LLMResponse, type StreamCallback } from '@/features/llm-provider';
+import { buildToolRunTraceEntry, type ToolRunTraceEntry } from '@/shared/tools/embedded-tool-tier';
 import { FollowupQuestionSignal } from './followup-question-signal';
 import { FatalToolError } from './fatal-tool-error';
 
@@ -100,6 +102,7 @@ export async function runAgenticLoop(
   const loopConfig = { ...DEFAULT_CONFIG, ...config };
   const history = [...messages];
   const toolsUsed: string[] = [];
+  const toolRuns: ToolRunTraceEntry[] = [];
   let usageSummary = createEmptyUsageSummary();
   let turnCount = 0;
 
@@ -111,17 +114,17 @@ export async function runAgenticLoop(
   while (turnCount < loopConfig.maxTurns) {
     turnCount++;
     const turnResult = await executeTurn(
-      provider, history, systemPrompt, tools, executeTool, toolsUsed, turnCount, loopConfig,
+      provider, history, systemPrompt, tools, executeTool, toolsUsed, toolRuns, turnCount, loopConfig,
     );
     usageSummary = mergeUsageSummaries(usageSummary, turnResult.usageSummary);
 
     if (turnResult.done) {
-      return buildResult(true, turnResult.response, turnCount, toolsUsed, turnResult.completionType, usageSummary);
+      return buildResult(true, turnResult.response, turnCount, toolsUsed, toolRuns, turnResult.completionType, usageSummary);
     }
   }
 
   logger.warn({ turnCount: loopConfig.maxTurns }, 'Agentic loop hit max turns');
-  return buildResult(true, extractLastResponse(history), turnCount, toolsUsed, 'tool_limit', usageSummary);
+  return buildResult(true, extractLastResponse(history), turnCount, toolsUsed, toolRuns, 'tool_limit', usageSummary);
 }
 
 /**
@@ -133,6 +136,7 @@ export async function runAgenticLoop(
  * @param tools - Available tools
  * @param executeTool - Tool execution callback
  * @param toolsUsed - Mutable list of tools used (for tracking)
+ * @param toolRuns - Mutable tier-aware trace of tool invocations
  * @param turnNumber - Current turn number
  * @param config - Loop config
  * @returns Turn outcome — whether loop should continue or stop
@@ -144,6 +148,7 @@ async function executeTurn(
   tools: LLMToolDefinition[],
   executeTool: ToolExecutionCallback,
   toolsUsed: string[],
+  toolRuns: ToolRunTraceEntry[],
   turnNumber: number,
   config: AgenticLoopConfig,
 ): Promise<{ done: boolean; response?: string; completionType?: string; usageSummary: TaskUsageSummary }> {
@@ -181,7 +186,9 @@ async function executeTurn(
   // Execute tools and continue loop
   addAssistantMessage(history, response.content);
   try {
-    await executeToolBlocks(toolUseBlocks, executeTool, history, toolsUsed, config);
+    await executeToolBlocks(
+      toolUseBlocks, executeTool, history, toolsUsed, toolRuns, provider.getProviderName(), config,
+    );
   } catch (error) {
     if (error instanceof FollowupQuestionSignal) {
       return { done: true, response: error.question, completionType: 'waiting_for_input', usageSummary };
@@ -289,6 +296,8 @@ function addAssistantMessage(history: LLMMessage[], content: ContentBlock[]): vo
  * @param executeTool - Tool execution callback
  * @param history - Mutable conversation history
  * @param toolsUsed - Mutable tracking list
+ * @param toolRuns - Mutable tier-aware trace list
+ * @param providerId - Active provider, so an embedded tool names the operation that ran
  * @param config - Loop config (for stream callback)
  */
 async function executeToolBlocks(
@@ -296,10 +305,12 @@ async function executeToolBlocks(
   executeTool: ToolExecutionCallback,
   history: LLMMessage[],
   toolsUsed: string[],
+  toolRuns: ToolRunTraceEntry[],
+  providerId: string,
   config: AgenticLoopConfig,
 ): Promise<void> {
   for (const block of toolBlocks) {
-    const result = await executeAndTrack(block, executeTool, toolsUsed);
+    const result = await executeAndTrack(block, executeTool, toolsUsed, toolRuns, providerId);
     addToolResultToHistory(history, block.id, result.content, result.isError);
   }
 }
@@ -310,15 +321,24 @@ async function executeToolBlocks(
  * @param block - Tool use block
  * @param executeTool - Execution callback
  * @param toolsUsed - Tracking list
+ * @param toolRuns - Tier-aware trace list
+ * @param providerId - Active provider, for embedded-tier operation resolution
  * @returns Tool result content and error status
  */
 async function executeAndTrack(
   block: { id: string; name: string; input: Record<string, unknown> },
   executeTool: ToolExecutionCallback,
   toolsUsed: string[],
+  toolRuns: ToolRunTraceEntry[],
+  providerId: string,
 ): Promise<{ content: string; isError: boolean }> {
-  logger.info({ tool: block.name, toolUseId: block.id }, 'Executing tool');
+  const traceEntry = buildToolRunTraceEntry(block.name, providerId);
+  logger.info(
+    { tool: block.name, toolUseId: block.id, tier: traceEntry.tier, providerOperation: traceEntry.providerOperation },
+    'Executing tool',
+  );
   toolsUsed.push(block.name);
+  toolRuns.push(traceEntry);
 
   try {
     const content = await executeTool(block.name, block.input);
@@ -379,15 +399,20 @@ function buildResult(
   response: string | undefined,
   turnCount: number,
   toolsUsed: string[],
+  toolRuns: ToolRunTraceEntry[],
   completionType?: string,
   usageSummary?: TaskUsageSummary,
 ): ProcessResult {
-  logger.info({ success, turnCount, toolCount: toolsUsed.length, completionType }, 'Agentic loop completed');
+  logger.info(
+    { success, turnCount, toolCount: toolsUsed.length, tiers: toolRuns.map((run) => run.tier), completionType },
+    'Agentic loop completed',
+  );
   return {
     success,
     response,
     turnCount,
     toolsUsed,
+    toolRuns,
     usageSummary: usageSummary ?? createEmptyUsageSummary(),
     completionType: completionType as ProcessResult['completionType'],
   };

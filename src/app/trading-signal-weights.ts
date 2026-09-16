@@ -11,12 +11,13 @@
  * CHANGE LOG
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-algo learned mass/proximity store (load masses for the ensemble, upsert from the overnight review).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  *
  * @module trading-signal-weights
  */
 
 import type { AppContext } from './composition-root';
-import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 
 /** A learned weight row for one signal/algo. `expectancy` is the avg signed return % per fire (the
  *  P&L-aware edge; 0 when learned from hit-rate). */
@@ -36,7 +37,7 @@ export function learnExpectancyEnabled(): boolean {
 /** Ensure the signal-weights table exists (self-healing). */
 export async function ensureSignalWeightsTable(pool: AppContext['pool']): Promise<void> {
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading signal weights',
+    pool, moduleName: 'trading signal weights', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_signal_weights (
         algo TEXT PRIMARY KEY,

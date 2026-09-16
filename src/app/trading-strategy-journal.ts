@@ -20,12 +20,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — append-only journal (kind/summary/detail/source per ET day) + since-window reader for the recap's "What changed" section.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  *
  * @module trading-strategy-journal
  */
 
 import type { Pool } from 'pg';
-import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'trading-strategy-journal' });
@@ -53,7 +54,7 @@ function etDay(ms: number = Date.now()): string {
 /** @description Create the journal table if absent (self-healing, like the daily-equity store). */
 export async function ensureStrategyJournalTable(pool: Pool): Promise<void> {
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading strategy journal',
+    pool, moduleName: 'trading strategy journal', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_strategy_journal (
         id BIGSERIAL PRIMARY KEY,

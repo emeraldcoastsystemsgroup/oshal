@@ -243,7 +243,7 @@ export class TaskOrchestrator {
       'Starting agentic processing',
     );
 
-    const executor = this.getExecutor(taskId, options.agentId, options.userSub);
+    const executor = this.getExecutor(taskId, options.agentId, options.userSub, provider.getProviderName());
 
     return runAgenticLoop(
       provider,
@@ -341,9 +341,17 @@ export class TaskOrchestrator {
    *
    * @param taskId - Current task context
    * @param agentId - The agent requesting tool execution
+   * @param userSub - Authenticated caller, threaded to per-user tools
+   * @param providerId - Active model provider, so an embedded-tier decision can name the
+   *                     provider operation it applied to
    * @returns Tool execution callback (original or intercepted)
    */
-  private getExecutor(taskId: string, agentId?: string, userSub?: string): ToolExecutionCallback {
+  private getExecutor(
+    taskId: string,
+    agentId?: string,
+    userSub?: string,
+    providerId?: string,
+  ): ToolExecutionCallback {
     const baseExecutor: ToolExecutionCallback = (toolName, toolInput) => this.deps.executeTool(
       toolName,
       toolInput,
@@ -361,6 +369,7 @@ export class TaskOrchestrator {
       baseExecutor,
       agentId?.trim() || DEFAULT_CHAT_AGENT_ID,
       taskId,
+      providerId,
     );
   }
 

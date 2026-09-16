@@ -16,11 +16,12 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — accounts table (encrypted number + HMAC digest identity + last4, owner-pair unique for the books composite FK, RLS at the DDL chokepoint), discoverBrokerAccounts over every schwab connection with age-out-not-delete semantics, masked list reads.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 pin retirement: discovery no longer reads SCHWAB_ACCOUNT_NUMBER to decide which discovered account is 'the legacy live one'. The books-by-account_id check already covers a legacy live book that is BOUND (the post-cutover state), and with the pin gone there is nothing to compare an unbound one against - guessing here is the same defect the adapter's selection rule just lost. An account no book holds gets the documented DISABLED view-only book.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
  */
 
 import crypto from 'crypto';
 import type { AppContext } from './composition-root';
-import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap } from '@/shared/services/database';
+import { buildOwnerRlsPolicyStatements, runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'trading-accounts-store' });
@@ -61,7 +62,7 @@ export async function ensureAccountsSchema(pool: AppContext['pool']): Promise<vo
 
 async function bootstrapAccounts(pool: AppContext['pool']): Promise<void> {
   await runRuntimeSchemaBootstrap({
-    pool, moduleName: 'trading accounts',
+    pool, moduleName: 'trading accounts', lockKey: SCHEMA_LOCK_KEYS.trading,
     statements: [
       `CREATE TABLE IF NOT EXISTS oshal_trading_accounts (
         account_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
