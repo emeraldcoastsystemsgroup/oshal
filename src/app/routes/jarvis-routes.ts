@@ -52,6 +52,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Emitted surface ops log op count, names (custom:<name>) and the target app + its declared custom names at INFO on the success path, so a BUG-18 custom-name mismatch is diagnosable from the api log alone.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | No-hosted-brain honesty: the /ask catch runs describeJarvisAskFailure, so a turn whose user-brain ladder resolved to nothing on an unbrokered-harness bot records "Jarvis has no AI engine connected — add one under Settings → Connections → Bring Your Own LLM." with code NO_HOSTED_BRAIN, and /ask/result returns that code for the surface to speak. Every other failure keeps its own message and carries no code; the refusal, the ladder and the SEC-05 preflight are untouched.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted jarvis-speaker-profile-links.js in JARVIS_CLIENT_ASSETS: the Manage Voices → Ambient Recall bridge serves from the same authenticated /assets route as the other speaker siblings.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | GET /tasks claims the return leg's FAILURE half beside the success half: a task whose ticket reached a terminal failure is closed in the durable shelf and the honest sentence is written into its thread (returnFailedComplexTasks). The ticket map now carries the whole ticket rather than its status alone, because the recorded escalation reason lives in its metadata and re-reading it per task would turn one list into an N+1.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -134,9 +135,12 @@ import {
   markJarvisSessionTaskStatus,
   mapJarvisTaskStatusFromTicketStatus,
   jarvisFailureNoteForTicketStatus,
+  returnFailedComplexTasks,
+  type JarvisFailedTaskCandidate,
   storedVisual,
   storedFiles,
 } from './jarvis-task-store';
+import { deriveTicketEscalationDetail } from '@/entities/ticket';
 import { threadTicketKey, ensureSessionTask, ensureThreadChatTicket, closeThreadChatTicket } from './jarvis-thread-tickets';
 import { describeJarvisAskFailure } from './jarvis-no-brain-notice';
 
@@ -517,23 +521,32 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
       if (briefings) rows = await briefings.service.listTasks(sub, await briefings.resolveActor(req), 50);
       rows = await filterJarvisResultRows(ctx, sub, rows, () => resultActor(req));
       // For complex tasks (filed with the swarm), the live status lives on the ticket — map it in.
+      // The whole ticket is carried, not just its status: the recorded escalation reason lives in
+      // its metadata, and re-reading it per task would turn one list into an N+1.
       const hasComplex = rows.some((r) => r.kind === 'complex' && r.ticket_id);
-      let ticketStatus = new Map<string, string>();
+      let ticketsById = new Map<string, { status: string; metadata: Record<string, unknown> }>();
       if (hasComplex) {
         try {
           const tickets = await ctx.ticketService.listTickets({ ownerSub: sub, limit: 200 });
-          ticketStatus = new Map(tickets.map((t) => [String(t.ticketId), String(t.status)]));
+          ticketsById = new Map(tickets.map((t) => [String(t.ticketId), { status: String(t.status), metadata: t.metadata }]));
         } catch { /* fall back to the stored status */ }
       }
+      // Tasks whose ticket is terminally dead and whose row has not been closed yet. Collected in
+      // this same owner-filtered pass so the return leg costs no extra read.
+      const failedComplex: JarvisFailedTaskCandidate[] = [];
       const tasks = rows.map((r) => {
         let status = r.status;
         let error = r.error as string | null;
-        if (r.kind === 'complex' && r.ticket_id && ticketStatus.has(r.ticket_id)) {
-          const ts = ticketStatus.get(r.ticket_id)!;
+        if (r.kind === 'complex' && r.ticket_id && ticketsById.has(r.ticket_id)) {
+          const ts = ticketsById.get(r.ticket_id)!.status;
           status = mapJarvisTaskStatusFromTicketStatus(ts);
           // A ticket that escalated never wrote to the shelf row's error column, so a failed
           // multi-app plan arrived as status 'error' with a null message. Say what happened.
           if (!error) error = jarvisFailureNoteForTicketStatus(ts);
+          if (status === 'error') {
+            failedComplex.push({ id: r.id, kind: r.kind, ticketId: r.ticket_id, ticketStatus: ts,
+              storedStatus: String(r.status || ''), createdAt: r.created_at });
+          }
         }
         const visual = storedVisual({ visual: r.visual });
         // Deliverables the task produced, already copied into THIS caller's private folder. The
@@ -548,6 +561,14 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
           ...(files.length ? { files } : {}),
         };
       });
+      // The return leg's failure half, claimed here alongside the success half below. A dead
+      // ticket has no work product to summarize, so the honest sentence is derived from its own
+      // recorded status and reason code and written straight into the thread the user asked in —
+      // otherwise the row sits at 'queued' forever and Jarvis keeps calling it "in progress".
+      await returnFailedComplexTasks(ctx, sub, failedComplex, new Map(failedComplex.map((task) => [
+        task.ticketId ?? '',
+        deriveTicketEscalationDetail(null, ticketsById.get(task.ticketId ?? '')?.metadata),
+      ])));
       // For finished complex tasks, have Jarvis READ the deliverable and summarize it in his voice
       // (once, in the background). Until that lands, the task stays masked as in-flight — see
       // maskPendingComplexSummaries for why it must never surface as 'done' early.

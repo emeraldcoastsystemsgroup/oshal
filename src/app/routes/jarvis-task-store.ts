@@ -17,6 +17,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Stale DONE results are WITHHELD from the block (title + age stay): the fourth live iteration proved guidance cannot stop the model quoting numbers it can see - the month-old demo-era pull kept winning however it was framed. Deterministic beats instruction: past STALE_RESULT_DAYS the result text simply is not in the context.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | OPEN WORK results carry their AGE and are scoped to their own task. Live verification on the gsquared staging box: with no dates and a preamble commanding "read the RESULT and report it", Jarvis quoted a month-old demo-era CRM pull as the current pipeline ("0 in docs out, 4 opportunities" against a live 473/7/2) even after the catalog freshness rule shipped — the two guidances conflicted and this one won. Now they agree: a result answers questions about that task; current-state questions file a fresh handoff.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Persist captured deliverables on the task (files JSONB) so a finished task still offers its download after a reload, not only in the reply that happened to be on screen. Reset files alongside result/visual on re-file: a task re-run under the same id must never surface the previous run's links.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | The return leg's failure half: finishFailedComplexTask/returnFailedComplexTasks claim a dead ticket's shelf row with one guarded UPDATE and persist the honest sentence into the Jarvis thread. finishTask is called only from success paths, so a ticket that escalated left its row at 'queued' with a NULL error forever and buildOpenWorkBlock injected it into every turn as "in progress" — two live rows did exactly that for 18 hours (2026-09-15). 'dead_letter' joins the error branch of the ticket-status map: it is terminal and read 'in progress' forever.
  *
  * @module jarvis-task-store
  */
@@ -29,6 +30,7 @@ import {
   type VisualResponseArtifact,
 } from '@/features/visual-response';
 import { createChildLogger } from '@/shared/logger';
+import type { TicketEscalationDetail } from '@/entities/ticket';
 import type { CapturedFile } from './jarvis-deliverable-files';
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
 import { getRequestIdentity } from '@/shared/services/database/request-identity';
@@ -335,7 +337,10 @@ export function mapJarvisTaskStatusFromTicketStatus(ticketStatus: string): strin
   // (for example, a checkout handoff or one successful owner in a partial multi-owner run).
   // Surface and summarize that durable completion instead of leaving the Jarvis shelf "running".
   if (ticketStatus === 'complete' || ticketStatus === 'customer_action') return 'done';
-  if (ticketStatus === 'cancelled' || ticketStatus === 'escalated') return 'error';
+  // `dead_letter` is the DLQ quarantine and it is TERMINAL (entities/ticket/types.ts) — the queue
+  // never retries it and only an operator requeue releases it. Left out of this branch it fell
+  // through to 'running', so a quarantined ticket's work item read "in progress" forever.
+  if (ticketStatus === 'cancelled' || ticketStatus === 'escalated' || ticketStatus === 'dead_letter') return 'error';
   return 'running';
 }
 
@@ -353,10 +358,183 @@ export function jarvisFailureNoteForTicketStatus(ticketStatus: string): string |
   if (ticketStatus === 'escalated') {
     return 'This one did not finish — a step failed and the run stopped there. Nothing was made up in its place; open the ticket for the details.';
   }
+  if (ticketStatus === 'dead_letter') {
+    return 'This one stopped for good — it failed repeatedly and was quarantined for review. Nothing was made up in its place; open the ticket for the details.';
+  }
   if (ticketStatus === 'cancelled') {
     return 'This one was cancelled before it finished.';
   }
   return null;
+}
+
+/**
+ * A recorded failure reason is a CODE the swarm writes (`manifest_worker_dispatch_failed`,
+ * `superadmin_required`, …), and this is the fixed code → plain-words map the returned sentence is
+ * built from. Two rules hold it together.
+ *
+ * It is keyed on the CODE alone. The same transition also records a free-text `message` written by
+ * whatever failed — the live 2026-09-15 pair carried `authorization_remote_execution_failed` — and
+ * text that came out of a worker must never be echoed into a conversation turn, both because it is
+ * an injection surface and because it is not a sentence anyone can read.
+ *
+ * And the sentences are fixed literals, never generated prose, for exactly the reason
+ * jarvisFailureNoteForTicketStatus above is: there is no result to summarize here, and a model
+ * asked to explain a failure it cannot see will invent one. An unrecognised code contributes
+ * nothing and the honest terminal-status line still ships on its own.
+ */
+const JARVIS_FAILURE_REASON_SENTENCES: Readonly<Record<string, string>> = {
+  manifest_worker_dispatch_failed: 'The app that owns this work would not accept the handoff.',
+  manifest_worker_agent_unresolved: 'No bot is registered to do this kind of work yet.',
+  multi_owner_dispatch_failed: 'Every app this was split across failed to take its part.',
+  invalid_provider_intent: 'The request did not match what the connected service accepts.',
+  superadmin_required: 'It needs an operator with higher privileges than the run had.',
+  explicit_remote_target_unhandled: 'The remote machine it was addressed to never picked it up.',
+  browser_submission_dispatch_failed: 'The browser step could not be started on the machine that runs it.',
+  remote_execution_failed: 'The remote machine took the work and then failed part-way.',
+  worker_bot_first_pass_failed: 'The bot working on it failed on its first pass.',
+  worker_bot_revision_failed: 'The bot failed while revising its earlier answer.',
+  reviewer_unavailable_deliverables_missing: 'The review step had nothing to review — the work produced no output.',
+  incident_rca_pipeline_failed: 'The investigation pipeline failed before it reached a finding.',
+  graph_workflow_definition_missing: 'The workflow it needs is not installed on this deployment.',
+  graph_workflow_dispatch_failed: 'The workflow could not be started.',
+  child_ticket_escalated: 'A step further down the plan failed, so the whole plan stopped.',
+  routing_failed_max_retries_exhausted: 'Routing could not find a bot for it after repeated tries.',
+  unspecified_escalation: 'The run stopped without recording why.',
+  escalation_loop_poison: 'It failed the same way repeatedly and was quarantined.',
+  max_dispatch_attempts_poison: 'It could not be handed off after repeated attempts and was quarantined.',
+  unspecified_dead_letter: 'It was quarantined without recording why.',
+};
+
+/** Longest failure sentence that may enter a thread turn. */
+const FAILURE_SENTENCE_LIMIT = 600;
+
+/** At most this many dead tickets are returned to their threads per owner poll — the same bound
+ *  repairCompletedTaskTableVisuals uses, so a backlog drains over a few polls instead of posting a
+ *  burst of messages into several conversations at once. */
+const FAILURE_RETURNS_PER_POLL = 3;
+
+/** A failure note is never dated retroactively into a conversation older than this. Six live rows
+ *  across four sessions qualified for the first flush and one of them was 15 days old; a note
+ *  arriving under a two-week-old question reads as a new event, which it is not. Matches
+ *  STALE_RESULT_DAYS above — past it, a work item is history, not an open thread. */
+const FAILURE_RETURN_MAX_AGE_DAYS = STALE_RESULT_DAYS;
+
+/**
+ * @description Composes the one sentence a dead ticket returns with: the honest terminal-status
+ * line, plus the plain-words half-sentence for the recorded reason CODE when there is one. Newlines
+ * are collapsed and the whole thing is bounded before anything reaches a thread turn.
+ * @param note - The fixed line for the ticket's terminal status.
+ * @param detail - The recorded escalation detail, when the transition recorded one.
+ * @returns A single bounded line of plain text.
+ */
+function jarvisFailureSentence(note: string, detail: TicketEscalationDetail | null): string {
+  const extra = JARVIS_FAILURE_REASON_SENTENCES[detail?.reason ?? ''];
+  return `${note}${extra ? ` ${extra}` : ''}`.replace(/\s+/g, ' ').trim().slice(0, FAILURE_SENTENCE_LIMIT);
+}
+
+/**
+ * @description The failure half of the return leg. A handed-off task whose ticket ended badly is
+ * marked errored in the durable shelf AND told to the user in the thread they asked in — because
+ * finishTask is only ever called from success paths, a ticket that escalated used to leave its row
+ * at 'queued' with a NULL error indefinitely (two live rows sat that way for 18 hours on
+ * 2026-09-15) while buildOpenWorkBlock injected both into every subsequent turn as "in progress".
+ *
+ * The guarded UPDATE is the once-only guard: the turn is persisted only when THIS call is the one
+ * that moved the row, so a second poll adds no second message and no separate delivered/claim flag
+ * is needed. A row a summarizer claimed less than three minutes ago is deliberately left alone —
+ * finishTask carries no status guard of its own and would overwrite this 'error' straight back to
+ * 'done' after the failure turn had already posted.
+ *
+ * @param ctx - App context: its pool owns the shelf row, its messageStore owns the thread.
+ * @param sub - The owner the row must belong to; the UPDATE is scoped to it.
+ * @param task - The shelf task, taken from the owner-filtered poll list.
+ * @param ticketStatus - The linked ticket's terminal status.
+ * @param detail - The recorded escalation detail, when the transition recorded one.
+ * @returns True when this call claimed the row and wrote the thread turn.
+ */
+export async function finishFailedComplexTask(
+  ctx: AppContext,
+  sub: string,
+  task: { id: string; kind: string; ticketId: string | null },
+  ticketStatus: string,
+  detail: TicketEscalationDetail | null,
+): Promise<boolean> {
+  if (task.kind !== 'complex' || !task.ticketId) return false;
+  const note = jarvisFailureNoteForTicketStatus(ticketStatus);
+  if (!note) return false;
+  const sentence = jarvisFailureSentence(note, detail);
+  try {
+    const claimed = await ctx.pool.query(
+      `UPDATE jarvis_tasks SET status = 'error', error = $3, finished_at = NOW()
+        WHERE id = $1 AND user_sub = $2 AND status NOT IN ('error', 'done')
+          AND (status <> 'summarizing' OR summarize_started_at IS NULL
+               OR summarize_started_at < NOW() - INTERVAL '3 minutes')
+        RETURNING id`,
+      [task.id, sub, sentence],
+    );
+    if (!claimed.rowCount) return false;
+    const sessionId = await findJarvisTaskSessionId(ctx, sub, task.id);
+    if (sessionId) {
+      await persistJarvisTurn(ctx, sessionId, 'assistant', sentence, {
+        sourceJarvisTaskId: task.id,
+        sourceTicketId: task.ticketId,
+      });
+    }
+    logger.info({ taskId: task.id, ticketId: task.ticketId, ticketStatus, reason: detail?.reason ?? null },
+      'jarvis: returned a terminal ticket failure to its thread');
+    return true;
+  } catch (err) {
+    logger.warn({ err, taskId: task.id }, 'jarvis: finishFailedComplexTask failed');
+    return false;
+  }
+}
+
+/** One task the owner poll saw whose linked ticket has reached a terminal failure. `storedStatus`
+ *  is the row's own durable status, so the per-poll budget is spent on rows that still need the
+ *  return rather than on ones a previous poll already closed. */
+export interface JarvisFailedTaskCandidate {
+  id: string;
+  kind: string;
+  ticketId: string | null;
+  ticketStatus: string;
+  storedStatus: string;
+  createdAt?: string | Date | null;
+}
+
+/**
+ * @description Returns a bounded batch of dead tickets to their threads on one owner poll. Bounded
+ * on two axes deliberately: at most FAILURE_RETURNS_PER_POLL rows move per poll so a backlog drains
+ * over several polls instead of dropping a burst of messages into several conversations at once,
+ * and a row older than FAILURE_RETURN_MAX_AGE_DAYS is skipped entirely rather than dating a
+ * retroactive failure note into a conversation from two weeks ago.
+ * @param ctx - App context (Postgres pool and message store).
+ * @param sub - The polling owner; every row and turn is scoped to them.
+ * @param candidates - Terminal-failure tasks from the owner-filtered poll list.
+ * @param details - The recorded escalation detail per ticket id, read once from the tickets the
+ *   poll already loaded so this adds no per-task query.
+ * @param maximumReturns - Test seam; never raises the per-poll ceiling.
+ * @returns How many rows this poll actually claimed and returned.
+ */
+export async function returnFailedComplexTasks(
+  ctx: AppContext,
+  sub: string,
+  candidates: readonly JarvisFailedTaskCandidate[],
+  details: ReadonlyMap<string, TicketEscalationDetail | null>,
+  maximumReturns = FAILURE_RETURNS_PER_POLL,
+): Promise<number> {
+  const limit = Math.max(0, Math.min(FAILURE_RETURNS_PER_POLL, Math.floor(maximumReturns)));
+  const oldest = Date.now() - FAILURE_RETURN_MAX_AGE_DAYS * 86400000;
+  let returned = 0;
+  for (const candidate of candidates) {
+    if (returned >= limit) break;
+    if (candidate.storedStatus === 'error' || candidate.storedStatus === 'done') continue;
+    const createdAt = candidate.createdAt ? new Date(candidate.createdAt).getTime() : Number.NaN;
+    if (Number.isFinite(createdAt) && createdAt < oldest) continue;
+    if (await finishFailedComplexTask(ctx, sub, candidate, candidate.ticketStatus, details.get(candidate.ticketId ?? '') ?? null)) {
+      returned += 1;
+    }
+  }
+  return returned;
 }
 
 /** @description Validates and returns persisted visual-artifact metadata, or undefined if it fails

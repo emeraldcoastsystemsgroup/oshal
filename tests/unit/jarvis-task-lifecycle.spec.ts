@@ -608,6 +608,8 @@ describe('Jarvis task lifecycle persistence', () => {
     expect(mapJarvisTaskStatusFromTicketStatus('customer_action')).toBe('done');
     expect(mapJarvisTaskStatusFromTicketStatus('cancelled')).toBe('error');
     expect(mapJarvisTaskStatusFromTicketStatus('escalated')).toBe('error');
+    // DLQ quarantine is terminal — read as 'running' it left a dead work item "in progress" forever.
+    expect(mapJarvisTaskStatusFromTicketStatus('dead_letter')).toBe('error');
     expect(mapJarvisTaskStatusFromTicketStatus('approved')).toBe('running');
   });
 
