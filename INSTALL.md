@@ -100,6 +100,14 @@ in named volumes; `.env` and `config-seed/` are never overwritten on re-runs.
 **Docker Desktop** with Compose v2 — macOS, Windows, or Linux. [Get Docker](https://docs.docker.com/get-docker/).
 That's it. No Node, no Postgres, no API keys, no identity provider for the default install.
 
+**On Windows, Docker Desktop runs on WSL2**, and enabling WSL2 is a separate step that
+`winget install Docker.DockerDesktop` does not perform. Installing Docker on a machine without
+it appears to succeed and then never starts, which reads as a Docker problem and is not one.
+The installer now checks for this before it looks for Docker and, in an elevated shell, offers
+to run `wsl --install --no-distribution` for you. **Enabling WSL2 always requires a reboot** —
+restart, start Docker Desktop once, then re-run the installer. On a Hyper-V backend, pass
+`-SkipWslCheck`.
+
 ### What it actually costs your machine
 
 Measured on a live default install (44 containers), 2026-07-26 — not estimated:
@@ -379,6 +387,25 @@ bash scripts/install.sh --minimal      # controller + infra only (no worker bots
 bash scripts/install.sh --no-verify    # skip the post-install verification
 bash scripts/install.sh --down         # stop and remove the stack
 ```
+
+`scripts/oshal-install.sh` / `oshal-install.ps1` additionally take:
+
+| Flag | PowerShell | What it does |
+|---|---|---|
+| `--allow-stale-image` | `-AllowStaleImage` | Install the published image even when it is far behind this repository. |
+| *(n/a)* | `-SkipWslCheck` | Skip the Windows WSL2 preflight (Hyper-V backend, or a machine you have already prepared). |
+
+**About the freshness check.** Images are published to GHCR only by the manual-only CI
+workflow, so `latest` can sit still while the repository moves. After pulling, the installer
+compares the image's `oshal.git.commit` build date against this repository's current tip and
+**refuses** an image more than 30 days behind it, warning between 7 and 30. This exists because
+a stale image does not look stale: everything added since the build is simply **absent**, so
+the box reports missing features rather than an old image. It fails open — offline,
+rate-limited or unreachable means it reports that it could not check and continues.
+
+Past a refusal you have two real fixes and one override: publish a current image (Actions →
+CI → Run workflow on `main`), install from source with `--mode 2`, or pass
+`--allow-stale-image` to take the old one deliberately.
 
 ## Enabling real LLM bots
 

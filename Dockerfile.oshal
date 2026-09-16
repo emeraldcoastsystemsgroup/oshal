@@ -58,6 +58,7 @@
 #                      |                          | daily rebuild now self-heals
 #                      |                          | fixable OS CVEs.
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | Carry the two shared Test
+# 8 | maintainer@emeraldcoastsystemsgroup.com   | Bake scripts/image-freshness.js. The installer's freshness gate runs INSIDE the pulled image on mode 1, where there is no repository on the host and no guaranteed node - without this COPY the check silently degrades to a skip on exactly the install path it exists to protect.
 #                      |                          | Lab browser fixtures
 #                      |                          | (tests/fixtures/isolated-
 #                      |                          | browser.ts and stl-viewer.ts)
@@ -258,6 +259,9 @@ COPY scripts/record-cost.sh ./scripts/
 COPY scripts/oshal-verify.sh ./scripts/
 COPY scripts/swarm-routability-check.sh ./scripts/
 COPY scripts/routability-critical-bots.txt ./scripts/
+# The installer runs this INSIDE the pulled image to report how far behind the image is.
+# It has to be baked: mode 1 has no repository on the host and no guaranteed node there.
+COPY scripts/image-freshness.js ./scripts/
 # ALL OSHAL connector/app CLIs (walmart, uber, uber-rides, spotify, duffel, gcp,
 # plaid, trading, …) — baked so app search/booking survives a container recreate.
 # Glob picks up new oshal-*.js automatically (allowlisted in .dockerignore).

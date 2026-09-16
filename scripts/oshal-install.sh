@@ -12,6 +12,7 @@
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: assess every requested store package in the shipped core image, block invalid audit bindings, and stage verified packages only from their exact SHA archive.
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: mode 4 goes from a printed Terraform pointer to a REAL codeless k8s install — kubectl/helm preflight, cluster detection (offers a single-node kind cluster with the cockpit port mapped; REFUSES to create one beside a running compose swarm — that pairing OOM-wedged a 6GB engine twice), chart from the published OCI package with a repo-fetch fallback, fleet presets kernel|full (store bundles stay compose-only and say so), the same admin-email→MOCK_OIDC identity wiring as mode 1 (shared local_sub, hoisted above the mode dispatch), NodePort exposure with localhost/node-IP detection, /api/health postflight, and the /welcome open. New flags: --namespace, --k8s-context, --nodeport, --chart.
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | Mode 4 now INSTALLS its prerequisites instead of printing links and exiting 1 (operator: the installer should include the prereqs). kubectl and helm are fetched from their official sources into /usr/local/bin when writable, else ~/.local/bin (never a silent sudo); if no cluster is reachable it offers k3s on Linux (native, no Docker, survives reboot, NodePorts land on the host) and kind wherever Docker is present (fully scriptable — no GUI toggle), still refusing kind beside a running compose swarm. Every system-touching step asks first; --yes/-y accepts them for unattended installs, and a non-interactive shell DECLINES rather than surprise-installing.
+# 9 | maintainer@emeraldcoastsystemsgroup.com   | Lockstep with the ps1: --allow-stale-image plus the post-pull freshness gate, and the Windows WSL2 guidance on both docker preflight failures. Git Bash on Windows hits the same dead end as the ps1 path - 'docker daemon not running' with no hint that WSL2 is the engine that is missing. The sh path only ADVISES (it cannot elevate); the ps1 can actually enable it.
 # =============================================================================
 #
 # One-click:
@@ -47,6 +48,8 @@ MODE=""; BUNDLE="full"; APPS=""; DIR="./oshal"; TAG="latest"; NO_AI=0
 PACKAGE_AUDIT_MODE="${OSHAL_PACKAGE_AUDIT_MODE:-compatible}"
 REGISTRY="ghcr.io/emeraldcoastsystemsgroup"; ADMIN_EMAIL=""; DRY=0; FROM_ARCHIVE=""
 CONTROL_PLANE=""; JOIN_CODE=""; ENROLL_TOKEN=""; ASSUME_YES=0
+ALLOW_STALE_IMAGE=0
+SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 K8S_NAMESPACE="oshal"; K8S_CONTEXT=""; K8S_NODEPORT="30500"; K8S_CHART=""; BUNDLE_EXPLICIT=0
 REPO_URL="https://github.com/emeraldcoastsystemsgroup/oshal"
 STORE_REPO="https://github.com/emeraldcoastsystemsgroup/oshal-apps"
@@ -68,6 +71,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --nodeport) K8S_NODEPORT="$2"; shift 2 ;;
   --chart) K8S_CHART="$2"; shift 2 ;;
   --from-archive) FROM_ARCHIVE="$2"; shift 2 ;;
+  --allow-stale-image) ALLOW_STALE_IMAGE=1; shift ;;
   --no-ai) NO_AI=1; shift ;;
   --yes|-y) ASSUME_YES=1; shift ;;
   --dry-run) DRY=1; shift ;;
@@ -78,6 +82,48 @@ case "$PACKAGE_AUDIT_MODE" in compatible|enforce) ;; *) echo "--audit-mode must 
 
 say()  { printf '\n== %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
+
+# -- Windows: WSL2 is Docker Desktop's engine, and nothing here used to check it -----
+# `winget install Docker.DockerDesktop` succeeds on a box whose WSL2 features are off;
+# Docker Desktop then never starts and this installer reported only "daemon not running",
+# which sends the operator looking at Docker rather than at Windows. Exit codes only --
+# wsl.exe writes UTF-16LE and parsing its text is how that check breaks silently.
+wsl_ready() { command -v wsl.exe >/dev/null 2>&1 && wsl.exe --status >/dev/null 2>&1; }
+is_windows_host() { case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*|Windows*) return 0 ;; *) return 1 ;; esac; }
+wsl_guidance() {
+  is_windows_host || return 0
+  wsl_ready && return 0
+  note ""
+  note "WSL2 does not look enabled on this machine, and Docker Desktop runs ON WSL2."
+  note "That is almost certainly why the engine is not up. In an ADMINISTRATOR PowerShell:"
+  note "    wsl --install --no-distribution"
+  note "    # then REBOOT, start Docker Desktop once, and re-run this installer"
+  note "This enables the Virtual Machine Platform and WSL features and installs the kernel."
+}
+
+# -- The published image can be far behind this repository --------------------------
+# Publishing to GHCR happens only in the manual-only CI workflow, so `latest` can and does
+# go stale. A stale image does not look stale: features added since the build are simply
+# ABSENT, which reads as a broken install rather than an old one. Refuses past the
+# threshold unless --allow-stale-image. Fails OPEN whenever it cannot check.
+check_image_freshness() {
+  img="$1"; rc=0
+  created="$(docker image inspect -f '{{.Created}}' "$img" 2>/dev/null || true)"
+  sha="$(docker image inspect -f '{{index .Config.Labels "oshal.git.commit"}}' "$img" 2>/dev/null || true)"
+  [ "$sha" = "<no value>" ] && sha=""
+  [ -n "$created" ] || { note "image freshness: no build date on the image - skipping the check"; return 0; }
+  if command -v node >/dev/null 2>&1 && [ -f "$SELF_DIR/image-freshness.js" ]; then
+    node "$SELF_DIR/image-freshness.js" --image-created "$created" --image-commit "$sha" || rc=$?
+  else
+    docker run --rm --entrypoint node "$img" /app/scripts/image-freshness.js \
+      --image-created "$created" --image-commit "$sha" || rc=$?
+  fi
+  if [ "$rc" = "3" ] && [ "$ALLOW_STALE_IMAGE" -ne 1 ]; then
+    echo "refusing to install a stale image - see above (or pass --allow-stale-image)" >&2
+    exit 1
+  fi
+  return 0
+}
 
 # ── Bundles: kernel + curated sets with dependencies BOUND ───────────────────
 # A bundle names (a) store packages and (b) the bot-node services those packages
@@ -455,9 +501,9 @@ if [ "$MODE" = "3" ]; then
 fi
 
 # ── Modes 1-2: the swarm ─────────────────────────────────────────────────────
-command -v docker >/dev/null 2>&1 || { echo "docker is required (Docker Desktop / Engine 24+)"; exit 1; }
+command -v docker >/dev/null 2>&1 || { echo "docker is required (Docker Desktop / Engine 24+)"; wsl_guidance; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "docker compose v2 is required"; exit 1; }
-docker info >/dev/null 2>&1 || { echo "docker daemon not running"; exit 1; }
+docker info >/dev/null 2>&1 || { echo "docker daemon not running"; wsl_guidance; exit 1; }
 
 # ── Preflight: own the credential paths BEFORE docker can (INSTALLER-GAPS G4) ─
 # Compose bind-mounts these vendor-CLI homes into every bot. If a path is absent at
@@ -493,6 +539,7 @@ else
     printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${GHCR_USER:-emeraldcoastsystemsgroup}" --password-stdin
   fi
   docker pull "$IMAGE"
+  check_image_freshness "$IMAGE"
   COMPOSE_SRC=""
 fi
 
