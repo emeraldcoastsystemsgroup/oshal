@@ -153,6 +153,11 @@ x-bot-env: &bot-env
   # Entra): MOCK_OIDC=false + OIDC_ISSUER_URL + OIDC_CLIENT_ID + OIDC_CLIENT_SECRET +
   # APP_URL + SESSION_SECRET in .env. Guard: tests/unit/mock-oidc-failclosed.spec.ts.
   MOCK_OIDC: ${MOCK_OIDC:-false}
+  # The installer writes these; without the passthrough the container falls back to the
+  # fabricated demo user, which never matches OSHAL_OPERATOR_EMAILS -> no superadmin.
+  MOCK_OIDC_EMAIL: ${MOCK_OIDC_EMAIL:-}
+  MOCK_OIDC_NAME: ${MOCK_OIDC_NAME:-}
+  MOCK_OIDC_SUB: ${MOCK_OIDC_SUB:-}
   OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
   OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
   OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}

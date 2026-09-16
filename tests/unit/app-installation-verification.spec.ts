@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove installed report linkage, safe smoke execution, pending prerequisites, reload refusal and portable CLI outcomes over real HTTP.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Cover the CLI verifier's posture: a GET service smoke with no cookie-bound operator session is PENDING and is never issued, while the same smoke executes once a session is bound. Without this the installer's own postflight failed every service smoke with 403.
  */
 import { spawn } from 'node:child_process';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -213,3 +214,25 @@ it('uses the actual portable CLI formatter for passed, pending and failed instal
   expect(waiting.output).toContain('RESULT: PENDING'); expect(waiting.output).not.toContain('RESULT: PASS');
   expect(waiting.output).not.toContain('every named package executed'); expect(fixture.state.suiteRuns).toBe(0);
 }, 60000);
+
+it('reports a GET service smoke pending when no operator session is bound, and runs it once one is', async () => {
+  const manifest = packageManifest('service-smoke-fixture');
+  manifest.smoke = [{ name: 'ready', method: 'GET', path: '/api/service-smoke-fixture/ready', auth: 'service',
+    expect: { status: 200, jsonPointer: '/ready', rejectValues: [false] } }];
+  fixture.add(manifest);
+
+  // The CLI verifier (scripts/oshal-verify.sh --apps) authenticates with the service secret and
+  // carries NO cookie, so no operator transport can be bound.
+  const cliResult = await report(['service-smoke-fixture']);
+  expect(cliResult.status).toBe(200);
+  expect(cliResult.body).toMatchObject({ verified: false, verificationStatus: 'pending' });
+  const pending = cliResult.body.apps[0].cases.find(test => test.runner === 'smoke');
+  expect(pending?.status).toBe('pending');
+  expect(pending?.error).toContain('operator browser session');
+  expect(fixture.state.reads.size).toBe(0);
+
+  // Same case, same secret, plus the operator session the transport requires.
+  const sessionResult = await report(['service-smoke-fixture'], { cookie: INSTALL_COOKIE });
+  expect(sessionResult.body.verified).toBe(true);
+  expect(fixture.state.reads.get('GET /api/service-smoke-fixture/ready')).toBe(1);
+});

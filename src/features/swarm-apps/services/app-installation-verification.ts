@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify eligible installed smokes through their registered executor and link all other cases without running them.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps, read through @/shared/app-dependencies (dependencies.required.apps or the legacy dependencies.apps).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | A service-auth smoke with no bound operator transport reports PENDING instead of being executed unauthenticated. createServiceSmokeFetch only binds a transport for a cookie-bearing operator browser session, so the CLI verifier (scripts/oshal-verify.sh --apps, which the installer runs) got undefined, fell through to a bare fetch and collected 403 authorization_app_admin_required for EVERY service smoke — a fresh install could never pass its own postflight.
  */
 import { requiredAppDependencies } from '@/shared/app-dependencies';
 import type { SwarmApplicationRecord } from '../types';
@@ -63,6 +64,12 @@ async function verifyCase(test: InstalledAppTestCase, catalog: InstalledAppTestC
   if (test.runner.kind !== 'smoke' || !test.installationEligible) return result;
   const { serviceSmokeFetch: transport, resolveMember: _resolve, ...runOptions } = options;
   const serviceSmokeFetch = test.auth === 'service' ? await transport?.(test) : undefined;
+  // No bound transport means no operator session to borrow: executing anyway sends the service
+  // secret with no operator identity, which the app-admin gate refuses. Unrunnable, not broken.
+  if (test.auth === 'service' && !serviceSmokeFetch) {
+    return { ...result, status: 'pending',
+      error: 'Service-auth smokes run only through an operator browser session; open this case in the Test Lab.' };
+  }
   const smoke = await catalog.run(test, visible, { ...runOptions, serviceSmokeFetch });
   const { error: _pending, ...base } = result;
   return { ...base, status: smoke.status, durationMs: smoke.durationMs,
