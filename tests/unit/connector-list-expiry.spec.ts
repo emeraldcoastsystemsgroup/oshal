@@ -15,6 +15,9 @@
  *    Scope limit, stated rather than implied: this asserts the PRODUCING side. The Identity Hub
  *    surface lives in the oshal-applications store repo, which a core spec cannot read, so the
  *    consuming half is guarded there (identity/tests/list-contract.test.js) against the same list.
+ *    The same holds one level up, for the PROVIDER entry that carries those connections: the hub
+ *    reads `configured` and `tokenFallback` off it to decide whether a card can be connected at
+ *    all, and to count "Ready to enable". Those keys are pinned here for the same reason.
  *
  * 2. THE MEANING of `expired`. The naive rule — expiry in the past — is wrong and would be worse
  *    than the dead flag it replaces: getValidAccessToken renews silently whenever a refresh token
@@ -28,6 +31,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial BUG-13 guard: per-connection key-set contract on both the provider entries and the any-llm entry, isConnectionExpired semantics (refreshable / unrefreshable / no-expiry / boundary), the end-to-end derivation through buildConnectorListResponse, and a no-token-material assertion on the whole response.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin the PROVIDER-level keys too. The per-connection contract left the other half of what Identity Hub reads unguarded: `configured` drives its needs-attention filter and its Ready-to-enable tile, and `tokenFallback` decides whether a card offers "Set up" or "Not configured" - neither was asserted anywhere in this repo (only a Playwright spec touched `configured`, incidentally), so dropping either from the projection went green while a shipped surface silently read undefined. Same failure shape as BUG-13, one layer up.
  * -----------------------------------------------------------------------------
  */
 
@@ -48,6 +52,38 @@ const CONNECTION_KEYS = [
   'tenantId',     // marks a household (shared) account
   'isDefault',    // the ★ marker and the default-account resolution
   'expired',      // Identity Hub: Need attention tile, needs-attention filter, Reconnect pill, · expired
+] as const;
+
+/**
+ * Every key a PROVIDER entry in /api/connect/list promises, and who reads it. A key deleted from
+ * the projection renders as `undefined` on the surfaces below - falsy, never an error - so the
+ * only thing that can catch it is an assertion here.
+ */
+const PROVIDER_KEYS = [
+  'id',                  // the card's identity; /api/connect/<id>/start is built from it
+  'label',               // the card heading
+  'category',            // the hub's group headings and its icon map
+  'auth',                // oauth | token | link | llm - which action the card offers
+  'configured',          // Identity Hub: "Ready to enable" tile, needs-attention filter, and the
+                         //   disabled "Not configured" button; core /utilities gates reconnect on it
+  'tokenHelpUrl',        // where /utilities sends a user to mint a pasted token
+  'tokenFallback',       // Identity Hub isTokenSetup(): an unregistered OAuth client that still
+                         //   accepts a pasted token offers "Set up" instead of "Not configured"
+  'platformDefault',     // a shared read-only catalog makes a personal connection optional
+  'connected',           // the Connected tile, the connected/available filters, the pill
+  'connections',         // the per-account rows (their own key contract is CONNECTION_KEYS)
+  'multiAccount',        // more than one account for this provider
+  'defaultConnectionId', // which account a bare request resolves to
+  'status',              // connected | not_connected
+] as const;
+
+/**
+ * The subset the Identity Hub surface (oshal-applications/identity/tools/identity.html) reads off
+ * a provider entry. Held separately because the any-llm entry is shaped by a different builder and
+ * carries fewer keys - what matters is that no key a shipped surface reads is missing from it.
+ */
+const SURFACE_PROVIDER_KEYS = [
+  'id', 'label', 'category', 'auth', 'configured', 'tokenFallback', 'connected', 'connections',
 ] as const;
 
 const HOUR = 3_600_000;
@@ -98,6 +134,40 @@ describe('connector list — per-connection contract', () => {
     const serialized = JSON.stringify(buildConnectorListResponse([connection({ expiry: new Date(NOW - HOUR) })]));
     expect(serialized).not.toContain('encrypted-access-never-returned');
     expect(serialized).not.toContain('encrypted-refresh-never-returned');
+  });
+});
+
+describe('connector list - the provider-entry contract', () => {
+  it('carries every provider key consumers read, and nothing they do not', () => {
+    const google = buildConnectorListResponse([connection()])
+      .find((entry) => entry.id === 'google') as Record<string, unknown>;
+
+    expect(Object.keys(google).sort()).toEqual([...PROVIDER_KEYS].sort());
+  });
+
+  it('carries the keys the Identity Hub surface reads on the any-llm entry too', () => {
+    const anyLlm = buildConnectorListResponse([])
+      .find((entry) => entry.id === ANY_LLM_PROVIDER) as Record<string, unknown>;
+
+    // The hub renders this card like any other, so a key it reads must not be missing here either.
+    for (const key of SURFACE_PROVIDER_KEYS) expect(Object.keys(anyLlm)).toContain(key);
+  });
+
+  it('reports configured and tokenFallback as the booleans the surfaces branch on', () => {
+    // Deliberately env-independent providers: a token-auth connector is configured by the user's
+    // pasted token (never by platform OAuth creds), and allowTokenFallback is a static registry
+    // fact. A projection that emitted either as undefined would read as "not configured / no
+    // fallback" - the hub would show a permanently disabled "Not configured" button on a
+    // connector the user can set up right now.
+    const entries = buildConnectorListResponse([]);
+    const jira = entries.find((entry) => entry.id === 'jira') as Record<string, unknown>;
+    const smartthings = entries.find((entry) => entry.id === 'smartthings') as Record<string, unknown>;
+
+    expect(jira.auth).toBe('token');
+    expect(jira.configured).toBe(true);
+    expect(jira.tokenFallback).toBe(false);
+    // SmartThings: OAuth connector that accepts a pasted PAT until the partner app is registered.
+    expect(smartthings.tokenFallback).toBe(true);
   });
 });
 
