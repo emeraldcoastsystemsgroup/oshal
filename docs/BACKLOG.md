@@ -1952,8 +1952,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   before the change, 4 failed / 5 passed, and green after). *Not done:* the Docker case
   `advertises harness:core-test-fixtures exactly when the image carries the staged fixture closure`
   in `tests/unit/package-test-sandbox.spec.ts` has not run (Docker VM one-minute load 8.9 when this
-  landed), and the image on the box (`9ec04dc84c75`, built 2026-09-14 17:30 before this change) does
-  not carry the files, so the three cases stay pending until a core deploy rebuilds the image.
+  landed). **Cleared 2026-09-16 by the deploy of `1cc13e12` (image `d3db70cd34f2`):** the image now
+  carries `/app/tests/fixtures/isolated-browser.ts` and `stl-viewer.ts`, and that Docker case passes
+  on it — `npx vitest run tests/unit/package-test-sandbox.spec.ts -t "core-test-fixtures"`, 1 passed
+  in 11.4 s with `harness:core-test-fixtures` in the probe's verified set (Docker VM one-minute load
+  3.69; the duration matters because a sandbox DECLINE returns in about 200 ms and reports the same
+  green). *Still open:* one Lab run of each of the three store cases on the box.
   **Done when:** that Docker case passes on a rebuilt image (run it with
   `npx vitest run tests/unit/package-test-sandbox.spec.ts -t "core-test-fixtures"` under the same
   load rule as above) and one Lab run of each of the three cases passes on the box — a real run of
@@ -2138,32 +2142,6 @@ was held by another session, so it was requested in the store thread (2026-09-14
   into the scan without leaving the browser (ADR-139 post mode), verified by a human on the box.
 - The surface says plainly that a scanned box is a hollow shell (a splat is a surface) and that outdoor
   captures need an explicit `scaleM` — the ceiling fit is for rooms.
-
-### Multipart uploads lose the RLS request identity — the same trap sits in core (2026-09-14)
-
-- **Built 2026-09-14 on `fix/backlog-sweep`; not deployed.** `preserveRequestIdentity` in
-  `src/shared/middleware/multipart-identity.ts` captures the request identity before multer streams
-  the body and re-enters it around the parser's continuation — the spaces 0.7.1 shape, now shared.
-- **Scope, re-measured:** core has six multer routes. Four touch the database under the caller's
-  identity after the upload and now use the helper: `POST /api/rag/upload` (knowledge-memory
-  record; `knowledge_memory_documents` and `rag_chunks` are FORCE RLS), `POST /api/swarm/apps/import`
-  (`swarm_applications`, FORCE RLS), `POST /api/jarvis/ambient/audio` (`ambient_user_settings`,
-  `ambient_audio_chunk_receipts`, `ambient_speaker_*`, FORCE RLS) and
-  `POST /api/agents/:agentId/profile/avatar` (`agents`, which has no RLS policy, so the lost identity
-  changed the stamp from operator to anonymous, not the outcome). Two are not exposed and were left
-  unchanged: `POST /api/voice/transcribe` touches no database after the upload, and
-  `POST /api/artifacts/handles/upload` mints an in-memory handle whose authorization reads all run
-  under `runWithSystemIdentity`. Table posture read from `pg_class` on the local stack.
-- **Guard:** `tests/unit/multipart-request-identity-postgres.spec.ts` drives the four real routers
-  over loopback HTTP with the body streamed in 64 KB chunks with gaps, through the production GUC
-  pool, into a FORCE-RLS table as `oshal_app` in a throwaway database the spec creates and drops
-  (5/5). Red on all four routes before the fix — rag 500 `RAG ingestion failed`, import 400
-  `new row violates row-level security policy`, ambient 500 `speaker_service_unavailable`, avatar
-  500 with the same RLS error — and red again on all four when the helper's re-bind line is
-  removed. `docs/governance/RLS-RUNBOOK.md` names multipart bodies as an async-context boundary and
-  points at the helper.
-- **Remaining:** nothing against the done-when; the running api keeps the defect until a core
-  deploy carries this change.
 
 ### Spaces: the PLY→splat converter runs on the api's event loop and a large import can take the box down (2026-09-14)
 
