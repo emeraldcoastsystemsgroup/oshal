@@ -374,7 +374,10 @@ export async function runJarvisBot(
   const answer = String(result.response || '').trim();
   // Passive learning (fire-and-forget, throttled): extraction runs on the same accountable
   // inline brain so its LLM cost lands in chat_tasks (ADR-036/050). Never blocks the reply.
-  void learnFromExchange(ctx.pool, sub, message, answer, (p) => runJarvis(ctx, sub, p, 'haven-learn', byoLlmConnection));
+  // Learn from what the USER said. `message` here is the assembled prompt, and the extraction
+  // reads only its first 2,000 characters: under the old context-first order those characters were
+  // the tool catalog, so the loop was recording the catalog as durable facts about the person.
+  void learnFromExchange(ctx.pool, sub, userText ?? message, answer, (p) => runJarvis(ctx, sub, p, 'haven-learn', byoLlmConnection));
   return { answer, routed: [], handoffs: [] };
 }
 

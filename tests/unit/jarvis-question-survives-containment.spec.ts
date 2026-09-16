@@ -5,9 +5,12 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the 2026-09-15 fault where a Jarvis turn answered an empty prompt: the assembled message is carried through the REAL prompt-containment boundary the bot node applies, and the user's question must still be inside the kept window when the context blocks are larger than that window; the typed access tools spend their operations/targets JSON only on an access ask; and the Haven long-tail search is given the user's own words, capped, with a time budget that degrades to the hot core instead of holding the turn.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review findings: an attachment-heavy turn must keep BOTH the ask and the tool guardrails in the window (framing is clipped per attachment, not in aggregate), a bare catalog render still lists the exact access operations, and access wording is matched by stem.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Second review pass: "remember" is not a membership question, a single surviving section is returned rather than discarded, and the ROUTE call sites are pinned - the helper is pure, so swapped arguments there would have kept every other case green.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { assembleJarvisBotMessage, buildToolsBlock } from '../../src/app/routes/jarvis-tool-catalog';
 import { wrapUntrustedPromptContent } from '../../src/features/swarm-orchestration/services/prompt-containment';
@@ -95,10 +98,43 @@ describe('typed access tools spend their operations/targets JSON only when it is
     }
   });
 
+  it('does not read "remember" as a membership question', () => {
+    const block = buildToolsBlock({
+      message: 'remember that I keep the live book separate from the paper book', surface: 'jarvis', authorizationTools,
+    });
+    expect(block).toContain('registered operations over');
+    expect(block).not.toContain('"app-399"');
+  });
+
+  it('still matches the plural catalog keyword in the singular and vice versa', () => {
+    const block = buildToolsBlock({ message: 'what permission does Bob have', surface: 'jarvis', authorizationTools });
+    expect(block).toContain('operations=');
+  });
+
   it('lists everything when there is no ask to judge relevance from', () => {
     const block = buildToolsBlock({ authorizationTools });
     expect(block).toContain('operations=');
     expect(block).toContain('"app-399"');
+  });
+});
+
+describe('the route wires the assembly and the learning loop the way the guard assumes', () => {
+  // assembleJarvisBotMessage is pure, so a swapped argument at the call site would keep every case
+  // above green. These pin the two call sites the live fault ran through.
+  const routes = readFileSync(resolve('src/app/routes/jarvis-routes.ts'), 'utf8');
+  const orchestrator = readFileSync(resolve('src/app/routes/jarvis-orchestrator.ts'), 'utf8');
+
+  it('passes ctxBlocks, framing and the message in that order, with the message out of framing', () => {
+    expect(routes).toContain('assembleJarvisBotMessage(ctxBlocks, framing, message)');
+    const framing = /const framing = \[([^\]]*)\]/.exec(routes);
+    expect(framing, 'the framing array must exist').toBeTruthy();
+    expect((framing as RegExpExecArray)[1]).not.toContain('message');
+  });
+
+  it('gives the Haven retrieval and the learning loop the user own words', () => {
+    expect(routes).toContain('runJarvisBot(ctx, sub, botMessage, sessionId, true, message)');
+    expect(orchestrator).toContain('withHavenContext(ctx.pool, sub, message, userText ?? message)');
+    expect(orchestrator).toContain('learnFromExchange(ctx.pool, sub, userText ?? message');
   });
 });
 

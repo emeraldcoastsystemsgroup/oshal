@@ -17,6 +17,7 @@
  *
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The typed access tools list their exact operations and targets only when the ask is about access (or when there is no ask to judge). That JSON was 39,185 of the 71,817 characters in a live Jarvis prompt and rode every turn, pushing the app catalog, the tool proposals and the user's own question out of the node's untrusted-content window.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | assembleJarvisBotMessage: the turn's prompt leads with the user's words, then the tool guardrails, then the screen/attachment framing, so neither the ask nor the guardrails can be truncated away by a large attachment.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: the access gate matches whole words, so "remember that I…" is no longer read as a membership question and does not re-spend the window on the operations/targets JSON; and a single surviving section is returned rather than discarded.
  *
  * @module jarvis-tool-catalog
  */
@@ -171,7 +172,7 @@ export function buildToolsBlock(context: { message?: string; surface?: string; a
  */
 export function assembleJarvisBotMessage(ctxBlocks: string, framing: string, message: string): string {
   const sections = [message, ctxBlocks, framing].filter(Boolean);
-  if (sections.length === 1) return message;
+  if (sections.length <= 1) return sections[0] ?? '';
   return `${sections.join('\n\n---\n\n')}\n\n---\n\nThe user's message again (answer THIS):\n\n${message}`;
 }
 
@@ -190,6 +191,21 @@ const ACCESS_STEMS = ['access', 'permission', 'authoriz', 'role', 'grant', 'revo
   'who can see', 'who can use', 'entitle', 'privilege'];
 
 /**
+ * @description Does the ask mention this word as a WORD? A bare substring test made "remember" an
+ * access question by way of "member", which re-spent the whole window on the operations/targets
+ * JSON this gate exists to withhold — and "remember that I…" is first-class phrasing for an
+ * assistant. Matching is still prefix-tolerant so "permissions" matches the stem "permission".
+ * @param ask - The lowercased request plus surface.
+ * @param word - One keyword or stem.
+ * @returns Whether the ask uses that word.
+ */
+function mentionsWord(ask: string, word: string): boolean {
+  if (!word) return false;
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}`, 'i').test(ask);
+}
+
+/**
  * @description Match a catalog keyword against an ask by stem, so a plural keyword still matches the
  * singular a person actually types (and the reverse).
  * @param ask - The lowercased request plus surface.
@@ -200,7 +216,7 @@ function matchesAccessStem(ask: string, keyword: string): boolean {
   const word = keyword.toLowerCase().trim();
   if (!word) return false;
   const stem = word.endsWith('s') ? word.slice(0, -1) : word;
-  return ask.includes(word) || ask.includes(stem);
+  return mentionsWord(ask, word) || mentionsWord(ask, stem);
 }
 
 function typedAuthorizationLines(
@@ -223,7 +239,7 @@ function typedAuthorizationLines(
   const ask = input.trim();
   const asksAboutAccess = ask.length === 0
     || (metadata.keywords ?? []).some((word) => matchesAccessStem(ask, word))
-    || ACCESS_STEMS.some((stem) => ask.includes(stem));
+    || ACCESS_STEMS.some((stem) => mentionsWord(ask, stem));
   const detail = (tool: AuthorizationToolDiscovery): string => (asksAboutAccess
     ? `- ${tool.name}: operations=${JSON.stringify(tool.operations)}; targets=${JSON.stringify(tool.targets)}`
     : `- ${tool.name}: ${tool.operations.length} registered operations over ${tool.targets.length} targets`
