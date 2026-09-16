@@ -149,9 +149,9 @@ Two refusals survive this routing decision. Neither is fixed by naming a differe
 - **The `task` lane's call-out can still select a controller-inline bot.** ADR-083 lets an online
   knowledge owner claim a `task` ticket, overriding the workflow default, and a bidder that resolves
   to no endpoint is refused with the message above. The workflow default (general-bot) and the
-  manifest-declared workers are covered by the rule; a call-out winner is not. This is where the
-  refusal is actually being produced on the local box: every occurrence in the api log in the 24 h to
-  2026-09-16 names `workerBot: self-healing-bot`, `routedBy: "bid"`, on the `task` tickets
+  manifest-declared workers are covered by the rule; a call-out winner is not. Three of the five
+  refusals in the local box's api log in the 24 h to 2026-09-16 are this shape - `routedBy: "bid"` on
+  self-healing-bot, which has no registry entry at all - on the `task` tickets
   `scripts/lib/deploy-verify.sh` files. The backlog entry carries the measured size of the
   endpoint-less set; do not copy a count into this page, it drifts.
 - **The `build` pipeline does not use this hop at all.** The swarm pipeline sends work units over

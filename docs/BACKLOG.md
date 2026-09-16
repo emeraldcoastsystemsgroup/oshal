@@ -759,12 +759,15 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ### The `task` call-out can still hand a ticket to a controller-inline bot under signing
 
-- **Observed live 2026-09-16.** The five `Signed HTTP delegation requires a dedicated bot-node
-  endpoint` refusals in the api log in the preceding 24 h are all this shape, not the manifest-worker
-  shape the entry above fixes: `workerBot: self-healing-bot` (`a0...0056`), `routedBy: "bid"`, on the
-  `task` tickets `scripts/lib/deploy-verify.sh` files (`"deploy verification 2026-09-16T07:38:04.781Z"`
-  at 07:38:34.332Z, and four more). `self-healing-bot` has no entry in either registry file - it is
-  registered dynamically - so it resolves to no endpoint and wins the bid anyway.
+- **Observed live 2026-09-16.** Of the five `Signed HTTP delegation requires a dedicated bot-node
+  endpoint` refusals in this box's api log in the preceding 24 h, THREE are this shape rather than the
+  pinned-worker shape the entry above fixes: `routedBy: "bid"`, `workerAgentId
+  a0000000-0000-0000-0000-000000000056` (self-healing-bot), on the `task` tickets
+  `scripts/lib/deploy-verify.sh` files - `"deploy verification 2026-09-16T07:38:04.781Z"` refused at
+  07:38:34.332Z, and two more at 07:39:34.264Z and 07:44:04.314Z. `self-healing-bot` has no entry in
+  either registry file - it is registered dynamically - so it resolves to no endpoint and wins the bid
+  anyway. (The other two, at 07:57:54.330Z and 08:10:30.744Z, are `routedBy: "pinned"` on
+  `a0000000-0000-0000-0000-000000000047`, security-analyst: the case the entry above closes.)
 - ADR-083 lets an online knowledge owner claim a `task` ticket and override the workflow's declared
   worker
   (`task-call-out.ts` -> `callOutAgentId` in `dispatch-manifest-worker.ts`). The workflow default is
