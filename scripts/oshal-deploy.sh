@@ -298,7 +298,15 @@ if ! oshal_deploy_post_verify; then
   exit 4
 fi
 
-log "DEPLOYED ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots, parity clean, 0 unhealthy, live verification passed"
+# The verification can now end in a third state, and this line is what an operator reads. Saying
+# "live verification passed" over a run where the two product checks proved NOTHING is the exact
+# dishonesty the third state exists to remove, so the tail follows the tally.
+if [ "${OSHAL_VERIFY_UNVERIFIED:-0}" -eq 0 ]; then
+  VERIFY_TAIL="live verification passed"
+else
+  VERIFY_TAIL="${OSHAL_VERIFY_UNVERIFIED} check(s) UNVERIFIED — UNPROVEN as a product (see above)"
+fi
+log "DEPLOYED ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots, parity clean, 0 unhealthy, ${VERIFY_TAIL}"
 log "advisory error scan (api, this boot):"
 docker logs "$API_CONTAINER" 2>&1 | grep -c '"level":50' | xargs -I{} echo "  error-level lines: {}" | tee -a "$RUN_LOG"
 exit 0

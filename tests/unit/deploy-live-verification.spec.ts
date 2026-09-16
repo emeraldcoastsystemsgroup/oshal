@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the cleanup itself, in both directions. The Jarvis check used to close its thread and leave the chat-ticket, the chat_tasks row and its chat_messages behind on every deploy - and leave the row WITHOUT closing anything when the ask was refused, which is the path this gate exists to hit. So: the pass path must delete the thread's ticket and its task, the refused path must still delete the task it caused to be written, and a cleanup step that fails must report at error level naming what was left behind while the already-decided verdict survives untouched. Plus the runbook honesty the deploy's no-rollback policy depends on: what a deploy spends, and the manual rollback for the one failure class exit 4 does not cure.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cross the argument boundary the cases below are blind to. They shadow docker with a bash FUNCTION, so the command never leaves the shell and its arguments are never marshalled into a native process - which is exactly the boundary that broke the gate on its first real deploy: Git Bash rewrote the staged container path on its way into docker.exe, node resolved the Windows host path it received against the image's /app working directory, and both product checks died MODULE_NOT_FOUND while every case here stayed green. The new cases put a copy of the real node binary on PATH as `docker` - a genuine native executable, which is the property that makes the host runtime convert the argument at all - and assert that the path the runtime was handed resolves, under the image's own WORKDIR, to the file that was staged in the container. One case is the negative control: it drives the pre-fix call shape and requires the harness to SEE the rewrite, so the suite can never pass by being blind again.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard the third verdict, and guard it AGAINST ITSELF. With delegation signing configured this gate could not pass at all - the service-secret PAT it mints records no principal issuer by design, so the controller refuses the Jarvis ask AND the queued dispatch, and the 'task' ticket's call-out winner was an inline bot that signed delegation refuses outright. The fix adds an UNVERIFIED state, and the ONLY thing that makes an unverifiable state safe is how narrow it is: a third state wide enough to swallow a product outage reads as green and is worse than no check. So the cases below pin the narrowness from four sides - the byte-identical refusal is a FAIL when an operator token was supplied, a FAIL when no signing material is configured, and a FAIL for any other refusal under signing; only the self-minted-PAT-under-signing case is UNVERIFIED, and it is never printed as PASS and never masks a real failure in the same run. Plus the two halves the live box cannot demonstrate headlessly: a genuine PASS under signing on a session-minted token, and the knob forwarding that makes that remedy runnable at all (the probe reads its environment inside the container, not in the deploy's shell).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Two findings from this change's own review. The deploy's terminal headline said 'live verification passed' over a run where both product checks proved NOTHING, and THIS FILE pinned that wording - so the case now asserts the tally-driven tail and both of its branches. And the 'swallows nothing else' rows gained the two sibling refusals that contain the substring 'principal issuer': without them, widening the classifier from the pinned constant to that substring passed the whole suite.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -425,9 +426,15 @@ describe('scripts/oshal-deploy.sh — where the verification sits in the run', (
     expect(deploySource.slice(0, deploySource.indexOf('set -uo pipefail'))).toMatch(/EXIT:[\s\S]*\b4\b/);
   });
 
-  it('only prints DEPLOYED once the verification has passed', () => {
-    const deployedLine = deploySource.slice(at('log "DEPLOYED '));
-    expect(deployedLine.split('\n')[0]).toMatch(/live verification passed/);
+  it('tells the truth in its own last line: "passed" only when nothing was left unverified', () => {
+    const deployedLine = deploySource.slice(at('log "DEPLOYED ')).split(String.fromCharCode(10))[0];
+    // The headline interpolates a tally-driven tail rather than asserting a pass outright.
+    expect(deployedLine).toContain('${VERIFY_TAIL}');
+    expect(deployedLine, 'the pass wording must not be hard-coded into the headline').not.toMatch(/live verification passed/);
+    // Both branches exist, and the unverified one says what it is.
+    const tail = deploySource.slice(at('if [ "${OSHAL_VERIFY_UNVERIFIED:-0}" -eq 0 ]'), at('log "DEPLOYED '));
+    expect(tail).toMatch(/VERIFY_TAIL="live verification passed"/);
+    expect(tail).toMatch(/UNVERIFIED . UNPROVEN as a product/);
   });
 
   it('leaves the existing rollback exit contract untouched', () => {
@@ -854,6 +861,11 @@ describe('scripts/operations/deploy-live-verification.js — verdicts and cleanu
   it.each([
     ['a bot-posture outage', 'authorization_bot_posture_unavailable'],
     ['an inline worker signed delegation refuses', INLINE_REFUSAL],
+    // The two SIBLING refusals in bot-node-client.ts that also contain 'principal issuer'. Without
+    // these rows, widening the comparison from the pinned constant to that substring passes the whole
+    // suite - and a real authorization regression would then report as 'not verifiable'.
+    ['a principal issuer that does not match the request identity', 'Delegation principal issuer does not match the trusted request identity'],
+    ['an untrusted system delegation issuer', 'System delegation principal issuer is not trusted'],
     ['a subject that does not match the trusted identity', 'Delegation subject does not match the trusted request identity'],
   ])('still FAILS under signing on %s - the third state swallows nothing else', async (_label, error) => {
     replies = jarvisRefused(error);
