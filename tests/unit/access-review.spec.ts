@@ -7,101 +7,13 @@
  */
 /** Real HTTP join over the three authorization axes. No database, no container, no mock authority. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import express, { type Request } from 'express';
-import type { AddressInfo } from 'node:net';
-import { randomUUID } from 'node:crypto';
-import { ApplicationAuthorizationService, MemoryAuthorizationStore } from '@/features/application-authorization';
-import type { AuthorizationActor } from '@/shared/application-authorization';
-import { createAccessReviewRoutes } from '@/app/routes/access-review-routes';
 import { clearPrivilegedIdentities, setPrivilegedIdentities } from '@/shared/middleware/privileged-identities';
-import { CATALOG, ISSUER } from '../fixtures/authorization';
+import { ISSUER } from '../fixtures/authorization';
+import { createAccessReviewFixture } from '../fixtures/access-review';
 
 vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 
-/** One signed-in identity: the OIDC claims the governance resolver reads, and its ADR-149 actor. */
-interface Session { claims: Record<string, unknown>; actor: AuthorizationActor }
-
-const SESSIONS: Record<string, Session> = {
-  // Granted on the Users page: a row in the swarm_roles snapshot (ADR-148).
-  granted: {
-    claims: { sub: 'granted-admin', email: 'granted@fixture.test' },
-    actor: { sub: 'granted-admin', issuer: ISSUER, isActive: true, isSwarmAdmin: true },
-  },
-  // Break-glass ONLY: named in the operator-local environment file, no swarm_roles row.
-  breakglass: {
-    claims: { sub: 'breakglass-admin', email: 'breakglass@fixture.test' },
-    actor: { sub: 'breakglass-admin', issuer: ISSUER, isActive: true, isSwarmAdmin: true },
-  },
-  // Admin by an IdP role claim only — the case the old two-way guess reported as break-glass.
-  claimed: {
-    claims: { sub: 'claims-admin', email: 'claims@fixture.test', realm_access: { roles: ['oshal-admin'] } },
-    actor: { sub: 'claims-admin', issuer: ISSUER, isActive: true, isSwarmAdmin: false },
-  },
-  alice: {
-    claims: { sub: 'alice', email: 'alice@fixture.test' },
-    actor: { sub: 'alice', issuer: ISSUER, isActive: true, isSwarmAdmin: false },
-  },
-  bob: {
-    claims: { sub: 'bob', email: 'bob@fixture.test' },
-    actor: { sub: 'bob', issuer: ISSUER, isActive: true, isSwarmAdmin: false },
-  },
-};
-
-/** @description Stand up the real service, the real route and a disposable loopback server. */
-async function createFixture() {
-  const store = new MemoryAuthorizationStore();
-  const service = new ApplicationAuthorizationService(store, {
-    resolveActor: async (sub, issuer) => Object.values(SESSIONS)
-      .map((session) => session.actor)
-      .find((actor) => actor.sub === sub && actor.issuer === issuer) ?? null,
-  });
-  await service.registerApp({ app: 'catalog-app', source: 'fixture-store', version: '1.0.0', catalog: CATALOG,
-    mode: 'enforce', adapters: { records: { authorize: async () => true } } });
-  await service.registerApp({ app: 'fallback-app', source: 'fixture-store', version: '1.0.0', catalog: null, mode: 'enforce' });
-
-  const name = (req: Request) => /(?:^|;\s*)session=([^;]+)/.exec(req.headers.cookie || '')?.[1] ?? '';
-  const app = express();
-  app.use('/api/access-review', createAccessReviewRoutes({
-    // The one seam a test may stand in for: the OIDC session. callerFromRequest reads req.oidc.user
-    // exactly as it does in production, so the role resolution under test is the real one.
-    requiresAuth: (req, res, next) => {
-      const session = SESSIONS[name(req)];
-      if (!session) { res.status(401).json({ error: 'authentication_required' }); return; }
-      (req as unknown as { oidc: { user: unknown } }).oidc = { user: session.claims };
-      next();
-    },
-    resolveActor: async (req) => {
-      const session = SESSIONS[name(req)];
-      if (!session) throw new Error('no identity');
-      return structuredClone(session.actor);
-    },
-    authority: service,
-  }));
-  const server = app.listen(0, '127.0.0.1');
-  await new Promise<void>((done) => server.once('listening', done));
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-
-  /** @description Apply a real grant through the service's own preview/apply path. */
-  async function grant(targetSub: string, role: string) {
-    const preview = await service.previewChange(SESSIONS.granted.actor, {
-      action: 'grant', app: 'catalog-app', targetSub, targetIssuer: ISSUER, role,
-      reason: 'Access review fixture', expectedRevision: (await store.read()).revision,
-    });
-    await service.applyChange(SESSIONS.granted.actor, { previewId: preview.previewId, idempotencyKey: randomUUID() });
-  }
-
-  async function review(session: string | null, query = '') {
-    const response = await fetch(`${base}/api/access-review${query}`, {
-      headers: session ? { cookie: `session=${session}` } : {},
-    });
-    return { status: response.status, body: await response.json() as Record<string, never> };
-  }
-
-  return { service, store, grant, review, base,
-    async close() { server.closeAllConnections(); await new Promise<void>((done) => server.close(() => done())); } };
-}
-
-let fixture: Awaited<ReturnType<typeof createFixture>>;
+let fixture: Awaited<ReturnType<typeof createAccessReviewFixture>>;
 
 beforeEach(async () => {
   // The real swarm_roles snapshot, populated the way the swarm-roles feature populates it.
@@ -110,7 +22,7 @@ beforeEach(async () => {
   vi.stubEnv('OSHAL_OPERATOR_SUBS', 'breakglass-admin');
   vi.stubEnv('OSHAL_OPERATOR_EMAILS', '');
   vi.stubEnv('OSHAL_RBAC_ENFORCE', 'false');
-  fixture = await createFixture();
+  fixture = await createAccessReviewFixture();
 });
 
 afterEach(async () => {
@@ -208,11 +120,7 @@ describe('access review — the three axes in one answer', () => {
     const granted = await fixture.review('alice');
     expect((granted.body.apps as unknown as Array<Record<string, unknown>>)[0].source).toBe('app-assignment');
 
-    const preview = await fixture.service.previewChange(SESSIONS.granted.actor, {
-      action: 'revoke', app: 'catalog-app', targetSub: 'alice', targetIssuer: ISSUER, role: 'reader',
-      reason: 'Access review fixture revoke', expectedRevision: (await fixture.store.read()).revision,
-    });
-    await fixture.service.applyChange(SESSIONS.granted.actor, { previewId: preview.previewId, idempotencyKey: randomUUID() });
+    await fixture.revoke('alice', 'reader');
 
     const after = await fixture.review('alice');
     expect((after.body.apps as unknown as Array<Record<string, unknown>>)[0].source).toBe('none');

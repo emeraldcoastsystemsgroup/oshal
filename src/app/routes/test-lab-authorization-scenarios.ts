@@ -111,6 +111,9 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
 }, {
   id: 'access-review', title: 'What am I allowed to do', group: 'tool',
   description: 'Read the joined answer over the three authorization axes for the calling identity: swarm role and where it came from, governance permissions, and per-application assignments. Read-only; the route has no write member.',
-  regressionTests: [{ level: 'integration', path: 'tests/unit/access-review.spec.ts' }],
+  regressionTests: [
+    { level: 'integration', path: 'tests/unit/access-review.spec.ts' },
+    { level: 'browser', path: 'tests/unit/access-review-browser.spec.ts' },
+  ],
   steps: [{ id: 'self', app: 'authorization', label: 'Joined access review (self)', run: accessReview }],
 }];
