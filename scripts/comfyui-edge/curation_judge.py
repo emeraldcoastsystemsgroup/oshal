@@ -31,6 +31,7 @@
 # SEQ                 | AUTHOR                                    | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial automated curation judge: identity,
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Refuse a --dest that contains a candidate. curate() empties dest_dir first, and dest became operator-supplied alongside an independent --source, so --source X --dest X deleted the overnight pool and still reported success because the pool had already been read. Resolved-path comparison, so a different spelling of the same directory cannot slip past.
 #     quality, single-eye, multiple-character and caption-agreement checks decide keep/reject before
 #     training; rejected pairs never reach the curated folder or curated.zip; per-candidate human
 #     override always wins; a labelled fixture measures false accept/reject rates.
@@ -196,6 +197,23 @@ def _read_caption(path):
     return text or None
 
 
+def _refuse_destructive_dest(dest_dir, rows):
+    """Refuse a destination that would delete the candidates being curated.
+
+    @param dest_dir - The directory curate() is about to empty.
+    @param rows - The judged candidates, whose source paths locate the pool.
+    @returns None. Raises SystemExit when the destination contains a candidate.
+    """
+    dest = os.path.realpath(dest_dir)
+    for row in rows:
+        source = os.path.realpath(row["image"])
+        if os.path.commonpath([dest, source]) == dest:
+            raise SystemExit(
+                "REFUSING: --dest %s contains the candidate %s, and curating empties --dest first. "
+                "Point --dest at a directory outside the candidate pool." % (dest_dir, row["image"])
+            )
+
+
 def curate(candidates, measurements, dest_dir, zip_path, overrides=None,
            thresholds=None, report_path=None):
     """
@@ -213,6 +231,11 @@ def curate(candidates, measurements, dest_dir, zip_path, overrides=None,
     """
     t = resolve_thresholds(thresholds)
     rows = _verdicts(candidates, measurements or {}, overrides or {}, t)
+    # The next line EMPTIES dest_dir. If dest is the candidate pool - the same directory by another
+    # spelling, or a directory containing it - that deletes overnight render output which costs
+    # another GPU night to replace, and the run still reports success because the pool was already
+    # read. Compare resolved paths, and refuse rather than delete.
+    _refuse_destructive_dest(dest_dir, rows)
     shutil.rmtree(dest_dir, ignore_errors=True)
     os.makedirs(dest_dir, exist_ok=True)
     for row in rows:

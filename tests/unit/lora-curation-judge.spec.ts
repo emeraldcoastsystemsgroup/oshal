@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for the LoRA automated curation judge. Runs the REAL scripts/comfyui-edge/make-curate.py over a real pool of image/caption pairs and inspects the artefact train-lora.py actually consumes - curated.zip - so "rejected candidates do not enter the training set" is proved at the training-set boundary rather than at the decision function. Also drives curation_judge.py's labelled-fixture mode: the false accept/reject rates are measured and shown to bite when the thresholds are loosened, and a fixture that cannot measure a rate is refused instead of reported as a perfect zero. Fails loudly (never skips) when Python is missing, because a skipped guard is no guard.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin that curating INTO the candidate pool refuses. curate() empties --dest first, and this change made --dest operator-supplied beside an independent --source, so --source X --dest X wiped the pool - measured on this fixture: 36 files to 0, then a traceback.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -217,6 +218,29 @@ describe('LoRA automated curation judge', () => {
     expect(report.summary.rejected).toBe(ctx.fixture.candidates.filter((c) => c.label === 'reject').length);
     expect(report.summary.overridden).toBe(0);
     expect(Object.keys(report.summary.reject_reasons)).toContain('structural-identity-violation');
+  }, RUN_TIMEOUT_MS);
+
+  it('refuses to curate INTO the candidate pool instead of deleting it', () => {
+    // curate() empties --dest before it copies. --dest became operator-supplied alongside an
+    // independent --source, so pointing both at the pool wiped it: measured on this fixture, all 36
+    // files gone, then a traceback - a night of GPU output destroyed on the way to a crash.
+    const ctx = buildPool();
+    const before = readdirSync(ctx.pool).length;
+    expect(before).toBeGreaterThan(0);
+
+    const r = run(MAKE_CURATE, [
+      '--source', ctx.pool, '--dest', ctx.pool, '--zip', ctx.zipPath,
+      '--sheet', join(ctx.work, 'curated-sheet.png'),
+      '--rejected-sheet', join(ctx.work, 'rejected-sheet.png'),
+      '--target', '200', '--pattern', '*.png', '--fallback-pattern', '',
+      '--measurements', ctx.measurements,
+    ]);
+
+    expect(r.status, 'curating into the pool must refuse, not proceed').not.toBe(0);
+    expect(`${r.stdout}${r.stderr}`).toContain('REFUSING');
+    // The pool is intact: the refusal comes BEFORE anything is emptied.
+    expect(readdirSync(ctx.pool).length, 'the candidate pool was destroyed').toBe(before);
+    expect(existsSync(ctx.zipPath)).toBe(false);
   }, RUN_TIMEOUT_MS);
 
   it('rejects an unmeasured candidate rather than admitting it', () => {
