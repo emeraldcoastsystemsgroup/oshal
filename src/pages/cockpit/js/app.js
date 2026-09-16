@@ -54,12 +54,14 @@
  * 48 | maintainer@emeraldcoastsystemsgroup.com | Bind relocated workspace options to the existing settings and action handlers.
  * 49 | maintainer@emeraldcoastsystemsgroup.com | Route OSHAL directory intent through the normal Home lifecycle and keep the duplicate chat rail closed beside its embedded Jarvis.
  * 50 | maintainer@emeraldcoastsystemsgroup.com | Read the durable-storage indicator once at boot alongside the first metrics read, so a box that came up with a store stranded in memory says so on the first paint rather than at the first 60s poll.
+ * 51 | maintainer@emeraldcoastsystemsgroup.com | Mount the per-surface help control and feed it every view change from switchView — the shell already owns the one chokepoint that knows which surface is on screen, so the control never has to guess from the DOM.
  */
 
 import { ThemeManager } from './theme-manager.js';
 import { WorkspaceNavigation } from './workspace-navigation.js';
 import { bindApplicationsDirectory } from './applications-directory-navigation.js';
 import { initHeaderOptions } from './header-options.js';
+import { mountSurfaceHelp } from './surface-help.js';
 import { ApiClient } from './api-client.js';
 import { RibbonNav } from './components/RibbonNav.js';
 import { renderModalContent, getAuthToken } from './cockpit-modals.js';
@@ -190,6 +192,9 @@ class CockpitApp {
    */
   async init() {
     initHeaderOptions();
+    // Per-surface help: the header control follows the active view, so the guide for THIS
+    // screen is one click away without hunting for it in the ribbon's Help list.
+    this.surfaceHelp = mountSurfaceHelp();
     this.initRibbon();
     this.bindChatEvents();
     this.initModals();
@@ -377,6 +382,7 @@ class CockpitApp {
    */
   async switchView(viewId) {
     this.pendingView = viewId;
+    this.surfaceHelp?.setSurface(viewId);
     this.ribbon?.setActive?.(viewId, { notify: false });
     // Picking an item from the mobile drawer should close it.
     this.toggleMobileMenu(false);
