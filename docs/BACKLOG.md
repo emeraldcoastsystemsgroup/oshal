@@ -13,6 +13,19 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ### A bot that cannot reach Postgres in its first 20 seconds is pool-less for life, and says it is healthy (2026-09-17)
 
+- **Status (branch `botnode-pool-recovery`, awaiting merge + image deploy): (1), (3), (4) done and
+  guarded by `tests/unit/bot-node-database-pool-recovery.spec.ts`, which starts a real disposable
+  PostgreSQL on a reserved loopback port AFTER the bot-side connect has exhausted its window and
+  proves the pool object handed out at exhaustion is the one that later answers. (2) is done in
+  code — `/health` and `/api/health` answer 503 until a configured database has answered once,
+  and `Dockerfile.oshal`'s `HEALTHCHECK` is `curl -f http://localhost:5000/health`, which the spec
+  runs verbatim against the real routes (exit 22 while pool-less, exit 0 after) — but the
+  built-image probe the done-when asks for has NOT been run: no image build was permitted on the
+  memory-constrained box. The running fleet keeps the old behaviour until `oshal-deploy.sh` ships
+  this commit. Also not done: the mesh bid responder captures the boot-time capabilities by
+  value, so a bot that recovers late bids with its YAML capabilities, not the persisted profile's,
+  until its next restart.
+
 - **Measured 2026-09-17, 22:24Z.** The Docker daemon bounced inside a VM that stayed up: 51 of 52
   containers carry a `StartedAt` in the same minute. Every bot-node cold-started beside a cold
   Postgres. `bot-node-runtime` retries its connect `maxAttempts: 10` at 2 s — a 20 second window —
