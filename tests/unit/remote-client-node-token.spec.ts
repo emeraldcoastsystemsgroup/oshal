@@ -23,11 +23,10 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extend the token-store model and rotation proof to preserve an owner's verified issuer namespace in successor node credentials.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Inject the explicit test-only task journal so token-store pool fixtures do not masquerade as the production journal database.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact device-owner subjects through owner-scoped revocation, successor minting, and the HTTP rotation surface; case/whitespace variants remain separate principals.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Move the oshal_cli_tokens stand-in to tests/helpers/fake-cli-token-pool.ts so the enrolment guard drives the same statement matcher rather than a second copy that would drift from it.
  */
 
-import crypto from 'crypto';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import type { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   decideNodeTokenScope,
@@ -36,6 +35,7 @@ import {
   sharedSecretRetired,
 } from '../../src/features/remote-client';
 import { InMemoryRemoteTaskJournalFixture } from '../helpers/in-memory-remote-task-journal';
+import { FakeCliTokenPool } from '../helpers/fake-cli-token-pool';
 import {
   CLI_TOKEN_PREFIX,
   createCliTokenAuthMiddleware,
@@ -75,88 +75,6 @@ afterEach(async () => {
   await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(resolve))));
   servers.length = 0;
 });
-
-// ── An in-memory stand-in for oshal_cli_tokens, driven by the REAL SQL ─────────────
-
-interface TokenRow {
-  id: string;
-  user_sub: string;
-  email: string | null;
-  label: string;
-  token_hash: string;
-  expires_at: Date | null;
-  revoked_at: Date | null;
-  node_client_id: string | null;
-  principal_issuer: string | null;
-}
-
-/**
- * @description Minimal Pool stand-in that answers the three statements the token store
- * issues (auth lookup, last_used_at touch, rotation revoke + insert) off an array of rows,
- * so the REAL middleware and the REAL rotateNodeToken run unmodified.
- */
-class FakeTokenPool {
-  rows: TokenRow[] = [];
-
-  async query(sql: string, params: unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> {
-    const text = sql.replace(/\s+/g, ' ').trim();
-    if (text.startsWith('SELECT id, user_sub, email, node_client_id, principal_issuer FROM oshal_cli_tokens')) {
-      const hash = params[0] as string;
-      const now = Date.now();
-      const hit = this.rows.find((r) => (
-        r.token_hash === hash && r.revoked_at === null && (r.expires_at === null || r.expires_at.getTime() > now)
-      ));
-      return { rows: hit ? [hit] : [], rowCount: hit ? 1 : 0 };
-    }
-    if (text.startsWith('UPDATE oshal_cli_tokens SET last_used_at')) {
-      return { rows: [], rowCount: 1 };
-    }
-    if (text.startsWith('UPDATE oshal_cli_tokens SET revoked_at = NOW() WHERE node_client_id')) {
-      const [clientId, ownerSub] = params as [string, string];
-      const hits = this.rows.filter((r) => r.node_client_id === clientId && r.user_sub === ownerSub && r.revoked_at === null);
-      for (const row of hits) row.revoked_at = new Date();
-      return { rows: [], rowCount: hits.length };
-    }
-    if (text.startsWith('INSERT INTO oshal_cli_tokens')) {
-      const [id, userSub, email, label, tokenHash, expiresAt, nodeClientId, principalIssuer] = params as [
-        string, string, string | null, string, string, Date | null, string | null, string | null,
-      ];
-      this.rows.push({
-        id, user_sub: userSub, email, label, token_hash: tokenHash,
-        expires_at: expiresAt, revoked_at: null, node_client_id: nodeClientId,
-        principal_issuer: principalIssuer,
-      });
-      return { rows: [], rowCount: 1 };
-    }
-    throw new Error(`FakeTokenPool: unexpected SQL: ${text.slice(0, 90)}`);
-  }
-
-  asPool(): Pool {
-    return this as unknown as Pool;
-  }
-
-  /** Seeds a token row directly and returns its plaintext (bypassing the mint route). */
-  seed(opts: {
-    sub: string;
-    nodeClientId?: string | null;
-    revoked?: boolean;
-    principalIssuer?: string | null;
-  }): string {
-    const token = `${CLI_TOKEN_PREFIX}${crypto.randomBytes(24).toString('hex')}`;
-    this.rows.push({
-      id: crypto.randomUUID(),
-      user_sub: opts.sub,
-      email: null,
-      label: 'spec token',
-      token_hash: hashCliToken(token),
-      expires_at: null,
-      revoked_at: opts.revoked ? new Date() : null,
-      node_client_id: opts.nodeClientId ?? null,
-      principal_issuer: opts.principalIssuer ?? null,
-    });
-    return token;
-  }
-}
 
 // ── Pure scope decisions ──────────────────────────────────────────────────────────
 
@@ -221,7 +139,7 @@ describe('nodeTokenBindingMatches / sharedSecretRetired', () => {
 // ── The REAL auth middleware confines a bound token ───────────────────────────────
 
 describe('createCliTokenAuthMiddleware — node-bound confinement over HTTP', () => {
-  async function bootTokenApp(pool: FakeTokenPool): Promise<string> {
+  async function bootTokenApp(pool: FakeCliTokenPool): Promise<string> {
     const app = express();
     app.use(createCliTokenAuthMiddleware(pool.asPool()));
     // Stands in for requiresAuth: authenticated -> 200, otherwise the normal 401.
@@ -245,7 +163,7 @@ describe('createCliTokenAuthMiddleware — node-bound confinement over HTTP', ()
   }
 
   it('a bound token authenticates on its OWN plane and the handshake, and NOWHERE else', async () => {
-    const pool = new FakeTokenPool();
+    const pool = new FakeCliTokenPool();
     const token = pool.seed({ sub: OWNER, nodeClientId: MINE });
     const base = await bootTokenApp(pool);
     const auth = { authorization: `Bearer ${token}` };
@@ -266,7 +184,7 @@ describe('createCliTokenAuthMiddleware — node-bound confinement over HTTP', ()
   }, 20_000);
 
   it('an UNBOUND PAT is unchanged — it still authenticates everywhere (no regression)', async () => {
-    const pool = new FakeTokenPool();
+    const pool = new FakeCliTokenPool();
     const token = pool.seed({ sub: OWNER });
     const base = await bootTokenApp(pool);
     const auth = { authorization: `Bearer ${token}` };
@@ -279,7 +197,7 @@ describe('createCliTokenAuthMiddleware — node-bound confinement over HTTP', ()
   });
 
   it('a revoked bound token authenticates nowhere', async () => {
-    const pool = new FakeTokenPool();
+    const pool = new FakeCliTokenPool();
     const token = pool.seed({ sub: OWNER, nodeClientId: MINE, revoked: true });
     const base = await bootTokenApp(pool);
     const res = await fetch(`${base}/api/remote-clients/${MINE}/tasks/next`, { headers: { authorization: `Bearer ${token}` } });
@@ -291,7 +209,7 @@ describe('createCliTokenAuthMiddleware — node-bound confinement over HTTP', ()
 
 describe('rotateNodeToken', () => {
   it('revokes EVERY live generation for the device and mints exactly one successor', async () => {
-    const pool = new FakeTokenPool();
+    const pool = new FakeCliTokenPool();
     pool.seed({ sub: OWNER, nodeClientId: MINE });
     pool.seed({ sub: OWNER, nodeClientId: MINE });
     const otherDevice = pool.seed({ sub: OWNER, nodeClientId: SIBLING });
@@ -317,7 +235,7 @@ describe('rotateNodeToken', () => {
   });
 
   it('never crosses owners: another user tokens for the same clientId are untouched', async () => {
-    const pool = new FakeTokenPool();
+    const pool = new FakeCliTokenPool();
     pool.seed({ sub: OWNER, nodeClientId: MINE });
     const foreign = pool.seed({ sub: 'auth0|someone-else', nodeClientId: MINE });
 
@@ -329,14 +247,14 @@ describe('rotateNodeToken', () => {
   });
 
   it('refuses to run without both a clientId and an owner (no accidentally-unbound mint)', async () => {
-    const pool = new FakeTokenPool();
+    const pool = new FakeCliTokenPool();
     await expect(rotateNodeToken(pool.asPool(), { clientId: '', ownerSub: OWNER })).rejects.toThrow(/clientId/);
     await expect(rotateNodeToken(pool.asPool(), { clientId: MINE, ownerSub: '  ' })).rejects.toThrow(/ownerSub/);
     expect(pool.rows).toHaveLength(0);
   });
 
   it('insertCliToken stores the binding (and null for an ordinary PAT)', async () => {
-    const pool = new FakeTokenPool();
+    const pool = new FakeCliTokenPool();
     const bound = await insertCliToken(pool.asPool(), { sub: OWNER, nodeClientId: MINE });
     const unbound = await insertCliToken(pool.asPool(), { sub: OWNER });
     expect(bound.nodeClientId).toBe(MINE);
@@ -348,7 +266,7 @@ describe('rotateNodeToken', () => {
 
 describe('rotateNodeToken exact owner identity', () => {
   it('revokes and mints only for the byte-exact subject', async () => {
-    const pool = new FakeTokenPool();
+    const pool = new FakeCliTokenPool();
     const exactOwner = ' Auth0|Case-Owner ';
     pool.seed({ sub: exactOwner, nodeClientId: MINE });
     const normalizedAlias = pool.seed({ sub: 'Auth0|Case-Owner', nodeClientId: MINE });
@@ -382,7 +300,7 @@ describe('remote-client router — shared-secret retirement and the rotate surfa
     };
   }
 
-  async function bootRouter(pool?: FakeTokenPool): Promise<string> {
+  async function bootRouter(pool?: FakeCliTokenPool): Promise<string> {
     const { createRemoteClientRoutes } = await import('../../src/app/routes/remote-client-routes');
     const app = express();
     app.use(express.json());
@@ -464,7 +382,7 @@ describe('remote-client router — shared-secret retirement and the rotate surfa
   });
 
   it('rotate mints for the DEVICE OWNER and refuses the deprecated secret', async () => {
-    const pool = new FakeTokenPool();
+    const pool = new FakeCliTokenPool();
     const device = 'rotate-device';
     pool.seed({ sub: OWNER, nodeClientId: device });
     process.env.REMOTE_CLIENT_SHARED_SECRET = SECRET;
@@ -506,7 +424,7 @@ describe('remote-client router — shared-secret retirement and the rotate surfa
   }, 20_000);
 
   it('operator rotation preserves the device exact owner in the response and token row', async () => {
-    const pool = new FakeTokenPool();
+    const pool = new FakeCliTokenPool();
     const device = 'rotate-exact-owner-device';
     const exactOwner = ' Auth0|Exact-Owner ';
     process.env.REMOTE_CLIENT_SHARED_SECRET = SECRET;
