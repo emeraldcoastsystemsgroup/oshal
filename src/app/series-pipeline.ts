@@ -4,7 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The three stages: WRITE (bot -> validated episodes), STORYBOARD (camera lines -> stills), RENDER (stills + prompts -> the node). Each gate fails before the next one spends money.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | STORYBOARD now carries the series OWNER's sub into the image provider. The ADR-130 codex-cli rail (the demo-mode default) authorizes per caller at the bot node's SEC-05 carve, so an identity-less resolve read unavailable and the stage failed closed with the carve hint on every demo-box series. The owner is read from the video_series row this query already joins, so it is the row's owner by construction and no caller can name someone else; the conductor also threads it explicitly so the chain is visible where it starts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | STORYBOARD now carries the series OWNER's sub into the image provider. The ADR-130 codex-cli rail (the demo-mode default) authorizes per caller at the bot node's SEC-05 carve, so an identity-less resolve read unavailable and the stage failed closed with the carve hint on every demo-box series. The owner is read from the video_series row this query already joins, so it is the row's owner by construction and no caller can name someone else. The conductor does NOT thread it as an argument - storyboardEpisode reads the owner off the series row itself, which is why OrchestratorDeps.storyboard keeps its signature.
  */
 /**
  * @description Video Series — the stages, in the order money gets spent.
