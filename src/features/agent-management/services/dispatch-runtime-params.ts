@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-034 push-on-dispatch (controller half): RuntimeParamsResolver reads the authoritative agent_config record (providerId/modelId/configVersion — the same keys GET /api/agents/:id/runtime serves) so every BotNodeClient.execute dispatch can carry the expected provider/model; resolveDispatchConfigFields is the fail-open call-site helper — no resolver, no record, or a resolver error all yield {} so the dispatched request stays byte-identical to the legacy shape (the dual dispatch path is load-bearing).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extend the spreadable request slice with providerConfigRequired so dispatch chokepoints can distinguish an unavailable authority record from an intentional compatibility-mode request.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Resolve ADR-034 §1a tier 3 (registry apiType) when the per-agent agent_config record carries no providerId. The resolver read ONLY agent_config, but that table is written when something CHANGES a bot's provider — a bot that has always run its registry-declared provider has no row, so the resolver reported "no actionable record" while the registry declared one. Combined with the unconditional providerConfigRequired marker the bot refused before task creation and the ticket escalated: 33 tickets on the operator box carry that message, including a nightly oshal-dev schedule that failed for two weeks, and 13 registry bots with a dedicated bot-node had no row at all. Tier 3 applies ONLY when tier 2 yields nothing, so every bot that resolves today is stamped byte-identically, and an agent neither store declares still resolves to null and keeps the fail-closed refusal.
  */
 
 /**
@@ -63,25 +64,49 @@ export type DispatchConfigFields = Partial<Pick<
 >>;
 
 /**
+ * @description The bot registry's own provider declaration for one agent — ADR-034 §1a
+ * tier 3, `apiType`. Injected (rather than imported) because the registry lives in the app
+ * layer and this module is a feature-layer service; the composition root supplies it.
+ * @param agentId - The agent id to look up.
+ * @returns The declared apiType, or null when the agent is absent from the registry or
+ *   declares none. A registry that cannot be read must also return null.
+ */
+export type RegistryProviderDeclarationReader = (agentId: string) => string | null;
+
+/**
  * @description Builds a RuntimeParamsResolver over the authoritative agent_config store —
  * the SAME record ConfigSyncService versions and GET /api/agents/:agentId/runtime serves,
  * so dispatch stamping can never disagree with the push-down/broadcast-up machinery.
+ *
+ * `agent_config` is the record OSHAL *versions*, but it is only written when something has
+ * changed a bot's provider; a bot that has always run its registry-declared provider has no
+ * row at all. Push-on-dispatch stamps `providerConfigRequired:true` unconditionally, so a
+ * missing row made the bot refuse the dispatch before task creation ("no actionable record
+ * was available") — every queued ticket for that bot escalated. ADR-034 §1a already names the
+ * remedy: registry `apiType` is the next provider fallback below the per-agent record. That
+ * fallback is applied here and ONLY when the per-agent record yields no providerId, so a bot
+ * that resolves today is stamped byte-identically and an agent the registry does not declare
+ * still resolves to null and keeps the fail-closed refusal.
+ *
  * @param agentConfig - The Postgres-backed per-agent config store (only getConfig is used).
+ * @param readRegistryProvider - Optional ADR-034 §1a tier-3 reader; omitted → tier 2 only.
  * @returns Resolver yielding the record, or null when the agent has no actionable record
- *   (no row, or a row without a providerId — model-only records are not carried because the
+ *   (no row and no registry declaration — model-only records are not carried because the
  *   bot could not compare a model against a possibly-different provider's active model).
  */
 export function createAgentConfigRuntimeParamsResolver(
   agentConfig: Pick<AgentConfigService, 'getConfig'>,
+  readRegistryProvider?: RegistryProviderDeclarationReader,
 ): RuntimeParamsResolver {
   return async (agentId: string): Promise<DispatchRuntimeParams | null> => {
     const config = await agentConfig.getConfig(agentId);
     const values = config?.values;
-    if (!values) return null;
-    const providerId = readNonEmptyString(values.providerId);
+    const recordProviderId = values ? readNonEmptyString(values.providerId) : null;
+    // Tier 2 (the per-agent record) wins whenever it is actionable; tier 3 only fills its absence.
+    const providerId = recordProviderId ?? readRegistryDeclaredProvider(readRegistryProvider, agentId);
     if (!providerId) return null;
-    const model = readNonEmptyString(values.modelId);
-    const rawVersion = Number(values.configVersion);
+    const model = values ? readNonEmptyString(values.modelId) : null;
+    const rawVersion = Number(values?.configVersion);
     const configVersion = Number.isFinite(rawVersion) ? rawVersion : undefined;
     return {
       providerId,
@@ -89,6 +114,32 @@ export function createAgentConfigRuntimeParamsResolver(
       ...(configVersion !== undefined ? { configVersion } : {}),
     };
   };
+}
+
+/**
+ * @description Reads the registry's declared provider for an agent without letting a registry
+ * failure escape into the dispatch path — an unreadable registry is "no declaration", which
+ * preserves the fail-closed refusal rather than inventing a provider.
+ * @param reader - The injected registry reader (absent → no tier-3 declaration).
+ * @param agentId - The agent id to look up.
+ * @returns The declared provider, or null.
+ */
+function readRegistryDeclaredProvider(
+  reader: RegistryProviderDeclarationReader | undefined,
+  agentId: string,
+): string | null {
+  if (!reader) return null;
+  try {
+    const declared = readNonEmptyString(reader(agentId));
+    // ADR-034 §1a: `auto` is a no-opinion sentinel, never a provider.
+    return declared && declared.toLowerCase() !== 'auto' ? declared : null;
+  } catch (err) {
+    logger.warn(
+      { err, agentId },
+      'ADR-034 §1a: bot registry unreadable — no tier-3 provider declaration for this dispatch',
+    );
+    return null;
+  }
 }
 
 /**
