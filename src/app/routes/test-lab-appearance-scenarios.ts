@@ -12,6 +12,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Link full-head local asset startup, rendering and service-worker browser coverage without changing the read-only readiness check.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register real Profile dialog and abandoned workspace HTTP coverage, with shared fixed-asset readiness.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the per-surface in-app help contract: the covered-surface list the cockpit header reads, and a representative deep link, so a deployment that ships without the guide corpus (or with a mapping to a guide nobody wrote) reports it here instead of failing in front of a stuck reader.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Link the default-rail band guard. config-seed/profiles/oshal-framework.json is hand-maintained with no linkage to install state, so a tile drifting between rail groups — or out of the rail entirely — went unnoticed until somebody opened the cockpit and looked.
  * =============================================================================
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -105,6 +106,7 @@ export const APPEARANCE_SCENARIOS: Scenario[] = [{
     { level: 'browser', path: 'tests/unit/workspace-navigation-contextual-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/career-group-navigation.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-app-groups.spec.ts' },
+    { level: 'integration', path: 'tests/unit/default-rail-groups.spec.ts' },
   ],
   steps: [{ id: 'workspace-discovery', app: 'cockpit', label: 'Current workspace navigation', run: workspaceDiscovery }],
 }, {
