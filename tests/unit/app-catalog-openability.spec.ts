@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { readManifest } from '../../src/features/swarm-apps';
 import { hasCockpitSurface, toSummary } from '../../src/features/swarm-apps/services/swarm-app-record-view';
@@ -161,5 +161,21 @@ describe('the catalog page keeps no inventory of its own', () => {
 
   it('no longer decides anything from the manifest path', () => {
     expect(script).not.toMatch(/manifestPath[^\n]*includes\(\s*'deployed-apps'\s*\)/);
+  });
+
+  // A module script fails ATOMICALLY: one unresolvable specifier and the whole page stops running,
+  // which reads as an empty screen rather than an error. This checks only that the path maps to a
+  // file that exists — whether a given server SERVES it is the browser spec's job
+  // (multi-store-routes-browser.spec.ts drives this page over a real HTTP server and times out if
+  // the import 404s, which is how that harness was found to be missing the static mount the real
+  // registerStaticHtmlPageRoute provides).
+  it('imports only page modules that exist on disk, at a path rooted in this page directory', () => {
+    const specifiers = [...script.matchAll(/^\s*import\s[^'"]*from\s*'([^']+)'/gm)].map((m) => m[1]);
+    expect(specifiers.length).toBeGreaterThan(0);
+    for (const specifier of specifiers) {
+      expect(specifier.startsWith('/applications/')).toBe(true);
+      const onDisk = join(REPO_ROOT, 'src', 'pages', specifier.replace(/^\//, ''));
+      expect(existsSync(onDisk), `${specifier} -> ${onDisk}`).toBe(true);
+    }
   });
 });
