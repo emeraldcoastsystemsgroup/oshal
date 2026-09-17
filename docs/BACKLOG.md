@@ -429,6 +429,37 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ### Jarvis fast-lane: the deterministic shortcut is hardcoded to three intents
 
+- ✅ **CLOSED 2026-09-17.** Both halves landed. The **harness** half landed 2026-09-15/16
+  (`bench/jarvis-tool-selection/`, guard `tests/unit/jarvis-tool-selection-bench.spec.ts`): it
+  reports recall, false matches and a real BPE token delta per candidate over 34 items and gates
+  binarily on `regressions == 0`. Its verdict was that **every** candidate is rejected - `top-3`,
+  `top-6` and `scored-floor-3` all regress on the same three turns, and `fast-lane-calendar` is
+  rejected on one false match.
+- The **shadow-step** half landed on branch `feat/jarvis-selector-shadow-step`:
+  `src/app/routes/jarvis-selector-shadow.ts`. `buildToolsBlockWithShadow` builds the real block
+  first and returns that same value on every path - the candidate's block is measured for the log
+  and discarded, so a candidate that throws, one whose spec does not parse and one that would drop
+  every tool are all identical to the caller. `/ask` calls it in place of `buildToolsBlock`
+  (one line, `jarvis-routes.ts`), it is OFF unless `JARVIS_SELECTOR_SHADOW` names `top-k:<k>` or
+  `scored-floor:<k>`, and the knob is forwarded to the controller only (pinned in
+  `tests/unit/compose-env-passthrough.spec.ts`, so arming it in `.env` cannot silently measure
+  nothing). Each measured turn logs the candidate, baseline/candidate bytes, the delta, tool counts,
+  the dropped scripts, the surface and the `/ask` job id as a correlation key; **the message text is
+  never logged**, only its length. Bytes are exact - the token axis stays in the harness, which is
+  the only side with a tokenizer.
+- **Guard:** `tests/unit/jarvis-selector-shadow.spec.ts` crosses the boundary that would actually
+  fail - the real authenticated `/api/jarvis/ask` route, real `createJarvisRoutes`, real
+  `buildToolsBlock` off the real YAML and mounted scripts - and asserts the prompt the model
+  received with `top-k:1` armed is byte-for-byte the prompt it received with the shadow off. Proved
+  red twice: leaking the candidate into the return value (2 failed / 3 passed, the route case
+  showing 17 tool lines gone from the real prompt) and reporting zeros instead of `not-run`
+  (2 failed / 3 passed). Green 5/5 restored.
+- **What this does NOT claim.** Nothing has been adopted and nothing has been measured against real
+  traffic yet: the shadow is a knob nobody has turned. Adopting a candidate is still a separate
+  change and still owes `regressions == 0` against a corpus whose ground truth is the invocation
+  that really happened. The precision axis (a WIDENED fast lane) has no shadow - there is no
+  candidate fast lane in core to shadow, and inventing one is the thing the harness exists to avoid.
+
 - **Measured 2026-09-14:** `detectProviderBoundHandoff` (288 lines of hand-written regex in core)
   recognises exactly three things - weather, priority inbox, read-only Walmart catalog. On a hit,
   `buildToolsBlock` is never called and the turn is answered with no model tokens. On a miss, every

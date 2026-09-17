@@ -12,6 +12,7 @@
  * 2026-09-14 22:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the two ADR-100 maintenance knobs (first-pass delay + jitter): unforwarded, the runtime runs on its compiled-in defaults and an operator tuning them in .env is silently ignored.
  * 2026-09-14 23:30:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the two world series-store load knobs (WORLD_SERIES_READ_CONCURRENCY, WORLD_ROLLUP_CONCURRENCY) — the throttles an operator reaches for when the market-hours pulse pins oshal-local-tsdb. Unforwarded, turning them down in .env changes nothing.
  * 2026-09-17 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin PERSON_MODEL_RELATED_SIMILARITY_FLOOR — the ADR-100 related-hit relevance floor. Unforwarded it runs on its compiled-in default and an operator retuning it for their own corpus is silently ignored.
+ * 2026-09-17 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin JARVIS_SELECTOR_SHADOW: the shadow step exists so a narrower tool selector can be judged on REAL traffic, and unforwarded it would be armed in .env and measure nothing — the failure would look like the candidate simply never firing.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -35,6 +36,7 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   { name: 'ENTRA_LOCAL_IDENTITY_EMAILS', readBy: 'Entra/local bridge first-link allowlist' },
   { name: 'APP_URL', readBy: 'absolute links in invitations and OAuth callbacks' },
   { name: 'TRADING_EVENT_PLANS', readBy: 'trading-event-plans eventPlansEnabled — the ADR-136 D6 IPO-plan executor gate' },
+  { name: 'JARVIS_SELECTOR_SHADOW', readBy: 'jarvis-selector-shadow buildToolsBlockWithShadow — the tool-selector shadow candidate' },
   // Added 2026-07-30 after a browser walk of a real customer deployment. server.ts read
   // DISABLE_ONBOARDING_GATE the whole time and compose never forwarded it, so setting it in
   // .env did nothing and every invited user on a single-app box was bounced out of their app
