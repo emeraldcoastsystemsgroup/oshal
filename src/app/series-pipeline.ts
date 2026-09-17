@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The three stages: WRITE (bot -> validated episodes), STORYBOARD (camera lines -> stills), RENDER (stills + prompts -> the node). Each gate fails before the next one spends money.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | STORYBOARD now carries the series OWNER's sub into the image provider. The ADR-130 codex-cli rail (the demo-mode default) authorizes per caller at the bot node's SEC-05 carve, so an identity-less resolve read unavailable and the stage failed closed with the carve hint on every demo-box series. The owner is read from the video_series row this query already joins, so it is the row's owner by construction and no caller can name someone else; the conductor also threads it explicitly so the chain is visible where it starts.
  */
 /**
  * @description Video Series — the stages, in the order money gets spent.
@@ -350,14 +351,15 @@ export async function writeSeries(
  * @description STORYBOARD — one still per scene, cast held by an anchor frame, near-duplicates
  * rejected. Frames are uploaded to Drive because the node cannot be reached over the LAN.
  *
- * The image vendor is NOT decided here. STORYBOARD_IMAGE_PROVIDER chooses it (default `codex`, the
- * operator's own OpenAI account); a provider that is not configured fails closed rather than falling
- * through to one that bills per image.
+ * The image vendor is NOT decided here. STORYBOARD_IMAGE_PROVIDER chooses it (unset: `codex-cli` on
+ * a demo-mode deployment, else `codex` — ADR-130); a provider that is not configured fails closed
+ * rather than falling through to one that bills per image.
  *
  * @param {Pool} pool database pool
  * @param {string} episodeId the episode
  * @param {(png: Buffer, name: string) => Promise<string>} uploadFrame returns the Drive file id
- * @param {{vertexToken?: string}} creds credentials the selected provider may need
+ * @param {{vertexToken?: string}} creds credentials the selected provider may need — the caller's
+ *   identity is NOT one of them: the owner is read from the series row (see below)
  * @returns {Promise<{ok: boolean, frameIds?: string[], duplicates?: string[], error?: string}>} result
  */
 export async function storyboardEpisode(
@@ -367,7 +369,7 @@ export async function storyboardEpisode(
   creds: { vertexToken?: string } = {},
 ): Promise<{ ok: boolean; frameIds?: string[]; duplicates?: string[]; error?: string }> {
   const { rows } = await pool.query(
-    `SELECT e.scenes, e.title, e.ordinal, s.style_lock, s.cast_bible
+    `SELECT e.scenes, e.title, e.ordinal, s.style_lock, s.cast_bible, s.user_sub
        FROM video_episodes e JOIN video_series s ON s.series_id = e.series_id
       WHERE e.episode_id = $1`, [episodeId],
   );
@@ -377,10 +379,17 @@ export async function storyboardEpisode(
   const scenes = (Array.isArray(e.scenes) ? e.scenes : []) as Scene[];
   if (!scenes.length) return { ok: false, error: 'episode has no scenes — the write stage has not run' };
 
+  // The owner's sub is load-bearing, not decoration: the ADR-130 `codex-cli` provider — the demo
+  // default — authorizes per caller at the bot node's SEC-05 carve, so a resolve without it reads
+  // unavailable and this whole stage fails closed with the carve hint. It is read from the
+  // video_series row this query already joins rather than accepted as an argument, so it is the
+  // SERIES OWNER by construction: no caller can forget it and none can name somebody else. The
+  // vendor-API providers ignore the field.
   const ctx: StoryboardContext = {
     styleLock: String(e.style_lock ?? ''),
     cast: (Array.isArray(e.cast_bible) ? e.cast_bible : []) as CastMember[],
     vertexToken: creds.vertexToken,
+    userSub: String(e.user_sub ?? '') || undefined,
   };
 
   logger.info({ episodeId, scenes: scenes.length }, 'STORYBOARD stage: generating stills');

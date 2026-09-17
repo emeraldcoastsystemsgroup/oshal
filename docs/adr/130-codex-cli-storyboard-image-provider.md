@@ -65,9 +65,14 @@ swarm-execute rail — and it is the default when the deployment runs in demo mo
 - Portrait Studio (and any media-generation consumer that passes `userSub`) renders on the
   operator's own subscription in demo mode, with zero vendor keys and zero marginal spend. The
   portrait-studio package must pass `{ userSub }` to `resolveStoryboardImageProvider` (1.4.1).
-- Video Studio's storyboard stage does not yet thread `userSub`, so under the demo default it fails
-  closed with the carve hint (it was already dead on this box — exhausted OpenRouter). BACKLOG:
-  "Video Studio storyboards on the demo codex-cli rail".
+- Video Studio's storyboard stage carries the identity too (2026-09-17). It does NOT take it as an
+  argument: `storyboardEpisode` selects `s.user_sub` from the `video_series` row it already joins
+  and puts it on `StoryboardContext`, so the sub that reaches the resolve is the series OWNER by
+  construction — no caller can omit it, and none can name somebody else. That covers both entry
+  points at once: the conductor (`advanceVideoSeries` → `storyboardEpisode`) and the `video`
+  package's per-episode storyboard route. Guard:
+  `tests/unit/series-storyboard-owner-sub.spec.ts`. The live demo-box render through a real bot
+  node is still owed and stays in BACKLOG "Video Studio storyboards on the demo codex-cli rail".
 - The render task's workspace (`sbimg-*`, anchor + output PNG) persists on the shared volume like
   every other task workspace; the surface stores its own copy of the deliverable.
 - Guard: `tests/unit/storyboard-codex-cli-provider.spec.ts` (demo-aware default, gate mirroring,
