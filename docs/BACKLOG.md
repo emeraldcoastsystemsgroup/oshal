@@ -763,9 +763,33 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** root-cause the specs outside the current green ratchet and separate product defects, fixture/auth defects, and intentionally unsupported cases.
 - **Done when:** every spec uses the configured origin, each unsupported case has an explicit disposition, and the complete CI Playwright job is green without retry-dependent success.
 
-### Dev-console `/work` under Linux user-namespace remapping
-- **Remaining:** make the ADR-077 sandbox scratch mount writable to remapped container users without widening host access beyond the per-run directory.
-- **Done when:** a GitHub-Actions-equivalent userns-remap container writes inside `/work`, cannot escape it, and the focused sandbox/security guards pass. See [ADR-077](adr/077-self-developing-platform-and-super-admin-dev-console.md).
+### Dev-console `/work` under Linux user-namespace remapping — DONE 2026-09-17
+- **Done:** `SandboxedAgentRunner` prepares the bind mount on every run instead of assuming the
+  container owns it. Under a userns-remapped daemon the container's root is a host subuid that owns
+  nothing, so a `mkdtemp` (0700) scratch holding 0644 seeded files denied it both traversal and
+  writes. The per-run directory and its files are now widened (`0o777` / `0o666`) and the scratch
+  ROOT that contains them is locked to `0o700`: the daemon resolves the mount without traversing the
+  root, a second host user must traverse it and is refused, so host reach does not extend past the
+  per-run directory. Symlinks inside the scratch are never chmodded — `chmod` follows them, which
+  would widen a target outside it. Windows has no POSIX mode bits, so the plan is computed and
+  declared unapplied rather than pretended.
+- **Proved on a real kernel**, not inferred: `scripts/sandbox-userns-mount-proof.sh` runs in one
+  disposable container as uid 165536 — the first subuid a default `dockremap` mapping hands to
+  container root — and reports `unprepared_write=denied`, `prepared_write=ok`, `prepared_create=ok`,
+  `escape_parent=denied`, `escape_root=denied`, `owner_cleanup=ok` in a single run; driven with the
+  old modes (`OSHAL_SCRATCH_DIR_MODE=700 OSHAL_SCRATCH_FILE_MODE=644`) the same container reports
+  `prepared_write=FAILED`.
+- **Guard:** `tests/unit/sandbox-scratch-userns-remap.spec.ts` (9 cases) — the plan and its mode
+  bits, the symlink refusal, the root lock, and that `run()`, `runStreaming()` and the orchestrator
+  all prepare before the container starts; the container proof is the ninth case, opt-in via
+  `OSHAL_SANDBOX_USERNS_PROOF=1` because it starts a container, and it FAILS rather than skips when
+  Docker cannot be reached. Mutation-proven red on removing preparation from the run paths (3 red),
+  on narrowing the directory mode (1 red) and on deleting the symlink refusal (1 red).
+- **Not claimed:** nothing here was run against an actual userns-remapped daemon — the operator's
+  engine is Docker Desktop. The uid the proof uses is the one such a daemon presents, and the kernel
+  check it exercises is the same one; the remaining step is a CI run of the dev-console container
+  tests on the Actions daemon, which is blocked behind the manual-only CI state, not behind this.
+  See [ADR-077](adr/077-self-developing-platform-and-super-admin-dev-console.md).
 
 ### Remote-client full-suite flake
 - **Remaining:** test the module-level registry and rate-limiter state leads in the auth spec; isolate file state or serialize only the affected specs if needed.

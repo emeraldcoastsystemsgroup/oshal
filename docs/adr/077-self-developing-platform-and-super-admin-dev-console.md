@@ -72,6 +72,20 @@ every escape blocked (network egress, root-fs write, host-FS visibility, creds),
 `tests/unit/sandboxed-agent-runner.spec.ts` (the container tests skip when Docker is absent). The
 engine still never spawns the agent itself.
 
+*The scratch mount under a remapped daemon (2026-09-17).* A bind mount is judged by host uid, and
+under a Linux userns-remapped daemon — GitHub Actions' — the container's root is a subuid that owns
+nothing there. A `mkdtemp` scratch is 0700 and its seeded files 0644, so that uid could neither
+traverse nor write and every `/work` write was "Permission denied"; the sandbox's own integration
+tests treated such an engine as one the sandbox cannot run on. Each run now prepares the mount:
+the per-run directory and the files inside it are widened (`0o777` / `0o666`), symlinks are never
+chmodded — that would widen a target outside the scratch — and the scratch ROOT stays `0o700`. The
+daemon resolves the mount without traversing the root, a second host user must traverse it and is
+refused, so the widening reaches the per-run directory and nothing above it. Proved on a real
+kernel by `scripts/sandbox-userns-mount-proof.sh` as uid 165536 (the first subuid a default
+`dockremap` mapping hands container root): denied the unprepared mount, writing the prepared one,
+still refused beside it and through a locked root. Guard:
+`tests/unit/sandbox-scratch-userns-remap.spec.ts`.
+
 **Slice 3 — the orchestrator (BUILT + proven end-to-end).**
 `src/features/dev-console/services/dev-session-orchestrator.ts` (`DevSessionOrchestrator`) composes
 the two red-team-hardened cores into one governed step: seed a sandbox scratch from the session
