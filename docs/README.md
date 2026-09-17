@@ -104,6 +104,7 @@ unrelated to native compiled code.
 ## Planning & status
 
 - [BACKLOG.md](./BACKLOG.md) — deferred engineering work; every entry has done-when criteria.
+- [OPERATOR-QUEUE.md](./OPERATOR-QUEUE.md) — everything waiting on a human: decisions and live proofs, generated from the triage ledger.
 - [../ROADMAP.md](../ROADMAP.md) — today vs target, per capability.
 - [adr/README.md](./adr/README.md) — decisions and their status.
 
