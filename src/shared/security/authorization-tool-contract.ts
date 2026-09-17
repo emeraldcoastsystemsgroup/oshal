@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Define the closed core authorization tool family and trusted invocation port.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Add the strict package grant plan schema the management route parses with. Deliberately NOT a member of AuthorizationToolInputSchema: the plan is an administration view, and the registered tool family's operation set is unchanged by it.
  */
 import { z } from 'zod';
 import type { AuthorizationActor } from '@/shared/application-authorization';
@@ -45,6 +46,12 @@ export const AuthorizationApplySchema = z.object({
 export const AuthorizationAuditSchema = z.object({ app: app.optional(), tenantId: identifier.optional(),
   limit: z.number().int().min(1).max(100).optional(), cursor: z.string().min(1).max(2048).regex(/^[A-Za-z0-9_-]+$/).optional(),
 }).strict().refine(input => !input.tenantId || Boolean(input.app));
+/** Read-only "configure by package" request: one package and the subject the plan is about.
+ *  Naming a target requires BOTH identifiers so a half-specified subject can never fall back to
+ *  the caller. This schema is not part of the registered tool's operation union. */
+export const AuthorizationPackagePlanSchema = z.object({
+  app, targetSub: identifier.optional(), targetIssuer: identifier.optional(), tenantId: identifier.optional(),
+}).strict().refine(input => (input.targetSub === undefined) === (input.targetIssuer === undefined));
 /** Runtime validation is independent of model-visible schema metadata. */
 export const AuthorizationToolInputSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('catalog') }).strict(),

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add authenticated Access Administration adapters over the shared policy service and its strict tool schemas.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Serve the installed source asset from compiled runtimes and redact file delivery failures.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Adapt the read-only package grant plan. Same authenticated, same-origin, JSON-bounded adapter as every other management call; a service that does not implement it refuses rather than answering an empty plan.
  */
 import path from 'node:path';
 import { Router, json, type ErrorRequestHandler, type Request, type RequestHandler, type Response } from 'express';
@@ -13,7 +14,7 @@ import { z } from 'zod';
 import type { ApplicationAuthorizationManagementService, AuthorizationActor } from '@/shared/application-authorization';
 import {
   AUTHORIZATION_TOOL, AuthorizationApplySchema, AuthorizationAuditSchema, AuthorizationChangeSchema, AuthorizationExplainSchema,
-  AuthorizationTargetSchema, type AuthorizationToolExecutor,
+  AuthorizationPackagePlanSchema, AuthorizationTargetSchema, type AuthorizationToolExecutor,
 } from '@/shared/security/authorization-tool-contract';
 import { createChildLogger } from '@/shared/logger';
 
@@ -74,6 +75,13 @@ export function createAuthorizationRoutes(service: ApplicationAuthorizationManag
   router.use(authorizationSameOrigin, json({ limit: '32kb' }));
   router.post('/effective', run(async (req, actor) => service.effective(actor, AuthorizationTargetSchema.parse(req.body))));
   router.post('/explain', run(async (req, actor) => service.explain(actor, AuthorizationExplainSchema.parse(req.body))));
+  // Read-only: resolves a package and what it requires, and creates nothing. It sits with the
+  // other POST reads behind the same-origin check because it names a target subject.
+  router.post('/package-plan', run(async (req, actor) => {
+    const input = AuthorizationPackagePlanSchema.parse(req.body);
+    if (!service.packageGrantPlan) throw new Error('package_plan_unsupported');
+    return service.packageGrantPlan(actor, input);
+  }));
   router.post('/preview', run(async (req, actor) => service.previewChange(actor, AuthorizationChangeSchema.parse(req.body))));
   router.post('/apply', run(async (req, actor) => service.applyChange(actor, AuthorizationApplySchema.parse(req.body))));
   if (options.authorizationTool) {

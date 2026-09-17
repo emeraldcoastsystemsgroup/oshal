@@ -4,8 +4,9 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Validate the read-only package grant plan request in the service, not only at its HTTP adapter, so every caller of the same method gets the same closed shape.
  */
-import type { AuthorizationChange, AuthorizationApplyInput } from '@/shared/application-authorization';
+import type { AuthorizationChange, AuthorizationApplyInput, PackageGrantPlanInput } from '@/shared/application-authorization';
 import { ApplicationAuthorizationError } from './types';
 import { validSubject } from './policy';
 function reject(): never { throw new ApplicationAuthorizationError(400, 'invalid_authorization_change'); }
@@ -39,4 +40,21 @@ export function parseAuthorizationApply(input: unknown): AuthorizationApplyInput
   for (const field of ['previewId','idempotencyKey']) if (typeof value[field] !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(value[field] as string)) return reject();
   if (value.approvalReference !== undefined && !validSubject(value.approvalReference)) return reject();
   return structuredClone(value) as unknown as AuthorizationApplyInput;
+}
+/**
+ * @description Validate a read-only package grant plan request. Closed key set, the same package
+ * slug the installer and authorization registration accept, and subject identifiers bounded exactly
+ * as every other target is. Carries no authority: the service still revalidates the caller.
+ * @param input - Unvalidated request body or tool argument.
+ * @returns The parsed request.
+ * @throws ApplicationAuthorizationError 400 on any unexpected key or malformed identifier.
+ */
+export function parsePackageGrantPlanInput(input: unknown): PackageGrantPlanInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return reject();
+  const value = input as Record<string, unknown>;
+  if (Object.keys(value).some(key => !['app', 'targetSub', 'targetIssuer', 'tenantId'].includes(key))) return reject();
+  if (typeof value.app !== 'string' || !/^[a-z0-9][a-z0-9-]{1,63}$/.test(value.app)) return reject();
+  for (const key of ['targetSub', 'targetIssuer', 'tenantId']) if (value[key] !== undefined && !validSubject(value[key])) return reject();
+  if ((value.targetSub === undefined) !== (value.targetIssuer === undefined)) return reject();
+  return structuredClone(value) as unknown as PackageGrantPlanInput;
 }
