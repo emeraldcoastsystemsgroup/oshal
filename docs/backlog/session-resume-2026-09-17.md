@@ -2,8 +2,9 @@
 
 **Published for review:** [core PR 605](https://github.com/emeraldcoastsystemsgroup/oshal/pull/605)
 and [Little Monsters PR 237](https://github.com/emeraldcoastsystemsgroup/oshal-applications/pull/237).
-Core source `27caada3` passed the publish gate and committed-source typecheck; store source
-`0b2b94b` is version 1.3.2. Both remain unmerged pending the repository's required approving review.
+Core source `e5088e6b` passed the publish gate and committed-source typecheck; store source
+`0b2b94b` is version 1.3.2. Core requires an approving review. The store PR is held until its core
+catalog dependency is available; GitHub does not require an approving review on the store PR.
 
 This continues [the earlier handover](session-handover-2026-09-17.md). The resumed priority is
 assigning a package to a person without calling an ordinary student an application administrator.
@@ -99,7 +100,7 @@ do not restore broad authorization-table grants. Helper privilege alone does not
 - Review and merge the remaining Wave 5 PRs 620–623; they were not completed by this lane.
 - Finish the publish-gate escaping investigation and placeholder regression described in the prior
   handover. No local identifier patterns were weakened here.
-- An approving review by another GitHub collaborator is still required before either PR can merge;
+- An approving review by another GitHub collaborator is still required before core PR 605 can merge;
   the authenticated maintainer account is also the PR author and cannot approve its own PR.
 - Operator-only credential rotation, image-publish scope, actual student sign-in and host configuration
   decisions remain in the generated [operator queue](../OPERATOR-QUEUE.md).
