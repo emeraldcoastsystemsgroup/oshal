@@ -49,14 +49,20 @@ and drops embedded double quotes** — which is how a compact `--metadata-json` 
 never applied. `ConvertTo-NativeJsonArgument` now escapes the quotes in exactly the host modes that
 need it. Reproduce either direction without a database or a container:
 
+Reproduce it with the guard, which is the only runnable form — `-NodeLeaseArgumentProbe` takes a
+path to a stand-in for the lease CLI that records the argv it was handed, and the spec generates
+that file into a scratch directory. Passing a path by hand fails at `Resolve-Path` with
+`ItemNotFound` before anything is demonstrated.
+
 ```powershell
-# expects {"requestedDate":...}; the unfixed shape prints {requestedDate:...}
-powershell -NoProfile -File scripts/run-daily-recap.ps1 -Date 2026-08-05 `
-  -NodeLeaseArgumentProbe "$env:TEMP\node-lease-argument-probe.js"
+npx vitest run tests/unit/recap-node-lease-arguments.spec.ts --reporter=verbose
 ```
 
-`tests/unit/recap-node-lease-arguments.spec.ts` writes that probe target and asserts the round trip
-in both the host default and forced-legacy argument modes.
+Three of its five cases spawn a real `powershell.exe`; it asserts the round trip in both the host
+default and forced-legacy argument modes. To watch the failure instead of the fix, revert the
+escape at `scripts/run-daily-recap.ps1` (`ConvertTo-NativeJsonArgument`) to a bare `$metadata` and
+re-run: two cases go red with the production symptom, `node-lease CLI failed (exit 1): Expected
+property name or '}' in JSON at position 1`.
 
 The manifests are local integrity and coherence records, not signatures. They close stale-file,
 partial-write, substitution-race, and cross-run mixing failures, but they do not authenticate bytes
