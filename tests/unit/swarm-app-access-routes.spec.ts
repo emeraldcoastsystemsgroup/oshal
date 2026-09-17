@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: real Express proof that the framework-owned access matrix and assignment API are operator-only, validate app declarations/tiers, and support restoring defaults.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Deny legacy grant and clear writes for policy-protected applications, including catalog and enforced no-catalog packages.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cover the optional userIssuer: it reaches the store unchanged, an absent one still records no issuer exactly as before, and a malformed one is refused before the database.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove clear carries the exact issuer instead of clearing every identity sharing a subject.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -150,6 +151,17 @@ describe('swarm app access management routes', () => {
     }
   });
 
+  it('passes the exact target issuer when restoring defaults', async () => {
+    process.env.OSHAL_OPERATOR_SUBS = 'operator-sub';
+    const { server, base, clear } = await boot();
+    try {
+      expect((await request(base, 'operator-sub', '/api/swarm/apps/test-access/access', {
+        userSub: 'shared-sub', userIssuer: 'https://identity.fixture.test', tier: null, reason: 'Clear one provider',
+      })).status).toBe(200);
+      expect(clear).toHaveBeenCalledWith(expect.objectContaining({ userSub: 'shared-sub', userIssuer: 'https://identity.fixture.test' }));
+    } finally { await stop(server); }
+  });
+
   it('clears an explicit assignment to restore the manifest default', async () => {
     process.env.OSHAL_OPERATOR_SUBS = 'operator-sub';
     const { server, base, clear } = await boot();
@@ -160,7 +172,7 @@ describe('swarm app access management routes', () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({ cleared: true, effectiveTier: 'viewer' });
       expect(clear).toHaveBeenCalledWith({
-        userSub: 'Exact-User', appName: 'test-access', assignedBySub: 'operator-sub', reason: 'Temporary assignment ended',
+        userSub: 'Exact-User', userIssuer: null, appName: 'test-access', assignedBySub: 'operator-sub', reason: 'Temporary assignment ended',
       });
     } finally {
       await stop(server);

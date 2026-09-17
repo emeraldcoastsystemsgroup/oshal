@@ -201,6 +201,31 @@ business-tenant memberships. Normal schema
 initialization supports installation. No deployed accounts or app grants are changed by the source
 implementation itself.
 
+### Assign a package to a person
+
+In Access Administration, select the user, choose **Assign a package**, optionally enter the business
+tenant, and choose **Review package access**. The read-only plan includes the package's required
+application dependencies. Optional applications, tool needs and connection needs are displayed
+separately and are never granted automatically. An explicit deny, inactive user/application, missing
+dependency, dependency cycle or missing management scope blocks package continuation.
+
+Choose **Choose required roles** to open the existing batch editor. Every missing role starts blank:
+choose an application-declared role explicitly, add a reason and review the exact changes before
+applying. Existing access stays in place. A batch saves sequentially and stops on a conflict or uncertain
+result; completed changes remain saved. Plans with more than 20 missing roles require smaller reviews
+in the application table. A changed identity, tenant or catalog invalidates the pending plan.
+
+Package catalog adoption is a separate migration. Existing source/revision-bound assignments can
+block activation; review and remove incompatible grants under the old catalog, activate the new
+catalog, then make explicit named-role grants. Do not infer roles from an old `@app-admin` assignment.
+Little Monsters documents its student/teacher/admin adoption sequence in its package documentation.
+
+Migration 145 keys coarse application access by subject, application and issuer. A legacy NULL issuer
+and `urn:oshal:local-auth` identify the same local principal; different external issuers remain separate,
+including explicit denies and clears. Owner reads require the subject and verified issuer in the
+database request context. Package stop and uninstall are swarm-operator actions, independent of
+application business roles.
+
 Run `npm run test:authorization` locally. It includes isolated policy/import, identity, loaded-package
 HTTP, typed-tool, real Chromium, worker-boundary, and disposable PostgreSQL tests. The existing AI Test
 Lab registers their source paths under `authorization-management`; its live catalog step is read-only

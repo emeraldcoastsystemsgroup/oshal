@@ -15,11 +15,11 @@ To comment, write under an entry in this file and tell me, or just say the entry
 
 Short-lived and blocking today. Source: `docs/backlog/operator-now.json` (as of 2026-09-17).
 
-### Ella has access — and the way she got it is the bug
+### Migrate Little Monsters to named roles
 
-The grant landed: oshal_authorization_assignments carries little-monsters for Google sub 113439769752756917575 at issuer accounts.google.com. But the role it had to use is @app-admin, which is your objection and it is a fair one. The cause is a single branch in src/features/application-authorization/service.ts: when an app ships no role catalog, the only grantable role is @app-admin at tier admin — there is no vocabulary for 'ordinary user', so the code falls back to the one role it knows. Two things are true at once and they should not be confused: inside the package she is a student, because little-monsters/src-routes/education-access.ts keys every route on lm_students.role and never reads the platform tier; at the platform layer she is labelled an admin of that app. What I have NOT verified is whether any platform surface outside the package (uninstall, grant management for that app) accepts an @app-admin — that is the part worth checking before this is called harmless.
+Little Monsters 1.3.2 now declares student, teacher and admin structural roles. Its rebuilt package passes 88 registered checks. Core issuer isolation, package lifecycle guards and a reviewed package-assignment screen are implemented. These source proofs do not change the deployed grant or verify an actual student sign-in. Existing assignments reference the old catalog revision, so the core intentionally refuses activation until they are reviewed and migrated.
 
-**Do:** Nothing to do today; she can use it. The fix is to give little-monsters a real role catalog with a student role so the grant can say 'student'. That work was started and stopped when the tokens ran out — the next session should pick it up first.
+**Do:** After the core rollout, review all existing grants, restrictions, expiry and group mappings. Remove only reviewed incompatible assignments through the OLD catalog preview/apply flow, activate 1.3.2, then explicitly restore intended named roles and restrictions. See docs/backlog/session-resume-2026-09-17.md and the package authorization guide. Do not delete policy rows or infer a student role from an admin label.
 
 ### Sign Ella in once, to close the last gap
 

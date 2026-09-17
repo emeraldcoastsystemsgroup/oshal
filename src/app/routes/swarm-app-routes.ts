@@ -23,6 +23,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | PUT /:name/access accepts an OPTIONAL userIssuer so an operator-made tier assignment can name the verified identity provider it belongs to (migration 145). Omitting it stores no issuer, which is exactly what this route did before and still resolves only for a canonical local account; it grants nobody anything on its own.
  */
 
+/** CHANGE LOG 18 | maintainer@emeraldcoastsystemsgroup.com | Resolve and clear exact principals; require current swarm operator authority for package lifecycle changes. */
 import { Router, type Request, type Response, type RequestHandler } from 'express';
 import multer from 'multer';
 import fs from 'fs';
@@ -48,7 +49,7 @@ import {
   type AppStatusFallbackItem,
 } from '@/features/swarm-apps';
 import type { AuthorizationActor } from '@/shared/application-authorization';
-import { getCaller, isOperator } from '@/shared/middleware/authz';
+import { getCaller, isOperator, requiresOperator } from '@/shared/middleware/authz';
 import { preserveRequestIdentity } from '@/shared/middleware/multipart-identity';
 import { GUEST_TIERS, isGuestTier } from '@/shared/middleware/guest-capability-matrix';
 import { registerAppStoreRemoteRoutes } from './app-store-remote';
@@ -144,7 +145,7 @@ async function admittedHomeManifests(
     const access = manifest.access;
     // The coarse ceiling is keyed on a subject. A guest has none, and canDiscover has already
     // refused everything protected, so there is nothing left for this tier to judge.
-    if (actor && access && appAccess && (await appAccess.resolve(manifest.name, actor.sub, access)).tier === 'deny') continue;
+    if (actor && access && appAccess && (await appAccess.resolveForPrincipal(manifest.name, actor.sub, actor.issuer, access)).tier === 'deny') continue;
     admitted.push(manifest);
   }
   return admitted;
@@ -339,7 +340,7 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
         return;
       }
       if (tier === null) {
-        const cleared = await appAccess.clear({ userSub, appName: name, assignedBySub: actorSub, reason });
+        const cleared = await appAccess.clear({ userSub, userIssuer: userIssuer ?? null, appName: name, assignedBySub: actorSub, reason });
         res.json({ cleared, appName: name, userSub, effectiveTier: declaration.defaultTier });
         return;
       }
@@ -623,7 +624,8 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
     }
   });
 
-  router.patch('/:name/toggle', async (req: Request, res: Response) => {
+  // Lifecycle changes affect every consumer of the installed package, so require swarm authority.
+  router.patch('/:name/toggle', requiresOperator, async (req: Request, res: Response) => {
     const name = String(req.params.name);
     try {
       const active = Boolean(req.body?.active);
@@ -756,13 +758,11 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
    * other active apps depend on this one; `?force=true` overrides (the caller has seen
    * the impact and decided). Orphaned dependencies are reported, never auto-removed.
    */
-  router.delete('/:name', async (req: Request, res: Response) => {
+  router.delete('/:name', requiresOperator, async (req: Request, res: Response) => {
     const name = String(req.params.name);
     try {
       const force = String(req.query.force || '').toLowerCase() === 'true';
-      // Data-loss gate: dropData additionally deletes the RAG collections the
-      // manifest's ragCollections globs match. Destructive → operator-only; the
-      // plain (data-preserving) uninstall keeps its existing auth posture.
+      // Keep the data-loss gate explicit: dropData also removes matching RAG collections.
       const dropData = String(req.query.dropData || '').toLowerCase() === 'true';
       if (dropData && !isOperator(req)) {
         res.status(403).json({ error: 'dropData is operator-only (deletes the app\'s RAG data)' });

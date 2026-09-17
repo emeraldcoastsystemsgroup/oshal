@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove abandoned workspace discovery stops at each awaited port without cancelling other HTTP requests or normal completed requests.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise cancellation through the issuer-qualified coarse-access port.
  */
 import express, { type Request, type Response } from 'express';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -68,7 +69,7 @@ function ports(): Options {
       canDiscover: name => port('discover', true, name),
       canNavigateHttpPath: (_actor, pathname) => port('navigate', true, pathname),
     },
-    access: { resolve: (appName, userSub) => port('access', { appName, userSub, tier: 'viewer', bundle: null, source: 'default' }, appName) },
+    access: { resolveForPrincipal: (appName, userSub) => port('access', { appName, userSub, tier: 'viewer', bundle: null, source: 'default' }, appName) },
   };
 }
 

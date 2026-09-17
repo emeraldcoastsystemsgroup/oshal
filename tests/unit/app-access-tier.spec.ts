@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: verify explicit-deny-wins/default/stale resolution, durable assignment SQL, fail-closed manifest and CLI validation, and the FORCE-RLS migration contract.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard the tier resolver itself in the default unit run: it must carry the actor issuer into the lookup for EVERY issuer, so reinstating the short-circuit that refused a federated identity before reading an assignment goes red without a database. The database boundary itself is proved in tests/authorization-issuer-tier-live.spec.ts against real PostgreSQL.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cover the principal-qualified lookup: the assignment SQL carries the actor issuer and the pre-145 local-auth rule, an upsert records the issuer it was written for, and migration 145 keeps the column nullable so an older row is never guessed into the configured identity provider.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin the principal-qualified key and RLS predicate while retaining local-only compatibility.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -33,7 +34,7 @@ describe('AppAccessService resolution', () => {
   it('uses the manifest default when no exact assignment exists', async () => {
     const { pool, query } = poolWithRows([]);
     const decision = await new AppAccessService(pool).resolve('career-hunter', 'user-a', ACCESS);
-    expect(query).toHaveBeenCalledWith(expect.stringContaining('user_sub = $1 AND app_name = $2'), ['user-a', 'career-hunter']);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('user_sub = $1 AND app_name = $2'), ['user-a', 'career-hunter', 'urn:oshal:local-auth']);
     expect(decision).toEqual({
       appName: 'career-hunter', userSub: 'user-a', tier: 'viewer', bundle: null, source: 'default',
     });
@@ -101,9 +102,9 @@ describe('AppAccessService resolution', () => {
     await new AppAccessService(pool).resolveForPrincipal(
       'career-hunter', '100000000000000000001', 'https://accounts.google.com', ACCESS,
     );
-    expect(query.mock.calls[0][0]).toContain('user_issuer = $3 OR (user_issuer IS NULL AND $3 = $4)');
+    expect(query.mock.calls[0][0]).toContain("COALESCE(user_issuer, 'urn:oshal:local-auth') = $3");
     expect(query.mock.calls[0][1]).toEqual([
-      '100000000000000000001', 'career-hunter', 'https://accounts.google.com', 'urn:oshal:local-auth',
+      '100000000000000000001', 'career-hunter', 'https://accounts.google.com',
     ]);
   });
 
@@ -167,11 +168,12 @@ describe('legacy tier resolver principal handling', () => {
 describe('migration 145 app access principal issuer contract', () => {
   const sql = readFileSync(resolve('scripts/migrations/145-app-access-principal-issuer.sql'), 'utf8');
 
-  it('adds a nullable issuer column, bounds it, and leaves the existing key alone', () => {
+  it('preserves nullable provenance while isolating principal keys and owner reads', () => {
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS user_issuer TEXT');
     expect(sql).not.toMatch(/user_issuer\s+TEXT\s+NOT NULL/);
     expect(sql).toContain('octet_length(user_issuer) <= 2048');
-    expect(sql).not.toMatch(/DROP CONSTRAINT IF EXISTS oshal_app_access_pkey/);
+    expect(sql).toContain('PRIMARY KEY (user_sub, app_name, principal_issuer)');
+    expect(sql).toContain("principal_issuer = current_setting('oshal.current_issuer', true)");
     expect(sql).not.toMatch(/UPDATE\s+oshal_app_access/i);
   });
 });

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove exact static filenames can be bound without accepting traversal or wildcard routes.
  */
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,6 +25,19 @@ afterEach(() => {
   }
 });
 describe('authorization package catalog import', () => {
+  it.each(['/ui/student.css', '/games/quiz.v2.js', '/assets/avatar.png'])('accepts literal asset binding %s', asset => {
+    const root = fixture(); const value = JSON.parse(catalog);
+    value.bindings = { http: [{ id: 'asset', method: 'GET', path: asset, allOf: ['records.read'] }] };
+    writeFileSync(join(root, 'authorization.yaml'), JSON.stringify(value));
+    const loaded = loadApplicationAuthorization(root, { uses: ['application-authorization'], authorization: { version: 1, catalog: 'authorization.yaml' } });
+    expect(loaded!.bindings.http![0].path).toBe(asset);
+  });
+  it.each(['/../outside.css', '/./asset.js', '/assets/%2e%2e/file.js', '/assets/*.js', '/assets/:file.js', '/assets/a.js?x=1', '/assets/a.js#part', '/assets\\a.js'])('rejects unsafe asset binding %s', asset => {
+    const root = fixture(); const value = JSON.parse(catalog);
+    value.bindings = { http: [{ id: 'asset', method: 'GET', path: asset, allOf: ['records.read'] }] };
+    writeFileSync(join(root, 'authorization.yaml'), JSON.stringify(value));
+    expect(() => loadApplicationAuthorization(root, { uses: ['application-authorization'], authorization: { version: 1, catalog: 'authorization.yaml' } })).toThrow('HTTP path');
+  });
   it('loads a real package-local YAML catalog through the same CLI/runtime validator', () => {
     const root = fixture(); writeFileSync(join(root, 'authorization.yaml'), catalog);
     expect(loadApplicationAuthorization(root, { uses: ['application-authorization'], authorization: { version: 1, catalog: 'authorization.yaml' } })!.roles.reader.tier).toBe('viewer');

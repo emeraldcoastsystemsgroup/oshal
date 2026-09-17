@@ -3,6 +3,7 @@
 -- SEQ | AUTHOR                                      | DESCRIPTION
 -- -----------------------------------------------------------------------------
 -- 1   | maintainer@emeraldcoastsystemsgroup.com     | Record the verified issuer an ADR-118 app-access assignment was written for, so a tier can be resolved for a federated identity on its full principal; rows written before this migration stay NULL and are answered only for canonical local accounts.
+-- 2   | maintainer@emeraldcoastsystemsgroup.com     | Isolate simultaneous same-subject identities in the key, mutations and owner RLS; preserve NULL provenance as the canonical local principal.
 -- -----------------------------------------------------------------------------
 
 -- ADR-118 keyed an assignment on `user_sub` alone. A subject identifier is unique only
@@ -21,12 +22,6 @@
 --   user_issuer = '<issuer>'  -> resolves ONLY for that exact (subject, issuer) principal
 --   user_issuer IS NULL       -> resolves ONLY for urn:oshal:local-auth
 --
--- The primary key stays (user_sub, app_name). One subject string therefore still holds at
--- most one assignment per application: an operator re-assigning that subject under a
--- different issuer REBINDS the existing row rather than adding a second one. Subjects are
--- issuer-scoped identifiers, so two live identities sharing a subject string is a
--- coincidence rather than a shape this table needs to represent, and keeping the key
--- unchanged means no existing lookup, policy or upsert arbiter has to move.
 ALTER TABLE oshal_app_access
   ADD COLUMN IF NOT EXISTS user_issuer TEXT;
 
@@ -40,3 +35,20 @@ ALTER TABLE oshal_app_access
 
 COMMENT ON COLUMN oshal_app_access.user_issuer IS
   'Verified issuer namespace this assignment was written for. NULL means the assignment predates issuer provenance and resolves only for urn:oshal:local-auth; it must never be inferred from the deployment current identity-provider configuration.';
+
+-- NULL preserves legacy provenance while sharing exactly one key with explicit local auth.
+-- Other issuers with the same subject are independent people, including when one is denied.
+ALTER TABLE oshal_app_access
+  ADD COLUMN IF NOT EXISTS principal_issuer TEXT
+    GENERATED ALWAYS AS (COALESCE(user_issuer, 'urn:oshal:local-auth')) STORED;
+ALTER TABLE oshal_app_access DROP CONSTRAINT IF EXISTS oshal_app_access_pkey;
+ALTER TABLE oshal_app_access ADD CONSTRAINT oshal_app_access_pkey
+  PRIMARY KEY (user_sub, app_name, principal_issuer);
+
+DROP POLICY IF EXISTS oshal_app_access_owner_or_operator_read ON oshal_app_access;
+CREATE POLICY oshal_app_access_owner_or_operator_read ON oshal_app_access
+  AS PERMISSIVE FOR SELECT USING (
+    (user_sub = current_setting('oshal.current_sub', true)
+      AND principal_issuer = current_setting('oshal.current_issuer', true))
+    OR current_setting('oshal.is_operator', true) = 'on'
+  );

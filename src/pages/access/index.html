@@ -8,6 +8,7 @@ SEQ | AUTHOR | DESCRIPTION
 2 | maintainer@emeraldcoastsystemsgroup.com | Review additive role changes inside exact user/application/tenant rows.
 3 | maintainer@emeraldcoastsystemsgroup.com | Focus application editing, condense permission summaries and provide explicit local expiry controls.
 4 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
+5 | maintainer@emeraldcoastsystemsgroup.com | Feed required package dependencies into the existing explicit-role reviewed batch flow.
 -->
 <!doctype html>
 <html lang="en" data-theme="midnight">
@@ -31,6 +32,11 @@ SEQ | AUTHOR | DESCRIPTION
     .hint { font-size: 12px; }
     .panel { background: var(--bg-secondary, #1f2937); border: 1px solid var(--border-color, #374151); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
     .selectors { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap: 16px; }
+    #package-access-toolbar { margin: 12px 0; gap: 10px; align-items: center; }
+    #package-access-toolbar input, #package-access-toolbar select { width: auto; max-width: 100%; flex: 1 1 160px; }
+    #package-access-dialog { color: var(--text-primary); background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 14px; width: min(760px, 90vw); max-height: 85vh; padding: 24px; }
+    #package-access-dialog::backdrop { background: #0009; }
+    #package-access-dialog li { margin: 10px 0; overflow-wrap: anywhere; }
     .layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr); gap: 18px; align-items: start; }
     .identity-selection { grid-template-columns: minmax(130px, .6fr) minmax(220px, 1.4fr) minmax(220px, 1fr); align-items: end; }
     .identity-selection label { margin-bottom: 3px; }
@@ -1045,7 +1051,7 @@ async function runRoleBatch(batch, request, isCurrent, onProgress) {
   } finally { batch.running = false; }
 }
 
-</script><script>
+</script><script src="/shared/ui/js/access-package-plan.js"></script><script>
 /* Reviewed multi-application changes share the ordinary authorization HTTP boundary. */
 'use strict';
 {
@@ -1072,10 +1078,12 @@ async function runRoleBatch(batch, request, isCurrent, onProgress) {
   function eligible(row) { return row.result && (row.app.managementScopes || []).some(scope => scope.permissions.includes('assign')); }
   function current(generation) { return generation === bulk.generation && bulk.catalog === state.catalog && bulk.target === targetKey(target()) && !bulk.stop; }
   function reset() {
+    packageAccess.reset();
     bulk.generation++; bulk.stop = true; bulk.selected.clear(); bulk.rows = []; bulk.batch = null;
     dialog.close(); updateToolbar();
   }
   function updateToolbar() {
+    packageAccess?.busy(Boolean(state.busy || bulk.pending));
     const count = bulk.selected.size;
     $('bulk-count').textContent = count ? `${count} application${count === 1 ? '' : 's'} selected` : 'No applications selected';
     $('bulk-edit-selected').disabled = !count || state.busy || bulk.pending;
@@ -1097,7 +1105,7 @@ async function runRoleBatch(batch, request, isCurrent, onProgress) {
       });
       row.summary.cells[6].prepend(checkbox);
     });
-    updateToolbar();
+    updateToolbar(); packageAccess.attach();
   }
   function populateBulkRole(row, index) {
     const container = $('bulk-drafts').children[index], select = container.querySelector('[data-bulk-role]');
@@ -1123,10 +1131,11 @@ async function runRoleBatch(batch, request, isCurrent, onProgress) {
     $('bulk-common-role').innerHTML = '<option value="">Choose separately below</option>';
     common.forEach(source => { const option = source.cloneNode(true); option.selected = false; $('bulk-common-role').append(option); });
   }
-  function editSelected() {
+  function editSelected(tenantOverride) {
     if (state.busy || !bulk.selected.size) return;
     bulk.generation++; bulk.stop = false; bulk.batch = null; bulk.pending = false; bulk.running = false;
-    bulk.rows = [...bulk.selected]; bulk.catalog = state.catalog; bulk.target = targetKey(target());
+    bulk.rows = [...bulk.selected].map(row => typeof tenantOverride === 'string' ? { ...row, tenant: tenantOverride } : row);
+    bulk.catalog = state.catalog; bulk.target = targetKey(target());
     $('bulk-form').reset(); $('bulk-form').hidden = false; $('bulk-reviewed').hidden = true;
     $('bulk-fields').disabled = false; $('bulk-review').disabled = false; $('bulk-status').textContent = '';
     $('bulk-close').textContent = 'Close';
@@ -1222,8 +1231,19 @@ async function runRoleBatch(batch, request, isCurrent, onProgress) {
   $('bulk-apply').addEventListener('click', () => { void applyBatch(); });
   $('bulk-close').addEventListener('click', () => { void close(); });
   dialog.addEventListener('cancel', event => { event.preventDefault(); void close(); });
+  const packageAccess = window.installOshalPackageAccess({ request,
+    snapshot: tenant => !target() || $('target-kind').value !== 'user' || !state.catalog ? null : ({
+      target: { ...targetInput(), ...(tenant ? { tenantId: tenant } : {}) }, label: targetLabel(target()), revision: state.catalog.revision,
+      apps: applicationRows.rows.map(row => ({ app: row.app.app, canAssign: eligible(row) && rowCanAssign({ ...row, tenant }) })),
+    }),
+    review: (names, tenant) => {
+      if (state.busy || bulk.pending) return;
+      bulk.selected = new Set(applicationRows.rows.filter(row => names.includes(row.app.app)));
+      updateToolbar(); editSelected(tenant);
+    },
+  });
   window.oshalAccessBulk = { attach, reset, busy: updateToolbar };
-  updateToolbar();
+  updateToolbar(); if (applicationRows.rows.length) attach();
 }
 
 </script>

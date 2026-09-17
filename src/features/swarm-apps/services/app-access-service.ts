@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: durable per-user app assignments, explicit-deny-wins resolution, unsupported-stale-assignment fail-closed behavior, and operator assignment/list/clear operations.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve and record an assignment against the FULL verified principal. A subject identifier is unique only inside its issuer, so keying on the subject alone left the control plane unable to tell a federated identity from a local account and it refused every non-local issuer a tier outright. An assignment stored before migration 145 carries no issuer and keeps its only safe meaning: a canonical local account, never a federated subject that happens to match.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Isolate same-subject principals in every lookup, upsert and clear; legacy NULL and explicit local issuer share one key.
  */
 
 import type { Pool } from 'pg';
@@ -50,9 +51,10 @@ export interface ResolvedAppAccess {
 
 /** Narrow port consumed by the app-layer dynamic route boundary. */
 export interface AppAccessResolver {
-  resolve(
+  resolveForPrincipal(
     appName: string,
-    userSub: string | null,
+    userSub: string,
+    userIssuer: string,
     declaration: SwarmAppAccessDeclaration,
   ): Promise<ResolvedAppAccess>;
 }
@@ -98,7 +100,7 @@ async function withIssuerColumn<T>(
       degraded.add(operation);
       logger.warn(
         { ...context, migration: '145-app-access-principal-issuer.sql' },
-        'oshal_app_access has no user_issuer column; applying pre-145 subject-only behavior until it is applied',
+        'Issuer-aware app access schema is incomplete; checking whether local-only compatibility is available',
       );
     }
     return legacy();
@@ -113,16 +115,15 @@ function storedTier(raw: string | undefined): AppAccessTier | null {
 
 /**
  * @description PostgreSQL-backed ADR-118 access service. Every route lookup is constrained by
- * the exact `(user_sub, app_name)` tuple even when the caller's database context is privileged;
+ * the exact `(user_sub, issuer, app_name)` tuple even when the caller's database context is privileged;
  * FORCE RLS remains a second boundary rather than the only object-level authorization check.
  */
 export class AppAccessService implements AppAccessResolver {
   constructor(private readonly pool: Pool) {}
 
   /**
-   * @description Resolve explicit assignment first, then the manifest default. An explicit deny
-   * always wins. A stale explicit tier that the current manifest no longer supports fails closed
-   * to deny instead of silently widening to the default.
+   * @description Compatibility API for canonical local accounts only. Production request callers
+   * must use resolveForPrincipal with their verified issuer; no subject-only query is permitted.
    */
   async resolve(
     appName: string,
@@ -132,19 +133,8 @@ export class AppAccessService implements AppAccessResolver {
     assertAppName(appName);
     if (userSub !== null) assertSubject(userSub, 'userSub');
 
-    let assigned: AppAccessTier | null = null;
-    if (userSub !== null) {
-      const result = await this.pool.query<Pick<AssignmentRow, 'tier'>>(
-        `SELECT tier
-           FROM oshal_app_access
-          WHERE user_sub = $1 AND app_name = $2
-          LIMIT 1`,
-        [userSub, appName],
-      );
-      assigned = storedTier(result.rows[0]?.tier);
-    }
-
-    return this.decide(appName, userSub, assigned, declaration);
+    return userSub === null ? this.decide(appName, null, null, declaration)
+      : this.resolveForPrincipal(appName, userSub, LOCAL_AUTH_PRINCIPAL_ISSUER, declaration);
   }
 
   /**
@@ -181,9 +171,9 @@ export class AppAccessService implements AppAccessResolver {
           `SELECT tier
              FROM oshal_app_access
             WHERE user_sub = $1 AND app_name = $2
-              AND (user_issuer = $3 OR (user_issuer IS NULL AND $3 = $4))
+              AND COALESCE(user_issuer, 'urn:oshal:local-auth') = $3
             LIMIT 1`,
-          [userSub, appName, userIssuer, LOCAL_AUTH_PRINCIPAL_ISSUER],
+          [userSub, appName, userIssuer],
         );
         return storedTier(result.rows[0]?.tier);
       },
@@ -270,8 +260,7 @@ export class AppAccessService implements AppAccessResolver {
    * `userIssuer` names the verified identity provider the assignment is for; omitting it keeps
    * the pre-145 meaning (no issuer recorded, resolvable only by a canonical local account)
    * rather than guessing whichever provider this deployment happens to be configured with.
-   * The key is still (user_sub, app_name), so naming a different issuer for a subject that
-   * already holds an assignment on this application REBINDS that row.
+   * The key includes the issuer; granting another identity cannot overwrite an existing deny.
    */
   async assign(input: {
     userSub: string;
@@ -304,6 +293,7 @@ export class AppAccessService implements AppAccessResolver {
    */
   async clear(input: {
     userSub: string;
+    userIssuer?: string | null;
     appName: string;
     assignedBySub: string;
     reason: string;
@@ -312,14 +302,24 @@ export class AppAccessService implements AppAccessResolver {
     assertSubject(input.assignedBySub, 'assignedBySub');
     assertAppName(input.appName);
     const reason = assertReason(input.reason);
-    const result = await this.pool.query(
-      `DELETE FROM oshal_app_access
-        WHERE user_sub = $1 AND app_name = $2`,
-      [input.userSub, input.appName],
+    const userIssuer = input.userIssuer ?? LOCAL_AUTH_PRINCIPAL_ISSUER;
+    assertIssuer(userIssuer);
+    const result = await withIssuerColumn(
+      () => this.pool.query(`DELETE FROM oshal_app_access
+        WHERE user_sub = $1 AND app_name = $2 AND COALESCE(user_issuer, 'urn:oshal:local-auth') = $3`,
+      [input.userSub, input.appName, userIssuer]),
+      () => {
+        if (userIssuer !== LOCAL_AUTH_PRINCIPAL_ISSUER) {
+          throw new Error('Apply migration 145 before clearing an issuer-bound tier');
+        }
+        return this.pool.query(`DELETE FROM oshal_app_access WHERE user_sub = $1 AND app_name = $2`,
+          [input.userSub, input.appName]);
+      },
+      { appName: input.appName, operation: 'clear' },
     );
     const cleared = (result.rowCount ?? 0) > 0;
     logger.info(
-      { appName: input.appName, userSub: input.userSub, assignedBySub: input.assignedBySub, reason, cleared },
+      { appName: input.appName, userSub: input.userSub, userIssuer, assignedBySub: input.assignedBySub, reason, cleared },
       'Explicit app access assignment clear requested',
     );
     return cleared;
@@ -337,7 +337,7 @@ async function upsertWithIssuer(pool: Pool, values: unknown[], userIssuer: strin
     `INSERT INTO oshal_app_access
        (user_sub, app_name, tier, assigned_by_sub, reason, user_issuer)
      VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (user_sub, app_name) DO UPDATE
+     ON CONFLICT (user_sub, app_name, principal_issuer) DO UPDATE
        SET tier = EXCLUDED.tier,
            assigned_by_sub = EXCLUDED.assigned_by_sub,
            reason = EXCLUDED.reason,
@@ -361,6 +361,13 @@ async function upsertWithoutIssuer(pool: Pool, values: unknown[], userIssuer: st
   if (userIssuer !== null) {
     throw new Error('oshal_app_access.user_issuer is missing; apply migration 145 before assigning an issuer-bound tier');
   }
+  // An earlier additive-only 145 schema has user_issuer but no principal key. Never
+  // fall back to its subject-only arbiter, which could overwrite another issuer's row.
+  const columns = await pool.query<{ present: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'oshal_app_access'::regclass
+      AND attname = 'user_issuer' AND NOT attisdropped) AS present`,
+  );
+  if (columns.rows[0]?.present) throw new Error('Apply migration 145 principal key before assigning a tier');
   const result = await pool.query<Omit<AssignmentRow, 'user_issuer'>>(
     `INSERT INTO oshal_app_access
        (user_sub, app_name, tier, assigned_by_sub, reason)

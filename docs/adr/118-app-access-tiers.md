@@ -78,8 +78,13 @@ Baseline mappings considered by the decision:
   written for a federated identity unreadable, so every OIDC-signed-in user resolved `deny` on
   every application and a catalog-less one answered `authorization_app_admin_required`. Migration
   145 adds a nullable `user_issuer`; resolution is keyed on `(user_sub, user_issuer, app_name)`,
-  and a row with no issuer still resolves only for `urn:oshal:local-auth`. The key is unchanged,
-  so re-assigning one subject under a different issuer rebinds its single row.
+  and a row with no issuer still resolves only for `urn:oshal:local-auth`. The generated
+  `principal_issuer` key preserves that NULL provenance and identifies NULL and explicit local
+  issuer as the same principal. Different issuers retain independent rows, including explicit
+  denies; assign and clear never replace another principal's assignment. Owner RLS compares
+  both subject and the verified issuer stamped and reset by the database pool. A missing issuer
+  cannot read an owner row. Request routes, discovery and artifact/Test Lab visibility carry the
+  verified issuer; the old `resolve` API is retained only for canonical-local compatibility.
 - The framework-owned operator API and Applications cockpit matrix list, assign and clear tiers.
   Apps cannot administer the platform doorway or self-promote.
 - Both route shapes enforce the same decision after authentication and before app code: dynamic

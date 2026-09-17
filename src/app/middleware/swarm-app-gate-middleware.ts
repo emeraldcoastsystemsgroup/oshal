@@ -5,12 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial swarm-app gate middleware — 503s manifest-owned routes when the owning app is inactive (ADR 2026-04-20 Phase 1 close)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: enforce declared per-user app tiers on hard-mounted kernel routes, sharing the same exact-subject, method, rollout, and fail-closed policy as dynamic package routes.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Require the verified issuer alongside subject before resolving a declared application tier.
  */
 
 import type { Request, Response, NextFunction } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import type { AppAccessResolver, SwarmAppService } from '@/features/swarm-apps';
-import { appAccessCallerSub, appAccessDenial, appAccessEnforcementMode } from './app-access-policy';
+import { appAccessCallerSub, appAccessCallerIssuer, appAccessDenial, appAccessEnforcementMode } from './app-access-policy';
 
 const logger = createChildLogger({ module: 'swarm-app-gate-middleware' });
 
@@ -56,7 +57,9 @@ export function createSwarmAppGateMiddleware(
         return;
       }
       try {
-        const decision = await appAccess.resolve(owner.appName, userSub, owner.access);
+        const issuer = appAccessCallerIssuer(req);
+        if (!issuer) { res.status(403).json({ error: 'app_access_identity_required' }); return; }
+        const decision = await appAccess.resolveForPrincipal(owner.appName, userSub, issuer, owner.access);
         res.locals.oshalAppAccess = decision;
         const denial = appAccessDenial(req.method, decision);
         if (!denial) {

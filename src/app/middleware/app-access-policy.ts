@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: shared request-subject, rollout-mode, and method/tier policy for both dynamic package routes and hard-mounted kernel routes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve issuer from the same verified identity rail as subject; never accept caller-supplied issuer hints or infer local provenance.
  */
 
 import type { Request } from 'express';
 import type { ResolvedAppAccess } from '@/features/swarm-apps';
 import { getCaller, getTrustedServiceUserSub } from '@/shared/middleware/authz';
 import { getRequestIdentity } from '@/shared/services/database/request-identity';
+import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 
 export type AppAccessEnforcementMode = 'shadow' | 'enforce';
 
@@ -32,6 +34,13 @@ export function appAccessCallerSub(req: Request): string | null {
   if (oidc) return oidc;
   const carried = (req as Request & { oshalCallerSub?: string }).oshalCallerSub;
   return carried ?? getTrustedServiceUserSub(req);
+}
+
+/** @description Resolve issuer for the same principal selected by appAccessCallerSub. */
+export function appAccessCallerIssuer(req: Request): string | null {
+  const scoped = getRequestIdentity();
+  if (scoped?.sub) return scoped.principalIssuer || null;
+  return getCaller(req).sub ? getAuthenticatedPrincipalIssuer(req) : null;
 }
 
 /** @description Return the stable denial code for a resolved tier/method, or null when admitted. */

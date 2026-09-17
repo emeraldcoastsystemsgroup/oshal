@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Discover current authorized application workspaces without changing profiles, roles or business data.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Stop subsequent serial discovery ports when the response is abandoned; retain current authorization and uncached retry semantics.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Resolve coarse visibility for the complete verified principal.
  */
 import { Router, type Request } from 'express';
 import type { SwarmAppService, AppAccessService, SwarmApplicationRecord } from '@/features/swarm-apps';
@@ -20,7 +21,7 @@ interface WorkspaceNavigationOptions {
   apps: Pick<SwarmAppService, 'listApps' | 'getAppForViewer' | 'synthesiseProfile'>;
   runtime: Pick<ApplicationAuthorizationRuntime, 'canDiscover' | 'canNavigateHttpPath' | 'snapshot'>;
   resolveActor(req: Request): Promise<AuthorizationActor>;
-  access: Pick<AppAccessService, 'resolve'>;
+  access: Pick<AppAccessService, 'resolveForPrincipal'>;
 }
 
 /** @description Resolve only the installed profile's actual initial surface; never accept a package URL as a top-level destination.
@@ -45,7 +46,7 @@ async function workspace(record: SwarmApplicationRecord, actor: AuthorizationAct
   if (record.status !== 'active' || (!manifest.theme && manifest.kind !== 'group')) return null;
   const generation = options.runtime.snapshot(record.name);
   if (!generation || !await lifecycle.read(() => options.runtime.canDiscover(record.name, actor))) return null;
-  if (access && (await lifecycle.read(() => options.access.resolve(record.name, actor.sub, access))).tier === 'deny') return null;
+  if (access && (await lifecycle.read(() => options.access.resolveForPrincipal(record.name, actor.sub, actor.issuer, access))).tier === 'deny') return null;
   const profile = await lifecycle.read(() => options.apps.synthesiseProfile(record.name));
   if (!profile || profile.name !== record.name) return null;
   const surface = initialSurface(profile);

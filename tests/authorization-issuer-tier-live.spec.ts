@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-PostgreSQL proof that an ADR-118 explicit tier resolves for the exact (subject, issuer) principal it was written for: a federated identity holding an admin assignment reaches a catalog-less application, the same identity without one is still refused, an issuer-less legacy row answers only a canonical local account, a row bound to one issuer never answers another, and one subject's grant never answers a different subject.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove simultaneous issuer isolation, independent clear and deny retention, owner RLS and nonoperator write refusal, local alias equivalence and migration compatibility.
  */
 
 import { expect, test } from '@playwright/test';
@@ -217,7 +218,9 @@ test('an explicit deny written for a federated identity is honoured, not ignored
 test('a database without migration 145 keeps its pre-145 behaviour instead of failing', async () => {
   await clearAssignments();
   await insertLegacyRow(SHARED_SUB, 'admin');
-  await adminPool.query(`ALTER TABLE ${quotedIdentifier(SCHEMA)}.oshal_app_access DROP COLUMN user_issuer`);
+  // Recreate the pre-145 key rather than leaving a partially migrated schema.
+  await adminPool.query(`ALTER TABLE ${quotedIdentifier(SCHEMA)}.oshal_app_access DROP COLUMN user_issuer CASCADE`);
+  await adminPool.query(`ALTER TABLE ${quotedIdentifier(SCHEMA)}.oshal_app_access ADD PRIMARY KEY (user_sub, app_name)`);
   try {
     const local = await asOperator(() => authorization.authorize(actor(SHARED_SUB, LOCAL_AUTH_PRINCIPAL_ISSUER), { app: APP }));
     expect(local, 'the local account keeps the tier it already had').toMatchObject({ allowed: true, tier: 'admin' });
@@ -229,6 +232,91 @@ test('a database without migration 145 keeps its pre-145 behaviour instead of fa
       userSub: OTHER_SUB, userIssuer: GOOGLE_ISSUER, appName: APP, tier: 'admin',
       assignedBySub: OPERATOR, reason: 'issuer binding that cannot be stored yet',
     })), 'an issuer binding must never be dropped silently').rejects.toThrow(/migration 145/);
+  } finally {
+    await adminPool.query(readFileSync('scripts/migrations/145-app-access-principal-issuer.sql', 'utf8'));
+  }
+});
+
+test('same-subject principals retain independent assignments and an explicit deny', async () => {
+  await clearAssignments();
+  await asOperator(() => appAccess.assign({ userSub: SHARED_SUB, userIssuer: GOOGLE_ISSUER,
+    appName: APP, tier: 'deny', assignedBySub: OPERATOR, reason: 'First principal denied' }));
+  await asOperator(() => appAccess.assign({ userSub: SHARED_SUB, userIssuer: 'https://second.identity.test',
+    appName: APP, tier: 'admin', assignedBySub: OPERATOR, reason: 'Independent second principal' }));
+  expect(await asOperator(() => authorization.authorize(actor(SHARED_SUB, GOOGLE_ISSUER), { app: APP })))
+    .toMatchObject({ allowed: false, reason: 'authorization_explicit_deny' });
+  expect(await asOperator(() => appAccess.listAssignments())).toHaveLength(2);
+});
+
+test('clearing an issuer-bound assignment never clears another issuer or the local alias', async () => {
+  await clearAssignments();
+  for (const userIssuer of [null, GOOGLE_ISSUER, 'https://second.identity.test']) {
+    await asOperator(() => appAccess.assign({ userSub: SHARED_SUB, userIssuer,
+      appName: APP, tier: 'deny', assignedBySub: OPERATOR, reason: 'Independent refusal' }));
+  }
+  await asOperator(() => appAccess.clear({ userSub: SHARED_SUB, userIssuer: GOOGLE_ISSUER,
+    appName: APP, assignedBySub: OPERATOR, reason: 'Clear only first provider' }));
+  const rows = await asOperator(() => appAccess.listAssignments());
+  expect(rows.map(row => row.userIssuer).sort()).toEqual([null, 'https://second.identity.test'].sort());
+  expect(await asOperator(() => authorization.authorize(actor(SHARED_SUB, LOCAL_AUTH_PRINCIPAL_ISSUER), { app: APP })))
+    .toMatchObject({ reason: 'authorization_explicit_deny' });
+});
+
+test('owner RLS reads only its issuer and clears the issuer before connection reuse', async () => {
+  await clearAssignments();
+  await asOperator(() => appAccess.assign({ userSub: SHARED_SUB, userIssuer: GOOGLE_ISSUER,
+    appName: APP, tier: 'admin', assignedBySub: OPERATOR, reason: 'Provider-qualified row' }));
+  const wrapped = wrapPoolWithGuc(probePool);
+  const read = (principalIssuer?: string) => runWithRequestIdentity({ sub: SHARED_SUB, principalIssuer, isOperator: false },
+    () => wrapped.query('SELECT user_sub, user_issuer FROM oshal_app_access'));
+  expect((await read(GOOGLE_ISSUER)).rows).toHaveLength(1);
+  expect((await read('https://second.identity.test')).rows).toHaveLength(0);
+  expect((await read()).rows).toHaveLength(0);
+  const stamp = await probePool.query("SELECT current_setting('oshal.current_issuer', true) AS issuer");
+  expect(stamp.rows[0].issuer || '').toBe('');
+});
+
+test('legacy NULL and canonical local are one principal without overwriting a federated row', async () => {
+  await clearAssignments();
+  await insertLegacyRow(SHARED_SUB, 'deny');
+  await asOperator(() => appAccess.assign({ userSub: SHARED_SUB, userIssuer: GOOGLE_ISSUER,
+    appName: APP, tier: 'admin', assignedBySub: OPERATOR, reason: 'Independent provider' }));
+  await asOperator(() => appAccess.assign({ userSub: SHARED_SUB, userIssuer: LOCAL_AUTH_PRINCIPAL_ISSUER,
+    appName: APP, tier: 'editor', assignedBySub: OPERATOR, reason: 'Update local alias' }));
+  const rows = await asOperator(() => appAccess.listAssignments());
+  expect(rows).toHaveLength(2);
+  expect(rows.find(row => row.userIssuer === GOOGLE_ISSUER)?.tier).toBe('admin');
+  expect(rows.find(row => row.userIssuer === LOCAL_AUTH_PRINCIPAL_ISSUER)?.tier).toBe('editor');
+  // Re-running the migration preserves both rows and NULL/local still has one key.
+  await adminPool.query(readFileSync('scripts/migrations/145-app-access-principal-issuer.sql', 'utf8'));
+  expect(await asOperator(() => appAccess.listAssignments())).toHaveLength(2);
+});
+
+test('owner RLS cannot insert, change or clear its own assignment', async () => {
+  await clearAssignments();
+  await asOperator(() => appAccess.assign({ userSub: SHARED_SUB, userIssuer: GOOGLE_ISSUER,
+    appName: APP, tier: 'deny', assignedBySub: OPERATOR, reason: 'Operator refusal' }));
+  const own = <T>(fn: () => T) => runWithRequestIdentity({ sub: SHARED_SUB, principalIssuer: GOOGLE_ISSUER, isOperator: false }, fn);
+  await expect(own(() => appAccess.assign({ userSub: SHARED_SUB, userIssuer: GOOGLE_ISSUER,
+    appName: APP, tier: 'admin', assignedBySub: SHARED_SUB, reason: 'Self promotion attempt' }))).rejects.toThrow();
+  expect(await own(() => appAccess.clear({ userSub: SHARED_SUB, userIssuer: GOOGLE_ISSUER,
+    appName: APP, assignedBySub: SHARED_SUB, reason: 'Self clear attempt' }))).toBe(false);
+  expect(await asOperator(() => authorization.authorize(actor(SHARED_SUB, GOOGLE_ISSUER), { app: APP })))
+    .toMatchObject({ reason: 'authorization_explicit_deny' });
+});
+
+test('an additive-only issuer migration cannot fall back to a subject-only write', async () => {
+  await clearAssignments();
+  await asOperator(() => appAccess.assign({ userSub: SHARED_SUB, userIssuer: GOOGLE_ISSUER,
+    appName: APP, tier: 'deny', assignedBySub: OPERATOR, reason: 'Retain provider refusal' }));
+  await adminPool.query(`ALTER TABLE ${quotedIdentifier(SCHEMA)}.oshal_app_access DROP COLUMN principal_issuer CASCADE`);
+  await adminPool.query(`ALTER TABLE ${quotedIdentifier(SCHEMA)}.oshal_app_access ADD PRIMARY KEY (user_sub, app_name)`);
+  try {
+    await expect(asOperator(() => appAccess.assign({ userSub: SHARED_SUB,
+      appName: APP, tier: 'admin', assignedBySub: OPERATOR, reason: 'Local-only assignment' }))).rejects.toThrow(/migration 145/);
+    expect(await asOperator(() => appAccess.clear({ userSub: SHARED_SUB,
+      appName: APP, assignedBySub: OPERATOR, reason: 'Clear local only' }))).toBe(false);
+    expect((await asOperator(() => appAccess.listAssignments()))[0]).toMatchObject({ userIssuer: GOOGLE_ISSUER, tier: 'deny' });
   } finally {
     await adminPool.query(readFileSync('scripts/migrations/145-app-access-principal-issuer.sql', 'utf8'));
   }
