@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: verify explicit-deny-wins/default/stale resolution, durable assignment SQL, fail-closed manifest and CLI validation, and the FORCE-RLS migration contract.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard the tier resolver itself in the default unit run: it must carry the actor issuer into the lookup for EVERY issuer, so reinstating the short-circuit that refused a federated identity before reading an assignment goes red without a database. The database boundary itself is proved in tests/authorization-issuer-tier-live.spec.ts against real PostgreSQL.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cover the principal-qualified lookup: the assignment SQL carries the actor issuer and the pre-145 local-auth rule, an upsert records the issuer it was written for, and migration 145 keeps the column nullable so an older row is never guessed into the configured identity provider.
  */
 
@@ -14,6 +15,8 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { spawnSync } from 'child_process';
 import { AppAccessService, readManifest, type SwarmAppAccessDeclaration } from '../../src/features/swarm-apps';
+import { createLegacyTierResolver } from '../../src/app/composition/application-access-tier';
+import type { AuthorizationActor } from '../../src/shared/application-authorization';
 
 const ACCESS: SwarmAppAccessDeclaration = {
   supported: ['deny', 'viewer', 'editor', 'admin'],
@@ -110,6 +113,54 @@ describe('AppAccessService resolution', () => {
       .rejects.toThrow(/userIssuer/);
     await expect(new AppAccessService(pool).resolveForPrincipal('career-hunter', 'user-a', 'x'.repeat(2049), ACCESS))
       .rejects.toThrow(/userIssuer/);
+  });
+});
+
+/**
+ * The resolver seam that carried the defect. These doubles stand in for the registry and the
+ * store so the resolver's OWN contract is checked on every `vitest run`; the store/database
+ * boundary they replace is proved for real in tests/authorization-issuer-tier-live.spec.ts.
+ */
+describe('legacy tier resolver principal handling', () => {
+  function resolver(tier: 'deny' | 'viewer' | 'editor' | 'admin', source: 'explicit' | 'default') {
+    const seen: Array<{ app: string; sub: string; issuer: string }> = [];
+    const access = {
+      resolveForPrincipal: async (app: string, sub: string, issuer: string) => {
+        seen.push({ app, sub, issuer });
+        return { appName: app, userSub: sub, tier, bundle: null, source };
+      },
+    };
+    const apps = () => ({ getApp: async () => null });
+    return { seen, resolve: createLegacyTierResolver(access as never, apps as never) };
+  }
+
+  function actor(sub: string, issuer: string): AuthorizationActor {
+    return { sub, issuer, isActive: true, isSwarmAdmin: false };
+  }
+
+  it.each([
+    ['https://accounts.google.com'],
+    ['urn:oshal:local-auth'],
+    ['urn:oshal:mock-oidc'],
+    ['https://login.microsoftonline.com/common/v2.0'],
+  ])('carries the actor issuer %s into the lookup instead of refusing before it', async (issuer) => {
+    const { seen, resolve } = resolver('admin', 'explicit');
+    await expect(resolve('intelligent-trades', actor('subject-a', issuer))).resolves.toEqual({
+      tier: 'admin', explicit: true,
+    });
+    expect(seen).toEqual([{ app: 'intelligent-trades', sub: 'subject-a', issuer }]);
+  });
+
+  it('reports a manifest default as NOT explicit, so nothing is synthesised from it', async () => {
+    const { resolve } = resolver('admin', 'default');
+    await expect(resolve('intelligent-trades', actor('subject-a', 'https://accounts.google.com')))
+      .resolves.toEqual({ tier: 'admin', explicit: false });
+  });
+
+  it('reports an explicit deny for a federated identity instead of dropping it', async () => {
+    const { resolve } = resolver('deny', 'explicit');
+    await expect(resolve('intelligent-trades', actor('subject-a', 'https://accounts.google.com')))
+      .resolves.toEqual({ tier: 'deny', explicit: true });
   });
 });
 
