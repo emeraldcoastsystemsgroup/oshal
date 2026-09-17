@@ -22,18 +22,20 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | 2026-07-31 23:21:37 America/Chicago — Raises the first HTTP router boot timeout because full-suite dynamic import load can exceed 15s before the auth assertions execute.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Re-point the two rate-limit assertions at the default-ON limiter. This spec PINNED the bug it was written to guard: it asserted the limiter must be "a no-op by default (flag off)", which is exactly why /api/remote-clients ran unlimited in every deployment (no compose file or .env ever set the flag). The default-off case becomes the explicit-opt-out case, and the source tripwire drops its keyGenerator substring check — that belonged to a substring, not to behaviour, and the keying is now proven over real requests in remote-client-rate-limit.spec.ts. Ordering (limiter AFTER auth) stays a source assertion because no HTTP call can observe it.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Inject and await the explicit test-only task journal; production task routes no longer fall back to process memory.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | De-flake (docs/BACKLOG.md "Remote-client full-suite flake"). The stated leads — module-level registry state and rate-limiter state — are disproven in place: vitest runs each file in its own isolated fork, the registry ids used across this file are disjoint, and createRemoteClientRateLimiter() is called inside createRemoteClientRoutes(), so every boot gets a fresh limiter and a fresh store. The cause was accounting: `await import(.../remote-client-routes)` sat inside the first it(), so that one test paid the router graph's one-time transform out of its own budget — 17.3s measured with four spec files in parallel on an idle box, against the 30s the file had bought to hide it, while every sibling ran in 14-101ms. Under the 990-file sweep that import competes for the same cores and the budget goes. The import moves to a file-level beforeAll with its own 120s hook budget, the inflated per-test budgets come back down to the sibling 15s, and the new first test asserts the import now resolves from cache in under 500ms — a measurement, not a substring, so the hoist cannot be undone quietly.
  */
 
 import { readFileSync } from 'fs';
 import * as path from 'path';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   RemoteTaskJournalService,
   remoteClientRateLimitKey,
   timingSafeSecretEquals,
 } from '@/features/remote-client';
 import { InMemoryRemoteTaskJournalFixture } from '../helpers/in-memory-remote-task-journal';
+import { expectRouterGraphPreloaded } from '../helpers/router-graph-import-budget';
 
 const ENV_KEYS = [
   'OSHAL_OPERATOR_SUBS',
@@ -68,6 +70,31 @@ afterEach(() => {
     else process.env[key] = savedEnv[key];
   }
 });
+
+describe('router-graph import accounting', () => {
+  // Must stay the FIRST test in the file: it measures whether the router graph is
+  // already resident, which only means anything before some other test has warmed it.
+  it('is paid in the file hook, never out of an it() budget', async () => {
+    await expectRouterGraphPreloaded(() => import('../../src/app/routes/remote-client-routes'));
+  }, 60_000);
+});
+
+/**
+ * The real router graph (express + authz + agent-management + chat-orchestration +
+ * the task/workspace/print route modules) is loaded ONCE here, in the file hook,
+ * because a dynamic import inside an `it()` charges that one-time transform to that
+ * test's timeout budget: measured at 12.9s-17.3s while every sibling in this file
+ * runs in tens of milliseconds. That is the remote-client full-suite flake — under
+ * the parallel sweep the same import contends for the same cores and blows the
+ * budget, and the file dies with a timeout. The route FACTORY still runs per boot,
+ * so each test's env is read exactly as before; only the module load moved.
+ * Guarded by the "router-graph import accounting" test above.
+ */
+let routerGraph: typeof import('../../src/app/routes/remote-client-routes');
+
+beforeAll(async () => {
+  routerGraph = await import('../../src/app/routes/remote-client-routes');
+}, 120_000);
 
 describe('timingSafeSecretEquals', () => {
   it('matches only the exact secret', () => {
@@ -152,7 +179,7 @@ describe('remote-client auth over HTTP', () => {
    * stamps for a `Bearer oshal_pat_…` node token — x-test-sub selects the owner.
    */
   async function bootApp(): Promise<string> {
-    const { createRemoteClientRoutes, remoteClientRegistry } = await import('../../src/app/routes/remote-client-routes');
+    const { createRemoteClientRoutes, remoteClientRegistry } = routerGraph;
     const app = express();
     app.use(express.json());
     app.use(nodeTokenShapedOidc());
@@ -228,8 +255,7 @@ describe('remote-client auth over HTTP', () => {
     });
     expect(viaBearer.status).toBe(200);
     expect(viaBearer.headers.get('x-oshal-shared-secret-deprecated')).toBe('1');
-    // 30s: the first HTTP test pays the one-time dynamic import/transform of the router graph under full-suite load.
-  }, 30_000);
+  }, 15_000);
 
   it('runs the ENTIRE worker plane on a node token with NO shared secret configured', async () => {
     // The BACKLOG-sanctioned replacement for the swarm-wide secret: a per-node

@@ -9,13 +9,15 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | First test timeout raised 15s → 30s after the full unit suite showed the same import-heavy route graph can exceed 15s under parallel load while passing alone in ~9s.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Inject and await the explicit test-only task journal so ownership tests exercise the PostgreSQL-authoritative async route contract without a production memory fallback.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact owner-subject persistence through the operator reassignment route and durable journal instead of trimming the binding to another principal.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | De-flake (docs/BACKLOG.md "Remote-client full-suite flake"). The stated leads — module-level registry state and rate-limiter state — are disproven in place: vitest runs each file in its own isolated fork, the registry ids used across this file are disjoint, and createRemoteClientRateLimiter() is called inside createRemoteClientRoutes(), so every boot gets a fresh limiter and a fresh store. The cause was accounting: `await import(.../remote-client-routes)` sat inside the first it(), so that one test paid the router graph's one-time transform out of its own budget — 17.3s measured with four spec files in parallel on an idle box, against the 30s the file had bought to hide it, while every sibling ran in 14-101ms. Under the 990-file sweep that import competes for the same cores and the budget goes. The import moves to a file-level beforeAll with its own 120s hook budget, the inflated per-test budgets come back down to the sibling 15s, and the new first test asserts the import now resolves from cache in under 500ms — a measurement, not a substring, so the hoist cannot be undone quietly.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiOrigin } from '../helpers';
 import { RemoteTaskJournalService } from '@/features/remote-client';
 import { InMemoryRemoteTaskJournalFixture } from '../helpers/in-memory-remote-task-journal';
+import { expectRouterGraphPreloaded } from '../helpers/router-graph-import-budget';
 
 const ENV_KEYS = [
   'OSHAL_OPERATOR_SUBS',
@@ -57,6 +59,31 @@ afterEach(() => {
   }
 });
 
+describe('router-graph import accounting', () => {
+  // Must stay the FIRST test in the file: it measures whether the router graph is
+  // already resident, which only means anything before some other test has warmed it.
+  it('is paid in the file hook, never out of an it() budget', async () => {
+    await expectRouterGraphPreloaded(() => import('../../src/app/routes/remote-client-routes'));
+  }, 60_000);
+});
+
+/**
+ * The real router graph (express + authz + agent-management + chat-orchestration +
+ * the task/workspace/print route modules) is loaded ONCE here, in the file hook,
+ * because a dynamic import inside an `it()` charges that one-time transform to that
+ * test's timeout budget: measured at 12.9s-17.3s while every sibling in this file
+ * runs in tens of milliseconds. That is the remote-client full-suite flake — under
+ * the parallel sweep the same import contends for the same cores and blows the
+ * budget, and the file dies with a timeout. The route FACTORY still runs per boot,
+ * so each test's env is read exactly as before; only the module load moved.
+ * Guarded by the "router-graph import accounting" test above.
+ */
+let routerGraph: typeof import('../../src/app/routes/remote-client-routes');
+
+beforeAll(async () => {
+  routerGraph = await import('../../src/app/routes/remote-client-routes');
+}, 120_000);
+
 describe('remote-client device ownership binding', () => {
   const servers: Array<{ close: (cb: () => void) => void }> = [];
 
@@ -71,9 +98,9 @@ describe('remote-client device ownership binding', () => {
    * so one app serves the owner, the intruder, and the operator.
    */
   async function bootApp(orchestrator?: TestChatOrchestrator): Promise<string> {
-    // Import fresh so the module-level registry is shared within one app but the
-    // route wiring picks up this test's env.
-    const { createRemoteClientRoutes, remoteClientRegistry } = await import('../../src/app/routes/remote-client-routes');
+    // The module-level registry is shared within one app; the route wiring picks up
+    // this test's env because the FACTORY, not the import, runs per boot.
+    const { createRemoteClientRoutes, remoteClientRegistry } = routerGraph;
     const app = express();
     app.use(express.json());
     app.use(headerDrivenOidc());
@@ -151,10 +178,7 @@ describe('remote-client device ownership binding', () => {
     // A single-device read by a non-owner 404s (not 403) so ids cannot be probed for existence.
     expect((await fetch(`${base}/device-1`, { headers: { 'x-test-sub': INTRUDER } })).status).toBe(404);
     expect((await fetch(`${base}/device-1`, { headers: { 'x-test-sub': OWNER } })).status).toBe(200);
-    // 30s: the FIRST test in the file pays the one-time
-    // dynamic-import/transform of the real router graph, which blows the default 5s budget on a
-    // cold vite cache and can exceed 15s under full-suite parallel load.
-  }, 30_000);
+  }, 15_000);
 
   it('refuses mesh task INJECTION from one user\'s device onto another user\'s device', async () => {
     // The mesh subscriber converts an inbound envelope into registry.enqueueTask, and toTaskEnvelope
@@ -163,7 +187,7 @@ describe('remote-client device ownership binding', () => {
     // body `toAgentId` — so owning one node was a licence to execute on anyone else's. Guarding the
     // CONVERSION covers direct and broadcast alike; the sender id is server-derived, not body-supplied.
     const base = await bootApp();
-    const { mayInjectTask } = await import('../../src/app/routes/remote-client-routes');
+    const { mayInjectTask } = routerGraph;
     await registerDevice(base, 'device-owner-box', OWNER);
     await registerDevice(base, 'device-intruder-box', INTRUDER);
 

@@ -24,10 +24,11 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Inject the explicit test-only task journal so token-store pool fixtures do not masquerade as the production journal database.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact device-owner subjects through owner-scoped revocation, successor minting, and the HTTP rotation surface; case/whitespace variants remain separate principals.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Move the oshal_cli_tokens stand-in to tests/helpers/fake-cli-token-pool.ts so the enrolment guard drives the same statement matcher rather than a second copy that would drift from it.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | De-flake (docs/BACKLOG.md "Remote-client full-suite flake"). The stated leads — module-level registry state and rate-limiter state — are disproven in place: vitest runs each file in its own isolated fork, the registry ids used across this file are disjoint, and createRemoteClientRateLimiter() is called inside createRemoteClientRoutes(), so every boot gets a fresh limiter and a fresh store. The cause was accounting: `await import(.../remote-client-routes)` sat inside the first it(), so that one test paid the router graph's one-time transform out of its own budget — 17.3s measured with four spec files in parallel on an idle box, against the 30s the file had bought to hide it, while every sibling ran in 14-101ms. Under the 990-file sweep that import competes for the same cores and the budget goes. The import moves to a file-level beforeAll with its own 120s hook budget, the inflated per-test budgets come back down to the sibling 15s, and the new first test asserts the import now resolves from cache in under 500ms — a measurement, not a substring, so the hoist cannot be undone quietly.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   decideNodeTokenScope,
   nodeTokenBindingMatches,
@@ -36,6 +37,7 @@ import {
 } from '../../src/features/remote-client';
 import { InMemoryRemoteTaskJournalFixture } from '../helpers/in-memory-remote-task-journal';
 import { FakeCliTokenPool } from '../helpers/fake-cli-token-pool';
+import { expectRouterGraphPreloaded } from '../helpers/router-graph-import-budget';
 import {
   CLI_TOKEN_PREFIX,
   createCliTokenAuthMiddleware,
@@ -75,6 +77,31 @@ afterEach(async () => {
   await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(resolve))));
   servers.length = 0;
 });
+
+describe('router-graph import accounting', () => {
+  // Must stay the FIRST test in the file: it measures whether the router graph is
+  // already resident, which only means anything before some other test has warmed it.
+  it('is paid in the file hook, never out of an it() budget', async () => {
+    await expectRouterGraphPreloaded(() => import('../../src/app/routes/remote-client-routes'));
+  }, 60_000);
+});
+
+/**
+ * The real router graph (express + authz + agent-management + chat-orchestration +
+ * the task/workspace/print route modules) is loaded ONCE here, in the file hook,
+ * because a dynamic import inside an `it()` charges that one-time transform to that
+ * test's timeout budget: measured at 12.9s-17.3s while every sibling in this file
+ * runs in tens of milliseconds. That is the remote-client full-suite flake — under
+ * the parallel sweep the same import contends for the same cores and blows the
+ * budget, and the file dies with a timeout. The route FACTORY still runs per boot,
+ * so each test's env is read exactly as before; only the module load moved.
+ * Guarded by the "router-graph import accounting" test above.
+ */
+let routerGraph: typeof import('../../src/app/routes/remote-client-routes');
+
+beforeAll(async () => {
+  routerGraph = await import('../../src/app/routes/remote-client-routes');
+}, 120_000);
 
 // ── Pure scope decisions ──────────────────────────────────────────────────────────
 
@@ -301,7 +328,7 @@ describe('remote-client router — shared-secret retirement and the rotate surfa
   }
 
   async function bootRouter(pool?: FakeCliTokenPool): Promise<string> {
-    const { createRemoteClientRoutes } = await import('../../src/app/routes/remote-client-routes');
+    const { createRemoteClientRoutes } = routerGraph;
     const app = express();
     app.use(express.json());
     app.use(stampedIdentity());
@@ -348,7 +375,7 @@ describe('remote-client router — shared-secret retirement and the rotate surfa
       body: JSON.stringify(registrationBody('retired-secret-device')),
     });
     expect(viaNodeToken.status).toBe(201);
-  }, 30_000);
+  }, 15_000);
 
   it('with the switch OFF the secret still works, but is stamped deprecated (the migration observable)', async () => {
     process.env.REMOTE_CLIENT_SHARED_SECRET = SECRET;

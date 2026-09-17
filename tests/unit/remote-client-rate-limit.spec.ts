@@ -14,16 +14,18 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — prove the remote-client limiter is ON with no env at all, caps at 300/min/caller, keys per clientId (not per IP), survives junk numeric overrides, and only turns off on an explicit operator opt-out; plus an end-to-end proof that the REAL router (not just the module) is limited by default.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | De-flake (docs/BACKLOG.md "Remote-client full-suite flake"). The stated leads — module-level registry state and rate-limiter state — are disproven in place: vitest runs each file in its own isolated fork, the registry ids used across this file are disjoint, and createRemoteClientRateLimiter() is called inside createRemoteClientRoutes(), so every boot gets a fresh limiter and a fresh store. The cause was accounting: `await import(.../remote-client-routes)` sat inside the first it(), so that one test paid the router graph's one-time transform out of its own budget — 17.3s measured with four spec files in parallel on an idle box, against the 30s the file had bought to hide it, while every sibling ran in 14-101ms. Under the 990-file sweep that import competes for the same cores and the budget goes. The import moves to a file-level beforeAll with its own 120s hook budget, the inflated per-test budgets come back down to the sibling 15s, and the new first test asserts the import now resolves from cache in under 500ms — a measurement, not a substring, so the hoist cannot be undone quietly.
  */
 
 import express from 'express';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Server } from 'http';
 import {
   REMOTE_CLIENT_RATE_LIMIT_DEFAULT_MAX,
   REMOTE_CLIENT_RATE_LIMIT_DEFAULT_WINDOW_MS,
   createRemoteClientRateLimiter,
 } from '../../src/features/remote-client';
+import { expectRouterGraphPreloaded } from '../helpers/router-graph-import-budget';
 
 const ENV_KEYS = [
   'OSHAL_RATE_LIMIT_REMOTE_CLIENTS',
@@ -77,6 +79,31 @@ async function statuses(base: string, path: string, count: number): Promise<numb
   for (let i = 0; i < count; i++) out.push((await fetch(`${base}${path}`)).status);
   return out;
 }
+
+describe('router-graph import accounting', () => {
+  // Must stay the FIRST test in the file: it measures whether the router graph is
+  // already resident, which only means anything before some other test has warmed it.
+  it('is paid in the file hook, never out of an it() budget', async () => {
+    await expectRouterGraphPreloaded(() => import('../../src/app/routes/remote-client-routes'));
+  }, 60_000);
+});
+
+/**
+ * The real router graph (express + authz + agent-management + chat-orchestration +
+ * the task/workspace/print route modules) is loaded ONCE here, in the file hook,
+ * because a dynamic import inside an `it()` charges that one-time transform to that
+ * test's timeout budget: measured at 12.9s-17.3s while every sibling in this file
+ * runs in tens of milliseconds. That is the remote-client full-suite flake — under
+ * the parallel sweep the same import contends for the same cores and blows the
+ * budget, and the file dies with a timeout. The route FACTORY still runs per boot,
+ * so each test's env is read exactly as before; only the module load moved.
+ * Guarded by the "router-graph import accounting" test above.
+ */
+let routerGraph: typeof import('../../src/app/routes/remote-client-routes');
+
+beforeAll(async () => {
+  routerGraph = await import('../../src/app/routes/remote-client-routes');
+}, 120_000);
 
 describe('createRemoteClientRateLimiter — enforcement posture', () => {
   it('is ENABLED with a completely empty environment (the inert-limiter regression)', async () => {
@@ -161,7 +188,7 @@ describe('the REAL /api/remote-clients router is per-caller limited out of the b
    * @returns Base URL of the mounted router.
    */
   async function bootRouter(): Promise<string> {
-    const { createRemoteClientRoutes } = await import('../../src/app/routes/remote-client-routes');
+    const { createRemoteClientRoutes } = routerGraph;
     const app = express();
     app.use(express.json());
     app.use('/api/remote-clients', createRemoteClientRoutes());
@@ -184,7 +211,7 @@ describe('the REAL /api/remote-clients router is per-caller limited out of the b
     for (let i = 0; i < 3; i++) seen.push((await fetch(`${base}/rl-real-device`, { headers })).status);
     // 404 = authenticated but no such registration; 429 = the limiter engaged.
     expect(seen).toEqual([404, 404, 429]);
-  }, 30_000);
+  }, 15_000);
 
   it('rejects an ANONYMOUS flood at the auth gate before it can touch a node bucket', async () => {
     // Ordering proof: the limiter sits AFTER authorizeRemoteClient, so unauthenticated traffic
@@ -199,5 +226,5 @@ describe('the REAL /api/remote-clients router is per-caller limited out of the b
     }
     const authed = await fetch(`${base}/rl-victim-device`, { headers: { 'x-remote-client-key': 'rl-order-secret' } });
     expect(authed.status).toBe(404);
-  }, 30_000);
+  }, 15_000);
 });
