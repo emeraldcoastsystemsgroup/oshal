@@ -606,19 +606,50 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   Red on the unlocked tree in 3 of 3 runs, green in 5 of 5 after. Registered in the isolated nightly
   set (`scripts/ci/run-nightly-isolated.mjs`) and on the Test Lab `nightly-isolated-regression`
   scenario, which is the only gate that executes a Docker-owning spec.
-- **Remaining:** the trading set is not GREEN on a bare cluster, for reasons that are not the race and
-  were not touched here. Five files fail identically before and after, on prerequisites nothing in the
-  trading bootstrap creates: `trading-book-report-scripts` needs `OSHAL_TEST_APP_DSN` (the enforcing
-  `oshal_app` role); `trading-books-schema` and `trading-settlement` need `oshal_user_deks`
-  (connector-token-crypto, `42P01`); `trading-dispatch-golden-plan` needs `trading_config_overrides`
-  (`42P01`); `trading-watchdog-books` needs `OSHAL_TEST_DB_CONTAINER`. That is the 'whether the whole
-  set survives on a bare cluster is still unmeasured' clause of the disposable-PostgreSQL entry below
-  — now measured, and it belongs there. The golden-plan spec's single-retry workaround
-  (`bootstrapOnce`) is now redundant but was left in place; removing it is a separate change.
+- **Three of the five bare-cluster prerequisites are CLOSED (2026-09-17).** The three that failed on
+  a table nothing in their own prologue created now take ONE shared prologue,
+  `tests/helpers/trading-spec-schema.ts`: `ensureTradingSpecSchema` runs the family's eleven
+  bootstraps in dependency order, including the two that are not `src/app/trading-*` at all and that
+  every hand-written prologue had therefore missed — `ensureOverridesSchema`
+  (`trading_config_overrides`, which `trading-dispatch-golden-plan` sweeps in `beforeAll` BEFORE the
+  first fire that used to create it lazily) and `ensureDekSchema` (`oshal_user_deks`, which
+  `trading-books-schema` and `trading-settlement` reach through the REAL envelope path when they seed
+  a book account). Those prologues were written against the operator's already-built database, where
+  a forgotten `ensure*` is invisible. `bootstrapOnce` went with the change: its single retry existed
+  only for the concurrent-CREATE race the family lock now prevents.
+- **Measured on one disposable `postgres:16-alpine`, database dropped and recreated before each run,
+  no `--no-file-parallelism`.** Before: `7 failed | 7 passed (14)`, `4 failed | 105 passed | 41
+  skipped`, with `42P01` on `oshal_user_deks` and on `trading_config_overrides`. After, three runs:
+  `4 failed | 10 passed`, `4 failed | 10 passed`, `6 failed | 8 passed` — and **zero `42P01` in any
+  of them**. The three converged files pass identically every run (golden-plan 4, books-schema 9,
+  settlement 24 cases). The passed count moves 107 → 135 because settlement and golden-plan now
+  execute at all; 107 + 24 + 4 = 135.
+- **Guard:** `tests/unit/trading-spec-bare-cluster-prerequisites.spec.ts` starts its own PostgreSQL,
+  asserts the EMPTY database is missing every relation, runs the shared prologue, and asserts none is
+  missing afterwards — then exercises the two paths that actually died (`encryptToken` round-trips a
+  `v2:` blob; the golden-plan residue `SELECT` on `trading_config_overrides` answers instead of
+  raising `42P01`), and pins that the three specs really import the shared prologue so the file
+  cannot guard a helper nobody calls. Mutation-proved: dropping the two bootstraps from the helper
+  gives `3 failed | 1 passed`; moving one spec off the prologue gives `1 failed | 3 skipped`.
+  Registered in the isolated nightly set and on the Test Lab `nightly-isolated-regression` scenario
+  — the only gate that executes a Docker-owning spec.
+- **Remaining, and NOT a bootstrap problem:** two files still refuse on an environment nothing
+  provisions. `trading-book-report-scripts` needs the enforcing `oshal_app` role to exist on the
+  cluster (no migration creates it; it is provisioned outside the tree), and `trading-watchdog-books`
+  needs `OSHAL_TEST_DB_CONTAINER` + `OSHAL_TEST_REDIS_CONTAINER`, i.e. a disposable Postgres AND a
+  disposable Redis container of its own. Both belong to the "converge them on
+  `tests/helpers/disposable-postgres.ts`" work in the disposable-PostgreSQL entry below, not here.
+- **Also measured, and also not the race:** on a loaded box, 14 concurrent vitest workers push
+  individual cases past vitest's DEFAULT 5s `testTimeout`. Every remaining test-level failure in the
+  three runs above is literally `Test timed out in 5000ms` (4 log lines = 2 cases, 8 = 4 cases), and
+  the SET of cases moves run to run — `trading-event-leg-cadence`, `trading-dated-orders`,
+  `trading-schwab-account-binding` (a synchronous whole-`src` walk), `trading-pinned-lots`. It fires
+  before and after this change and did not fire on the box that measured `2 failed | 107 passed`.
+  Raising those budgets is a separate change with its own done-when.
 - **Done when:** ~~the bootstrap takes an advisory lock (or tolerates the concurrent create)~~ DONE,
   and the same ten-file trading set is green without `--no-file-parallelism` — PARTIAL: no file fails
-  for the race any more and the run is deterministic, but five fail on the bare-cluster prerequisites
-  listed above.
+  for the race or for a missing bootstrap any more, but two still refuse for the environment reasons
+  above and individual cases still wander onto the 5s default timeout under 14-way parallelism.
 
 ### The DB-backed unit specs need a disposable PostgreSQL to run against
 - **What changed:** 23 `tests/unit/*.spec.ts` resolved their DSN with a fallback onto the local
