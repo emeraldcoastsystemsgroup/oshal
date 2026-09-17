@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Exported delegation-aware BotNodeClient construction options through the feature barrel.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 memory namespace, ACL, provenance, and promotion contracts.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Exported resolveBotRuntimeLauncher so every bot-runtime caller picks the substrate the same way
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Exported the provider switch store + snapshot (migration 146): the rows behind "a bot's LLM provider is a row in a table".
  */
 
 export { RedisMeshTransport, type RedisMeshTransportOptions } from './redis-mesh-transport';
@@ -69,6 +70,13 @@ export {
   type RuntimeParamsResolver,
   type DispatchConfigFields,
 } from './dispatch-runtime-params';
+export { ProviderSwitchStore } from './provider-switch-store';
+export {
+  ProviderSwitchSnapshot,
+  resolveProviderSwitchRefreshMs,
+  type ProviderSwitchSnapshotStatus,
+  type ProviderSwitchSource,
+} from './provider-switch-snapshot';
 export {
   AgentMemoryService,
   type AgentMemoryEntry,
