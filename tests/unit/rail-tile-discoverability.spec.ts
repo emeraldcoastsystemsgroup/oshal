@@ -162,7 +162,7 @@ describe('ADR-149 rail discoverability — the profile route, the real service a
     expect(before.status).toBe(200); expect(before.source).toBe('swarm-app');
     expect(before.items.map(item => item.id).slice(0, 5)).toEqual(['tool-launcher-home', 'tool-studio-app', 'tool-legacy-ui', 'tool-help', 'tool-studio-lookalike']);
     const locked = byId(before.items, 'tool-studio-app')!;
-    expect(locked.locked).toEqual({ app: 'studio', reason: 'application-role-required', roleGuidanceUrl: '/users' });
+    expect(locked.locked).toEqual({ app: 'studio', reason: 'application-role-required', roleGuidanceUrl: '/access-review' });
     expect(locked.toolUi?.iframeUrl).toBe('/api/studio/app?starter=blank');
 
     await grantOpener('studio');
@@ -192,7 +192,7 @@ describe('ADR-149 rail discoverability — the profile route, the real service a
     const before = await rail('creative');
     expect(before.items.map(item => item.id)).toEqual(expect.arrayContaining(['tool-creative-setup', 'tool-studio-home', 'tool-legacy-home']));
     expect(byId(before.items, 'tool-creative-setup')?.locked).toBeUndefined();
-    expect(byId(before.items, 'tool-studio-home')?.locked).toEqual({ app: 'studio', reason: 'application-role-required', roleGuidanceUrl: '/users' });
+    expect(byId(before.items, 'tool-studio-home')?.locked).toEqual({ app: 'studio', reason: 'application-role-required', roleGuidanceUrl: '/access-review' });
     expect(byId(before.items, 'tool-legacy-home')?.locked).toBeUndefined();
     await grantOpener('studio');
     expect(byId((await rail('creative')).items, 'tool-studio-home')?.locked).toBeUndefined();

@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Explain denied document navigation with escaped static HTML while retaining API JSON and current policy decisions.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Accept the minimal navigation request shape so installed surfaces share workspace validation without unsafe Express casts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Export roleGuidance(actor) — the one place that decides where the role-guidance page sends a person (access review for a swarm admin, the account page otherwise) — so the ADR-149 locked rail tile carries the same link the denial page offers. The rendered denial body is unchanged.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Explain a CATALOG-LESS refusal as a page too, and send an ordinary denied person to /access-review. applicationShell() cannot recognise the shell of a package that declares no catalog, because there are no bindings to match — yet `!app.catalog` is the only shape that raises authorization_app_admin_required, so the one refusal with nothing else to explain it fell through to res.status(403).json(...) and rendered as bare {"error":...,"decisionId":...} in the cockpit content pane. explainableNavigation() is presentation-only and is deliberately NOT used by authorizeApplicationNavigation, whose tenant retry stays bound to a declared shell binding. roleGuidance's non-admin branch moved from /users (swarm roles — that page states application permissions are managed separately) to /access-review, which answers "what am I allowed to do" and did not exist when this link was chosen; same requiresAuth-only page gate, so nobody reaches an administration surface they could not already reach.
  */
 import type { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
@@ -35,14 +36,32 @@ function escapeLabel(value: string): string {
   return value.slice(0, 160).replace(/[&<>"']/g, character => entities[character]);
 }
 
-/** @description Where the role-guidance page sends a person: application access review for an active swarm admin,
- * their own account page otherwise. Shared with the cockpit rail so a locked tile (ADR-149) points where the denial page does.
+/** @description Where the role-guidance page sends a person: application access administration for an active swarm
+ * admin, who can act on the refusal; the read-only access review otherwise, which is the surface that answers
+ * "what am I allowed to do" and names the source of every grant. Both are requiresAuth-only pages whose privileged
+ * reads and every write are fenced inside their own APIs, so this chooses which explanation is useful, never who may
+ * reach an administration surface. Shared with the cockpit rail so a locked tile (ADR-149) points where the denial
+ * page does.
  * @param actor Verified caller. @returns Root-relative kernel page and the label the denial page shows for it.
  */
 export function roleGuidance(actor: Pick<AuthorizationActor, 'isActive' | 'isSwarmAdmin'>): { href: string; label: string } {
   return actor.isActive && actor.isSwarmAdmin
     ? { href: '/access', label: 'Review application access' }
-    : { href: '/users', label: 'View your account' };
+    : { href: '/access-review', label: 'See what you can access' };
+}
+
+/** @description Which denied requests the role-guidance page explains, as opposed to the JSON every API caller keeps.
+ * A package with no authorization catalog declares no bindings at all, so applicationShell() — which has to see a
+ * declared read-only `app.open` binding — can never recognise its shell; and `!app.catalog` is the only shape that
+ * raises authorization_app_admin_required. That left the one refusal with nothing else to explain it falling through
+ * to raw JSON in the cockpit content pane. Presentation only: it admits no request the policy did not already refuse,
+ * and authorizeApplicationNavigation keeps using applicationShell() so its tenant retry stays bound to a declared
+ * shell binding.
+ * @param registration Activated registration. @param operation Denied request. @returns Whether the page explains this refusal.
+ */
+function explainableNavigation(registration: AuthorizationAppRegistration, operation: AuthorizationOperation): boolean {
+  if (operation.kind !== 'http' || operation.method !== 'GET') return false;
+  return !registration.catalog || applicationShell(registration, operation);
 }
 
 /** @description Render role guidance only for a denied browser document request; callers keep all other JSON errors.
@@ -52,7 +71,7 @@ export function roleGuidance(actor: Pick<AuthorizationActor, 'isActive' | 'isSwa
  */
 export function sendApplicationNavigationDenied(req: Request, res: Response, registration: AuthorizationAppRegistration,
   operation: AuthorizationOperation, actor: AuthorizationActor, label: string): boolean {
-  if (!applicationShell(registration, operation) || req.get('sec-fetch-mode') !== 'navigate' ||
+  if (!explainableNavigation(registration, operation) || req.get('sec-fetch-mode') !== 'navigate' ||
     !['document', 'iframe', 'frame'].includes(req.get('sec-fetch-dest') ?? '') || !req.accepts('html')) return false;
   const name = escapeLabel(label || registration.app);
   const guidance = roleGuidance(actor);
