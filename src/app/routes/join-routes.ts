@@ -36,10 +36,12 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | POST /enroll accepts a clientId and mints a token BOUND to that device (hardening #7: cli-token node_client_id). A bound token is not an account credential - it authenticates only on that device's worker plane plus the enrollment handshake - which is what lets an edge machine hold a long-lived worker-plane credential instead of the swarm-wide REMOTE_CLIENT_SHARED_SECRET, and lets it be rotated (POST /api/remote-clients/:clientId/token/rotate) and revoked per node. Bound enrollments also get a longer default TTL, because the token IS the node's steady-state credential rather than a 60-minute handoff. Omitting clientId keeps the previous unbound behaviour verbatim.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Delegate the signed-in user's verified issuer into enrollment and node credentials so derived authentication preserves the complete principal namespace.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Mount GET /node-installer: the same per-device enrollment, delivered as a runnable script with the credential already in it.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | POST /enroll is DEVICE-BOUND by default, and every instruction it prints carries the device id. Seq 3 left the binding opt-in, and no caller could opt in: the id does not exist until something mints one, so the first enrolment of a new machine always took the unbound branch - an account-wide PAT clamped to an hour, sitting on an edge machine, dying under the node it was meant to keep alive. The route mints the id itself when the caller has none (the shape GET /node-installer already used) and returns it beside the token, and existingNode/newInstall now seed OSHAL_CLIENT_ID / -ClientId, without which the node keeps the id it invented for itself and register answers 403 node_token_client_mismatch. An explicit ttlMinutes is still honoured, so a caller that deliberately wants a short handoff still gets one.
  *
  * @module join-routes
  */
 
+import { randomUUID } from 'crypto';
 import { Router, type Request, type Response, type RequestHandler } from 'express';
 import * as path from 'path';
 import type { Pool } from 'pg';
@@ -55,6 +57,15 @@ const logger = createChildLogger({ module: 'join-routes' });
 const DEFAULT_ENROLL_TTL_MINUTES = 60;
 const MIN_ENROLL_TTL_MINUTES = 5;
 const MAX_ENROLL_TTL_MINUTES = 24 * 60;
+
+/**
+ * Characters a device id may carry. Narrow because the id is now WRITTEN INTO the commands
+ * `/enroll` prints - a `"` or a `&` in it produces a line that does something other than what
+ * it reads as. Server-minted ids (`node-<uuid>`) and the node app's own (`oshal-chat-<uuid>`)
+ * are well inside it; a caller-supplied id outside it is refused rather than escaped, which is
+ * the same call `renderNodeInstaller` makes about the one-click download.
+ */
+const SAFE_CLIENT_ID = /^[A-Za-z0-9._:-]+$/;
 
 /** Hostnames that only ever resolve back to the controller's own machine. */
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
@@ -156,27 +167,40 @@ export function createJoinRoutes(apiDir: string, pool?: Pool): Router {
 
     const body = (req.body ?? {}) as { computerName?: unknown; ttlMinutes?: unknown; clientId?: unknown };
     const computerName = String(body.computerName ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
-    // Naming a clientId asks for a DEVICE-SCOPED credential rather than an account PAT: the
-    // resulting token works only on that device's worker plane, so it is safe to leave on the
-    // edge machine as its steady-state credential (hardening #7).
-    const clientId = String(body.clientId ?? '').trim().slice(0, 200);
+    // A node credential is a DEVICE credential. A caller may name the device it is for - a
+    // computer that is already registered knows its own id - but the first enrolment of a new
+    // machine cannot, because the id does not exist until something mints one. So the swarm
+    // mints it HERE and hands both halves back together. Minting it on the node instead is the
+    // shape that failed: the node invented `oshal-chat-<uuid>` on first run and the control
+    // plane answered 403 node_token_client_mismatch, and the only way to avoid that was to
+    // leave the credential unbound - an account PAT on an edge machine, which is more reach
+    // than a node should hold and (clamped to an hour) dies under it.
+    const requestedClientId = String(body.clientId ?? '').trim().slice(0, 200);
+    if (requestedClientId && !SAFE_CLIENT_ID.test(requestedClientId)) {
+      res.status(400).json({
+        error: 'unsupported_client_id',
+        message: 'A device id may contain letters, digits, and . _ : - only. Leave it out and '
+          + 'this swarm will mint one for the computer.',
+      });
+      return;
+    }
+    const clientId = requestedClientId || `node-${randomUUID()}`;
     // A DEVICE-bound token is the node's steady-state credential, not a 60-minute handoff, so
     // it does not expire by default: an edge machine that is off for a week must still come back
     // without a human. Its bounds are SCOPE (one device's plane), rotation and revocation - all
-    // three of which the swarm-wide secret lacked. An explicit ttlMinutes still wins.
+    // three of which the swarm-wide secret lacked. An explicit ttlMinutes still wins, which is
+    // what keeps the short handoff available to a caller that deliberately asks for one.
     const explicitTtl = body.ttlMinutes !== undefined && body.ttlMinutes !== null;
-    const ttlMinutes = explicitTtl || !clientId ? clampEnrollTtlMinutes(body.ttlMinutes) : 0;
+    const ttlMinutes = explicitTtl ? clampEnrollTtlMinutes(body.ttlMinutes) : 0;
     const { url, loopback } = resolveControlPlaneUrl(req);
 
     try {
       const minted = await insertCliToken(pool, {
         sub, email,
         principalIssuer: getAuthenticatedPrincipalIssuer(req),
-        label: clientId
-          ? `node ${clientId}`
-          : (computerName ? `node enrollment: ${computerName}` : 'node enrollment'),
+        label: computerName ? `node ${clientId} (${computerName})` : `node ${clientId}`,
         ttlMs: ttlMinutes > 0 ? ttlMinutes * 60 * 1000 : undefined,
-        nodeClientId: clientId || null,
+        nodeClientId: clientId,
       });
       // The token is the credential — it is returned to its owner exactly once and never logged.
       logger.info(
@@ -190,27 +214,30 @@ export function createJoinRoutes(apiDir: string, pool?: Pool): Router {
           expiresAt: minted.expiresAt,
           ttlMinutes: ttlMinutes > 0 ? ttlMinutes : null,
           controlPlaneUrl: url,
-          // Present = the token is confined to this device and can replace the swarm-wide
-          // secret on it; null = an ordinary short-lived account token for the handshake only.
+          // The device this token is confined to. It is HALF THE CREDENTIAL: a bound token
+          // presented by a node registering under any other id is refused 403
+          // node_token_client_mismatch, so every instruction below carries the id as well.
           nodeClientId: minted.nodeClientId,
+          // Whether the swarm minted the id or the caller named one it already had, so a
+          // surface can say "this is your computer's id" instead of echoing a value back.
+          clientIdMinted: requestedClientId.length === 0,
         },
         // How the node proves who owns it — no swarm-wide secret involved in THIS step.
         verifyUrl: `${url}/api/cli-tokens/whoami`,
         install: {
-          // An already-installed node: this is all it needs to bind itself to you.
-          existingNode: `set OSHAL_ENROLLMENT_TOKEN=${minted.token} && installer\\Open-Swarm-Node.cmd`,
-          // With a clientId supplied, the minted token IS the worker-plane credential: set it as
-          // REMOTE_CLIENT_CONTROL_PLANE_TOKEN and the node authenticates every register/heartbeat/
-          // claim call with a per-device, revocable, rotatable credential. Without one, the node
-          // still needs an operator's join code (which embeds the swarm-wide secret) - the exact
-          // dependency REMOTE_CLIENT_REQUIRE_NODE_TOKEN=true retires.
-          newInstall: `powershell -ExecutionPolicy Bypass -File installer\\lib\\install-node.ps1 -JoinCode <OSJOIN1...> -EnrollmentToken "${minted.token}"`,
-          workerPlaneToken: minted.nodeClientId
-            ? `set REMOTE_CLIENT_CONTROL_PLANE_TOKEN=${minted.token}`
-            : null,
-          note: minted.nodeClientId
-            ? 'This token is bound to this computer only. It replaces the swarm-wide shared secret on it, and you can rotate or revoke it without touching any other machine.'
-            : 'A new computer also needs a join code from an operator; this enrollment code is what binds the computer to YOU.',
+          // An already-installed node: BOTH halves. The token on its own leaves the node with
+          // the id it minted for itself, which this token was never minted for.
+          existingNode: `set OSHAL_CLIENT_ID=${clientId} && set OSHAL_ENROLLMENT_TOKEN=${minted.token} && installer\\Open-Swarm-Node.cmd`,
+          // The minted token IS the worker-plane credential: the node sends it as its bearer on
+          // every register/heartbeat/claim call, per-device, revocable and rotatable. -ClientId is
+          // not decoration - install-node.ps1 seeds OSHAL_CLIENT_ID from it, and without it the
+          // node registers as an id this token does not name.
+          newInstall: `powershell -ExecutionPolicy Bypass -File installer\\lib\\install-node.ps1 -JoinCode <OSJOIN1...> -EnrollmentToken "${minted.token}" -ClientId "${clientId}"`,
+          workerPlaneToken: `set REMOTE_CLIENT_CONTROL_PLANE_TOKEN=${minted.token}`,
+          // Nothing needs pasting at all if the person downloads the file instead: the same
+          // per-device enrollment, already inside something they can run.
+          oneClick: `${url}/api/join/node-installer`,
+          note: `This token is bound to one computer. It replaces the swarm-wide shared secret on it, and you can rotate or revoke it without touching any other machine. Both values travel together: the computer registers as ${clientId}, and a computer that registers as anything else is refused.`,
         },
         warning: loopback
           ? 'You are browsing over localhost, so this points at localhost and only works on this machine. Open the cockpit from the swarm machine\'s LAN address and enroll again.'
