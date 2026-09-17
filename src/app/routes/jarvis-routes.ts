@@ -55,6 +55,7 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | GET /tasks claims the return leg's FAILURE half beside the success half: a task whose ticket reached a terminal failure is closed in the durable shelf and the honest sentence is written into its thread (returnFailedComplexTasks). The ticket map now carries the whole ticket rather than its status alone, because the recorded escalation reason lives in its metadata and re-reading it per task would turn one list into an N+1.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | GET /tasks now claims the PROTECTED success half too. Protected rows were dropped out of the summarize/repair pass and nothing else ever picked them up, so a protected ticket that finished correctly produced no summary, no finishTask and no thread turn - it simply went quiet. They are split out instead of discarded and handed to returnProtectedComplexSummaries, which records the derived lineage before it claims. The automatic half and the table-visual repair pass keep exactly the rows they had.
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Record WHICH half of the /ask session gate refused. The 404 session_not_found was emitted with no log line at all, so an operator reading the api log could not tell a foreign-owned session id from a store that failed to answer - the same indistinguishability that let a Jarvis ownership fault read as an empty conversation for three days. The decision, the status, the body and the short-circuit order are all unchanged; only the refusal is now written down.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com   | The tool block is built through the selector shadow step: a candidate selector is measured beside the shipped one and discarded, so a narrower cut can be judged on real traffic while the model keeps receiving exactly the block it received before.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -120,7 +121,8 @@ import { visualSpecForDirectRequest } from './jarvis-visuals';
 import { visibleArtifactActions } from './artifact-action-visibility';
 import type { PickerVisibleApps } from './artifact-picker-routes';
 import { resolveJarvisArtifact, buildArtifactRoutingPrompt, resolveJarvisArtifactAnswer, type JarvisArtifactAction } from './jarvis-artifact-routing';
-import { assembleJarvisBotMessage, buildToolsBlock, withImageDeliverableContract } from './jarvis-tool-catalog';
+import { assembleJarvisBotMessage, withImageDeliverableContract } from './jarvis-tool-catalog';
+import { buildToolsBlockWithShadow } from './jarvis-selector-shadow';
 import { createJarvisPackageToolRoutes } from './jarvis-package-tool-routes';
 import { resolveJarvisPackageToolDirective } from './jarvis-package-tool-directives';
 import type { JarvisPackageToolDiscovery, JarvisPackageToolProposal, JarvisPackageToolService } from './jarvis-package-tool-service';
@@ -735,7 +737,11 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         const authorizationTools = ctx.authorizationTool && authorizationActor
           ? await ctx.authorizationTool.discover(authorizationActor, true) : [];
         offeredPackageTools = packageTools && authorizationActor && !artifactSelection ? await packageTools.discover(authorizationActor) : [];
-        const tools = buildToolsBlock({ message, surface: surfaceContext?.app, authorizationTools, packageTools: offeredPackageTools });
+        // Shadow step (ADR-free, off unless JARVIS_SELECTOR_SHADOW names a candidate): a narrower
+        // selector is measured beside this block and discarded. The value below is always the real
+        // block, so real traffic can judge a cut the synthetic bench corpus rejected without the
+        // model ever receiving the candidate.
+        const tools = buildToolsBlockWithShadow({ message, surface: surfaceContext?.app, authorizationTools, packageTools: offeredPackageTools }, { correlation: jobId });
         // The deployment's app catalog rides EVERY model turn (before the plan guidance, whose
         // "catalog keys above" refers to it). Without it the persona's baked specialist list was
         // Jarvis's whole world - a store-installed app on this box did not exist to the model.

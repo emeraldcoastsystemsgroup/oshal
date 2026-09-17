@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 3: the semantic leg over the owner's own transcripts. Writes deterministic `pm:<segment_id>` chunks into the kernel-reserved `ambient-recall` collection through the shared pgvector engine (owner_sub stamped in metadata so the engine lifts it into the RLS column and data-lifecycle deletes it by column), embeds with the shared MiniLM, and answers paraphrase queries as "possibly related" receipts that are never folded into the exact count. Gated on RAG_ENGINE=pgvector + engine availability; absent that, recall stays FTS-exact-only.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A related hit must now clear a relevance floor (related-relevance.ts). The engine fuses its legs by reciprocal RANK, so with fewer chunks in the store than the fetch bound every chunk placed and the list was the store's contents in rank order — the live proof published "Can we order pizza tonight" as possibly related to "volleyball" at 1/63 against 1/61 for a real paraphrase. Candidates are now collected up to the fetch bound, scored against the query on the projection's own model, floored, ordered by that cosine, and only then capped; an unscoreable list is published as nothing rather than as noise. The exact count is untouched — it never came from here.
  */
 
 import type { Pool } from 'pg';
@@ -15,6 +16,7 @@ import {
   AMBIENT_RECALL_COLLECTION, listUnprojectedSegments, purgeOrphanChunks, ragChunksTableExists,
   rebuildRollups, reconcileProjectionLedger, type ProjectionLedgerRow,
 } from './projection-ledger';
+import { applyRelevanceFloor, type RelatedCandidate } from './related-relevance';
 import type { RecallIntent, RelatedReceipt } from './person-model-types';
 
 const logger = createChildLogger({ module: 'person-model-semantic' });
@@ -77,13 +79,15 @@ export async function projectOwnerSegments(pool: Pool, ownerSub: string, limit =
 
 /**
  * @description The paraphrase leg of a recall: searches the owner's `ambient-recall` chunks for the
- * topic terms and returns hits that the exact leg did NOT already quote, filtered to the same person
- * and owner-local day. Never changes the count — callers present these as "possibly related".
+ * topic terms, keeps the hits the exact leg did NOT already quote that belong to the same person and
+ * owner-local day, then drops whatever does not clear the relevance floor against the query. The
+ * retrieval leg ranks; the floor decides what is evidence. Never changes the count — callers present
+ * what survives as "possibly related".
  * @param pool - GUC-aware Postgres pool.
  * @param ownerSub - Authenticated owner sub.
  * @param intent - The recall intent (person, terms, range).
  * @param exactSegmentIds - Segment ids already quoted by the exact leg (excluded here).
- * @returns Related receipts, best match first.
+ * @returns Related receipts that cleared the floor, most similar first; empty when none did.
  */
 export async function relatedRecall(
   pool: Pool, ownerSub: string, intent: RecallIntent, exactSegmentIds: ReadonlySet<string>,
@@ -100,7 +104,7 @@ export async function relatedRecall(
     logger.warn({ err: error, operation: 'relatedRecall' }, 'semantic recall failed — exact leg stands alone');
     return [];
   }
-  const related: RelatedReceipt[] = [];
+  const candidates: RelatedCandidate[] = [];
   for (const hit of hits) {
     const meta = hit.metadata ?? {};
     const segmentId = String(meta.segment_id ?? '');
@@ -109,10 +113,17 @@ export async function relatedRecall(
     if (profileIds && !profileIds.has(String(meta.profile_id ?? ''))) continue;
     const capturedAt = String(meta.captured_at ?? '');
     if (today && (!capturedAt || localDate(new Date(capturedAt), await ownerTimeZone(pool, ownerSub)) !== today)) continue;
-    related.push({ segmentId, quote: hit.text, capturedAt, score: Number(hit.score) || 0 });
-    if (related.length >= RELATED_CAP) break;
+    candidates.push({ segmentId, quote: hit.text, capturedAt, score: Number(hit.score) || 0 });
+    // The cap is applied AFTER the floor: cutting at six while a rank-ordered list still
+    // holds noise is how an off-topic line crowds out a real paraphrase.
+    if (candidates.length >= RELATED_FETCH) break;
   }
-  return related;
+  const relevant = await applyRelevanceFloor(intent.terms, candidates);
+  if (!relevant) {
+    logger.warn({ operation: 'relatedRecall', candidates: candidates.length }, 'related hits could not be scored — exact leg stands alone');
+    return [];
+  }
+  return relevant.slice(0, RELATED_CAP);
 }
 
 /**

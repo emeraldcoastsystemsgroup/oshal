@@ -2,6 +2,7 @@
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise registered Lab scenarios through real catalog/run HTTP routes; model responses and session authentication are explicit fixtures.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Require the authenticated relay suite in Lab and local runner parity.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Count 11, not 9. This gate was RED on main: the tool-selection bench guard was registered in the Lab on 2026-09-15 without being added to test:artifacts, so the suite the Lab publishes and the suite the command runs had already diverged by one before the selector-shadow guard made it two. Both paths are now in the command; the assertion is what forces that pairing, so raising the number without adding the path fails on the next line.
  */
 import express from 'express';
 import { existsSync, readFileSync } from 'node:fs';
@@ -56,7 +57,7 @@ describe('artifact features registered in AI Test Lab', () => {
     const registered = catalog.scenarios.filter((s: any) => ARTIFACT_SCENARIOS.some(expected => expected.id === s.id));
     expect(registered.map((s: any) => s.id)).toEqual(['artifact-discovery', 'jarvis-artifact-handoff']);
     const suites = registered.flatMap((s: any) => s.regressionTests);
-    expect(suites).toHaveLength(9);
+    expect(suites).toHaveLength(11);
     const command = JSON.parse(readFileSync('package.json', 'utf8')).scripts['test:artifacts'];
     for (const suite of suites) expect(command.split(/\s+/)).toContain(suite.path);
     expect(new Set(suites.map((s: any) => s.level))).toEqual(new Set(['unit', 'integration', 'browser']));
