@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extract the record presentation and listing-visibility helpers verbatim out of swarm-app-service.ts, which reached 1082 code lines against the 1000-line hard cap. These three are pure functions of a record — no pool, no registry, no service state — so they read and test better beside each other than buried above a 1400-line class.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | toSummary now redacts owner identity for a viewer who is neither the owner nor an operator. A public-scoped app keeps its stamped owner_sub, and the listing serialized it to EVERY caller — a guest (mintable with no credentials) read the deployment operator's real OIDC subject off /api/swarm/apps. Redaction is viewer-CONDITIONAL, never unconditional: global search calls the listing with no viewer and compares summary.ownerSub to decide person-scope visibility, so blanking it always would silently hide a user's own apps from their own search.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The summary carries hasSurface, so a listing surface can tell an app that opens into a cockpit from one that genuinely has no screen without re-reading a manifest it is not given. The applications catalog was deciding that from a hand-typed name array, which no core manifest could ever join by shipping a rail; five apps with real surfaces rendered "Coming soon". Derived here beside firstAppIcon because it reads the same manifest.ui block, and a second copy of the rule is how two surfaces start disagreeing about which apps are openable.
  */
 
 import type { SwarmApplicationRecord, SwarmApplicationSummary } from '../types';
@@ -56,6 +57,27 @@ export function firstAppIcon(manifest: SwarmApplicationRecord['manifest'] | unde
 }
 
 /**
+ * @description Does this app declare anything a cockpit can open? True for `ui.static` tiles, for
+ * a `ui.dynamic` row source (its tiles come from a table, so the rail is real even though no tile
+ * is written down), and for an ADR-141 group, which carries no `ui` of its own and instead borrows
+ * its members' surfaces through `toolbar` and lands on the kernel setup dashboard.
+ *
+ * Kept separate from {@link firstAppIcon} even though both read `manifest.ui`: an icon is optional
+ * decoration on a tile, so "has no icon" and "has no surface" are different facts, and reusing the
+ * icon as the openability signal would call a tile-without-an-icon headless. Lifecycle `status` is
+ * not consulted — deactivating an app does not remove the surface its manifest declares, and the
+ * listing already reports status separately.
+ * @param manifest - Parsed app manifest (may be undefined for bare records).
+ * @returns True when the manifest declares a surface to open.
+ */
+export function hasCockpitSurface(manifest: SwarmApplicationRecord['manifest'] | undefined): boolean {
+  if (!manifest) return false;
+  if (Array.isArray(manifest.ui?.static) && manifest.ui.static.length > 0) return true;
+  if (manifest.ui?.dynamic) return true;
+  return manifest.kind === 'group' && Array.isArray(manifest.toolbar) && manifest.toolbar.length > 0;
+}
+
+/**
  * @description Project a stored application record into the summary shape every listing surface
  * consumes, resolving the display icon and the ADR-097 primary suite along the way.
  *
@@ -80,6 +102,7 @@ export function toSummary(r: SwarmApplicationRecord, viewer?: SummaryViewer | nu
     botCount: r.agentIds.length,
     toolCount: r.toolNames.length,
     icon: firstAppIcon(r.manifest),
+    hasSurface: hasCockpitSurface(r.manifest),
     suite: r.manifest?.suite ?? null,
     manifestPath: r.manifestPath,
     loadedAt: r.loadedAt.toISOString(),

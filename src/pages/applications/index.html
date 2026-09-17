@@ -4,6 +4,7 @@ CHANGE LOG
 SEQ | AUTHOR | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
+2 | maintainer@emeraldcoastsystemsgroup.com | Openability comes from the manifest, not from a list of names typed into this page. The WORKING array plus "manifestPath contains deployed-apps" let a store package through on its path while a CORE manifest could only qualify by being typed in, so five shipped apps with real rail surfaces rendered a disabled "Coming soon" — the Security Center said it was unreleased while sitting on the operator's own rail. Rows now read summary.hasSurface (derived by hasCockpitSurface from ui.static / ui.dynamic / a group's toolbar) through js/app-catalog-openability.js, every row shows its real active/inactive status, and an app that declares no surface says THAT instead of claiming to be unfinished.
 -->
 <!--
   Applications — the operator app-admin console AND the signed-in app catalog, one page.
@@ -13,7 +14,8 @@ SEQ | AUTHOR | DESCRIPTION
   per-row lifecycle actions) rather than a big store tile. Operator chrome (the admin bar +
   per-row activate/export/unload + manifest paths) only appears when the super-admin probe
   adds .is-operator — the API + RLS gate the writes regardless. For guests / regular users the
-  same rows render read-only (Open where working, greyed where not). Anonymous visitors never
+  same rows render read-only (Open where the manifest declares a surface, greyed where it declares
+  none — the app's own answer, never a list kept here). Anonymous visitors never
   see this cold: the route wears createGuestWelcomeMat, so they land on /guest first.
   The Discover section below the installed list is the ADR-085 D7 store browse: rows come from
   the store's machine-derived marketplace.json via GET /api/swarm/apps/catalog (never hand-typed
@@ -135,8 +137,8 @@ SEQ | AUTHOR | DESCRIPTION
       background: var(--card); border: 1px solid var(--line-dark); border-radius: 10px; padding: 10px 14px;
     }
     .app-row:hover { border-color: rgba(20, 151, 131, 0.4); }
-    .app-row.coming-soon { opacity: 0.5; }
-    .app-row.coming-soon:hover { border-color: var(--line-dark); }
+    .app-row.no-surface { opacity: 0.5; }
+    .app-row.no-surface:hover { border-color: var(--line-dark); }
 
     .app-ico {
       width: 38px; height: 38px; border-radius: 8px; flex: 0 0 auto;
@@ -167,7 +169,6 @@ SEQ | AUTHOR | DESCRIPTION
     .status-active { color: var(--green); border-color: rgba(95, 138, 63, 0.4); background: rgba(95, 138, 63, 0.1); }
     .status-inactive { color: var(--ink-muted); }
     .status-coming { color: var(--ink-muted); }
-    .status-preview { color: var(--amber); border-color: rgba(164, 97, 25, 0.4); background: rgba(164, 97, 25, 0.1); }
 
     .app-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
     .open-link { background: var(--navy); color: var(--text-on-accent, #fff); border-color: var(--navy); font-weight: 700; padding: 7px 14px; }
@@ -283,6 +284,11 @@ SEQ | AUTHOR | DESCRIPTION
   </div>
 
   <script type="module">
+    // Openability is the manifest's answer (summary.hasSurface), never a list of names kept here.
+    // Absolute path: this page serves at both /applications and /applications/, and a relative
+    // specifier resolves against the document URL, so it would 404 on one of them.
+    import { catalogRank, openControl } from '/applications/js/app-catalog-openability.js';
+
     const appsEl = document.getElementById('apps');
     const errorBox = document.getElementById('errorBox');
     const focusSelect = document.getElementById('focusSelect');
@@ -326,11 +332,6 @@ SEQ | AUTHOR | DESCRIPTION
       return /^codicon codicon-[a-z0-9-]+$/.test(String(icon || '')) ? icon : '';
     }
 
-    // Only these swarms work today — listed first + openable; everything else is greyed out.
-    const WORKING = ['jarvis', 'social', 'email-summarizer', 'codex-packer', 'storage', 'presentations',
-      'career-hunter', 'gov-contracting', 'home', 'eats', 'travel', 'purchasing', 'vids', 'pumpkin', 'finance', 'identity', 'devops'];
-    // Premium "Private Preview" facades — openable into a real-looking surface, badged preview.
-    const PREVIEW = [];
     // Codex Packer's real entry is the builder chat, NOT ?app=codex-packer (default app + a bare toolbar).
     const CODEX_PACKER_LAUNCH = '/swarmbot/chat?agentId=a0000000-0000-0000-0000-000000000030';
 
@@ -433,29 +434,23 @@ SEQ | AUTHOR | DESCRIPTION
         || localStorage.getItem('oshal-ui-profile') || '';
       focusSelect.value = focused;
 
-      // Working swarms first (built-ins in WORKING order, then operator-deployed), then the rest
-      // greyed out + alphabetical.
-      const rank = (a) => {
-        const i = WORKING.indexOf(a.name);
-        if (i !== -1) return i;
-        if (a.manifestPath && a.manifestPath.includes('deployed-apps')) return 50;
-        if (PREVIEW.includes(a.name)) return 60;
-        return 99;
-      };
-      const sorted = [...apps].sort((x, y) => rank(x) - rank(y) || String(x.displayName).localeCompare(String(y.displayName)));
+      // Apps you can open first, headless ones after them; alphabetical within each. The rank is
+      // a function of the manifest, so a newly shipped app sorts correctly with no edit here.
+      const sorted = [...apps].sort((x, y) => catalogRank(x) - catalogRank(y) || String(x.displayName).localeCompare(String(y.displayName)));
 
       const rowHtml = (a) => {
-        const deployed = !!(a.manifestPath && a.manifestPath.includes('deployed-apps'));
-        const preview = PREVIEW.includes(a.name);
-        const working = WORKING.includes(a.name) || deployed;
-        const openable = working || preview;
-        const badgeClass = working ? a.status : (preview ? 'preview' : 'coming');
-        const badgeText = working ? a.status : (preview ? 'private preview' : 'coming soon');
+        const open = openControl(a);
+        const openable = open.openable;
+        // The real lifecycle status, on every row: an app with no surface is not "coming soon",
+        // it is a shipped app that works through its queue, and its own badge already says
+        // whether it is active.
+        const badgeClass = a.status;
+        const badgeText = a.status;
         const icon = safeIcon(a.icon);
         const initial = escapeHtml(String(a.displayName || a.name || '?').trim().charAt(0).toUpperCase() || '?');
         const iconInner = icon ? `<span class="${icon}"></span>` : initial;
         return `
-        <div class="app-row${openable ? '' : ' coming-soon'}" data-name="${escapeHtml(a.name)}">
+        <div class="app-row${openable ? '' : ' no-surface'}" data-name="${escapeHtml(a.name)}">
           <div class="app-ico">${iconInner}</div>
           <div class="app-main">
             <div class="app-titleline">
@@ -481,8 +476,8 @@ SEQ | AUTHOR | DESCRIPTION
               <button data-act="unload" class="danger">Unload</button>
             </div>
             ${openable
-              ? `<button class="open-link" data-act="focus">${preview ? 'Open preview' : 'Open'} &rarr;</button>`
-              : '<button class="open-link" disabled title="Not ready yet — tracked in BACKLOG">Coming soon</button>'}
+              ? `<button class="open-link" data-act="focus" title="${escapeHtml(open.title)}">${escapeHtml(open.label)}</button>`
+              : `<button class="open-link" disabled title="${escapeHtml(open.title)}">${escapeHtml(open.label)}</button>`}
           </div>
         </div>`;
       };
