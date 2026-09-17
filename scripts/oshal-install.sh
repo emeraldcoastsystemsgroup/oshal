@@ -14,6 +14,7 @@
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | Mode 4 now INSTALLS its prerequisites instead of printing links and exiting 1 (operator: the installer should include the prereqs). kubectl and helm are fetched from their official sources into /usr/local/bin when writable, else ~/.local/bin (never a silent sudo); if no cluster is reachable it offers k3s on Linux (native, no Docker, survives reboot, NodePorts land on the host) and kind wherever Docker is present (fully scriptable — no GUI toggle), still refusing kind beside a running compose swarm. Every system-touching step asks first; --yes/-y accepts them for unattended installs, and a non-interactive shell DECLINES rather than surprise-installing.
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | Lockstep with the ps1: --allow-stale-image plus the post-pull freshness gate, and the Windows WSL2 guidance on both docker preflight failures. Git Bash on Windows hits the same dead end as the ps1 path - 'docker daemon not running' with no hint that WSL2 is the engine that is missing. The sh path only ADVISES (it cannot elevate); the ps1 can actually enable it.
 # 10 | maintainer@emeraldcoastsystemsgroup.com  | The install ends with a USER who owns the swarm, not an allowlist entry. --auth-mode (basic|mock, default basic) picks the sign-in stack. basic writes LOCAL_AUTH=true/MOCK_OIDC=false, creates the administrator through the ADR-117 bootstrap (one-use proof from scripts/oshal-setup-root.mjs, swarm root claimed per ADR-148) with a random password nobody sees, then opens scripts/oshal-admin-link.mjs's one-time set-password link instead of /welcome: choosing the password signs that browser in and continues to the wizard, so the operator arrives authenticated and there is no generated credential to print and lose (the first cut printed one, and a hung closing step lost it). OSHAL_ADMIN_PASSWORD remains for headless automation. mock keeps the no-login demo posture but still claims root. Both write OSHAL_INSTALL_OWNER_SUB — the sha256-of-lowercased-email the local-auth store derives — so packages staged before any login belong to the operator. Unattended runs without --admin-email get admin@localhost. The Windows browser-open no longer hangs (cmd `start` read a lone quoted URL as a window title), and closing output gives the reissue command.
+# 11 | maintainer@emeraldcoastsystemsgroup.com  | The operator's first cockpit shows their applications. UI_PROFILE is written as oshal-framework (OSHAL_UI_PROFILE overrides): compose defaults to the 7-item starter cockpit, whose rail lists no installed application at all. Paired with the loader granting the install owner an explicit admin tier on each application it adopts — without one, the rail hid all 58 ADR-149 protected applications from the person who installed them.
 # =============================================================================
 #
 # One-click:
@@ -721,6 +722,11 @@ if [ ! -f "$ENV_FILE" ]; then
     # so the owner is knowable before the api ever boots — packages staged now can belong to
     # the operator created later, instead of landing unowned and invisible to everyone.
     if [ -n "$ADMIN_EMAIL" ]; then echo "OSHAL_INSTALL_OWNER_SUB=$(local_sub "$ADMIN_EMAIL")"; fi
+    # Compose defaults UI_PROFILE to the 7-item starter cockpit, whose rail lists NO installed
+    # application — after staging dozens of them, the operator's first cockpit looked empty.
+    # The full operator cockpit (every app surface grouped) is oshal-framework; the starter
+    # view stays one ?profile=oshal-starter away. OSHAL_UI_PROFILE overrides.
+    echo "UI_PROFILE=${OSHAL_UI_PROFILE:-oshal-framework}"
     if [ "$AUTH_MODE" = "basic" ]; then
       echo "# ADR-117 local login: real accounts, real passwords. MOCK_OIDC must stay false —"
       echo "# the server throws at boot if both are enabled rather than degrade to open auth."

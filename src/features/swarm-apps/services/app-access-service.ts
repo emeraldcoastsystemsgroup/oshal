@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Isolate same-subject principals in every lookup, upsert and clear; legacy NULL and explicit local issuer share one key.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Keep a pre-145 issuer-less row applying to EVERY issuer of its subject as a ceiling (migration 146). Reading NULL as local-only silently dropped a deny or viewer ceiling that main enforced for any issuer through its subject-only SQL, and the subject then received the manifest default (admin on security, devops and oshal-dev). The legacy row is still the full assignment for the canonical local account and lifts no other issuer above its default; an issuer-bound row written for that issuer is the operator re-bind and takes precedence for it.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Read the assignment under the SYSTEM identity so the legacy ceiling is visible on every enforcement path. The gate middleware, the dynamic route mounter and the artifact/Test Lab visibility reads call resolveForPrincipal under the CALLER's request identity, and migration 145's owner-read policy admits only the row whose principal_issuer equals the caller's issuer - a legacy NULL row is urn:oshal:local-auth there, so a federated caller could not see its own ceiling and a legacy deny let a POST through the real gate with 200. Only the application-authorization bridge (createLegacyTierResolver) read under the system identity before. The predicate is exact on (subject, app, issuer-or-NULL); nothing wider is read, and listAssignments, assign and clear stay under the caller. Proved through the real gate on a NOBYPASSRLS role in tests/authorization-issuer-tier-live.spec.ts.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | grantIfAbsent(): a default grant that never overrides an existing row, so the install owner becomes administrator of each application it adopts without ever undoing a tier — or an explicit deny — someone set on purpose. Issuer-keyed like assign(): it conflicts on (user_sub, app_name, principal_issuer) and falls back through withIssuerColumn to the pre-145 key, refusing an issuer binding it cannot store.
  */
 
 import type { Pool } from 'pg';
@@ -323,6 +324,36 @@ export class AppAccessService implements AppAccessResolver {
   }
 
   /**
+   * @description Record an explicit tier only when this subject has none for the application.
+   * Unlike assign(), an existing row — including an explicit deny someone set on purpose — is left
+   * exactly as it is, so a default grant can run on every adoption without ever overriding a person.
+   * @param input Same validated fields as assign().
+   * @returns Whether a new assignment was written.
+   */
+  async grantIfAbsent(input: {
+    userSub: string;
+    userIssuer?: string | null;
+    appName: string;
+    tier: AppAccessTier;
+    assignedBySub: string;
+    reason: string;
+  }): Promise<boolean> {
+    assertSubject(input.userSub, 'userSub');
+    assertSubject(input.assignedBySub, 'assignedBySub');
+    assertAppName(input.appName);
+    if (!isAppAccessTier(input.tier)) throw new TypeError('tier is not a known app access tier');
+    const reason = assertReason(input.reason);
+    const userIssuer = input.userIssuer ?? null;
+    if (userIssuer !== null) assertIssuer(userIssuer);
+    const values = [input.userSub, input.appName, input.tier, input.assignedBySub, reason];
+    return withIssuerColumn(
+      () => insertIfAbsentWithIssuer(this.pool, values, userIssuer),
+      () => insertIfAbsentWithoutIssuer(this.pool, values, userIssuer),
+      { appName: input.appName, operation: 'grantIfAbsent' },
+    );
+  }
+
+  /**
    * @description Remove one explicit assignment so the manifest default applies again.
    * The framework audit middleware records the operator request; this method logs the reason too.
    */
@@ -392,6 +423,51 @@ async function upsertWithIssuer(pool: Pool, values: unknown[], userIssuer: strin
  * @param userIssuer - The binding that was asked for; anything but null fails loudly.
  * @returns The stored row, reported as carrying no issuer.
  */
+/**
+ * @description Write a tier only when this principal has none for the application. Same principal
+ * key as upsertWithIssuer — DO NOTHING instead of DO UPDATE, so a default grant can run on every
+ * adoption and never touch a tier, or an explicit deny, someone set on purpose.
+ * @param pool - Control-plane pool. @param values - user_sub, app_name, tier, assigned_by_sub, reason.
+ * @param userIssuer - Issuer this grant binds to, or null for the canonical local account.
+ * @returns Whether a row was written.
+ */
+async function insertIfAbsentWithIssuer(pool: Pool, values: unknown[], userIssuer: string | null): Promise<boolean> {
+  const result = await pool.query(
+    `INSERT INTO oshal_app_access
+       (user_sub, app_name, tier, assigned_by_sub, reason, user_issuer)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (user_sub, app_name, principal_issuer) DO NOTHING`,
+    [...values, userIssuer],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * @description The pre-145 form of the same insert. An issuer binding is REFUSED rather than
+ * dropped, exactly as upsertWithoutIssuer refuses it: a grant the caller believes is bound to one
+ * identity must never land in a shape another identity resolves.
+ * @param pool - Control-plane pool. @param values - The five pre-145 columns.
+ * @param userIssuer - Anything but null fails loudly. @returns Whether a row was written.
+ */
+async function insertIfAbsentWithoutIssuer(pool: Pool, values: unknown[], userIssuer: string | null): Promise<boolean> {
+  if (userIssuer !== null) {
+    throw new Error('oshal_app_access.user_issuer is missing; apply migration 145 before granting an issuer-bound tier');
+  }
+  const columns = await pool.query<{ present: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'oshal_app_access'::regclass
+      AND attname = 'user_issuer' AND NOT attisdropped) AS present`,
+  );
+  if (columns.rows[0]?.present) throw new Error('Apply migration 145 principal key before granting a tier');
+  const result = await pool.query(
+    `INSERT INTO oshal_app_access
+       (user_sub, app_name, tier, assigned_by_sub, reason)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (user_sub, app_name) DO NOTHING`,
+    values,
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 async function upsertWithoutIssuer(pool: Pool, values: unknown[], userIssuer: string | null): Promise<AssignmentRow> {
   if (userIssuer !== null) {
     throw new Error('oshal_app_access.user_issuer is missing; apply migration 145 before assigning an issuer-bound tier');

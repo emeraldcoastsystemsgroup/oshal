@@ -121,8 +121,17 @@ Headless automation that must know the credential up front can pass `OSHAL_ADMIN
 (at least 10 characters); the installer then skips the link and you sign in at `/login`.
 
 Packages staged during the install are **owned by that administrator** (`OSHAL_INSTALL_OWNER_SUB`,
-derived from the email exactly as the local-auth store derives it). Without an owner, person-scoped
-applications match nobody and stay invisible to every user.
+derived from the email exactly as the local-auth store derives it), and that administrator is granted
+the **admin tier on each one** the first time it loads. Without an owner, person-scoped applications
+match nobody; without a tier, the cockpit hides every protected application (ADR-149) — on a full
+install that is most of them. Both happen once: an owner or tier someone sets later, including an
+explicit deny, is never overridden.
+
+The first cockpit is the **full operator cockpit** (`UI_PROFILE=oshal-framework`), whose rail lists
+every installed application. The compose default is a 7-item starter cockpit that shows none of them;
+set `OSHAL_UI_PROFILE=oshal-starter` before installing to keep it, or open `?profile=oshal-starter`
+any time. The **top workspaces** bar is a separate, per-browser choice: OSHAL menu (the chevron beside
+the brand) → Navigation layout → *Top workspaces + sidebar*.
 
 **Switching to a real identity provider** (Google, Microsoft/Entra, any OIDC): set `MOCK_OIDC=false`
 and `LOCAL_AUTH=false`, add `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` and `APP_URL`

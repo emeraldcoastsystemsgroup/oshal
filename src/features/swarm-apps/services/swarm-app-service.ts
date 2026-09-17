@@ -40,7 +40,7 @@
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: applyArtifactActions on activate / unregister on deactivate — the app's "Send to…" declarations join the shared registry with the skill-profiles discipline (replace-by-app, retract-on-absent, full teardown on toggle-off).
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | synthesiseProfile forwards ribbon.hideStatusBar (true → true, else undefined) exactly like hideChatPanel/hideAssistant, so the cockpit can drop the operational status bar for apps that are not ticket/queue-shaped.
  * 35 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups: activate() fail-closes a `kind: group` whose borrowed toolbar surfaces or setup readiness do not resolve against its ACTIVE members (member + surface named; the record lands inactive); synthesiseProfile renders a group as its kernel setup-dashboard tile followed by the member surfaces its toolbar borrows (resolved at synthesis, so a member that moves a surface is followed); getGroupSetupPlan() hands the dashboard route the steps with each member's probe. autoLoadAll loads groups AFTER every app (orderGroupsLast) so directory order cannot fail-close a group's first boot. Resolution logic lives in swarm-app-group.ts (this file is over its 800-line budget); the static-item map moved there as staticRibbonItems.
- * 36 | maintainer@emeraldcoastsystemsgroup.com   | loadApp stamps OSHAL_INSTALL_OWNER_SUB on a row that has no owner yet. Packages are staged BEFORE any account can exist, so every installed app landed with owner_sub NULL — and a person-scoped app resolves visibility by ownerSub, which NULL never matches: ten packages on a full install were invisible to everyone, permanently. A row that already names an owner is never restamped (an explicit publish outranks the install default, and the upsert would otherwise overwrite it on every boot).
+ * 36 | maintainer@emeraldcoastsystemsgroup.com   | loadApp adopts rows staged before first sign-in for OSHAL_INSTALL_OWNER_SUB and makes that owner their administrator (install-owner.ts — the rule lives outside this over-budget file). Unowned person-scoped apps were invisible to everyone, and with no explicit tier the rail hid every ADR-149 protected app from the operator who installed them. Adoption happens once; an existing owner or tier is never overridden.
  * 38 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers: only a REQUIRED app dependency blocks an uninstall and counts toward orphans; apps that list the target as OPTIONAL are reported (optionalDependents) and never block. Group members and the connector allow-list read through @/shared/app-dependencies so the tiered and legacy forms agree.
  * 39 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 rail discoverability: synthesiseProfile takes an optional per-person discovery port (the ui-profile route binds it to the verified actor) and, when given, hands the static tiles plus every installed record to lockUndiscoverableTiles — a tile under ANOTHER active package's mount that the person cannot discover comes back `locked` (kept in place; the cockpit renders the guest-disabled style with the role-guidance link) instead of a dead frame. No port = the manifest-static rail exactly as before. The logic lives in swarm-app-tile-discoverability.ts; this file is over its size budget.
  * 40 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 landing half: the synthesised defaultView now comes from openableDefaultView, so a locked tile is never the view the cockpit opens on. Locking only the rail button left a launcher whose ribbon.defaultView names another package's surface opening straight onto the kernel's role-guidance 403 inside the frame.
@@ -105,6 +105,8 @@ import {
 } from './tool-ownership';
 import { deleteManifestBotToolGrants, deregisterOwnedManifestTools, failClosedManifestActivation, prepareManifestToolUpdate, rollbackNewManifestToolGrants } from './manifest-tool-reconciliation';
 import { SwarmAppRepository, type SwarmAppScopeMeta } from './swarm-app-repository';
+import { AppAccessService } from './app-access-service';
+import { adoptedInstallOwner, grantInstallOwnerAdmin, withInstallOwner } from './install-owner';
 import { InstalledAppTestCatalog } from './installed-app-test-catalog';
 import { upsertManifestBots, type ManifestBotRuntimeDefaultsResolver } from './manifest-bot-runtime';
 import type { ManifestBriefingRegistrar } from '@/shared/briefings';
@@ -147,20 +149,6 @@ const logger = createChildLogger({ module: 'swarm-app-service' });
  *   - Dynamic migration application — migrations stay in scripts/migrations
  *   - Dynamic workflow pipeline    — WORKFLOW_PIPELINES array still static
  */
-/**
- * @description Decide the scope metadata an app load should persist, giving an unowned row the
- * deployment's install owner. Pure so the rule is testable without a database.
- * @param scopeMeta Caller-supplied scope (a publish session), if any.
- * @param previousOwnerSub The owner already stored for this app, or null when it has none.
- * @param installOwnerSub The deployment's install owner (OSHAL_INSTALL_OWNER_SUB).
- * @returns The scope metadata to persist — unchanged whenever an owner already exists.
- */
-export function withInstallOwner(scopeMeta: SwarmAppScopeMeta | undefined, previousOwnerSub: string | null,
-  installOwnerSub: string | undefined): SwarmAppScopeMeta | undefined {
-  if (scopeMeta?.ownerSub || previousOwnerSub) return scopeMeta;
-  const owner = (installOwnerSub ?? '').trim();
-  return owner ? { ...scopeMeta, ownerSub: owner } : scopeMeta;
-}
 
 export class SwarmAppService {
   readonly testLabCatalog = new InstalledAppTestCatalog();
@@ -264,20 +252,6 @@ export class SwarmAppService {
    * @param manifestPath - absolute or cwd-relative path to the YAML file
    * @returns the resulting application record
    */
-  /**
-   * @description Give an unowned row the deployment's install owner, so packages staged before
-   * anyone could log in still belong to the operator the installer created. A row that already
-   * names an owner is never restamped — an explicit publish outranks the install default, and the
-   * upsert would otherwise overwrite it on every boot.
-   * @param scopeMeta Caller-supplied scope (a publish session), if any.
-   * @param previous The stored record, read before the upsert.
-   * @returns Scope metadata to persist, or the caller's own when there is nothing to add.
-   */
-  private stampInstallOwner(scopeMeta: SwarmAppScopeMeta | undefined,
-    previous: SwarmApplicationRecord | null): SwarmAppScopeMeta | undefined {
-    return withInstallOwner(scopeMeta, previous?.ownerSub ?? null, process.env.OSHAL_INSTALL_OWNER_SUB);
-  }
-
   async loadApp(manifestPath: string, scopeMeta?: SwarmAppScopeMeta): Promise<SwarmApplicationRecord> {
     const manifest = readManifest(manifestPath);
     // Read the stored revision BEFORE upsert. Once overwritten, names removed from the new
@@ -288,8 +262,10 @@ export class SwarmAppService {
     const prepared = await prepareManifestToolUpdate(this.pool, previous, manifest,
       (retiredManifest) => this.deregisterManifestTools(retiredManifest, true),
     );
-    const record = await this.repo.upsert(manifest, manifestPath, staticToolNames(manifest),
-      this.stampInstallOwner(scopeMeta, previous));
+    const persistedScope = withInstallOwner(scopeMeta, previous?.ownerSub ?? null, process.env.OSHAL_INSTALL_OWNER_SUB);
+    const record = await this.repo.upsert(manifest, manifestPath, staticToolNames(manifest), persistedScope);
+    const adopter = adoptedInstallOwner(scopeMeta, persistedScope);
+    if (adopter) await grantInstallOwnerAdmin(new AppAccessService(this.pool), record.name, adopter);
     await this.deregisterRetiredManifestSchedules(previous, manifest);
     if (record.status === 'active') {
       try {
