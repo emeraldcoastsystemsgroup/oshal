@@ -3,14 +3,23 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The switch rows outrank the registry (operator, 2026-09-17: "it should literally be a switch in a table"). A per-bot or fleet-default switch row resolved by bot-provider-switch.ts is now the top of the ladder, reported as providerSource 'bot-row' / 'fleet-default' (or 'switch-refused' when the row names an id this build cannot run — fail closed, with the reason as the note). Consequence for the surface: a registry-pinned harness is no longer the ceiling, so providerOverridable is TRUE for every readable-registry bot and the panel's disabled select comes alive. The legacy per-agent record (agents.api_provider_id / agent_config providerId) keeps exactly the rank it had — below a non-cline registry harness — because the box measured on 2026-09-17 holds 11 such rows that differ from the registry (8 on the cancelled claude-code subscription) and honouring them at merge would have moved the fleet.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot provider precedence rule, extracted as ONE pure function so the cockpit can show a bot's EFFECTIVE provider and say plainly when the registry outranks the operator's pick. This was previously only knowable by reading three files: provider-runtime.ts:841 (a registry harnessType short-circuits the whole DB/cockpit path), claude-code-provider.ts:246 (inside the cline harness the ORDER is request > agent profile > registry apiType > global config), and bot-node-config-bootstrap.ts:184 (a DB modelId reaches even a registry-pinned harness through CODEX_MODEL/CLAUDE_CODE_MODEL, which is why the model stays overridable when the provider does not). Lives in shared/ because both the agent-profile feature and any surface over it need the same answer; duplicating it in browser JS is how the panel would start lying.
  *
  * @module shared/llm-runtime/bot-provider-precedence
  */
 
+import type { BotProviderSwitchResolution } from './bot-provider-switch';
+
 /** Where a bot's effective provider actually comes from. */
 export type BotProviderSource =
-  /** The registry pinned a non-cline harnessType; it short-circuits everything below. */
+  /** The bot's own switch row (the operator's per-bot pick, honoured above the registry). */
+  | 'bot-row'
+  /** The fleet-default switch row: no per-bot row, and the registry runs this bot on an LLM harness. */
+  | 'fleet-default'
+  /** A switch row won but names a provider id this build cannot run — refused, with the reason. */
+  | 'switch-refused'
+  /** The registry pinned a non-cline harnessType; it short-circuits every LEGACY tier below. */
   | 'registry-harness'
   /** The per-agent DB record (agents.api_provider_id / agent_config providerId). */
   | 'agent-profile'
@@ -41,6 +50,12 @@ export interface BotProviderInputs {
    * "nothing is pinned". Defaults to true (a caller that always has the registry need not pass it).
    */
   registryReadable?: boolean;
+  /**
+   * The switch-row resolution for this bot from `resolveBotProviderSwitch` (bot-provider-switch.ts).
+   * Absent/null, or a resolution whose source is 'registry', means no switch row applies and the
+   * legacy ladder below decides exactly as it always has.
+   */
+  switchResolution?: BotProviderSwitchResolution | null;
 }
 
 /** The resolved answer, shaped for direct rendering. */
@@ -82,9 +97,14 @@ function meaningful(value: string | null | undefined): string | null {
  * surface never has to invent an explanation for a case it did not expect.
  *
  * Precedence, highest first:
+ *   0. a SWITCH ROW — the bot's own, else the fleet default for a bot the registry runs on an LLM
+ *      harness (bot-provider-switch.ts). A row naming an id this build cannot run is refused here
+ *      with its reason; it never falls through to the rungs below.
  *   1. a registry `harnessType` other than 'cline' — `resolveHarnessForAgent` returns that harness
- *      before the process provider or any DB record is consulted, so the cockpit pick is inert;
- *   2. the per-agent DB provider;
+ *      before the process provider or the LEGACY DB record is consulted. Since the switch rows
+ *      landed this is no longer a ceiling for the operator: writing a per-bot switch row overrides
+ *      it, so `providerOverridable` is true here.
+ *   2. the per-agent legacy DB provider (agents.api_provider_id / agent_config providerId);
  *   3. the registry `apiType` (the cline harness's `configuredProvider`);
  *   4. the deployment default (`FORCE_LLM_PROVIDER`, then global-config.json).
  *
@@ -113,17 +133,20 @@ export function resolveEffectiveBotProvider(inputs: BotProviderInputs): Effectiv
   const dbProvider = meaningful(inputs.dbProviderId);
   const effectiveModel = meaningful(inputs.dbModelId);
 
+  const fromSwitch = resolveFromSwitchRow(inputs.switchResolution, effectiveModel);
+  if (fromSwitch) return fromSwitch;
+
   if (harness && harness !== PASS_THROUGH_HARNESS) {
     return {
       effectiveProvider: apiType ?? harness,
       effectiveModel,
       providerSource: 'registry-harness',
-      providerOverridable: false,
+      providerOverridable: true,
       modelOverridable: true,
-      precedenceNote: `The bot registry pins harness '${harness}' for this bot, and a declared harness `
-        + 'is resolved before the deployment provider or any per-bot record — so a provider pick here '
-        + 'would have no effect. Changing it means changing the registry entry. The MODEL is still '
-        + "yours to set: it reaches the harness through the bot-node config bootstrap's model env var.",
+      precedenceNote: `The bot registry declares harness '${harness}' for this bot and no switch row `
+        + "overrides it. Saving a provider here writes the bot's own switch row, which is resolved "
+        + 'ABOVE the registry literal; the fleet default (one row) sits between the two. The legacy '
+        + 'per-bot record stays below the registry and is not what a save writes.',
     };
   }
 
@@ -161,5 +184,43 @@ export function resolveEffectiveBotProvider(inputs: BotProviderInputs): Effectiv
     precedenceNote: 'Nothing bot-specific is set, so this bot follows the deployment default '
       + '(FORCE_LLM_PROVIDER, then the active provider in global-config.json). Saving a provider here '
       + 'gives it one of its own.',
+  };
+}
+
+/**
+ * @description The switch-row rung of the ladder: a winning row answers for the bot, a refused row
+ * answers with its reason, and no row (or a registry-sourced resolution) defers to the legacy tiers.
+ * @param resolution - The switch resolution, if the caller had rows to resolve.
+ * @param legacyModel - The legacy per-agent model, reported when the row names none.
+ * @returns The effective provider from the switch rung, or null to defer.
+ */
+function resolveFromSwitchRow(
+  resolution: BotProviderSwitchResolution | null | undefined,
+  legacyModel: string | null,
+): EffectiveBotProvider | null {
+  if (!resolution || resolution.source === 'registry') return null;
+  if (!resolution.ok) {
+    return {
+      effectiveProvider: resolution.providerId,
+      effectiveModel: meaningful(resolution.row.modelId) ?? legacyModel,
+      providerSource: 'switch-refused',
+      providerOverridable: true,
+      modelOverridable: true,
+      precedenceNote: `The ${resolution.source === 'bot-row' ? "bot's own" : 'fleet-default'} switch row names `
+        + `'${resolution.providerId}', which this build cannot run — refused, and nothing falls back to the `
+        + `registry: ${resolution.reason}`,
+    };
+  }
+  const rung = resolution.source === 'bot-row' ? "This bot's own switch row" : 'The fleet-default switch row';
+  return {
+    effectiveProvider: resolution.providerId,
+    effectiveModel: resolution.modelId ?? legacyModel,
+    providerSource: resolution.source,
+    providerOverridable: true,
+    modelOverridable: true,
+    precedenceNote: `${rung} decides: '${resolution.providerId}' runs through harness '${resolution.harnessType}'. `
+      + (resolution.source === 'bot-row'
+        ? 'It outranks the fleet default and the registry literal; clear it to fall back to them.'
+        : 'No per-bot row exists, so the fleet default outranks the registry literal; save a provider here to give this bot its own row.'),
   };
 }

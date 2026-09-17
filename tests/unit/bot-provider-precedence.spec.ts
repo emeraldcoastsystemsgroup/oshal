@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Named guard provider-panel-shows-registry-precedence. Pins the rule itself (a non-cline registry harnessType outranks the per-bot DB record; 'auto' is the no-opinion sentinel, not a provider; the MODEL stays overridable when the provider does not, because the bot-node config bootstrap maps modelId onto the harness's model env var), pins that a FAILED registry read fails CLOSED instead of promoting the DB record (the aliased require() the controller uses does not resolve under vitest, so this environment exercises that branch deterministically), pins that /api/agents carries the resolved fields, and pins that the Utilities panel disables the control FROM providerOverridable, renders the API's own reason verbatim, never sends a providerId from a disabled select, and reports a 502 push refusal as not-applied. The classification runs over the REAL active registry so it is not fixture-only. NOT asserted: "some bot is overridable" - every shipped registry entry declares a harness today, and a gate that a legitimate future cline bot would turn red is a gate nobody can act on.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Re-pointed the retired Utilities surface guard at Config Admin and added executable refusal coverage proving a disabled provider cannot leak into runtime/profile writes
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove disabled provider/model values are absent from single and bulk payloads; model-only runtime updates rely on server-owned transport resolution
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | INVERTED, not deleted (BACKLOG "A bot's LLM provider is a row in a table"): a non-cline registry harness still outranks the LEGACY per-bot record, but it is no longer a ceiling — providerOverridable is true because a save now writes a switch row that resolves above the registry. The real-registry sweep now asserts every entry is overridable and still names a concrete provider.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -58,27 +59,31 @@ async function listAgentsVia(service: AgentProfileService): Promise<Array<Record
 }
 
 describe('provider-panel-shows-registry-precedence', () => {
-  it('a non-cline registry harness outranks the per-bot DB provider, and SAYS so', () => {
+  it('a non-cline registry harness outranks the LEGACY per-bot DB provider, but is no longer a ceiling', () => {
+    // INVERTED 2026-09-17, not deleted. The legacy record (agents.api_provider_id / agent_config
+    // providerId) still loses to a declared harness — the operator box holds 11 such rows that
+    // differ from the registry and they must stay inert. What changed: a SWITCH ROW written by a
+    // save now resolves above the registry, so the surface may offer the control.
     const r = resolveEffectiveBotProvider({
       harnessType: 'codex-cli',
       apiType: 'openai-codex',
-      dbProviderId: 'anthropic',   // an operator's pick that cannot win
+      dbProviderId: 'anthropic',   // a legacy pick that still cannot win
       dbModelId: 'gpt-5-codex',
     });
     expect(r.providerSource).toBe('registry-harness');
     expect(r.effectiveProvider).toBe('openai-codex');
     expect(r.effectiveProvider).not.toBe('anthropic');
-    expect(r.providerOverridable).toBe(false);
+    expect(r.providerOverridable).toBe(true);
     expect(r.precedenceNote).toMatch(/registry/i);
-    expect(r.precedenceNote).toMatch(/no effect|would have no effect/i);
+    expect(r.precedenceNote).toMatch(/switch row/i);
+    expect(r.precedenceNote).not.toMatch(/no effect/i);
   });
 
-  it('the MODEL stays overridable even when the provider is pinned', () => {
+  it('the MODEL stays overridable alongside the provider', () => {
     // The bot-node config bootstrap maps a pulled modelId onto CODEX_MODEL / CLAUDE_CODE_MODEL, so
-    // the model reaches a pinned harness even though the provider does not. Reporting the model as
-    // un-settable would be as wrong as offering a provider control that does nothing.
+    // the model reaches a declared harness; the provider now reaches it through the switch row.
     const r = resolveEffectiveBotProvider({ harnessType: 'claude-code', apiType: 'anthropic', dbModelId: 'claude-opus-4' });
-    expect(r.providerOverridable).toBe(false);
+    expect(r.providerOverridable).toBe(true);
     expect(r.modelOverridable).toBe(true);
     expect(r.effectiveModel).toBe('claude-opus-4');
   });
@@ -134,14 +139,13 @@ describe('provider-panel-shows-registry-precedence', () => {
   /**
    * Run the rule over the REAL shipped registry so it is not tested only against fixtures.
    *
-   * A finding, deliberately NOT asserted as an invariant: every entry in the default registry
-   * declares a non-cline harnessType today, so ZERO shipped bots are provider-overridable. That is
-   * exactly why the panel's read-only branch and its "nothing here is changeable" empty state
-   * matter more than its writable branch. Asserting "at least one overridable bot exists" would
-   * make a legitimate future cline bot the thing that turns this red, and a red gate nobody can act
-   * on trains everyone to ignore red — so what is pinned here are the real invariants instead.
+   * Before the switch rows landed every entry in the default registry declared a non-cline
+   * harnessType, so ZERO shipped bots were provider-overridable and the panel's read-only branch
+   * was the one that mattered. Now the registry literal is the BOTTOM rung: every readable-registry
+   * bot is overridable through its switch row, and a registry-sourced bot must still name a
+   * concrete provider (an answer of "registry, but nothing" would render as a blank select).
    */
-  it('the rule classifies every REAL registry entry, and a pinned bot always names a provider', () => {
+  it('the rule classifies every REAL registry entry; all are overridable and a registry bot still names a provider', () => {
     const registry = getActiveRegistry() as Array<{ name: string; harnessType?: string; apiType?: string }>;
     expect(registry.length).toBeGreaterThan(0);
     const resolved = registry.map((b) => ({
@@ -151,9 +155,8 @@ describe('provider-panel-shows-registry-precedence', () => {
     const KNOWN = ['registry-harness', 'agent-profile', 'registry-api-type', 'deployment-default'];
     // 'registry-unreadable' is deliberately absent: this loop passes the registry it just read.
     for (const r of resolved) expect(KNOWN, r.name).toContain(r.providerSource);
-    // A pinned bot must always resolve to a concrete provider name — "pinned to nothing" would
-    // render as read-only with no answer, which is worse than being changeable.
-    for (const r of resolved.filter((x) => x.providerOverridable === false)) {
+    for (const r of resolved) expect(r.providerOverridable, r.name).toBe(true);
+    for (const r of resolved.filter((x) => x.providerSource === 'registry-harness')) {
       expect(r.effectiveProvider, r.name).toBeTruthy();
     }
     // The registry-pinned branch must be exercised by real data, not only by fixtures.
