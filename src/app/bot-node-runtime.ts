@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Honor DB_MAX_CONNECTIONS for the bot-node Postgres pool and stamp a per-bot application_name, making the existing fleet knob effective for managed-database connection budgets.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Admit verified hosted protected execution and keep only cost bookkeeping in explicit system context.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | A lost cold-start race no longer leaves the long-lived bot pool-less for life. connectPool moved to bot-node-database-pool.ts (re-exported here for the one-shot callers, contract unchanged); createBotNodeRuntime takes { recoverDatabase } and, when the server sets it, builds every repository and the protected-execution boundary over a pool that is KEPT through boot-window exhaustion and recovered in the background, and exposes `database` (status + whenReady) so the health route can refuse 200 while there is no database. The batch runner does not set it: a Job pod must exit, not wait.
  */
 import { createProtectedBotExecutionBoundary } from './bot-node-protected-execution';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -32,10 +33,8 @@ import { runWithSystemIdentity } from '@/shared/services/database/request-identi
  * @module bot-node-runtime
  */
 
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
-import { gucEnabled, wrapPoolWithGuc } from '@/shared/services/database/guc-pool';
-import { postgresApplicationName, resolvePoolMax } from '@/shared/services/database/pool-sizing';
 import type { MeshEnvelope } from '@/features/agent-management';
 import { PersonaLayerStore, SwarmMemoryService } from '@/features/agent-management';
 import { RagService } from '@/features/rag';
@@ -50,6 +49,9 @@ import { createBotNodeExecutionHandler } from './bot-node-execution-handler';
 import { applyPulledBotConfigToEnv, runBootConfigBootstrap } from './bot-node-config-bootstrap';
 import { UnknownBotNodeProviderError, type ActiveBotNodeProvider } from './bot-node-llm-provider-route';
 import { createPromptAuthorizationResolver } from './prompt-authorization-resolver';
+import { connectPool, connectRecoverableBotNodeDatabase, type BotNodeDatabase } from './bot-node-database-pool';
+
+export { connectPool };
 
 const logger = createChildLogger({ module: 'bot-node-runtime' });
 
@@ -62,6 +64,8 @@ export interface BotNodeRuntime {
   /** Full resolved identity — the server reads aliases/endpoints from it for heartbeats. */
   identity: ReturnType<typeof SwarmBotRegistry.resolveRuntimeIdentity>;
   pool: Pool | null;
+  /** Whether the pool has ever answered, and when it first does. The health route reads this. */
+  database: Pick<BotNodeDatabase, 'status' | 'whenReady' | 'stop'>;
   agentProfileRepository?: AgentProfileRepository;
   personaLayerStore?: PersonaLayerStore;
   workItemRepository?: WorkItemRepository;
@@ -91,16 +95,20 @@ export interface BotNodeRuntime {
  * connects Postgres (retrying a cold start) under the RLS GUC wrapper, constructs the
  * repositories, initializes the any-bot LLM provider stack with runtime failover, and wires
  * the envelope execution handler.
- * @returns The constructed runtime. Degrades gracefully to a DB-less runtime when Postgres
- *   never answers (repositories are then undefined; cost capture becomes a no-op).
+ * @param options - `recoverDatabase: true` (the long-lived server) keeps the pool through a lost
+ *   cold-start race and recovers it in the background; omitted (one-shot batch) keeps the bounded
+ *   connect that returns null so the process can exit.
+ * @returns The constructed runtime. DB-less (repositories undefined, cost capture a no-op) only
+ *   when DATABASE_URL is unset, or for a one-shot caller whose bounded connect was exhausted.
  */
-export async function createBotNodeRuntime(): Promise<BotNodeRuntime> {
+export async function createBotNodeRuntime(options: { recoverDatabase?: boolean } = {}): Promise<BotNodeRuntime> {
   const runtimeIdentity = SwarmBotRegistry.resolveRuntimeIdentity(process.env);
   const agentId = runtimeIdentity.agentId;
   const botName = runtimeIdentity.agentName;
   logger.info({ agentId, botName, role: runtimeIdentity.role }, 'Resolved runtime identity');
 
-  const pool = await connectPool();
+  const database = options.recoverDatabase ? await connectRecoverableBotNodeDatabase() : await connectOneShotDatabase();
+  const pool = database.pool;
 
   const agentProfileRepository = pool ? new AgentProfileRepository(pool) : undefined;
   const agentToolRepository = pool ? new AgentToolRepository(pool) : undefined;
@@ -144,48 +152,20 @@ export async function createBotNodeRuntime(): Promise<BotNodeRuntime> {
   return {
     agentId, botName, role: runtimeIdentity.role, capabilities: runtimeIdentity.capabilities,
     identity: runtimeIdentity,
-    pool, agentProfileRepository, personaLayerStore, workItemRepository,
+    pool, database, agentProfileRepository, personaLayerStore, workItemRepository,
     costTrackingService, ticketService, executionHandler, providerName, modelName,
     getActiveProvider, setActiveProvider, agenticController,
   };
 }
 
-/**
- * @description Connects Postgres with cold-start retries and wraps the pool with the RLS GUC
- * stamper. Bots have no request identity, so the wrapper stamps trusted system context —
- * without it they'd be starved to zero rows under restrictive RLS.
- * @returns The pool, or null when the DB never answered (the bot still runs, DB-less).
- */
-export async function connectPool(): Promise<Pool | null> {
-  const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) return null;
-
-  let pool: Pool | null = new Pool({
-    connectionString: dbUrl,
-    max: resolvePoolMax(process.env.DB_MAX_CONNECTIONS, 5),
-    application_name: postgresApplicationName(
-      process.env.PGAPPNAME,
-      `oshal-bot-${process.env.BOT_NAME || process.env.AGENT_ID || 'unknown'}`,
-    ),
-  });
-  const maxAttempts = Math.max(1, Number(process.env.BOT_DB_CONNECT_ATTEMPTS ?? 10));
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      await pool.query('SELECT 1');
-      if (gucEnabled()) pool = wrapPoolWithGuc(pool);
-      logger.info('Postgres connected');
-      return pool;
-    } catch (err) {
-      if (attempt === maxAttempts) {
-        logger.warn({ err, attempts: maxAttempts }, 'Postgres not available after retries — running without DB');
-        try { await pool.end(); } catch { /* failed pool — ignore cleanup error */ }
-        return null;
-      }
-      logger.info({ attempt, maxAttempts }, 'Postgres not ready — retrying in 2s');
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-    }
-  }
-  return null;
+/** One-shot callers get connectPool's bounded contract, described in the same status shape. */
+async function connectOneShotDatabase(): Promise<BotNodeDatabase> {
+  const pool = await connectPool();
+  const status = { configured: Boolean(process.env.DATABASE_URL), ready: Boolean(pool), attempts: 0 };
+  return {
+    pool, status: () => ({ ...status }), stop: () => undefined,
+    whenReady: pool ? Promise.resolve() : new Promise<void>(() => undefined),
+  };
 }
 
 /** The any-bot TaskController shape the execution handler depends on. */

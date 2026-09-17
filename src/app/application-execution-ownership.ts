@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Compare the bound executable name against the ownership arrays as text. `swarm_applications.agent_ids` is UUID[] (migration 022) while the parameter binds as text, so `$1=ANY(agent_ids)` raised `operator does not exist: text = uuid` for every kind:'bots' read. That threw ApplicationOwnershipUnavailableError, which canReadProtectedResult swallows to `false`, so every Jarvis ask answered 404 session_not_found from 2026-09-11 (c18f057a) onward. Log the swallowed failure: callers turn it into a bare refusal, so an unlogged one hid a three-day Jarvis outage.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Resolve an ambiguous bot association to the loader-stamped owner instead of refusing. `swarm_applications.agent_ids` is an ASSOCIATION column and is deliberately many-to-many (swarm-app-repository `upsert` resolves `workflow.workerBot` by name for carved apps with no `bots:`, so Jarvis catalog/mesh/selector keep working after ADR-085) — twelve live ids are claimed by more than one app, several of them correctly. Reading it as ownership, which must be 1:1, raised `Ambiguous package ownership` on every such read; callers swallow that to `false`, so tickets vanished from the operator's own listing (docs/operations/agent-id-ownership-collisions.md). `agents.metadata.manifestApp` is loader-stamped (manifest-bot-runtime `upsertManifestBot`) and is the authoritative owner, so arbitrate with it. No stamp, an inactive agent, a tool name, or a stamp that is not one of the claimants still refuses: this is an authorization path and an unresolvable case must fail closed.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Read the claims through oshal_application_execution_claims (migration 142) instead of querying oshal_authorization_applications and swarm_applications inline. The bot node runs this same reader as oshal_bot, and the governed bot contract gives that role the derived answer, not the tables - so the posture guard stops failing closed on 42501 for every bot execution (BUG-25). The controller calls the same helper, so ownership has one definition.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Carry the underlying failure as `cause`. The read path threw a bare ApplicationOwnershipUnavailableError, so the bot posture guard could not tell an unreachable database (socket refused after a lost cold-start race) from a database that answered with an error, and named both as an authorization fault. Additive: same class, same code, same 503, same fail-closed throw.
  */
 /** Durable package ownership closes the interval before activation and survives disabled/uninstalled packages. */
 import type { Pool } from 'pg';
@@ -19,7 +20,10 @@ export class ApplicationOwnershipUnavailableError extends Error {
   readonly status = 503;
   readonly statusCode = 503;
   readonly code = 'authorization_ownership_unavailable';
-  constructor() { super('Application execution ownership is unavailable'); this.name = 'ApplicationOwnershipUnavailableError'; }
+  constructor(cause?: unknown) {
+    super('Application execution ownership is unavailable', cause === undefined ? undefined : { cause });
+    this.name = 'ApplicationOwnershipUnavailableError';
+  }
 }
 interface OwnershipClaim { app: string; protected: boolean }
 
@@ -91,6 +95,6 @@ export async function readApplicationExecutionOwnership(pool: Pick<Pool, 'query'
     // Callers fail closed on this error, and several swallow it to a bare `false` (a refused Jarvis
     // conversation, an unreadable result). Name it here or the next schema drift is silent again.
     logger.error({ err, kind: input.kind, id: input.id, app: input.app ?? null }, 'application execution ownership read failed');
-    throw new ApplicationOwnershipUnavailableError();
+    throw new ApplicationOwnershipUnavailableError(err);
   }
 }
