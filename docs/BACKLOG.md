@@ -1363,6 +1363,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   `registry`) so the UI can show where a value came from. A fleet-default control lives beside it.
 - **Out of scope here:** the Cline fallback's missing binary - its own change with an image-level
   guard, because it restores agentic work on the persisted Gemini config without touching resolution.
+  **That change landed as its own entry below** ("The Cline fallback brain could not start").
 - **Done when:** a unit spec proves a per-bot row overrides the registry, a fleet-default row
   overrides the registry for a bot without its own row, a per-bot row beats the fleet default, no
   rows resolve byte-identically to today (the existing registry-wins spec is inverted, not deleted),
@@ -1371,6 +1372,40 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   audit) rather than a mocked store; the cockpit select is enabled and a browser case writes a row
   and sees the resolved source change; and the operator flips one bot to `gemini` /
   `gemini-3.8-flash` from the cockpit and it answers on Gemini in the bot's own log.
+
+### The Cline fallback brain could not start: a glibc executable on a musl base (2026-09-17)
+
+- **What was measured.** On a real ticket at 22:57Z: Codex refused on its usage limit, the JS
+  `ProviderFailoverProvider` fired (`provider_runtime_failure`, primary=openai-codex,
+  fallback=cline-cli), and the fallback died with `spawnSync
+  /usr/local/lib/node_modules/cline/bin/.cline ENOENT` - a file that EXISTS (151 MB ELF,
+  `PT_INTERP /lib64/ld-linux-x86-64.so.2`; `/lib64` did not exist; base is Alpine). `cline@latest`
+  floated from the pure-JS 2.x line onto 3.x, whose npm package is a Bun-compiled glibc
+  executable with no musl build. With the binary starting (a container hot-fixed with unconfined
+  gcompat at 23:11Z) the next failed-over ticket at 23:16:33Z died a second way: the wrapper passed
+  `-m gpt-5.5` (the fleet default `ClineProvider` was constructed with) to the resolved gemini
+  backing provider - `models/gpt-5.5 is not found for API version v1beta`.
+- **Landed (PR "fix(image): the Cline fallback brain could not start"):** `Dockerfile.oshal` pins
+  cline by `ARG CLINE_VERSION`, installs the gcompat loader stub CONFINED to the glibc executable
+  (the `/lib` glibc aliases are removed so node still refuses glibc-only native addons - measured
+  before and after on the msgpackr glibc build) and asserts inside the layer that `cline --version`
+  prints the pinned version; `scripts/check-cline-entrypoint.mjs` runs the real launcher inside an
+  image or a running container and `scripts/oshal-deploy.sh` refuses an image that fails it;
+  `ClineProvider` gates and spawns with the backing provider's model. Guards:
+  `tests/unit/cline-entrypoint-probe.spec.ts`, `tests/unit/cline-provider-fallback-model.spec.ts`.
+  Runbook: `docs/runbooks/cline-fallback-entrypoint.md` (includes the per-container operator
+  hot-fix).
+- **Proof so far:** the probe is FAIL (`glibc-binary-no-loader`) on `oshal-bot:latest` and on
+  `oshal-local-api`, PASS on a throwaway container carrying the new layer, where a real Gemini
+  task also completed; the Dockerfile RUN body executed in a throwaway container from the shipped
+  image exits 0 with the pinned version and 1 with a drifted one.
+- **Remaining:** no image was built on the box (memory constrained), so the in-layer assert has not
+  run inside a real `docker build`; the running fleet still carries the broken image; nothing
+  exercises cline 3.x's migration of the wrapper's `config.json` into its own `providers.json`.
+- **Done when:** `bash scripts/oshal-deploy.sh` builds the image with the layer green, its image
+  verify prints `image verified: cline fallback entrypoint starts`, and a ticket that fails over
+  from Codex completes on the persisted Gemini config with `provider: 'cline-cli'` and
+  `model: gemini-3.8-flash` on its `chat_tasks` row.
 
 
 ### Jarvis briefing preferences (operator ask, 2026-08-09)
