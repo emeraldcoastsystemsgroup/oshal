@@ -11,15 +11,9 @@ To comment, write under an entry in this file and tell me, or just say the entry
 
 ---
 
-## Right now — 6
+## Right now — 3
 
 Short-lived and blocking today. Source: `docs/backlog/operator-now.json` (as of 2026-09-17).
-
-### Migrate Little Monsters to named roles
-
-Little Monsters 1.3.2 now declares student, teacher and admin structural roles. Its rebuilt package passes 88 registered checks. Core issuer isolation, package lifecycle guards and a reviewed package-assignment screen are implemented. These source proofs do not change the deployed grant or verify an actual student sign-in. Existing assignments reference the old catalog revision, so the core intentionally refuses activation until they are reviewed and migrated.
-
-**Do:** After the core rollout, review all existing grants, restrictions, expiry and group mappings. Remove only reviewed incompatible assignments through the OLD catalog preview/apply flow, activate 1.3.2, then explicitly restore intended named roles and restrictions. See docs/backlog/session-resume-2026-09-17.md and the package authorization guide. Do not delete policy rows or infer a student role from an admin label.
 
 ### Sign Ella in once, to close the last gap
 
@@ -38,18 +32,6 @@ Your PATs are already god-level — that is not the problem, and there is nothin
 A lane's bad redaction printed the values of ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA_KEY into its own transcript; it disclosed this unprompted. Separately, the oshal PAT was pasted into chat. Neither left this machine, but neither should sit in a log.
 
 **Do:** Rotate the Alpaca paper keys; re-mint OSHAL_VERIFY_OPERATOR_PAT from a signed-in session and replace the line in .env. The deploy path now reads .env for that name, so replacing the line is enough.
-
-### Review and deploy after establishing build headroom
-
-Core PR 605 and Little Monsters PR 237 are published and await the required approving review. The core preview build was stopped during npm ci after Docker/API timeouts under observed low host memory. The prior runtime recovered: API HTTP 200, 37/37 app containers healthy, unchanged access-assignment fingerprints, commit 49686ac4. Migration 145 is still absent. This is source-verified work, not a completed deployment.
-
-**Do:** Arrange the required review and establish host/engine build headroom or an adequately provisioned build worker. Then use the normal full verified deploy command (documented --preview only for an authorized published feature preview). Do not use --skip-build with the old image. Follow docs/backlog/session-resume-2026-09-17.md; Little Monsters catalog activation and real student sign-in remain separate steps.
-
-### Review WSL memory configuration
-
-The earlier handover reports an unrecognized wsl2.autoMemoryReclaim key in %USERPROFILE%/.wslconfig. The resumed image build coincided with Docker/API timeouts while the host had approximately 0.8?1 GB free physical memory and Docker reported a 4.8 GiB memory limit. The runtime recovered after the owned build stopped. These observations do not prove that one configuration key caused the incident; the file was not changed.
-
-**Do:** Review the configuration and active workload memory before another build. Any configuration change requiring Docker/WSL restart should be planned around other workloads. Do not shut down WSL during a build or discard existing volumes.
 
 ---
 

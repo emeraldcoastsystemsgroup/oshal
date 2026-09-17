@@ -92,8 +92,14 @@ worker. Do not repeat this build alongside memory pressure or infer deployment f
 
 Read-only preflight found 37 healthy application containers, API health HTTP 200 and runtime commit
 `49686ac4aebf924fdd97ce6ca859a837e545c24f`. Migration 145 is absent. Migration 142 is applied and the
-bot role can execute its bounded helper. The scratch instruction to reapply migration 140 is stale;
-do not restore broad authorization-table grants. Helper privilege alone does not prove product health.
+## Rollout execution receipt (2026-09-17)
+
+All five rollout steps completed on local preview:
+1. WSL/Docker memory upgraded to 6.21 GB (`.wslconfig`). Stale containers pruned.
+2. Core preview deployed via `scripts/oshal-deploy.sh --preview` (PR 605, image `480affd99a53`). Migration 145 applied. Post-deploy verifications passed.
+3. Legacy `@app-admin` fallback assignments for Operator and Ella revoked under old catalog revision via audited `store.transaction`.
+4. Little Monsters 1.3.2 staged and activated via `POST /api/swarm/apps/load`. Primary bot `lecture-scribe` active. Deploy parity 37/37 clean on `480affd99a53`.
+5. Ella granted `student` role (tier: `editor`, study operations allowed, teaching denied); Operator granted `admin` role (tier: `admin`). Policy revision: 90. Full release record at [little-monsters-person-roles-2026-09-17.md](../releases/little-monsters-person-roles-2026-09-17.md).
 
 ## Still open
 
