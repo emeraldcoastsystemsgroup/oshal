@@ -28,8 +28,9 @@ perspective: |
     (compute cost only); larger ones imply cleared hires (~$13K/mo loaded) or teaming.
   - **OSHAL honesty (CRITICAL — this goes to a contracting officer):** OSHAL is **beta**. Its
     build and incident (RCA) pipelines run end-to-end with mix-mode bots. The demonstrable
-    proofs are an enterprise-database root-cause-analysis run at **~$1.30/RCA** (vs ~$4.05 for a 2-bot
-    pipeline) and a working CLIP semantic-image-search demo. Tie every OSHAL claim to those.
+    proofs are an enterprise-database root-cause-analysis run at **~$1.30/RCA (n=1)** vs a **~$4.05 (n=7)** median for a 2-bot
+    pipeline — one workload, one corpus, not a benchmark — and a working CLIP semantic-image-search demo. Tie every OSHAL claim to those.
+    Never state either figure without its n and that limit; a contracting officer reading it as a rate is an overstatement.
     **Do NOT invent capabilities, harnesses, pipelines, metrics, certifications, clearances at
     the entity level, or past performance.** Overstating in front of a CO is a disqualifier. If
     a fact is unknown (not yet pulled from SAM/the PWS), say so explicitly — never fabricate.
@@ -75,7 +76,8 @@ perspective: |
     verify in SAM/the PWS), competitive landscape, and the realistic win probability for a new
     firm with no CPARS. No fabricated award numbers — mark unknowns.
   - `deliverables/SOLUTION-WIN-THEMES.md` — 3–5 win themes. **Every theme ties to something we
-    can actually prove** (relevant certifications, enterprise ERP depth, small-business, the $1.30 RCA / CLIP demo) —
+    can actually prove** (relevant certifications, enterprise ERP depth, small-business, the $1.30 (n=1) RCA / CLIP demo,
+    quoted as one workload and not a benchmark) —
     not a slogan. Flag anything that would need to be built before it's claimable.
   - `deliverables/PRICING-BOE.md` *(Mode A only)* — a basis of estimate: labor model (solo+OSHAL
     compute vs cleared hires at ~$13K/mo loaded), duration, and a **low / expected / high** range

@@ -1,0 +1,228 @@
+{
+  "generator": "scripts/evidence/cost-per-ticket-type.ts",
+  "capturedAt": "2026-09-17T16:41:08.276Z",
+  "proofTier": "live",
+  "source": "chat_tasks joined to tickets through the product's own ticket_task_links, read inside a READ ONLY transaction on the operator's live cluster",
+  "window": {
+    "firstSeen": "2026-04-25",
+    "lastSeen": "2026-08-13"
+  },
+  "totals": {
+    "ticketTypes": 17,
+    "tickets": 138,
+    "llmRequests": 469,
+    "costUsd": 149.8218
+  },
+  "limits": [
+    "One operator cluster, one model mix, and whatever workloads that operator actually ran — not a controlled benchmark.",
+    "A ticket type with a small n is a sample, not a rate: read the range beside the median, never the median alone.",
+    "Cost is what the provider billed for the LLM calls linked to the ticket. Compute, storage and human time are not in it.",
+    "Ticket types named smoke-*, *-probe and test-* are harness fixtures kept in the table so the n is not quietly curated."
+  ],
+  "ticketTypes": [
+    {
+      "ticketType": "build",
+      "tickets": 60,
+      "medianCostUsd": 1.0409,
+      "minCostUsd": 0.1196,
+      "maxCostUsd": 8.8715,
+      "totalCostUsd": 102.9611,
+      "meanTokens": 238226,
+      "llmRequests": 343,
+      "firstSeen": "2026-06-21",
+      "lastSeen": "2026-07-20"
+    },
+    {
+      "ticketType": "intelligent-processing",
+      "tickets": 28,
+      "medianCostUsd": 1.1376,
+      "minCostUsd": 0.4566,
+      "maxCostUsd": 2.2697,
+      "totalCostUsd": 31.1048,
+      "meanTokens": 22104,
+      "llmRequests": 54,
+      "firstSeen": "2026-08-01",
+      "lastSeen": "2026-08-02"
+    },
+    {
+      "ticketType": "task",
+      "tickets": 17,
+      "medianCostUsd": 0.0489,
+      "minCostUsd": 0.0139,
+      "maxCostUsd": 0.5787,
+      "totalCostUsd": 1.9022,
+      "meanTokens": 3988,
+      "llmRequests": 17,
+      "firstSeen": "2026-06-26",
+      "lastSeen": "2026-08-04"
+    },
+    {
+      "ticketType": "daily-trade-recap",
+      "tickets": 8,
+      "medianCostUsd": 0.0347,
+      "minCostUsd": 0.0107,
+      "maxCostUsd": 0.2143,
+      "totalCostUsd": 0.5073,
+      "meanTokens": 3059,
+      "llmRequests": 21,
+      "firstSeen": "2026-06-26",
+      "lastSeen": "2026-06-30"
+    },
+    {
+      "ticketType": "chat",
+      "tickets": 6,
+      "medianCostUsd": 0.0201,
+      "minCostUsd": 0.0002,
+      "maxCostUsd": 0.0429,
+      "totalCostUsd": 0.1192,
+      "meanTokens": 2363,
+      "llmRequests": 6,
+      "firstSeen": "2026-06-28",
+      "lastSeen": "2026-08-13"
+    },
+    {
+      "ticketType": "federal-capture",
+      "tickets": 3,
+      "medianCostUsd": 0.144,
+      "minCostUsd": 0.0148,
+      "maxCostUsd": 0.554,
+      "totalCostUsd": 0.7128,
+      "meanTokens": 108167,
+      "llmRequests": 3,
+      "firstSeen": "2026-06-01",
+      "lastSeen": "2026-06-29"
+    },
+    {
+      "ticketType": "incident",
+      "tickets": 2,
+      "medianCostUsd": 1.8076,
+      "minCostUsd": 0.8622,
+      "maxCostUsd": 2.753,
+      "totalCostUsd": 3.6152,
+      "meanTokens": 666547,
+      "llmRequests": 4,
+      "firstSeen": "2026-04-26",
+      "lastSeen": "2026-07-08"
+    },
+    {
+      "ticketType": "durable-probe",
+      "tickets": 2,
+      "medianCostUsd": 0.4439,
+      "minCostUsd": 0.3828,
+      "maxCostUsd": 0.505,
+      "totalCostUsd": 0.8877,
+      "meanTokens": 6361,
+      "llmRequests": 5,
+      "firstSeen": "2026-07-05",
+      "lastSeen": "2026-07-05"
+    },
+    {
+      "ticketType": "test-gate-flow",
+      "tickets": 2,
+      "medianCostUsd": 0.2591,
+      "minCostUsd": 0.2483,
+      "maxCostUsd": 0.2698,
+      "totalCostUsd": 0.5182,
+      "meanTokens": 3415,
+      "llmRequests": 2,
+      "firstSeen": "2026-06-22",
+      "lastSeen": "2026-06-23"
+    },
+    {
+      "ticketType": "smoke-published-flow",
+      "tickets": 2,
+      "medianCostUsd": 0.0347,
+      "minCostUsd": 0.0265,
+      "maxCostUsd": 0.043,
+      "totalCostUsd": 0.0695,
+      "meanTokens": 2330,
+      "llmRequests": 2,
+      "firstSeen": "2026-06-23",
+      "lastSeen": "2026-06-23"
+    },
+    {
+      "ticketType": "capability-ideation",
+      "tickets": 2,
+      "medianCostUsd": 0.0134,
+      "minCostUsd": 0.0084,
+      "maxCostUsd": 0.0185,
+      "totalCostUsd": 0.0269,
+      "meanTokens": 902,
+      "llmRequests": 2,
+      "firstSeen": "2026-08-01",
+      "lastSeen": "2026-08-01"
+    },
+    {
+      "ticketType": "oshal-dev",
+      "tickets": 1,
+      "medianCostUsd": 4.1254,
+      "minCostUsd": 4.1254,
+      "maxCostUsd": 4.1254,
+      "totalCostUsd": 4.1254,
+      "meanTokens": 8242,
+      "llmRequests": 1,
+      "firstSeen": "2026-08-06",
+      "lastSeen": "2026-08-06"
+    },
+    {
+      "ticketType": "sap-incident",
+      "tickets": 1,
+      "medianCostUsd": 1.6072,
+      "minCostUsd": 1.6072,
+      "maxCostUsd": 1.6072,
+      "totalCostUsd": 1.6072,
+      "meanTokens": 748479,
+      "llmRequests": 1,
+      "firstSeen": "2026-04-25",
+      "lastSeen": "2026-06-23"
+    },
+    {
+      "ticketType": "cluster-probe",
+      "tickets": 1,
+      "medianCostUsd": 0.5898,
+      "minCostUsd": 0.5898,
+      "maxCostUsd": 0.5898,
+      "totalCostUsd": 0.5898,
+      "meanTokens": 8792,
+      "llmRequests": 3,
+      "firstSeen": "2026-07-05",
+      "lastSeen": "2026-07-05"
+    },
+    {
+      "ticketType": "smoke-parallel-2",
+      "tickets": 1,
+      "medianCostUsd": 0.5708,
+      "minCostUsd": 0.5708,
+      "maxCostUsd": 0.5708,
+      "totalCostUsd": 0.5708,
+      "meanTokens": 6446,
+      "llmRequests": 2,
+      "firstSeen": "2026-06-24",
+      "lastSeen": "2026-06-24"
+    },
+    {
+      "ticketType": "smoke-parallel-flow",
+      "tickets": 1,
+      "medianCostUsd": 0.4536,
+      "minCostUsd": 0.4536,
+      "maxCostUsd": 0.4536,
+      "totalCostUsd": 0.4536,
+      "meanTokens": 4664,
+      "llmRequests": 2,
+      "firstSeen": "2026-06-24",
+      "lastSeen": "2026-06-24"
+    },
+    {
+      "ticketType": "workflow-build",
+      "tickets": 1,
+      "medianCostUsd": 0.0501,
+      "minCostUsd": 0.0501,
+      "maxCostUsd": 0.0501,
+      "totalCostUsd": 0.0501,
+      "meanTokens": 3346,
+      "llmRequests": 1,
+      "firstSeen": "2026-06-22",
+      "lastSeen": "2026-06-23"
+    }
+  ]
+}
