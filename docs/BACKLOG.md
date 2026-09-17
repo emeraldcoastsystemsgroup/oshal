@@ -1928,6 +1928,28 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   RLS classifier and the DDL parser, one entry above.
 - **Done when:** mermaid@11 (or an equivalent parser) parses an exported block in CI, and the
   renderer has one implementation behind both the docs and the surface.
+- ✅ **CLOSED 2026-09-17.** Both halves are in [#558](https://github.com/emeraldcoastsystemsgroup/oshal/pull/558)
+  (`faea98c1`, merged 2026-09-16); this change is what makes the first one *readable*.
+  **(b)** One renderer: `src/pages/data-model/js/er-diagram.mjs`, imported by `export-view.js` and
+  `require`d by `scripts/schema-docs/render.js`, which keeps only the owner-column reader it injects
+  (the generator classifies the policies, the page is handed the server's summary). Two cases in
+  `data-model-export.spec.ts` hold it: the exported functions must be the SAME objects on the surface
+  side, and neither consumer may carry a line building an `'erDiagram'` of its own. The catalog SQL,
+  the RLS classifier and the DDL parser are still two copies each — that is the entry above, not this
+  one. **(a)** mermaid **11.17.2** is a devDependency, so `npm audit --omit=dev` is untouched, and
+  `data-model-explorer-browser.spec.ts` hands the block Chromium copied out of the real page to
+  mermaid's own `parse()`: the Tables export must read as `er`, the owner export as a `flowchart`,
+  and a deliberately mangled block must be REFUSED — so a parser that accepted anything could not pass.
+- **The gate could not read that verdict, and now can.** The parse case ran in CI and passed, but its
+  FILE reported `FAIL` every time, so a real mermaid regression and the spec's own teardown looked
+  identical to the gate. `afterAll` had no bound of its own and therefore ran on vitest's 10 s
+  DEFAULT, which is what `npm run test:unit` — the `scripts/ci-local.sh` `unit` gate, the one
+  automated gate this trunk has — uses; `npm run test:data-model` passes 180 s and so never saw it.
+  Measured from a clean checkout of `02936a38`: `Tests 11 passed`, `Test Files 1 failed`,
+  `Hook timed out in 10000ms`; the same shape is in the 2026-09-16 nightly on `184377cee79a`.
+  Instrumented, the cost is `browser.close()` at 72 588 ms against `server.close()` at 1 ms — a real
+  Chromium closing on a loaded box, not the fixture server — so the hook now carries an explicit bound
+  like its own `beforeAll` and like the repo's other browser specs.
 
 ### Drone physical payloads and peer coordination
 - **Remaining:** prove a real approved MAVLink airframe/adaptor, authenticated drone-to-drone coordination, physical camera/video, ESC telemetry, and LED payload through the remote-node envelope; the Drone package carve is already complete.

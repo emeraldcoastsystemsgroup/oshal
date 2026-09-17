@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Export guards at the real boundary: the Mermaid block copied for the view on screen names exactly the tables Chromium drew and reaches the clipboard, the SVG and JSON downloads are real files with the drawn scope inside them, and a non-operator - who never got a snapshot - is told there is nothing to export instead of being handed an empty one.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Shared glass finish at the served boundary: Chromium must load /shared/ui/css/surface-glass.css from the real static mount AFTER the page's own data-model.css, and --oshal-glass-bg (defined only by that sheet) must resolve on :root. The page shipped without the link and the source-level glass specs went red; this case runs inside `npm run test:data-model`, the command the explorer's own work runs.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | A real mermaid@11 parse, at the only boundary that settles it: the block Chromium copied out of the real page is handed to mermaid's own parser, which must read the Tables export as an `er` diagram and the owner export as a flowchart, and must REJECT a mangled block - so a parser that silently accepted anything could not pass this. The structural assertions above and the byte-parity to the docs generator never ran a parser at all; a block that renders on GitHub but throws in mermaid would have shipped unnoticed.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Give afterAll a bound of its own, so the mermaid parse above can actually be READ in CI. The one automated gate this trunk has is scripts/ci-local.sh, whose `unit` gate is `npm run test:unit` - a bare `vitest run`, on vitest's 10 s DEFAULT hookTimeout, not the 180 s `npm run test:data-model` passes. Under that bound this FILE reported FAIL on every run while all 11 cases inside it PASSED, so a real mermaid regression and this teardown were indistinguishable in the gate: "Hook timed out in 10000ms", 11 passed / 1 file failed, reproduced 2026-09-17 from a clean checkout of origin/main 02936a38 and by the 2026-09-16 nightly (ci-local-last-run.log, origin/main 184377cee79a). The cause is not the fixture server - instrumented, `browser.close()` took 72588 ms and `server.close()` took 1 ms - it is that closing a real Chromium is slow on a loaded box and this hook, unlike its own beforeAll and unlike the repo's other browser specs, never said so.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -79,7 +80,11 @@ afterAll(async () => {
   await new Promise((r) => server.close(r));
   vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
-});
+  // The bound is explicit for the same reason beforeAll's is: this hook closes a REAL browser, and
+  // vitest's default is 10 s. Measured here, closing the eleven contexts' Chromium took 72.6 s on a
+  // box running other suites in parallel while server.close() took 1 ms - so without a bound of its
+  // own this FILE reported FAIL in the unit gate with every case inside it green.
+}, 180_000);
 
 /** Open the explorer as `user` at `query`, collecting console errors. */
 async function open(user: string, query = ''): Promise<Page> {
