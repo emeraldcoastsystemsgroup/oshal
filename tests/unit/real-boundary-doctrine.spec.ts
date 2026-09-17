@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the integration-boundary doctrine and its first audited companions: real ticket/RLS stores, real package alias resolution, and mutation-tested build artifacts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin the ci-local `secret-scan` scanner double in the audit. Its guard replaces `docker` on PATH, so the gitleaks image - the boundary that exits 0 on a tree it could not read - never runs, and the audit carried no row for it. This case reads the shipped gate and helper, so the registration goes red if the scanner tag or the calibrated wording version moves away from what the row records.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The SEC-05 durable-memory proof was a file on disk: written, never listed in a required suite, and recorded in the audit as an open blocker. This case requires it to be in the e2e green set, to still be a real-Pool/NOBYPASSRLS proof rather than a double, and to be named by an audit row that no longer reads as open; it also pins both halves of the ledger-broker contract the recorded mutations exercised, so loosening either without re-recording the result turns the gate red.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -18,7 +19,37 @@ describe('real-boundary regression doctrine', () => {
     const audit = read('docs/governance/real-boundary-regression-audit.md');
     expect(rules).toContain('Integration-boundary corollary');
     expect(rules).toContain('real-boundary-regression-audit.md');
-    expect(audit).toContain('Open SEC-05 blocker');
+    expect(audit).toContain('integration-boundary corollary');
+  });
+
+  it('proves the durable swarm-memory ledger against a real PostgreSQL, inside a required gate', () => {
+    const spec = 'tests/swarm-memory-rls-live.spec.ts';
+    const audit = read('docs/governance/real-boundary-regression-audit.md');
+    const source = read(spec);
+    const requiredE2e = read('tests/e2e-green-suite.txt');
+    const migration = read('scripts/migrations/117-swarm-memory-provenance.sql');
+    const service = read('src/features/agent-management/services/swarm-memory-service.ts');
+
+    // A proof nothing runs is not evidence. This is the whole reason the row stayed open.
+    expect(requiredE2e, `${spec} must be in the required e2e set, not merely on disk`).toContain(spec);
+
+    // And it has to still be the real seam: a real Pool, a role RLS can apply to, the shipped
+    // migration text, and the production GUC wrapper — no module mocking anywhere.
+    expect(source).toContain('new Pool');
+    expect(source).toContain('NOBYPASSRLS');
+    expect(source).toContain("readFileSync('scripts/migrations/117-swarm-memory-provenance.sql'");
+    expect(source).toContain('wrapPoolWithGuc');
+    expect(source).not.toContain('vi.mock(');
+
+    const row = audit.split('\n').find((line) => line.includes(spec));
+    expect(row, 'the durable-memory boundary must be registered in the audit by spec path').toBeTruthy();
+    expect(row, 'the row must not still read as an open blocker once the proof has run').not.toContain('Open SEC-05 blocker');
+
+    // Both halves of the broker contract the recorded mutations exercised. Moving either one
+    // without re-running and re-recording would leave the audit describing code that is gone.
+    expect(migration).toContain('FORCE ROW LEVEL SECURITY');
+    expect(migration).toContain("USING (current_setting('oshal.swarm_memory_ledger_broker', true) = 'on')");
+    expect(service).toContain("set_config('oshal.swarm_memory_ledger_broker', 'on', true)");
   });
 
   it('runs ticket ingress over the real Postgres store and enforcing role', () => {

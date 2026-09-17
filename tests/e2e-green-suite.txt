@@ -106,3 +106,11 @@ tests/rls-core-table-coverage-live.spec.ts
 tests/connector-webhook-rls-live.spec.ts
 tests/workload-delegation-rls-live.spec.ts
 tests/app-access-rls-live.spec.ts
+# SEC-05 durable swarm-memory provenance ledger (2026-09-17). Applies migration 117 into a
+# disposable schema, connects as the NOBYPASSRLS oshal_bot role and self-validates that role
+# before asserting anything, so it can never pass vacuously. Proven against a real PostgreSQL 16
+# on 2026-09-17: 1 passed in 431 ms; 2 rows instead of 0 leak to the unbrokered read when the
+# ledger-broker policy is loosened to USING (true), and the store answers 200 instead of 201
+# when the service's transaction-local broker marker is removed. Does not skip - it FAILS when
+# DATABASE_URL is absent.
+tests/swarm-memory-rls-live.spec.ts
