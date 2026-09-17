@@ -1802,10 +1802,16 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   through `docker exec` arrives unquoted. The scheduled task runs `powershell.exe`, so PowerShell 7's fixed argument
   passing never applies. Secondary defect in the same path: the lease is acquired **before** the market-calendar
   check, so non-trading days fail and alert instead of exiting quietly.
-- **Remaining:** pass the metadata so it survives 5.1 native-argument handling (escape the quotes, or hand the value
-  over stdin / a file / discrete flags rather than one JSON argument), move the calendar check ahead of the lease,
-  and add a guard that would go red on the quoting regression. The last recap that reached the operator was
-  2026-08-03; 2026-08-04/05 failed earlier in the chain, at render-node reachability.
+- **Fixed in the tree 2026-09-17:** the metadata argument is escaped for the host mode that mangles it (and left
+  alone under PowerShell 7.3+, which passes native arguments verbatim and would be broken by an escape), and the
+  market-session check now runs above the lease, so a weekend exits before any durable lease is taken.
+  `tests/unit/recap-node-lease-arguments.spec.ts` drives the real runner over the real native-argument boundary
+  against the lease CLI's own exported parser — in the host's default mode and again with
+  `$PSNativeCommandArgumentPassing = 'Legacy'`, which is how any host reproduces the 5.1 failure. Reverting the
+  escape turns both red with the production message (`refuses it at position 1`).
+- **Remaining:** the live half only — the next scheduled run has to acquire the lease and complete end to end, and
+  the next non-trading day has to pass without an alert. Nothing is left to build. The last recap that reached the
+  operator was 2026-08-03; 2026-08-04/05 failed earlier in the chain, at render-node reachability.
 - **Done when:** a scheduled run acquires the lease and completes end to end, a non-trading day exits without an
   alert, and a spec covers the argument round trip. Recovery detail is in
   [runbooks/daily-trade-recap-pipeline.md](runbooks/daily-trade-recap-pipeline.md); the pipeline is

@@ -36,6 +36,27 @@ and SHA-256. Final assembly produces `recap-artifacts-<runId>-<deliveryId>.json`
   concurrent new run cannot mix deliveries.
 - Production is complete only after the public index provenance and downloaded artifact hashes
   match the frozen delivery.
+- The market-session check runs **above** the shared render-node lease. A weekend or holiday prints
+  `no market session on <date> ... nothing to recap` and exits 0 without taking the lease, so a
+  no-close day neither alerts nor holds the render node away from the video pump.
+
+### If the run stops at `node-lease CLI returned no JSON`
+
+The lease CLI is a native command, and **Windows PowerShell 5.1 builds the child command line itself
+and drops embedded double quotes** — which is how a compact `--metadata-json` argument arrived as
+`{requestedDate:...}` and was refused at position 1, killing every scheduled run from 2026-08-06 to
+2026-09-17. The scheduled task runs `powershell.exe`, so PowerShell 7's verbatim argument passing
+never applied. `ConvertTo-NativeJsonArgument` now escapes the quotes in exactly the host modes that
+need it. Reproduce either direction without a database or a container:
+
+```powershell
+# expects {"requestedDate":...}; the unfixed shape prints {requestedDate:...}
+powershell -NoProfile -File scripts/run-daily-recap.ps1 -Date 2026-08-05 `
+  -NodeLeaseArgumentProbe "$env:TEMP\node-lease-argument-probe.js"
+```
+
+`tests/unit/recap-node-lease-arguments.spec.ts` writes that probe target and asserts the round trip
+in both the host default and forced-legacy argument modes.
 
 The manifests are local integrity and coherence records, not signatures. They close stale-file,
 partial-write, substitution-race, and cross-run mixing failures, but they do not authenticate bytes
