@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Residue-proof + load-proof: the two rotation fires (two full rotations with the real 6s settle and 1.5s cancel wait) got 180s budgets after a 60s budget timed out on a busy box; every fire's promise is tracked so afterAll AWAITS an abandoned run (bounded by SETTLE_MS) before it deletes, so the cleanup assertion can no longer race a still-writing fire; beforeAll sweeps the residue of earlier `spec-golden-` runs first (the sub now carries the run start time, so a sub younger than STALE_MS — a concurrent instance of this spec — is never swept), so rows a killed run left behind are cleared on the next run instead of accumulating in the operator DB; and the schema bootstrap retries once past the repo-wide concurrent-CREATE trigger race.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 - seed the engine's OWN filled buys for every fixture position (seedEngineFills), so the golden book is one the engine actually bought. Without them the fixture describes a book of hand-bought shares, which the engine now monitors instead of managing: every stop, take-profit, cap trim, rotation drop-out sell and beta-core top-up in the plan below would be withheld and the characterization would assert the withheld plan rather than the managed one. Each seeded fill is the venue average to the share, so the wash-sale veto stays inert and the plan is unchanged. The plan asserted here is therefore also the proof that a COVERED book's plan survives ADR-159 end to end.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The prologue is the shared one (tests/helpers/trading-spec-schema.ts), which adds trading_config_overrides: sweepGoldenResidue reads that table in beforeAll, BEFORE the first fire that used to create it lazily, so on a bare cluster it was 42P01 and the file never reached a test. bootstrapOnce goes with it - its single retry existed only for the concurrent-CREATE race that the trading family's advisory lock now prevents, and the shared prologue takes that lock.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Pool } from 'pg';
@@ -157,16 +158,10 @@ vi.mock('@/shared/logger', async (importOriginal) => {
   };
 });
 
-import { ensureBooksSchema, legacyBook } from '../../src/app/trading-books-store';
-import { ensureTradingSchema } from '../../src/app/trading-engine';
-import { ensureEquityGuardTable } from '../../src/app/trading-equity-guard';
-import { ensureGateBlockTable } from '../../src/app/trading-gate-block-store';
-import { ensurePeaksTable } from '../../src/app/trading-peaks-store';
-import { ensureDailyEquityTable } from '../../src/app/trading-daily-equity-store';
-import { ensureRotationStateTable } from '../../src/app/trading-rotation-store';
-import { ensurePinnedLotsSchema } from '../../src/app/trading-pinned-lots';
+import { legacyBook } from '../../src/app/trading-books-store';
 import { dispatchTradingSchedule } from '../../src/app/trading-schedule-dispatch';
 import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { ensureTradingSpecSchema } from '../helpers/trading-spec-schema';
 
 const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
 const SUB_SCAN = `spec-golden-${h.RUN}-scan`;
@@ -197,11 +192,10 @@ beforeAll(async () => {
   } catch (error) {
     throw new Error(`trading-dispatch-golden-plan requires the live oshal Postgres at ${DSN.replace(/:[^:@/]+@/, ':***@')} — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
   }
-  for (const ensure of [ensureBooksSchema, ensureTradingSchema, ensureEquityGuardTable, ensureGateBlockTable,
-    ensurePeaksTable, ensureDailyEquityTable, ensureRotationStateTable, ensurePinnedLotsSchema]) {
-    await bootstrapOnce(ensure as (p: never) => Promise<unknown>);
-  }
-  // trading_config_overrides is created lazily by getActiveOverride on the first fire (null override).
+  // The shared prologue (tests/helpers/trading-spec-schema.ts) — including trading_config_overrides,
+  // which sweepGoldenResidue below reads BEFORE the first fire that used to create it lazily, and
+  // which is therefore 42P01 on any database that was not already built.
+  await ensureTradingSpecSchema(pool);
   await sweepGoldenResidue();
   await seedWorkingOrders(SUB_SCAN, 'paper');
   await seedWorkingOrders(SUB_ROT, 'paper');
@@ -237,21 +231,6 @@ afterAll(async () => {
     for (const [k, v] of Object.entries(h.saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 }, SETTLE_MS + 60_000);
-
-/** Run one schema bootstrap, retrying ONCE past the repo-wide concurrent-CREATE race (two DB specs
- *  bootstrapping the same trading schema race on `CREATE TRIGGER`, which Postgres reports as
- *  "already exists" — the object is there, so a single retry is enough).
- * @description Bootstrap a trading table/schema idempotently under a concurrent create.
- * @param ensure - The ensure* function to run against the spec pool.
- * @returns Nothing; throws when the retry fails too, or when the failure is not the create race. */
-async function bootstrapOnce(ensure: (p: never) => Promise<unknown>): Promise<void> {
-  try {
-    await ensure(pool as never);
-  } catch (error) {
-    if (!/already exists/i.test((error as Error).message)) throw error;
-    await ensure(pool as never);
-  }
-}
 
 /** Delete the residue of EARLIER runs of this spec, not just this run's subs: a killed or timed-out
  *  run cannot clean up after itself, and its rows are live-shaped rows sitting in the operator's

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 live proof on the DEPLOYED api container: real pgvector engine, real MiniLM embedder, real Postgres, under an isolated synthetic owner (`live-proof-<run>`) that is removed afterwards through the real data-lifecycle discovered delete. Proves the semantic projection + ledger, the exact count kept literal beside paraphrase hits, the Jarvis front door phrasing, the migration-138 triggers on the live database, and a clean owner delete. Never touches the operator's data. Used after both preview deploys of 2026-09-12.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Assert the related-hit relevance floor on the live corpus: both volleyball paraphrases survive, the off-topic pizza line does not, every published hit clears the configured floor, the list is ordered by measured similarity rather than fused rank, and the exact count is still 1.
  *
  * Usage (from the repo root, Git Bash):
  *   MSYS_NO_PATHCONV=1 docker cp scripts/person-model-live-proof.js oshal-local-api:/tmp/pm-live.js
@@ -65,10 +66,21 @@ async function main() {
       log(`exact: count=${exact.count} label=${exact.personLabel} receipts=${exact.receipts.map((r) => r.segmentId).join(',')}`);
       assert.equal(exact.count, 1);
       const related = await pm.relatedRecall(pool, OWNER, intent, new Set(exact.receipts.map((r) => r.segmentId)));
-      log(`related (${related.length}): ${related.map((r) => `${r.segmentId}:${r.score.toFixed(3)} "${r.quote}"`).join(' | ')}`);
+      log(`related (${related.length}): ${related.map((r) => `${r.segmentId}:rrf=${r.score.toFixed(3)} sim=${r.similarity.toFixed(3)} "${r.quote}"`).join(' | ')}`);
       assert.ok(related.length >= 1, 'semantic leg returned paraphrase hits');
       assert.ok(related.every((r) => !exact.receipts.some((e) => e.segmentId === r.segmentId)), 'related never repeats an exact receipt');
-      assert.ok(related.some((r) => /net sport|knee pads/.test(r.quote)), 'a volleyball paraphrase is among the related hits');
+      // The relevance floor: BOTH volleyball paraphrases survive and the off-topic line does not.
+      // Before the floor this list was the store's contents in reciprocal-rank order, so "Can we
+      // order pizza tonight" was published as possibly related to "volleyball" at 1/63 against
+      // 1/61 for a real paraphrase — the same list, read as noise.
+      assert.ok(related.some((r) => /net sport/.test(r.quote)), 'the "net sport" paraphrase survives the relevance floor');
+      assert.ok(related.some((r) => /knee pads/.test(r.quote)), 'the "knee pads" paraphrase survives the relevance floor');
+      assert.ok(!related.some((r) => /pizza/.test(r.quote)), 'the off-topic pizza line is below the relevance floor');
+      assert.ok(related.every((r) => r.similarity >= pm.relatedSimilarityFloor()), 'every published related hit cleared the floor');
+      assert.deepEqual([...related].sort((a, b) => b.similarity - a.similarity).map((r) => r.segmentId), related.map((r) => r.segmentId),
+        'related hits are ordered by measured similarity, not by fused rank');
+      // The count is what it always was — the floor touches the related list only.
+      assert.equal(exact.count, 1, 'the exact count is unchanged by the relevance floor');
 
       // Jarvis front door phrasing over the same rows (no model turn).
       const answer = await pm.answerPersonModelIntent(pool, OWNER, { kind: 'recall', ...intent });
