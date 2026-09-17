@@ -5,6 +5,7 @@ queue is [../BACKLOG.md](../BACKLOG.md). Active entries state only reproducible 
 its done-when evidence; resolved history is preserved in the [archive](./archive/README.md), the
 relevant ADR or feature documentation, release notes, and git history.
 
+- [session-handover-2026-09-17.md](./session-handover-2026-09-17.md) — where the overnight run stopped: tree state, the two workflows that were stopped mid-flight, the five open PRs, and the unresolved reason an ordinary user is granted `@app-admin`.
 - [triage-2026-09-15.md](./triage-2026-09-15.md) — **read this before triaging the backlog again.** Every entry in `docs/BACKLOG.md` given a verdict against the code: 137 actionable, 75 need the operator, 46 need live proof, 11 blocked, and 14 claimed done-or-stale that an independent verifier refuted and so were kept open. Only one "already done" claim survived two refuting verifiers. Machine-readable, keyed by entry title so it survives line shifts: [triage-2026-09-15.json](./triage-2026-09-15.json).
 - [outstanding-work-index-2026-09-14.md](./outstanding-work-index-2026-09-14.md) — a map, not a
   queue: every document across this repo and `oshal-applications` that records unfinished work, with
