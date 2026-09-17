@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards ADR-093 Tier 2 end to end: a package bot that declares `container:` must actually DISPATCH to that node. It never did — the mapper registered the container, but a package cannot set requiresOwnNode and an omitted harnessType inherits codex-cli, so the resolver's prefer-inline codex rule silently sent every packaged node bot to the controller. Live cost: career-hunter won its bid, ran inline, and reported the operator's resume database as missing. These cases run the REAL mapper, the REAL registry registration, and the REAL resolver — a doubled registry would not have caught this, because each piece was individually correct.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-128 Amendment 2 (operator directive 2026-09-17): the fleet brain is Cline on Gemini (gemini / gemini-3.8-flash), so the rows that pinned codex-cli/openai-codex as the inherited or default value are inverted. Fixture declarations that merely NAME codex as an explicit choice are untouched.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -71,7 +72,8 @@ describe('a packaged bot that declares a dedicated node dispatches to that node'
     expect(def.container).toBe('career-bot');
     // The inherited fleet default is what made the old code send it inline — assert it is
     // still inherited, so this guard proves the FIX rather than a changed default.
-    expect(def.harnessType).toBe('codex-cli');
+    expect(def.harnessType).toBe('cline');
+    expect(def.apiType).toBe('gemini');
   });
 
   it('reaches the node for the intelligent-sales shape too', () => {

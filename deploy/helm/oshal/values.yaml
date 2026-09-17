@@ -4,6 +4,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — defaults for the MAIN role (controller + infra + relay). Bot-pod overrides in values-bot-pod.example.yaml. Trust rule: bot-pod clusters NEVER receive DATABASE_URL.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 (ADR-129) — codeless-install defaults: image pulls ghcr.io/emeraldcoastsystemsgroup/oshal-bot (was a CHANGE-ME under a retired image name); relay + Kyma APIRule default OFF (generic clusters have neither headscale nor the APIRule CRD — both stay as opt-ins); api Service gains type/nodePort; LLM defaults follow the codex fleet floor (openai-codex / gpt-5.5 / CODEX_REASONING_EFFORT, compose SEQ-13 parity); fleet presets kernel|full|custom with the lists GENERATED from docker-compose.oshal-local.yml by scripts/generate-chart-fleet.mjs (guard: tests/unit/chart-fleet-parity.spec.ts); bots connect as oshal_bot (K5), overridable via swarm.botDatabaseUrl.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Fleet brain -> Cline on Gemini (compose SEQ-30 parity, ADR-128 Amendment 2, operator directive 2026-09-17): forceLlmProvider gemini, forceLlmModel gemini-3.8-flash. The Codex login hit its usage limit and the chart's 'compose parity' claim would otherwise have been false. Guard row inverted in tests/unit/chart-fleet-parity.spec.ts.
 #
 # Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
 # Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
@@ -191,13 +192,14 @@ cockpit:
 
 # ── Shared env (both roles) — the k8s form of the compose *bot-env anchor ─────
 swarm:
-  # Codex fleet floor (compose SEQ-13 parity): openai-codex / gpt-5.5, per-spawn
-  # reasoning effort pinned. Per-bot registry overrides still win. `noop` = a
+  # Fleet brain (compose SEQ-30 parity, ADR-128 Amendment 2): Cline on Gemini —
+  # gemini / gemini-3.8-flash. codexReasoningEffort still pins the per-spawn effort
+  # for any bot a deployment moves back onto Codex. Per-bot registry overrides still win. `noop` = a
   # deliberate no-AI posture (the installer's --no-ai); the /welcome wizard's
   # hosted/BYO connection is the browser-side way to power reasoning on a box
   # with no vendor-CLI login.
-  forceLlmProvider: openai-codex
-  forceLlmModel: gpt-5.5
+  forceLlmProvider: gemini
+  forceLlmModel: gemini-3.8-flash
   codexReasoningEffort: high
   logLevel: info
   queuePollIntervalMs: "30000"

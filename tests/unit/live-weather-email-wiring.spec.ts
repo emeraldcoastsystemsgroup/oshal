@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Backfilled the missing change-log header. Compose alignment check updated for the security-audit port de-publish: weather-bot's 5000 is now expose-only (internal Docker network), no longer host-published as 127.0.0.1:3032:5000 — the test now asserts the INTERNAL-ONLY posture so a re-published port fails loudly.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extended the internal-only posture guard to the alternate swarm stacks (docker-compose.swarm-local.yml + docker-compose.incident-lab.yml): the security-audit de-publish only covered oshal-local.yml, leaving those variants publishing bot 5000s on the host; the new case fails loudly if any bot service in them host-publishes :5000 again.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "Bot runtime consolidation": the any-bot runtime case no longer asserts that the entrypoint STARTS any-bot/server/app.js. That runtime is retired (the entrypoint refuses BOT_RUNTIME=any-bot outright) and any-bot/server/swarm-node.js is deleted, so the case now pins the demoted posture instead; the behavioural proof lives in tests/unit/bot-runtime-consolidation.spec.ts, which evaluates the shipped selection block under sh.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-128 Amendment 2 (operator directive 2026-09-17): the fleet brain is Cline on Gemini (gemini / gemini-3.8-flash), so the rows that pinned codex-cli/openai-codex as the inherited or default value are inverted. Fixture declarations that merely NAME codex as an explicit choice are untouched.
  */
 
 import fs from 'node:fs';
@@ -26,15 +27,15 @@ const weatherTools = requireModule('../../any-bot/server/services/tools/weatherT
 
 describe('live weather and email data-path wiring', () => {
   afterEach(() => vi.unstubAllGlobals());
-  it('routes forecast weather and communications work to their own Codex nodes', () => {
+  it('routes forecast weather and communications work to their own fleet-harness nodes', () => {
     const weather = LOCAL_BOT_REGISTRY.find((bot) => bot.name === 'weather-bot');
     expect(weather).toMatchObject({
       agentId: 'a0000000-0000-0000-0000-000000000036',
       port: 3032,
       container: 'weather-bot',
       requiresOwnNode: true,
-      harnessType: 'codex-cli',
-      apiType: 'openai-codex',
+      harnessType: 'cline',
+      apiType: 'gemini',
     });
     expect(weather?.capabilities).toContain('weather-forecast');
 
@@ -42,8 +43,8 @@ describe('live weather and email data-path wiring', () => {
     expect(communications).toMatchObject({
       container: 'email-bot',
       requiresOwnNode: true,
-      harnessType: 'codex-cli',
-      apiType: 'openai-codex',
+      harnessType: 'cline',
+      apiType: 'gemini',
     });
   });
 
@@ -60,7 +61,8 @@ describe('live weather and email data-path wiring', () => {
       BOT_NAME: 'weather-bot',
       AGENT_ID: 'a0000000-0000-0000-0000-000000000036',
       BOT_PERSONA_FILE: '/app/ai-lab/bot-personas/weather-bot.yaml',
-      FORCE_LLM_PROVIDER: 'openai-codex',
+      // Inherited from the x-bot-env anchor: the service carries no literal of its own.
+      FORCE_LLM_PROVIDER: '${FORCE_LLM_PROVIDER:-gemini}',
     });
   });
 

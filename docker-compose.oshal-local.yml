@@ -34,6 +34,7 @@
 # 27 | maintainer@emeraldcoastsystemsgroup.com | Forward the world series-store load knobs (WORLD_SERIES_READ_CONCURRENCY, WORLD_ROLLUP_CONCURRENCY, WORLD_PULSE_WINDOW_MS, WORLD_PULSE_WARN_FRACTION) to the api, which is where the world schedules dispatch. Unforwarded they would be the documented silent-env-var class: the operator turns the knob in .env, the container keeps the compiled default, and the series store keeps saturating.
 # 28 | maintainer@emeraldcoastsystemsgroup.com | Hot-swap bind mount for src/api/jarvis-speaker-profile-links.js (the Manage Voices → Ambient Recall bridge), beside the other Jarvis speaker siblings, so it updates without a rebuild.
 # 29 | maintainer@emeraldcoastsystemsgroup.com | Signed delegation, core queued ticket types (BACKLOG "Signed delegation refuses every ticket whose worker bot runs inline"): security-analyst and workflow-assistant get dedicated bot-node services. They own the queued 'security-finding' and 'workflow-build' ticket types, and with OSHAL_DELEGATION_SIGNING_* configured a worker without a dedicated endpoint is refused before execution. Both inherit x-bot-common/x-bot-env, so they receive the public verification ring and the service secret with no extra wiring, and neither takes a `profiles:` key — a core queued ticket type must not depend on an opt-in profile.
+# 30 | maintainer@emeraldcoastsystemsgroup.com   | Fleet brain -> Cline on Gemini (operator directive 2026-09-17, ADR-128 Amendment 2, PR #195 run in reverse): FORCE_LLM_PROVIDER/LLM_PROVIDER default gemini, FORCE_LLM_MODEL/LLM_MODEL default gemini-3.8-flash, and the 19 per-service `FORCE_LLM_PROVIDER: openai-codex` / `FORCE_LLM_MODEL: gpt-5.5` literals are REMOVED so every bot inherits the one interpolation in x-bot-env (they overrode it, so .env could not reach ~20 bots). jarvis/sales keep their per-bot knobs with the fleet interpolation as the default. The Codex login hit its usage limit and took every ticket, schedule and agentic run with it; Cline 3.0.62 on gemini/gemini-3.8-flash completed an 8-iteration ticket task in oshal-local-general-bot the same night. Guard: tests/unit/fleet-default-cline-gemini.spec.ts.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -121,13 +122,17 @@ x-bot-env: &bot-env
   # (cline-config-builder.ts). Points at the in-network container when the `local-llm`
   # profile is up; harmless otherwise (only used when a bot's provider is `ollama`).
   OLLAMA_HOST: ${OSHAL_OLLAMA_HOST:-http://oshal-ollama:11434}
-  # Default local runtime targets Codex (the swarm's default CLI/API/LLM — operator
-  # directive 2026-08-12) via the mounted ~/.codex ChatGPT login. Claude Code stays
-  # available as a per-bot registry override and as the runtime-failover secondary
-  # via the mounted ~/.claude session. Per-bot harness overrides in the registry
-  # still take precedence; set FORCE_LLM_PROVIDER=noop for a zero-keys demo.
-  FORCE_LLM_PROVIDER: ${FORCE_LLM_PROVIDER:-openai-codex}
-  FORCE_LLM_MODEL: ${FORCE_LLM_MODEL:-gpt-5.5}
+  # Fleet brain (operator directive 2026-09-17, ADR-128 Amendment 2): Cline backed by
+  # Gemini. Cline is the one harness any API provider can back, and GEMINI_API_KEY
+  # (falls back to GOOGLE_API_KEY below) is present in every container. The Codex
+  # ChatGPT login stays mounted for per-bot overrides and CODEX_MODEL keeps its floor,
+  # but nothing defaults onto it any more. These two knobs are the ONLY place the
+  # fleet engine is named: every bot service inherits them, none carries a literal
+  # (guard: tests/unit/fleet-default-cline-gemini.spec.ts). Set FORCE_LLM_PROVIDER /
+  # FORCE_LLM_MODEL in .env to move the whole fleet; set FORCE_LLM_PROVIDER=noop for
+  # a zero-keys demo.
+  FORCE_LLM_PROVIDER: ${FORCE_LLM_PROVIDER:-gemini}
+  FORCE_LLM_MODEL: ${FORCE_LLM_MODEL:-gemini-3.8-flash}
   SHARED_WORKSPACE_ROOT: /app/workspace-shared
   CLINE_SHARED_WORKSPACE_ROOT: /app/workspace-shared
   CLINE_WORKSPACE_ROOT: /app/workspace-shared
@@ -189,13 +194,11 @@ x-bot-env: &bot-env
   SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
   LM_TEACHER_EMAILS: ${LM_TEACHER_EMAILS:-}
   # ── LLM Provider ──
-  # Default provider/model: openai-codex via the mounted ~/.codex ChatGPT login
-  # (the swarm's default CLI/API/LLM — operator directive 2026-08-12). claude-code
-  # remains available via mounted ~/.claude as a per-bot override / failover:
-  #   LLM_PROVIDER: claude-code
-  #   LLM_MODEL: claude-sonnet-4-6
-  LLM_PROVIDER: openai-codex
-  LLM_MODEL: gpt-5.5
+  # Lower-tier provider/model fallback (read when FORCE_LLM_* is unset and no persisted
+  # global-config.json names a provider). Follows the fleet brain: Cline on Gemini
+  # (operator directive 2026-09-17). Override in .env, never by editing this file.
+  LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+  LLM_MODEL: ${LLM_MODEL:-gemini-3.8-flash}
   # Provider-runtime fallback for CLI stalls, auth failures, throttles, and embedded
   # provider-error text. Explicit override wins; otherwise bot-node auto-picks a
   # configured secondary CLI provider unless OSHAL_PROVIDER_AUTO_FAILOVER=false.
@@ -1944,8 +1947,6 @@ services:
       AGENT_ID: a0000000-0000-0000-0000-000000000036
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/weather-bot.yaml
       AGENT_CAPABILITIES: "current-weather,weather-forecast,local-weather-report,weather-data-formatting"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
       - ./ai-lab/bot-personas:/app/ai-lab/bot-personas:ro
@@ -2014,10 +2015,6 @@ services:
       AGENT_ID: b0000000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/email-summarizer.yaml
       AGENT_CAPABILITIES: "email-summarization,gmail-triage,outlook-mail,calendar-digest,meeting-agenda,reply-drafting,inbox-triage,social-signals-feed,social-publishing"
-      # Run this bot on CODEX (its sandbox can shell out to run scripts/oshal-gmail.js,
-      # which claude-code-as-root cannot). ADR-037 Phase 2. Overrides the *bot-env default.
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       # Owns email: reads the per-user connector token (DATABASE_URL), decrypts
       # it (SESSION_SECRET, from *bot-env), and calls Gmail/Calendar. The OIDC
       # client creds power the Google refresh flow used by scripts/oshal-gmail.js.
@@ -2064,9 +2061,6 @@ services:
       AGENT_ID: de000000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/oshal-developer.yaml
       AGENT_CAPABILITIES: "platform-development,typescript,feature-slice-design,documentation-quality,codebase-indexing,self-hosting"
-      # codex: the persona shells out constantly (git, npx tsc, vitest, docs-link-check).
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       # The bot's own clone of the platform repo (configurable per deployment).
       # ADR-115: the TRUNK is this repo. The default pointed at the pre-cutover private
       # repo, which is now a frozen reference archive — the bot's self-development work
@@ -2114,18 +2108,18 @@ services:
       AGENT_ID: a0000000-0000-0000-0000-000000000050
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/oshal-assistant.yaml
       AGENT_CAPABILITIES: "intent-routing,cross-app-orchestration,answer-synthesis"
-      # CODEX (not claude-code): the any-bot claude-code provider doesn't expose OSHAL framework
-      # tools to the CLI session, so career_database stayed a ghost. Codex's sandbox CAN shell out
-      # (CODEX_SANDBOX_MODE=danger-full-access), so Jarvis runs the mounted CLIs directly —
-      # the same proven pattern as email-bot/home-bot/cloud-ops-bot. Overrides the *bot-env default.
-      # Parameterised, default UNCHANGED. A deployment whose host has no ~/.codex/auth.json must run
+      # Per-bot engine knob (NOT claude-code: the any-bot claude-code provider doesn't expose OSHAL
+      # framework tools to the CLI session, so career_database stayed a ghost). Since 2026-09-17 the
+      # default is the fleet interpolation (Cline on Gemini), the same engine email-bot/home-bot/
+      # cloud-ops-bot inherit from *bot-env.
+      # Parameterised. A deployment whose host has no login for the fleet engine must run
       # this bot on another engine, and the only way to say so was to EDIT this line — which left
       # that box's git tree permanently dirty and made the documented core update
       # (`git reset --hard origin/main`, gated on a clean tree) silently destroy the setting, taking
       # the assistant down. Setting JARVIS_LLM_PROVIDER / JARVIS_LLM_MODEL in .env survives updates.
-      # With both unset this renders byte-identical to the literals it replaces.
-      FORCE_LLM_PROVIDER: ${JARVIS_LLM_PROVIDER:-openai-codex}
-      FORCE_LLM_MODEL: ${JARVIS_LLM_MODEL:-gpt-5.5}
+      # With both unset this renders the fleet default from *bot-env.
+      FORCE_LLM_PROVIDER: ${JARVIS_LLM_PROVIDER:-${FORCE_LLM_PROVIDER:-gemini}}
+      FORCE_LLM_MODEL: ${JARVIS_LLM_MODEL:-${FORCE_LLM_MODEL:-gemini-3.8-flash}}
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       # career_database tool (node scripts/oshal-jobhunter.js query) reads the user's jobs DB here.
       # The store lives on the API's output volume (the career routes write it) — mounted below at
@@ -2234,12 +2228,12 @@ services:
       AGENT_ID: 15000000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/workspace-shared/deployed-apps/intelligent-sales/personas/sales-concierge.yaml
       AGENT_CAPABILITIES: "pipeline-analysis,lead-triage,call-note-structuring"
-      # Fleet default is codex (ADR-128), overridable per deployment exactly like jarvis-bot.
+      # Fleet default is Cline on Gemini (ADR-128 Amendment 2), overridable per deployment exactly like jarvis-bot.
       # This is not ceremony: a box is signed in to ONE CLI, and a node pinned to a CLI it has
       # no login for fails every turn while looking perfectly healthy. G-Squared runs
       # SALES_LLM_PROVIDER=claude-code because that is the login that box actually owns.
-      FORCE_LLM_PROVIDER: ${SALES_LLM_PROVIDER:-openai-codex}
-      FORCE_LLM_MODEL: ${SALES_LLM_MODEL:-gpt-5.5}
+      FORCE_LLM_PROVIDER: ${SALES_LLM_PROVIDER:-${FORCE_LLM_PROVIDER:-gemini}}
+      FORCE_LLM_MODEL: ${SALES_LLM_MODEL:-${FORCE_LLM_MODEL:-gemini-3.8-flash}}
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       BOT_UI_LABEL: Sales
       BOT_UI_URL: /cockpit/?app=intelligent-sales
@@ -2285,8 +2279,6 @@ services:
       AGENT_ID: b0080000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/eats-concierge.yaml
       AGENT_CAPABILITIES: "restaurant-search,menu-browse,food-order-building,uber-eats-checkout-handoff,dietary-filtering,cuisine-preferences"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       BOT_UI_LABEL: Order Food
       BOT_UI_URL: /cockpit/?app=eats
@@ -2327,8 +2319,6 @@ services:
       AGENT_ID: b0090000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/rides-concierge.yaml
       AGENT_CAPABILITIES: "ride-fare-estimate,ride-options-comparison,rideshare-trip-planning,uber-ride-handoff,ride-preference-learning"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
       BOT_UI_LABEL: Rides
       BOT_UI_URL: /cockpit/?app=rides
@@ -2373,8 +2363,6 @@ services:
       AGENT_ID: b0070000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/shopping-concierge.yaml
       AGENT_CAPABILITIES: "product-search,retail-price-comparison,shopping-list-management,cross-retailer-cart-building,rollback-deal-tracking,retail-checkout-handoff,purchase-preference-memory"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
@@ -2405,8 +2393,6 @@ services:
       AGENT_ID: b00a0000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/spotify-concierge.yaml
       AGENT_CAPABILITIES: "spotify-music-search,spotify-playlist-building,music-recommendation,music-taste-learning,now-playing-awareness"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
@@ -2437,8 +2423,6 @@ services:
       AGENT_ID: b00c0000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/travel-concierge.yaml
       AGENT_CAPABILITIES: "flight-search,hotel-search,car-search,fare-price-intelligence,fare-watch,trip-itinerary-planning,traveller-preference-learning,booking-handoff"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
@@ -2469,8 +2453,6 @@ services:
       AGENT_ID: b00b0000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/movies-concierge.yaml
       AGENT_CAPABILITIES: "movie-tv-discovery,title-search,where-to-watch-streaming,watchlist-curation,movie-taste-learning,showtimes-handoff"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
@@ -2503,8 +2485,6 @@ services:
       AGENT_ID: a0000000-0000-0000-0000-000000000040
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/social-writer.yaml
       AGENT_CAPABILITIES: "post-drafting,voice-matching,content-refinement,personal-branding,linkedin-post-drafting,x-post-drafting,facebook-page-post-drafting,caption-writing,hook-and-cta-crafting"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
@@ -2535,8 +2515,6 @@ services:
       AGENT_ID: a0000000-0000-0000-0000-000000000041
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/storage-assistant.yaml
       AGENT_CAPABILITIES: "storage-target-config,github-repo-create,file-store-listing,storage-backend-routing,storage-management"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
@@ -2567,8 +2545,6 @@ services:
       AGENT_ID: a0000000-0000-0000-0000-000000000042
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/deck-builder.yaml
       AGENT_CAPABILITIES: "presentation-outline,slide-structure,deck-template-recommendation,pitch-deck-drafting,deck-guidance"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
@@ -2599,8 +2575,6 @@ services:
       AGENT_ID: a0000000-0000-0000-0000-000000000044
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/finance-analyst.yaml
       AGENT_CAPABILITIES: "personal-finance-brief,net-worth-analysis,account-balance-aggregation,portfolio-holdings-review,spending-and-cashflow-analysis,budget-tracking"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
@@ -2631,8 +2605,6 @@ services:
       AGENT_ID: a0000000-0000-0000-0000-000000000046
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/trading-analyst.yaml
       AGENT_CAPABILITIES: "market-signal-analysis,trade-decision,decision-tree-justification,portfolio-audit,autopilot-pnl,order-forensics,risk-gate-forensics"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
@@ -2663,8 +2635,6 @@ services:
       AGENT_ID: a0000000-0000-0000-0000-000000000045
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/identity-advisor.yaml
       AGENT_CAPABILITIES: "connection-inventory-review,access-health-review,expired-login-detection,duplicate-account-detection,stale-connection-detection,missing-connector-suggestion,default-account-check"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
@@ -2698,8 +2668,6 @@ services:
       AGENT_ID: a0000000-0000-0000-0000-000000000099
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/everything-default.yaml
       AGENT_CAPABILITIES: "general-assistance,cross-domain-synthesis,web-research,overflow-fallback"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
     volumes:
       - oshal_workspace:/app/workspace-shared:rw
@@ -2739,10 +2707,6 @@ services:
       AGENT_ID: d0000000-0000-0000-0000-000000000001
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/home-bot.yaml
       AGENT_CAPABILITIES: "smart-home-control,smartthings,device-control,scene-execution,home-automation"
-      # CODEX: its sandbox shells out to scripts/oshal-smartthings.js (claude-code-as-root
-      # cannot auto-approve bash). Overrides the *bot-env default.
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       # Reads the per-user SmartThings token: decrypts oshal_connections (DATABASE_URL +
       # SESSION_SECRET from *bot-env). Per-user scoping via OSHAL_USER_SUB at dispatch.
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
@@ -2787,8 +2751,6 @@ services:
       AGENT_ID: d0000000-0000-0000-0000-000000000002
       BOT_PERSONA_FILE: /app/ai-lab/bot-personas/cloud-ops-bot.yaml
       AGENT_CAPABILITIES: "gcp-inventory,gcp-projects,gcp-compute,gcp-enabled-apis,gcp-cost-optimization,gcp-health-audit,gcp-iam-audit"
-      FORCE_LLM_PROVIDER: openai-codex
-      FORCE_LLM_MODEL: gpt-5.5
       # Reads the per-user GCP token (DATABASE_URL + SESSION_SECRET) and refreshes it
       # via the GCP OAuth client creds when expired (oshal-gcp.js).
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-129 codeless k8s chart (deploy/helm/oshal). Pins: (1) the fleet block in values.yaml matches docker-compose.oshal-local.yml via the real generator (counts are generated, never hand-typed — drift here is how docs went 6.8x off reality); (2) the docker-socket bot stays EXCLUDED with its reason logged (no docker daemon inside a k8s pod); (3) every fleet bot's persona file exists on disk (a persona rename otherwise ships a crash-looping pod); (4) agent IDs are unique per fleet (the a0…030 three-way collision, k8s edition); (5) registry-pull defaults hold — public ghcr.io oshal-bot image, relay + Kyma APIRule OFF (a generic cluster has neither headscale nor the APIRule CRD, and rendering either fails the whole install); (6) the codex fleet floor (chart shared-env follows compose SEQ-13: openai-codex, model >= gpt-5.5); (7) K5 + seeding-repair parity in the bot template source: bots carry the least-privilege oshal_bot DSN (never the superuser interpolation) and NO config-seed cp (bot-entrypoint Step 1b copy-if-missing is the only seeding path).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-128 Amendment 2 (operator directive 2026-09-17): the fleet brain is Cline on Gemini (gemini / gemini-3.8-flash), so the rows that pinned codex-cli/openai-codex as the inherited or default value are inverted. Fixture declarations that merely NAME codex as an explicit choice are untouched.
  */
 
 import fs from 'fs';
@@ -76,12 +77,16 @@ describe('ADR-129 chart codeless-install defaults', () => {
     expect(values.relay.enabled).toBe(false);
   });
 
-  it('LLM defaults follow the codex fleet floor (compose SEQ-13 parity)', () => {
-    expect(values.swarm.forceLlmProvider).toBe('openai-codex');
-    const m = /^gpt-(\d+)\.(\d+)/.exec(values.swarm.forceLlmModel);
-    expect(m, `forceLlmModel must be a gpt-<maj>.<min> id, got ${values.swarm.forceLlmModel}`).toBeTruthy();
-    const [major, minor] = [Number(m![1]), Number(m![2])];
-    expect(major > 5 || (major === 5 && minor >= 5), `model ${values.swarm.forceLlmModel} is below the gpt-5.5 floor`).toBe(true);
+  it('LLM defaults follow the compose fleet brain — Cline on Gemini (compose SEQ-30 parity)', () => {
+    // Read the SAME values compose resolves to, so the chart's parity claim is checked against the
+    // compose file rather than against a second hand-typed copy of the engine name.
+    const compose = fs.readFileSync(path.join(REPO_ROOT, 'docker-compose.oshal-local.yml'), 'utf8');
+    const provider = /^  FORCE_LLM_PROVIDER: \$\{FORCE_LLM_PROVIDER:-([^}]+)\}$/m.exec(compose);
+    const model = /^  FORCE_LLM_MODEL: \$\{FORCE_LLM_MODEL:-([^}]+)\}$/m.exec(compose);
+    expect(provider && model, 'compose x-bot-env must interpolate both fleet knobs').toBeTruthy();
+    expect(values.swarm.forceLlmProvider).toBe(provider![1]);
+    expect(values.swarm.forceLlmModel).toBe(model![1]);
+    expect(values.swarm.forceLlmProvider).toBe('gemini');
     expect(values.swarm.codexReasoningEffort).toBeTruthy();
   });
 
