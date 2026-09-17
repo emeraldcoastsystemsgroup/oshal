@@ -13,6 +13,7 @@
 # 7 | maintainer@emeraldcoastsystemsgroup.com | Drain startup logs when matching auto-load readiness so an early grep exit cannot turn a found marker into a Docker pipe failure; retain refusal on actual log-read errors.
 # 8 | maintainer@emeraldcoastsystemsgroup.com | A deploy is not finished until Jarvis answers and a ticket moves. Every gate this script already had measures the STACK — containers healthy, image parity clean, /health 200, zero unhealthy — and on 2026-09-15 all of them were green while Jarvis answered nothing and an operator ticket raised at 00:51Z escalated on manifest_worker_dispatch_failed instead of being worked. The run said DEPLOYED. Post-deploy live verification (scripts/lib/deploy-verify.sh) now runs after those gates and before the DEPLOYED line: the bot role can still SELECT the table its own ADR-149 posture guard reads, Jarvis answers a fixed question as the operator, and one synthetic ticket leaves the queue without parking in a failed state. A failure carries its own exit code (4) and deliberately does NOT roll back — the new image is already live and serving, and swapping it for the previous one would add a version surprise to a product outage. OSHAL_DEPLOY_SKIP_LIVE_VERIFY=1 is the one documented skip, for a box with no operator identity. Guard: tests/unit/deploy-live-verification.spec.ts.
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | wait_api waits on a DEADLINE (OSHAL_DEPLOY_API_HEALTH_SECONDS, default 900) and fails fast only on unhealthy/exited/dead/restarting. A fixed 40x3s window rolled back a healthy deploy on 2026-09-16 because this box loads 83 swarm apps at boot and took about eight minutes under load; the rollback's api needed more than 120 s for the same reason, so the script then reported a DEGRADED stack that was serving fine minutes later. A slow boot is not a failed boot, and the elapsed time is now logged so the difference is visible.
+# 10 | maintainer@emeraldcoastsystemsgroup.com   | Image verify also asks whether the Cline FALLBACK can start (scripts/check-cline-entrypoint.mjs --image). The 2026-09-17 image passed the commit label and the kernel-skills probe, every container was healthy, and every ticket that failed over from Codex died on `spawnSync .../cline/bin/.cline ENOENT` - a glibc executable on a musl base with no loader. That is an artifact defect only the artifact can show, so it is gated here, before any container is touched, alongside the other two image probes.
 # =============================================================================
 #
 # Usage:  bash scripts/oshal-deploy.sh [--preview] [--skip-build] [--no-rollback] [--allow-unpushed] [--dry-run]
@@ -156,6 +157,17 @@ if [ -f scripts/check-kernel-skills.ts ]; then
     log "IMAGE VERIFY FAILED: kernel-skills probe (silent-prune class) — stack untouched"; exit 1
   fi
   log "image verified: commit label + kernel-skills probe"
+fi
+# The Cline fallback brain must START in the image that ships. cline 3.x is a glibc executable;
+# on this musl base it needs the confined gcompat loader Dockerfile.oshal installs, and the only
+# thing that proves it is running the real launcher inside the artifact (2026-09-17: every gate
+# here was green while every failed-over ticket died on ENOENT). Exit 2 = the probe could not run,
+# which is not a verdict and is refused just the same - a gate that cannot verify does not skip.
+if [ -f scripts/check-cline-entrypoint.mjs ]; then
+  if ! timeout 300 node scripts/check-cline-entrypoint.mjs --image "$IMAGE" --quiet >>"$RUN_LOG" 2>&1; then
+    log "IMAGE VERIFY FAILED: cline fallback entrypoint cannot start in $IMAGE (see $RUN_LOG) — stack untouched"; exit 1
+  fi
+  log "image verified: cline fallback entrypoint starts"
 fi
 
 # ── Classify services by their compose-declared image (NEVER by name) ───────
