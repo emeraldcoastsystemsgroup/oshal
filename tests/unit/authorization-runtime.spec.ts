@@ -415,7 +415,7 @@ it('explains denied iframe navigation with escaped application text and a script
   expect(html).toContain('Application role required'); expect(html).toContain('application role for your account and workspace');
   expect(html).toContain('Fixture &lt;/title&gt;&lt;script&gt;alert(&quot;label&quot;)&lt;/script&gt; &amp; records');
   expect(html).not.toContain('<script'); expect(html).not.toContain('authorization_denied');
-  expect(html).toContain('href="/users"'); expect(html).toContain('href="/api/help"'); expect(html).not.toContain('href="/access"');
+  expect(html).toContain('href="/access-review"'); expect(html).toContain('href="/api/help"'); expect(html).not.toContain('href="/access"');
   const style = html.match(/<style>([\s\S]*?)<\/style>/)![1];
   const csp = response.headers.get('content-security-policy');
   expect(csp).toContain("script-src 'none'"); expect(csp).not.toContain('unsafe-inline');
@@ -427,7 +427,7 @@ it('links a verified administrator to Access without granting application rights
   await businessNavigation(); const assignments = (await store.read()).assignments;
   const response = await navigationRequest(`${base}/api/runtime-app/app`, { headers: { ...DOCUMENT_HEADERS, 'sec-fetch-dest': 'document', 'x-fixture-user': 'administrator' } });
   const html = await response.text();
-  expect(response.status).toBe(403); expect(html).toContain('href="/access"'); expect(html).not.toContain('href="/users"');
+  expect(response.status).toBe(403); expect(html).toContain('href="/access"'); expect(html).not.toContain('href="/access-review"');
   expect(html).toContain('does not automatically grant access to application records');
   expect((await store.read()).assignments).toEqual(assignments);
   expect(observations.filter(row => row.phase === 'handler')).toHaveLength(0);
@@ -461,4 +461,46 @@ it('dispatches authorized document navigation and returns role guidance after cu
   const denied = await navigationRequest(`${base}/api/runtime-app/app`, options);
   expect(denied.status).toBe(403); expect(await denied.text()).toContain('Application role required');
   expect(observations.filter(row => row.phase === 'handler')).toHaveLength(1);
+});
+
+/**
+ * The refusal a catalog-less package raises is `authorization_app_admin_required`, and it is the
+ * ONLY refusal that shape can raise. A package with no catalog also declares no bindings, so the
+ * declared-shell check that used to gate the explanation page could never recognise its shell —
+ * the one refusal with nothing else to explain it was the one that fell through to
+ * `res.status(403).json(...)` and rendered as bare `{"error":...,"decisionId":...}` in the cockpit
+ * content pane, which reads as a broken server. Status, code and handler dispatch are unchanged.
+ */
+it('explains a catalog-less refusal as a page instead of putting its JSON in the content pane', async () => {
+  hasCatalog = false;
+  await apps.loadApp(writePackage(manifest({ authorization: undefined })));
+  const response = await navigationRequest(`${base}/api/runtime-app/app`, { headers: { ...DOCUMENT_HEADERS, 'x-fixture-user': 'alice' } });
+  const html = await response.text();
+  expect(response.status).toBe(403); expect(response.headers.get('content-type')).toContain('text/html');
+  expect(html).toContain('Application role required'); expect(html).toContain('application role for your account and workspace');
+  expect(html).not.toContain('authorization_app_admin_required'); expect(html).not.toContain('decisionId');
+  expect(html).toContain('href="/access-review"');
+  // The refusal itself is untouched: same status, same code, still JSON for every non-navigation caller.
+  const api = await call('/app');
+  expect(api.status).toBe(403); expect(api.body.error).toBe('authorization_app_admin_required');
+  expect(observations.filter(row => row.phase === 'handler')).toHaveLength(0);
+});
+
+it('keeps a catalog-less refusal in JSON for everything that is not a browser document GET', async () => {
+  hasCatalog = false;
+  await apps.loadApp(writePackage(manifest({ authorization: undefined })));
+  const requests = [
+    { path: '/app', headers: { ...DOCUMENT_HEADERS, 'sec-fetch-mode': 'cors' } },
+    { path: '/app', headers: { ...DOCUMENT_HEADERS, accept: 'application/json' } },
+    { path: '/asset/style.css', headers: { ...DOCUMENT_HEADERS, 'sec-fetch-dest': 'style' } },
+    { path: '/app', method: 'POST', headers: DOCUMENT_HEADERS },
+  ];
+  for (const request of requests) {
+    const response = await navigationRequest(`${base}/api/runtime-app${request.path}`,
+      { method: request.method || 'GET', headers: { ...request.headers, 'x-fixture-user': 'alice' } });
+    expect(response.status, request.path).toBe(403);
+    expect(response.headers.get('content-type'), request.path).toContain('application/json');
+    expect(await response.json()).toHaveProperty('error', 'authorization_app_admin_required');
+  }
+  expect(observations.filter(row => row.phase === 'handler')).toHaveLength(0);
 });
