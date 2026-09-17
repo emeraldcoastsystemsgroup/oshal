@@ -36,6 +36,33 @@ and SHA-256. Final assembly produces `recap-artifacts-<runId>-<deliveryId>.json`
   concurrent new run cannot mix deliveries.
 - Production is complete only after the public index provenance and downloaded artifact hashes
   match the frozen delivery.
+- The market-session check runs **above** the shared render-node lease. A weekend or holiday prints
+  `no market session on <date> ... nothing to recap` and exits 0 without taking the lease, so a
+  no-close day neither alerts nor holds the render node away from the video pump.
+
+### If the run stops at `node-lease CLI returned no JSON`
+
+The lease CLI is a native command, and **Windows PowerShell 5.1 builds the child command line itself
+and drops embedded double quotes** — which is how a compact `--metadata-json` argument arrived as
+`{requestedDate:...}` and was refused at position 1, killing every scheduled run from 2026-08-06 to
+2026-09-17. The scheduled task runs `powershell.exe`, so PowerShell 7's verbatim argument passing
+never applied. `ConvertTo-NativeJsonArgument` now escapes the quotes in exactly the host modes that
+need it. Reproduce either direction without a database or a container:
+
+Reproduce it with the guard, which is the only runnable form — `-NodeLeaseArgumentProbe` takes a
+path to a stand-in for the lease CLI that records the argv it was handed, and the spec generates
+that file into a scratch directory. Passing a path by hand fails at `Resolve-Path` with
+`ItemNotFound` before anything is demonstrated.
+
+```powershell
+npx vitest run tests/unit/recap-node-lease-arguments.spec.ts --reporter=verbose
+```
+
+Three of its five cases spawn a real `powershell.exe`; it asserts the round trip in both the host
+default and forced-legacy argument modes. To watch the failure instead of the fix, revert the
+escape at `scripts/run-daily-recap.ps1` (`ConvertTo-NativeJsonArgument`) to a bare `$metadata` and
+re-run: two cases go red with the production symptom, `node-lease CLI failed (exit 1): Expected
+property name or '}' in JSON at position 1`.
 
 The manifests are local integrity and coherence records, not signatures. They close stale-file,
 partial-write, substitution-race, and cross-run mixing failures, but they do not authenticate bytes
