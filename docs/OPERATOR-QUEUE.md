@@ -11,51 +11,45 @@ To comment, write under an entry in this file and tell me, or just say the entry
 
 ---
 
-## Right now — 7
+## Right now — 6
 
 Short-lived and blocking today. Source: `docs/backlog/operator-now.json` (as of 2026-09-17).
 
-### Claim swarm root
+### Ella has access — and the way she got it is the bug
 
-swarm_roles is empty — 0 rows. Nobody holds any role, so no grant of any kind can be made, including to yourself. Every mutating authorization route requires root or admin; POST /claim-root needs only your signed-in session and is the designed bootstrap for exactly this state.
+The grant landed: oshal_authorization_assignments carries little-monsters for Google sub 113439769752756917575 at issuer accounts.google.com. But the role it had to use is @app-admin, which is your objection and it is a fair one. The cause is a single branch in src/features/application-authorization/service.ts: when an app ships no role catalog, the only grantable role is @app-admin at tier admin — there is no vocabulary for 'ordinary user', so the code falls back to the one role it knows. Two things are true at once and they should not be confused: inside the package she is a student, because little-monsters/src-routes/education-access.ts keys every route on lm_students.role and never reads the platform tier; at the platform layer she is labelled an admin of that app. What I have NOT verified is whether any platform surface outside the package (uninstall, grant management for that app) accepts an @app-admin — that is the part worth checking before this is called harmless.
 
-**Do:** Click Claim swarm root in the cockpit.
+**Do:** Nothing to do today; she can use it. The fix is to give little-monsters a real role catalog with a student role so the grant can say 'student'. That work was started and stopped when the tokens ran out — the next session should pick it up first.
 
-### Activate Little Monsters
+### Sign Ella in once, to close the last gap
 
-swarm_applications says status=inactive while its own manifest says active, so it was toggled off deliberately after install. A grant against an inactive package is refused 404 before authorization runs — so Ella cannot be given it until this flips. 13 of 89 apps are in the same state.
+lm_students has her row with role=student, but external_issuer is still NULL where yours is populated. The package self-heals it on first login — education-access.ts writes UPDATE lm_students SET external_issuer at line 236 — but until she actually signs in, the issuer-keyed lookup at line 175 will not match her. Issuer-keyed lookups silently failing is exactly the failure that took Jarvis down for three days, so this is worth closing rather than assuming.
 
-**Do:** Activate it from the app surface, or tell me to and I will report the exact call first.
+**Do:** Have her log in once with her Google account and open Little Monsters. Then tell me and I will confirm the issuer got written.
 
-### Decide what Ella gets
+### Give the GitHub token the packages scope
 
-She already exists: lm_students carries Ella Murphy, ella.k.murphy@gmail.com, Google sub 113439769752756917575, role student. Her external_issuer is NULL where yours is populated — worth checking before granting, because issuer-keyed lookups are exactly what silently failed elsewhere. Jarvis needs no grant at all (legacy mode); Little Monsters needs activation first and declares no prerequisites, so nothing else comes with it.
+Your PATs are already god-level — that is not the problem, and there is nothing for you to mint. The problem is narrower: the gh CLI session on this box was authorized without write:packages, so the publish step cannot push the image even with a good token. Nothing has ever published this trunk's container image, so ghcr.io/.../oshal-bot:latest is still the pre-cutover 2026-07-26 artifact, and --mode 1 (the default documented install) hands that to every new machine. That is what made the second computer look like it was missing features.
 
-**Do:** Confirm the scope and I will prepare the grant for your approval rather than applying it.
-
-### Mint a GHCR token
-
-Nothing has ever published this trunk's container image. ghcr.io/.../oshal-bot:latest is still the pre-cutover 2026-07-26 artifact, and --mode 1 (the default documented install) hands that to every new machine. That is what made the second computer look like it was missing features. The publish mechanism is merged and fail-closed; it needs a credential an agent must not mint.
-
-**Do:** A PAT with write:packages, set as OSHAL_GHCR_TOKEN and OSHAL_GHCR_USER in the environment the nightly gate runs under, then add --publish-image to that scheduled command.
+**Do:** gh auth refresh -h github.com -s write:packages — then add --publish-image to the nightly gate command. The publish mechanism is merged and fail-closed; it will refuse rather than publish something wrong.
 
 ### Rotate two credentials that were exposed in a transcript
 
 A lane's bad redaction printed the values of ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA_KEY into its own transcript; it disclosed this unprompted. Separately, the oshal PAT was pasted into chat. Neither left this machine, but neither should sit in a log.
 
-**Do:** Rotate the Alpaca paper keys; re-mint OSHAL_VERIFY_OPERATOR_PAT from a signed-in session and replace the line in .env.
+**Do:** Rotate the Alpaca paper keys; re-mint OSHAL_VERIFY_OPERATOR_PAT from a signed-in session and replace the line in .env. The deploy path now reads .env for that name, so replacing the line is enough.
 
 ### Deploy when you are ready
 
-The running api is 12+ commits behind main, so POST /api/authorization/package-plan 404s on the box and the rail change is not picked up. Nothing is broken by waiting. A deploy signs you out and takes about 20 minutes.
+The running api is on 49686ac4 — 25 commits behind main, measured, not estimated. So POST /api/authorization/package-plan still 404s on the box and none of last night's merges are live. Nothing is broken by waiting. A deploy signs you out and takes about 20 minutes.
 
-**Do:** bash scripts/oshal-deploy.sh — or tell me to run it. For the rail change alone, no deploy is needed: POST /api/ui/profile/reload with your PAT.
+**Do:** bash scripts/oshal-deploy.sh — or tell me to run it. For the cockpit rail change alone, no deploy is needed: POST /api/ui/profile/reload with your PAT.
 
-### Fix .wslconfig
+### Fix .wslconfig line 4 — this is the memory problem
 
-wsl reports: Unknown key 'wsl2.autoMemoryReclaim' in C:\Users\roger\.wslconfig:4. The key is being rejected, so whatever it was meant to do is not happening. The docker-desktop WSL2 distro stopped three times last night and the engine was at 1.4 GB free of 15.7 GB; this may be the cause rather than a coincidence.
+wsl reports: Unknown key 'wsl2.autoMemoryReclaim' in %USERPROFILE%/.wslconfig:4. The key is rejected, so whatever it was meant to do is not happening. You said the gateway went down almost immediately and that you think the box is memory constrained — that matches: the docker-desktop WSL2 distro stopped three times overnight and the engine was at 1.4 GB free of 15.7 GB. This is the most likely single cause of the instability you felt.
 
-**Do:** Say the word and I will read the file and tell you exactly what is malformed.
+**Do:** Say the word and I will read the file and tell you exactly what is malformed. It is a one-line edit plus wsl --shutdown.
 
 ---
 
