@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D6 event playbooks against the REAL oshal Postgres (fail-loud when the stack is down): the FORCE-RLS table exists; params normalize/refuse; the state machine walks armed → watching → priced (EDGAR fakes: S-1 then 424B4 with a parseable price + ticker) → listed → entry_placed (a real 'event-playbook' decision row on the plan's book) → filled → exits_placed (TP limit GTC + stop GTC) → closed on the take-profit with the STOP CANCELLED and P&L recorded; the disarm path cancels working orders; delete refuses an active plan; the 424B4 parser reads price + ticker; the leg refuses to act while TRADING_EVENT_PLANS is off.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | This spec now STARTS its own PostgreSQL and removes it, the way the ADR-159 dispatch guards do, instead of taking an address from the environment at all. Refusing an unpointed run made the accident impossible but left the spec unrunnable, so it proved nothing in any gate; a private server makes it both safe and executable, and there is no longer any value a caller can supply that would reach a deployment. The DELETE-by-sub teardown is gone with it — the container is destroyed, so no cleanup SQL runs anywhere, which is the property that failed twice on 2026-09-14. The `ALTER TABLE ... OWNER TO oshal_app` handoff is gone too: that role exists only in the shared deployment this spec no longer touches.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The ADR-159 sibling block gains the case the fence never had: a plan driven through its entry AND its fill with the fence OFF, then fenced while it holds the position. It asserts what the module chose - the take-profit and the stop keep working (nothing cancelled, the plan stays `exits_placed`), and the timeline carries `exit_fence_held` naming TRADING_CORE_SYMBOLS and the pre-fence mandate. Two further ticks assert the five-minute leg says it ONCE, and un-fencing asserts `exit_fence_lifted` so a stale note is never read as current. Proven red against the pristine module (no fence event at all) and mutation-proved twice: dropping the edge trigger duplicates the note, and recording only the fence loses the lift.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Pool } from 'pg';
@@ -238,6 +239,63 @@ describe('TRADING_CORE_SYMBOLS is honoured at the event-plan ENTRY (ADR-159 sibl
       const p = (await getEventPlan(pool as never, SUB, out.planId))!;
       expect(p.timeline.at(-1)).toMatchObject({ event: 'ring_fenced' });
       expect(p.timeline.at(-1)?.detail).toContain('TRADING_CORE_SYMBOLS');
+    } finally { if (prev === undefined) delete process.env.TRADING_CORE_SYMBOLS; else process.env.TRADING_CORE_SYMBOLS = prev; }
+  });
+
+  /** Drive a plan through the entry AND the fill with the fence off, so it holds a real position
+   *  with both protective orders working — the state a fence added later actually finds. */
+  async function driveToExitsPlaced(name: string) {
+    const venue = fakeVenue();
+    const clock = new Date('2026-10-20T14:00:00Z');
+    const deps: EventPlanDeps = {
+      now: () => clock, session: async () => 'regular', edgarSearch: async () => edgar,
+      fetchText: async () => 'The initial public offering price is $50.00 per share ... under the symbol “ANTH”',
+      broker: venue.broker as unknown as EventPlanDeps['broker'],
+      latestTrade: async () => ({ price: 61, asOf: clock }),
+      place: venue.place as unknown as EventPlanDeps['place'],
+    };
+    const plan = await createEventPlan(pool as never, SUB, { book, name, params: normalizeEventPlanParams({ issuer: 'Anthropic', sizePctOfEquity: 10 }) });
+    await armEventPlan(pool as never, SUB, plan.planId);
+    for (let i = 0; i < 6; i += 1) {
+      if ((await getEventPlan(pool as never, SUB, plan.planId))!.status === 'entry_placed') break;
+      await tickEventPlans(ctx(), SUB, deps);
+    }
+    venue.fill((id) => id.includes(`${plan.planId.slice(0, 8)}-entry`), 51.2);
+    await tickEventPlans(ctx(), SUB, deps);
+    return { planId: plan.planId, venue, deps };
+  }
+
+  const fenceEvents = (t: Array<{ event: string; detail?: string }>) => t.filter((e) => e.event.startsWith('exit_fence_'));
+
+  it('a ticker fenced AFTER the fill keeps both exits and SAYS SO — the pre-fence mandate is recorded once, and its lift too', async () => {
+    const prev = process.env.TRADING_CORE_SYMBOLS;
+    delete process.env.TRADING_CORE_SYMBOLS;
+    try {
+      const run = await driveToExitsPlaced('fence-after-fill');
+      let p = (await getEventPlan(pool as never, SUB, run.planId))!;
+      expect(p.status).toBe('exits_placed');
+      expect(fenceEvents(p.timeline)).toEqual([]);                       // nothing to say while the name is free
+
+      process.env.TRADING_CORE_SYMBOLS = 'ANTH:0';                        // the operator fences it NOW
+      await tickEventPlans(ctx(), SUB, run.deps);
+      p = (await getEventPlan(pool as never, SUB, run.planId))!;
+      expect(p.status).toBe('exits_placed');                             // not closed, not cancelled, not errored
+      expect(run.venue.cancelled).toEqual([]);                           // the take-profit and the stop are still working
+      expect(fenceEvents(p.timeline).map((e) => e.event)).toEqual(['exit_fence_held']);
+      const note = fenceEvents(p.timeline)[0];
+      expect(note.detail).toContain('TRADING_CORE_SYMBOLS');
+      expect(note.detail).toMatch(/pre-fence mandate/i);
+
+      await tickEventPlans(ctx(), SUB, run.deps);                        // the leg fires every five minutes…
+      await tickEventPlans(ctx(), SUB, run.deps);
+      p = (await getEventPlan(pool as never, SUB, run.planId))!;
+      expect(fenceEvents(p.timeline).map((e) => e.event)).toEqual(['exit_fence_held']);   // …and says it ONCE
+
+      delete process.env.TRADING_CORE_SYMBOLS;                            // the operator lifts the fence
+      await tickEventPlans(ctx(), SUB, run.deps);
+      p = (await getEventPlan(pool as never, SUB, run.planId))!;
+      expect(fenceEvents(p.timeline).map((e) => e.event)).toEqual(['exit_fence_held', 'exit_fence_lifted']);
+      expect(p.status).toBe('exits_placed');
     } finally { if (prev === undefined) delete process.env.TRADING_CORE_SYMBOLS; else process.env.TRADING_CORE_SYMBOLS = prev; }
   });
 });

@@ -606,19 +606,50 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   Red on the unlocked tree in 3 of 3 runs, green in 5 of 5 after. Registered in the isolated nightly
   set (`scripts/ci/run-nightly-isolated.mjs`) and on the Test Lab `nightly-isolated-regression`
   scenario, which is the only gate that executes a Docker-owning spec.
-- **Remaining:** the trading set is not GREEN on a bare cluster, for reasons that are not the race and
-  were not touched here. Five files fail identically before and after, on prerequisites nothing in the
-  trading bootstrap creates: `trading-book-report-scripts` needs `OSHAL_TEST_APP_DSN` (the enforcing
-  `oshal_app` role); `trading-books-schema` and `trading-settlement` need `oshal_user_deks`
-  (connector-token-crypto, `42P01`); `trading-dispatch-golden-plan` needs `trading_config_overrides`
-  (`42P01`); `trading-watchdog-books` needs `OSHAL_TEST_DB_CONTAINER`. That is the 'whether the whole
-  set survives on a bare cluster is still unmeasured' clause of the disposable-PostgreSQL entry below
-  — now measured, and it belongs there. The golden-plan spec's single-retry workaround
-  (`bootstrapOnce`) is now redundant but was left in place; removing it is a separate change.
+- **Three of the five bare-cluster prerequisites are CLOSED (2026-09-17).** The three that failed on
+  a table nothing in their own prologue created now take ONE shared prologue,
+  `tests/helpers/trading-spec-schema.ts`: `ensureTradingSpecSchema` runs the family's eleven
+  bootstraps in dependency order, including the two that are not `src/app/trading-*` at all and that
+  every hand-written prologue had therefore missed — `ensureOverridesSchema`
+  (`trading_config_overrides`, which `trading-dispatch-golden-plan` sweeps in `beforeAll` BEFORE the
+  first fire that used to create it lazily) and `ensureDekSchema` (`oshal_user_deks`, which
+  `trading-books-schema` and `trading-settlement` reach through the REAL envelope path when they seed
+  a book account). Those prologues were written against the operator's already-built database, where
+  a forgotten `ensure*` is invisible. `bootstrapOnce` went with the change: its single retry existed
+  only for the concurrent-CREATE race the family lock now prevents.
+- **Measured on one disposable `postgres:16-alpine`, database dropped and recreated before each run,
+  no `--no-file-parallelism`.** Before: `7 failed | 7 passed (14)`, `4 failed | 105 passed | 41
+  skipped`, with `42P01` on `oshal_user_deks` and on `trading_config_overrides`. After, three runs:
+  `4 failed | 10 passed`, `4 failed | 10 passed`, `6 failed | 8 passed` — and **zero `42P01` in any
+  of them**. The three converged files pass identically every run (golden-plan 4, books-schema 9,
+  settlement 24 cases). The passed count moves 107 → 135 because settlement and golden-plan now
+  execute at all; 107 + 24 + 4 = 135.
+- **Guard:** `tests/unit/trading-spec-bare-cluster-prerequisites.spec.ts` starts its own PostgreSQL,
+  asserts the EMPTY database is missing every relation, runs the shared prologue, and asserts none is
+  missing afterwards — then exercises the two paths that actually died (`encryptToken` round-trips a
+  `v2:` blob; the golden-plan residue `SELECT` on `trading_config_overrides` answers instead of
+  raising `42P01`), and pins that the three specs really import the shared prologue so the file
+  cannot guard a helper nobody calls. Mutation-proved: dropping the two bootstraps from the helper
+  gives `3 failed | 1 passed`; moving one spec off the prologue gives `1 failed | 3 skipped`.
+  Registered in the isolated nightly set and on the Test Lab `nightly-isolated-regression` scenario
+  — the only gate that executes a Docker-owning spec.
+- **Remaining, and NOT a bootstrap problem:** two files still refuse on an environment nothing
+  provisions. `trading-book-report-scripts` needs the enforcing `oshal_app` role to exist on the
+  cluster (no migration creates it; it is provisioned outside the tree), and `trading-watchdog-books`
+  needs `OSHAL_TEST_DB_CONTAINER` + `OSHAL_TEST_REDIS_CONTAINER`, i.e. a disposable Postgres AND a
+  disposable Redis container of its own. Both belong to the "converge them on
+  `tests/helpers/disposable-postgres.ts`" work in the disposable-PostgreSQL entry below, not here.
+- **Also measured, and also not the race:** on a loaded box, 14 concurrent vitest workers push
+  individual cases past vitest's DEFAULT 5s `testTimeout`. Every remaining test-level failure in the
+  three runs above is literally `Test timed out in 5000ms` (4 log lines = 2 cases, 8 = 4 cases), and
+  the SET of cases moves run to run — `trading-event-leg-cadence`, `trading-dated-orders`,
+  `trading-schwab-account-binding` (a synchronous whole-`src` walk), `trading-pinned-lots`. It fires
+  before and after this change and did not fire on the box that measured `2 failed | 107 passed`.
+  Raising those budgets is a separate change with its own done-when.
 - **Done when:** ~~the bootstrap takes an advisory lock (or tolerates the concurrent create)~~ DONE,
   and the same ten-file trading set is green without `--no-file-parallelism` — PARTIAL: no file fails
-  for the race any more and the run is deterministic, but five fail on the bare-cluster prerequisites
-  listed above.
+  for the race or for a missing bootstrap any more, but two still refuse for the environment reasons
+  above and individual cases still wander onto the 5s default timeout under 14-way parallelism.
 
 ### The DB-backed unit specs need a disposable PostgreSQL to run against
 - **What changed:** 23 `tests/unit/*.spec.ts` resolved their DSN with a fallback onto the local
@@ -1928,6 +1959,28 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   RLS classifier and the DDL parser, one entry above.
 - **Done when:** mermaid@11 (or an equivalent parser) parses an exported block in CI, and the
   renderer has one implementation behind both the docs and the surface.
+- ✅ **CLOSED 2026-09-17.** Both halves are in [#558](https://github.com/emeraldcoastsystemsgroup/oshal/pull/558)
+  (`faea98c1`, merged 2026-09-16); this change is what makes the first one *readable*.
+  **(b)** One renderer: `src/pages/data-model/js/er-diagram.mjs`, imported by `export-view.js` and
+  `require`d by `scripts/schema-docs/render.js`, which keeps only the owner-column reader it injects
+  (the generator classifies the policies, the page is handed the server's summary). Two cases in
+  `data-model-export.spec.ts` hold it: the exported functions must be the SAME objects on the surface
+  side, and neither consumer may carry a line building an `'erDiagram'` of its own. The catalog SQL,
+  the RLS classifier and the DDL parser are still two copies each — that is the entry above, not this
+  one. **(a)** mermaid **11.17.2** is a devDependency, so `npm audit --omit=dev` is untouched, and
+  `data-model-explorer-browser.spec.ts` hands the block Chromium copied out of the real page to
+  mermaid's own `parse()`: the Tables export must read as `er`, the owner export as a `flowchart`,
+  and a deliberately mangled block must be REFUSED — so a parser that accepted anything could not pass.
+- **The gate could not read that verdict, and now can.** The parse case ran in CI and passed, but its
+  FILE reported `FAIL` every time, so a real mermaid regression and the spec's own teardown looked
+  identical to the gate. `afterAll` had no bound of its own and therefore ran on vitest's 10 s
+  DEFAULT, which is what `npm run test:unit` — the `scripts/ci-local.sh` `unit` gate, the one
+  automated gate this trunk has — uses; `npm run test:data-model` passes 180 s and so never saw it.
+  Measured from a clean checkout of `02936a38`: `Tests 11 passed`, `Test Files 1 failed`,
+  `Hook timed out in 10000ms`; the same shape is in the 2026-09-16 nightly on `184377cee79a`.
+  Instrumented, the cost is `browser.close()` at 72 588 ms against `server.close()` at 1 ms — a real
+  Chromium closing on a loaded box, not the fixture server — so the hook now carries an explicit bound
+  like its own `beforeAll` and like the repo's other browser specs.
 
 ### Drone physical payloads and peer coordination
 - **Remaining:** prove a real approved MAVLink airframe/adaptor, authenticated drone-to-drone coordination, physical camera/video, ESC telemetry, and LED payload through the remote-node envelope; the Drone package carve is already complete.
@@ -2102,8 +2155,9 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** a service-secret-gated fixture (or a diarization fixture) lets the Lab seed an attributed line for a fixture voice, the scenario proves an ask and a profile for it, and a normal session cannot reach the fixture.
 
 ### Ambient Recall — relevance floor on "possibly related" hits
-- **Remaining:** the semantic leg returns the engine's nearest neighbours with no floor; the live proof returned "Can we order pizza tonight" as related to "volleyball" with the same flat RRF score as the true paraphrases. The count is unaffected, but the list reads as noise when few lines exist.
-- **Done when:** a similarity floor (or a rule that a hit must score on the vector leg, not only rank) drops the pizza line from the live-proof fixture while keeping the two volleyball paraphrases, and the exact count is unchanged.
+- **Done (2026-09-17):** `src/features/person-model/services/related-relevance.ts` scores every related candidate against the recall query on the projection's own all-MiniLM-L6-v2 and drops anything below a cosine floor (0.2 by default, `PERSON_MODEL_RELATED_SIMILARITY_FLOOR` retunes it and is forwarded by compose), then orders the survivors by that distance rather than by the fused rank, and caps AFTER the floor so noise cannot crowd out a paraphrase. A list that cannot be scored is published as nothing. `RelatedReceipt` carries `similarity` beside the fused `score`. `tests/unit/person-model-related-relevance.spec.ts` drives the real `relatedRecall` against the REAL model in a tsx child (the ESM-only import cannot resolve under vitest) on the live-proof corpus: measured 0.391 "net sport", 0.233 "knee pads", 0.169 the pizza line, and a control set never used to tune the floor at -0.048 / -0.030 / 0.145 / 0.044. Red on 3 of 11 against unmodified main, green on 11 of 11 after; the floor-disarmed control is asserted so the guard fails loudly if it ever stops reproducing the defect. Doubles recorded in [the real-boundary audit](governance/real-boundary-regression-audit.md).
+- **Remaining:** the live half. `scripts/person-model-live-proof.js` now asserts the same separation — both paraphrases kept, the pizza line gone, every published hit above the configured floor, the list ordered by similarity, the exact count still 1 — but it has not run since the floor landed: it needs a deploy and a running api container.
+- **Done when:** `docker exec oshal-local-api node /tmp/pm-live.js` prints `LIVE PROOF OK` against real pgvector and real Postgres on a `main` deploy that carries the floor.
 
 ### Lazy-DDL trigger and function guards must converge, not create-once
 - **Done (2026-09-14):** `tests/unit/lazy-ddl-guard-convergence.spec.ts` with `tests/helpers/lazy-ddl-guards.ts` enumerates every guard under `src/` that keys a trigger or function on its name alone (`IF NOT EXISTS … pg_trigger / pg_proc / information_schema.triggers / information_schema.routines`, `to_regproc … IS NULL`). The inventory is two guards, both in `person-model-schema.ts`: the consent trigger (converges on the tgtype DELETE bit) and the `ambient_speaker_consents_no_flip` function (create-once by design — `CREATE OR REPLACE` raises 42501 for the app role — so its CREATE statement and live body are pinned). A new, moved or removed guard, or a changed CREATE statement without a convergence decision, is red; an empty inventory is red; the scanner is self-tested on fixtures of every shape. Read-only psql against the dev box on 2026-09-14 returned exactly the pinned rendering: `CREATE TRIGGER ambient_speaker_consents_no_mutate BEFORE UPDATE ON public.ambient_speaker_consents FOR EACH ROW EXECUTE FUNCTION ambient_speaker_consents_no_flip()` (tgtype 19) and the pinned `prosrc` body.
@@ -2828,31 +2882,3 @@ work in `ocean-lab`, `aero-lab` and `embodied`; no core code.
   and engine fingerprints or is not displayed. No slice buys, builds or tests hardware, and none attempts
   free-surface hydrodynamics, added mass, cavitation, or aerodynamics inside the physics plant.
 
-### Event-plan EXITS are not ring-fenced, only the entry is
-
-`stepListed` in `src/app/trading-event-plans.ts` refuses to open a position in a ticker
-`TRADING_CORE_SYMBOLS` fences, which is what stops a fenced name from ever entering an event
-plan's book. The exits (`stepFilled`'s take-profit and stop, `stepExitsPlaced`'s time stop) are
-deliberately NOT fenced: they close the quantity the plan's own entry bought, and withholding them
-would strip a filled position of its protection — strictly worse than the exposure prevented. The
-residual is narrow but real: a plan that reached `filled` BEFORE the operator added its ticker to
-`TRADING_CORE_SYMBOLS` keeps running its exits against a name the fence now covers. The ADR-159
-`unmanaged` mark does not apply to this module at all — its `EventBroker` interface is
-`configured/getAccount/getOrder/cancelOrder` with no `getPositions`, so every quantity it sells
-comes from `entry.filledQty`/`exits.qty`, which the engine's ledger accounts for by construction.
-
-**Done when:** arming or fencing decides the question before a position exists — adding a symbol to
-`TRADING_CORE_SYMBOLS` while a plan on it is `filled` or `exits_placed` either hands the position
-to the operator explicitly (the plan closes and says the exits are now theirs to manage) or records
-on the plan timeline that its exits continue under the pre-fence mandate, rather than the current
-silence. A guard in the shape of the `ADR-159 sibling` block in
-`tests/unit/trading-event-plans.spec.ts` drives a plan to `filled`, fences its ticker, ticks, and
-asserts the chosen behaviour — proven red against today's code, which neither closes nor records.
-
-**Assessed and deliberately left alone:** `trading-pinned-lots.ts` and `trading-dated-orders.ts`
-ride the same `trading-events:<sub>` leg and place through the same `deps.place` seam, and neither
-reads the `unmanaged` mark or `TRADING_CORE_SYMBOLS`. They are not the same defect shape: both
-execute an order the OPERATOR authored (a protected lot is the operator's own buy with its own exit
-rules, explicitly subtracted from the autopilot's view by ADR-138 D3; a dated order is an operator
-decision minted now and placed at a time they chose). ADR-159 withholds where the engine trades a
-position it did not buy, not where the operator instructed a specific order.

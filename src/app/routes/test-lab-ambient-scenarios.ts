@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2-4 Test Lab scenario: seeds one clearly-labelled transcript line through the REAL ambient ingest route, then proves the deterministic person-model reads end to end as the signed-in user — the themed surface, an exact recall count for that line, the asks / people / trends / projection reads, and Jarvis chat answering the open-asks shape without a model turn. Registered in test-lab-scenarios.ts; regression files attached at unit + integration levels.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attached the Manage Voices → Ambient Recall bridge regressions: the four-point wiring pin (unit) and the Chromium proof that every voice row opens its profile page (browser).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Attached the "possibly related" relevance-floor regression, which runs the real embedding model in a child process — the retrieval leg's fused score is a reciprocal rank and carried no distance, so an off-topic line was published beside real paraphrases.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -127,6 +128,7 @@ export const AMBIENT_SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/person-model-intent.spec.ts' },
       { level: 'unit', path: 'tests/unit/person-model-surface.spec.ts' },
       { level: 'unit', path: 'tests/unit/person-model-recall-guard.spec.ts' },
+      { level: 'unit', path: 'tests/unit/person-model-related-relevance.spec.ts' },
       { level: 'integration', path: 'tests/unit/person-model-parity-postgres.spec.ts' },
       { level: 'unit', path: 'tests/unit/person-model-maintenance-runtime.spec.ts' },
       { level: 'unit', path: 'tests/unit/lazy-ddl-guard-convergence.spec.ts' },
