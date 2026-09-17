@@ -1363,6 +1363,14 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   `registry`) so the UI can show where a value came from. A fleet-default control lives beside it.
 - **Out of scope here:** the Cline fallback's missing binary - its own change with an image-level
   guard, because it restores agentic work on the persisted Gemini config without touching resolution.
+- **Acceptance, in the operator's words (2026-09-17): "so this is flexible configuration right ...
+  im not going to switch it to codex tomorrow and we have to hard code a bunch of shit."** The test
+  is literal: the day after this merges and deploys, moving the whole fleet back to Codex is ONE
+  write of the fleet-default row from the cockpit - no pull request, no image deploy, no container
+  restart - and the next dispatch to an idle bot runs on it (the reconciler already applies a
+  carried record to an idle bot; the ADR-034 post-execution check must then agree with what ran).
+  A change that leaves ANY per-service compose literal or registry edit on that path has not met
+  this entry, whatever else it proves.
 - **Done when:** a unit spec proves a per-bot row overrides the registry, a fleet-default row
   overrides the registry for a bot without its own row, a per-bot row beats the fleet default, no
   rows resolve byte-identically to today (the existing registry-wins spec is inverted, not deleted),
