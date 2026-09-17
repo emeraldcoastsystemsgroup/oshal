@@ -1810,8 +1810,29 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** a real storyboard request returns a generated image through the ComfyUI provider, failure is bounded/visible, and the conductor can consume it without Vertex spend.
 
 ### Video Studio storyboards on the demo codex-cli rail
-- **Remaining:** the series storyboard stage calls `resolveStoryboardImageProvider` without `userSub`, so under the ADR-130 demo default it fails closed with the carve hint; thread the series owner's sub from the conductor (`series-orchestrator` → `storyboardEpisode` → resolver opts) the way portrait-studio 1.4.1 does.
-- **Done when:** a demo-mode series storyboard renders through the `codex-cli` provider end to end with the owner's sub on the SEC-05 gates, and the conductor spec covers the threading. See [ADR-130](adr/130-codex-cli-storyboard-image-provider.md).
+- **Built 2026-09-17 on `fix/series-storyboard-owner-sub`.** The series storyboard stage reached
+  `resolveStoryboardImageProvider` with no caller identity, so under the ADR-130 demo default
+  (`STORYBOARD_IMAGE_PROVIDER` unset + `DEMO_MODE`) the resolve read `codex-cli` as unavailable and
+  the whole stage died at the carve hint — every series on the demo box, before the first image.
+  The owner's sub is now carried on `StoryboardContext` and into the resolve
+  (`storyboardEpisode` → `generateEpisodeStoryboard`/`generateStoryboardFrame` → resolver opts).
+- **Read off the row, not threaded as an argument.** The entry proposed threading from the conductor
+  (`series-orchestrator` → `storyboardEpisode` → opts). The stage already JOINs `video_series`, so
+  it selects `s.user_sub` there instead: the identity is the SERIES OWNER by construction, no caller
+  can forget it and none can name somebody else, and the `video` package's own per-episode route
+  (`src-routes/video-routes.ts` `POST /series/:seriesId/episodes/:ordinal/storyboard`, which calls
+  `storyboardEpisode` directly) is fixed by the same change with no second repo's compile depending
+  on this one. `OrchestratorDeps.storyboard` keeps its signature.
+- **Guard:** `tests/unit/series-storyboard-owner-sub.spec.ts` — `advanceVideoSeries` over a real
+  two-scene episode through the real pipeline, the real frame generator (real PNG decode, crop and
+  16×16 average-hash distinctness), the real resolver, the real `codex-cli` provider and the real
+  shared-workspace filesystem, onto the boot-registered executor seam. Red 2 of 3 against unmodified
+  main with the carve hint on `resolveStoryboardImageProvider`; green 3 of 3 after. The third case
+  is the control and the anti-hardcode mutation check: a non-operator owner still fails closed and
+  reaches no executor.
+- **Done when:** the remaining half is LIVE — one demo-box series storyboarding through a real bot
+  node (the executor is doubled in the guard, so the bot-side SEC-05 spawn is not evidence here),
+  dated in the deploy record. See [ADR-130](adr/130-codex-cli-storyboard-image-provider.md).
 
 ### Video Series intro and season assembly
 - **Remaining:** splice a reusable intro into each episode and add season-level ordering/stitching over completed episode artifacts.
