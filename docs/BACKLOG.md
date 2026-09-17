@@ -275,6 +275,49 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** [AUTH-01 through AUTH-10](backlog/enterprise-authorization.md) retain directory provisioning, live worker revalidation, business-data adapters and rollout evidence. Isolated implementation suites are registered in AI Test Lab.
 - **Done when:** one installed business package proves differing user/group function and record rights across UI, API and delegated AI; explicit deny and revocation work; installer root has one authorized winner; test cases register with installation and isolated/live evidence is accurately distinguished.
 
+### Configure by package: the plan resolves, the apply is still one change at a time (2026-09-17)
+
+- **Shipped 2026-09-17.** `POST /api/authorization/package-plan` resolves one package plus the
+  applications it declares under `dependencies.required.apps` (transitively, cycle-safe, bounded at
+  128 apps / depth 24) and classifies each into the ONE `/access` change it needs:
+  `grant-app-admin` for a catalog-less enforce app, `choose-role` (with the declared roles, never a
+  guess) for a catalogued one, `no-grant-required` for a legacy one, and a NAMED refusal for an
+  application that is not installed, not active, explicitly denied, outside the caller's management
+  read, or whose subject account is closed or outside the tenant. It grants nothing.
+- **Why the apply half is not here.** `previewChange`/`applyChange` are one change per preview by
+  construction: a preview stores exactly one `AuthorizationChange`, pins one `expectedRevision` and
+  one `catalogRevision`, and `applyPrepared` bumps the revision once. Fanning a plan out to N
+  grants means either N sequential previews (each invalidated by the previous one's revision bump,
+  so the operator re-previews N−1 times) or a new set-shaped preview with all-or-nothing apply.
+  The second changes the ADR-149 preview/apply contract and its audit shape, which is an ADR-level
+  decision, not an implementation detail. **Propose it before writing it.**
+- **Measured constraints any apply design has to survive.** On the deployment box 2026-09-16:
+  `oshal_authorization_assignments` holds 77 rows, exactly one per application and all for a single
+  subject; 73 are `@app-admin` and 4 are catalog roles, so catalog-less `@app-admin` is the
+  dominant shape. Of 65 installed packages only 4 ship an `authorization.yaml`. Only 14 manifests
+  declare a required app dependency at all, and `little-monsters` declares
+  `apps: [] tools: [] connectors: []` — a correct fan-out over an empty declaration is still an
+  empty fan-out, so **the declarations are the gating work, not the resolver**.
+- **Deactivated packages cannot be granted at all, and that is upstream of this.** `previewChange`
+  calls `requireApp`, and deactivation calls `service.unregisterApp`, so a grant for an inactive
+  package is refused 404 `authorization_app_unavailable`. `little-monsters` is inactive right now.
+  The plan reports this as `blocked-inactive` rather than proposing a grant that would be refused.
+- **Source binding is reported, not repaired.** `matchingAssignments` (policy.ts) drops a row whose
+  `source` no longer matches the running installation and — unlike a `catalogRevision` mismatch —
+  raises no `stale` flag and no refusal reason. The plan counts those rows per application as
+  `inertAssignments`. Re-measured 2026-09-16 against the live box: **0 of 77 rows are currently
+  orphaned** (69 match the recomputed source exactly; the other 8 are workflow-studio published
+  flows whose manifests sit in the `deployed-apps` root and match it). The hazard is real in code
+  and has not yet fired in this deployment.
+- **No `/access` UI.** The plan is API-only today; `src/pages/access/index.html` still edits one
+  assignment at a time.
+- **Done when:** an administrator can, from `/access`, pick a package and a person, see the plan
+  (including every named refusal), choose a role for each catalogued entry, and apply the whole set
+  in one audited act that either lands completely or lands nothing; an inactive or uninstalled
+  prerequisite is refused rather than skipped; the audit history shows the set as one act with its
+  per-application entries; and a package whose required declaration is empty says so on the screen
+  instead of producing a one-entry plan that looks complete.
+
 ### Application test cases register with AI Test Lab during installation
 - **Requested:** test cases belong to application packages and register automatically on installation, with upgrade/reload/disable/uninstall reconciliation. Reuse existing package `smoke:` validation and verification; richer local/browser/live suites need versioned catalog and runner metadata.
 - **Implemented in the current branch:** versioned package catalogs, shared CLI/runtime validation, lifecycle reconciliation, caller-filtered discovery, sealed Node execution, durable versioned results and local catalog-selected schedules. Installed catalogs include Hello, Portrait, Kalshi, the ten-package adoption cohort and Sports Edge's coach follow-up; unavailable fixtures remain explicit. See the [execution guide](testing/package-test-execution.md) and dated run records for each proof scope.

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Expose distinct core access-management role templates and effective capabilities.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Add the read-only "configure by package" grant plan: one application plus the applications it declares it cannot run without, each classified into the ONE change /access would make for it. A plan is a description, never a grant — it creates no assignment, bumps no revision and writes no audit entry.
  */
 /** ADR-149: versioned application permission contract. Routing metadata never grants authority. */
 export type AuthorizationTier = 'deny' | 'viewer' | 'editor' | 'admin';
@@ -104,6 +105,72 @@ export interface AuthorizationEffective {
   managementRoles?: string[];
   managementPermissions?: AuthorizationManagementScope['permissions'];
 }
+/** What the ONE /access change for a single application in a package grant plan would be. */
+export type PackageGrantAction =
+  /** Catalog-less application in enforce mode: `@app-admin` is the only grantable role. */
+  | 'grant-app-admin'
+  /** Catalogued application: the caller must name one of `candidateRoles`; the plan never picks. */
+  | 'choose-role'
+  /** The subject already holds a non-deny tier here. */
+  | 'already-granted'
+  /** Legacy application with no catalog: reachable with no assignment at all. */
+  | 'no-grant-required'
+  /** An explicit deny stands for this subject; a grant would not take effect until it is cleared. */
+  | 'blocked-explicit-deny'
+  /** Nothing is installed under this name, so there is nothing to grant. */
+  | 'blocked-not-installed'
+  /** Installed but not active, so no authority holds its catalog and no grant can be previewed. */
+  | 'blocked-inactive'
+  /** This caller holds no management read on this application; nothing else about it is reported. */
+  | 'blocked-management-denied'
+  /** The subject's account is not active; access granted to it would not resolve. */
+  | 'blocked-subject-inactive'
+  /** The subject is not a member of the requested business tenant. */
+  | 'blocked-tenant';
+
+/** One application in a resolved package grant plan. */
+export interface PackageGrantPlanEntry {
+  app: string;
+  /** 0 for the requested package, 1+ for something it requires (transitively). */
+  depth: number;
+  /** The applications that require this one, nearest requirer first; empty for the requested package. */
+  requiredBy: string[];
+  action: PackageGrantAction;
+  /** Only when this caller may read this application's access. */
+  status?: AuthorizationAppSummary['status'];
+  /** The declared roles a `choose-role` entry may be granted. The plan never guesses one. */
+  candidateRoles?: string[];
+  /** The subject's current tier here, when this caller may read it. */
+  currentTier?: AuthorizationTier;
+  /** How many assignments this subject holds for this application that the RUNNING installation no
+   *  longer matches — a reinstall changed the installation source, so the row grants nothing and
+   *  `effective()` reports neither stale nor denied, it simply does not see it. A count, never a
+   *  source value: the source is a hash of an install path or repository. */
+  inertAssignments?: number;
+}
+
+/** A package plus everything it declares it cannot run without, as one reviewable list. */
+export interface PackageGrantPlan {
+  app: string; targetSub: string; targetIssuer: string; tenantId?: string;
+  /** The policy revision the plan was resolved against; a change to it invalidates the plan. */
+  revision: number;
+  /** The requested package first, then its required applications in resolution order. */
+  entries: PackageGrantPlanEntry[];
+  /** Optional dependencies anywhere in the set. Install-time offers, never members (ADR-141) —
+   *  they are listed so an administrator can add one deliberately, never fanned out into. */
+  offers: Array<{ app: string; offeredBy: string }>;
+  /** Required tools and connectors the set declares. Not assignments: a connector is a credential
+   *  the subject connects themselves. Reported verbatim, with no claim that they are unmet. */
+  declaredNeeds: Array<{ kind: 'tool' | 'connector'; id: string; declaredBy: string }>;
+  /** Dependency cycles found and cut. The closure is still complete; each cycle is reported once. */
+  cycles: string[][];
+  /** How many entries would produce an /access change (`grant-app-admin` or `choose-role`). */
+  actionable: number;
+}
+
+/** Read-only plan request. Authority always comes from the server actor, never these fields. */
+export interface PackageGrantPlanInput { app: string; targetSub?: string; targetIssuer?: string; tenantId?: string }
+
 export interface AuthorizationInventory {
   users: Array<{ sub: string; issuer: string; label: string }>;
   groups: Array<{ issuer: string; tenantId: string; id: string; label: string }>;
@@ -125,6 +192,9 @@ export interface ApplicationAuthorizationManagementService {
   ownCatalog?(actor: AuthorizationActor): Promise<AuthorizationCatalogResult>;
   effective(actor: AuthorizationActor, target: AuthorizationTarget): Promise<AuthorizationEffective>;
   explain(actor: AuthorizationActor, input: AuthorizationOperation & { targetSub?: string; targetIssuer?: string }): Promise<AuthorizationDecision>;
+  /** @description Resolve one package and everything it requires into the changes /access would make.
+   * @param actor Verified caller. @param input Requested package and subject. @returns A read-only plan; nothing is granted. */
+  packageGrantPlan?(actor: AuthorizationActor, input: PackageGrantPlanInput): Promise<PackageGrantPlan>;
   previewChange(actor: AuthorizationActor, input: AuthorizationChange): Promise<AuthorizationPreview>;
   applyChange(actor: AuthorizationActor, input: AuthorizationApplyInput): Promise<AuthorizationReceipt>;
 }
