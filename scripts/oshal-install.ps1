@@ -29,8 +29,8 @@
   5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: -Kubernetes — the codeless k8s install, lockstep with oshal-install.sh mode 4. kubectl/helm preflight (winget offers for both), cluster reachability check with crisp Docker-Desktop/kind guidance, chart from the published OCI package with a repo-fetch fallback, fleet presets kernel|full, the same AdminEmail→MOCK_OIDC identity wiring as the compose path (shared LocalSub, hoisted above the branch), NodePort exposure, /api/health postflight, /welcome open. New params: -Namespace, -K8sContext, -NodePort, -Chart, -Fleet.
   6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129 amendment: bundles/-Apps reach Kubernetes. The k8s branch moves BELOW bundle resolution so it installs the same curated app sets as compose (chart `packages:` staging + the fleet those bots need), auto-creating the private-store Secret when a token is present. Fixes a latent parameter bug found dry-running the new path: `-Apps a,b` is an ARRAY to PowerShell, so the [string] parameter threw a transformation error on the very syntax the bash installer and our closing instructions advertise — now [string[]], accepting both forms.
   7 | maintainer@emeraldcoastsystemsgroup.com   | The k8s path INSTALLS its prerequisites instead of printing links and exiting (operator: the installer should include the prereqs). kubectl/Helm/kind/Docker Desktop are offered via winget, and the session PATH is re-read from the registry after each install so the run CONTINUES rather than demanding a new terminal. With no cluster reachable it stands up a kind cluster with the cockpit port mapped — Docker Desktop's Kubernetes toggle is a GUI setting we deliberately do not poke at, and kind gives the same result scriptably on the engine already installed; it still refuses to create one beside a running compose swarm. New -Yes accepts every prerequisite step for unattended installs, and a non-interactive host DECLINES rather than surprise-installing.
-  8 | maintainer@emeraldcoastsystemsgroup.com   | Lockstep with oshal-install.sh seq 10: -AuthMode (basic|mock, default basic) picks the sign-in stack, -AdminPassword (or a prompt / generated-and-printed value) feeds the first-admin bootstrap, and the install ends by creating the account and claiming swarm root (ADR-117/148) instead of leaving an empty roster behind. Both modes write OSHAL_INSTALL_OWNER_SUB so staged packages have an owner.
   8 | maintainer@emeraldcoastsystemsgroup.com   | Two gaps the 2026-09-16 remote install walked into. (1) WSL2 preflight: winget installs Docker Desktop successfully on a box whose WSL2 features are off, Docker Desktop then never starts, and every message here pointed at Docker - so the client wrote a patch script by hand to get past a Windows problem this installer never mentioned. Detection is by EXIT CODE (wsl.exe emits UTF-16LE; matching its text is a check that stops working silently), enabling needs elevation and ALWAYS needs a reboot, so it ends the run either way rather than pretending to continue. -SkipWslCheck for a Hyper-V backend. (2) Stale-image refusal: GHCR is published only by the manual-only CI workflow, so latest rots with nothing saying so - that box came up 52 days and 983 commits behind and its operator reported MISSING FEATURES, not an old image. Refuses past the threshold unless -AllowStaleImage, and fails open when it cannot check.
+  9 | maintainer@emeraldcoastsystemsgroup.com   | Lockstep with oshal-install.sh: the install ends with a USER who owns the swarm. -AuthMode (basic|mock, default basic) picks the sign-in stack. basic creates the administrator through the ADR-117 bootstrap (swarm root claimed, ADR-148) with a random password nobody sees, then opens scripts/oshal-admin-link.mjs's one-time set-password link instead of /welcome - choosing the password signs that browser in and lands on the wizard, so there is no generated credential to print and lose. -AdminPassword stays for headless automation. mock still claims root for the mock principal. Both write OSHAL_INSTALL_OWNER_SUB so staged packages have an owner. Closing output states the real sign-in path, the reissue command, and the 0.0.0.0 exposure mock implies.
 #>
 [CmdletBinding()]
 param(
@@ -97,26 +97,6 @@ function Test-EmailShape([string]$value) {
   if (-not $value) { return $false }
   return $value -match '^[^@\s]+@[^@\s]+\.[^@\s]+$'
 }
-function Require-AdminPassword([string]$value, [string]$email) {
-  # basic mode needs a credential. A generated one is printed once; a shipped constant never is.
-  if ($value) { return @{ Password = $value; Generated = $false } }
-  if (-not [Environment]::UserInteractive) {
-    return @{ Password = (-join ((1..20) | ForEach-Object { '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'[(Get-Random -Maximum 62)] })); Generated = $true }
-  }
-  while ($true) {
-    $first = Read-Host "   password for $email (min 10 chars, Enter to generate one)" -AsSecureString
-    $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($first))
-    if (-not $plain) {
-      return @{ Password = (-join ((1..20) | ForEach-Object { '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'[(Get-Random -Maximum 62)] })); Generated = $true }
-    }
-    if ($plain.Length -lt 10) { Write-Host "   too short - the store requires at least 10 characters" -ForegroundColor Yellow; continue }
-    $again = Read-Host "   confirm" -AsSecureString
-    $confirm = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($again))
-    if ($plain -eq $confirm) { return @{ Password = $plain; Generated = $false } }
-    Write-Host "   they do not match" -ForegroundColor Yellow
-  }
-}
-
 function Require-AdminEmail([string]$value) {
   while (-not (Test-EmailShape $value)) {
     if ($value) { Write-Host "   not an email address: $value" -ForegroundColor Yellow }
@@ -557,13 +537,13 @@ try {
 $envFile = Join-Path $Dir '.env'
 # An existing .env already carries the identity chosen on the first install.
 $script:AdminAccountCreated = $false
-$script:PasswordGenerated = $false
+$script:SetPasswordLink = ''
+$script:SetPasswordExpires = ''
+# No password question: the administrator chooses it in the browser through a one-time link that
+# also signs that browser in. -AdminPassword stays for headless automation that must know it.
+$script:PasswordSupplied = [bool]$AdminPassword
 if (-not (Test-Path $envFile)) {
   $AdminEmail = Require-AdminEmail $AdminEmail
-  if ($AuthMode -eq 'basic') {
-    $credential = Require-AdminPassword $AdminPassword $AdminEmail
-    $AdminPassword = $credential.Password; $script:PasswordGenerated = $credential.Generated
-  }
   $StoreRepo = Require-StoreSource $StoreRepo ($PSBoundParameters.ContainsKey('StoreRepo') -or [bool]$env:OSHAL_STORE_REPO)
 }
 
@@ -707,6 +687,11 @@ if ($AuthMode -eq 'mock') {
   } catch { Note "root claim skipped (already held, or the route declined)" }
 } else {
   Say "creating the administrator account"
+  # Unless automation supplied one, the bootstrap password is random and NEVER shown: the operator
+  # replaces it through the set-password link issued below, which is what signs their browser in.
+  if (-not $script:PasswordSupplied) {
+    $AdminPassword = -join ((1..48) | ForEach-Object { '0123456789abcdef'[(Get-Random -Maximum 16)] })
+  }
   # One-use, origin-bound, 15-minute proof. Terminal-only by design - it never reaches a log.
   $proof = (cmd /c "docker exec oshal-local-api node scripts/oshal-setup-root.mjs --origin $origin 2>nul" |
     Select-String -Pattern '^Installer setup code: (.+)$' | ForEach-Object { $_.Matches[0].Groups[1].Value }) | Select-Object -First 1
@@ -719,6 +704,13 @@ if ($AuthMode -eq 'mock') {
         -Body (@{ email = $AdminEmail; name = $AdminEmail.Split('@')[0]; password = $AdminPassword; setupToken = $proof } | ConvertTo-Json) | Out-Null
       Note "administrator $AdminEmail created; swarm root claimed"
       $script:AdminAccountCreated = $true
+      if (-not $script:PasswordSupplied) {
+        $link = cmd /c "docker exec oshal-local-api node scripts/oshal-admin-link.mjs --origin $origin --email $AdminEmail 2>nul"
+        $script:SetPasswordLink = ($link | Select-String -Pattern '^Set your password: (.+)$' |
+          ForEach-Object { $_.Matches[0].Groups[1].Value }) | Select-Object -First 1
+        $script:SetPasswordExpires = ($link | Select-String -Pattern '^Expires: (.+)$' |
+          ForEach-Object { $_.Matches[0].Groups[1].Value }) | Select-Object -First 1
+      }
     } catch { Note "account bootstrap declined - open $origin/login and use setup code: $proof" }
   }
 }
@@ -768,20 +760,33 @@ if ($LASTEXITCODE -ne 0) {
 # actually lives. (/cockpit would 302 here anyway while onboarding is incomplete; landing on the
 # wizard directly is the honest version of the same redirect.)
 $welcome = if ($NoAi) { 'http://localhost:35457/cockpit/' } else { 'http://localhost:35457/welcome' }
+# Basic auth opens the one-time SET-PASSWORD link instead: choosing the password there signs this
+# browser in and continues to / - the welcome wizard while setup is incomplete. Lockstep with sh.
+if ($script:SetPasswordLink) { $welcome = $script:SetPasswordLink }
 Say "installed - opening your swarm"
-Note "setup:   $welcome"
-Note "cockpit: http://localhost:35457/cockpit/   (after setup)"
+Note "cockpit: http://localhost:35457/cockpit/"
 Start-Process $welcome
 
-Say "what happens next, in the browser"
-if ($AdminEmail) {
-  Note "You are $AdminEmail - your local login AND the swarm superadmin. No sign-in page will"
-  Note "appear: MOCK_OIDC trusts this machine, and .env says that machine is you."
+Say "how you sign in"
+if ($AuthMode -eq 'basic') {
+  Note "Local login (ADR-117). Your account: $AdminEmail"
+  if ($script:AdminAccountCreated) { Note "It exists, holds swarm root, and owns every package this install staged." }
+  if ($script:SetPasswordLink) {
+    Note "Your browser is opening a one-time page to choose your password; doing so signs you in."
+    Note "If it did not open, use this link (expires $($script:SetPasswordExpires)):"
+    Note "  $($script:SetPasswordLink)"
+  } elseif ($script:PasswordSupplied) {
+    Note "Sign in at http://localhost:35457/login with the password this install was given."
+  }
+  Note "Link expired or lost? Issue a new one - no password is ever lost for good:"
+  Note "  docker exec oshal-local-api node scripts/oshal-admin-link.mjs --origin http://localhost:35457 --email $AdminEmail"
+  Note "Invite other people from the cockpit (Users -> invite); each gets their own login."
+  Note "Real identity provider (Google, Microsoft/Entra, any OIDC)? Set LOCAL_AUTH=false and MOCK_OIDC=false"
+  Note "plus OIDC_ISSUER_URL / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET / APP_URL in $envFile, restart the api."
 } else {
-  Note "You skipped the email prompt, so you are the shared demo identity (alex@demo.local) and"
-  Note "NOT the superadmin. To become yourself, set MOCK_OIDC_EMAIL / MOCK_OIDC_NAME /"
-  Note "MOCK_OIDC_SUB / OSHAL_OPERATOR_EMAILS in $envFile, then:"
-  Note "  docker compose -f `"$compose`" restart oshal-api"
+  Note "MOCK auth: there is NO sign-in page. Every request is treated as $AdminEmail, and the api"
+  Note "publishes on 0.0.0.0 - anyone who can reach port 35457 is that operator. Demo boxes only."
+  Note "Real login: set LOCAL_AUTH=true and MOCK_OIDC=false in $envFile, restart the api, visit /login."
 }
 if ($NoAi) {
   Note "This box was installed -NoAi. Chat, Jarvis, and app AI routes stay honestly disabled."
