@@ -11,6 +11,38 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ## Promotion, deployment, and regression proof
 
+### A bot that cannot reach Postgres in its first 20 seconds is pool-less for life, and says it is healthy (2026-09-17)
+
+- **Measured 2026-09-17, 22:24Z.** The Docker daemon bounced inside a VM that stayed up: 51 of 52
+  containers carry a `StartedAt` in the same minute. Every bot-node cold-started beside a cold
+  Postgres. `bot-node-runtime` retries its connect `maxAttempts: 10` at 2 s — a 20 second window —
+  logs `Postgres not ready — retrying in 2s` ten times and then serves without a pool for the rest of
+  the process's life. **28 of 36 bots lost that race**, including jarvis-bot, general-bot,
+  trading-bot, career-bot and email-bot. All 36 reported healthy; a wrap-up written minutes later
+  recorded "42/42 containers running and healthy" and was true.
+- **How it presents.** Nothing is logged until a request arrives, so an idle fleet shows no error at
+  all. The first protected execution then fails in ~4 ms inside `readProtectedBotApplication`
+  (`src/app/bot-node-application-authorization.ts:51`, `hasPool: false`) with
+  `authorization_bot_posture_unavailable`, HTTP 503 — which reads as an authorization fault and sends
+  the reader to the grant check, which passes. Jarvis answers "couldn't do that just now".
+- **This is the second occurrence in two days** (2026-09-16: all 37 bots, same shape, found only
+  because Jarvis was asked something). The recovery both times was a human noticing and restarting
+  the bots. `scripts/oshal-up.sh` exists for this, but it only runs when someone runs it; a daemon
+  bounce runs nothing.
+- **The defect is the permanence, not the race.** Losing a cold-start race is expected. Deciding at
+  second 20 that the database will never exist, and continuing to answer `/health` 200, is the bug.
+- **Done when:** (1) a bot-node with no pool keeps trying to get one in the background with backoff,
+  and the FIRST success installs the pool everywhere the boot path would have — proven against a
+  real Postgres that is started AFTER the bot, not a mocked connect (integration-boundary corollary:
+  the failing boundary is the socket); (2) while there is no pool, the container healthcheck reports
+  unhealthy, so the deployment's own restart policy and `docker ps` both tell the truth — proven by
+  a probe against a built image, not a unit double of the handler; (3) the pool-less refusal names
+  its cause (`database_pool_unavailable`) instead of borrowing an authorization error code, with the
+  refusal itself unchanged — this must NOT weaken `src/app/bot-node-protected-execution.ts`, which
+  refusing without a pool is correct; (4) a guard fails if `maxAttempts` exhaustion can again leave a
+  process serving 200 without a pool.
+
+
 ### Nothing publishes the container image, so the default install ships whatever was last pushed by hand
 
 - **Measured 2026-09-16.** `ghcr.io/emeraldcoastsystemsgroup/oshal-bot:latest` resolves to digest
@@ -1294,6 +1326,52 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** a new `tests/unit/` spec that reaches `oshal-local-db` through `docker exec` fails the gate; the live-stack e2e suites still pass it; and the guard spec carries a case for each side.
 
 ## Workflow, agent, and model runtime
+
+### A bot's LLM provider is a row in a table, not a literal in the registry (operator, 2026-09-17)
+
+- **What the operator hit.** Codex ran out of tokens for one login and the instruction was "set the
+  default to Gemini 3.8 Flash — it should literally be a switch in a table". There is no such switch.
+  Measured on the box the same hour: all 38 LLM bots carry `harnessType: 'codex-cli'` /
+  `apiType: 'openai-codex'` as source literals in both registries; `resolveHarnessForAgent()` in
+  `src/app/composition/provider-runtime.ts` reads that literal BEFORE any record and has no override;
+  the cockpit's per-bot provider select was made read-only in PR #97 (2026-08-01) precisely because
+  it did nothing; `FORCE_LLM_PROVIDER` only reaches agents with no registry entry; and the one
+  settings-driven layer - the JS failover's `cline-cli` fallback, backed by each container's
+  persisted `global-config.json` - cannot start: `spawnSync
+  /usr/local/lib/node_modules/cline/bin/.cline ENOENT` in the shipped image. Measured on a real
+  ticket the same hour: Codex refused with "You've hit your usage limit ... try again at Sep 20th",
+  the failover FIRED (the CLI error banner classifies as `provider_runtime_failure`), Cline exited 1,
+  and the ticket landed in `escalated`. Chat survived only because the ADR-127 hosted-brain retry
+  answered on `gemini-2.5-flash`; tickets have no such retry. A carried ADR-034 dispatch config does
+  not switch a bot either - `bot-node-execution-handler.ts` refuses a provider that differs from the
+  active one.
+  PR #97's own residual said "either make harnessType overridable or document it as source-only —
+  don't build another picker until that's decided". **Decided: overridable.**
+- **Precedence, most specific first, each a real record:** per-bot row → fleet default row →
+  registry literal. The per-bot row is the existing `agent_config` record (`providerId`/`modelId` —
+  the same keys `GET /api/agents/:id/runtime` serves and ADR-034 dispatch stamping already reads),
+  so a bot that has a row is dispatched and resolved from the same fact. The fleet default is one
+  row with a reserved id, so "switch the default" is one write. No row anywhere = today's behaviour,
+  byte-identical, so the fleet does not move when this merges.
+- **Accepted values:** any `HARNESS_FACTORIES` key, or a Cline-backed API provider id from
+  `provider-definitions.ts` (`gemini`, `openrouter`, `anthropic`, …) with a model id from the row.
+  The row carries NO secret; keys stay in the container environment where they already are
+  (`GEMINI_API_KEY` is forwarded by compose from `GOOGLE_API_KEY`). An unknown provider id fails
+  closed with the reason in the response, never silently falls to the registry.
+- **Surface:** the disabled select in the cockpit bot settings becomes live and writes the row;
+  `/api/agents` reports the RESOLVED harness with its source (`bot-row` | `fleet-default` |
+  `registry`) so the UI can show where a value came from. A fleet-default control lives beside it.
+- **Out of scope here:** the Cline fallback's missing binary - its own change with an image-level
+  guard, because it restores agentic work on the persisted Gemini config without touching resolution.
+- **Done when:** a unit spec proves a per-bot row overrides the registry, a fleet-default row
+  overrides the registry for a bot without its own row, a per-bot row beats the fleet default, no
+  rows resolve byte-identically to today (the existing registry-wins spec is inverted, not deleted),
+  and an unknown provider id refuses with a reason; the record read crosses the real database
+  boundary (a real `agent_config` query against the enforcing role, recorded in the real-boundary
+  audit) rather than a mocked store; the cockpit select is enabled and a browser case writes a row
+  and sees the resolved source change; and the operator flips one bot to `gemini` /
+  `gemini-3.8-flash` from the cockpit and it answers on Gemini in the bot's own log.
+
 
 ### Jarvis briefing preferences (operator ask, 2026-08-09)
 - **Source proof:** registered application sources, exact-user settings, announcement cadence, channel delivery and Kalshi producer adoption pass isolated PostgreSQL/HTTP/browser and package tests. [The contract](apps/jarvis-briefings.md) distinguishes announcement cadence from collection schedules.
