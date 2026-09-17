@@ -2,6 +2,7 @@
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Review required package access and hand explicit role choices to the existing audited batch flow.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep package review steps small and disable planning without a current person and applications.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Preserve ordinary editing when mounted pages precede the package-plan API rollout.
  */
 'use strict';
 const PACKAGE_ACCESS_LABELS = { 'choose-role': 'Choose a role', 'grant-app-admin': 'Explicit app administrator role required',
@@ -94,7 +95,9 @@ class OshalPackageAccessController {
       }
       this.render(result, snapshot, token); this.$('package-access-status').textContent = '';
     } catch (error) {
-      if (this.current(token, snapshot)) this.$('package-access-status').textContent = error.message || 'Could not read package access.';
+      if (this.current(token, snapshot)) this.$('package-access-status').textContent = error.status === 404
+        ? 'Package planning is unavailable on this server. Use Edit roles until the core is updated.'
+        : error.message || 'Could not read package access.';
     } finally { if (token === this.generation) { this.pending = false; this.update(); } }
   }
   continueReview() {

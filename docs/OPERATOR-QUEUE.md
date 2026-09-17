@@ -39,17 +39,17 @@ A lane's bad redaction printed the values of ALPACA_SECRET, ALPACA_PAPER_SECRET_
 
 **Do:** Rotate the Alpaca paper keys; re-mint OSHAL_VERIFY_OPERATOR_PAT from a signed-in session and replace the line in .env. The deploy path now reads .env for that name, so replacing the line is enough.
 
-### Deploy when you are ready
+### Review and deploy after establishing build headroom
 
-The running api is on 49686ac4 — 25 commits behind main, measured, not estimated. So POST /api/authorization/package-plan still 404s on the box and none of last night's merges are live. Nothing is broken by waiting. A deploy signs you out and takes about 20 minutes.
+Core PR 605 and Little Monsters PR 237 are published and await the required approving review. The core preview build was stopped during npm ci after Docker/API timeouts under observed low host memory. The prior runtime recovered: API HTTP 200, 37/37 app containers healthy, unchanged access-assignment fingerprints, commit 49686ac4. Migration 145 is still absent. This is source-verified work, not a completed deployment.
 
-**Do:** bash scripts/oshal-deploy.sh — or tell me to run it. For the cockpit rail change alone, no deploy is needed: POST /api/ui/profile/reload with your PAT.
+**Do:** Arrange the required review and establish host/engine build headroom or an adequately provisioned build worker. Then use the normal full verified deploy command (documented --preview only for an authorized published feature preview). Do not use --skip-build with the old image. Follow docs/backlog/session-resume-2026-09-17.md; Little Monsters catalog activation and real student sign-in remain separate steps.
 
-### Fix .wslconfig line 4 — this is the memory problem
+### Review WSL memory configuration
 
-wsl reports: Unknown key 'wsl2.autoMemoryReclaim' in %USERPROFILE%/.wslconfig:4. The key is rejected, so whatever it was meant to do is not happening. You said the gateway went down almost immediately and that you think the box is memory constrained — that matches: the docker-desktop WSL2 distro stopped three times overnight and the engine was at 1.4 GB free of 15.7 GB. This is the most likely single cause of the instability you felt.
+The earlier handover reports an unrecognized wsl2.autoMemoryReclaim key in %USERPROFILE%/.wslconfig. The resumed image build coincided with Docker/API timeouts while the host had approximately 0.8?1 GB free physical memory and Docker reported a 4.8 GiB memory limit. The runtime recovered after the owned build stopped. These observations do not prove that one configuration key caused the incident; the file was not changed.
 
-**Do:** Say the word and I will read the file and tell you exactly what is malformed. It is a one-line edit plus wsl --shutdown.
+**Do:** Review the configuration and active workload memory before another build. Any configuration change requiring Docker/WSL restart should be planned around other workloads. Do not shut down WSL during a build or discard existing volumes.
 
 ---
 

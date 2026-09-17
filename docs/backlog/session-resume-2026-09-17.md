@@ -1,5 +1,10 @@
 # September 17 authorization resume
 
+**Published for review:** [core PR 605](https://github.com/emeraldcoastsystemsgroup/oshal/pull/605)
+and [Little Monsters PR 237](https://github.com/emeraldcoastsystemsgroup/oshal-applications/pull/237).
+Core source `27caada3` passed the publish gate and committed-source typecheck; store source
+`0b2b94b` is version 1.3.2. Both remain unmerged pending the repository's required approving review.
+
 This continues [the earlier handover](session-handover-2026-09-17.md). The resumed priority is
 assigning a package to a person without calling an ordinary student an application administrator.
 
@@ -34,6 +39,14 @@ aggregate passed 62 checks across the administration browser, package browser, l
 readiness registration suites. After the independent UI review and selection fix, the final browser
 aggregate passed all 46 checks (39 existing administration cases and seven package-assignment cases).
 Final validation receipts are retained locally under `temp/`.
+The follow-up package-browser run passed 8/8, including the older-core API fallback added after
+the aborted rollout; ordinary role editing remains available without applying any grant.
+
+The strict whole-store publication gate was incomplete: four prerequisite-dependent cases were
+skipped in Career and Embodied. Supplemental unchanged Career suites then passed 5/5 storage
+checks against disposable PostgreSQL and 18/18 path checks on isolated Linux, including file symlinks.
+Those fixtures were removed. Embodied's two live-engine checks remain unavailable. Store publication
+used the documented `OSHAL_STORE_CI_ALLOW_SKIPS=1` option; this is not a strict whole-store pass.
 
 Little Monsters rebuilt 40 modules and validated with zero warnings. Its catalog-driven batch passed
 88 checks across ten runnable Node recipes, with verified process exit and no skips. The earlier
@@ -46,6 +59,24 @@ grants, certify all existing school record handlers, or prove deployment. The ow
 container and volume were removed. Other agents' fixtures were left alone.
 
 ## Rollout order
+
+The authorized core preview was attempted at `27caada3` and stopped during `npm ci`, before any
+container recreation or migration. The image build stalled while Docker queries and local API requests
+timed out; free host physical memory was approximately 0.8–1 GB. Resource pressure is an observation,
+not a proven root-cause attribution. Only the owned preview/build processes were stopped. The prior
+runtime recovered: API HTTP 200, 37/37 application containers healthy, no API restart, still commit
+`49686ac4aebf924fdd97ce6ca859a837e545c24f`. Migration 145 remains absent. Coarse and policy assignment
+counts and complete-row fingerprints match the pre-attempt snapshot exactly.
+
+The stopped run's lock was preserved under a distinct name after checking its timestamp and that no
+deploy process remained; the active deployment lock is free. No host settings, other workloads, grants
+or Little Monsters installation were changed. Product probes never ran, so no live Jarvis/ticket or
+student acceptance is claimed. No authenticated CDP browser was available for the live acceptance suite.
+The bind-mounted Access page handles an unavailable package-plan API with an explicit fallback to
+ordinary role editing, allowing the existing deployment to remain usable until its core is updated.
+
+Before retrying the full build, establish host/engine headroom or use an adequately provisioned build
+worker. Do not repeat this build alongside memory pressure or infer deployment from a pushed PR.
 
 1. Publish and merge the reviewed core and store changes through local gates; no GitHub Actions.
 2. Deploy the core through the normal verified deploy path. Confirm migration 145, image parity and
@@ -68,6 +99,8 @@ do not restore broad authorization-table grants. Helper privilege alone does not
 - Review and merge the remaining Wave 5 PRs 620–623; they were not completed by this lane.
 - Finish the publish-gate escaping investigation and placeholder regression described in the prior
   handover. No local identifier patterns were weakened here.
+- An approving review by another GitHub collaborator is still required before either PR can merge;
+  the authenticated maintainer account is also the PR author and cannot approve its own PR.
 - Operator-only credential rotation, image-publish scope, actual student sign-in and host configuration
   decisions remain in the generated [operator queue](../OPERATOR-QUEUE.md).
 - `RESTART-PLAN.md` stays untracked scratch. The untracked Intelligent Career reference remains

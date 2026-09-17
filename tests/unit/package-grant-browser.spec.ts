@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive package planning and reviewed grants through Chromium, the real Access page and authorization HTTP service.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep existing role editing usable while an older deployed core lacks package planning.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -30,6 +31,15 @@ async function openPlan() {
 }
 
 describe('assign a package to a person', () => {
+  it('keeps ordinary editing available when mounted pages are newer than the server API', async () => {
+    await page.route('**/api/authorization/package-plan', route => route.fulfill({ status: 404, contentType: 'text/html', body: 'Not found' }));
+    await page.locator('#package-access-plan').click();
+    await expect.poll(() => page.locator('#package-access-status').textContent()).toContain('Use Edit roles');
+    expect(await page.locator('#package-access-dialog').isVisible()).toBe(false);
+    await page.locator('tr[data-app="catalog-app"] [data-action="edit-roles"]').click();
+    expect(await page.locator('[data-editor-app="catalog-app"]').isVisible()).toBe(true);
+    expect((await fixture.store.read()).assignments).toHaveLength(0);
+  });
   it('carries the reviewed business tenant into every required application draft', async () => {
     fixture.actors.alice.tenantIds = ['tenant-one'];
     await page.locator('#package-access-tenant').fill('tenant-one'); await openPlan();
