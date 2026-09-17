@@ -11,6 +11,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | The three trading guards that now own their PostgreSQL join the fixed isolated set. They used to take a DSN from the environment, and this runner deliberately blanks every database variable it passes down - so they could only ever have refused here. Now they start and destroy their own container, which is exactly what this gate is for, and it is the only place they actually EXECUTE: the plain unit gate has nothing to point them at. isolatedEnvironment needs no new key for them, because they read no address at all.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | The trading schema bootstrap race guard joins the fixed isolated set. It starts its own PostgreSQL and bootstraps the trading family from several independent module copies at once, so it needs Docker and no address - the same shape as the three trading guards above, and the only gate that can execute it.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | The inherited-export guard joins the fixed isolated set beside the purge guard. It runs ci-local.sh's own gate sequence in Git Bash over a state directory that already holds the previous run's export - the state the 2026-09-09 nightly wedged nine hours in - so the run that has to survive a leftover is executed here rather than reasoned about.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | The trading spec bare-cluster prerequisite guard joins the fixed isolated set, for the same reason as the race guard beside it: it starts its own PostgreSQL and needs the database EMPTY, which no other gate can give it - the plain unit gate has no address to point it at, and the operator database already holds every table it is checking for.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
@@ -37,6 +38,7 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/trading-event-plans.spec.ts',
   'tests/unit/trading-earnings-rules.spec.ts',
   'tests/unit/trading-schema-bootstrap-race.spec.ts',
+  'tests/unit/trading-spec-bare-cluster-prerequisites.spec.ts',
 ]);
 
 /**

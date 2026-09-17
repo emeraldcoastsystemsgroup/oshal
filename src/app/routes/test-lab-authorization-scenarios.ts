@@ -11,7 +11,8 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register roster imports, delegated management roles and external business memberships with their isolated browser/database proofs.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register the authorization schema-readiness recovery proof: a bootstrap that loses the pool acquire at boot must be retried by the next operation rather than refusing for the life of the process.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the joined access review - the one surface that answers "what am I allowed to do" across swarm role, governance permissions and per-application assignments - with a read-only self probe.
- * 9 | maintainer@emeraldcoastsystemsgroup.com | Attach the principal-qualified app-access proofs: an explicit tier now resolves for the exact (subject, issuer) it was written for, and an issuer-less legacy assignment still answers only a canonical local account.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Register the package grant plan guards with the access-administration scenario: the resolver runs against the real PostgreSQL policy store and its HTTP adapter against the real routes, so the Lab lists them beside the rest of this feature. Also restores authorization-readiness-consumers.spec.ts to the test:authorization command - it was registered here but missing from the command, which had left this scenario's own registration assertion red on main.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Attach the principal-qualified app-access proofs beside package-plan and readiness regressions.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -101,6 +102,8 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/local-auth-forgot-password.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-audit.spec.ts' },
     { level: 'browser', path: 'tests/unit/authorization-audit-browser.spec.ts' },
+    { level: 'integration', path: 'tests/unit/package-grant-plan-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/package-grant-plan-routes.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'authorization', label: 'Caller-visible access catalog', run: authorizationCatalog }],
 }, {

@@ -85,6 +85,7 @@ export const ARTIFACT_SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/artifact-exchange.spec.ts' },
       { level: 'unit', path: 'tests/unit/jarvis-tool-catalog.spec.ts' },
       { level: 'unit', path: 'tests/unit/jarvis-tool-selection-bench.spec.ts' },
+      { level: 'integration', path: 'tests/unit/jarvis-selector-shadow.spec.ts' },
       { level: 'integration', path: 'tests/unit/artifact-mint-bytes-route.spec.ts' },
       { level: 'integration', path: 'tests/unit/artifact-redeem-relay.spec.ts' },
       { level: 'integration', path: 'tests/unit/artifact-authenticated-relay.spec.ts' },

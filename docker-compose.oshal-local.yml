@@ -1039,6 +1039,10 @@ services:
       # after boot plus up to the jitter, then daily. Empty = the code's defaults (2 min + 30 s).
       PERSON_MODEL_MAINTENANCE_INITIAL_DELAY_MS: ${PERSON_MODEL_MAINTENANCE_INITIAL_DELAY_MS:-}
       PERSON_MODEL_MAINTENANCE_JITTER_MS: ${PERSON_MODEL_MAINTENANCE_JITTER_MS:-}
+      # ADR-100 Phase 3: the cosine floor a "possibly related" recall hit must clear against the
+      # query. Empty = the measured default (0.2 on all-MiniLM-L6-v2). Raise it for a noisy
+      # corpus, lower it if real paraphrases are being dropped; outside 0..1 the default stands.
+      PERSON_MODEL_RELATED_SIMILARITY_FLOOR: ${PERSON_MODEL_RELATED_SIMILARITY_FLOOR:-}
       SPEAKER_PROFILE_SECRET: ${SPEAKER_PROFILE_SECRET:-oshal-local-speaker-profile-secret-do-not-use-in-prod}
       SPEAKER_PROFILE_SECRET_PREVIOUS: ${SPEAKER_PROFILE_SECRET_PREVIOUS:-}
       SPEAKER_DIARIZATION_TIMEOUT_MS: ${SPEAKER_DIARIZATION_TIMEOUT_MS:-45000}
@@ -1402,6 +1406,12 @@ services:
       # env is silently ignored and a large lead-import CSV keeps 413ing at the 100kb
       # default (found live on the gsquared CRM box, 2026-08-26).
       OSHAL_JSON_BODY_LIMIT: ${OSHAL_JSON_BODY_LIMIT:-}
+      # Jarvis tool-selector shadow step — CONTROLLER ONLY, and OFF unless it names a
+      # candidate (top-k:<k> / scored-floor:<k>). It measures a narrower selector beside
+      # the shipped one and logs the delta; the model always receives the shipped block.
+      # Unforwarded, an operator arming it in .env would collect no measurement at all,
+      # which is the silent-knob class this file has paid for repeatedly.
+      JARVIS_SELECTOR_SHADOW: ${JARVIS_SELECTOR_SHADOW:-}
       # FMCSA (Motus/QCMobile) WebKey — CONTROLLER ONLY. Read by the intelligent-sales
       # underwriting connector as the env fallback behind its admin-pasted setting
       # (sales_settings.integrations wins when both are set). Unforwarded, an operator

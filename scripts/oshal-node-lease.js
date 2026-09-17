@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add the trusted host-automation bridge to the PostgreSQL node-resource lease used by both daily recap and the controller video pump.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Bound database connection startup so a wedged container port fails the recap preflight instead of hanging the scheduler indefinitely.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the metadata-argument parser so the host runner's guard proves the real argument round trip against this exact parser rather than a copy of it.
  *
  * @description Token-bound node-resource lease CLI. It is intended to run inside the controller
  * container via docker exec: the initiating host is trusted, the database role remains the normal
@@ -137,7 +138,9 @@ async function main() {
   output(await withOperatorClient(operations[command]));
 }
 
-module.exports = { acquire, renew, release, withOperatorClient };
+module.exports = {
+  acquire, renew, release, withOperatorClient, metadata,
+};
 
 if (require.main === module) {
   main().catch((error) => fail(error instanceof Error ? error.message : String(error)));

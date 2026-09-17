@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 1: person-model services barrel.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2-4: export the intent front door, trend/profile reads, projection ledger and semantic leg.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the related-hit relevance floor (related-relevance.ts) so the semantic leg and its guard share one rule.
  */
 
 export { ensurePersonModelSchema, personModelSchemaStatements } from './person-model-schema';
@@ -33,6 +34,10 @@ export {
   type UnprojectedSegment, type ProjectionLedgerRow,
 } from './projection-ledger';
 export { semanticLegAvailable, projectOwnerSegments, relatedRecall, rebuildOwnerProjection } from './semantic-projection';
+export {
+  DEFAULT_RELATED_SIMILARITY_FLOOR, relatedSimilarityFloor, cosineSimilarity, scoreAgainstQuery, applyRelevanceFloor,
+  type RelatedCandidate,
+} from './related-relevance';
 export type {
   PersonModelIntent, OpenAsksIntent, TrendIntent, ConnectionIntent, RelatedReceipt, TopicTrendRow, TopicTrendResult,
   PersonConnection, HeardPerson, PersonTopic, PersonPresenceDay, PersonProfileSummary,

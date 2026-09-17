@@ -45,6 +45,7 @@
   16 | maintainer@emeraldcoastsystemsgroup.com  | Acquire, heartbeat, and exact-token release the PostgreSQL render-node lease shared with the video pump before touching the node; local mutex and blackout remain defense-in-depth.
   17 | maintainer@emeraldcoastsystemsgroup.com  | Complete the immutable build-manifest contract with explicit date/start/input digests and fail-closed ffprobe evidence for every MP4 before promotion; manifests from the former size-and-hash-only path can no longer authorize SkipBuild or ResumePull.
   18 | maintainer@emeraldcoastsystemsgroup.com  | Let the temp-scoped run-lock test contract declare a validated bounded hold window so concurrent PowerShell probes cannot expire the lock owner under full-suite startup pressure; production mutex behavior is unchanged.
+  19 | maintainer@emeraldcoastsystemsgroup.com  | Hand the lease CLI metadata that survives the host's native-argument handling, and ask the market calendar before taking the shared render-node lease. Windows PowerShell 5.1 builds the child command line itself and drops the embedded double quotes, so the compact JSON arrived as {requestedDate:...} and the CLI refused it at position 1 - every scheduled recap since 2026-08-06 died there and emailed a failure, weekends included, because the scheduled task runs powershell.exe. The escape is applied only in the legacy mode that needs it, a temp-scoped probe target makes the round trip provable on the real host, and a non-trading day now exits before any durable lease is taken.
 #>
 [CmdletBinding()]
 param(
@@ -55,6 +56,7 @@ param(
   [switch]$SkipBuild,  # reuse the pieces already on the node (skip the ~40-min generation)
   [switch]$ResumePull, # reuse only local pieces whose SHA-256 matches the completed build manifest
   [string]$ManifestContractProbe, # test-only JSON probe; exits before any node, Docker, or filesystem workflow
+  [string]$NodeLeaseArgumentProbe, # test-only temp-scoped lease-CLI stand-in; exits before the run lock
   [string]$VerifyDeliveryManifest, # publisher-facing fail-closed verification mode; prints JSON and exits
   [string]$DeliveryArtifactRoot    # defaults to the delivery manifest's directory
 )
@@ -149,8 +151,35 @@ function NodeShell($psFile,[int]$t=45000){ RN @('shell', "--client=$Node", "--ti
 # The recap and controller video pump coordinate through ONE PostgreSQL row. The CLI runs inside the
 # controller container so it uses the normal least-privilege app role; it stamps an explicit system
 # transaction and exposes only acquire/renew/release, never arbitrary SQL or a database credential.
+# A JSON argument to a NATIVE command does not survive Windows PowerShell 5.1: the host builds the
+# child command line itself and drops the embedded double quotes, so the lease CLI received
+# {requestedDate:2026-08-06,nodeClientId:...} and refused it at position 1. That killed every
+# scheduled recap from 2026-08-06 on ("node-lease CLI returned no JSON"), because the scheduled task
+# runs powershell.exe. Escape the quotes the way the receiving command line is parsed back.
+# PowerShell 7.3+ passes native arguments verbatim through ProcessStartInfo.ArgumentList and must NOT
+# be pre-escaped, so honour the host's declared mode instead of assuming either one.
+function ConvertTo-NativeJsonArgument([string]$Json) {
+  $mode = [string](Get-Variable -Name PSNativeCommandArgumentPassing -ValueOnly -ErrorAction SilentlyContinue)
+  if ($mode -and $mode -ne 'Legacy') { return $Json }
+  return ($Json -replace '"', '\"')
+}
+# TEST SEAM: a temp-scoped stand-in for the containerised CLI, so the argument round trip above can
+# be proven on the real host without a database, a container, or a lease. Production leaves it unset.
+$script:NodeLeaseProbeTarget = ''
+function Set-NodeLeaseProbeTarget([string]$Path) {
+  $resolved = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $Path).Path)
+  $tempRoot = [IO.Path]::GetFullPath([string]$env:TEMP).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+  if (-not $resolved.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'the node-lease argument probe must remain under the temporary directory'
+  }
+  $script:NodeLeaseProbeTarget = $resolved
+}
 function Invoke-NodeLeaseCli([string[]]$LeaseArgs) {
-  $text = & docker exec oshal-local-api node /app/scripts/oshal-node-lease.js @LeaseArgs 2>&1 | Out-String
+  $text = if ($script:NodeLeaseProbeTarget) {
+    & node $script:NodeLeaseProbeTarget @LeaseArgs 2>&1 | Out-String
+  } else {
+    & docker exec oshal-local-api node /app/scripts/oshal-node-lease.js @LeaseArgs 2>&1 | Out-String
+  }
   $status = $LASTEXITCODE
   $record = $null
   foreach ($line in @($text -split "`n" | Where-Object { $_.Trim().StartsWith('{') })) {
@@ -166,7 +195,7 @@ function Enter-SharedNodeLease {
   $metadata = @{ requestedDate = $Date; nodeClientId = $Node } | ConvertTo-Json -Compress
   $call = Invoke-NodeLeaseCli @(
     'acquire', '--resource', $resource, '--holder', $holder, '--purpose', 'daily-recap-build-publish',
-    '--ttl-seconds', [string]($minutes * 60), '--metadata-json', $metadata
+    '--ttl-seconds', [string]($minutes * 60), '--metadata-json', (ConvertTo-NativeJsonArgument $metadata)
   )
   if ($null -eq $call.record) { throw "node-lease CLI returned no JSON (exit $($call.status)): $($call.text)" }
   if ($call.record.message) { throw "node-lease CLI failed (exit $($call.status)): $($call.record.message)" }
@@ -200,6 +229,18 @@ function Exit-SharedNodeLease($Lease) {
   if ($call.status -ne 0 -or $null -eq $call.record -or -not [bool]$call.record.released) {
     Note "shared node lease was not released by this invocation (it may have expired/replaced): $($call.text)"
   } else { Note "shared render-node lease released" }
+}
+# SESSION GUARD — only recap real trading days. A weekend/holiday has no close to report, and
+# running anyway produces a bogus "day" from whatever data is lying around. It is asked BEFORE the
+# shared render-node lease on purpose: taking a durable six-hour lease (and failing loudly when the
+# video pump holds it) on a day with nothing to recap is how every weekend alerted the operator.
+# Returns 'none' for a confirmed non-session, 'session' for a confirmed one, and 'unknown' when the
+# calendar itself is unreachable — a transient calendar error must not block a real trading day.
+function Get-RecapMarketSession {
+  $cal = docker exec oshal-local-api node /run/desktop/mnt/host/c/Projects/open-shal-swarm-harness-agent-llm/scripts/alpaca-is-session.js $Date 2>&1 | Out-String
+  if ($cal -match 'NO_SESSION') { return 'none' }
+  if ($cal -notmatch 'SESSION') { Note "session check inconclusive ($($cal.Trim())) - proceeding"; return 'unknown' }
+  return 'session'
 }
 # A transfer that never landed used to be INVISIBLE. RN returns its last output after exhausting
 # its retries, and both helpers piped that straight to Out-Null — so a dead transfer and a good
@@ -497,6 +538,19 @@ if ($ManifestContractProbe) {
   try { Invoke-ManifestContractProbe $ManifestContractProbe | ConvertTo-Json -Depth 8 -Compress; exit 0 }
   catch { [pscustomobject]@{ error = $_.Exception.Message } | ConvertTo-Json -Compress; exit 2 }
 }
+# Lock-free like the other probe modes: build the real acquire arguments and hand them to a
+# temp-scoped stand-in over the same native-command boundary that the container call uses.
+if ($NodeLeaseArgumentProbe) {
+  try {
+    Set-NodeLeaseProbeTarget $NodeLeaseArgumentProbe
+    $probeLease = Enter-SharedNodeLease
+    [pscustomobject]@{
+      acquired = $true; resourceKey = $probeLease.resourceKey; holder = $probeLease.holder
+      leaseId = $probeLease.leaseId; ttlSeconds = $probeLease.ttlSeconds
+    } | ConvertTo-Json -Compress
+    exit 0
+  } catch { [pscustomobject]@{ acquired = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress; exit 2 }
+}
 
 $runLockTestContract = Get-RecapRunLockTestContract
 $recapRunLock = $null
@@ -528,6 +582,13 @@ if (-not $apiOk) {
   if (-not (RestartApi)) { Fail 'api remained unhealthy after the guarded restart' }
 }
 Note "=== daily recap $Date on node $Node ($NodeOut) ==="
+# Ask the calendar BEFORE the lease. A weekend used to acquire a six-hour render-node lease, walk
+# into the data step, and only then discover there was no close to report - so a quiet no-op day
+# either alerted the operator or held the node away from the pump for nothing.
+if (-not $SkipData -and (Get-RecapMarketSession) -eq 'none') {
+  Note "no market session on $Date (weekend/holiday) - nothing to recap"
+  exit 0
+}
 try {
   $sharedNodeLease = Enter-SharedNodeLease
   Note "shared render-node lease acquired through $($sharedNodeLease.expiresAt)"
@@ -583,11 +644,7 @@ if ($pfOut -notmatch 'VIDS_SIGNED_IN=True') { Fail "node not ready (Chrome not u
 
 # 2) DATA (in the api container)
 if (-not $SkipData) {
-  # SESSION GUARD — only recap real trading days. A weekend/holiday has no close to report,
-  # and running anyway produces a bogus "day" from whatever data is lying around.
-  $cal = docker exec oshal-local-api node /run/desktop/mnt/host/c/Projects/open-shal-swarm-harness-agent-llm/scripts/alpaca-is-session.js $Date 2>&1 | Out-String
-  if ($cal -match 'NO_SESSION') { Note "no market session on $Date (weekend/holiday) - nothing to recap"; exit 0 }
-  if ($cal -notmatch 'SESSION') { Note "session check inconclusive ($($cal.Trim())) - proceeding" }
+  # The market-session guard ran before the lease was taken; by here the day has a close to report.
   # OPS HONESTY — what the platform observed since the last report, written where the deck
   # generator can fold it into the "What changed / Operations" section (date-guarded there).
   $opsNotes = @()

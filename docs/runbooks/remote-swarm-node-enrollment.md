@@ -6,12 +6,18 @@ Use this when a newly stood-up computer needs to join OSHAL as a remote swarm no
 
 Enrollment has **two halves**, and they answer different questions.
 
-**Who owns this computer** — `POST /api/join/enroll` (`requiresAuth`, **not** operator-gated). Any
-signed-in user enrolls their own machine and receives a short-lived (default 60 min, clamped 5 min –
-24 h), revocable, per-user `oshal_pat_…` token bound to their OIDC sub. The node exchanges it once at
-startup via `GET /api/cli-tokens/whoami`, persists the **server-verified** sub, and clears the token —
-so `ownerSub` is proven by possession of a token minted for that user, never asserted by the node.
-Revoke any time from the same `/api/cli-tokens` list. **This binding is not cosmetic:** dispatch is
+**Who owns this computer** — `POST /api/join/enroll` (`requiresAuth`, **not** operator-gated, and a
+`oshal_pat_…` bearer satisfies it, so this is reachable headlessly). Any signed-in user enrols their
+own machine and receives **two values that travel together**: a revocable `oshal_pat_…` token and the
+`nodeClientId` it is bound to. The binding is not optional — the swarm mints the device id when the
+caller has none, so the credential that leaves this route is confined to one computer's worker plane
+(`decideNodeTokenScope`) and is not an account credential. It does **not** expire by default, because
+the node holds it as its steady credential and a machine that is off for a week has to come back
+without a human; pass an explicit `ttlMinutes` (clamped 5 min – 24 h) when a short handoff is what
+you actually want. The node exchanges it once at startup via `GET /api/cli-tokens/whoami`, persists
+the **server-verified** sub, and clears the enrolment copy — so `ownerSub` is proven by possession of
+a token minted for that user, never asserted by the node. Revoke or rotate any time from the same
+`/api/cli-tokens` list, one computer at a time. **This binding is not cosmetic:** dispatch is
 owner-scoped ([device-access.ts](../../src/features/remote-client/services/device-access.ts)), so an
 UNOWNED node will not receive its own user's work unless they are an operator or the deployment still
 sets `OSHAL_ALLOW_LEGACY_UNOWNED=true`.
@@ -23,9 +29,11 @@ are **operator-only** even though the mount is not, because the code embeds a sw
 plaintext and never expires — treat it exactly like the secret itself: anyone holding it can register
 a worker node until the secret is rotated.
 
-So a **brand-new** machine needs both: a join code (from an operator) and an enrollment code (which
-the user mints for themselves). An **already-installed** node needs only the enrollment code —
-set `OSHAL_ENROLLMENT_TOKEN` and relaunch. Retiring the shared secret in favour of per-node token
+So a **brand-new** machine needs both: a join code (from an operator) and an enrolment code (which
+the user mints for themselves). An **already-installed** node needs the enrolment code **and the
+device id it names** — set `OSHAL_CLIENT_ID` and `OSHAL_ENROLLMENT_TOKEN` and relaunch. The id is
+half the credential: a node that keeps the `oshal-chat-<uuid>` it minted for itself is refused at
+register with `403 node_token_client_mismatch`. Retiring the shared secret in favour of per-node token
 auth is tracked in [BACKLOG.md](../BACKLOG.md) ("Node-token auth for the remote-client plane").
 
 - Off-LAN enrollment is planned as `OSJOIN2` from `installer\lib\install-swarm.ps1 -OffLan`; that path must mint a Headscale preauth key on the swarm host. The controller route deliberately does not shell out to Headscale from inside the API container.
@@ -36,13 +44,14 @@ auth is tracked in [BACKLOG.md](../BACKLOG.md) ("Node-token auth for the remote-
 # As the signed-in user (browser session or an oshal_pat_ token), from any account — not just an operator.
 curl -fsS -X POST "http://<swarm-host>:35457/api/join/enroll" \
   -b "$OSHAL_COOKIE_JAR" -H 'content-type: application/json' \
-  -d '{"computerName":"my laptop","ttlMinutes":60}' | jq '.enrollment | {expiresAt, ttlMinutes}'
+  -d '{"computerName":"my laptop"}' | jq '.enrollment | {nodeClientId, expiresAt, ttlMinutes}'
 ```
 
-Then on the target machine, with the token in `OSHAL_ENROLLMENT_TOKEN`:
+The response's `install.newInstall` is the command to run, already carrying both values; `install.oneClick`
+is the download that needs nothing pasted at all. Spelled out, on the target machine:
 
 ```powershell
-installer\lib\install-node.ps1 -JoinCode OSJOIN1.xxxxx -EnrollmentToken oshal_pat_...
+installer\lib\install-node.ps1 -JoinCode OSJOIN1.xxxxx -EnrollmentToken oshal_pat_... -ClientId node-<uuid>
 ```
 
 The node logs `enrolled: this computer is registered to <you>` on first launch. An expired or revoked
@@ -284,6 +293,10 @@ Pass criteria:
 - `401 Unauthorized`: the join code carried the wrong secret, the controller secret rotated, or `REMOTE_CLIENT_AUTH_HEADER` does not match the controller's configured header.
 - `403 Forbidden` on a device action: a browser/session caller is not the owner/operator for that device. Machine-secret calls bypass ownership because they are the node/control-plane trust path.
 - `403 Forbidden` on `GET /api/join/code` or `/api/join/`: those are operator-only (they carry the swarm-wide shared secret). `POST /api/join/enroll` is the endpoint an ordinary user calls.
+- `403 Forbidden` with code `node_token_client_mismatch` at `/api/remote-clients/register`: the node is registering under a
+  different device id than the token names. Both halves have to reach the machine — `OSHAL_CLIENT_ID` (or `-ClientId`)
+  alongside `OSHAL_ENROLLMENT_TOKEN`. The enrol response carries the id as `enrollment.nodeClientId`, and the one-click
+  download bakes both in.
 - `403 Forbidden` re-registering an existing device: adopting an already-registered but **unbound** device is operator-only — it was an ownership-takeover primitive. A genuine first-time enrollment registers a NEW `clientId`.
 - **"My work never reaches my computer."** Check `ownerSub` on the device (`GET /api/remote-clients` as a machine caller). `null` means the node was installed without an enrollment code: dispatch is owner-scoped, so it is skipped for everyone except operators. Enroll it and relaunch.
 - The registry is **in-memory**: every controller recreate wipes it and nodes re-register. A node whose `userSub` came from an enrollment exchange re-asserts its owner automatically; one that was bound only by `POST /:clientId/owner` loses the binding.

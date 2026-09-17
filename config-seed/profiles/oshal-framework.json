@@ -233,20 +233,28 @@
         "toolUi": { "iframeUrl": "/api/embodied/app", "sidebarLabel": "Embodied Swarm" }
       },
       {
-        "id": "tool-animatronics",
-        "icon": "codicon codicon-eye",
-        "label": "Animatronics",
-        "section": "top",
-        "group": "Robotics & Space",
-        "toolUi": { "iframeUrl": "/api/animatronics/app", "sidebarLabel": "Animatronics" }
-      },
-      {
         "id": "tool-drone-relay",
         "icon": "codicon codicon-radio-tower",
         "label": "Drone Relay",
         "section": "top",
         "group": "Robotics & Space",
         "toolUi": { "iframeUrl": "/api/drone-relay/app", "sidebarLabel": "Drone Relay" }
+      },
+      {
+        "id": "tool-animatronics",
+        "icon": "codicon codicon-eye",
+        "label": "Animatronics",
+        "section": "top",
+        "group": "Animatronics",
+        "toolUi": { "iframeUrl": "/api/animatronics/app", "sidebarLabel": "Animatronics" }
+      },
+      {
+        "id": "tool-pumpkin",
+        "icon": "codicon codicon-star-full",
+        "label": "Pumpkin",
+        "section": "top",
+        "group": "Animatronics",
+        "toolUi": { "iframeUrl": "/api/pumpkin/app", "sidebarLabel": "Pumpkin" }
       },
       {
         "id": "tool-aero-lab",
@@ -504,14 +512,6 @@
         "group": "Create",
         "workspace": "create",
         "toolUi": { "iframeUrl": "/api/vids/app", "sidebarLabel": "Creative Studio" }
-      },
-      {
-        "id": "tool-pumpkin",
-        "icon": "codicon codicon-star-full",
-        "label": "Pumpkin",
-        "section": "top",
-        "group": "Tools",
-        "toolUi": { "iframeUrl": "/api/pumpkin/app", "sidebarLabel": "Pumpkin" }
       },
       {
         "id": "connectors",

@@ -9,8 +9,9 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Compose reviewed roster registration, delegated management and exact external business memberships.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: compose the scheduled-service activation authority beside the policy it reads, and refresh an application service principal to itself — it has no account or session to revalidate, and its liveness is the activation row the runner re-resolves on every tick.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Make schema readiness re-requestable and sequence its DDL. One eagerly created promise cached its own rejection for the life of the process, so a bootstrap that lost the boot-time pool race made every later authorization operation refuse forever while the controller still reported healthy.
- * 7 | maintainer@emeraldcoastsystemsgroup.com | Give the RETURNED readiness the same re-requestable shape. It was a plain promise derived once from the recovered thunk, so the four modules chaining off it - queued ticket provenance, the user directory, Jarvis briefings and Test Lab runs - still inherited the first bootstrap failure forever, and authenticated ticket creation threw for the life of the process.
- * 8 | maintainer@emeraldcoastsystemsgroup.com | Resolve a legacy explicit tier on the FULL principal instead of refusing every non-local issuer before reading one. The short-circuit was there because an ADR-118 assignment carried no issuer, but it returned deny without a lookup, so an explicit admin assignment written for an OIDC identity was unreadable and every catalog-less application answered that identity authorization_app_admin_required. The legacy rule now lives in the query predicate: an issuer-less row still resolves only for urn:oshal:local-auth.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Supply the installed-package reader the package grant plan needs. The policy slice may not import the application registry directly (layer direction), so composition reads the record here and hands over ONLY the declared dependency tiers and whether the record is active - no manifest, no owner, no business data.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Give the RETURNED readiness the same re-requestable shape. It was a plain promise derived once from the recovered thunk, so the four modules chaining off it - queued ticket provenance, the user directory, Jarvis briefings and Test Lab runs - still inherited the first bootstrap failure forever, and authenticated ticket creation threw for the life of the process.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Resolve a legacy explicit tier on the full principal while retaining the canonical-local meaning of issuer-less assignments.
  */
 /** Assemble the control plane without granting it authority over business records. */
 import type { Request } from 'express';
@@ -29,6 +30,7 @@ import { createApplicationPrincipalDirectory } from './application-principal-dir
 import type { AppAccessService, SwarmAppService } from '@/features/swarm-apps';
 import { LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import { inspectAppDependencies } from '@/shared/app-dependencies';
 import { createRetryableReady } from '@/shared/services/database';
 import { createChildLogger } from '@/shared/logger';
 import { configureApplicationExecutionPolicy } from '@/shared/application-authorization-execution';
@@ -78,6 +80,15 @@ function createPolicyOptions(appAccess: AppAccessService, getApps: () => SwarmAp
     // them authorization_app_admin_required. The legacy rule now lives in the query predicate.
     resolveTier: createLegacyTierResolver(appAccess, getApps),
     inventory: actors.inventory,
+    // Declared dependency tiers only. inspectAppDependencies is the lenient reader: an already
+    // loaded record with a malformed block contributes an EMPTY required set rather than making
+    // the whole plan unreadable, which is the same posture the group resolver takes.
+    resolvePackage: async app => {
+      const record = await getApps().getApp(app);
+      if (!record) return null;
+      const tiers = inspectAppDependencies(record.manifest);
+      return { required: tiers.required, optional: { apps: tiers.optional.apps } };
+    },
   };
 }
 

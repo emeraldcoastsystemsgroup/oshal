@@ -80,6 +80,12 @@ beforeAll(async () => {
   app.get('/api/swarm/apps/access-matrix', (_req, res) => res.json({ apps: [], assignments: [] }));
   app.get('/applications/', (_req, res) => res.sendFile(resolve('src/pages/applications/index.html')));
   app.get('/app-loader/', (_req, res) => res.sendFile(resolve('src/pages/app-loader/index.html')));
+  // Sibling page assets, exactly as registerStaticHtmlPageRoute serves them in the real server
+  // (express.static over the page dir, mounted at the route path). Without these a page that
+  // imports one of its own modules dies whole — a module script fails atomically — so the store
+  // controls below would never render and every assertion would time out rather than fail.
+  app.use('/applications', express.static(resolve('src/pages/applications'), { index: false }));
+  app.use('/app-loader', express.static(resolve('src/pages/app-loader'), { index: false }));
   app.use('/shared', express.static(resolve('src/shared')));
   app.use('/cockpit/css/themes', express.static(resolve('src/pages/cockpit/css/themes')));
   server = app.listen(0, '127.0.0.1');

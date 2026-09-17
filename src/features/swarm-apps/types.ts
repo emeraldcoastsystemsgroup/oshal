@@ -922,6 +922,11 @@ export interface SwarmApplicationSummary {
    *  surfaced so listing UIs can show a real icon instead of a placeholder; null when the manifest
    *  declares no UI icon. */
   icon: string | null;
+  /** Does this app declare a surface a cockpit can open — `ui.static`, `ui.dynamic`, or a group's
+   *  borrowed `toolbar`? A listing gets the manifest's answer rather than guessing from the icon
+   *  (optional on a tile) or from a hand-kept name list, which no new app can ever join. False
+   *  means genuinely headless: the app works through its queue and bots. See hasCockpitSurface. */
+  hasSurface: boolean;
   /** ADR-097 primary catalog shelf; null only for pre-097 installed packages. */
   suite: SwarmAppSuite | null;
   manifestPath: string;

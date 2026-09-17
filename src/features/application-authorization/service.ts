@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Derive durable delegated management roles and revalidate writes without nested pool acquisition.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Reserve the global business-membership audit namespace against application registration.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Expose the registered application names for read-only review surfaces. effective() already answers one app at a time, but a joined access review has to ask about every registered app INCLUDING the ones the subject is denied — which is the half of the answer ownCatalog() cannot give, because it returns only what is already permitted.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Add packageGrantPlan: one application plus the applications it declares it cannot run without, each classified into the ONE /access change it needs. Read-only by construction — it opens no transaction, writes no assignment and bumps no revision — and every application in the set is gated on the CALLER'S own management read, so a prerequisite the caller cannot administer reports its name and nothing else.
  */
 /** ADR-149 authoritative management and execution service. No swarm-admin business bypass. */
 import { randomUUID } from 'node:crypto';
@@ -25,12 +26,14 @@ import {
   type AuthorizationResourceAdapter,
   type AuthorizationAuditInput, type AuthorizationAuditPage,
   type AuthorizationManagementScope,
+  type PackageGrantPlan, type PackageGrantPlanInput,
 } from '@/shared/application-authorization';
 import type { AuthorizationAssignment, AuthorizationState, AuthorizationStore, StoredAuthorizationPreview, AuthorizationTransaction } from './types';
 import { ApplicationAuthorizationError } from './types';
 import { APP_ADMIN_ROLE, TIER_ORDER, assertActor, catalogRevision, managementAllowed, matchingAssignments,
   requireManagement, resolveGrantSet, resolveOperationPermissions, type RegisteredAuthorizationApp } from './policy';
-import { parseAuthorizationApply, parseAuthorizationChange } from './change-validation';
+import { buildPackageGrantPlan, type PackageDependencyFacts, type PackageGrantAppFacts, type PackageGrantPlanPorts } from './package-grant-plan';
+import { parseAuthorizationApply, parseAuthorizationChange, parsePackageGrantPlanInput } from './change-validation';
 import { readAuthorizationAudit } from './audit-history';
 import { mergeManagementScopes, resolveManagementRoles, storedManagementScopes } from './management-policy';
 const logger = createChildLogger({ module: 'application-authorization' });
@@ -44,6 +47,9 @@ export interface ApplicationAuthorizationServiceOptions {
   verifyApproval?: (actor: AuthorizationActor, preview: AuthorizationPreview, reference: string) => Promise<boolean>;
   /** Provider must scope directory inventory to actor.managementScopes; this is not a business-data read. */
   inventory?: (actor: AuthorizationActor) => Promise<AuthorizationInventory>;
+  /** The installed package's declared dependency tiers, or null when nothing is installed under
+   *  that name. Read for the package grant plan only; a declaration never grants anything. */
+  resolvePackage?: (app: string) => Promise<PackageDependencyFacts | null>;
 }
 export class ApplicationAuthorizationService implements ApplicationAuthorizationManagementService {
   private readonly apps = new Map<string, RegisteredAuthorizationApp>();
@@ -93,6 +99,60 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
       logger.info({ durationMs: Date.now() - startedAt, count: result.entries.length }, 'Authorization history completed');
       return result;
     } catch (error) { logger.error({ err: error }, 'Authorization history refused'); throw error; }
+  }
+  /**
+   * @description Resolve one package plus every application it declares it cannot run without, and
+   * classify each into the single /access change that would give this subject access to it. The
+   * plan GRANTS NOTHING: it opens no transaction, writes no assignment, bumps no revision and
+   * records no audit entry, so calling it twice changes nothing either time. Authority is checked
+   * per application, not once for the set — an application this caller cannot administer reports
+   * its name and its position in the dependency chain, and nothing else.
+   * @param actor - Verified calling identity, revalidated here like every other management call.
+   * @param raw - The requested package and the subject the plan is about.
+   * @returns The plan, resolved against one consistent policy revision.
+   * @throws ApplicationAuthorizationError 403 when the caller cannot administer the requested
+   * package, 400 on a malformed request or a dependency closure past its bound.
+   */
+  async packageGrantPlan(actor: AuthorizationActor, raw: PackageGrantPlanInput): Promise<PackageGrantPlan> {
+    const startedAt = Date.now(); logger.info('Package grant plan requested');
+    try {
+      const input = parsePackageGrantPlanInput(raw);
+      const current = await this.currentActor(actor);
+      requireManagement(current, input.app, input.tenantId, 'read');
+      const subject = await this.targetActor(current, input);
+      const state = await this.store.read();
+      const plan = await buildPackageGrantPlan({ app: input.app, targetSub: subject.sub, targetIssuer: subject.issuer,
+        ...(input.tenantId ? { tenantId: input.tenantId } : {}) }, this.planPorts(current, subject, input.tenantId, state));
+      logger.info({ durationMs: Date.now() - startedAt, entries: plan.entries.length, actionable: plan.actionable },
+        'Package grant plan completed');
+      return plan;
+    } catch (error) { logger.error({ err: error }, 'Package grant plan refused'); throw error; }
+  }
+  /** One consistent policy snapshot behind every read the plan makes; nothing here writes. */
+  private planPorts(actor: AuthorizationActor, subject: AuthorizationActor, tenantId: string | undefined,
+    state: AuthorizationState): PackageGrantPlanPorts {
+    return { revision: state.revision,
+      subject: { active: subject.isActive, tenantMember: !tenantId || Boolean(subject.tenantIds?.includes(tenantId)) },
+      // An INACTIVE package still declares what it requires, so the closure is walked either way;
+      // readApp is what reports that the package itself cannot be granted right now.
+      readPackage: async app => (await this.options.resolvePackage?.(app)) ?? null,
+      readApp: app => this.planAppFacts(actor, subject, tenantId, state, app) };
+  }
+  /** What one application looks like to THIS caller: unreadable ones surrender no detail at all. */
+  private async planAppFacts(actor: AuthorizationActor, subject: AuthorizationActor, tenantId: string | undefined,
+    state: AuthorizationState, name: string): Promise<PackageGrantAppFacts> {
+    if (!managementAllowed(actor, name, tenantId, 'read')) return { manageable: false, installed: false, active: false };
+    const app = this.apps.get(name);
+    if (!app) return { manageable: true, installed: Boolean(await this.options.resolvePackage?.(name)), active: false };
+    const resolution = matchingAssignments(state, app, subject, tenantId, this.now());
+    const grants = resolveGrantSet(app, resolution.rows, await this.explicitTier(name, subject));
+    const summary = this.summary(app);
+    const denied = grants.denied || resolution.stale || resolution.unknownDirectory;
+    return { manageable: true, installed: true, active: true, status: summary.status,
+      candidateRoles: summary.catalog ? Object.keys(summary.catalog.roles) : [APP_ADMIN_ROLE],
+      currentTier: denied ? 'deny' : grants.tier, denied,
+      explicitDeny: resolution.rows.some(row => row.deny && !row.permission),
+      inertAssignments: inertAssignmentCount(state, app, subject) };
   }
   async catalog(actor: AuthorizationActor): Promise<AuthorizationCatalogResult> {
     actor = await this.currentActor(actor);
@@ -300,4 +360,20 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     return { previewId: preview.previewId, expiresAt: preview.expiresAt, revision: preview.revision,
       catalogRevision: preview.catalogRevision, change: structuredClone(preview.change), requiresApproval: preview.requiresApproval };
   }
+}
+
+/**
+ * @description Count the assignments this subject holds for an application that the RUNNING
+ * installation no longer matches. matchingAssignments binds a row to the installation `source`, so
+ * a reinstall that changes the source leaves the row in the table granting nothing — and unlike a
+ * catalog-revision change it raises no `stale` flag and no refusal reason. The plan cannot repair
+ * that, but it must not present a grant as durable while an inert one sits behind it.
+ * @param state - The policy snapshot the plan was resolved against.
+ * @param app - The application as it is registered right now.
+ * @param subject - The subject the plan is about.
+ * @returns How many of the subject's rows for this application are bound to a different source.
+ */
+function inertAssignmentCount(state: AuthorizationState, app: RegisteredAuthorizationApp, subject: AuthorizationActor): number {
+  return state.assignments.filter(row => row.app === app.app && row.source !== app.source
+    && row.targetSub === subject.sub && row.targetIssuer === subject.issuer).length;
 }

@@ -41,9 +41,17 @@ The Mermaid block is copied to the clipboard **and** shown in the menu, so a bro
 clipboard access still leaves it selectable. An empty or diagram-less scope refuses by name rather
 than writing a file that will not parse.
 
-`toErDiagram()` is pinned byte-for-byte against the generator's `mermaidDiagram()` by
-`tests/unit/data-model-export.spec.ts`; that duplication is part of the same backlog item that
-collapses the catalog SQL, the RLS classifier and the DDL parser.
+There is no second renderer to keep in step. `toErDiagram()` and the generator's
+`mermaidDiagram()` are the same module — `src/pages/data-model/js/er-diagram.mjs`, which the page
+imports and `scripts/schema-docs/render.js` requires. The one thing the two callers read
+differently arrives injected: the generator hands in its own RLS classifier, the page takes the
+module default and uses the summary the server already computed.
+
+`tests/unit/data-model-export.spec.ts` holds that neither consumer writes an `erDiagram` of its
+own, and `tests/unit/data-model-explorer-browser.spec.ts` hands a block Chromium copied out of the
+real page to mermaid@11's own parser, which must read it as an `er` diagram and must refuse a
+mangled one. The catalog SQL, the RLS classifier and the DDL parser are still two copies each;
+that collapse is the backlog item this one was carved out of.
 
 ## What changed since: schema drift
 

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Storyboard frames: turn a screenwriter's per-scene camera line into the still image the renderer animates. Cast consistency via an anchor frame; white-page margins cropped; near-duplicate scenes rejected before any video credit is spent.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Carry the owning user's sub on the context and into the provider resolve. The ADR-130 codex-cli rail authorizes per caller (the SEC-05 demo carve at the bot node), so a resolve with no identity reads unavailable and the whole stage failed closed with the carve hint under the demo default. The vendor-API siblings ignore the field.
  */
 /**
  * @description Storyboard frames — the missing stage between WRITE and RENDER.
@@ -76,6 +77,13 @@ export interface StoryboardContext {
   provider?: StoryboardImageProvider;
   /** A Google token, only used when the selected provider is `vertex`. */
   vertexToken?: string;
+  /**
+   * The sub of the user this storyboard belongs to. Load-bearing, not decoration: the ADR-130
+   * `codex-cli` rail authorizes per caller — the SEC-05 demo carve at the bot node decides the
+   * spawn on this sub, and the resolver mirrors the same predicates, so an identity-less resolve
+   * reads unavailable and fails closed. The vendor-API siblings ignore it.
+   */
+  userSub?: string;
 }
 
 /* ────────────────────────────── PNG: decode, crop, re-encode ────────────────────────────── */
@@ -273,7 +281,7 @@ function promptTail(): string {
  * @description Generate one storyboard still. When an anchor frame is supplied it is sent as a
  * reference image so the cast and world stay identical across scenes.
  * @param {SceneFramePlan} scene the scene's camera line
- * @param {StoryboardContext} ctx style lock, cast, caller token
+ * @param {StoryboardContext} ctx style lock, cast, caller token, owner sub
  * @param {Buffer | null} anchor scene 1's frame, or null when generating the anchor itself
  * @returns {Promise<StoryboardFrame>} the still, cropped if it came back on a white page
  */
@@ -282,7 +290,7 @@ export async function generateStoryboardFrame(
   ctx: StoryboardContext,
   anchor: Buffer | null,
 ): Promise<StoryboardFrame> {
-  const provider = ctx.provider ?? await resolveStoryboardImageProvider({ vertexToken: ctx.vertexToken });
+  const provider = ctx.provider ?? await resolveStoryboardImageProvider({ vertexToken: ctx.vertexToken, userSub: ctx.userSub });
 
   const castLock = ctx.cast.map((c) => `${c.name} = ${c.description}`).join(' | ');
   const prompt = anchor
@@ -315,7 +323,7 @@ export async function generateStoryboardFrame(
  * @description Generate a whole episode's storyboard: scene 1 becomes the anchor, the rest reference
  * it, and the set is rejected if two scenes are the same shot.
  * @param {SceneFramePlan[]} scenes the episode's camera lines, in order
- * @param {StoryboardContext} ctx style lock, cast, caller token
+ * @param {StoryboardContext} ctx style lock, cast, caller token, owner sub
  * @param {Buffer} [seriesAnchor] a series-level anchor (e.g. the intro frame) to hold the cast across episodes
  * @returns {Promise<{frames: StoryboardFrame[], distinct: {ok: boolean, duplicates: string[]}}>} the stills + the distinctness verdict
  */
@@ -326,7 +334,7 @@ export async function generateEpisodeStoryboard(
 ): Promise<{ frames: StoryboardFrame[]; distinct: { ok: boolean; duplicates: string[] } }> {
   if (!scenes.length) throw new Error('no scenes to storyboard');
   // Resolve once: a misconfigured provider should fail before the first image, not on scene three.
-  const provider = ctx.provider ?? await resolveStoryboardImageProvider({ vertexToken: ctx.vertexToken });
+  const provider = ctx.provider ?? await resolveStoryboardImageProvider({ vertexToken: ctx.vertexToken, userSub: ctx.userSub });
   const withProvider: StoryboardContext = { ...ctx, provider };
 
   const frames: StoryboardFrame[] = [];

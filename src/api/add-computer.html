@@ -11,6 +11,12 @@
   now mints both: the enrollment code that binds the node to the signed-in user, and the join
   code that lets a brand-new install attach to the swarm. Reached from cockpit Settings →
   "Add a computer (remote node)".
+
+  2026-09-17: the enrollment is device-bound, so the page shows BOTH halves. The token names
+  the computer it was minted for, and a node that registers as anything else is refused, so a
+  page that renders only the token hands out a credential that cannot be used. The expiry line
+  also stopped being true: a device credential does not expire, because a node that is off for
+  a week has to come back without a human.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -85,8 +91,9 @@
     <h2>1 &middot; Bind it to you</h2>
     <p class="cardsub">
       Dispatch is owner-scoped: a node that joins without this step belongs to nobody and will not
-      show up as yours. This mints a short-lived enrollment code the node exchanges once at startup
-      to register bound to <em>you</em>.
+      show up as yours. This mints that computer&rsquo;s own credential &mdash; it binds the node to
+      <em>you</em>, works on that one machine and nothing else, and you can revoke it without
+      touching any other computer.
     </p>
 
     <div class="row" style="margin-top:0;">
@@ -100,6 +107,13 @@
       <button id="enrollCopy" class="ghost" disabled>Copy</button>
       <span class="note" id="enrollMeta"></span>
     </div>
+
+    <!-- The device id is half the credential: the token authenticates only a node that
+         registers under this id, so showing the token alone is showing half of it. -->
+    <p class="note" id="enrollDeviceLabel" style="display:none;">
+      This computer&rsquo;s device id &mdash; the commands below already carry it:
+    </p>
+    <div class="codebox" id="enrollDevice" style="display:none;"></div>
 
     <p class="note" id="enrollExisting" style="display:none;">
       Computer already has the node app installed? Run this on it and you&rsquo;re done:
@@ -190,7 +204,15 @@
       enrollment = body;
       el('enrollCode').textContent = body.enrollment.token;
       el('enrollCopy').disabled = false;
-      el('enrollMeta').textContent = 'Expires in ' + body.enrollment.ttlMinutes + ' minutes — use it before then. Revoke any time under API tokens.';
+      el('enrollMeta').textContent = body.enrollment.ttlMinutes
+        ? 'Expires in ' + body.enrollment.ttlMinutes + ' minutes — use it before then. Revoke any time under API tokens.'
+        : 'Does not expire — this is the computer\'s steady credential, so it keeps working after a reboot. Revoke or rotate it any time under API tokens.';
+
+      if (body.enrollment.nodeClientId) {
+        el('enrollDevice').textContent = body.enrollment.nodeClientId;
+        el('enrollDeviceLabel').style.display = 'block';
+        el('enrollDevice').style.display = 'block';
+      }
 
       if (body.install && body.install.existingNode) {
         el('enrollExisting').style.display = 'block';

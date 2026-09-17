@@ -77,8 +77,44 @@ on one false match even though bypassing the model is the largest saving availab
   the Δ-token column is `—` and the report says `not-run` with the reason. Bytes are always exact.
 - **The committed `results/latest.json` is the tokenizer-less run** — what a fresh clone reproduces.
   The token figures above came from the `JARVIS_BENCH_TOKENIZER` run below.
-- **Nothing here has run against live traffic.** A shadow step in core is what would change that,
-  and no candidate has earned one yet.
+- **Nothing here has run against live traffic yet** - but the shadow step that would change that
+  now exists in core (see below), so this is a knob nobody has turned rather than a thing that
+  cannot be done.
+
+## The shadow step in core
+
+The finding above is that every candidate is rejected, on a corpus that is 22/34 hand-authored - and
+the harness's own limit is that synthetic recall is not production recall. The only honest way past
+that is real traffic, and the only safe way to get real traffic is to compute the candidate beside
+the shipped selector and send the shipped one anyway.
+
+[`src/app/routes/jarvis-selector-shadow.ts`](../../src/app/routes/jarvis-selector-shadow.ts) is that
+step. `buildToolsBlockWithShadow` builds the real block first and returns that same value on every
+path; the candidate's block is measured for the log and discarded - never returned, never merged.
+`/ask` calls it in place of `buildToolsBlock`, so production behaviour with the shadow armed is
+byte-for-byte what it was before, which is what
+[`tests/unit/jarvis-selector-shadow.spec.ts`](../../tests/unit/jarvis-selector-shadow.spec.ts)
+asserts through the real authenticated route.
+
+It is OFF unless `JARVIS_SELECTOR_SHADOW` names a candidate - `top-k:<k>` or `scored-floor:<k>`, the
+same two tool-cut families raced here, applied to the real block's own tool lines so a shadow number
+and a bench number mean the same thing:
+
+```bash
+JARVIS_SELECTOR_SHADOW=top-k:6      # in .env; compose forwards it to the controller only
+```
+
+Each measured turn logs one record at INFO from `module: jarvis-selector-shadow`: the candidate, the
+baseline and candidate byte counts, the delta, the tool counts, the scripts the candidate dropped,
+the surface, and the per-turn correlation id (the `/ask` job id). **It never logs the message** -
+only its length. A candidate that cannot be computed records `status: 'not-run'` with the reason
+rather than a zero, the same rule as the table above. Bytes are exact; the token axis stays here,
+where `JARVIS_BENCH_TOKENIZER` supplies a real tokenizer.
+
+What the shadow does NOT do is decide anything. It produces the recorded ground truth this harness
+is missing; adopting a candidate is still a separate change, and it needs the thing the entry that
+started this asked for - `regressions == 0` against a corpus whose ground truth is the invocation
+that really happened, not an authored judgement.
 
 ## Run it
 
