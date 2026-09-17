@@ -29,7 +29,7 @@ swarm_applications says status=inactive while its own manifest says active, so i
 
 ### Decide what Ella gets
 
-She already exists: lm_students carries Ella Murphy, ella.k.murphy@gmail.com, Google sub 113439769752756917575, role student. Her external_issuer is NULL where yours is populated — worth checking before granting, because issuer-keyed lookups are exactly what silently failed elsewhere. Jarvis needs no grant at all (legacy mode); Little Monsters needs activation first and declares no prerequisites, so nothing else comes with it.
+She already exists: lm_students carries the student row for her (name, address and Google sub are on the row — read them from the database, never from a published file), role student. Her external_issuer is NULL where yours is populated — worth checking before granting, because issuer-keyed lookups are exactly what silently failed elsewhere. Jarvis needs no grant at all (legacy mode); Little Monsters needs activation first and declares no prerequisites, so nothing else comes with it.
 
 **Do:** Confirm the scope and I will prepare the grant for your approval rather than applying it.
 
@@ -53,7 +53,7 @@ The running api is 12+ commits behind main, so POST /api/authorization/package-p
 
 ### Fix .wslconfig
 
-wsl reports: Unknown key 'wsl2.autoMemoryReclaim' in C:\Users\roger\.wslconfig:4. The key is being rejected, so whatever it was meant to do is not happening. The docker-desktop WSL2 distro stopped three times last night and the engine was at 1.4 GB free of 15.7 GB; this may be the cause rather than a coincidence.
+wsl reports: Unknown key 'wsl2.autoMemoryReclaim' in %USERPROFILE%\.wslconfig:4. The key is being rejected, so whatever it was meant to do is not happening. The docker-desktop WSL2 distro stopped three times last night and the engine was at 1.4 GB free of 15.7 GB; this may be the cause rather than a coincidence.
 
 **Do:** Say the word and I will read the file and tell you exactly what is malformed.
 
