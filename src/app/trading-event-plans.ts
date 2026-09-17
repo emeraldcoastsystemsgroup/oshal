@@ -26,6 +26,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-136 D5: the earnings-reaction rules tick rides this leg's FULL tick (EDGAR reads for held names in their window), gated by TRADING_EARNINGS_RULES on top of this leg's own gate, and dynamic-imported for the same cycle reason as the lots.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | TRADING_CORE_SYMBOLS is honoured at the ENTRY: a plan whose ticker the operator has ring-fenced is cancelled at stepListed instead of opening a position. This module is the ONE of the four outer dispatchers that does NOT sweep the venue's positions — its EventBroker interface is configured/getAccount/getOrder/cancelOrder with no getPositions, and every sell quantity comes from `entry.filledQty` / `exits.qty`, the shares this plan's own entry bought through placeDecisionOrder. The ADR-159 `unmanaged` mark is therefore structurally inapplicable here: the engine's ledger accounts for that quantity by construction. The exits are deliberately left ungated for the same reason — withholding a take-profit or a stop on a position the plan itself opened would strip a filled position of its protection, which is strictly worse than the exposure being prevented. Refusing the entry is what stops such a position from ever existing.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Bootstrap under the SCHEMA_LOCK_KEYS.trading advisory lock. These statements were running unserialised, so two processes sharing one database interleaved `DROP TRIGGER IF EXISTS` / `CREATE TRIGGER`, `CREATE TABLE IF NOT EXISTS` and the check-then-`CREATE POLICY` pair; Postgres answers that with 42710 "already exists" or 23505 on a catalog index, and it failed three trading specs in beforeAll on every unit run without --no-file-parallelism. The lock also moves the module onto the savepoint path, so owner-only DDL under a non-owner runtime role is reported and the requirements asserted instead of aborting the whole bootstrap.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | The ring-fence is now AUDIBLE on the exit side, not only enforced on the entry side. SEQ 5 refuses a fenced ticker at stepListed and deliberately leaves the exits ungated, which remains the right call: the take-profit, the stop and the time stop close only `entry.filledQty` / `exits.qty` - the shares this plan's own entry bought - and withholding them would leave a filled position unprotected, which is strictly worse than the exposure prevented. The residual was the SILENCE. A plan that reached `filled` BEFORE the operator added its ticker to TRADING_CORE_SYMBOLS kept selling a fenced name with nothing on the record. noteExitFenceState writes the mandate onto the plan's timeline (`exit_fence_held`) and the lift with it (`exit_fence_lifted`), edge-triggered off the last fence event so a leg that fires every five minutes says it once, and it names disarm as the way to hand the position over. It places, cancels and withholds nothing. The siblings on this same leg are untouched by design: trading-pinned-lots.ts and trading-dated-orders.ts execute an order the OPERATOR authored (a protected lot is their own buy with its own exit rules, subtracted from the autopilot's view by ADR-138 D3; a dated order is a decision they minted for a time they chose), and ADR-159 withholds where the engine trades a position it did not buy, not where the operator instructed a specific order.
  *
  * @module trading-event-plans
  */
@@ -417,7 +418,43 @@ export async function tickEventPlans(ctx: AppContext, sub: string, deps: EventPl
   return { processed: r.rows.length, transitions };
 }
 
+/** Timeline events for what the operator's ring-fence means to a plan that is ALREADY in a position. */
+const EXIT_FENCE_HELD = 'exit_fence_held';
+const EXIT_FENCE_LIFTED = 'exit_fence_lifted';
+
+/**
+ * @description Write down what TRADING_CORE_SYMBOLS means for a plan that already holds shares.
+ * The fence is enforced at the ENTRY (see {@link stepListed}), so a symbol added to it later finds
+ * the position already open, and the exits keep running: the take-profit, the stop and the time stop
+ * close only the quantity this plan's own entry bought, and withholding them would strip a filled
+ * position of its protection — strictly worse than the exposure prevented. That decision is right,
+ * but it was SILENT: the operator fenced a name and the engine went on selling it with nothing on the
+ * record. The mandate is now recorded on the plan's timeline, edge-triggered off the last fence event
+ * so a leg that fires every five minutes says it once, and the LIFT is recorded too so a standing
+ * note is never read as current after the operator un-fences the name. No order flow changes here.
+ * @param ctx - App context; only the pool is used.
+ * @param sub - The plan's owner.
+ * @param plan - The plan as loaded this tick, in `filled` or `exits_placed`.
+ * @returns Nothing — the plan gains at most one timeline entry per fence transition.
+ */
+async function noteExitFenceState(ctx: AppContext, sub: string, plan: EventPlanRow): Promise<void> {
+  const ticker = String(plan.ticker ?? '').toUpperCase();
+  if (!ticker) return;
+  const fenced = new Set(coreConfig().symbols).has(ticker);
+  const last = [...plan.timeline].reverse().find((e) => e.event === EXIT_FENCE_HELD || e.event === EXIT_FENCE_LIFTED)?.event;
+  if (fenced === (last === EXIT_FENCE_HELD)) return;
+  const held = Number((plan.exits ?? {}).qty ?? (plan.entry ?? {}).filledQty ?? 0);
+  const shares = Number.isFinite(held) && held > 0 ? `${held} shares` : 'the shares';
+  const detail = fenced
+    ? `${ticker} was added to TRADING_CORE_SYMBOLS after this plan's entry filled. Its exits CONTINUE under the pre-fence mandate: the take-profit, the stop and the time stop close only ${shares} this plan's own entry bought, and withholding them would leave the position unprotected. The fence refuses a NEW entry; it does not strip protection from a position it already opened. Disarm the plan if you want those exits cancelled and the position handed to you.`
+    : `${ticker} is no longer in TRADING_CORE_SYMBOLS — the pre-fence mandate recorded above no longer applies. No exit was withheld while the fence stood.`;
+  await patchPlan(ctx.pool, sub, plan.planId, {}, { event: fenced ? EXIT_FENCE_HELD : EXIT_FENCE_LIFTED, detail });
+  logger.warn({ sub, planId: plan.planId, ticker, status: plan.status, fenced },
+    fenced ? 'event plan is ring-fenced AFTER its fill — exits continue under the pre-fence mandate' : 'event plan ring-fence lifted — the standing pre-fence note no longer applies');
+}
+
 async function stepPlan(ctx: AppContext, sub: string, plan: EventPlanRow, book: TradingBook, deps: EventPlanDeps): Promise<string | null> {
+  if (plan.status === 'filled' || plan.status === 'exits_placed') await noteExitFenceState(ctx, sub, plan);
   switch (plan.status) {
     case 'armed': await patchPlan(ctx.pool, sub, plan.planId, { status: 'watching' }, { event: 'watching', detail: `EDGAR full-text watch for "${plan.params.issuer}"` }); return 'watching';
     case 'watching': return stepWatching(ctx, sub, plan, deps);
