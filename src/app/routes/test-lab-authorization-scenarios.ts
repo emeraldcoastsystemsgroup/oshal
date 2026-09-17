@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register roster imports, delegated management roles and external business memberships with their isolated browser/database proofs.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register the authorization schema-readiness recovery proof: a bootstrap that loses the pool acquire at boot must be retried by the next operation rather than refusing for the life of the process.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the joined access review - the one surface that answers "what am I allowed to do" across swarm role, governance permissions and per-application assignments - with a read-only self probe.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Attach the principal-qualified app-access proofs: an explicit tier now resolves for the exact (subject, issuer) it was written for, and an issuer-less legacy assignment still answers only a canonical local account.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -82,6 +83,8 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/authorization-readiness-consumers.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-runtime.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-app-access-routes.spec.ts' },
+    { level: 'unit', path: 'tests/unit/app-access-tier.spec.ts' },
+    { level: 'integration', path: 'tests/authorization-issuer-tier-live.spec.ts' },
     { level: 'unit', path: 'tests/unit/kernel-skills.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-execution-boundary.spec.ts' },
     { level: 'integration', path: 'tests/unit/installer-root-bootstrap.spec.ts' },

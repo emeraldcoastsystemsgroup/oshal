@@ -71,6 +71,15 @@ Baseline mappings considered by the decision:
 - Migration 121 provides the FORCE-RLS `oshal_app_access` store keyed by exact
   `(user_sub, app_name)`. Explicit assignments win over manifest defaults; an explicit `deny`
   always wins, and an assignment made stale by a later manifest fails closed to `deny`.
+- **Amended 2026-09-16 (migration 145).** A subject identifier is unique only inside its issuer,
+  and the original store recorded no issuer, so the only safe reading of a row was "a canonical
+  local account". The application-authorization control plane enforced that by refusing to resolve
+  a tier at all for any other issuer — which also made an assignment an operator had deliberately
+  written for a federated identity unreadable, so every OIDC-signed-in user resolved `deny` on
+  every application and a catalog-less one answered `authorization_app_admin_required`. Migration
+  145 adds a nullable `user_issuer`; resolution is keyed on `(user_sub, user_issuer, app_name)`,
+  and a row with no issuer still resolves only for `urn:oshal:local-auth`. The key is unchanged,
+  so re-assigning one subject under a different issuer rebinds its single row.
 - The framework-owned operator API and Applications cockpit matrix list, assign and clear tiers.
   Apps cannot administer the platform doorway or self-promote.
 - Both route shapes enforce the same decision after authentication and before app code: dynamic

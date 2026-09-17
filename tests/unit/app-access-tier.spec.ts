@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: verify explicit-deny-wins/default/stale resolution, durable assignment SQL, fail-closed manifest and CLI validation, and the FORCE-RLS migration contract.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cover the principal-qualified lookup: the assignment SQL carries the actor issuer and the pre-145 local-auth rule, an upsert records the issuer it was written for, and migration 145 keeps the column nullable so an older row is never guessed into the configured identity provider.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -73,8 +74,54 @@ describe('AppAccessService resolution', () => {
     const assignment = await new AppAccessService(pool).assign({
       userSub: 'User:Exact', appName: 'career-hunter', tier: 'admin', assignedBySub: 'operator-sub', reason: ' Support lead ',
     });
-    expect(query.mock.calls[0][1]).toEqual(['User:Exact', 'career-hunter', 'admin', 'operator-sub', 'Support lead']);
-    expect(assignment).toMatchObject({ userSub: 'User:Exact', appName: 'career-hunter', tier: 'admin', assignedBySub: 'operator-sub' });
+    expect(query.mock.calls[0][1]).toEqual(['User:Exact', 'career-hunter', 'admin', 'operator-sub', 'Support lead', null]);
+    expect(assignment).toMatchObject({ userSub: 'User:Exact', appName: 'career-hunter', tier: 'admin', assignedBySub: 'operator-sub', userIssuer: null });
+  });
+
+  it('records the issuer an assignment was written for', async () => {
+    const now = new Date('2026-09-16T12:00:00.000Z');
+    const { pool, query } = poolWithRows([{
+      user_sub: '100000000000000000001', user_issuer: 'https://accounts.google.com', app_name: 'career-hunter',
+      tier: 'admin', assigned_by_sub: 'operator-sub', reason: 'Owner', created_at: now, updated_at: now,
+    }]);
+    const assignment = await new AppAccessService(pool).assign({
+      userSub: '100000000000000000001', userIssuer: 'https://accounts.google.com', appName: 'career-hunter',
+      tier: 'admin', assignedBySub: 'operator-sub', reason: 'Owner',
+    });
+    expect(query.mock.calls[0][0]).toContain('user_issuer');
+    expect(query.mock.calls[0][1][5]).toBe('https://accounts.google.com');
+    expect(assignment.userIssuer).toBe('https://accounts.google.com');
+  });
+
+  it('asks for the assignment written for the actor issuer, and for a pre-145 local-auth row', async () => {
+    const { pool, query } = poolWithRows([]);
+    await new AppAccessService(pool).resolveForPrincipal(
+      'career-hunter', '100000000000000000001', 'https://accounts.google.com', ACCESS,
+    );
+    expect(query.mock.calls[0][0]).toContain('user_issuer = $3 OR (user_issuer IS NULL AND $3 = $4)');
+    expect(query.mock.calls[0][1]).toEqual([
+      '100000000000000000001', 'career-hunter', 'https://accounts.google.com', 'urn:oshal:local-auth',
+    ]);
+  });
+
+  it('refuses an issuer that is not an exact bounded string', async () => {
+    const { pool } = poolWithRows([]);
+    await expect(new AppAccessService(pool).resolveForPrincipal('career-hunter', 'user-a', '', ACCESS))
+      .rejects.toThrow(/userIssuer/);
+    await expect(new AppAccessService(pool).resolveForPrincipal('career-hunter', 'user-a', 'x'.repeat(2049), ACCESS))
+      .rejects.toThrow(/userIssuer/);
+  });
+});
+
+describe('migration 145 app access principal issuer contract', () => {
+  const sql = readFileSync(resolve('scripts/migrations/145-app-access-principal-issuer.sql'), 'utf8');
+
+  it('adds a nullable issuer column, bounds it, and leaves the existing key alone', () => {
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS user_issuer TEXT');
+    expect(sql).not.toMatch(/user_issuer\s+TEXT\s+NOT NULL/);
+    expect(sql).toContain('octet_length(user_issuer) <= 2048');
+    expect(sql).not.toMatch(/DROP CONSTRAINT IF EXISTS oshal_app_access_pkey/);
+    expect(sql).not.toMatch(/UPDATE\s+oshal_app_access/i);
   });
 });
 

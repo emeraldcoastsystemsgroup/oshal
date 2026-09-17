@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: compose the scheduled-service activation authority beside the policy it reads, and refresh an application service principal to itself — it has no account or session to revalidate, and its liveness is the activation row the runner re-resolves on every tick.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Make schema readiness re-requestable and sequence its DDL. One eagerly created promise cached its own rejection for the life of the process, so a bootstrap that lost the boot-time pool race made every later authorization operation refuse forever while the controller still reported healthy.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Give the RETURNED readiness the same re-requestable shape. It was a plain promise derived once from the recovered thunk, so the four modules chaining off it - queued ticket provenance, the user directory, Jarvis briefings and Test Lab runs - still inherited the first bootstrap failure forever, and authenticated ticket creation threw for the life of the process.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Resolve a legacy explicit tier on the FULL principal instead of refusing every non-local issuer before reading one. The short-circuit was there because an ADR-118 assignment carried no issuer, but it returned deny without a lookup, so an explicit admin assignment written for an OIDC identity was unreadable and every catalog-less application answered that identity authorization_app_admin_required. The legacy rule now lives in the query predicate: an issuer-less row still resolves only for urn:oshal:local-auth.
  */
 /** Assemble the control plane without granting it authority over business records. */
 import type { Request } from 'express';
@@ -18,6 +19,7 @@ import { ApplicationAuthorizationRuntime, applicationAuthorizationMode } from '.
 import { readApplicationExecutionOwnership } from '../application-execution-ownership';
 import { AuthorizationToolRuntime, registerAuthorizationTools } from './authorization-tool';
 import { createApplicationAuthorizationActorResolver } from '../middleware/application-authorization-identity';
+import { createLegacyTierResolver } from './application-access-tier';
 import { ApplicationAuthorizationService, PostgresAuthorizationStore, ensureApplicationAuthorizationSchema } from '@/features/application-authorization';
 import type { AuthorizationActor, AuthorizationStore, ApplicationAuthorizationServiceOptions } from '@/features/application-authorization';
 import { getSessionSnapshot } from '@/features/local-auth';
@@ -65,18 +67,16 @@ function createActorPorts(ctx: AppContext, directory: ReturnType<typeof createAp
   return { resolveActor, targetActor, refreshActor, inventory: directory.inventory };
 }
 
-function createPolicyOptions(ctx: AppContext, appAccess: AppAccessService, getApps: () => SwarmAppService,
+function createPolicyOptions(appAccess: AppAccessService, getApps: () => SwarmAppService,
   actors: ReturnType<typeof createActorPorts>): ApplicationAuthorizationServiceOptions {
   return { refreshActor: actors.refreshActor, resolveActor: actors.targetActor,
-    resolveTier: async (app, actor) => {
-      const record = await getApps().getApp(app);
-      // Old rows have no issuer column. They belong only to canonical local accounts.
-      if (actor.issuer !== LOCAL_AUTH_PRINCIPAL_ISSUER) return { tier: 'deny', explicit: false };
-      const access = await runWithSystemIdentity(() => appAccess.resolve(app, actor.sub, record?.manifest.access ?? {
-        supported: ['deny', 'viewer', 'editor', 'admin'], defaultTier: 'deny',
-      }));
-      return { tier: access.tier, explicit: access.source !== 'default' };
-    },
+    // The legacy ADR-118 ceiling is resolved on the FULL principal. This used to refuse any
+    // issuer but urn:oshal:local-auth BEFORE reading an assignment, because an old row carried
+    // no issuer and could only belong to a local account — but refusing early also made an
+    // assignment deliberately written for a federated identity unreadable, so every
+    // OIDC-signed-in user resolved deny everywhere and a catalog-less application then answered
+    // them authorization_app_admin_required. The legacy rule now lives in the query predicate.
+    resolveTier: createLegacyTierResolver(appAccess, getApps),
     inventory: actors.inventory,
   };
 }
@@ -141,7 +141,7 @@ export function createApplicationAuthorizationWiring(ctx: AppContext, appAccess:
   const actors = createActorPorts(ctx,directory,membershipStore);
   const memberships = new ExternalTenantMembershipService(membershipStore, { refreshActor: actors.refreshActor, resolveTarget: directory.targetActor });
   const { resolveActor } = actors;
-  const service = new ApplicationAuthorizationService(store, createPolicyOptions(ctx, appAccess, getApps, actors));
+  const service = new ApplicationAuthorizationService(store, createPolicyOptions(appAccess, getApps, actors));
   const runtime = new ApplicationAuthorizationRuntime(service, resolveActor, process.env, name => getApps().getApp(name));
   const remoteExecution = createApplicationRemoteExecutionWiring(ctx.pool, ready, runtime, actors.refreshActor);
   const isProtected = async (app: string) => {
