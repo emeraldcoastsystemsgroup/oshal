@@ -2859,31 +2859,3 @@ work in `ocean-lab`, `aero-lab` and `embodied`; no core code.
   and engine fingerprints or is not displayed. No slice buys, builds or tests hardware, and none attempts
   free-surface hydrodynamics, added mass, cavitation, or aerodynamics inside the physics plant.
 
-### Event-plan EXITS are not ring-fenced, only the entry is
-
-`stepListed` in `src/app/trading-event-plans.ts` refuses to open a position in a ticker
-`TRADING_CORE_SYMBOLS` fences, which is what stops a fenced name from ever entering an event
-plan's book. The exits (`stepFilled`'s take-profit and stop, `stepExitsPlaced`'s time stop) are
-deliberately NOT fenced: they close the quantity the plan's own entry bought, and withholding them
-would strip a filled position of its protection — strictly worse than the exposure prevented. The
-residual is narrow but real: a plan that reached `filled` BEFORE the operator added its ticker to
-`TRADING_CORE_SYMBOLS` keeps running its exits against a name the fence now covers. The ADR-159
-`unmanaged` mark does not apply to this module at all — its `EventBroker` interface is
-`configured/getAccount/getOrder/cancelOrder` with no `getPositions`, so every quantity it sells
-comes from `entry.filledQty`/`exits.qty`, which the engine's ledger accounts for by construction.
-
-**Done when:** arming or fencing decides the question before a position exists — adding a symbol to
-`TRADING_CORE_SYMBOLS` while a plan on it is `filled` or `exits_placed` either hands the position
-to the operator explicitly (the plan closes and says the exits are now theirs to manage) or records
-on the plan timeline that its exits continue under the pre-fence mandate, rather than the current
-silence. A guard in the shape of the `ADR-159 sibling` block in
-`tests/unit/trading-event-plans.spec.ts` drives a plan to `filled`, fences its ticker, ticks, and
-asserts the chosen behaviour — proven red against today's code, which neither closes nor records.
-
-**Assessed and deliberately left alone:** `trading-pinned-lots.ts` and `trading-dated-orders.ts`
-ride the same `trading-events:<sub>` leg and place through the same `deps.place` seam, and neither
-reads the `unmanaged` mark or `TRADING_CORE_SYMBOLS`. They are not the same defect shape: both
-execute an order the OPERATOR authored (a protected lot is the operator's own buy with its own exit
-rules, explicitly subtracted from the autopilot's view by ADR-138 D3; a dated order is an operator
-decision minted now and placed at a time they chose). ADR-159 withholds where the engine trades a
-position it did not buy, not where the operator instructed a specific order.
