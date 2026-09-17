@@ -11,6 +11,7 @@
  * 2026-09-14 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the four marketing-suite knobs the api reads (sender, GitHub traffic token, Google scope override, Switchboard executor). All four failed silently: GOOGLE_CONNECT_SCOPES sat in .env with no compose entry, so the Search Console scope the scorecard needs never reached the container.
  * 2026-09-14 22:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the two ADR-100 maintenance knobs (first-pass delay + jitter): unforwarded, the runtime runs on its compiled-in defaults and an operator tuning them in .env is silently ignored.
  * 2026-09-14 23:30:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the two world series-store load knobs (WORLD_SERIES_READ_CONCURRENCY, WORLD_ROLLUP_CONCURRENCY) — the throttles an operator reaches for when the market-hours pulse pins oshal-local-tsdb. Unforwarded, turning them down in .env changes nothing.
+ * 2026-09-17 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin PERSON_MODEL_RELATED_SIMILARITY_FLOOR — the ADR-100 related-hit relevance floor. Unforwarded it runs on its compiled-in default and an operator retuning it for their own corpus is silently ignored.
  * 2026-09-17 00:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin JARVIS_SELECTOR_SHADOW: the shadow step exists so a narrower tool selector can be judged on REAL traffic, and unforwarded it would be armed in .env and measure nothing — the failure would look like the candidate simply never firing.
  */
 import { describe, expect, it } from 'vitest';
@@ -79,6 +80,10 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   // in .env is silently ignored — the exact class this spec exists for.
   { name: 'PERSON_MODEL_MAINTENANCE_INITIAL_DELAY_MS', readBy: 'ambient-enrichment-runtime readMaintenanceInitialDelay — the first pass delay after boot' },
   { name: 'PERSON_MODEL_MAINTENANCE_JITTER_MS', readBy: 'ambient-enrichment-runtime readMaintenanceInitialDelay — the first pass jitter' },
+  // 2026-09-17, ADR-100 Phase 3: the relevance floor for "possibly related" recall hits. A floor is
+  // corpus-dependent — it is exactly the knob an operator reaches for when the related list is
+  // too noisy or too empty — and unforwarded, turning it in .env changes nothing.
+  { name: 'PERSON_MODEL_RELATED_SIMILARITY_FLOOR', readBy: 'person-model related-relevance relatedSimilarityFloor — the cosine floor a related hit must clear' },
   // 2026-09-14, the world pulse saturating the series store: these are the knobs an operator turns
   // when oshal-local-tsdb is pinned. Unforwarded they are the silent-env-var class with a load
   // consequence — the .env value is ignored, the compiled default stands, and the store stays at

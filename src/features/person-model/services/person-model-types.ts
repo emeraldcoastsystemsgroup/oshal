@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 1: shared types for ambient person-model recall (parsed intent, receipts, result).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2-4: the person-model intent union (recall | asks | trend | connection) Jarvis answers without a model turn, the "possibly related" semantic receipt that is never folded into the exact count, trend/connection rows, and the heard-people / profile-summary shapes behind the profile surface.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A RelatedReceipt now carries `similarity` beside `score`: the fused retrieval score is a reciprocal RANK and says nothing about distance, which is how an off-topic line was published as "possibly related" at the same value as two real paraphrases. `similarity` is the cosine the relevance floor judges and orders on.
  */
 
 import type { PersonAsk } from './asks-query';
@@ -56,8 +57,14 @@ export interface RecallResult {
  * receipts and NEVER counted — the answer-integrity rule of ADR-100 §4.
  */
 export interface RelatedReceipt extends RecallReceipt {
-  /** Engine similarity score (higher is closer); informational only. */
+  /** Fused RETRIEVAL score (reciprocal rank) — a placing, not a distance; informational only. */
   score: number;
+  /**
+   * Cosine similarity of this line to the recall query on the projection's own embedding model.
+   * This is what the relevance floor judges and what orders the list; unlike `score` it means
+   * "how close", so a caller may show it.
+   */
+  similarity: number;
 }
 
 /** "what has Ella asked me", "what did Sam promise", "any open asks from Ella". */

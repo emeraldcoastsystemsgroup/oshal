@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Render for macOS and Linux too (?platform=macos|linux -> a bash .sh). The five seeded values were always platform-neutral and the node app already installs from npm on both, but only a Windows .cmd was ever emitted, so a Mac or Linux machine had no one-click path at all. An unrecognised platform is a 400 rather than a silent Windows fallback, and it is refused BEFORE a token is minted so a rejected download leaves no live credential behind.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Register the node to start with Windows. The download installed and launched a node that never came back after a reboot: nothing wrote a startup entry, and the app's own login item is tied to background wake (a microphone feature) rather than to being a worker. A per-user Startup shortcut needs no elevation and no scheduled task, is removable like any other startup item, and is verified by reading the .lnk back rather than trusted because Save() returned. A failure to write it is reported as what it is instead of being swallowed into a success message.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Same correction on this side: the per-user Startup folder brings the node back at the next LOGON, not unattended after a boot. It is not a service, and the comment no longer implies one.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Give the POSIX renderers the login item the Windows one got in SEQ 6. The macOS/Linux script installed a node, launched it once and left nothing behind, so the first restart ended the node and a person had to find a launcher they never chose - the same defect SEQ 6 fixed for Windows, shipped on the two platforms whose bare-machine run has not happened yet. macOS gets a per-user LaunchAgent, Linux an XDG autostart entry; both are read back rather than trusted, both carry the launcher path and no credential, and a failure to write one is reported instead of being swallowed into the success message.
  */
 
 /**
@@ -29,12 +30,15 @@
  * the swarm-wide credential to make it work.
  *
  * The file is also what makes the machine a NODE rather than an app someone opens: it registers
- * the launcher in the per-user Startup folder, so the node comes back on its own at the next
- * LOGON rather than needing someone to find and click it. Startup is a per-user folder, so on a
- * machine that boots to a locked login screen nothing runs until someone signs in; only an
- * auto-logon box comes back unattended. A worker that needs a human to re-launch it after every
- * restart is not a worker - but this is not a service, and calling it one would be a lie the next
- * reader pays for.
+ * the launcher as a per-user login item, so the node comes back on its own at the next LOGON
+ * rather than needing someone to find and click it. Each platform uses its own no-elevation
+ * mechanism - the Startup folder on Windows, a LaunchAgent under `~/Library/LaunchAgents` on
+ * macOS, an XDG `autostart` entry on Linux - and all three are per-USER, so on a machine that
+ * boots to a locked login screen nothing runs until someone signs in; only an auto-logon box
+ * comes back unattended. A worker that needs a human to re-launch it after every restart is not
+ * a worker - but this is not a service, and calling it one would be a lie the next reader pays
+ * for. None of the three entries carries a credential: each names the launcher, and the app
+ * reads its settings from the store this file seeded on the first run.
  *
  * @module node-installer-routes
  */
@@ -304,7 +308,9 @@ export function renderPosixNodeInstaller(options: {
     ...posixHeader(options, platform === 'macos' ? 'macOS' : 'Linux'),
     ...POSIX_NODE_CHECK,
     ...(platform === 'linux' ? POSIX_DISPLAY_CHECK : []),
-    ...POSIX_INSTALL_AND_LAUNCH,
+    ...POSIX_INSTALL_AND_PROVE,
+    ...posixAutostart(platform),
+    ...POSIX_LAUNCH_AND_FINISH,
   ].join('\n');
 }
 
@@ -392,8 +398,8 @@ const POSIX_DISPLAY_CHECK = [
   '',
 ];
 
-/** Install from npm, seed the five platform-neutral values, prove a launcher, start it. */
-const POSIX_INSTALL_AND_LAUNCH = [
+/** Install from npm, seed the five platform-neutral values, prove a launcher was created. */
+const POSIX_INSTALL_AND_PROVE = [
   '# 3. The node app. Ships built, so this pulls the app plus Electron and nothing else.',
   'echo "Installing $NODE_PACKAGE (this downloads Electron - a few minutes)..."',
   'if ! npm install -g "$NODE_PACKAGE"; then',
@@ -437,12 +443,103 @@ const POSIX_INSTALL_AND_LAUNCH = [
   '  exit 1',
   'fi',
   '',
-  '# Detached, so closing the terminal does not take the node with it.',
+];
+
+/**
+ * Where each POSIX desktop keeps a per-user login item, and the file that goes there.
+ *
+ * A LaunchAgent and an XDG autostart entry are the same thing the Windows Startup folder is:
+ * per-user, no elevation, no system service, and removable from the desktop's own
+ * startup-applications UI. Neither is loaded here — writing the entry and starting the node
+ * now are separate steps, so nothing starts a second copy of an app that is already running.
+ * The entry names the launcher and nothing else; the credential stays in the store the app
+ * persisted on its first run.
+ */
+const MACOS_AUTOSTART_TARGET = [
+  'AUTOSTART_DIR="$HOME/Library/LaunchAgents"',
+  'AUTOSTART_PATH="$AUTOSTART_DIR/com.oshal.node.plist"',
+  'write_autostart() {',
+  '  cat >"$AUTOSTART_PATH" <<PLIST',
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"',
+  '  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+  '<plist version="1.0">',
+  '<dict>',
+  '  <key>Label</key><string>com.oshal.node</string>',
+  '  <key>ProgramArguments</key>',
+  '  <array><string>$LAUNCHER</string></array>',
+  '  <key>RunAtLoad</key><true/>',
+  '  <key>ProcessType</key><string>Interactive</string>',
+  '</dict>',
+  '</plist>',
+  'PLIST',
+  '}',
+];
+
+/** The Linux half. XDG_CONFIG_HOME is honoured because a desktop that sets it means it. */
+const LINUX_AUTOSTART_TARGET = [
+  'AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"',
+  'AUTOSTART_PATH="$AUTOSTART_DIR/oshal-node.desktop"',
+  'write_autostart() {',
+  '  cat >"$AUTOSTART_PATH" <<DESKTOP',
+  '[Desktop Entry]',
+  'Type=Application',
+  'Name=OSHAL worker node',
+  'Comment=Starts the OSHAL worker node when you log in',
+  'Exec=$LAUNCHER',
+  'Terminal=false',
+  'X-GNOME-Autostart-enabled=true',
+  'DESKTOP',
+  '}',
+];
+
+/**
+ * @description Emits the login-item step for one POSIX platform.
+ *
+ *   Only the directory and the file body differ between the two, so the write, the read-back
+ *   and the reporting are shared: two copies of "did the write actually land" is how one of
+ *   them quietly stops checking.
+ * @param platform - Which POSIX desktop this script is being rendered for.
+ * @returns The shell lines that write and verify the login item.
+ */
+function posixAutostart(platform: 'macos' | 'linux'): string[] {
+  return [
+    '# 6. Come back after a restart. A worker node that needs a human to re-run something after',
+    '#    every reboot is not a worker. This is a per-user login item: no sudo, no system',
+    '#    service, removable like any other startup application. It takes effect at the next',
+    '#    LOGIN and not unattended at boot - the node app opens a window, so it has nowhere to',
+    '#    run until someone signs in, and calling this a service would be a lie.',
+    ...(platform === 'macos' ? MACOS_AUTOSTART_TARGET : LINUX_AUTOSTART_TARGET),
+    '# Read it back rather than trusting the write. An entry that names nothing looks exactly',
+    '# like one that works, right up to the restart nobody is watching.',
+    'AUTOSTART_ERROR=""',
+    'if ! mkdir -p "$AUTOSTART_DIR" 2>/dev/null; then',
+    '  AUTOSTART_ERROR="could not create $AUTOSTART_DIR"',
+    'elif ! write_autostart 2>/dev/null; then',
+    '  AUTOSTART_ERROR="could not write $AUTOSTART_PATH"',
+    'elif ! grep -Fq "$LAUNCHER" "$AUTOSTART_PATH" 2>/dev/null; then',
+    '  AUTOSTART_ERROR="$AUTOSTART_PATH does not name $LAUNCHER"',
+    'fi',
+    '',
+  ];
+}
+
+/** Start the node now, then say plainly whether it will come back on its own. */
+const POSIX_LAUNCH_AND_FINISH = [
+  '# 7. Detached, so closing the terminal does not take the node with it.',
   'echo "Starting the node so it can register..."',
   'nohup "$LAUNCHER" >/dev/null 2>&1 &',
   '',
   'echo ""',
   'echo "Done. This computer should appear in the cockpit within a minute."',
+  'if [ -n "$AUTOSTART_ERROR" ]; then',
+  '  echo ""',
+  '  echo "This computer will NOT restart the node when you log in again."',
+  '  echo "  $AUTOSTART_ERROR"',
+  '  echo "  Start it by hand with: $LAUNCHER"',
+  'else',
+  '  echo "It starts again by itself the next time you log in: $AUTOSTART_PATH"',
+  'fi',
   'echo "You can delete this file now."',
   '',
 ];
