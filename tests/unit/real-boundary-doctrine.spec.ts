@@ -10,10 +10,13 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The mirror is gone: the guard imports the same parser the runner uses (scripts/e2e-green-list.mjs) and, instead of grepping the runner for three strings, asks it (`--list`) what it would hand to playwright and requires that to equal the parsed list. The source-text pin from seq 4 was satisfied by three semantically different runners (an extra filter, a different file, the expressions kept only in a comment) - PR #620 second review.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The guard drives the runner body with a recording spawner and pins the playwright ARGV to the parsed list; `--list` compared the parser to itself through a second derivation, and a filter at the spawn site passed it (third review, X1-X4). parseGreenSuite gets its own case for CRLF, indentation, trailing whitespace, `#` lines and blanks.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The guard drives main() - the function the CLI entry calls - rather than the body beneath it, and pins the argv to exactly the parsed list with no flags appended, so an entry that re-points the list or adds --grep-invert goes red (fourth review, X6/X6b).
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | The program is run out of process with a recording npx (a copy of the runner, its parser and the list in a scratch tree shaped like the repo), and the argv it hands playwright is pinned to the parsed list with no flags - the only drive that reaches the module default list path and the entry line (fifth review: X10, X6', X8 passed the in-process drive). The in-process drive stays as the fast path and no longer supplies listPath, so main's own default is exercised. The "only the exit is undriven" wording is withdrawn.
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, copyFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import { parseGreenSuite, readGreenSuite } from '../../scripts/e2e-green-list.mjs';
 import { main as runGreenGate } from '../../scripts/e2e-green.mjs';
@@ -31,16 +34,16 @@ const GREEN_LIST = path.resolve('tests/e2e-green-suite.txt');
 const greenSuiteFiles = (): string[] => readGreenSuite(GREEN_LIST) as string[];
 
 /**
- * @description Runs the program - main(), the same function the CLI entry calls - with a
- * recording spawner and returns the playwright argv it produced. Whatever the runner or its
- * entry filters, re-points, re-parses or appends, it reaches playwright only through this call;
- * the one line the guard cannot drive is process.exit.
+ * @description Runs main() - the function the CLI entry calls - in process with a recording
+ * spawner and returns the playwright argv it produced. This is the fast path: it reaches the
+ * body and main's own defaults, but not the entry line itself, which programHandsPlaywright()
+ * below covers by running the program as the gate does.
  * @returns The spec paths the runner handed to playwright, in order.
  */
 const runnerHandsPlaywright = (): string[] => {
   const calls: string[][] = [];
   const result = runGreenGate([], {
-    listPath: GREEN_LIST,
+    // No listPath: the program's OWN default is what must resolve to the parsed list.
     exists: () => true, // the chat bundle is the page under test, not the list under test
     spawn: (cmd: string, args: string[]) => { calls.push([cmd, ...args]); return { status: 0 }; },
     log: () => undefined,
@@ -57,7 +60,59 @@ const runnerHandsPlaywright = (): string[] => {
 };
 
 
+/**
+ * @description Runs scripts/e2e-green.mjs AS A PROGRAM, the way the gate does, with a recording
+ * `npx` first on PATH, and returns the argv it handed playwright. A copy of the runner, its parser
+ * and the list is laid out in a scratch directory with the same shape as the repo, so the
+ * program's own default list path, its top-level statements and the entry line's argv expression
+ * all execute for real. Nothing here can be satisfied by what the guard supplies, because the
+ * guard supplies nothing but PATH.
+ * @returns The spec paths (and any flags) the program handed playwright, in order.
+ */
+const programHandsPlaywright = (): string[] => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'e2e-green-program-'));
+  try {
+    for (const rel of ['scripts/e2e-green.mjs', 'scripts/e2e-green-list.mjs', 'tests/e2e-green-suite.txt']) {
+      mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+      copyFileSync(path.resolve(rel), path.join(root, rel));
+    }
+    // The chat bundle is the page under test, not the list under test: an empty file skips the
+    // unrelated vite preflight the way a built checkout would.
+    mkdirSync(path.join(root, 'src', 'api', 'dist'), { recursive: true });
+    writeFileSync(path.join(root, 'src', 'api', 'dist', 'chat-ui.js'), '');
+    const bin = path.join(root, 'bin');
+    mkdirSync(bin);
+    const record = path.join(root, 'npx-argv.txt');
+    // `shell: true` resolves `npx` through cmd.exe on Windows and sh elsewhere; both shims append
+    // their argv, space-joined, to the record and exit 0.
+    writeFileSync(path.join(bin, 'npx.cmd'), `@echo off\r\necho %*>> "${record}"\r\n`);
+    writeFileSync(path.join(bin, 'npx'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${record.replace(/\\/g, '/')}"\n`, { mode: 0o755 });
+    const r = spawnSync(process.execPath, [path.join(root, 'scripts', 'e2e-green.mjs')], {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 60_000,
+      env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` },
+    });
+    expect(r.status, `the program did not exit 0: ${r.stdout}${r.stderr}`).toBe(0);
+    expect(existsSync(record), 'the program never invoked npx').toBe(true);
+    const lines = readFileSync(record, 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+    expect(lines, 'the program invoked npx more than once').toHaveLength(1);
+    const [tool, verb, ...rest] = lines[0].split(/\s+/);
+    expect([tool, verb]).toEqual(['playwright', 'test']);
+    return rest;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+};
+
 describe('real-boundary regression doctrine', () => {
+  it('hands playwright exactly the parsed list when run as the gate runs it', () => {
+    // Out of process, through the real entry line and the module's own default list path.
+    const handed = programHandsPlaywright();
+    expect(handed.filter((arg) => arg.startsWith('-')), 'the program appended playwright flags of its own').toEqual([]);
+    expect(handed, 'the program handed playwright a different list than the shared parser reads').toEqual(greenSuiteFiles());
+  });
+
   it('parses the green list the one way both the runner and this guard depend on', () => {
     const text = ' tests/a.spec.ts \r\n\n#tests/commented.spec.ts\r\n  # indented comment\n\ttests/b.spec.ts\t\ntests/c.spec.ts';
     expect(parseGreenSuite(text)).toEqual(['tests/a.spec.ts', 'tests/b.spec.ts', 'tests/c.spec.ts']);

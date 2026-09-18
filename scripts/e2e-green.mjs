@@ -9,6 +9,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The list is parsed by scripts/e2e-green-list.mjs, shared with the registration guard, so the two cannot drift; `--list` prints the paths this runner would hand to playwright and exits before any preflight, which is what the guard compares against the parser (PR #620 review: a source-text pin was satisfied by three runners that ran a different list).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The body is an exported function with the spawner and the preflight existence check injectable, and the CLI entry calls it with the real ones. The registration guard calls it with a recording spawner and asserts the playwright argv - the list the gate actually runs. `--list` is removed: it re-derived the list in its own branch, so a filter at the spawn site passed the guard while playwright never received the spec (PR #620 third review, mutations X1-X4).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | main(argv, boundaries) is the program and the CLI entry is only process.exit(main(argv).status): the guard drives main([]) with a recording spawner and pins the argv exactly, so an entry that re-points the list or adds a playwright filter flag goes red (PR #620 fourth review, X6/X6b). Only the exit line is undriven.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Wording only: the "only the exit line is undriven" claim in seq 5 is withdrawn - the module default listPath and the entry line's argv expression were undriven by an in-process call (fifth review). The guard now also runs this file as a program with a recording npx; no code change here.
  */
 
 /**
@@ -83,9 +84,10 @@ export function runGreenSuite({
 
 /**
  * @description The program: builds the run's options from argv and runs the body. The CLI entry
- * below is `process.exit(main(argv).status)` and nothing else, so everything the gate does -
- * which list, which passthrough flags, which spawner - is reachable by the guard through this one
- * function; the only line it cannot drive is the exit.
+ * below is `process.exit(main(argv).status)` and nothing else. The registration guard drives this
+ * function in process as its fast path, and runs the whole file as a program - entry line,
+ * default list path and all - with a recording npx, which is the check that cannot be satisfied
+ * by anything the guard supplies.
  * @param argv - The process arguments after the script path; all are passed through to playwright.
  * @param boundaries - Injectable process boundaries (spawn, exists, log, error) for the guard.
  * @returns The run's status and the spec files handed to playwright.
