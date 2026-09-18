@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Local sentence embeddings (transformers.js all-MiniLM-L6-v2) so RagService can do real vector retrieval on the existing Chroma 0.4.24 (whose REST /query rejects query_texts — everything was falling back to BM25). Fully local + free per the self-host ethos; fail-open: any load/inference failure returns null and retrieval degrades to lexical, never breaks.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Strip the ONNX runtime's process-global rethrow listeners once the model load settles. onnxruntime-web's Emscripten Node shell appends `process.on('unhandledRejection', t => { throw t })` and a matching `uncaughtException` rethrow the moment the wasm initialises, BEHIND installProcessCrashGuards — from that instant a stray rejection anywhere in the controller (not just in RAG) was rethrown into an uncaught exception, rethrown again, and killed the api with exit 7 and ~548 KB of minified bundle on stderr, before the crash guards' 250 ms log flush. Measured: exit 7 / 548,709 bytes without the strip, exit 0 / 54 bytes with it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Contain an Emscripten abort raised inside the wasm runtime mid-inference. The abort is a WebAssembly.RuntimeError that the awaited call already surfaced to the catch, but the catch treated it like any transient error: it logged only a text count, named no caller, and left the runtime — which has ABORT set and an undefined heap after it — armed for the next call. Now an abort makes the service unavailable for the process, the same degrade a failed model load takes, and every inference failure logs the caller, the input size (count, total and longest chars, failing batch) and a bounded error summary instead of whatever the backend printed.
  */
 
 import { resolve } from 'path';
@@ -17,8 +18,86 @@ const logger = createChildLogger({ module: 'local-embedding-service' });
 const MODEL_ID = 'Xenova/all-MiniLM-L6-v2';
 /** Bound per-call batch size so a whole textbook ingest can't balloon memory. */
 const BATCH_SIZE = 32;
+/** Bound on the backend error text that reaches the log — the crash that motivated this put 548 KB of bundle on stderr. */
+const ERROR_TEXT_LIMIT = 600;
+/** Stack frames kept: enough to name the frame that raised, never enough to reproduce a bundle dump. */
+const STACK_FRAME_LIMIT = 6;
 
 type FeatureExtractor = (texts: string[], opts: { pooling: 'mean'; normalize: boolean }) => Promise<{ tolist(): number[][] }>;
+
+/**
+ * @description The sized description of one failed embed() call — what the log
+ * carries so the operator can tell which caller, with how much input, drove the
+ * backend into an error, without the backend's own output.
+ */
+export interface EmbeddingFailure {
+  /** The caller label the call site passed (e.g. `rag-service.ingest`). */
+  caller: string;
+  /** How many texts the call carried. */
+  count: number;
+  /** Total characters across all texts. */
+  chars: number;
+  /** The longest single text, in characters. */
+  maxChars: number;
+  /** Index of the first text in the batch that was in flight when the error surfaced. */
+  batchStart: number;
+  /** The batch bound, so batchStart can be read as a batch number. */
+  batchSize: number;
+  /** True when the error is the wasm runtime aborting, which leaves it unusable. */
+  abort: boolean;
+  /** A bounded summary of the error: name, message and the first few frames. */
+  error: { name: string; message: string; stack: string };
+}
+
+/**
+ * @description True when an inference error is the Emscripten runtime aborting
+ * — either the `WebAssembly.RuntimeError` its `abort()` throws (also the class a
+ * wasm trap such as `unreachable` throws) or an error carrying the `Aborted(`
+ * marker Emscripten prints. After either the runtime has `ABORT` set and its
+ * heap cannot be trusted, which is why the caller treats it as sticky rather
+ * than as one bad call.
+ * @param err - Whatever the awaited extractor call threw.
+ * @returns Whether the backend runtime itself aborted.
+ */
+export function isRuntimeAbort(err: unknown): boolean {
+  if (typeof WebAssembly !== 'undefined' && err instanceof WebAssembly.RuntimeError) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /\bAborted\(/.test(message);
+}
+
+/**
+ * @description Builds the sized, bounded log payload for a failed embed() call.
+ * Pure so the shape is testable without a backend: the input size is measured
+ * from the texts, and the error is summarised to a bounded name, message and a
+ * handful of frames.
+ * @param err - Whatever the awaited extractor call threw.
+ * @param texts - The full input to the embed() call.
+ * @param caller - The caller label the call site passed.
+ * @param batchStart - Index of the first text in the batch that was in flight.
+ * @returns The payload embed() logs.
+ */
+export function describeEmbeddingFailure(err: unknown, texts: string[], caller: string, batchStart: number): EmbeddingFailure {
+  let chars = 0;
+  let maxChars = 0;
+  for (const text of texts) {
+    const len = typeof text === 'string' ? text.length : 0;
+    chars += len;
+    if (len > maxChars) maxChars = len;
+  }
+  const asError = err instanceof Error ? err : null;
+  const message = (asError ? asError.message : String(err)).slice(0, ERROR_TEXT_LIMIT);
+  const stack = (asError?.stack || '').split('\n').slice(0, STACK_FRAME_LIMIT).join('\n').slice(0, ERROR_TEXT_LIMIT * 2);
+  return {
+    caller,
+    count: texts.length,
+    chars,
+    maxChars,
+    batchStart,
+    batchSize: BATCH_SIZE,
+    abort: isRuntimeAbort(err),
+    error: { name: asError ? asError.name : typeof err, message, stack },
+  };
+}
 
 /**
  * @description Lazy singleton around a local MiniLM feature-extraction pipeline.
@@ -30,7 +109,7 @@ type FeatureExtractor = (texts: string[], opts: { pooling: 'mean'; normalize: bo
 class LocalEmbeddingService {
   private extractor: FeatureExtractor | null = null;
   private loading: Promise<FeatureExtractor | null> | null = null;
-  /** Sticky after a failed load: don't re-pay a doomed model load on every query. */
+  /** Sticky after a failed load or a runtime abort: don't re-enter a dead backend on every query. */
   private unavailable = false;
 
   /** @returns False when explicitly disabled via RAG_LOCAL_EMBEDDINGS=0/false/off. */
@@ -42,25 +121,52 @@ class LocalEmbeddingService {
   /**
    * @description Embed texts into normalized 384-dim vectors (cosine-ready).
    * @param texts - The strings to embed.
+   * @param caller - Who is asking (e.g. `rag-service.ingest`), named in the log
+   * when the backend fails so a crash is attributable to a call site and its input.
    * @returns One vector per input, or null when embeddings are unavailable
-   * (disabled, model failed to load, or inference errored) — callers fall back.
+   * (disabled, model failed to load, backend aborted, or inference errored) —
+   * callers fall back.
    */
-  async embed(texts: string[]): Promise<number[][] | null> {
+  async embed(texts: string[], caller = 'unknown'): Promise<number[][] | null> {
     if (!texts.length) return [];
     if (!this.isEnabled() || this.unavailable) return null;
     const extractor = await this.getExtractor();
     if (!extractor) return null;
+    let batchStart = 0;
     try {
       const out: number[][] = [];
-      for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-        const tensor = await extractor(texts.slice(i, i + BATCH_SIZE), { pooling: 'mean', normalize: true });
+      for (; batchStart < texts.length; batchStart += BATCH_SIZE) {
+        const tensor = await extractor(texts.slice(batchStart, batchStart + BATCH_SIZE), { pooling: 'mean', normalize: true });
         out.push(...tensor.tolist());
       }
       return out;
     } catch (err) {
-      logger.error({ err, count: texts.length }, 'Local embedding inference failed — falling back to lexical');
+      return this.degradeAfterFailure(err, texts, caller, batchStart);
+    }
+  }
+
+  /**
+   * @description Turns an inference error into the null the callers fall back on,
+   * logging who asked and how much input was in flight. A transient error costs
+   * only this call; a runtime abort leaves the wasm runtime with `ABORT` set and
+   * an undefined heap, so the service goes unavailable for the rest of the
+   * process — the same degrade a failed model load already takes — rather than
+   * handing the next caller a dead backend.
+   */
+  private degradeAfterFailure(err: unknown, texts: string[], caller: string, batchStart: number): null {
+    const failure = describeEmbeddingFailure(err, texts, caller, batchStart);
+    if (!failure.abort) {
+      logger.error(failure, 'Local embedding inference failed — this call falls back to lexical');
       return null;
     }
+    this.unavailable = true;
+    this.extractor = null;
+    this.loading = null;
+    logger.error(
+      failure,
+      'Local embedding runtime aborted mid-inference — embeddings unavailable for this process, retrieval stays lexical (the same degrade as a failed model load)',
+    );
+    return null;
   }
 
   private getExtractor(): Promise<FeatureExtractor | null> {

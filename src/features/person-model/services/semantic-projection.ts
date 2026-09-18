@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 3: the semantic leg over the owner's own transcripts. Writes deterministic `pm:<segment_id>` chunks into the kernel-reserved `ambient-recall` collection through the shared pgvector engine (owner_sub stamped in metadata so the engine lifts it into the RLS column and data-lifecycle deletes it by column), embeds with the shared MiniLM, and answers paraphrase queries as "possibly related" receipts that are never folded into the exact count. Gated on RAG_ENGINE=pgvector + engine availability; absent that, recall stays FTS-exact-only.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A related hit must now clear a relevance floor (related-relevance.ts). The engine fuses its legs by reciprocal RANK, so with fewer chunks in the store than the fetch bound every chunk placed and the list was the store's contents in rank order — the live proof published "Can we order pizza tonight" as possibly related to "volleyball" at 1/63 against 1/61 for a real paraphrase. Candidates are now collected up to the fetch bound, scored against the query on the projection's own model, floored, ordered by that cosine, and only then capped; an unscoreable list is published as nothing rather than as noise. The exact count is untouched — it never came from here.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Name this projection as the caller on localEmbeddings.embed() — the ambient sweeper reaches it with no request in flight, so a backend failure here was otherwise unattributable.
  */
 
 import type { Pool } from 'pg';
@@ -57,7 +58,7 @@ export async function projectOwnerSegments(pool: Pool, ownerSub: string, limit =
   const eligible = await eligibleProfileIds(pool, ownerSub);
   const segments = await listUnprojectedSegments(pool, ownerSub, eligible, limit);
   if (segments.length === 0) return 0;
-  const embeddings = await localEmbeddings.embed(segments.map((s) => s.text));
+  const embeddings = await localEmbeddings.embed(segments.map((s) => s.text), 'semantic-projection.projectOwnerSegments');
   if (!embeddings) {
     logger.warn({ operation: 'projectOwnerSegments', pending: segments.length }, 'embedder unavailable — projection deferred');
     return 0;
