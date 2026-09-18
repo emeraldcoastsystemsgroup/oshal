@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The guard for "an administrator defines as many LLMs as they want, and the order they fall back in" (operator, 2026-09-18). The defect it pins shut: src/app/bot-node-runtime.ts held a `'claude-code' | 'openai-codex' | 'cline-cli'` union on the failover wrapper and a Record literal mapping each of those three names to its hardcoded successors, so a fourth provider could never be a fallback and the order could not be changed by any setting. When the chain's remaining name ran out of tokens, recovery required editing and redeploying code. Two of these cases are SOURCE checks rather than behaviour: the defect was a type signature and a literal, and a behavioural test alone would stay green if someone reintroduced either one beside the new path.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The configuration has to REACH a bot to be configuration: compose passes OSHAL_PROVIDER_FALLBACK_ORDER with an EMPTY default (a shipped default would itself be a hardcoded chain), .env.example ships the variable present and empty, and the cockpit control writes fallbackOrder while suggesting ids from the live provider list rather than any literal. An env var the containers never receive is a setting that silently does nothing.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -159,6 +160,41 @@ describe('the provider fallback chain is configuration, not code', () => {
     it('invents no chain when nothing is configured', () => {
       // The outage shape: a chain this file made up, that no setting could change.
       expect(resolveBotNodeProviderFallbackOrder('openai-codex')).toEqual([]);
+    });
+  });
+
+  describe('the configuration actually reaches a bot', () => {
+    it('compose passes the ordered chain to every bot, with an empty default', () => {
+      // "we better have an env that corialtes as well" - an env var the containers never receive
+      // is a setting that silently does nothing, which is the shape this whole change exists to
+      // delete. The empty default is load-bearing: a shipped default would BE a hardcoded chain.
+      const compose = readFileSync(join(process.cwd(), 'docker-compose.oshal-local.yml'), 'utf8');
+      expect(compose).toMatch(
+        /OSHAL_PROVIDER_FALLBACK_ORDER:\s*\$\{OSHAL_PROVIDER_FALLBACK_ORDER:-\}/,
+      );
+    });
+
+    it('.env.example documents the variable and ships it EMPTY', () => {
+      const example = readFileSync(join(process.cwd(), '.env.example'), 'utf8');
+      expect(example).toContain('OSHAL_PROVIDER_FALLBACK_ORDER');
+      const assignment = example
+        .split(/\r?\n/)
+        .find((line) => line.startsWith('OSHAL_PROVIDER_FALLBACK_ORDER='));
+      expect(assignment, 'the variable must be present and uncommented, so it is visible')
+        .toBe('OSHAL_PROVIDER_FALLBACK_ORDER=');
+    });
+
+    it('the cockpit control writes the chain and suggests only ids this deployment can run', () => {
+      const surface = readFileSync(
+        join(process.cwd(), 'src/pages/config-admin/config-admin-fleet-default.js'), 'utf8',
+      );
+      expect(surface, 'the write must carry the chain').toContain('fallbackOrder');
+      expect(surface, 'suggestions come from the provider list, never a literal')
+        .toMatch(/renderDatalist\(app\.state\.providers\)/);
+      const providerLiterals = surface.match(
+        /'(claude-code|openai-codex|codex-cli|cline-cli|gemini|anthropic|openrouter)'/g,
+      );
+      expect(providerLiterals, 'the surface must name no provider').toBeNull();
     });
   });
 

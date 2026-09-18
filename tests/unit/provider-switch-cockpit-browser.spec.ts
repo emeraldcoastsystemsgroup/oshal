@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Named guard provider-switch-cockpit (headless Chromium over the REAL config-admin page, the REAL AgentProfileController, the REAL /runtime and fleet-default routes, the REAL precedence rule and a REAL ProviderSwitchSnapshot): the per-bot provider select is ENABLED for a registry-declared bot (PR #97 made it read-only because it did nothing; the row makes it do something), its reported source starts at 'registry-harness'; writing the fleet default from the panel is one save and every bot with no row reports 'fleet-default'; saving a provider on one bot writes its own row and it reports 'bot-row' while the other bot stays on the fleet default; clearing the fleet default returns the row-less bot to 'registry-harness'. Doubles: the agent-profile persistence, the config-sync push (pushed:true, persisting into the same in-memory agent_config the switch store reads) and the switch store itself — the database boundary is provider-switch-store-postgres.spec.ts. Chromium is headless; nothing opens on the desktop.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot switch row is an operator-written row of oshal_bot_provider_switch, never the agent_config record: the store double now holds per-bot rows written ONLY through the runtime route's writeBotSwitch seam (wired as agent-provider-mount.ts wires it) and listAll no longer projects agentConfig — the pre-fix projection let the bot-row case pass with the seam absent. The case now asserts the row itself (scope, provider, updatedBy = the session's sub) and that the other bot has none; with the seam unwired the case is red (no bot-row ever appears).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The fallback-order control, driven in a real browser against the real route: an administrator types an ordered list and the stored row carries that EXACT order (asserted as an array - a chain that arrives reordered is a different chain), and an empty box stores [] rather than being guessed as "unchanged". The store double now mirrors the real upsert contract on that argument.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -62,8 +63,16 @@ async function startFixture(): Promise<string> {
   const store = {
     listAll: async () => switchRowsFromDoubles(),
     get: async (scopeId: string) => (scopeId === FLEET_DEFAULT_SWITCH_ID ? fleetRow : perBotRows.get(scopeId) ?? null),
-    upsert: async (scopeId: string, providerId: string, modelId: string | null, updatedBy: string) => {
-      const row: ProviderSwitchRow = { scopeId, providerId, modelId, updatedBy, updatedAt: new Date().toISOString() };
+    upsert: async (
+      scopeId: string, providerId: string, modelId: string | null, updatedBy: string,
+      fallbackOrder?: readonly string[] | null,
+    ) => {
+      const existing = scopeId === FLEET_DEFAULT_SWITCH_ID ? fleetRow : perBotRows.get(scopeId) ?? null;
+      const row: ProviderSwitchRow = {
+        scopeId, providerId, modelId, updatedBy, updatedAt: new Date().toISOString(),
+        // Mirrors the real store: undefined keeps what is there, an explicit array replaces it.
+        fallbackOrder: fallbackOrder === undefined ? (existing?.fallbackOrder ?? null) : (fallbackOrder ?? null),
+      };
       if (scopeId === FLEET_DEFAULT_SWITCH_ID) fleetRow = row; else perBotRows.set(scopeId, row);
       return row;
     },
@@ -191,6 +200,29 @@ describe('provider-switch-cockpit', () => {
     expect(fleetRow).toMatchObject({ scopeId: FLEET_DEFAULT_SWITCH_ID, providerId: 'claude-code', modelId: 'claude-sonnet-4-6', updatedBy: OPERATOR });
     await page!.waitForSelector('#agentProviderPrecedence[data-provider-source="fleet-default"]');
     expect(await page!.textContent('#fleetDefaultStatus')).toContain('claude-code / claude-sonnet-4-6');
+  }, 60_000);
+
+  it('the administrator types an ordered fallback chain and the row stores that exact order', async () => {
+    // The operator's requirement: as many providers as they want, in the order they want, set in
+    // the UX - not curl, not a redeploy. The order is asserted as an ARRAY, because a chain that
+    // arrives reordered is a different chain.
+    await page!.fill('#fleetDefaultFallbackInput', 'openrouter, anthropic , codex-cli');
+    await page!.click('#saveFleetDefaultButton');
+    await page!.waitForFunction(
+      () => (document.querySelector('#fleetDefaultStatus')?.textContent || '').includes('Fallback order'),
+      undefined, { timeout: 20_000 },
+    );
+    expect(fleetRow?.fallbackOrder).toEqual(['openrouter', 'anthropic', 'codex-cli']);
+    expect(await page!.inputValue('#fleetDefaultFallbackInput')).toBe('openrouter, anthropic, codex-cli');
+
+    // An empty box is the deliberate "no failover", stored as [] - never guessed as "unchanged".
+    await page!.fill('#fleetDefaultFallbackInput', '');
+    await page!.click('#saveFleetDefaultButton');
+    await page!.waitForFunction(
+      () => (document.querySelector('#fleetDefaultStatus')?.textContent || '').includes('Fallback: none'),
+      undefined, { timeout: 20_000 },
+    );
+    expect(fleetRow?.fallbackOrder).toEqual([]);
   }, 60_000);
 
   it('saving a provider on one bot writes its own row (bot-row) while the other stays on the fleet default', async () => {
