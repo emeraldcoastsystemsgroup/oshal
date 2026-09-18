@@ -136,7 +136,7 @@ package-tool blocks that landed on `/ask` since, so it was re-run rather than qu
 | `vitest oshal-chat-background-wake + jarvis-ambient-client` | **21 passed / 2 files** (07-11: 16) |
 | `npm --prefix packages/oshal-chat run test:wake` | `{"confidence":0.987673938,"ok":true,"rawAudioStored":false,"locale":"en-US","phrase":"Hey Jarvis"}` - byte-identical to 07-11 |
 | `playwright tests/jarvis-audio-lifecycle.spec.ts` | **7 passed** |
-| `playwright tests/jarvis-rich-response-native-wake.spec.ts` | ⛔ **3 failed / 3** - see below |
+| `playwright tests/jarvis-rich-response-native-wake.spec.ts` | **4 passed / 4** on 2026-09-18 (was ⛔ 3 failed / 3 on 09-15 - see below) |
 | `npm run typecheck` | exit 0 |
 
 ⛔ **CORRECTION to this record, 2026-09-15 (same day it was written).** The first version of
@@ -145,17 +145,32 @@ overstated it. The 07-11 baseline covered **three** Playwright files - "rich-res
 response-stage, and audio-lifecycle" - and the Run block above listed only one, so the one spec
 that actually drives the wake receiver in a browser was never run.
 
-Run now, `tests/jarvis-rich-response-native-wake.spec.ts` is **3 failed of 3**, and all three fail
-at the same first assertion: `__nativeWakeAudio.streams.length` is `0` rather than `1`, and `#mic`
-never gains the `live` class. The command microphone is never opened, so the three release
-invariants have nothing to release. The page itself loads and the button exists.
+On 09-15, `tests/jarvis-rich-response-native-wake.spec.ts` was **3 failed of 3**, all three at
+the same first assertion: `__nativeWakeAudio.streams.length` was `0` rather than `1`, and `#mic`
+never gained the `live` class. The command microphone was never opened, so the three release
+invariants had nothing to release. The page itself loaded and the button existed.
 
-**Not diagnosed here, and deliberately not fixed in passing:** `src/api/jarvis.html` has taken
-**15 commits since 2026-07-11** while the spec has not been touched since a governance chore, so
-spec-drift against a moved page is at least as likely as a runtime regression. Either way the
-release invariants on an always-on-microphone feature are currently unproven. Tracked in
-[BACKLOG](../BACKLOG.md) with done-when criteria. **The wake path should not be treated as
-delivery-ready until this is green or the spec is retired with a reason.**
+**Diagnosed and fixed 2026-09-18 - it was spec-fixture drift, and it exposed a page defect.**
+The page had thrown before the wake listener existed: `window.__OSHAL_JARVIS_NATIVE_WAKE_READY__`
+was unset and the one `pageerror` was `Failed to execute 'addColorStop' on 'CanvasGradient': The
+value provided ('var(--accent-primary)') could not be parsed as a color` at the synchronous first
+`tick()` near the top of the main script. Two causes, each proven by swapping one file at a time:
+
+- **The fixture (why the spec was red).** BUG-12 (#191, `d7f3ae88`) made the orb read its colours
+  from the framework theme tokens, which `jarvis.html` now loads through
+  `/shared/ui/css/surface-themes.css` (an `@import` list of `/cockpit/css/themes/*.css`) and
+  `/shared/ui/js/surface-theme.js`. `tests/helpers/jarvis-rich-response-fixtures.ts` answered all
+  of those with 404, so the page ran unthemed. With the theme files served off disk the
+  **unchanged** `origin/main` page passes 3 of 3, so this was never a wake regression.
+- **The page (the real defect the drift uncovered).** The same commit set the *fallback* colours
+  to the literal string `'var(--accent-primary)'`, which canvas cannot parse. That fallback is
+  only reached when the theme stylesheet fails to load, but when it does, the throw kills the
+  whole main script: no mic button, no `oshal:native-wake` listener, no `pagehide` release. The
+  fallbacks are concrete colours again, and the spec's fourth case withholds the theme assets and
+  proves the wake path still opens and releases the microphone (red on the previous page).
+
+The release invariants are proven again by the command in the Run block above, which is the one
+that produced the 4 of 4. Physical-device sign-off below is unchanged.
 
 ⛔ **The Playwright line in the Run block above is corrected.** The bare
 `npx playwright test tests/jarvis-audio-lifecycle.spec.ts` fails on this box with
