@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the two /api/budgets READ endpoints the new cockpit Budgets surface consumes, which had none: GET / and GET /spend. Pins 401 for an unauthenticated caller before BudgetService is touched, that the caller identity handed to the service comes ONLY from the session (a body/query-supplied sub can never widen the list), that a non-operator's cross-user spend read is 403 while their own 'user'-scope self-read succeeds, and that an unreadable spend store answers 503 rather than a fabricated 0 (the surface renders null as "unknown", so a 0 here would be a lie with a number on it).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The self-read case also pins spendByUnit riding beside spendUsd (ADR-127 units labelled, never folded into the enforcement sum); the fake service grows computeSpendByUnit, null alongside a null spend.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,8 +38,10 @@ function fakeService(spend: number | null = 1.25): {
 } {
   const getBudgets = vi.fn(async (caller: BudgetCaller) => [budgetRow(caller.sub ?? '')]);
   const computeSpend = vi.fn(async () => spend);
+  // The ADR-127 display split rides beside the enforcement sum; null when its own read fails.
+  const computeSpendByUnit = vi.fn(async () => (spend === null ? null : { billed: spend, priceEquivalent: 0.5, byo: 0, total: spend + 0.5 }));
   return {
-    service: { getBudgets, computeSpend } as unknown as BudgetService,
+    service: { getBudgets, computeSpend, computeSpendByUnit } as unknown as BudgetService,
     getBudgets,
     computeSpend,
   };
@@ -163,6 +166,8 @@ describe('GET /api/budgets/spend — the per-row spend the surface joins onto ea
     expect(res.status).toBe(200);
     expect(res.body?.spendUsd).toBe(2.5);
     expect(computeSpend).toHaveBeenCalledWith('user', PLAIN.sub, 168);
+    // The unit split is labelled beside the sum, never folded into it (ADR-127).
+    expect(res.body?.spendByUnit).toEqual({ billed: 2.5, priceEquivalent: 0.5, byo: 0, total: 3 });
   });
 
   it('answers 503 (never a fabricated 0) when the spend store cannot be read', async () => {

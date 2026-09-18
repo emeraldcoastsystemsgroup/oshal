@@ -244,6 +244,35 @@ stat lines keyed by `(season, week, player_id)`, the same posture as the existin
 `sports_fantasy_projections`. The tenancy boundary is therefore not what this row is about; the
 statement boundary is.
 
+## Inline chat spend on the windowed budget ledger (2026-09-18)
+
+`tests/unit/inline-chat-cost-ledger-postgres.spec.ts` covers the boundary that failed for the
+BACKLOG entry "Inline chat spend is invisible to windowed budget enforcement": the FORCE-RLS'd
+`oshal_cost_events` ledger that `BudgetService` sums for its trailing-window caps, which no
+controller-inline chat turn ever wrote. Measured read-only on the running box before the fix: 384
+owner-attributed inline tasks, 2276 requests, $162.06 in `chat_tasks`, zero ledger rows.
+
+The boundary runs for real. A disposable `postgres:16-alpine` on an ephemeral loopback port with
+migrations 078, 090 and 112 applied as written; a `NOSUPERUSER NOBYPASSRLS` runtime role behind the
+production GUC wrapper (`wrapPoolWithGuc`), so every statement carries the request identity the way
+the api's main pool does; the REAL `TaskOrchestrator`; the REAL app-layer binding
+(`createInlineTurnCostLedger` -> `CostTrackingService.recordLedgerEvent`); and the REAL
+`BudgetService.computeSpend` / `checkBudget` / `computeSpendByUnit` reads. The turn is issued inside
+`runWithRequestIdentity` exactly as `POST /api/send-message` issues it. Self-validated per rule 2:
+`relforcerowsecurity` is asserted true and an insert whose `owner_sub` disagrees with the connection
+identity is refused with SQLSTATE 42501, so the fixture is enforcing rather than agreeing with itself.
+Mutation-proven: with `main`'s orchestrator checked out in place of the fixed one, three of the five
+cases go red (spend stays 0, the HARD cap does not refuse, the ledger is empty).
+
+Doubled, outside the boundary: the LLM provider (a stub with an explicit per-turn price — the claim
+is where cost lands, not how a vendor prices it), the message store and the stream manager. The
+task store is the real `InMemoryTaskStore` in memory-only mode via
+`tests/helpers/jarvis-session-task-store.ts`; `chat_tasks` is not the table under test.
+
+`tests/unit/inline-turn-cost-ledger.spec.ts` is the scoped-double companion: the pure event builder,
+the ADR-127 unit classification table, the by-unit fold and the run-trace label rendering. It is not
+closure evidence for the database seam; the file above is.
+
 ## Rules for future fixes
 
 1. Name the failed boundary in the test header and name what remains doubled.
