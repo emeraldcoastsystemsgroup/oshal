@@ -152,9 +152,13 @@ indication anything is wrong. Labelling it (D5) does not move it.
 `multi-round-dispatch-service.ts:359` and `:371` pass `ticketId` where the handover is written under
 `workspaceTaskId`. Behaviour-neutral today only because nothing consumes the flag — which is R0.12.
 
-- **Done when:** both call sites pass `workspaceTaskId ?? ticketId`, proven by a spec that runs the round
-  path against a real temp `SHARED_WORKSPACE_ROOT` with the handover written under `workspaceTaskId` and
-  asserts `handoverValidated === true`.
+- **Done when:** both call sites pass `workspaceTaskId ?? ticketId`, proven **red first**: a spec whose
+  `workspaceTaskId !== ticketId` fails before the change and passes after. The spec must construct a real
+  `handoverManager` rooted at the temp directory — setting `SHARED_WORKSPACE_ROOT` alone proves nothing,
+  because the strict path (`multi-round-dispatch-service.ts:359` → `validateHandover:515`) returns `true`
+  immediately when `handoverManager` is absent and never reads the env; only the relaxed fallback at
+  `:371` does, and only after the strict check already failed. Without the real manager this criterion
+  goes green on an unpatched tree.
 
 ---
 
@@ -429,13 +433,15 @@ the **real** `dispatchGraphTicket` with that workflow and a stub ticketService, 
 was called with `'escalated'` and `reason: 'graph_workflow_definition_missing'`. (c) A case calls the real
 `readManifest` against a fixture YAML **on disk** declaring `pipeline: graph` with no `processDefinition`
 and expects a throw naming the app and the key; a second fixture with no `workerBot` also throws —
-without it, that shape still silently routes to the 7-phase `swarm` pipeline. (d) The two graph-fixture
-assertions are inverted to expect `'graph'`, each carrying a Change Log line saying why the old assertion
-was wrong. (e) **Land the store fix first or `print-ingest` stops installing:** in
+without it, that shape still silently routes to the 7-phase `swarm` pipeline. (d) **All three** graph-fixture
+assertions are inverted, each carrying a Change Log line saying why the old assertion was wrong —
+`tests/dispatch-routing.spec.ts:90` and `tests/unit/dispatch-path-routing.spec.ts:99` (both
+`.toBe('manifest-worker')`) and `tests/unit/workflow-publish-pipeline.spec.ts:124` (`.not.toBe('graph')`).
+Criterion (a) turns all three red; a lane that flips "the two" leaves the third failing. (e) **Land the store fix first or `print-ingest` stops installing:** in
 `oshal-applications`, `git ls-files '*oshal-app.yaml' | xargs grep -l '^  pipeline: graph'` lists only
 files that also match `grep -l '^  processDefinition:'`.
 
-### CKR-12 — `approval_required` means four things, not three (D5) — S
+### CKR-12 — `approval_required` means five things, not three (D5) — S
 
 Three writers confirmed (`dispatch-graph-worker.ts:178` approval gate, `queue-manager-service.ts:1006`
 planning complete, `:1025` planner returned nothing), plus **CV-2**, the fourth and highest-volume one that
@@ -455,7 +461,12 @@ test for `updateStatus(id,'approval_required')` with no metadata returning a rea
 vocabulary `{approval_gate, planning_complete, planner_returned_no_work, incident_intake_triage,
 capture_lead_review}`, and a **second** for `createTicket({ticketType:'incident', ...})` with no trusted
 `externalProvider` producing `metadata.reason === incident_intake_triage` — the creation path does not pass
-through `buildStatusTransitionMetadata`, so it needs its own backstop. (b) A test per writer pins its value.
+through `buildStatusTransitionMetadata`, so it needs its own backstop. (b) One test per **enumerated**
+writer, and the list is exactly five: `dispatch-graph-worker.ts:178` → `approval_gate`,
+`queue-manager-service.ts:1006` → `planning_complete`, `:1025` → `planner_returned_no_work`,
+`ticket-service.ts:122` → `incident_intake_triage`, and `gov-contracting-cron.ts:208` →
+`capture_lead_review` (the `federal-capture` draft path, which also bypasses CV-2's incident-only
+override and so needs the same `createTicket` backstop).
 (c) `GET /api/tickets/:id` returns `metadata.reason` and `metadata.nextAction` for any such ticket. (d) The
 strings "children will wait for the build gate" and "children are picked up after build approval" no longer
 appear in `queue-manager-service.ts`. **Not in scope:** CV-3.
@@ -508,7 +519,12 @@ the quantity sanity-check; `eats-concierge` gains "ALWAYS explain a pick" into `
 fixture. **Do not write it as "any key the parser does not consume"** — measured, that fires on 50 of 103
 files across 25 keys. (3) The `foundation?: { persona: string }` field leaves
 `src/features/swarm-apps/types.ts:775` and `scripts/oshal-app.js:124,136` **only after** the 5 store
-manifests have dropped the key and shipped.
+manifests have dropped the key and shipped. (4) **The store half, which criterion (1) otherwise breaks:**
+10 personas in `oshal-applications` declare `extends:`, and two of them target files that live in *core*
+(`extends: travel-foundation`, `extends: world-foundation`). So the store personas drop the key and ship
+**before** the core `*-foundation.yaml` files are deleted, and the dead-key spec in (2) extends to the
+store package suite — otherwise the entry can be signed off with the dead key still shipping in ten
+installed packages.
 
 ### CKR-15 — the chat path assembles a persona prompt with no containment frame (D11) — M
 
@@ -572,11 +588,14 @@ for `workspace-bootstrap-service.ts:105` vs `task-explorer-workspace-service.ts:
 
 ### CKR-18 — the handover gate does not gate, and says the opposite (R0.12) — S
 
-Confirmed and understated. `enforceHandoverGate` (`swarm-ticket-lifecycle-helpers.ts:414`) logs "Ticket
+The log-line dishonesty is confirmed; the assessment's *repeated-work* consequence is unproven.
+`enforceHandoverGate` (`swarm-ticket-lifecycle-helpers.ts:414`) logs "Ticket
 blocked from advancing" at `:429` and then returns a struct; both callers
 (`planning-round-orchestrator.ts:283-286,:320-323`) log "continuing with warning" and proceed. **The same
-execution produces two mutually contradictory log lines.** Scope the assessment omits: the gate touches
-only 2 of 7 phases.
+execution produces two mutually contradictory log lines.** Scope, corrected: the gate touches **1 of 7
+phases on an ordinary ticket** — `isArchitecturePhaseEnabled` (`planning-round-orchestrator.ts:982-986`)
+returns true only when `USE_ARCHITECTURE_PHASE==='true'` or `complexity==='high'`, so 2 of 7 is the
+enabled case, not the normal one.
 
 **Decision:** advisory or required. The current flagged-but-accepted state is the only indefensible one.
 
@@ -603,8 +622,12 @@ thread's task id — so the trace join and the ticket/app budget joins both miss
 
 **Measured on the live box:** 0 of 123 chat tickets show any llm-call span; only 6 of 93 with a bot span
 carry non-zero cost; the money sits under the sibling id. Ticket-scoped and app-scoped budget caps
-(`budget-service.ts:596-608`) read the same join and are **blind to interactive spend**. The route-module
-count is exact: 13 route files plus `runJarvisBot` = 14.
+(`budget-service.ts:596-608`) read the same join and are **blind to interactive spend**. The invoking
+population is **wider than the assessment's 14**: ~14 core route modules, ~9 other core modules, and
+**25 store-package modules across 19 packages** calling `executeBotOrInline` directly (recounted in
+`oshal-applications`). A fix that reaches only core route modules leaves the store packages
+unattributed — so done-when (C): a store-package concierge call produces a ticket-reachable cost event
+under query (A), or a BACKLOG entry records why store packages are out of scope.
 
 **Decision:** the repair spec's R1.1 proposes one submission function creating a task record at admission,
 with deadline-conversion to deferred. That is core and wide and should carry its own proposal. **The entry
@@ -635,8 +658,11 @@ layout on a shared read-write mount is attribution, not enforcement, and names t
 
 **Nothing observable on the current single-owner box.** This is a property, not an incident.
 
-**Decision (ADR-060:202-203):** per-owner subpath mounts, per-claim materialization, or an accepted risk —
-"none, deliberately, for single-operator deployments" is a defensible answer, and recording it is the point.
+**Decision.** `ADR-060:202-203` names three: **per-owner subpath mounts, per-owner volumes, or a
+filesystem jail per bot container.** A fourth answer — accept the risk, deliberately, for a
+single-operator deployment — is supported by `ADR-060:208` ("Track it as backlog, not as a security
+gap") but is **not** in that list; it is this entry's own addition. Per-claim materialization is the
+clean-kernel target design, not an ADR-060 option. Recording which one was chosen is the point.
 
 **Done when.** (1) `docs/BACKLOG.md` carries a workspace-isolation entry naming ADR-060:198-205 items 1-4
 verbatim and recording which option was chosen, **and** `tests/unit/compose-workspace-mount-posture.spec.ts`

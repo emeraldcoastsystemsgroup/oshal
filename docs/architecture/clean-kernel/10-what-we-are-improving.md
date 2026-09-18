@@ -1,12 +1,20 @@
 # Clean kernel — what we are actually improving
 
-> **VERIFIED 2026-09-18.** Every defect D1–D15 and every scoreboard row below was re-derived against the
-> tree by an independent reader, then attacked by a second one. The verdicts, the corrections and the
-> resulting work items are in [`docs/backlog/clean-kernel-repair.md`](../../backlog/clean-kernel-repair.md).
-> Two rows of §7 do not survive: **"files threading tenancy identity by hand: 113 → 0"** is refuted (89
-> of the 113 call the trusted-SYSTEM sentinel, which carries no tenancy identity and is not removable),
-> and **"packages importing kernel internals: ~1,500 sites"** was measured over a generated tree — the
-> tracked figure is ~840–870 sites across ~310–320 files. Read the corrections before quoting any number here.
+> **VERIFIED 2026-09-18.** Every defect D1–D15, and the §7 scoreboard rows those defects support, were
+> re-derived against the tree by an independent reader and then attacked by a second one. The verdicts,
+> the corrections and the resulting work items are in
+> [`docs/backlog/clean-kernel-repair.md`](../../backlog/clean-kernel-repair.md).
+>
+> **One row of §7 does not survive:** *"Files threading tenancy identity by hand | 113 | 0"* (:251) is
+> refuted — 89 of the 113 call the trusted-SYSTEM sentinel, which carries no tenancy identity and is not
+> removable, so the target of 0 is wrong.
+>
+> **Three rows carry no verification** and should not be quoted as measured: *Bot replicas* (:249),
+> *Server codebases* (:252) and *Layering enforcement* (:253). Neither pass examined them.
+>
+> The inflated import figure is **not in this document** — it is `11-repair-spec.md:466` and
+> `01-high-level-spec.md:100`, `:500`. It was measured over a tree containing a generated `output/`
+> snapshot; the tracked figure is ~840–870 sites across ~310–320 files.
 
 **Status:** DRAFT, rewritten 2026-09-18 after reading the code. The first version of this document was
 written from measurements without reading the designs behind them, and several of its claims were wrong.
