@@ -69,7 +69,7 @@ planner would size the work against.
 5. **D14's severity is over-read, but its claim is right — including the part I first called false.**
    The fail-open primitive is exactly as described and its own docstring admits it. No reachable path
    today obtains an unrestricted set: the three field-omitting callers sit in the legacy `any-bot` Express
-   app that `bot-entrypoint.sh:206` refuses with exit 78 and that no compose service or installer points
+   app that `bot-entrypoint.sh:208-212` refuses with exit 78 and that no compose service or installer points
    at. Latent defence-in-depth, not a live hole.
 
    **Correction of record.** An earlier draft of this file said the assessment's "scopes behave the same
@@ -101,7 +101,7 @@ planner would size the work against.
 
 `CLAUDE.md:564` and `docs/framework-developer-guide.md:223` both tell every agent on this repo that
 Workflow Studio compiles "multi-stage → the `staged` executor with per-stage approval gates". There is no
-staged executor. `workflow-publish-compiler.ts:143` sets `pipeline: 'graph'` for staged mode;
+staged executor. `workflow-publish-compiler.ts:148` (linear/staged emit) and `:320` (canvas emit) both set `pipeline: 'graph'`;
 `dispatch-routing.ts:148-149` states the executor "has been retired"; `queue-manager-service.ts:743-747`
 is an orphan JSDoc for a function that does not exist. **Seven** text sites repeated or implied the
 opposite — `CLAUDE.md:564`, `docs/framework-developer-guide.md:223`, `ROADMAP.md:117` (status column:
@@ -241,14 +241,22 @@ telling the model never to follow instructions found there.
 **Fix.** Stamp loader-side on read, not in a migration: the live host row's content is deployment-specific,
 so a migration would freeze one box's text.
 
-**Done when.** (1) A case builds the exact live seeded shape
-`{layerType:'platform', priority:10, promptFragment:'<any>', metadata:{source:'seed', version:'1.0'}}`,
-passes it to `assemblePromptForAnyBot`, and asserts the fragment appears after `## TRUSTED POLICY` and
-inside no `<UNTRUSTED_CONTENT>` block. (2) The same fragment with `scope='agent'`, and any `role` layer
-regardless of stamp, still lands inside `<UNTRUSTED_CONTENT>` (pins `prompt-containment.ts:191-193`).
-(3) A test asserts the sole caller of `PersonaLayerStore.insertLayer` — `agent-factory-service.ts:703-704` —
-passes scope `'agent'` and layerType `'role'`, so the "global scope implies server-authored" premise cannot
-be widened by a second caller without going red. (4) On the running box,
+**Done when.** (1) A case drives the **real loader seam** — `PersonaLayerStore.getLayersForAgent` /
+`loadPersonaLayers` against a row carrying the live seeded shape
+`{layer_type:'platform', priority:10, metadata:{source:'seed', version:'1.0'}}` — feeds what it returns to
+`assemblePromptForAnyBot`, and asserts the fragment appears after `## TRUSTED POLICY` and inside no
+`<UNTRUSTED_CONTENT>` block. Hand-building an unstamped layer and calling the assembler directly cannot
+work: a loader-side stamp never reaches it, so only a `classifyLayer` change could turn that green, and
+that is not the fix this entry prescribes. (2) Any `role` layer, regardless of stamp, still lands inside
+`<UNTRUSTED_CONTENT>` (pins `prompt-containment.ts:191-193`). **Do not write a `scope='agent'` clause:**
+`PersonaLayer` has four fields and none is `scope` (`persona-layer-composer.ts:23-28`),
+`getLayersForAgent` does not SELECT the column (`persona-layer-store.ts:110-113`), and `classifyLayer`
+reads only `layerType` and `metadata` — such an assertion passes identically before and after any fix.
+(3) **Two checks, labelled separately** — a behavioural case pinning
+`agent-factory-service.ts:702-704`'s arguments (layerType `'role'`, scope `'agent'`), **plus** an explicit
+caller-inventory check in the same category as the route-auth inventory gate. A behavioural spy alone
+stays green the day a second caller appears elsewhere, and prescribing a source-text regex on its own
+would be the guard shape this file condemns sixty lines above. (4) On the running box,
 `SELECT count(*) FROM persona_layers WHERE scope='global' AND layer_type IN ('platform','host','tenant')`
 returns 3 and `SELECT count(*) FROM persona_layers WHERE metadata->>'serverAuthored' IS NOT NULL` is
 unchanged at 0 — proving the fix is loader-side and wrote nothing to the database.
@@ -303,17 +311,23 @@ between `llm-execution-handler.ts:226` and `:232` with no counterpart. **The com
 
 ### CKR-6 — the chat runtime does not fence tool results as untrusted (D11-a) — S
 
-**Evidence.** Split out of D11 because it is a different defect from the one D11 names, and it is the half
-that is actually a boundary. The bot-node runtime treats every tool observation as untrusted data; the
-controller/chat runtime does not.
+**Evidence.** Split out of D11 because it is a different defect from the one D11 names, and it is the half that is
+actually a boundary. Stated precisely, because the looser version is wrong: the chat path pushes a
+structured `{type:'tool_result', ...}` block (`agentic-loop.ts:381-384`), so on a hosted mapping that
+keeps the protocol slot the output is already marked as tool output. What loses the marking is the
+**flattening** mappings — `anthropic-provider.ts:119` and its siblings — where the block is collapsed
+into ordinary message text with no fence. Do **not** write "fenced on one runtime and raw on the other";
+that is true only for the flatteners.
 
 **Impact.** A tool result is the one input on that path a third party can influence.
 
 **Done when.** `tests/unit/chat-runtime-tool-result-containment.spec.ts` exists and passes; it feeds the
 exact string at `tests/unit/any-bot-runtime-containment.spec.ts:89` through the chat path's executor seam
-and asserts the `tool_result` content the stub provider receives contains `</UNTRUSTED_CONTENT>`
+and asserts the `tool_result` content the stub provider receives **starts with** `<UNTRUSTED_CONTENT>`
 and does not contain `</UNTRUSTED_CONTENT>\n## SYSTEM`; a second case asserts the same after
 `anthropic-provider.ts:119` flattening, the only mapping that loses the protocol `role: 'tool'` slot.
+The opening-tag form is deliberate: that fixture string already contains the *closing* tag, so an
+assertion on the closing tag alone passes on an unpatched tree and pins nothing.
 Production change is one line in `src/features/chat-orchestration/services/agentic-loop.ts` before `:314`.
 
 ### CKR-7 — the capability primitive is fail-open (D14) — S
@@ -324,7 +338,7 @@ The docstring at `:33-34` documents the hole word for word. SEC-05 closed the HT
 (`requireDispatchAuthorityList`, called at exactly two places), not the primitive.
 
 **Impact.** Latent, not live. No reachable path obtains an unrestricted set today: the three
-field-omitting callers are in the legacy Express app that `bot-entrypoint.sh:206` refuses with exit 78,
+field-omitting callers are in the legacy Express app that `bot-entrypoint.sh:208-212` refuses with exit 78,
 the live caller passes arrays from a resolver that fails closed to completion-only, and the live
 `/api/swarm-execute` body type does not accept the fields. File as defence-in-depth, not as an open hole.
 
@@ -382,7 +396,9 @@ both print an identical triple (this passes only if it enumerates via `git ls-fi
 disk); (2) the `sites` value is below 1,000 and `files` below 400; (3) `grep -rnE '924|1,?500'
 docs/architecture/clean-kernel/` returns hits ONLY on lines that either name the generator as the source or sit
 inside a `>` verification banner quoting the old figure in order to correct it —
-the five cells that must change are `01-high-level-spec.md:100,:500,:501` and `11-repair-spec.md:332,:455`;
+the **four** cells that must change are `01-high-level-spec.md:100` and `:500`, `11-repair-spec.md:343`
+(the R2.3 prose) and `:466` (the exit-table row) — re-derived against the committed files, since this
+change's own banner shifted that document by eleven lines;
 (4) the table has exactly one row per module, the row count equals the triple's `modules` value, and every
 row carries a verdict of exactly `promote to SDK` or `move to package`.
 
@@ -450,7 +466,7 @@ the assessment missed. Per ADR-031's own amendment (`:134-144`) the state stoppe
 None of the writers passes transition metadata, and `buildStatusTransitionMetadata`
 (`ticket-service.ts:476-515`) backstops a mandatory reason only for `escalated` and `dead_letter`.
 
-**Impact.** The cockpit renders one badge, "Approval Required" (`formatters.js:113`), for at least four
+**Impact.** The cockpit renders one badge, "Approval Required" (`formatters.js:115`), for at least four
 conditions. Two need no human at all.
 
 **Decision:** whether to split the status or label it. Labelling is the smaller blast radius and is what
@@ -600,8 +616,11 @@ enabled case, not the normal one.
 **Decision:** advisory or required. The current flagged-but-accepted state is the only indefensible one.
 
 **Done when (Option A, advisory — recommended, no behaviour change).** (1) `grep -rn "blocked from
-advancing" src/` returns 0 (today 1). (2) `grep -rn "enforceHandoverGate\|handoversEnforced" src/` returns
-0 — the identifiers are `assessHandoverCoverage` / `allHandoversPresent`. (3) The unused import at
+advancing" src/` returns 0 (today 1). (2) `grep -rn "enforceHandoverGate\|handoversEnforced" src/ | grep -v '^[^:]*:[0-9]*: *\*'` returns 0 —
+the identifiers are `assessHandoverCoverage` / `allHandoversPresent`. The filter is required: of the 15
+hits today, **three are historical Change Log lines** (`planning-round-orchestrator.ts:13`,
+`swarm-ticket-lifecycle-helpers.ts:8`, `swarm-ticket-processing-service.ts:36`) which are a record of
+what happened and are not rewritten. (3) The unused import at
 `swarm-ticket-processing-service.ts:109` is deleted and the Change Log line at `:36` corrected. (4) **CV-4**
 lands — `multi-round-dispatch-service.ts:359,:371` pass `workspaceTaskId ?? ticketId`; it is the only
 change that makes the check capable of passing at all. (5) A named spec calls `assessHandoverCoverage` with
@@ -690,8 +709,11 @@ sites are not removable. The one shape that can fail open — choosing `runWithS
 (`connector-webhook-routes.ts` Change Log 5, call at `:197`; `a2a-routes.ts` Change Log 2, call at `:200`).
 Those are per-site defects with per-site guards, which is the right shape.
 
-**Action:** delete the scoreboard row at `10-what-we-are-improving.md` and the R3.2 item at
-`11-repair-spec.md:366-371`, or annotate both with this finding.
+**Action:** delete the scoreboard row `Files threading tenancy identity by hand | 113 | 0`
+(`10-what-we-are-improving.md:251`) and the item `### R3.2 — Tenancy identity carried, not threaded`
+(`11-repair-spec.md:377-382`), or annotate both with this finding. Cite the heading text as well as the
+line: an earlier draft of this entry published pre-banner line numbers and would have sent the reader
+into R3.1, an unrefuted item.
 
 ---
 
