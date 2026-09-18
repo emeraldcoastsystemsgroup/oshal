@@ -20,6 +20,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. resolveRuntimeProviderName's env fallback is openai-codex (was claude-code) and the generic DEFAULT_MODEL is gpt-5.5 (was claude-sonnet-4-6) — both only reachable with no persisted config and no LLM_PROVIDER/LLM_MODEL, i.e. exactly the self-install shape. The claude-code harness factory, its apiType check, and the recursion guards are untouched.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Share the current model resolver with manifest bot initialization.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | A bot's LLM provider is a row in a table (operator, 2026-09-17). resolveHarnessForAgent now asks the installed switch snapshot (provider-switch-runtime.ts) BEFORE reading the registry literal: a per-bot row, else the fleet-default row for a registry LLM bot, else the literal exactly as before. A winning row that names an id this build cannot run returns a RefusedProviderSwitch — every request fails with the reason — instead of falling to the process provider. createProviderResolver installs the snapshot when it has a pool (the read is awaited by the composition root through installProviderSwitchSnapshot). With no rows the resolution, the factory config and the log lines are byte-identical to the previous revision; guarded by tests/unit/harness-resolution.spec.ts.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'antigravity-cli' harness (Google's `agy`) beside gemini-cli: its own model/binary env vars (ANTIGRAVITY_MODEL, ANTIGRAVITY_CLI_PATH) falling through to the shared Google ones, because both CLIs authenticate with GEMINI_API_KEY but do not necessarily run the same model id. Both remain selectable and either can be a fallback rung.
  */
 
 import fs from 'fs';
@@ -52,6 +53,7 @@ import {
   ClaudeCodeCliHarnessAdapter,
   CodexCliHarnessAdapter,
   GeminiCliHarnessAdapter,
+  AntigravityCliHarnessAdapter,
   HarnessLLMBridge,
   type HarnessFactory,
   type HarnessFactoryConfig,
@@ -108,6 +110,12 @@ export const HARNESS_RUNTIME_DEFAULTS: Record<HarnessType, {
   'gemini-cli': {
     resolveModel: (fb) => process.env.GEMINI_MODEL ?? fb(),
     resolveBinary: () => process.env.GEMINI_CLI_PATH,
+  },
+  'antigravity-cli': {
+    // Its own model var first, then the shared Google one: the two CLIs authenticate with the same
+    // GEMINI_API_KEY but do not necessarily run the same model id (`agy models` is its catalogue).
+    resolveModel: (fb) => process.env.ANTIGRAVITY_MODEL ?? process.env.GEMINI_MODEL ?? fb(),
+    resolveBinary: () => process.env.ANTIGRAVITY_CLI_PATH,
   },
   'a2a': {
     // "Model" for an external agent is a label, not an LLM id — the remote owns
@@ -263,6 +271,31 @@ export const HARNESS_FACTORIES: Record<HarnessType, HarnessFactory> = {
     const adapter = new GeminiCliHarnessAdapter({
       model: geminiModel,
       binaryPath: cfg.cliBinaryPath ?? process.env.GEMINI_CLI_PATH,
+    });
+    return new HarnessLLMBridge(adapter);
+  },
+
+  /**
+   * Google Antigravity CLI (`agy`) — a SIBLING of gemini-cli over the same Google key, registered
+   * so an administrator can select either one, or list both in a fallback order. Headless form and
+   * JSON envelope are the published ones; unattended execution stays gated by the audited-harness
+   * guard inside the adapter, like every other CLI in this record.
+   */
+  'antigravity-cli': (cfg: HarnessFactoryConfig) => {
+    if (cfg.apiType && cfg.apiType !== 'google-gemini') {
+      throw new Error(
+        `HARNESS_FACTORIES antigravity-cli: apiType '${cfg.apiType}' is incompatible — `
+        + "the 'antigravity-cli' harness only works with apiType: 'google-gemini'.",
+      );
+    }
+    const antigravityModel = cfg.modelId ?? process.env.ANTIGRAVITY_MODEL ?? process.env.GEMINI_MODEL ?? 'gemini-3.8-flash';
+    logger.info(
+      { harnessType: 'antigravity-cli', apiType: 'google-gemini', model: antigravityModel },
+      'HARNESS_FACTORIES: creating Antigravity CLI harness',
+    );
+    const adapter = new AntigravityCliHarnessAdapter({
+      model: antigravityModel,
+      binaryPath: cfg.cliBinaryPath ?? process.env.ANTIGRAVITY_CLI_PATH,
     });
     return new HarnessLLMBridge(adapter);
   },

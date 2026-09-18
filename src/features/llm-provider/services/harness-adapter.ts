@@ -9,6 +9,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added 'a2a' to the HarnessType union (outbound A2A gateway, BACKLOG Plan F item 3) — an external A2A agent as a dispatch target; the typed HARNESS_FACTORIES record forces its factory entry. HarnessFactoryConfig gains botName + a2aEndpointEnv so the a2a factory can derive the per-bot credential env (A2A_OUTBOUND_TOKEN_<BOTKEY>) and the registry-declared endpoint env without hardcoding either.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credentials from HarnessTask and fail closed before unattended Cline, Codex, Claude Code, or Gemini CLI execution until an audited OSHAL brokered sandbox exists.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Move unattended-provider denial into a dependency-free policy module, preserving this compatibility export without pulling the harness runtime into controller preflight callers.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Added 'antigravity-cli' to the HarnessType union (operator, 2026-09-18: keep gemini-cli and add Antigravity as another supported CLI so both can live side by side). The typed HARNESS_FACTORIES record forces its factory entry, so the union cannot grow without a runnable factory. Unattended execution stays gated by assertAuditedAutonomousHarness exactly like every other CLI here.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -34,10 +35,13 @@ const logger = createChildLogger({ module: 'harness-adapter' });
  * - `codex-cli`   — OpenAI Codex CLI subprocess (`codex`)
  * - `claude-code` — Claude Code CLI subprocess (`claude`)
  * - `gemini-cli`  — Google Gemini CLI subprocess (`gemini`)
+ * - `antigravity-cli` — Google Antigravity CLI subprocess (`agy`). A SIBLING of `gemini-cli`, not a
+ *                   replacement: both are registered terminal agents over the same Google key, and
+ *                   either can be selected or used as a fallback rung.
  * - `a2a`         — External A2A agent over JSON-RPC HTTP (outbound gateway, Plan F)
  * - `noop`        — No-op stub harness for test / local dev
  */
-export type HarnessType = 'cline' | 'codex-cli' | 'claude-code' | 'gemini-cli' | 'a2a' | 'noop';
+export type HarnessType = 'cline' | 'codex-cli' | 'claude-code' | 'gemini-cli' | 'antigravity-cli' | 'a2a' | 'noop';
 
 /**
  * @description Normalised input handed to a harness for one unit of work.

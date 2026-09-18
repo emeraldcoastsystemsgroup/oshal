@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Mounts the two /api/agents provider surfaces in one place so the swarm extension index stays under its line budget: the ADR-034 per-agent runtime routes wired to the switch seams (resolver, catalog, post-write snapshot refresh) and the fleet-default switch routes over a ProviderSwitchStore on the GUC-wrapped pool. Both share the serviceSecretOr(requiresAuth) mount the bot-node boot pull relies on; each route file decides for itself what a service secret may do.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | One ProviderSwitchStore serves both routers, and the runtime routes get its upsert as writeBotSwitch: a provider pick through PUT /:agentId/runtime now writes the bot's own row in oshal_bot_provider_switch (the only per-bot record that beats the fleet default) under the caller's identity, so the table's operator-only policy — not this file — decides who may. The agent_config record the same PUT persists is the ADR-034 dispatch artefact beneath the fleet row, never a switch.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Supplies resolveFallbackChain from the installed snapshot, so the runtime read carries the administrator's ordered chain to the bot node alongside the provider.
  */
 
 import type { Application, RequestHandler } from 'express';
@@ -44,6 +45,8 @@ export function mountAgentProviderRoutes(app: Application, auth: RequestHandler,
     {
       resolveSwitch: resolveSwitchFor,
       catalog: installedProviderSwitchCatalog,
+      resolveFallbackChain: (agentId, primaryProviderId) =>
+        installedProviderSwitchSnapshot()?.resolveFallbackChain(agentId, primaryProviderId).order ?? [],
       // A provider pick is the bot's own switch row (migration 147, scope = agent id), written under
       // the request identity so the table's operator-only policy is the enforcement.
       ...(store ? { writeBotSwitch: async (agentId, providerId, modelId, updatedBy) => { await store.upsert(agentId, providerId, modelId, updatedBy); } } : {}),

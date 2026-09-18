@@ -16,6 +16,8 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Admit verified hosted protected execution and keep only cost bookkeeping in explicit system context.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | A lost cold-start race no longer leaves the long-lived bot pool-less for life. connectPool moved to bot-node-database-pool.ts (re-exported here for the one-shot callers, contract unchanged); createBotNodeRuntime takes { recoverDatabase } and, when the server sets it, builds every repository and the protected-execution boundary over a pool that is KEPT through boot-window exhaustion and recovered in the background, and exposes `database` (status + whenReady) so the health route can refuse 200 while there is no database. The batch runner does not set it: a Job pod must exit, not wait.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | "A bot's LLM provider is a row in a table" — the bot-node half: setActiveProvider (the ADR-034 reconcile and PUT /api/llm-provider both land here) now translates a switch row's id through resolveBotNodeSwitch: a runtime name/alias as before, or a Cline-backed API provider id (gemini, anthropic, openrouter, ... from the same ProviderRegistry the api validates against) onto the cline-cli runtime with CLINE_API_PROVIDER/CLINE_API_MODEL set to the row's id and model (the wrapper's precedence-1 keys, read before every spawn) and restored to the container's seeds on the way back. getActiveProvider reports the backing provider as apiProvider. Boot: a pulled Cline-backed id (FORCE_LLM_PROVIDER=gemini after the bootstrap overlay) used to be silently ignored and the bot booted codex; resolveCurrentProvider now lands it on cline-cli fronting that id. An id nothing knows still throws UnknownBotNodeProviderError with no state change.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | The fallback CHAIN is configuration, not a literal (operator, 2026-09-18). Deleted: a `'claude-code' | 'openai-codex' | 'cline-cli'` union on the wrapper's parameters and a Record literal mapping each of those three names to its hardcoded successors. A provider outside those three could not be a fallback at all, an administrator could not reorder the chain, and that vendor exclusion of 2026-08-13 lived as a missing array entry - so when the single remaining name ran out of tokens, recovery required editing and redeploying code. Now: resolveBotNodeProviderFallbackOrder reads an ordered list from configuration (the fallback_order column of the bot or fleet switch row, carried to the node as OSHAL_PROVIDER_FALLBACK_ORDER; the legacy single-name variables still parse), the wrapper walks the WHOLE order by folding one ProviderFailoverProvider per rung so a chain of four is a chain of four, and no provider is named in this file. With nothing configured there is no failover, which is the honest answer - inventing a chain here is what caused the outage.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | Three defects an adversarial review measured. (1) The wrapping loop mutated baseProviderMap while iterating, so later runtimes wrapped ALREADY-WRAPPED providers: replayed with three throwing providers, cline-cli realized a NINE-attempt sequence and a two-rung chain made it fail over to itself - each attempt a real subprocess against a vendor that had just returned 429. It now snapshots first and rungs are always raw providers. (2) The new env key sat at the head of a ?? chain while compose defines it as an EMPTY STRING on every bot, and ?? does not fall through on '', so it permanently shadowed all four legacy variables and disabled a working configuration; the chain is truthiness-based now. (3) Rung matching lost its lowercasing while the route kept it, so a capitalised entry vanished at the node.
  */
 import { createProtectedBotExecutionBoundary } from './bot-node-protected-execution';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -219,9 +221,22 @@ async function buildLlmStack(): Promise<{
     'openai-codex': codexProvider,
     'cline-cli': clineProvider,
   };
-  claudeCodeProvider = maybeWrapBotNodeProviderFailover(claudeCodeProvider, 'claude-code', baseProviderMap);
-  codexProvider = maybeWrapBotNodeProviderFailover(codexProvider, 'openai-codex', baseProviderMap);
-  clineProvider = maybeWrapBotNodeProviderFailover(clineProvider, 'cline-cli', baseProviderMap);
+  // Every initialized runtime is wrappable and every one can be a rung of someone else's chain.
+  // The names below are the RUNTIME keys this node constructed, not a policy about who falls back
+  // to whom — that is entirely the administrator's ordered list.
+  // Snapshot FIRST. Wrapping in place while iterating made every later runtime resolve its rungs
+  // against ALREADY-WRAPPED providers: a nested tree whose shape depends on key order, in which a
+  // two-rung chain could make a provider fail over to itself and a three-rung chain re-spawned a
+  // just-429'd vendor up to nine times in one request. Rungs must always be the RAW providers.
+  const rawProviders: Record<string, any> = { ...baseProviderMap };
+  for (const runtimeName of Object.keys(rawProviders)) {
+    (baseProviderMap as Record<string, any>)[runtimeName] = maybeWrapBotNodeProviderFailover(
+      rawProviders[runtimeName], runtimeName, rawProviders,
+    );
+  }
+  claudeCodeProvider = baseProviderMap['claude-code'];
+  codexProvider = baseProviderMap['openai-codex'];
+  clineProvider = baseProviderMap['cline-cli'];
 
   // ADR-034 mutable seam: the AgenticController's getCurrentProvider closes over these
   // `let`s, so setActiveProvider changes take effect on the NEXT provider resolution.
@@ -282,7 +297,11 @@ async function buildLlmStack(): Promise<{
       );
     }
     const trimmedModel = typeof model === 'string' && model.trim().length > 0 ? model.trim() : undefined;
-    applyPulledBotConfigToEnv({ providerId: target.runtime, modelId: trimmedModel ?? null, configVersion: null });
+    // fallbackOrder null: a live provider switch changes the PROVIDER, never the administrator's
+    // chain. Passing [] here would silently delete failover on every switch.
+    applyPulledBotConfigToEnv({
+      providerId: target.runtime, modelId: trimmedModel ?? null, fallbackOrder: null, configVersion: null,
+    });
     const backingKeys = clineBackingEnv.apply(target.apiProvider, trimmedModel);
     taskController.setLLMProvider(target.runtime);
     activeProviderName = target.runtime;
@@ -404,38 +423,64 @@ function resolveModelName(currentProvider: string): string {
  */
 export function maybeWrapBotNodeProviderFailover(
   primaryProvider: any,
-  primaryName: 'claude-code' | 'openai-codex' | 'cline-cli',
-  providers: Record<'claude-code' | 'openai-codex' | 'cline-cli', any>,
+  primaryName: string,
+  providers: Record<string, any>,
+  chain?: readonly string[],
 ): any {
   if (!primaryProvider) return primaryProvider;
-  const fallbackName = resolveBotNodeProviderStallFallbackName(primaryName, providers);
-  if (!fallbackName) return primaryProvider;
+  const order = (chain ?? resolveBotNodeProviderFallbackOrder(primaryName)).filter(Boolean);
+  if (order.length === 0) return primaryProvider;
 
-  let fallbackProvider: any = null;
-  let resolvedFallbackName = fallbackName;
-  if (fallbackName === 'codex-cli' || fallbackName === 'openai-codex') {
-    fallbackProvider = providers['openai-codex'];
-    resolvedFallbackName = 'openai-codex';
-  } else if (fallbackName === 'cline-cli' || fallbackName === 'cline') {
-    fallbackProvider = providers['cline-cli'];
-    resolvedFallbackName = 'cline-cli';
-  } else if (fallbackName === 'claude-code') {
-    fallbackProvider = providers['claude-code'];
-    resolvedFallbackName = 'claude-code';
+  // Walk the WHOLE administrator-defined order and keep every rung that has a live runtime, so a
+  // chain of four is a chain of four. The previous implementation took one name and stopped, which
+  // is why an exhausted vendor could strand the fleet: its single named backup was exhausted too.
+  const rungs: Array<{ name: string; provider: any }> = [];
+  const unavailable: string[] = [];
+  for (const configured of order) {
+    const name = normalizeProviderName(String(configured).trim().toLowerCase());
+    // Compare normalized on BOTH sides: the route and the row path are case-insensitive, so a
+    // capitalised entry must not silently vanish here.
+    const primary = normalizeProviderName(String(primaryName).trim().toLowerCase());
+    if (!name || name === primary || rungs.some((r) => r.name === name)) continue;
+    const provider = providers[name];
+    if (provider) rungs.push({ name, provider });
+    else unavailable.push(name);
   }
-
-  if (!fallbackProvider) {
-    logger.warn({ fallbackName }, 'Bot-node provider stall fallback requested but no initialized fallback provider is available');
+  if (unavailable.length > 0) {
+    logger.warn(
+      { primaryProvider: primaryName, unavailable },
+      'Configured fallback providers have no initialized runtime on this node and were skipped',
+    );
+  }
+  if (rungs.length === 0) {
+    logger.warn(
+      { primaryProvider: primaryName, configured: order },
+      'Provider fallback is configured but no configured provider has an initialized runtime here',
+    );
     return primaryProvider;
   }
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { ProviderFailoverProvider } = require('../../any-bot/server/services/llm/ProviderFailoverProvider');
-    logger.info({ primaryProvider: primaryName, fallbackProvider: resolvedFallbackName }, 'Bot-node provider runtime fallback enabled');
+    // Fold right: each rung becomes the fallback of the one before it, so an N-provider chain is
+    // N-1 nested wrappers and a failure walks the order the administrator wrote.
+    let wrapped = rungs[rungs.length - 1].provider;
+    let wrappedName = rungs[rungs.length - 1].name;
+    for (let i = rungs.length - 2; i >= 0; i -= 1) {
+      wrapped = new ProviderFailoverProvider({
+        primary: rungs[i].provider, fallback: wrapped,
+        primaryName: rungs[i].name, fallbackName: wrappedName, reason: 'provider_runtime_failure',
+      });
+      wrappedName = rungs[i].name;
+    }
+    logger.info(
+      { primaryProvider: primaryName, fallbackChain: rungs.map((r) => r.name) },
+      'Bot-node provider runtime fallback enabled',
+    );
     return new ProviderFailoverProvider({
-      primary: primaryProvider, fallback: fallbackProvider,
-      primaryName, fallbackName: resolvedFallbackName, reason: 'provider_runtime_failure',
+      primary: primaryProvider, fallback: wrapped,
+      primaryName, fallbackName: rungs[0].name, reason: 'provider_runtime_failure',
     });
   } catch (err: any) {
     logger.warn({ err: err?.message }, 'Failed to initialize bot-node provider runtime fallback');
@@ -443,39 +488,57 @@ export function maybeWrapBotNodeProviderFailover(
   }
 }
 
-/** @description Resolves which provider a stalled primary should fail over to (explicit env, else auto-order). */
-function resolveBotNodeProviderStallFallbackName(
-  primaryName: 'claude-code' | 'openai-codex' | 'cline-cli',
-  providers: Record<'claude-code' | 'openai-codex' | 'cline-cli', any>,
-): string | null {
-  const raw = process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER
-    ?? process.env.CLAUDE_CODE_STALL_FALLBACK_PROVIDER
-    ?? process.env.OSHAL_PROVIDER_STALL_FALLBACK_PROVIDER
-    ?? process.env.OSHAL_PROVIDER_STALL_FALLBACK
-    ?? '';
-  const normalized = raw.trim().toLowerCase();
-  if (normalized && normalized !== 'none' && normalized !== 'off' && normalized !== 'false') {
-    if (normalizeProviderName(normalized) === primaryName) {
-      logger.warn({ primaryName, fallbackName: normalized }, 'Ignoring recursive bot-node provider runtime fallback');
-      return null;
+/**
+ * @description Resolves the ordered fallback chain for a primary provider FROM CONFIGURATION.
+ *
+ * No provider is named in this file, and none may be. The order is whatever an administrator
+ * wrote — any number of providers, any order — supplied by the boot pull as
+ * `OSHAL_PROVIDER_FALLBACK_ORDER` from the `fallback_order` column of this bot's switch row or the
+ * fleet-default row (migration 148), resolved by `resolveProviderFallbackChain`. The legacy
+ * single-name variables remain readable so an existing deployment keeps working.
+ *
+ * What this replaced, and why: a `Record` literal mapping three hardcoded provider names to their
+ * hardcoded successors. A provider outside those three could not be a fallback at all, the order
+ * could not be changed by any setting, and one vendor's exclusion was encoded as a missing array
+ * entry. When that chain's only remaining name ran out of tokens there was nothing an
+ * administrator could change to recover — the fix required editing and redeploying code.
+ *
+ * @param primaryName - The provider being wrapped.
+ * @returns Provider ids to try, in order. Empty means no failover, which is a valid answer.
+ */
+export function resolveBotNodeProviderFallbackOrder(primaryName: string): string[] {
+  // Truthiness, NOT `??`: compose defines OSHAL_PROVIDER_FALLBACK_ORDER as an EMPTY STRING on
+  // every bot, and `??` does not fall through on '' - so the new key at the head of the chain
+  // permanently shadowed all four legacy variables and silently disabled a working configuration.
+  const rawOrder = [
+    process.env.OSHAL_PROVIDER_FALLBACK_ORDER,
+    process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER,
+    process.env.CLAUDE_CODE_STALL_FALLBACK_PROVIDER,
+    process.env.OSHAL_PROVIDER_STALL_FALLBACK_PROVIDER,
+    process.env.OSHAL_PROVIDER_STALL_FALLBACK,
+  ].find((value) => typeof value === 'string' && value.trim() !== '') ?? '';
+  const parsed = String(rawOrder).split(/[\s,]+/).map((entry) => entry.trim()).filter(Boolean);
+  const isOff = (value: string): boolean => ['none', 'off', 'false'].includes(value.toLowerCase());
+  if (parsed.length > 0) {
+    if (parsed.length === 1 && isOff(parsed[0])) return [];
+    const order = parsed
+      .map((entry) => normalizeProviderName(entry))
+      .filter((entry) => entry !== normalizeProviderName(primaryName));
+    if (order.length !== parsed.length) {
+      logger.warn({ primaryName, configured: parsed }, 'Dropped the primary provider from its own fallback order');
     }
-    return normalized;
+    return order;
   }
 
+  // Nothing configured. Auto-failover stays opt-out, but with no configured order there is no
+  // order to walk — the honest answer is "no fallback", not a chain this file invented.
   const autoFailover = String(process.env.OSHAL_PROVIDER_AUTO_FAILOVER ?? 'true').trim().toLowerCase();
-  if (autoFailover === 'false' || autoFailover === 'off' || autoFailover === 'none') return null;
-
-  // Codex is the fallback target, never the thing fallen away FROM by default (operator
-  // directive 2026-08-13, amending ADR-128 #2). claude-code is gone from every automatic chain:
-  // the subscription is being cancelled, and an auto-failover onto it turns a codex outage into
-  // silent spend on a dying account instead of a visible failure. Naming it explicitly in
-  // OSHAL_PROVIDER_RUNTIME_FALLBACK still works — that is a deliberate operator choice.
-  const fallbackOrder: Record<typeof primaryName, Array<'claude-code' | 'openai-codex' | 'cline-cli'>> = {
-    'openai-codex': ['cline-cli'],
-    'claude-code': ['openai-codex', 'cline-cli'],
-    'cline-cli': ['openai-codex'],
-  };
-  return fallbackOrder[primaryName].find((name) => Boolean(providers[name])) ?? null;
+  if (isOff(autoFailover)) return [];
+  logger.info(
+    { primaryName },
+    'No provider fallback order is configured for this node; a failover-eligible failure will surface instead of switching provider. Set the fleet-default row\'s fallback_order (or OSHAL_PROVIDER_FALLBACK_ORDER) to define one.',
+  );
+  return [];
 }
 
 /** @description Normalizes legacy provider aliases (`codex-cli` → `openai-codex`, `cline` → `cline-cli`). */

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The fleet-default switch surface for "a bot's LLM provider is a row in a table" (operator acceptance, 2026-09-17: moving the whole fleet back to Codex is ONE write of the fleet-default row from the cockpit — no pull request, no image deploy, no container restart). GET reports the fleet row, the snapshot's freshness and the accepted provider ids; PUT validates the id against the REAL runnable catalog (classifyProviderId — an unknown id is a 400 carrying the reason and the accepted list, never a silent write), upserts the one reserved row under the caller's identity (the table's operator-only policy is the enforcement, not this file), and refreshes the installed snapshot so the next dispatch carries it; DELETE clears it so resolution falls to the registry literal. Operator browser sessions only: a service secret is refused exactly as the per-bot runtime writes refuse it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot switch rows live in the same table now (migration 147 entry 2: a row an operator wrote through PUT /:agentId/runtime, the only per-bot record that beats the fleet default). GET lists them as perBot so an operator can see which bots hold their own row and who wrote it; DELETE takes the scope — 'fleet-default' as before, or an agent id to release that bot back to the fleet default — and refreshes the snapshot. The PUT stays fleet-only: a per-bot write goes through the runtime route, which pushes to the bot first (ADR-034) and then writes the row.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | A Cline-backed id (gemini, anthropic, ...) written to the fleet default without a modelId is refused 400 model_required with the reason and nothing is written — the Cline runtime would otherwise fall back to the container's FORCE_LLM_MODEL seed (gpt-5.5), the exact 'models/gpt-5.5 is not found' failure by another door. Native ids (codex-cli, claude-code) may still omit the model.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | PUT accepts fallbackOrder: the administrator names as many providers as they want, in the order they want, in the same write that sets the provider. Every rung is validated against the same runnable catalog as the provider id, and a rung equal to the selected provider is refused, so a chain cannot silently do nothing when it is finally needed. Omitting the field leaves an existing chain untouched; [] is an explicit "no failover".
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -67,7 +68,11 @@ async function handleWrite(req: Request, res: Response, deps: ProviderSwitchRout
   const body = (req.body ?? {}) as Record<string, unknown>;
   const providerId = readOptionalString(body.providerId);
   const modelId = readOptionalString(body.modelId);
-  logger.info({ providerId, modelId }, 'Fleet-default switch write started');
+  // Absent leaves any existing chain alone; an explicit array (including []) replaces it.
+  const fallbackRaw = body.fallbackOrder === undefined ? undefined
+    : Array.isArray(body.fallbackOrder) ? body.fallbackOrder.map((entry) => String(entry ?? '').trim()).filter(Boolean)
+    : null;
+  logger.info({ providerId, modelId, fallbackOrder: fallbackRaw }, 'Fleet-default switch write started');
   try {
     if (!deps.store) {
       res.status(503).json({ success: false, applied: false, error: 'Provider switch store unavailable (no Postgres pool)' });
@@ -90,8 +95,39 @@ async function handleWrite(req: Request, res: Response, deps: ProviderSwitchRout
       res.status(400).json({ success: false, applied: false, code: 'model_required', error: modelLess.reason });
       return;
     }
+    if (fallbackRaw === null) {
+      res.status(400).json({
+        success: false, applied: false, code: 'fallback_order_invalid',
+        error: 'fallbackOrder must be an array of provider ids (use [] for "no failover", or omit it to leave the chain unchanged)',
+      });
+      return;
+    }
+    // Every rung is validated against the SAME runnable catalog as the provider itself, so an
+    // administrator cannot write a chain that silently does nothing at 3am.
+    const chain: string[] = [];
+    for (const entry of fallbackRaw ?? []) {
+      const rung = classifyProviderId(entry, catalog);
+      if (!rung.ok) {
+        res.status(400).json({
+          success: false, applied: false, code: 'fallback_order_invalid',
+          error: `fallbackOrder entry "${entry}": ${rung.reason}`, accepted: acceptedIds(catalog),
+        });
+        return;
+      }
+      if (rung.providerId === classified.providerId) {
+        res.status(400).json({
+          success: false, applied: false, code: 'fallback_order_invalid',
+          error: `fallbackOrder entry "${entry}" is the selected provider — a provider cannot fail over to itself`,
+        });
+        return;
+      }
+      if (!chain.includes(rung.providerId)) chain.push(rung.providerId);
+    }
     const updatedBy = getCaller(req).sub ?? 'operator';
-    const row = await deps.store.upsert(FLEET_DEFAULT_SWITCH_ID, classified.providerId, modelId, updatedBy);
+    const row = await deps.store.upsert(
+      FLEET_DEFAULT_SWITCH_ID, classified.providerId, modelId, updatedBy,
+      fallbackRaw === undefined ? undefined : chain,
+    );
     await deps.snapshot()?.refresh();
     res.json({
       success: true, applied: true, fleetDefault: row,

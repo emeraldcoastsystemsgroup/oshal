@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary companion for "a bot's LLM provider is a row in a table": migration 147 as shipped on a DISPOSABLE PostgreSQL this spec owns, the real ProviderSwitchStore and ProviderSwitchSnapshot, and the real GUC pool wrapper — as the ENFORCING oshal_app role (self-validated: current_user, not superuser, not RLS-bypassing, table owner under FORCE RLS). Proves: an operator identity writes the fleet-default and per-bot rows, a non-operator identity is refused by the table's own policy (42501) and still reads, the CHECKs refuse a malformed scope, the snapshot resolves per-bot > fleet > registry from the rows Postgres holds, and a removed row falls back. No double on the boundary; the deployment database is never touched (the fixture publishes its own loopback port).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot row is the real agent_config record (migrations 001 + 011 applied beside 147): the store's listAll is proven to project agent_config.config_values.providerId/modelId/configUpdatedBy into the same ProviderSwitchRow shape as the fleet row, an 'auto' record is proven to be no row, and the table's CHECK is proven to refuse a per-bot scope so the fleet table can never become a second per-bot store. The ladder cases (bot-row > fleet > registry, refusal by name, fall-back on removal) now run over the two stores the deployment actually has.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Entry 2 was the defect (ADR-162 §7 failed for every bot on the box): an agent_config record is a machinery-written dispatch artefact, never a switch, and reading it as one let 70 rows outrank a fleet-default write. Inverted, not deleted: listAll is proven to read ONLY oshal_bot_provider_switch (a record that even claims an operator tag is not a row); a per-bot scope is ACCEPTED in the table for an operator and refused by the policy for anyone else; and a new describe reproduces the operator box's exact row shape from tests/fixtures/agent-config-provider-rows-2026-09-17.json (70 agents + agent_config records, blank/bot-local/oshal-push configUpdatedBy, zero switch rows), registers the package bots into the ACTIVE registry as the app loader does, and drives the REAL dispatch resolver (createAgentConfigRuntimeParamsResolver over the real AgentConfigService on this pool) to prove: zero rows = the registry rung and the agent_config record byte-identically; ONE fleet-default write moves ALL 70 (registry and package bots alike) in the resolver and in the stamped dispatch record; a second write moves all 70 again ("switch it to codex tomorrow"); an operator-written per-bot row beats the fleet row for that bot only; clearing returns every bot to where it started. Red on the pre-fix store (70 bots answered 'bot-row' with their agent_config provider after the fleet write).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Migration 148 applied beside 147, and a case for the fallback_order column on the real boundary: an ordered four-provider chain round-trips as TEXT[], a provider-only write leaves it untouched (a failover order must not vanish because someone changed the primary), and an explicit [] persists as [] rather than collapsing to null - the null/[] distinction the resolver turns on, and the one a JS-side double cannot prove.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Explicit 30s timeouts. Every case here drives a REAL disposable PostgreSQL and a 70-record fixture on vitest's 5s default, so the heavier ones failed intermittently with 'Test timed out in 5000ms' - an assertion-shaped red that is really a clock, which trains a reader to re-run instead of to look. The guard is only a guard if its red means something.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -62,7 +64,10 @@ const FLEET_PROVIDER_NOBODY_HAS = 'openrouter';
 
 const database = new DisposablePostgres({
   purpose: 'provider-switch', database: 'provider_switch_fixture',
-  migrations: ['001-multi-agent-foundation.sql', '011-agent-config.sql', '147-bot-provider-switch.sql'], max: 4,
+  migrations: [
+    '001-multi-agent-foundation.sql', '011-agent-config.sql',
+    '147-bot-provider-switch.sql', '148-provider-fallback-order.sql',
+  ], max: 4,
 });
 /** The enforcing role's pool — every statement in the cases below goes through it. */
 let appPool: Pool;
@@ -116,7 +121,7 @@ describe('provider switch rows on a real PostgreSQL, as the enforcing role', () 
         WHERE r.rolname = current_user AND c.relname = 'oshal_bot_provider_switch'`,
     ));
     expect(who.rows[0]).toEqual({ current_user: 'oshal_app', rolsuper: false, rolbypassrls: false, forced: true, owner: 'oshal_app' });
-  });
+  }, 30_000);
 
   it('the operator writes the fleet default: ONE upsert, and a second upsert is an update', async () => {
     const fleet = await runWithRequestIdentity(OPERATOR, () => store.upsert(FLEET_DEFAULT_SWITCH_ID, 'claude-code', 'claude-sonnet-4-6', 'operator-sub'));
@@ -126,7 +131,7 @@ describe('provider switch rows on a real PostgreSQL, as the enforcing role', () 
     expect(again.modelId).toBe('gpt-5.5');
     const count = await runWithSystemIdentity(() => appPool.query<{ n: string }>('SELECT count(*)::text AS n FROM oshal_bot_provider_switch'));
     expect(count.rows[0].n).toBe('1');
-  });
+  }, 30_000);
 
   it('a non-operator identity cannot write the fleet row — the TABLE refuses it (42501) — but reads it', async () => {
     await expect(runWithRequestIdentity(PERSON, () => store.upsert(FLEET_DEFAULT_SWITCH_ID, 'claude-code', null, 'person-sub')))
@@ -137,7 +142,7 @@ describe('provider switch rows on a real PostgreSQL, as the enforcing role', () 
     expect(rows.map((r) => r.scopeId)).toEqual([FLEET_DEFAULT_SWITCH_ID]);
     const stillThere = await runWithSystemIdentity(() => store.get(FLEET_DEFAULT_SWITCH_ID));
     expect(stillThere?.modelId).toBe('gpt-5.5');
-  });
+  }, 30_000);
 
   it('the CHECKs refuse a blank scope, "auto", a provider with whitespace and a blank model', async () => {
     await expect(runWithRequestIdentity(OPERATOR, () => store.upsert('   ', 'claude-code', null, 'x')))
@@ -150,7 +155,7 @@ describe('provider switch rows on a real PostgreSQL, as the enforcing role', () 
       .rejects.toMatchObject({ code: '23514' });
     await expect(runWithRequestIdentity(OPERATOR, () => store.upsert(FLEET_DEFAULT_SWITCH_ID, 'claude-code', '   ', 'x')))
       .rejects.toMatchObject({ code: '23514' });
-  });
+  }, 30_000);
 
   it('REGRESSION: an agent_config record is NOT a switch row — listAll reads only this table', async () => {
     // Even a record that carries an operator-looking tag is a dispatch artefact, not a switch: the
@@ -159,7 +164,7 @@ describe('provider switch rows on a real PostgreSQL, as the enforcing role', () 
     await writeAgentConfig(BOT_B, { providerId: 'auto', modelId: 'gpt-5.5', configVersion: 1 });
     const rows = await runWithRequestIdentity(PERSON, () => store.listAll());
     expect(rows.map((r) => r.scopeId)).toEqual([FLEET_DEFAULT_SWITCH_ID]);
-  });
+  }, 30_000);
 
   it('a per-bot scope is accepted for the operator, refused by the policy for anyone else, and read in the fleet row\'s shape', async () => {
     await expect(runWithRequestIdentity(PERSON, () => store.upsert(BOT_A, 'anthropic', null, 'person-sub')))
@@ -169,7 +174,7 @@ describe('provider switch rows on a real PostgreSQL, as the enforcing role', () 
     const rows = await runWithRequestIdentity(PERSON, () => store.listAll());
     expect(rows.map((r) => r.scopeId)).toEqual([FLEET_DEFAULT_SWITCH_ID, BOT_A]);
     expect(rows[1].updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-  });
+  }, 30_000);
 
   it('the snapshot resolves per-bot > fleet-default > registry from the rows Postgres holds', async () => {
     await snapshot.refresh();
@@ -182,7 +187,7 @@ describe('provider switch rows on a real PostgreSQL, as the enforcing role', () 
     // ...but not for an a2a boundary, and not for a bot the registry does not know.
     expect(snapshot.resolve(BOT_B, { harnessType: 'a2a', apiType: 'a2a' })).toMatchObject({ source: 'registry', harnessType: 'a2a' });
     expect(snapshot.resolve(BOT_B, null)).toMatchObject({ source: 'registry', harnessType: null });
-  });
+  }, 30_000);
 
   it('a row naming an id the build cannot run is refused with the reason once it is read back', async () => {
     // The table's CHECK only refuses shapes no validator would produce; a bad id written by hand
@@ -192,7 +197,7 @@ describe('provider switch rows on a real PostgreSQL, as the enforcing role', () 
     const r = snapshot.resolve(BOT_B, CODEX_REGISTRY);
     expect(r).toMatchObject({ ok: false, source: 'bot-row', providerId: 'gemini-3.8-flash' });
     if (!r.ok) expect(r.reason).toMatch(/unknown provider id/);
-  });
+  }, 30_000);
 
   it('clearing rows falls back rung by rung, and the fleet default is one delete', async () => {
     expect(await runWithRequestIdentity(OPERATOR, () => store.remove(BOT_B))).toBe(true);
@@ -205,14 +210,14 @@ describe('provider switch rows on a real PostgreSQL, as the enforcing role', () 
     expect(snapshot.resolve(BOT_A, CODEX_REGISTRY)).toEqual({
       ok: true, source: 'registry', providerId: 'openai-codex', harnessType: 'codex-cli', apiType: 'openai-codex', modelId: null, row: null,
     });
-  });
+  }, 30_000);
 
   it('a failed refresh keeps the last good rows and reports the error instead of throwing', async () => {
     const broken = new ProviderSwitchSnapshot({ listAll: async () => { throw new Error('connection reset'); } }, CATALOG);
     await expect(broken.refresh()).resolves.toBeUndefined();
     expect(broken.status()).toMatchObject({ loaded: false, rowCount: 0, lastError: 'connection reset' });
     expect(broken.resolve(BOT_A, CODEX_REGISTRY)).toMatchObject({ source: 'registry' });
-  });
+  }, 30_000);
 });
 
 describe('the operator box\'s row shape: 70 machinery-written agent_config records, zero switch rows (ADR-162 §7)', () => {
@@ -262,7 +267,7 @@ describe('the operator box\'s row shape: 70 machinery-written agent_config recor
 
   afterAll(() => {
     for (const app of new Set(BOX_ROWS.map((r) => r.manifestApp ?? 'no-manifest'))) unregisterAppBots(`${FIXTURE_APP_PREFIX}${app}`);
-  });
+  }, 30_000);
 
   it('the fixture is the box: 70 records, none written by a person, every one an LLM registry bot', async () => {
     const shape = await runWithSystemIdentity(() => appPool.query<{ provider: string; by: string; n: string }>(
@@ -287,7 +292,7 @@ describe('the operator box\'s row shape: 70 machinery-written agent_config recor
       expect(entry?.harnessType, `${row.name} must be a registry LLM bot`).toMatch(/^(codex-cli|claude-code|cline|gemini-cli)$/);
     }
     expect(snapshot.status().rowCount).toBe(0);
-  });
+  }, 30_000);
 
   it('REGRESSION: zero switch rows = the registry rung for every bot, and the dispatch record is the agent_config record, byte for byte', async () => {
     for (const row of BOX_ROWS) {
@@ -298,7 +303,7 @@ describe('the operator box\'s row shape: 70 machinery-written agent_config recor
     }
     // The bot-local and push-written records are carried as today: nothing moved because a table appeared.
     expect(await stamped(BOX_ROWS.find((r) => r.name === 'project-manager')!.agentId)).toMatchObject({ providerId: 'gemini', model: 'gemini-3.1-pro', configVersion: 39 });
-  });
+  }, 30_000);
 
   it('REGRESSION (ADR-162 §7): ONE fleet-default write moves ALL 70 — resolver and dispatch record — registry bots and package bots alike', async () => {
     expect(BOX_ROWS.some((r) => r.providerId === FLEET_PROVIDER_NOBODY_HAS)).toBe(false);
@@ -326,7 +331,7 @@ describe('the operator box\'s row shape: 70 machinery-written agent_config recor
       expect(snapshot.resolve(row.agentId, registryHarnessEntry(row.agentId)), row.name).toMatchObject({ source: 'fleet-default', providerId: 'openai-codex' });
       expect(await stamped(row.agentId), row.name).toEqual({ providerId: 'openai-codex', model: 'gpt-5.5', configVersion: row.configVersion });
     }
-  });
+  }, 30_000);
 
   it('an operator-written per-bot switch row still beats the fleet row — for that bot only — and releasing it rejoins the fleet', async () => {
     const pm = BOX_ROWS.find((r) => r.name === 'project-manager')!;
@@ -340,7 +345,7 @@ describe('the operator box\'s row shape: 70 machinery-written agent_config recor
     expect(await runWithRequestIdentity(OPERATOR, () => store.remove(pm.agentId))).toBe(true);
     await snapshot.refresh();
     expect(snapshot.resolve(pm.agentId, registryHarnessEntry(pm.agentId))).toMatchObject({ source: 'fleet-default', providerId: 'openai-codex' });
-  });
+  }, 30_000);
 
   it('clearing the fleet row returns all 70 to the registry rung and their agent_config record, exactly as before the write', async () => {
     expect(await runWithRequestIdentity(OPERATOR, () => store.remove(FLEET_DEFAULT_SWITCH_ID))).toBe(true);
@@ -352,5 +357,35 @@ describe('the operator box\'s row shape: 70 machinery-written agent_config recor
         providerId: row.providerId, ...(row.modelId ? { model: row.modelId } : {}), configVersion: row.configVersion,
       });
     }
-  });
+  }, 30_000);
+
+  it('an administrator ordered fallback chain survives the real column, and [] is not null', async () => {
+    // The whole point of migration 148: the chain is DATA. A unit double cannot prove a TEXT[]
+    // round-trip, and the resolver turns on null (inherit) vs [] (no failover) - two values a
+    // JS-side mock collapses into one.
+    const written = await runWithRequestIdentity(OPERATOR, () => store.upsert(
+      FLEET_DEFAULT_SWITCH_ID, 'gemini', 'gemini-3.8-flash', 'operator-sub',
+      ['claude-code', 'openrouter', 'anthropic', 'codex-cli'],
+    ));
+    expect(written.fallbackOrder, 'the order is the administrator and order matters')
+      .toEqual(['claude-code', 'openrouter', 'anthropic', 'codex-cli']);
+    const readBack = await runWithRequestIdentity(OPERATOR, () => store.get(FLEET_DEFAULT_SWITCH_ID));
+    expect(readBack?.fallbackOrder).toEqual(['claude-code', 'openrouter', 'anthropic', 'codex-cli']);
+
+    // Changing only the provider must NOT wipe the chain - that is how a failover order silently
+    // disappears and nobody notices until the primary is down.
+    const providerOnly = await runWithRequestIdentity(OPERATOR, () => store.upsert(
+      FLEET_DEFAULT_SWITCH_ID, 'anthropic', 'claude-sonnet-4-6', 'operator-sub',
+    ));
+    expect(providerOnly.fallbackOrder).toEqual(['claude-code', 'openrouter', 'anthropic', 'codex-cli']);
+
+    // An explicit empty array is a decision and must persist as one, distinct from null.
+    const noFailover = await runWithRequestIdentity(OPERATOR, () => store.upsert(
+      FLEET_DEFAULT_SWITCH_ID, 'anthropic', 'claude-sonnet-4-6', 'operator-sub', [],
+    ));
+    expect(noFailover.fallbackOrder, 'an empty array means no failover, not inherit').toEqual([]);
+    expect(noFailover.fallbackOrder).not.toBeNull();
+
+    await runWithRequestIdentity(OPERATOR, () => store.remove(FLEET_DEFAULT_SWITCH_ID));
+  }, 30_000);
 });

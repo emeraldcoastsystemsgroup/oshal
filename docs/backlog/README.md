@@ -13,6 +13,7 @@ relevant ADR or feature documentation, release notes, and git history.
   its counted open-item total, item shape, blocked-or-ready call and last-updated date; plus the
   stale and contradictory claims found while indexing (nine documents still describe core PR #431 or
   store PR #185 as open) and a prioritised "ready to pick up now" list.
+- [antigravity-and-node-footprint.md](./antigravity-and-node-footprint.md) — **enhancement, nothing is broken**: turning the registered-but-blocked Antigravity CLI harness into a working one, and the larger question it exposed. Google ships no musl build (manifest 404; the glibc binary fails to relocate under gcompat), so it is a base-image decision. Carries the measured footprint (7.05 GB image, 1.2 GB global node_modules, ~1.08 GB of it four CLI harnesses every bot container carries whether it uses them or not), the three delivery shapes the operator named (fatter base / dynamic load-unload / shared mount), and the finding that `agy` supports an SSH device-code account login — which may ride an entitlement rather than the API key's quota.
 - [hardening.md](./hardening.md) — security hardening backlog.
 - [artifact-exchange-continuation.md](./artifact-exchange-continuation.md) — ADR-139 "Send to…": what
   shipped, what was half-landed at handover (both halves since merged and deployed), how to continue

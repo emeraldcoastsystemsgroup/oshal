@@ -198,8 +198,13 @@ x-bot-env: &bot-env
   LLM_PROVIDER: openai-codex
   LLM_MODEL: gpt-5.5
   # Provider-runtime fallback for CLI stalls, auth failures, throttles, and embedded
-  # provider-error text. Explicit override wins; otherwise bot-node auto-picks a
-  # configured secondary CLI provider unless OSHAL_PROVIDER_AUTO_FAILOVER=false.
+  # provider-error text. The ORDER is the administrator's: as many providers as they list, tried
+  # left to right. The authority is the fallback_order column of the bot or fleet-default switch
+  # row (migration 148, set in the cockpit); this variable is the per-NODE override, read only
+  # when no row supplies a chain. Empty = NO failover: the failure surfaces rather than silently
+  # spending on another vendor. Nothing is hardcoded — bot-node invents no chain of its own.
+  OSHAL_PROVIDER_FALLBACK_ORDER: ${OSHAL_PROVIDER_FALLBACK_ORDER:-}
+  # Legacy single-name form, still read when the ordered list above is empty.
   OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER: ${OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER:-}
   OSHAL_PROVIDER_AUTO_FAILOVER: ${OSHAL_PROVIDER_AUTO_FAILOVER:-true}
   OSHAL_PROVIDER_STALL_FALLBACK: ${OSHAL_PROVIDER_STALL_FALLBACK:-}
