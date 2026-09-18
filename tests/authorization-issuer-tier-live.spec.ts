@@ -6,13 +6,23 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-PostgreSQL proof that an ADR-118 explicit tier resolves for the exact (subject, issuer) principal it was written for: a federated identity holding an admin assignment reaches a catalog-less application, the same identity without one is still refused, an issuer-less legacy row answers only a canonical local account, a row bound to one issuer never answers another, and one subject's grant never answers a different subject.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove simultaneous issuer isolation, independent clear and deny retention, owner RLS and nonoperator write refusal, local alias equivalence and migration compatibility.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Review findings on PR 605. (1) A pre-145 deny or viewer written for a federated subject must still apply after 145+146: the fixture rebuilds the pre-145 shape, inserts the row, runs both migrations and resolves for the Google issuer. (2) The owner-RLS reset case was vacuous - its last wrapped read carried no issuer and stamped the empty issuer itself, so removing the RESET stayed green; the last wrapped read now carries an issuer and an unwrapped read must see nothing.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Second review of PR 605: every case above resolved under an OPERATOR identity, which 145's owner-read policy admits to every row, so none could see that the enforcement paths (gate middleware, route mounter, visibility reads) resolve under the CALLER's identity and were blind to the legacy NULL row. Two cases now resolve under a non-operator federated request identity - one directly, one through the real createSwarmAppGateMiddleware over HTTP - and require the legacy deny to return 403 app_access_denied, the legacy viewer to cap, and the issuer-bound re-bind to admit.
  */
 
 import { expect, test } from '@playwright/test';
+import express from 'express';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { Pool } from 'pg';
-import { AppAccessService, type SwarmApplicationRecord, type SwarmAppService } from '@/features/swarm-apps';
+import { createSwarmAppGateMiddleware } from '@/app/middleware/swarm-app-gate-middleware';
+import {
+  AppAccessService,
+  type SwarmAppAccessDeclaration,
+  type SwarmApplicationRecord,
+  type SwarmAppService,
+} from '@/features/swarm-apps';
 import {
   ApplicationAuthorizationService,
   AUTHORIZATION_SCHEMA,
@@ -60,6 +70,20 @@ function actor(sub: string, issuer: string): AuthorizationActor {
 /** Operator identity, which is what the control plane reads assignments under. */
 function asOperator<T>(fn: () => T): T {
   return runWithRequestIdentity({ sub: OPERATOR, isOperator: true }, fn);
+}
+
+/**
+ * The identity the enforcement paths actually resolve under: the signed-in caller's own
+ * request identity, non-operator, stamped on the connection by the GUC wrapper. 145's owner-read
+ * policy admits this identity to exactly one row - the one bound to its own issuer.
+ */
+function asFederatedUser<T>(sub: string, fn: () => T): T {
+  return runWithRequestIdentity({ sub, principalIssuer: GOOGLE_ISSUER, isOperator: false }, fn);
+}
+
+/** A fresh manifest declaration with the given default; `supported` is a new array each time. */
+function declare(defaultTier: SwarmAppAccessDeclaration['defaultTier']): SwarmAppAccessDeclaration {
+  return { supported: ['deny', 'viewer', 'editor', 'admin'], defaultTier };
 }
 
 /** Remove every assignment so each case starts from "no explicit grant exists". */
@@ -388,5 +412,62 @@ test('an additive-only issuer migration cannot fall back to a subject-only write
     expect((await asOperator(() => appAccess.listAssignments()))[0]).toMatchObject({ userIssuer: GOOGLE_ISSUER, tier: 'deny' });
   } finally {
     await applyIssuerMigrations(adminPool);
+  }
+});
+
+test('a legacy ceiling resolves for a NON-operator federated caller under its own request identity', async () => {
+  await clearAssignments();
+  await insertLegacyRow(SHARED_SUB, 'deny');
+  // Under the caller's identity the owner-read policy hides the NULL row (its principal_issuer
+  // is urn:oshal:local-auth, the caller's is Google). The resolver must still see its own ceiling.
+  expect(await asFederatedUser(SHARED_SUB, () => appAccess.resolveForPrincipal(APP, SHARED_SUB, GOOGLE_ISSUER, declare('admin'))),
+    'a legacy deny must deny the federated caller on the enforcement path, not only under an operator read')
+    .toMatchObject({ tier: 'deny', source: 'explicit' });
+
+  await clearAssignments();
+  await insertLegacyRow(SHARED_SUB, 'viewer');
+  expect(await asFederatedUser(SHARED_SUB, () => appAccess.resolveForPrincipal(APP, SHARED_SUB, GOOGLE_ISSUER, declare('editor'))),
+    'a legacy viewer must cap the federated caller below the manifest default')
+    .toMatchObject({ tier: 'viewer', source: 'explicit' });
+  expect(await asFederatedUser(OTHER_SUB, () => appAccess.resolveForPrincipal(APP, OTHER_SUB, GOOGLE_ISSUER, declare('editor'))),
+    'a different subject is untouched').toMatchObject({ tier: 'editor', source: 'default' });
+  expect(await asFederatedUser(SHARED_SUB, () => appAccess.listAssignments()),
+    'the operator matrix is NOT opened by the resolver: the caller identity still lists only its own issuer-bound rows')
+    .toHaveLength(0);
+});
+
+test('the real gate middleware refuses a legacy-denied federated caller and admits its re-bind', async () => {
+  await clearAssignments();
+  await insertLegacyRow(SHARED_SUB, 'deny');
+  const access = declare('admin');
+  const apps = {
+    ownerOf: (path: string) => (path.startsWith('/api/security/') ? { appName: APP, status: 'active', access } : null),
+  } as unknown as SwarmAppService;
+  const app = express();
+  // The production shape: the identity middleware stamps the signed-in caller, non-operator,
+  // BEFORE the gate; the gate then resolves the tier and the handler runs only if admitted.
+  app.use((_req, _res, next) => asFederatedUser(SHARED_SUB, () => next()));
+  app.use(createSwarmAppGateMiddleware(apps, appAccess));
+  app.post('/api/security/write', (_req, res) => { res.status(200).json({ reached: true }); });
+  const server = createServer(app);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const denied = await fetch(`${base}/api/security/write`, { method: 'POST' });
+    expect(denied.status, 'a legacy deny must stop a federated caller at the gate').toBe(403);
+    expect(await denied.json()).toMatchObject({ error: 'app_access_denied', app: APP, tier: 'deny' });
+
+    await asOperator(() => appAccess.assign({ userSub: SHARED_SUB, userIssuer: GOOGLE_ISSUER,
+      appName: APP, tier: 'editor', assignedBySub: OPERATOR, reason: 'Operator re-bound the federated identity' }));
+    const admitted = await fetch(`${base}/api/security/write`, { method: 'POST' });
+    expect(admitted.status, 'the issuer-bound row is the re-bind for this issuer and admits the write').toBe(200);
+    expect(await admitted.json()).toEqual({ reached: true });
+
+    await asOperator(() => appAccess.clear({ userSub: SHARED_SUB, userIssuer: GOOGLE_ISSUER,
+      appName: APP, assignedBySub: OPERATOR, reason: 'Remove the re-bind' }));
+    expect((await fetch(`${base}/api/security/write`, { method: 'POST' })).status,
+      'with the re-bind cleared the legacy ceiling governs again').toBe(403);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });

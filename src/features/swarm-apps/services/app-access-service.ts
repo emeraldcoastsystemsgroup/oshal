@@ -7,11 +7,13 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve and record an assignment against the FULL verified principal. A subject identifier is unique only inside its issuer, so keying on the subject alone left the control plane unable to tell a federated identity from a local account and it refused every non-local issuer a tier outright. An assignment stored before migration 145 carries no issuer and keeps its only safe meaning: a canonical local account, never a federated subject that happens to match.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Isolate same-subject principals in every lookup, upsert and clear; legacy NULL and explicit local issuer share one key.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Keep a pre-145 issuer-less row applying to EVERY issuer of its subject as a ceiling (migration 146). Reading NULL as local-only silently dropped a deny or viewer ceiling that main enforced for any issuer through its subject-only SQL, and the subject then received the manifest default (admin on security, devops and oshal-dev). The legacy row is still the full assignment for the canonical local account and lifts no other issuer above its default; an issuer-bound row written for that issuer is the operator re-bind and takes precedence for it.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Read the assignment under the SYSTEM identity so the legacy ceiling is visible on every enforcement path. The gate middleware, the dynamic route mounter and the artifact/Test Lab visibility reads call resolveForPrincipal under the CALLER's request identity, and migration 145's owner-read policy admits only the row whose principal_issuer equals the caller's issuer - a legacy NULL row is urn:oshal:local-auth there, so a federated caller could not see its own ceiling and a legacy deny let a POST through the real gate with 200. Only the application-authorization bridge (createLegacyTierResolver) read under the system identity before. The predicate is exact on (subject, app, issuer-or-NULL); nothing wider is read, and listAssignments, assign and clear stay under the caller. Proved through the real gate on a NOBYPASSRLS role in tests/authorization-issuer-tier-live.spec.ts.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
+import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import {
   APP_ACCESS_TIERS,
   isAppAccessTier,
@@ -32,7 +34,7 @@ const UNDEFINED_COLUMN = '42703';
 /** Current assignment row returned to the operator management surface. */
 export interface AppAccessAssignment {
   userSub: string;
-  /** Issuer this assignment was written for; null means pre-145 and local-auth only. */
+  /** Issuer this assignment was written for; null means pre-145: the local account's full assignment and a ceiling for every other issuer of the subject (migration 146). */
   userIssuer: string | null;
   appName: string;
   tier: AppAccessTier;
@@ -128,8 +130,11 @@ function storedTier(raw: string | undefined): AppAccessTier | null {
 
 /**
  * @description PostgreSQL-backed ADR-118 access service. Every route lookup is constrained by
- * the exact `(user_sub, issuer, app_name)` tuple even when the caller's database context is privileged;
- * FORCE RLS remains a second boundary rather than the only object-level authorization check.
+ * the exact `(user_sub, issuer, app_name)` tuple and runs under the SYSTEM identity: that
+ * predicate is the object-level check, and it has to be, because migration 145's owner-read
+ * policy admits only the row bound to the caller's own issuer and hides the legacy issuer-less
+ * ceiling from every federated caller. FORCE RLS still governs every other read and every write
+ * of this table - listAssignments, assign and clear run under the caller.
  */
 export class AppAccessService implements AppAccessResolver {
   constructor(private readonly pool: Pool) {}
@@ -181,7 +186,12 @@ export class AppAccessService implements AppAccessResolver {
     assertSubject(userSub, 'userSub');
     assertIssuer(userIssuer);
 
-    const rows = await withIssuerColumn(
+    // Under the SYSTEM identity on purpose. The gate middleware, the route mounter and the
+    // visibility reads call this under the CALLER's request identity, and 145's owner-read
+    // policy compares principal_issuer to the caller's issuer - a legacy NULL row is
+    // urn:oshal:local-auth there, so a federated caller never saw its own ceiling and a legacy
+    // deny reached the handler. The predicate names the exact principal; nothing wider is read.
+    const rows = await runWithSystemIdentity(() => withIssuerColumn(
       async () => (await this.pool.query<Pick<AssignmentRow, 'tier' | 'user_issuer'>>(
         `SELECT tier, user_issuer
            FROM oshal_app_access
@@ -199,7 +209,7 @@ export class AppAccessService implements AppAccessResolver {
         [userSub, appName],
       )).rows.map(row => ({ ...row, user_issuer: null })),
       { appName, operation: 'resolveForPrincipal' },
-    );
+    ));
 
     const bound = rows.find(row => (row.user_issuer ?? LOCAL_AUTH_PRINCIPAL_ISSUER) === userIssuer);
     // For the local account the NULL row IS the bound row. For any other issuer, a row bound to
@@ -282,8 +292,9 @@ export class AppAccessService implements AppAccessResolver {
   /**
    * @description Insert or replace one explicit assignment, retaining its original creation time.
    * `userIssuer` names the verified identity provider the assignment is for; omitting it keeps
-   * the pre-145 meaning (no issuer recorded, resolvable only by a canonical local account)
-   * rather than guessing whichever provider this deployment happens to be configured with.
+   * the pre-145 meaning (no issuer recorded: the canonical local account's assignment and a
+   * ceiling for every other issuer of the subject, migration 146) rather than guessing whichever
+   * provider this deployment happens to be configured with.
    * The key includes the issuer; granting another identity cannot overwrite an existing deny.
    */
   async assign(input: {

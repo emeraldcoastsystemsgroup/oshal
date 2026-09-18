@@ -7,6 +7,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard the tier resolver itself in the default unit run: it must carry the actor issuer into the lookup for EVERY issuer, so reinstating the short-circuit that refused a federated identity before reading an assignment goes red without a database. The database boundary itself is proved in tests/authorization-issuer-tier-live.spec.ts against real PostgreSQL.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cover the principal-qualified lookup: the assignment SQL carries the actor issuer and the pre-145 local-auth rule, an upsert records the issuer it was written for, and migration 145 keeps the column nullable so an older row is never guessed into the configured identity provider.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin the principal-qualified key and RLS predicate while retaining local-only compatibility.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Pin that resolveForPrincipal reads under the SYSTEM identity even inside a non-operator request identity, and restores the caller's identity afterwards. Migration 145's owner-read policy hides the legacy NULL row from every federated caller, so a resolver that reads under the caller's identity cannot see a legacy deny on the enforcement paths; the database boundary itself is proved in tests/authorization-issuer-tier-live.spec.ts.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +19,12 @@ import { spawnSync } from 'child_process';
 import { AppAccessService, readManifest, type SwarmAppAccessDeclaration } from '../../src/features/swarm-apps';
 import { createLegacyTierResolver } from '../../src/app/composition/application-access-tier';
 import type { AuthorizationActor } from '../../src/shared/application-authorization';
+import {
+  getRequestIdentity,
+  isSystemIdentity,
+  runWithRequestIdentity,
+  type RequestIdentity,
+} from '../../src/shared/services/database/request-identity';
 
 const ACCESS: SwarmAppAccessDeclaration = {
   supported: ['deny', 'viewer', 'editor', 'admin'],
@@ -106,6 +113,21 @@ describe('AppAccessService resolution', () => {
     expect(query.mock.calls[0][1]).toEqual([
       '100000000000000000001', 'career-hunter', 'https://accounts.google.com',
     ]);
+  });
+
+  it('reads the assignment under the SYSTEM identity inside a non-operator request identity', async () => {
+    const seen: Array<RequestIdentity | undefined> = [];
+    const query = vi.fn(async () => { seen.push(getRequestIdentity()); return { rows: [], rowCount: 0 }; });
+    const caller: RequestIdentity = { sub: 'user-a', principalIssuer: 'https://accounts.google.com', isOperator: false };
+    await runWithRequestIdentity(caller, async () => {
+      await new AppAccessService({ query } as unknown as Pool)
+        .resolveForPrincipal('career-hunter', 'user-a', 'https://accounts.google.com', ACCESS);
+      expect(getRequestIdentity(), 'the caller identity is restored once the read completes').toBe(caller);
+    });
+    expect(seen).toHaveLength(1);
+    // The owner-read policy admits a federated caller to its issuer-bound row only; the legacy
+    // NULL row is urn:oshal:local-auth and would be invisible under the caller's own identity.
+    expect(isSystemIdentity(seen[0]), 'the lookup must run under the SYSTEM identity').toBe(true);
   });
 
   it('refuses an issuer that is not an exact bounded string', async () => {
