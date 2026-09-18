@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial /api/budgets surface for the cost-governance slice: list/set spend budgets + a windowed spend read. Auth-gated (requiresAuth param, the sanctioned factory pattern); cross-user scopes are operator-only via the OSHAL_OPERATOR_SUBS/EMAILS allowlist — a non-operator can list/set/read ONLY their own 'user'-scope budget, so one user's caps and spend never leak to another.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Ops-rails read surface: GET /api/budgets/state — a requiresOperator-gated, read-only governance snapshot (every cap with its trailing-window spend + the recent oshal_budget_events enforcement trail). Fail-open (BudgetService semantics). This is the tool-budgets operator rail; it never mutates and never enforces.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | GET /api/budgets/spend also answers spendByUnit (billed / priceEquivalent / byo / total) so the spend number a caller sees is labelled by unit (ADR-127: a CLI turn is a price-equivalent, a BYO turn is tokens only). spendUsd stays the enforcement sum; the split is omitted when its own read fails.
  */
 
 import { Router, type Request, type Response, type RequestHandler } from 'express';
@@ -163,8 +164,10 @@ export function createBudgetRoutes(requiresAuth: RequestHandler, deps: BudgetRou
         res.status(503).json({ success: false, error: 'Spend store unavailable' });
         return;
       }
+      // Display split only (ADR-127 units); the cap compares against spendUsd, never against a unit.
+      const spendByUnit = await service.computeSpendByUnit(parsed.scopeType, parsed.scopeKey, parsed.windowHours);
       logger.info({ sub: caller.sub, scopeType: parsed.scopeType, windowHours: parsed.windowHours, durationMs: Date.now() - startedAt }, 'GET /api/budgets/spend');
-      res.json({ success: true, ...parsed, spendUsd });
+      res.json({ success: true, ...parsed, spendUsd, ...(spendByUnit ? { spendByUnit } : {}) });
     } catch (err) {
       logger.error({ err }, 'GET /api/budgets/spend failed');
       res.status(500).json({ success: false, error: 'Failed to read spend' });

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted the Jarvis rich-response route/speech/audio stubs verbatim out of tests/jarvis-rich-response-integration.spec.ts, which had grown to 1006 code lines (over the 1000-line cap) and now splits into four topic specs that all share these fixtures
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Serve the framework theme off disk (surface-themes.css, surface-theme.js and the /cockpit/css/themes/*.css files the aggregator @imports): jarvis.html has read its orb colours from those tokens since BUG-12 (#191), and this fixture 404ing them is what left the native-wake spec red 3 of 3 (the unthemed page threw inside its first synchronous canvas tick, so the wake listener never registered). THEME_ASSET_PATHS is exported so the guard can withhold exactly these on purpose.
  */
 
 // DELIBERATELY NOT re-exported through tests/helpers/index.ts. This module reads eight Jarvis
@@ -24,6 +25,36 @@ const AMBIENT_RECOGNITION_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-ambi
 const AMBIENT_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-ambient.js'), 'utf8');
 const AMBIENT_CSS = readFileSync(path.join(ROOT, 'src/api/jarvis-ambient.css'), 'utf8');
 const SPEAKER_CAPTURE_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-speaker-capture.js'), 'utf8');
+const THEME_CSS = readFileSync(path.join(ROOT, 'src/shared/ui/css/surface-themes.css'), 'utf8');
+const THEME_JS = readFileSync(path.join(ROOT, 'src/shared/ui/js/surface-theme.js'), 'utf8');
+const COCKPIT_THEMES_DIR = path.join(ROOT, 'src/pages/cockpit/css/themes');
+const COCKPIT_THEME_CSS = new Map<string, string>();
+
+/**
+ * @description Read one cockpit theme token file (`/cockpit/css/themes/<id>.css`) off disk, once.
+ * surface-themes.css is only an @import list of these, so serving it alone applies no tokens.
+ * @param fileName - The basename the aggregator imported, e.g. `midnight.css`.
+ * @returns The stylesheet text, or null when no such theme file exists in the tree.
+ */
+function cockpitThemeCss(fileName: string): string | null {
+  if (!/^[a-z0-9-]+\.css$/.test(fileName)) return null;
+  const cached = COCKPIT_THEME_CSS.get(fileName);
+  if (cached !== undefined) return cached;
+  try {
+    const text = readFileSync(path.join(COCKPIT_THEMES_DIR, fileName), 'utf8');
+    COCKPIT_THEME_CSS.set(fileName, text);
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @description The two framework theme assets jarvis.html loads in <head> and reads its orb
+ * colours from. Exported so a spec can withhold exactly these and prove the page still stands up
+ * its microphone handlers without them.
+ */
+export const THEME_ASSET_PATHS = ['/shared/ui/css/surface-themes.css', '/shared/ui/js/surface-theme.js'] as const;
 
 /**
  * @description Inline SVG body served for every stubbed visual artifact. Kept as a literal so the
@@ -64,6 +95,12 @@ export async function fulfillJarvis(route: Route): Promise<void> {
   const url = new URL(route.request().url());
   const pathName = url.pathname;
   if (pathName === '/api/jarvis/') return route.fulfill({ contentType: 'text/html', body: HTML });
+  if (pathName === THEME_ASSET_PATHS[0]) return route.fulfill({ contentType: 'text/css', body: THEME_CSS });
+  if (pathName === THEME_ASSET_PATHS[1]) return route.fulfill({ contentType: 'application/javascript', body: THEME_JS });
+  if (pathName.startsWith('/cockpit/css/themes/')) {
+    const css = cockpitThemeCss(pathName.slice('/cockpit/css/themes/'.length));
+    if (css !== null) return route.fulfill({ contentType: 'text/css', body: css });
+  }
   if (pathName.endsWith('/jarvis-stage.js')) return route.fulfill({ contentType: 'application/javascript', body: STAGE_JS });
   if (pathName.endsWith('/jarvis-stage.css')) return route.fulfill({ contentType: 'text/css', body: STAGE_CSS });
   if (pathName.endsWith('/jarvis-ambient-core.js')) return route.fulfill({ contentType: 'application/javascript', body: AMBIENT_CORE_JS });

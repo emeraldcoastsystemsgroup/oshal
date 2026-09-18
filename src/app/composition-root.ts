@@ -30,6 +30,7 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Bind executeBotOrInline into AppContext so installed app routes can dispatch package-owned bots through the canonical node/credential/governance path.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Bind the fixed actor-mailbox Outlook reader into AppContext for token-safe package integrations.
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Bind the fixed owner-scoped RingCentral call-log reader into AppContext (screen-pop v2 call history), mirroring the Outlook seam.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com   | Hand the orchestrator the inline-turn cost ledger over the main (GUC-stamped) pool, so an inline chat turn's spend reaches oshal_cost_events under the request's owner sub and the windowed budget cap at the bot-invocation chokepoint can see it.
  */
 
 import {
@@ -46,6 +47,7 @@ import { InMemoryMessageStore } from '@/entities/message';
 import { StreamManager } from '@/features/streaming';
 import { MemoryLayerService } from '@/features/memory';
 import { WorkspaceBootstrapService } from '@/features/workspace-bootstrap';
+import { createInlineTurnCostLedger } from './composition/inline-turn-cost-ledger';
 import {
   type AppContext as CompositionAppContext,
   createAgentProfileComponents,
@@ -173,6 +175,7 @@ export function createAppContext(): CompositionAppContext {
     toolFramework.switchFrameworkService,
     toolFramework.dynamicToolExecutorRegistry,
     toolFramework.connectorSpecToolService,
+    createInlineTurnCostLedger(pool),
   );
   const verification = createVerificationComponents(pool, logger);
   const swarm = createSwarmExtensionBindings(pool, providerResolver.getProvider, { taskStore, messageStore });

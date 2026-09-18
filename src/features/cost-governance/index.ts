@@ -21,6 +21,7 @@ export {
   readRunawayConfig,
   readEventCooldownMin,
   spendSqlFor,
+  spendByProviderSqlFor,
   upsertBudgetSqlFor,
   BUDGET_SCOPE_TYPES,
   type BudgetScopeType,
@@ -33,4 +34,9 @@ export {
   type BudgetEventRecord,
   type BudgetStateRow,
   type BudgetGovernanceState,
+  classifyCostUnit,
+  splitSpendByUnit,
+  COST_UNIT_LABELS,
+  type CostUnit,
+  type SpendByUnit,
 } from './services';

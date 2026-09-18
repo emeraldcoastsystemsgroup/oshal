@@ -6,11 +6,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial cost-governance BudgetService — DB-backed daily USD spend caps per user/app/ticket scope (oshal_budgets) enforced pre-dispatch, plus a runaway-loop kill switch (countRecentExecutions over ticket_task_links). Fail-OPEN on infra gaps (missing table / DB down never bricks dispatch); fail-CLOSED with an oshal_budget_events audit row + operator notification when a HARD cap is definitively exceeded. Soft caps warn only. Distinct from the env-var llm-provider governance BudgetService (055): this one is operator/user-editable at runtime via /api/budgets.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes (gap-list build): (1) operator-set caps are now tamper-proof — setBudget writes set_by_operator, and a non-operator's self-scope upsert is conditional on set_by_operator=FALSE, so a capped user can no longer raise/disable an operator-imposed hard cap on themselves. (2) Windowed spend now sums the per-event oshal_cost_events ledger instead of chat_tasks rows filtered by updated_at — the old read attributed a task's LIFETIME total_cost to "today" whenever any event touched the row inside the window (blocking on phantom spend) and dropped stale-but-real per-ticket spend. (3) recordEvent dedupes: one audit row + one operator notification per (scope, action) per OSHAL_BUDGET_EVENT_COOLDOWN_MIN (default 30) — a sustained breach re-checked every poll cycle no longer floods oshal_budget_events or spams notification transports.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Ops-rails read surface: listRecentEvents() reads the oshal_budget_events enforcement trail newest-first (bounded limit), and getBudgetState() composes the operator governance snapshot — every cap with its trailing-window spend attached + the recent enforcement events — for the operator-only GET /api/budgets/state read rail. Both are read-only and fail-open (empty list on any infra gap, logged WARN), never mutate, and never enforce.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | computeSpendByUnit: the same windowed ledger read grouped by provider_id and folded into billed / price-equivalent / BYO (ADR-127 units). computeSpend stays the enforcement number — a cap is one figure — but a spend surface that shows only the sum is adding a subscription price-equivalent, a $0 BYO token count and real metered spend as if they were one unit.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { notifyOperator } from '@/features/notifications';
+import { splitSpendByUnit, type SpendByUnit } from './cost-unit';
 
 const logger = createChildLogger({ module: 'cost-governance-budget-service' });
 
@@ -328,6 +330,33 @@ export class BudgetService {
   }
 
   /**
+   * @description The same trailing-window ledger read as {@link computeSpend}, grouped by the
+   * provider that produced each row and folded into the three ADR-127 units. This is a display
+   * split, not an enforcement input: a cap compares against the plain sum so an operator's
+   * number never depends on how a provider id was classified.
+   * @param scopeType - Which dimension to sum.
+   * @param scopeKey - The sub / ticketType / ticketId for that dimension.
+   * @param windowHours - Trailing window size in whole hours.
+   * @returns The split (every field finite), or null when the query fails / no pool.
+   */
+  async computeSpendByUnit(scopeType: BudgetScopeType, scopeKey: string, windowHours: number): Promise<SpendByUnit | null> {
+    if (!this.pool) return null;
+    const hours = Math.max(1, Math.floor(windowHours));
+    try {
+      const result = await this.pool.query<{ provider_id: string | null; spend: string | number | null }>(
+        spendByProviderSqlFor(scopeType), [scopeKey, hours],
+      );
+      return splitSpendByUnit(result.rows.map((row) => ({
+        providerId: row.provider_id,
+        spend: Number.parseFloat(String(row.spend ?? 0)) || 0,
+      })));
+    } catch (err) {
+      logger.warn({ err, scopeType, scopeKey }, 'computeSpendByUnit: spend query failed — returning null');
+      return null;
+    }
+  }
+
+  /**
    * @description Runaway detector input: how many distinct chat_tasks execution rows linked
    * to this ticket were touched (updated_at) inside the trailing window. A looping ticket
    * that re-dispatches every poll cycle mints/touches a task row per execution, so this
@@ -576,6 +605,38 @@ export function spendSqlFor(scopeType: BudgetScopeType): string {
                 JOIN oshal_cost_events e ON e.task_id = ttl.task_id
                WHERE t.ticket_type = $1
                  AND e.ts >= NOW() - make_interval(hours => $2::int)`;
+  }
+}
+
+/**
+ * @description The {@link spendSqlFor} read with one row per provider, so the caller can name
+ * the unit each provider's cost_usd is in. Same anchor (event ts), same attribution joins.
+ * @param scopeType - Which dimension to sum.
+ * @returns Parameterized SQL taking ($1 = scope key, $2 = trailing hours), rows (provider_id, spend).
+ */
+export function spendByProviderSqlFor(scopeType: BudgetScopeType): string {
+  switch (scopeType) {
+    case 'user':
+      return `SELECT provider_id, COALESCE(SUM(cost_usd), 0) AS spend
+                FROM oshal_cost_events
+               WHERE owner_sub = $1
+                 AND ts >= NOW() - make_interval(hours => $2::int)
+               GROUP BY provider_id`;
+    case 'ticket':
+      return `SELECT e.provider_id, COALESCE(SUM(e.cost_usd), 0) AS spend
+                FROM ticket_task_links ttl
+                JOIN oshal_cost_events e ON e.task_id = ttl.task_id
+               WHERE ttl.ticket_id = $1
+                 AND e.ts >= NOW() - make_interval(hours => $2::int)
+               GROUP BY e.provider_id`;
+    case 'app':
+      return `SELECT e.provider_id, COALESCE(SUM(e.cost_usd), 0) AS spend
+                FROM tickets t
+                JOIN ticket_task_links ttl ON ttl.ticket_id = t.ticket_id
+                JOIN oshal_cost_events e ON e.task_id = ttl.task_id
+               WHERE t.ticket_type = $1
+                 AND e.ts >= NOW() - make_interval(hours => $2::int)
+               GROUP BY e.provider_id`;
   }
 }
 

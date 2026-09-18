@@ -23,6 +23,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: fail closed when the tool authorization registry/interceptor is unavailable instead of exposing the raw executor.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: both agentic and direct turns now honor options.byoLlmConnection — a caller-resolved hosted OpenAI-compatible endpoint runs the turn (governed, same GovernedProvider wrap the composition root applies) instead of deps.getProvider's registry harness, which for CLI-harness bots is refused unattended on the controller. Callers (executeBotOrInline, jarvis runInline) were already threading the option; nothing here read it.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | Every finished turn now appends its usage to the oshal_cost_events ledger (deps.costLedger, per-model rows under the owner sub) beside the chat_tasks rollup. The ledger is what BudgetService's trailing-window caps sum, and nothing on the inline path wrote it — recordUsage only bumps chat_tasks lifetime totals — so the HARD cap at the bot-invocation chokepoint could never see the spend its own inline branch produced. The provider is resolved once per turn so the ledger row names the provider that actually ran (BYO vs registry), and the append is non-fatal: a ledger failure logs at ERROR and never fails the chat turn.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 
@@ -47,6 +48,7 @@ import type { ToolAuthInterceptor } from '@/features/tool-approval';
 import type { MemoryLayerService } from '@/features/memory';
 import type { TicketService } from '@/features/ticketing';
 import { runAgenticLoop, type ToolExecutionCallback } from './agentic-loop';
+import { buildInlineTurnCostEvents, type InlineTurnCostLedger } from './inline-turn-cost-ledger';
 import { DEFAULT_CHAT_AGENT_ID } from '../constants/default-chat-agent';
 
 const logger = createChildLogger({ module: 'task-orchestrator' });
@@ -69,6 +71,8 @@ export interface TaskOrchestratorDeps {
   memoryService?: MemoryLayerService;
   /** Optional ticket service for automatic ticket→task linking */
   ticketService?: TicketService;
+  /** Per-event cost ledger (oshal_cost_events) the windowed budget caps read; absent = memory-only deployment. */
+  costLedger?: InlineTurnCostLedger;
 }
 
 /**
@@ -121,11 +125,17 @@ export class TaskOrchestrator {
       await this.deps.taskStore.updateStatus(taskId, 'processing');
       this.deps.streamManager.broadcastTaskUpdate(taskId, { status: 'processing' });
 
+      // Resolved once so the ledger row names the provider that actually ran this turn.
+      const provider = this.resolveProvider(options);
       const result = options.agenticMode
-        ? await this.processAgentic(taskId, text, options)
-        : await this.processDirect(taskId, text, options);
+        ? await this.processAgentic(taskId, text, options, provider)
+        : await this.processDirect(taskId, text, options, provider);
 
-      await this.handleResult(taskId, result, startTime);
+      await this.handleResult(taskId, result, startTime, {
+        agentId: options.agentId,
+        providerId: provider.getProviderName(),
+        ownerSub: options.userSub,
+      });
       await this.linkTicketIfRequested(taskId, options.ticketId);
       return result;
     } catch (error) {
@@ -231,8 +241,8 @@ export class TaskOrchestrator {
     taskId: string,
     text: string,
     options: ProcessMessageOptions,
+    provider: LLMService,
   ): Promise<ProcessResult> {
-    const provider = this.resolveProvider(options);
     const tools = await this.deps.getTools(options.agentId);
     const baseSystemPrompt = await this.deps.getSystemPrompt(options.agentId, tools, taskId);
     const systemPrompt = appendTicketContextNote(baseSystemPrompt, options);
@@ -275,8 +285,8 @@ export class TaskOrchestrator {
     taskId: string,
     text: string,
     options: ProcessMessageOptions,
+    provider: LLMService,
   ): Promise<ProcessResult> {
-    const provider = this.resolveProvider(options);
     const baseSystemPrompt = options.systemPromptOverride
       ?? (await this.deps.getSystemPrompt(options.agentId, undefined, taskId));
     const systemPrompt = options.systemPromptOverride
@@ -396,13 +406,52 @@ export class TaskOrchestrator {
   }
 
   /**
+   * @description Appends this turn's usage to the per-event cost ledger the windowed budget
+   * caps read. The owner is the request's sub, falling back to the thread's stored owner so a
+   * follow-up turn on an owned thread never lands unattributed. Non-fatal by design: the turn
+   * already answered, and a ledger gap must never fail a chat — but it is logged at ERROR, not
+   * warn, because a silently missing row is exactly the fail-OPEN cap this write exists to close.
+   *
+   * @param taskId - The chat thread
+   * @param usage - The turn's usage summary (the same figures persisted to chat_tasks)
+   * @param attribution - Agent, provider and request owner for this turn
+   * @param durationMs - Wall-clock of the whole turn
+   */
+  private async recordTurnCost(
+    taskId: string,
+    usage: TaskUsageSummary,
+    attribution: { agentId?: string; providerId: string; ownerSub?: string },
+    durationMs: number,
+  ): Promise<void> {
+    if (!this.deps.costLedger) return;
+    try {
+      const ownerSub = attribution.ownerSub ?? (await this.deps.taskStore.get(taskId))?.ownerSub;
+      const events = buildInlineTurnCostEvents(usage, { ...attribution, taskId, ownerSub, durationMs });
+      if (events.length === 0) return;
+      await this.deps.costLedger.recordInlineTurn(events);
+      logger.info(
+        { taskId, rows: events.length, providerId: attribution.providerId, totalCost: usage.totalCost, hasOwner: Boolean(ownerSub) },
+        'Inline turn cost appended to oshal_cost_events',
+      );
+    } catch (err) {
+      logger.error({ err, taskId, providerId: attribution.providerId }, 'Inline turn cost ledger append failed — windowed budget spend will not see this turn');
+    }
+  }
+
+  /**
    * @description Handle a successful processing result.
    *
    * @param taskId - Task identifier
    * @param result - Processing result
    * @param startTime - When processing started (for duration calc)
+   * @param attribution - Who ran the turn (agent, provider) and the request's owner sub
    */
-  private async handleResult(taskId: string, result: ProcessResult, startTime: number): Promise<void> {
+  private async handleResult(
+    taskId: string,
+    result: ProcessResult,
+    startTime: number,
+    attribution: { agentId?: string; providerId: string; ownerSub?: string },
+  ): Promise<void> {
     const durationMs = Date.now() - startTime;
     const waitingForInput = result.completionType === 'waiting_for_input';
 
@@ -411,6 +460,7 @@ export class TaskOrchestrator {
     }
     if (result.usageSummary) {
       await this.deps.taskStore.recordUsage(taskId, result.usageSummary);
+      await this.recordTurnCost(taskId, result.usageSummary, attribution, durationMs);
     }
 
     if (result.response) {

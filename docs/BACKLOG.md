@@ -421,6 +421,19 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   written reason and replaced by one that asserts the same three release invariants; and the
   passing command is the one the Run block documents, so the next reader cannot miss it again.
   Until then the wake path is not delivery-ready, and its doc says so.
+- **Status (2026-09-18, PR #638): DONE - 4 passed / 4 by the
+  Run block's own command.** Diagnosed by capturing `pageerror` on the fixture-served page: the
+  main script threw at its first synchronous canvas `tick()` (`addColorStop` on the literal
+  `'var(--accent-primary)'`) before the wake listener registered. Cause one, the red spec: the
+  fixture 404'd the theme assets the page has loaded since BUG-12 (#191); with them served off
+  disk the unchanged `origin/main` page passes 3 of 3. Cause two, a real page defect the drift
+  exposed: the colour *fallbacks* were `var()` strings canvas cannot parse, so a failed theme
+  stylesheet load silently killed the microphone and native-wake handlers. Fallbacks are concrete
+  colours again; a fourth case withholds the theme assets and proves the wake path still owns and
+  releases the mic (red on the previous page). `src/api/jarvis.html` is bind-mounted into the
+  running api, so the box changes when the shared tree syncs to main - no image deploy. The nine
+  red cases in `jarvis-rich-response-integration.spec.ts` are identical before and after this
+  change and are not part of this entry.
 
 ### Refusal visibility: the substrate for P1, P3 and P4
 
@@ -1219,6 +1232,22 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 ### Inline chat spend is invisible to windowed budget enforcement
 - **Remaining:** `BudgetService` reads `oshal_cost_events`, but no inline chat path writes it — only bot-node/A2A/Argo/vision paths call `recordCost`. Inline orchestrator turns land usage in `chat_tasks` only, so the HARD per-user cap at the executeBotOrInline chokepoint can never see spend that chokepoint's own inline branch generates (nor any cockpit chat turn). Related unit mismatch: the BYO hosted lane records $0 cost by design (tokens only), and a CLI turn's cost is a price-equivalent, not a bill (ADR-127).
 - **Done when:** an inline chat turn produces an `oshal_cost_events` row under the owner sub (or an ADR explicitly scopes budget enforcement to node work), a guard proves windowed spend moves after an inline turn, and cost surfaces label the price-equivalent/BYO units distinctly.
+- **Status 2026-09-18 (branch `inline-chat-cost-ledger`, PR open, NOT deployed):** built and guarded.
+  Measured read-only on the running box first: owner-attributed inline tasks (empty `provider_id`,
+  the orchestrator's own `chat_tasks` rows) were 384 tasks / 2276 requests / $162.06 over 90 days
+  with **0** ledger rows. `TaskOrchestrator` now appends per-model `oshal_cost_events` rows under
+  the request's owner sub after every finished turn (`deps.costLedger`, bound in composition-root
+  to `CostTrackingService.recordLedgerEvent` over the GUC-stamped main pool; non-fatal, ERROR-logged).
+  `tests/unit/inline-chat-cost-ledger-postgres.spec.ts` crosses the real boundary — disposable
+  `postgres:16-alpine`, migrations 078/090/112, a NOSUPERUSER NOBYPASSRLS role behind the production
+  GUC wrapper, the real orchestrator + ledger binding + `BudgetService` — and proves a turn moves the
+  owner's 24h spend from 0 to the turn's price, a HARD cap then refuses that owner and not another,
+  a cross-owner read sees 0, and a forged-owner insert is refused with 42501; mutation-proven red on
+  `main`'s orchestrator (3 of 5 cases fail, spend stays 0). Units: `classifyCostUnit` (billed /
+  price-equivalent / byo, ADR-127) labels run-trace llm-call spans + HTML and `GET /api/budgets/spend`
+  answers `spendByUnit` beside the enforcement sum. **Not done:** the cockpit ticket Cost tab still
+  shows one "Est. Cost" column with no unit (its per-agent rows carry no provider id server-side);
+  the BYO lane still records $0 by design (tokens only) — the label names it, it does not price it.
 
 ### Seeding-repair hygiene tail (2026-08-12)
 - **Remaining:** (1) rotate whatever `config-seed/claude-credentials.json` holds, then delete it — 25 KB of credential material, world-readable perms, zero consumers since the SEC-05 closure ("never revive a static config-seed token copy"); (2) mirror the eight `requiresOwnNode` entries that exist only in `swarm-bot-registry-local.ts` into the canonical registry (finance-analyst, identity-advisor, social-writer, storage-assistant, deck-builder, trading-analyst, communications-bot, weather-bot — "register in BOTH"); (3) point `WORLD_CLASSIFY_PROVIDERS` at a hosted provider so world classify stops degrading to lexicon-only (its 27 controller CLI refusals per 2h are BY DESIGN — never weaken `assertAuditedAutonomousHarness`).

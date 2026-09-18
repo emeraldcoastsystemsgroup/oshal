@@ -12,6 +12,12 @@
 export { DEFAULT_CHAT_AGENT_ID, DEFAULT_CHAT_AGENT_NAME } from './constants/default-chat-agent';
 export { TaskOrchestrator, type TaskOrchestratorDeps } from './services/task-orchestrator';
 export {
+  buildInlineTurnCostEvents,
+  type InlineTurnAttribution,
+  type InlineTurnCostEvent,
+  type InlineTurnCostLedger,
+} from './services/inline-turn-cost-ledger';
+export {
   resolveProjectManagerTicketExecutionContext,
   type ProjectManagerTicketExecutionContext,
   type ProjectManagerTicketIntakeDeps,
