@@ -162,8 +162,11 @@ RUN echo "cli-cache-bust=${CLI_CACHE_BUST}" && \
 # (musl's default search path) into /lib64, where only an explicit PT_INTERP reaches it.
 # The trailing asserts run INSIDE this layer so a regression fails the BUILD, not a ticket:
 #   1. no glibc alias survives in /lib (confinement held);
-#   2. the pinned cline launches and reports its version through the real launcher/spawn path;
-#   3. node still refuses a glibc-only addon (the msgpackr glibc build ships in node_modules).
+#   2. the pinned cline launches and reports its version through the real launcher/spawn path.
+# Whether node still refuses a glibc-only addon is NOT asserted here - node_modules does not
+# exist at this layer (npm ci runs later). The built artifact is probed instead:
+# scripts/check-cline-entrypoint.mjs (run by the deploy's image verification) fails when any
+# glibc alias is back in musl's search path, which is the condition that lets an addon load.
 RUN apk add --no-cache gcompat && \
     for alias in libc.so.6 libm.so.6 libpthread.so.0 libresolv.so.2 librt.so.1 libutil.so.1 libcrypt.so.1; do rm -f "/lib/$alias"; done && \
     rm -f /lib64/ld-linux-x86-64.so.2 && mv /lib/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2 && \
