@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify fresh principal and application discovery checks at the deployed Test Lab composition boundary.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise real history HTTP with unrelated held access and fresh selected-app revocation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Switch the boot-time runner probe off: this composition boundary is proven without starting a browser container.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Exercise the issuer-qualified coarse visibility port.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Request } from 'express';
@@ -33,7 +34,7 @@ function fixture() {
     (state.extra ? ['fixture','unrelated'] : ['fixture']).map(name => ({ name })),
     getActiveManifests: async () => (state.extra ? ['fixture','unrelated'] : ['fixture'])
       .map(name => ({ name, access: { defaultTier: 'viewer' } })) } as unknown as SwarmAppService;
-  const access = { resolve: async (name: string) => {
+  const access = { resolveForPrincipal: async (name: string) => {
     state.checked.push(name); if (name === 'unrelated') await state.hold;
     return { tier: state.legacy };
   } } as unknown as AppAccessService;

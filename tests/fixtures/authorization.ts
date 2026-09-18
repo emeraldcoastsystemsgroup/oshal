@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Provide isolated real policy and HTTP fixtures for access administration.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow the actual compiled page adapter to exercise installed asset paths under the same authority checks.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Supply declared package dependencies to browser proofs without replacing authorization routes.
  */
 /** Isolated real management service and disposable loopback HTTP server. No operator database. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -24,7 +25,8 @@ export const CATALOG: AuthorizationCatalog = {
   bindings: { http: [{ id: 'read-records', method: 'GET', path: '/records', allOf: ['records.read'] }] },
 };
 
-export async function createAuthorizationFixture(pageFactory = createAuthorizationPageRoutes) {
+export async function createAuthorizationFixture(pageFactory = createAuthorizationPageRoutes,
+  resolvePackage?: NonNullable<ConstructorParameters<typeof ApplicationAuthorizationService>[1]>['resolvePackage']) {
   let identityFailure: Error | null = null;
   let directoryGroups = [{ issuer: ISSUER, tenantId: 'tenant-one', id: 'engineering', label: 'Engineering' }];
   const actors: Record<string, AuthorizationActor> = {
@@ -36,6 +38,7 @@ export async function createAuthorizationFixture(pageFactory = createAuthorizati
   };
   const store = new MemoryAuthorizationStore();
   const service = new ApplicationAuthorizationService(store, {
+    resolvePackage,
     resolveActor: async (sub, issuer) => Object.values(actors).find(actor => actor.sub === sub && actor.issuer === issuer) ?? null,
     inventory: async actor => ({
       users: actor.isSwarmAdmin ? [{ sub: 'alice', issuer: ISSUER, label: '<img src=x onerror="window.inventoryXss=true"> Alice' }, { sub: 'bob', issuer: ISSUER, label: 'Bob' }] : [],

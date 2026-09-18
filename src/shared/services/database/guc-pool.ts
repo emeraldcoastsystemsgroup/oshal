@@ -41,6 +41,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Flipped gucStrictMode() default off→deny (fail-CLOSED) and made unrecognized values fall back to deny. A bare identity-less DB access (neither a user request nor the SYSTEM sentinel) is now stamped anonymous non-operator → RLS scopes it to nothing, so an un-migrated background caller fails loudly instead of silently reading cross-tenant. Break-glass = OSHAL_DB_GUC_STRICT=off; audit-first = warn. Safe because every legitimate background path was migrated to runWithSystemIdentity (enforced by tests/unit/background-system-identity.spec.ts).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Hardened the identity-less warn/deny audit so it always names an APPLICATION frame, not a node-internal one. The old find() returned the first non-guc-pool frame (processTicksAndRejections) and the 5-frame sample truncated before the async-stitched caller — so a real offender showed as "unknown". Now: bump stackTraceLimit at capture, skip node-internal frames for the reported site, and sample 12 app frames. This is what lets the warn soak positively identify every un-migrated site before the deny promotion.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Log the SQL text (normalized, 160-char) in the identity-less audit. A fully-detached async caller (single node-internal frame, no app stack) can't be named by the stack alone — but the query itself identifies it. Threaded firstSql(args) → setIdentityGucs → resolveFailOpen. Permanent improvement, not throwaway.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Stamp and reset verified principal issuer alongside subject for issuer-qualified owner RLS; absent provenance never becomes local auth.
  */
 
 import type { Pool, PoolClient } from 'pg';
@@ -75,7 +76,7 @@ export function gucStrictMode(): 'off' | 'warn' | 'deny' {
   return v === 'off' ? 'off' : v === 'warn' ? 'warn' : 'deny';
 }
 
-const RESET_SQL = 'RESET oshal.current_sub; RESET oshal.is_operator';
+const RESET_SQL = 'RESET oshal.current_sub; RESET oshal.current_issuer; RESET oshal.is_operator';
 
 /** Call sites already reported under `warn` — each is logged once so the audit isn't a firehose. */
 const reportedFailOpenSites = new Set<string>();
@@ -130,7 +131,7 @@ async function setIdentityGucs(client: PoolClient, id: RequestIdentity | undefin
     // this is what keeps schedulers / queue / workers / boot code visible after the strict mode
     // denies the "no context at all" case. Distinct from the fail-open branch below (bare undefined).
     await client.query(
-      "SELECT set_config('oshal.current_sub', '', false), set_config('oshal.is_operator', 'on', false)",
+      "SELECT set_config('oshal.current_sub', '', false), set_config('oshal.current_issuer', '', false), set_config('oshal.is_operator', 'on', false)",
     );
     return;
   }
@@ -142,18 +143,18 @@ async function setIdentityGucs(client: PoolClient, id: RequestIdentity | undefin
     // Break-glass `off` (or audit-only `warn`) restores the historical trusted-operator stamp.
     if (resolveFailOpen(queryText) === 'deny') {
       await client.query(
-        "SELECT set_config('oshal.current_sub', '', false), set_config('oshal.is_operator', 'off', false)",
+        "SELECT set_config('oshal.current_sub', '', false), set_config('oshal.current_issuer', '', false), set_config('oshal.is_operator', 'off', false)",
       );
     } else {
       // Break-glass / audit — historical fail-open-to-operator behavior.
       await client.query(
-        "SELECT set_config('oshal.current_sub', '', false), set_config('oshal.is_operator', 'on', false)",
+        "SELECT set_config('oshal.current_sub', '', false), set_config('oshal.current_issuer', '', false), set_config('oshal.is_operator', 'on', false)",
       );
     }
   } else {
     await client.query(
-      "SELECT set_config('oshal.current_sub', $1, false), set_config('oshal.is_operator', $2, false)",
-      [id.sub ?? '', id.isOperator ? 'on' : 'off'],
+      "SELECT set_config('oshal.current_sub', $1, false), set_config('oshal.current_issuer', $2, false), set_config('oshal.is_operator', $3, false)",
+      [id.sub ?? '', id.principalIssuer ?? '', id.isOperator ? 'on' : 'off'],
     );
   }
 }

@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Verify the package runner image once per boot so browser recipes become runnable only after a real in-profile probe.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Arm lazy runner verification instead of probing at boot; a restart no longer starts a browser container.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Ask the authorization readiness per run-store operation. Chaining off it once inherited a boot-time bootstrap failure permanently, so run history stayed dead after authorization itself recovered.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Preserve issuer separation in coarse package visibility for interactive and scheduled tests.
  */
 import type { Request } from 'express';
 import type { AppContext } from './app-context';
@@ -69,7 +70,7 @@ async function visibleCases(apps: SwarmAppService, access: AppAccessService, aut
   const visible = new Set((await apps.listApps('active', { ownerSub: actor.sub, isOperator: actor.isSwarmAdmin })).map(record => record.name));
   for (const manifest of await apps.getActiveManifests()) {
     if (!visible.has(manifest.name) || (appName !== undefined && manifest.name !== appName)) continue;
-    if (manifest.access && (await access.resolve(manifest.name, actor.sub, manifest.access)).tier === 'deny') continue;
+    if (manifest.access && (await access.resolveForPrincipal(manifest.name, actor.sub, actor.issuer, manifest.access)).tier === 'deny') continue;
     if (authorization.runtime.protectedApp(manifest.name) && !await authorization.runtime.canDiscover(manifest.name, actor)) continue;
     result.set(manifest.name, manifest.displayName || manifest.name);
   }

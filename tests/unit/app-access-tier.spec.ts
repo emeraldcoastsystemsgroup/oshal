@@ -4,6 +4,10 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: verify explicit-deny-wins/default/stale resolution, durable assignment SQL, fail-closed manifest and CLI validation, and the FORCE-RLS migration contract.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard the tier resolver itself in the default unit run: it must carry the actor issuer into the lookup for EVERY issuer, so reinstating the short-circuit that refused a federated identity before reading an assignment goes red without a database. The database boundary itself is proved in tests/authorization-issuer-tier-live.spec.ts against real PostgreSQL.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cover the principal-qualified lookup: the assignment SQL carries the actor issuer and the pre-145 local-auth rule, an upsert records the issuer it was written for, and migration 145 keeps the column nullable so an older row is never guessed into the configured identity provider.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin the principal-qualified key and RLS predicate while retaining local-only compatibility.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Pin that resolveForPrincipal reads under the SYSTEM identity even inside a non-operator request identity, and restores the caller's identity afterwards. Migration 145's owner-read policy hides the legacy NULL row from every federated caller, so a resolver that reads under the caller's identity cannot see a legacy deny on the enforcement paths; the database boundary itself is proved in tests/authorization-issuer-tier-live.spec.ts.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +17,14 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { spawnSync } from 'child_process';
 import { AppAccessService, readManifest, type SwarmAppAccessDeclaration } from '../../src/features/swarm-apps';
+import { createLegacyTierResolver } from '../../src/app/composition/application-access-tier';
+import type { AuthorizationActor } from '../../src/shared/application-authorization';
+import {
+  getRequestIdentity,
+  isSystemIdentity,
+  runWithRequestIdentity,
+  type RequestIdentity,
+} from '../../src/shared/services/database/request-identity';
 
 const ACCESS: SwarmAppAccessDeclaration = {
   supported: ['deny', 'viewer', 'editor', 'admin'],
@@ -29,7 +41,7 @@ describe('AppAccessService resolution', () => {
   it('uses the manifest default when no exact assignment exists', async () => {
     const { pool, query } = poolWithRows([]);
     const decision = await new AppAccessService(pool).resolve('career-hunter', 'user-a', ACCESS);
-    expect(query).toHaveBeenCalledWith(expect.stringContaining('user_sub = $1 AND app_name = $2'), ['user-a', 'career-hunter']);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('user_sub = $1 AND app_name = $2'), ['user-a', 'career-hunter', 'urn:oshal:local-auth']);
     expect(decision).toEqual({
       appName: 'career-hunter', userSub: 'user-a', tier: 'viewer', bundle: null, source: 'default',
     });
@@ -73,8 +85,118 @@ describe('AppAccessService resolution', () => {
     const assignment = await new AppAccessService(pool).assign({
       userSub: 'User:Exact', appName: 'career-hunter', tier: 'admin', assignedBySub: 'operator-sub', reason: ' Support lead ',
     });
-    expect(query.mock.calls[0][1]).toEqual(['User:Exact', 'career-hunter', 'admin', 'operator-sub', 'Support lead']);
-    expect(assignment).toMatchObject({ userSub: 'User:Exact', appName: 'career-hunter', tier: 'admin', assignedBySub: 'operator-sub' });
+    expect(query.mock.calls[0][1]).toEqual(['User:Exact', 'career-hunter', 'admin', 'operator-sub', 'Support lead', null]);
+    expect(assignment).toMatchObject({ userSub: 'User:Exact', appName: 'career-hunter', tier: 'admin', assignedBySub: 'operator-sub', userIssuer: null });
+  });
+
+  it('records the issuer an assignment was written for', async () => {
+    const now = new Date('2026-09-16T12:00:00.000Z');
+    const { pool, query } = poolWithRows([{
+      user_sub: '100000000000000000001', user_issuer: 'https://accounts.google.com', app_name: 'career-hunter',
+      tier: 'admin', assigned_by_sub: 'operator-sub', reason: 'Owner', created_at: now, updated_at: now,
+    }]);
+    const assignment = await new AppAccessService(pool).assign({
+      userSub: '100000000000000000001', userIssuer: 'https://accounts.google.com', appName: 'career-hunter',
+      tier: 'admin', assignedBySub: 'operator-sub', reason: 'Owner',
+    });
+    expect(query.mock.calls[0][0]).toContain('user_issuer');
+    expect(query.mock.calls[0][1][5]).toBe('https://accounts.google.com');
+    expect(assignment.userIssuer).toBe('https://accounts.google.com');
+  });
+
+  it('asks for the assignment written for the actor issuer, and for a pre-145 local-auth row', async () => {
+    const { pool, query } = poolWithRows([]);
+    await new AppAccessService(pool).resolveForPrincipal(
+      'career-hunter', '100000000000000000001', 'https://accounts.google.com', ACCESS,
+    );
+    expect(query.mock.calls[0][0]).toContain("COALESCE(user_issuer, 'urn:oshal:local-auth') = $3");
+    expect(query.mock.calls[0][1]).toEqual([
+      '100000000000000000001', 'career-hunter', 'https://accounts.google.com',
+    ]);
+  });
+
+  it('reads the assignment under the SYSTEM identity inside a non-operator request identity', async () => {
+    const seen: Array<RequestIdentity | undefined> = [];
+    const query = vi.fn(async () => { seen.push(getRequestIdentity()); return { rows: [], rowCount: 0 }; });
+    const caller: RequestIdentity = { sub: 'user-a', principalIssuer: 'https://accounts.google.com', isOperator: false };
+    await runWithRequestIdentity(caller, async () => {
+      await new AppAccessService({ query } as unknown as Pool)
+        .resolveForPrincipal('career-hunter', 'user-a', 'https://accounts.google.com', ACCESS);
+      expect(getRequestIdentity(), 'the caller identity is restored once the read completes').toBe(caller);
+    });
+    expect(seen).toHaveLength(1);
+    // The owner-read policy admits a federated caller to its issuer-bound row only; the legacy
+    // NULL row is urn:oshal:local-auth and would be invisible under the caller's own identity.
+    expect(isSystemIdentity(seen[0]), 'the lookup must run under the SYSTEM identity').toBe(true);
+  });
+
+  it('refuses an issuer that is not an exact bounded string', async () => {
+    const { pool } = poolWithRows([]);
+    await expect(new AppAccessService(pool).resolveForPrincipal('career-hunter', 'user-a', '', ACCESS))
+      .rejects.toThrow(/userIssuer/);
+    await expect(new AppAccessService(pool).resolveForPrincipal('career-hunter', 'user-a', 'x'.repeat(2049), ACCESS))
+      .rejects.toThrow(/userIssuer/);
+  });
+});
+
+/**
+ * The resolver seam that carried the defect. These doubles stand in for the registry and the
+ * store so the resolver's OWN contract is checked on every `vitest run`; the store/database
+ * boundary they replace is proved for real in tests/authorization-issuer-tier-live.spec.ts.
+ */
+describe('legacy tier resolver principal handling', () => {
+  function resolver(tier: 'deny' | 'viewer' | 'editor' | 'admin', source: 'explicit' | 'default') {
+    const seen: Array<{ app: string; sub: string; issuer: string }> = [];
+    const access = {
+      resolveForPrincipal: async (app: string, sub: string, issuer: string) => {
+        seen.push({ app, sub, issuer });
+        return { appName: app, userSub: sub, tier, bundle: null, source };
+      },
+    };
+    const apps = () => ({ getApp: async () => null });
+    return { seen, resolve: createLegacyTierResolver(access as never, apps as never) };
+  }
+
+  function actor(sub: string, issuer: string): AuthorizationActor {
+    return { sub, issuer, isActive: true, isSwarmAdmin: false };
+  }
+
+  it.each([
+    ['https://accounts.google.com'],
+    ['urn:oshal:local-auth'],
+    ['urn:oshal:mock-oidc'],
+    ['https://login.microsoftonline.com/common/v2.0'],
+  ])('carries the actor issuer %s into the lookup instead of refusing before it', async (issuer) => {
+    const { seen, resolve } = resolver('admin', 'explicit');
+    await expect(resolve('intelligent-trades', actor('subject-a', issuer))).resolves.toEqual({
+      tier: 'admin', explicit: true,
+    });
+    expect(seen).toEqual([{ app: 'intelligent-trades', sub: 'subject-a', issuer }]);
+  });
+
+  it('reports a manifest default as NOT explicit, so nothing is synthesised from it', async () => {
+    const { resolve } = resolver('admin', 'default');
+    await expect(resolve('intelligent-trades', actor('subject-a', 'https://accounts.google.com')))
+      .resolves.toEqual({ tier: 'admin', explicit: false });
+  });
+
+  it('reports an explicit deny for a federated identity instead of dropping it', async () => {
+    const { resolve } = resolver('deny', 'explicit');
+    await expect(resolve('intelligent-trades', actor('subject-a', 'https://accounts.google.com')))
+      .resolves.toEqual({ tier: 'deny', explicit: true });
+  });
+});
+
+describe('migration 145 app access principal issuer contract', () => {
+  const sql = readFileSync(resolve('scripts/migrations/145-app-access-principal-issuer.sql'), 'utf8');
+
+  it('preserves nullable provenance while isolating principal keys and owner reads', () => {
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS user_issuer TEXT');
+    expect(sql).not.toMatch(/user_issuer\s+TEXT\s+NOT NULL/);
+    expect(sql).toContain('octet_length(user_issuer) <= 2048');
+    expect(sql).toContain('PRIMARY KEY (user_sub, app_name, principal_issuer)');
+    expect(sql).toContain("principal_issuer = current_setting('oshal.current_issuer', true)");
+    expect(sql).not.toMatch(/UPDATE\s+oshal_app_access/i);
   });
 });
 
