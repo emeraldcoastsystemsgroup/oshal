@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | WorkflowDefinition.autoStart — carried from the manifest so the queue manager can auto-approve tickets of an auto-start workflow.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-083: 'task' workflow default workerBot project-manager → general-bot. The owner is now chosen by the knowledge-owner call-out (task-call-out.ts); the workflow default is only the last resort, and it must be a tool-capable DOER, not the PM planner (whose claude-code 401s escalated task tickets).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Comment corrections only. The pipeline doc block said 'staged' is "Executed by dispatch-staged-worker" - no such file exists - and the built-in list advertised it, in the same file whose chooseDispatchPath records the executor as retired and has no branch for it. A manifest declaring pipeline: staged silently becomes a single-bot manifest-worker run with every approval gate dropped.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | A fifth site in this file implied 'staged' is live: the workerBot doc said it is "informational only" for 'staged'/'graph'. For a manifest declaring the retired 'staged' pipeline the opposite is true - it falls through to manifest-worker and workerBot is the ONLY bot that runs.
  */
 
 /**
@@ -43,8 +44,10 @@ export interface WorkflowDefinition {
   name: string;
   /** Which pipeline handler processes this ticket type. Built-ins: 'incident-rca' | 'swarm' | 'graph' ('staged' is retired — see the pipeline notes above). Apps may contribute labels; unknown values fall through to the default 'swarm' dispatcher. */
   pipeline: string;
-  /** Worker bot persona name (resolved via agent registry). For 'staged'/'graph' workflows this
-   *  is informational only (the stages/graph drive execution); set it to the first stage's bot. */
+  /** Worker bot persona name (resolved via agent registry). For a 'graph' workflow this is
+   *  informational only (the compiled processDefinition drives execution); set it to the first node's
+   *  bot. It is NOT informational for a manifest declaring the retired 'staged' pipeline — that falls
+   *  through to manifest-worker and this is the only bot that runs. */
   workerBot: string;
   /** Reviewer bot persona name — opt-in. When set the incident-rca pipeline runs Phase 2 review. Default omitted = one-and-done. */
   reviewerBot?: string;

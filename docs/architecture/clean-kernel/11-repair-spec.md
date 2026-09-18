@@ -2,13 +2,15 @@
 
 > **VERIFIED 2026-09-18 — read [`docs/backlog/clean-kernel-repair.md`](../../backlog/clean-kernel-repair.md)
 > before acting on anything below.** Every claim in this document was re-derived against the tree and
-> then handed to a second reader instructed to overturn it. Twenty of the twenty-one mechanisms are
-> confirmed at the line they cite; **R3.2 is refuted outright** (the derivation it asks for already
-> exists and its target of 0 would remove the sentinel that makes row-level security survivable). Seven
-> impacts are corrected downward and five upward, the R2 site counts are inflated ~1.7× by a generated
-> tree, D7's proposed guard fires on 50 of 103 persona files as written, and four defects this document
-> does not name were found during verification. **The sizing below does not survive:** thirteen of the
-> fifteen R0 defects verified at size S against this document's "roughly six to ten weeks".
+> then handed to a second reader instructed to overturn it. Twenty of the twenty-one mechanisms were
+> **located and confirmed in the tree**, with citation drift corrected on six of them — this document
+> cites no files or line numbers, so nothing here was confirmed "at the line it cites".
+> **R3.2 is refuted outright** (the derivation it asks for already exists, and its target of 0 would
+> remove the sentinel that makes row-level security survivable). The R2 site counts are inflated ~1.7×
+> by a generated tree, D7's proposed guard fires on 50 of 103 persona files as written, and four
+> defects this document does not name were found during verification. **The sizing below does not
+> survive:** twelve of the fifteen R0 defects verified at size S and three at M (D7, D10, D11), two of
+> those three then reduced by the adversarial pass — against this document's "roughly six to ten weeks".
 > The backlog file is the queue; these tables are superseded by it.
 
 **Status:** DRAFT 2026-09-18, for operator review. This is the alternative to the rewrite: how to reach

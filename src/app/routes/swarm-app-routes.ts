@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | A GUEST session degrades to the unprotected applications instead of being refused. The actor resolver throws for the guest issuer by design, and routing that refusal to the surface as 401 left AppsHomeView rendering "The application list could not be read" on a deployment running ENABLE_GUEST_MODE=true. A guest is now admitted with NO actor, which the runtime already reads as refusing every protected application - stricter than main, which showed a guest those same framework apps without asking policy at all.
  * 15 | maintainer@emeraldcoastsystemsgroup.com  | ADR-145 D4/D5: GET /:name/setup and /:name/setup-dashboard address an ACTIVE GROUP **or** an ACTIVE APP, so an app that belongs to no group can finally report. The plan comes from getAppStatusPlan over the manifests THIS caller may see (the /:name visibility rule, so an invisible app 404s like a missing one) and carries each app's summary probe; for a member that declares no `summary:` the response also carries D5's fallbackItems, composed from this user's own recent jarvis_tasks rows through the injected recentAppTasks port (the router owns no pool). Manifest data only — the page still asks every probe itself in the viewer's own session.
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | PUT /:name/access accepts an OPTIONAL userIssuer so an operator-made tier assignment can name the verified identity provider it belongs to (migration 145). Omitting it stores no issuer, which is exactly what this route did before and still resolves only for a canonical local account; it grants nobody anything on its own.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Comment correction only. The publish JSDoc said the endpoint has "two emit targets: a single-shot bot (manifest-worker) or an authored multi-bot workflow (staged)". The compiler sets pipeline: 'graph' unconditionally on both emit paths, so neither is an emit target and there are three spec modes, not two. It survived the CV-1 sweep only by phrasing the claim differently from the pattern being grepped.
  */
 
 /** CHANGE LOG 18 | maintainer@emeraldcoastsystemsgroup.com | Resolve and clear exact principals; require current swarm operator authority for package lifecycle changes. */
@@ -448,8 +449,9 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
    * POST /publish — compile an authored workflow spec into a manifest, write it to
    * the writable deployed-apps/ dir, and load it LIVE (no reboot). This is how a
    * Workflow Studio canvas / builder-bot turns an authored workflow into a runnable
-   * app == queue. Two emit targets: a single-shot bot (manifest-worker) or an
-   * authored multi-bot workflow (staged).
+   * app == queue. THREE spec modes - 'single-shot', 'staged' and 'graph' - and all
+   * three compile to the SAME emit: pipeline 'graph' plus a processDefinition the
+   * engine runs. Neither 'manifest-worker' nor 'staged' is ever an emit target.
    *
    * Scope: 'person' (default) is owned by the caller and visible only to them;
    * 'public'/'tenant' require operator privilege. Owner is taken from the session,

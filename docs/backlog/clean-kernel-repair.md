@@ -12,9 +12,12 @@ verdict was then handed to a second reader whose instructions were to overturn i
 with the file and line that does it. Twenty-one claims, two independent passes each.
 
 **Headline: the assessment is substantially sound.** Not one claim was fabricated; twenty of the
-twenty-one mechanisms exist at the line they cite. What the second pass repeatedly found wrong is the
+twenty-one mechanisms were **located and confirmed in the tree**. (Not "at the line they cite" — the
+assessment cites no files or lines at all; every file:line in this queue was derived by the verification
+passes, and six claims needed their derived citations corrected.) What the second pass repeatedly found wrong is the
 **consequence attached to the mechanism** — the same failure shape this repo already has a rule about.
-Seven items had their impact corrected downward, five upward or wider, and one was overturned outright.
+Six items had their impact corrected downward, four upward, two found wider in scope but lower in
+severity, and one was overturned outright.
 
 This file is the queue. It replaces the repair spec's own wave/sizing tables, which are superseded by
 the measurements below.
@@ -22,10 +25,11 @@ the measurements below.
 | | count |
 |---|---|
 | claims assessed | 21 |
-| mechanism confirmed at the cited line | 20 |
+| mechanism located and confirmed in the tree | 20 |
 | overturned outright (the code is already correct) | 1 — R3.2 |
-| impact corrected **down** by the second pass | 7 — D7, D10, D11, D12, D14, D15, R2 |
-| impact corrected **up**, or scope found wider than claimed | 5 — D2, D5, R0.11, R1.1, and R0.12 (wider scope, *lower* severity) |
+| impact corrected **down** by the second pass | 6 — D7, D10, D11, D14, D15, R2 |
+| impact corrected **up** | 4 — D2, D4, D5, D12 |
+| scope found wider, severity found lower | 2 — R0.11, R1.1; and R0.12, whose phase count the pass *narrowed* (1 of 7, not 2) |
 | ready to ship, no operator decision | 11 — CKR-1 to CKR-9, plus CV-1 and CV-4 |
 | blocked on an operator decision | 13 — CKR-10 to CKR-20, plus CV-2 and CV-3 |
 | not real, or already correct | 1 |
@@ -111,8 +115,18 @@ manifests", and three in the dispatcher itself. That is the trap in D2.
 This is the live half of D2: an author who believes those four sentences writes `pipeline: staged`, gets
 a single-bot run with every approval gate skipped, and nothing logs it.
 
-- **Done — verified in this change:** `git grep -n "the .staged. executor" -- ':!docs/backlog/'` returns
-  zero hits **repo-wide**. The first attempt at this criterion scoped the grep to the three files that had
+- **Done — verified in this change.** Two checks, because one grep cannot express it:
+  (a) `git grep -nE "the .staged. (executor|dispatcher)" -- ':!docs/backlog/'` returns only lines that
+  also contain `retired` or `supersedes` — i.e. every surviving mention states the retirement rather
+  than asserting the thing exists. (b) `git grep -n dispatchStagedTicket -- ':!docs/backlog/'` returns
+  exactly **one** hit, the orphan JSDoc at `queue-manager-service.ts:745`, which CKR-10 removes.
+
+  A single broader pattern was tried and rejected: `\(staged\)` also matches an unrelated sense of the
+  word — `ADR-139 "Accepted (staged)"`, the Alexa connector, the report-only CSP — so it cannot
+  distinguish a false claim from a phased rollout. The first attempt had the opposite failure: it
+  grepped one phrasing and **two sites survived by wording the same false claim differently** —
+  `swarm-app-routes.ts` calling `(staged)` an emit target, and `dispatch-routing.ts` calling `workerBot`
+  "informational only" for a `'staged'` workflow. Both are corrected here. The first attempt at this criterion scoped the grep to the three files that had
   already been edited, which is exactly the narrowing Rule 0 forbids — run unscoped it found a fourth,
   `ROADMAP.md:117`, carrying the identical sentence in a row whose status column reads **Shipped**. That
   is corrected here too. The only exclusion is this file, which quotes the sentence to describe it.
@@ -709,8 +723,11 @@ sites are not removable. The one shape that can fail open — choosing `runWithS
 (`connector-webhook-routes.ts` Change Log 5, call at `:197`; `a2a-routes.ts` Change Log 2, call at `:200`).
 Those are per-site defects with per-site guards, which is the right shape.
 
-**Action:** delete the scoreboard row `Files threading tenancy identity by hand | 113 | 0`
-(`10-what-we-are-improving.md:251`) and the item `### R3.2 — Tenancy identity carried, not threaded`
+**Action:** delete the scoreboard row beginning `| Files threading tenancy identity by hand |` in
+`10-what-we-are-improving.md` §7 — **identified by its text, not a line number**: an earlier draft of
+this Action cited `:251`, which the banner added by this same change had already shifted onto
+`Meanings of approval_required`, a row this verification confirms and CKR-12 exists to fix. Then delete
+the item `### R3.2 — Tenancy identity carried, not threaded`
 (`11-repair-spec.md:377-382`), or annotate both with this finding. Cite the heading text as well as the
 line: an earlier draft of this entry published pre-banner line numbers and would have sent the reader
 into R3.1, an unrefuted item.

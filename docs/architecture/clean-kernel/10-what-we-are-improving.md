@@ -5,12 +5,16 @@
 > the corrections and the resulting work items are in
 > [`docs/backlog/clean-kernel-repair.md`](../../backlog/clean-kernel-repair.md).
 >
-> **One row of §7 does not survive:** *"Files threading tenancy identity by hand | 113 | 0"* (:251) is
-> refuted — 89 of the 113 call the trusted-SYSTEM sentinel, which carries no tenancy identity and is not
-> removable, so the target of 0 is wrong.
+> **One row of §7 does not survive:** the row beginning `| Files threading tenancy identity by hand |`
+> is refuted — 89 of the 113 call the trusted-SYSTEM sentinel, which carries no tenancy identity and is
+> not removable, so the target of 0 is wrong.
 >
-> **Three rows carry no verification** and should not be quoted as measured: *Bot replicas* (:249),
-> *Server codebases* (:252) and *Layering enforcement* (:253). Neither pass examined them.
+> **Three rows carry no verification** and should not be quoted as measured: the rows beginning
+> `| Bot replicas |`, `| Server codebases |` and `| Layering enforcement |`. Neither pass examined them.
+>
+> (Rows are identified by their text, not a line number. An earlier draft of this banner cited lines
+> that its own insertion had already shifted by eight, which pointed at four different rows — including
+> `Meanings of approval_required`, a defect this verification *confirms*.)
 >
 > The inflated import figure is **not in this document** — it is `11-repair-spec.md:466` and
 > `01-high-level-spec.md:100`, `:500`. It was measured over a tree containing a generated `output/`
