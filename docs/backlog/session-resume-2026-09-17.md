@@ -13,8 +13,11 @@ assigning a package to a person without calling an ordinary student an applicati
 
 - PR 605's initial issuer change was unsafe: its subject-only primary key let one issuer overwrite
   another issuer's assignment, including a deny. The repaired key includes the canonical issuer.
-  Full-principal reads, clears, owner RLS and connection identity stamping/reset agree. Legacy NULL
-  means local only. An incomplete migration cannot fall back to a cross-principal write.
+  Full-principal reads, clears, owner RLS and connection identity stamping/reset agree. A legacy
+  NULL-issuer row is the full assignment for the canonical local account and a ceiling for every
+  other issuer of the same subject (migration 146): a pre-145 deny still denies and a legacy viewer
+  still caps a federated identity, while a legacy grant never lifts it above the manifest default.
+  An incomplete migration cannot fall back to a cross-principal write.
 - Stop and uninstall now use the existing swarm-operator guard. This was an independent defect:
   an authenticated caller could reach the lifecycle service without holding a management role.
   `@app-admin` itself does not confer the core access-management roles.
@@ -66,7 +69,8 @@ container recreation or migration. The image build stalled while Docker queries 
 timed out; free host physical memory was approximately 0.8–1 GB. Resource pressure is an observation,
 not a proven root-cause attribution. Only the owned preview/build processes were stopped. The prior
 runtime recovered: API HTTP 200, 37/37 application containers healthy, no API restart, still commit
-`49686ac4aebf924fdd97ce6ca859a837e545c24f`. Migration 145 remains absent. Coarse and policy assignment
+`49686ac4aebf924fdd97ce6ca859a837e545c24f`. Migration 145 was still absent at that point; it was
+applied later (see the execution receipt below). Coarse and policy assignment
 counts and complete-row fingerprints match the pre-attempt snapshot exactly.
 
 The stopped run's lock was preserved under a distinct name after checking its timestamp and that no
@@ -91,7 +95,9 @@ worker. Do not repeat this build alongside memory pressure or infer deployment f
    separate from synthetic test results. Follow the package's `docs/authorization.md` migration guide.
 
 Read-only preflight found 37 healthy application containers, API health HTTP 200 and runtime commit
-`49686ac4aebf924fdd97ce6ca859a837e545c24f`. Migration 145 is absent. Migration 142 is applied and the
+`49686ac4aebf924fdd97ce6ca859a837e545c24f`; migration 145 was absent and migration 142 applied at that
+time. The receipt below supersedes this snapshot.
+
 ## Rollout execution receipt (2026-09-17)
 
 All five rollout steps completed on local preview:
@@ -100,6 +106,32 @@ All five rollout steps completed on local preview:
 3. Legacy `@app-admin` fallback assignments for Operator and the student revoked under old catalog revision via audited `store.transaction`.
 4. Little Monsters 1.3.2 staged and activated via `POST /api/swarm/apps/load`. Primary bot `lecture-scribe` active. Deploy parity 37/37 clean on `480affd99a53`.
 5. The student was granted the `student` role (tier: `editor`, study operations allowed, teaching denied); Operator granted `admin` role (tier: `admin`). Policy revision: 90. Full release record at [little-monsters-person-roles-2026-09-17.md](../releases/little-monsters-person-roles-2026-09-17.md).
+
+## Changed after review (second adversarial review of PR 605)
+
+- **Legacy ceiling on every enforcement path.** Migration 146 corrected the meaning of a pre-145
+  NULL-issuer row, but the ceiling was readable only under the system identity: the gate middleware,
+  the dynamic route mounter and the artifact/Test Lab visibility reads resolve under the caller's
+  identity, and 145's owner-read policy hides the NULL row from a federated caller, so a legacy deny
+  resolved to the manifest default and the real gate returned 200. `resolveForPrincipal` now reads
+  its exact (subject, application, issuer-or-NULL) predicate under the system identity; assign, clear
+  and `listAssignments` still run under the caller. Proved by two new cases in
+  `tests/authorization-issuer-tier-live.spec.ts` under a non-operator Google request identity, one
+  through the real `createSwarmAppGateMiddleware` over HTTP (legacy deny -> 403 `app_access_denied`,
+  issuer-bound re-bind -> 200, re-bind cleared -> 403), red with the resolver restored to `c6852384`.
+- **Service-secret callers are refused at the tier gate on purpose.** A fleet `X-Service-Secret` call
+  carrying `X-Oshal-User-Sub-B64` names a subject and no identity provider; the gate and the mounter
+  answer `403 app_access_identity_required` before any tier is resolved rather than assuming
+  `urn:oshal:local-auth` or reading the subject across every issuer. Recorded in
+  `docs/security/application-authorization.md`; pinned at the HTTP boundary in
+  `tests/unit/swarm-app-gate-access.spec.ts` and `tests/unit/manifest-route-mounter.spec.ts`.
+- **The issuer re-key is one-way.** 145 and 146 have no down migration; the deploy's image rollback
+  does not restore the subject-only key, and the pre-145 upsert then fails with
+  `no unique or exclusion constraint matching the ON CONFLICT spec`. Roll forward only.
+- **Migration numbering.** This branch holds 146; PR 633 renumbered its own migration to 147.
+- **Not fixed here, recorded:** `POST /api/swarm/apps/load` and `/import` carry only the mount-level
+  `requiresAuth` (BACKLOG, "Security, tenancy, and trust boundaries").
+- The release note and this resume no longer name the student or carry her subject.
 
 ## Still open
 

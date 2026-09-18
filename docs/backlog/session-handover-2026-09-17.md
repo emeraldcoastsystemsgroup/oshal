@@ -45,7 +45,7 @@ worth restarting.
 
 ## The open design question, in the operator's words
 
-> "i dont understand why ella has to be an admin just to be a user of an aplication. thats some
+> "i dont understand why [the student] has to be an admin just to be a user of an aplication. thats some
 > bullshit."
 
 He is right, and it is a real defect, not a misunderstanding. What was verified:

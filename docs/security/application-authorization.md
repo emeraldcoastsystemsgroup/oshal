@@ -223,8 +223,14 @@ Little Monsters documents its student/teacher/admin adoption sequence in its pac
 Migration 145 keys coarse application access by subject, application and issuer. A legacy NULL issuer
 and `urn:oshal:local-auth` identify the same local principal; different external issuers remain separate,
 including explicit denies and clears. Owner reads require the subject and verified issuer in the
-database request context. Package stop and uninstall are swarm-operator actions, independent of
-application business roles.
+database request context. Migration 146 records that a legacy NULL-issuer row is also a ceiling for
+every other issuer of its subject (a pre-145 deny still denies, a viewer still caps, a grant never
+lifts a federated identity above the manifest default), and the tier resolver reads that exact
+principal predicate under the system identity so the ceiling reaches the gate, the route mounter and
+visibility reads for a federated caller. Both migrations are one-way: there is no down migration, the
+deploy's image rollback does not restore the subject-only key, and the pre-145 upsert then fails with
+`no unique or exclusion constraint matching the ON CONFLICT spec`; roll forward. Package stop and
+uninstall are swarm-operator actions, independent of application business roles.
 
 A fleet service-secret call (`X-Service-Secret`) that carries `X-Oshal-User-Sub-B64` names a subject but
 no identity provider, so the tier gate and the dynamic route mounter refuse it with

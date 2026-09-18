@@ -1399,6 +1399,23 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** scope the exemption to the suites whose purpose IS the live stack (an explicit, reviewed list or a directory rule), and refuse the shape everywhere else.
 - **Done when:** a new `tests/unit/` spec that reaches `oshal-local-db` through `docker exec` fails the gate; the live-stack e2e suites still pass it; and the guard spec carries a case for each side.
 
+### POST /api/swarm/apps/load and /import carry only the mount-level requiresAuth
+- **Remaining:** `src/app/server.ts` mounts `/api/swarm/apps` behind `requiresAuth` alone, and neither
+  `router.post('/load')` nor `router.post('/import')` in `src/app/routes/swarm-app-routes.ts` checks
+  operator or management-role authority before `service.loadApp(manifestPath, { ownerSub })`, whose
+  signature carries no caller: it prepares the catalog registration, asserts tool ownership and upserts
+  the record. So any signed-in principal can hot-load any `.yaml` under `swarm-apps/` by path, or
+  upload a manifest that is written into `swarm-apps/` (auto-loaded on every later boot) and loaded
+  live, becoming its `owner_sub`. By contrast stop and uninstall require current swarm-operator
+  authority (PR 605) and `/publish` requires it for public/tenant scope. Found in the second review of
+  PR 605 and deliberately not fixed there; verified 2026-09-17 by reading both handlers on that branch.
+- **Done when:** both routes require the same current swarm-operator (or a named management-role)
+  authority as stop/uninstall, or a person-scoped load is designed and the operator-only shape is
+  explicit; a unit spec beside `tests/unit/swarm-app-lifecycle-authorization.spec.ts` proves an
+  authenticated non-operator receives 403 on both before any file is written or record upserted and an
+  operator succeeds; and an uploaded manifest can never land a public- or tenant-scoped app for a
+  non-operator.
+
 ## Workflow, agent, and model runtime
 
 ### Jarvis in dev mode should see what this workspace sees: an indexed developer corpus (operator, 2026-09-18)
