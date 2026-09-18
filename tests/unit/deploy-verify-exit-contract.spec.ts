@@ -4,10 +4,12 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guards the EXIT-CODE contract, which is what the third state was missing. Between 2026-09-15 and 2026-09-16 `VERIFY UNVERIFIED` printed on every deploy, in the same words each time, while Jarvis answered 503 to every ask and a real ticket landed in `escalated` - and each of those runs still ended `DEPLOYED ... 0 unhealthy` with exit 0. A verdict with no consequence is not a gate. Two rules give it one and both are driven here against the real library in a real shell. (a) With OSHAL_VERIFY_OPERATOR_PAT set the product checks are BINARY: the probe already refused exit 3 on a supplied token, but the shell - which decides the deploy's exit code - accepted a 3 unconditionally, and a 3 is reachable with the token visibly set, because ${!OSHAL_VERIFY_@} enumerates non-exported variables and a bare assignment is forwarded as a name docker resolves against its own environment and finds nothing. (b) An unproven run escalates off a ledger the gate appends to, so the third consecutive one returns 3 and the deploy exits 5 - a different fact from exit 4's proved-broken - and the line printed on the way there changes every run. tests/unit/deploy-live-verification.spec.ts keeps the three checks themselves; this file is only about what a deploy DOES with their verdicts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard the storm tail by DRIVING it: the real block from scripts/oshal-deploy.sh is executed at each probe outcome and the operator-facing line is read back. Restoring the defect it fixes - logging UNVERIFIED and then claiming "api lived through the recreate" - left every deploy guard in this file green, because the only thing asserted about that block was the absence of one word.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -243,6 +245,62 @@ describe('scripts/oshal-deploy.sh — the two codes it spends those verdicts on'
     // Reachable from nowhere else, or the code stops meaning anything — same rule as exit 4.
     expect(deploySource.match(/exit 5/g) ?? []).toHaveLength(1);
     expect(deploySource.slice(0, deploySource.indexOf('set -uo pipefail'))).toMatch(/EXIT:[\s\S]*\b5\b/);
+  });
+
+  /**
+   * @description Runs the REAL storm block out of scripts/oshal-deploy.sh at one probe outcome.
+   * Everything the block reads is supplied; nothing about it is rewritten, so the assertions are
+   * about the sentence an operator actually gets.
+   * @param rc - The probe's exit status: 0 measured-and-clean, 1 failed, 2 could not look.
+   * @param verdict - The probe's own stdout line, which the failure text branches on.
+   * @returns The block's output and exit status.
+   */
+  function stormBlock(rc: number, verdict = ''): { out: string; status: number | null } {
+    const block = deploySource.slice(at('STORM_TAIL='), at('log "advisory error scan'));
+    const scratch = mkdtempSync(path.join(tmpdir(), 'storm-tail-'));
+    try {
+      const file = path.join(scratch, 'block.sh');
+      writeFileSync(file, [
+        'set -uo pipefail',
+        'log() { printf "%s\\n" "$*"; }',
+        'HEAD_SHA=abcdef0123456789; NEW_ID="sha256:0123456789abcdef"; BOT_SERVICES=(a b c)',
+        'RUN_LOG=/dev/null; API_CONTAINER=api; STORM_SINCE=2026-01-01T00:00:00Z; STORM_RESTARTS=0',
+        'VERIFY_TAIL="live verification passed"',
+        `STORM_RC=${rc}; STORM_VERDICT=${JSON.stringify(verdict)}`,
+        block,
+      ].join('\n') + '\n');
+      const run = spawnSync(BASH, [file.replace(/\\/g, '/')], { encoding: 'utf8', timeout: 30_000 });
+      return { out: `${run.stdout ?? ''}${run.stderr ?? ''}`, status: run.status };
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+
+  it('says the api survived the recreate ONLY on a run that measured it', () => {
+    // The whole point of the tail. A storm check that could not be taken used to log UNVERIFIED and
+    // then print "api lived through the recreate" one line below it, in the line the operator reads.
+    const measured = stormBlock(0);
+    expect(measured.status).toBe(0);
+    expect(measured.out).toContain('api lived through the recreate');
+
+    const unverified = stormBlock(2);
+    expect(unverified.status, 'a check that could not be taken is not a failure').toBe(0);
+    expect(unverified.out).toContain('UNVERIFIED');
+    expect(unverified.out, 'it cannot claim survival in the same breath as UNVERIFIED')
+      .not.toContain('api lived through the recreate');
+  });
+
+  it('tells the operator which failure it saw, because a survived termination is not a restart', () => {
+    const restarted = stormBlock(1, 'api-storm-probe: FAIL(restarted) - RestartCount moved 0 -> 1');
+    expect(restarted.status).toBe(6);
+    expect(restarted.out).toContain('DID NOT LIVE THROUGH THE BOT RECREATE');
+
+    const terminated = stormBlock(1, 'api-storm-probe: FAIL(terminated) - RestartCount unchanged, but 1 line(s)');
+    expect(terminated.status).toBe(6);
+    expect(terminated.out).toContain('TRANSACTION WAS TERMINATED');
+    expect(terminated.out, 'the process did not restart, so nobody should be sent to read one')
+      .not.toContain('DID NOT LIVE THROUGH THE BOT RECREATE');
+    expect(terminated.out).not.toContain('Read the restart');
   });
 
   it('maps the gate’s two non-zero returns to those two codes, and to nothing else', () => {

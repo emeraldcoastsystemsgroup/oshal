@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards the promote step's outcome contract. The regression these prevent is the 2026-07-29 shape: a deploy that failed AND left nothing serving reported the same thing as a deploy that failed safely, so the operator learned it from `docker ps`. Exit 1 and exit 3 must stay distinguishable all the way out to the caller, and an unrecognized code must fail closed rather than read as success.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin the two post-deploy-verification codes. The deploy script grew exit 4 (deployed and SERVING, but the live verification proved the product broken) and exit 5 (deployed and SERVING, but the product was never PROVED for more consecutive runs than the gate tolerates). Both fell into the unrecognized arm, which answers stackServing: false and needsHands: true - the precise inversion entry 1 exists to prevent, sending an operator to oshal-up.sh for a stack that is up and serving. These cases require the serving half of both, require neither to read as 'deployed', and keep 4 and 5 distinguishable from each other: they demand different actions - fix the named check, versus supply an operator PAT the gate can prove with.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin exit 6 (deployed and SERVING, but the api did not live through the bot recreate): serving, no hands, never 'deployed', and distinct from 4 and 5.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -94,9 +95,22 @@ describe('promote verdicts — exit 1 and exit 3 are NOT the same failure', () =
     expect(v.summary).toContain('OSHAL_VERIFY_OPERATOR_PAT');
   });
 
-  it('keeps 4 and 5 distinguishable - proved broken and never proved demand different actions', () => {
+  it('reads 6 as deployed-and-SERVING but the api restarted inside the bot recreate - never as needing hands', () => {
+    // The 2026-09-05 shape: the api died and came back inside the recreate, and the run said
+    // DEPLOYED. The stack IS up; what needs reading is the api log, not oshal-up.sh.
+    const v = promoteVerdictForExit(6);
+    expect(v.status).toBe('deployed-api-restarted');
+    expect(v.stackServing).toBe(true);
+    expect(v.needsHands).toBe(false);
+    expect(v.summary).toMatch(/recreate/i);
+    expect(v.summary).toMatch(/not rolled back|nothing was rolled back/i);
+  });
+
+  it('keeps 4, 5 and 6 distinguishable - proved broken, never proved and restarted demand different actions', () => {
     expect(promoteVerdictForExit(4).status).not.toBe(promoteVerdictForExit(5).status);
-    for (const code of [4, 5]) {
+    expect(promoteVerdictForExit(6).status).not.toBe(promoteVerdictForExit(4).status);
+    expect(promoteVerdictForExit(6).status).not.toBe(promoteVerdictForExit(5).status);
+    for (const code of [4, 5, 6]) {
       expect(promoteVerdictForExit(code).status, String(code)).not.toBe('deployed');
       expect(promoteVerdictForExit(code).status, String(code)).not.toBe('unknown');
     }

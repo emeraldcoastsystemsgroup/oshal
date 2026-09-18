@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Classify the sandbox suite at the browser level: it now drives the image Chromium inside the disposable container.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Register the harness:core-test-fixtures guard: the staged core fixture closure, its Dockerfile COPY and allowlist, and the probe-only advertisement.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Register the post-deploy live verification guard alongside the other deploy-contract regressions: a deploy that reports DEPLOYED while Jarvis answers nothing and no ticket can be dispatched is reporting the wrong thing, and this is the suite that keeps that gate from decaying back into an advisory.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Attach the two guards this PR adds - pool-connection-errors and api-storm-probe - to the scenario that already carries their deploy/pool siblings. A test file on disk is not Test Lab registration (CLAUDE.md), and the review found both unattached.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -83,6 +84,8 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/deploy-live-verification.spec.ts' },
     { level: 'integration', path: 'tests/unit/deploy-verify-exit-contract.spec.ts' },
     { level: 'integration', path: 'tests/unit/managed-postgres-pool-budget.spec.ts' },
+    { level: 'integration', path: 'tests/unit/pool-connection-errors.spec.ts' },
+    { level: 'integration', path: 'tests/unit/api-storm-probe.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'test-lab', label: 'Installed package cases', run: installedCatalog }],
 }];

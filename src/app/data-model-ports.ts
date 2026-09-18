@@ -5,12 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | App-layer adapters for the data-model explorer's ports: the platform pool, a lazily-created one-connection TimescaleDB pool (TSDB_URL), installed app records (unredacted, server-internal - the route that serves them is operator-only), and read-only inventories of ArangoDB (databases, collections, counts), ChromaDB (collections, counts) and Redis (key families + value types, never values). Every external call is bounded by a timeout and every client is closed after use.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two drift ports: the platform pool again for the schema-digest history table (migration 139), and the applied-migration count read from app_migrations - the signal that separates a migrated schema change from an unexplained one. A missing app_migrations answers null rather than throwing, so drift falls back to the quiet window instead of failing.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Own the lazily-created TimescaleDB pool's connection 'error' events (ownPoolConnectionErrors) - a server-terminated connection on an unowned pool is an uncaught exception that ends the api process.
  */
 
 import { Pool } from 'pg';
 import Redis from 'ioredis';
 import { Database } from 'arangojs';
 import { createChildLogger } from '@/shared/logger';
+import { ownPoolConnectionErrors } from '@/shared/services/database';
 import {
   readCatalog, tallyFamilies, noDatabaseError,
   type AppRecordLite, type CatalogQueryable, type CatalogSnapshot, type DataModelPorts, type StoreCollection, type StoreInventory,
@@ -61,7 +63,10 @@ let timeseriesPool: Pool | null = null;
 async function timeseriesCatalog(): Promise<CatalogSnapshot | null> {
   const url = process.env.TSDB_URL;
   if (!url) return null;
-  timeseriesPool ||= new Pool({ connectionString: url, max: 1, idleTimeoutMillis: 30_000, connectionTimeoutMillis: TIMEOUT_MS });
+  timeseriesPool ||= ownPoolConnectionErrors(
+    new Pool({ connectionString: url, max: 1, idleTimeoutMillis: 30_000, connectionTimeoutMillis: TIMEOUT_MS }),
+    'data-model-timeseries',
+  );
   return withTimeout('time-series catalog', catalogOf(timeseriesPool));
 }
 

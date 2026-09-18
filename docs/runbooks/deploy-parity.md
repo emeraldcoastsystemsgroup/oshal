@@ -222,6 +222,34 @@ supplies it. `src/features/dev-console/services/deploy-promoter.ts` decodes both
 `stackServing: true, needsHands: false` — an operator sent to `oshal-up.sh` for a stack that is already
 up would be the exact inversion its exit-code contract exists to prevent.
 
+### `exit 6`: deployed and serving, but the api did not live through the bot recreate
+
+On 2026-09-05 the api process exited inside the bot recreate: the storm starved its event loop, a
+transaction idled past Postgres's `idle_in_transaction_session_timeout`, the termination reached a
+checked-out pg client that nothing owned, and the crash guards exited the process. Docker restarted
+it, it was healthy 40 s later, and the run printed DEPLOYED over about a minute of downtime that only
+the container's RestartCount recorded.
+
+`scripts/api-storm-probe.sh` now makes that a named outcome. `begin` snapshots the api container's
+RestartCount and the clock just before the recreate; after the census gate, `verify` reads the
+RestartCount again and counts `idle-in-transaction` lines in the api log inside that window. Either
+being non-zero is **exit 6**: the new image is live and serving, nothing is rolled back (the downtime
+already happened, and a rollback would only run the storm again), and the run does not say DEPLOYED.
+The promoter decodes it as `deployed-api-restarted` — `stackServing: true, needsHands: false`.
+
+What to go do: read the restart. The `since` value is on the deploy's `api-storm-probe` line:
+
+```bash
+docker logs --since <since> oshal-local-api 2>&1 | grep -i -E 'UNCAUGHT|idle-in-transaction'
+```
+
+A terminated checked-out connection is logged by `src/shared/services/database/pool-connection-errors.ts`
+with the backend pid, and the call site's own catch logs the statement that then rejected — together
+they name the transaction. The recreate pacing (`OSHAL_UP_BATCH_SIZE` / `OSHAL_UP_BATCH_SETTLE`) is
+printed on the "recreating N bots" line, so the log states what the run relied on. The probe runs
+standalone over any window: `bash scripts/api-storm-probe.sh begin`, then
+`bash scripts/api-storm-probe.sh verify <restarts> <since>`.
+
 ### Exit 4: deployed and serving, but the product is down
 
 A verification failure is **exit 4** and is deliberately **not** rolled back. The new image is

@@ -4,10 +4,12 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the long-lived bot-node's Postgres pool no longer becomes null for life when the cold-start race is lost. Measured 2026-09-17: a Docker daemon bounce cold-started every bot beside a cold Postgres, connectPool gave up after 10 attempts x 2 s, ended the pool and returned null, and 28 of 36 bots then served /health 200 without a database until a human restarted them. Here the SAME pool object is kept and handed to the boot path whether or not the first window succeeded (pg connects per checkout, so a pool that failed at second 20 works at second 40), a background probe with capped exponential backoff latches readiness on the first success and resolves whenReady so boot-only database steps can run late, and the status it exposes is what the health route and the refusal code read. One-shot callers (batch, record-cost, finalize-incident) keep connectPool's bounded null-on-exhaustion contract - a Job pod must exit, not wait.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Own the bot pool's connection 'error' events (ownPoolConnectionErrors). Bot nodes run the same crash guards as the api, so a server-terminated checked-out connection was the same silent process exit there.
  */
 import { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { gucEnabled, wrapPoolWithGuc } from '@/shared/services/database/guc-pool';
+import { ownPoolConnectionErrors } from '@/shared/services/database/pool-connection-errors';
 import { postgresApplicationName, resolvePoolMax } from '@/shared/services/database/pool-sizing';
 
 const logger = createChildLogger({ module: 'bot-node-database-pool' });
@@ -47,14 +49,14 @@ function positiveNumber(raw: string | undefined, fallback: number): number {
 }
 
 function newBotPool(dbUrl: string): Pool {
-  return new Pool({
+  return ownPoolConnectionErrors(new Pool({
     connectionString: dbUrl,
     max: resolvePoolMax(process.env.DB_MAX_CONNECTIONS, 5),
     application_name: postgresApplicationName(
       process.env.PGAPPNAME,
       `oshal-bot-${process.env.BOT_NAME || process.env.AGENT_ID || 'unknown'}`,
     ),
-  });
+  }), 'bot-node');
 }
 
 /**
