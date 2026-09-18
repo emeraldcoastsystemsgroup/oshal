@@ -11,6 +11,13 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { resolveHostBash } from '../helpers/deploy-verify-shell';
+/**
+ * Removing a Docker fixture is measured in tens of seconds on this box (20.2 s for the disposable
+ * Postgres), and vitest's default hook budget is 10 s — so every case passed while the FILE exited
+ * non-zero, which takes `npm run test:unit` red with it. The teardown gets its own budget.
+ */
+const TEARDOWN_TIMEOUT_MS = 120_000;
+
 
 const PROBE = path.resolve('scripts/api-storm-probe.sh').replace(/\\/g, '/');
 const BASH = resolveHostBash();
@@ -83,7 +90,7 @@ afterAll(() => {
   for (const name of containers) {
     spawnSync('docker', ['rm', '--force', name], { encoding: 'utf8', timeout: DOCKER_TIMEOUT_MS });
   }
-});
+}, TEARDOWN_TIMEOUT_MS);
 
 describe('scripts/api-storm-probe.sh', () => {
   it('PASS: RestartCount unchanged and no termination line inside the window', () => {

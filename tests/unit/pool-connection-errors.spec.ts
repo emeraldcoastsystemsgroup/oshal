@@ -12,6 +12,13 @@ import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DisposablePostgres } from '../helpers/disposable-postgres';
 import { ownPoolConnectionErrors } from '@/shared/services/database';
+/**
+ * Removing a Docker fixture is measured in tens of seconds on this box (20.2 s for the disposable
+ * Postgres), and vitest's default hook budget is 10 s — so every case passed while the FILE exited
+ * non-zero, which takes `npm run test:unit` red with it. The teardown gets its own budget.
+ */
+const TEARDOWN_TIMEOUT_MS = 120_000;
+
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CHILD = path.join('tests', 'fixtures', 'pool-connection-errors-child.ts');
@@ -80,7 +87,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server?.stop();
-});
+}, TEARDOWN_TIMEOUT_MS);
 
 describe('a server-terminated checked-out connection', () => {
   it('unowned: is an uncaught exception, and the crash guards exit the process (the 2026-09-05 shape)', () => {

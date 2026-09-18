@@ -387,9 +387,16 @@ else
   VERIFY_TAIL="${OSHAL_VERIFY_UNVERIFIED} check(s) UNVERIFIED — UNPROVEN as a product on ${OSHAL_VERIFY_UNPROVEN_STREAK:-1} consecutive run(s) (see above)"
 fi
 # The api restarted (or lost a transaction to the server) INSIDE the bot recreate. The new image is
-# live and serving and the downtime already happened, so a rollback would only recreate the storm;
+# live and serving and the downtime already happened, so restoring the previous image would only recreate the storm;
 # but a run that carried a mid-deploy api outage does not get to say DEPLOYED.
-if [ "$STORM_RC" -ne 0 ]; then
+# The probe has two non-zero codes and they mean opposite things: 2 is "I could not
+# inspect the container", which is a gate that could not verify, not a restart. Saying
+# the api died because docker answered 500 sends the operator after a restart that never
+# happened - the same doctrine this script already applies to a snapshot it cannot take.
+if [ "$STORM_RC" -eq 2 ]; then
+  log "storm probe: UNVERIFIED - the api container could not be inspected; this run proves nothing about the recreate storm"
+  FAILED_CHECKS="${FAILED_CHECKS:+$FAILED_CHECKS }api-storm-unverified"
+elif [ "$STORM_RC" -ne 0 ]; then
   log ""
   log "✗ deployed ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots healthy, parity clean, ${VERIFY_TAIL},"
   log "  but the API DID NOT LIVE THROUGH THE BOT RECREATE (api-storm-probe lines above)."
