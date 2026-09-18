@@ -421,7 +421,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   written reason and replaced by one that asserts the same three release invariants; and the
   passing command is the one the Run block documents, so the next reader cannot miss it again.
   Until then the wake path is not delivery-ready, and its doc says so.
-- **Status (2026-09-18, branch `fix/native-wake-spec-fixture-drift`): DONE - 4 passed / 4 by the
+- **Status (2026-09-18, PR #638): DONE - 4 passed / 4 by the
   Run block's own command.** Diagnosed by capturing `pageerror` on the fixture-served page: the
   main script threw at its first synchronous canvas `tick()` (`addColorStop` on the literal
   `'var(--accent-primary)'`) before the wake listener registered. Cause one, the red spec: the
