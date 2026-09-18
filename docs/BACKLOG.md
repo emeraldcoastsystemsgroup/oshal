@@ -421,6 +421,19 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   written reason and replaced by one that asserts the same three release invariants; and the
   passing command is the one the Run block documents, so the next reader cannot miss it again.
   Until then the wake path is not delivery-ready, and its doc says so.
+- **Status (2026-09-18, branch `fix/native-wake-spec-fixture-drift`): DONE - 4 passed / 4 by the
+  Run block's own command.** Diagnosed by capturing `pageerror` on the fixture-served page: the
+  main script threw at its first synchronous canvas `tick()` (`addColorStop` on the literal
+  `'var(--accent-primary)'`) before the wake listener registered. Cause one, the red spec: the
+  fixture 404'd the theme assets the page has loaded since BUG-12 (#191); with them served off
+  disk the unchanged `origin/main` page passes 3 of 3. Cause two, a real page defect the drift
+  exposed: the colour *fallbacks* were `var()` strings canvas cannot parse, so a failed theme
+  stylesheet load silently killed the microphone and native-wake handlers. Fallbacks are concrete
+  colours again; a fourth case withholds the theme assets and proves the wake path still owns and
+  releases the mic (red on the previous page). `src/api/jarvis.html` is bind-mounted into the
+  running api, so the box changes when the shared tree syncs to main - no image deploy. The nine
+  red cases in `jarvis-rich-response-integration.spec.ts` are identical before and after this
+  change and are not part of this entry.
 
 ### Refusal visibility: the substrate for P1, P3 and P4
 
