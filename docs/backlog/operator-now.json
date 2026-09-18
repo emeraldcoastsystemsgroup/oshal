@@ -8,7 +8,7 @@
       "how": "gh auth refresh -h github.com -s write:packages,read:packages - it prints a code, opens the browser, you click Authorize. Nothing to paste: afterwards the refreshed token is read with gh auth token, wired as OSHAL_GHCR_TOKEN/OSHAL_GHCR_USER for the nightly gate, and the first green main gate publishes."
     },
     {
-      "title": "Ella: open Little Monsters once (signing in was not enough)",
+      "title": "The student: open Little Monsters once (signing in was not enough)",
       "why": "Her 2026-09-17 sign-in reached / and /cockpit/ only - the api log shows no Little Monsters route for her sub, and lm_students.external_issuer is still NULL (row last updated 2026-08-25). The issuer self-heal lives in the app's own access path (education-access.ts, the legacy branch: same external_id, NULL issuer -> UPDATE sets the issuer), so it runs the first time she opens the app, not at login. The grant itself is right: little-monsters, role student, issuer accounts.google.com.",
       "how": "Have her click into Little Monsters once. Then say so and I will confirm the issuer was written."
     },
