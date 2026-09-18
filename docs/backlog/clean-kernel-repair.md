@@ -11,10 +11,10 @@ reading the designs behind the code.
 verdict was then handed to a second reader whose instructions were to overturn it — in either direction,
 with the file and line that does it. Twenty-one claims, two independent passes each.
 
-**Headline: the assessment is substantially sound.** Not one claim was fabricated; every mechanism it
-names exists at the line it cites. What the second pass repeatedly found wrong is the **consequence
-attached to the mechanism** — the same failure shape this repo already has a rule about. Seven items had
-their impact corrected downward, four upward, and one was overturned outright.
+**Headline: the assessment is substantially sound.** Not one claim was fabricated; twenty of the
+twenty-one mechanisms exist at the line they cite. What the second pass repeatedly found wrong is the
+**consequence attached to the mechanism** — the same failure shape this repo already has a rule about.
+Seven items had their impact corrected downward, five upward or wider, and one was overturned outright.
 
 This file is the queue. It replaces the repair spec's own wave/sizing tables, which are superseded by
 the measurements below.
@@ -25,9 +25,9 @@ the measurements below.
 | mechanism confirmed at the cited line | 20 |
 | overturned outright (the code is already correct) | 1 — R3.2 |
 | impact corrected **down** by the second pass | 7 — D7, D10, D11, D12, D14, D15, R2 |
-| impact corrected **up**, or scope found wider than claimed | 5 — D2, D5, R0.11, R0.12, R1.1 |
-| ready to ship, no operator decision | 9 |
-| blocked on an operator decision | 8 |
+| impact corrected **up**, or scope found wider than claimed | 5 — D2, D5, R0.11, R1.1, and R0.12 (wider scope, *lower* severity) |
+| ready to ship, no operator decision | 11 — CKR-1 to CKR-9, plus CV-1 and CV-4 |
+| blocked on an operator decision | 13 — CKR-10 to CKR-20, plus CV-2 and CV-3 |
 | not real, or already correct | 1 |
 | defects found that the assessment did **not** name | 4 |
 
@@ -89,7 +89,7 @@ planner would size the work against.
 
 ## Defects found during verification that the assessment did not name
 
-### CV-1 — CLAUDE.md and the developer guide describe a runtime that was retired (S, no decision)
+### CV-1 — CLAUDE.md and the developer guide described a runtime that was retired — **FIXED in this change**
 
 `CLAUDE.md:564` and `docs/framework-developer-guide.md:223` both tell every agent on this repo that
 Workflow Studio compiles "multi-stage → the `staged` executor with per-stage approval gates". There is no
@@ -101,9 +101,11 @@ it by saying `'staged'` remains "available for hand-authored manifests", which i
 This is the live half of D2: an author who believes those four sentences writes `pipeline: staged`, gets
 a single-bot run with every approval gate skipped, and nothing logs it.
 
-- **Done when:** `git grep -n "the .staged. executor"` over `CLAUDE.md`,
+- **Done — verified in this change:** `git grep -n "the .staged. executor"` over `CLAUDE.md`,
   `docs/framework-developer-guide.md` and `workflow-publish-compiler.ts` returns zero hits, and
-  `git grep -n dispatchStagedTicket` returns zero hits. (Grepping the bare word `staged` proves nothing —
+  `git grep -n dispatchStagedTicket -- ':!docs/backlog/'` returns zero hits. (Both the pathspec and the
+  exact phrase are load-bearing: this file names the identifier, so an unscoped grep can never pass, and
+  grepping the bare word `staged` proves nothing —
   it legitimately remains an author-time mode name at `framework-developer-guide.md:485`, `:565`, `:569`.)
 
 ### CV-2 — every untrusted-source incident ticket is created into `approval_required`, overriding the caller (S, decision)
@@ -354,7 +356,8 @@ modules` triple plus a per-module table, and all four hold: (1) **idempotence ac
 it on a clean store checkout, run `bash scripts/build-store-public.sh` so `output/` exists, run it again;
 both print an identical triple (this passes only if it enumerates via `git ls-files` rather than walking
 disk); (2) the `sites` value is below 1,000 and `files` below 400; (3) `grep -rnE '924|1,?500'
-docs/architecture/clean-kernel/` returns zero hits except on a line naming the generator as the source —
+docs/architecture/clean-kernel/` returns hits ONLY on lines that either name the generator as the source or sit
+inside a `>` verification banner quoting the old figure in order to correct it —
 the five cells that must change are `01-high-level-spec.md:100,:500,:501` and `11-repair-spec.md:332,:455`;
 (4) the table has exactly one row per module, the row count equals the triple's `modules` value, and every
 row carries a verdict of exactly `promote to SDK` or `move to package`.
@@ -377,7 +380,8 @@ emit it. The present harm is the four text sites in CV-1. Already recorded once 
 **Decision:** delete the type and its registry copy, or restore an executor. Deleting is correct unless the
 staged shape is still wanted; the graph engine supersedes it.
 
-**Done when.** `git grep -n dispatchStagedTicket` returns zero hits; CV-1's grep is clean; and a fixture
+**Done when.** `git grep -n dispatchStagedTicket -- ':!docs/backlog/'` returns zero hits (the pathspec is
+required — this file names the identifier); CV-1's grep is clean; and a fixture
 manifest declaring `pipeline: staged` makes `readManifest` throw an error whose message contains `graph`,
 asserted by a named case in `tests/unit/swarm-app-manifest-load.spec.ts`.
 
@@ -453,7 +457,7 @@ runs longer than `approvedStaleMinutes` (default 10) is counted stale at
 **Decision:** whether position becomes a first-class ticket column / distinct in-flight status. That is the
 expensive half and it is explicitly **out of scope** of the done-when below.
 
-**Done when.** (a) `grep -rn graphResumeNode docs/` returns nothing **and**
+**Done when.** (a) `grep -rn graphResumeNode docs/ --exclude-dir=backlog` returns nothing **and**
 `docs/architecture/human-in-the-loop.md:16,:84` name `metadata.workflowCheckpoint.resumeNodeId` instead
 (both clauses required — deleting the paragraph would satisfy the grep alone). (b) `GET /api/tickets/:id`
 for a ticket suspended at a gate returns the resume node id and node title from its most recent
@@ -603,7 +607,10 @@ Both halves accurate and the ADR quote near-verbatim. All **40** workspace mount
 subpath; every bot container sees every other ticket's and every other user's working directory as a
 sibling. The TS file tools cannot escape their directory, **but the shell tool runs an arbitrary command
 with cwd set to the task directory and nothing below it** — `cat ../<otherTaskId>/deliverables/...` works,
-and 45 of 103 personas carry that tool. ADR-060 (`Reverted in implementation`) already says a directory
+and **no persona declaration gates it** - `execute_command` is in `HARNESS_NATIVE_TOOL_NAMES`
+(`src/shared/tools/embedded-tool-tier.ts:34-43`), so `runtimeToolMatchesCapabilities`
+(`tool-capability-scope.ts:148`) returns true before any capability matching. Every bot with a shell
+can traverse, whatever its YAML says. ADR-060 (`Reverted in implementation`) already says a directory
 layout on a shared read-write mount is attribution, not enforcement, and names the three options.
 
 **Nothing observable on the current single-owner box.** This is a property, not an incident.
@@ -644,13 +651,15 @@ Those are per-site defects with per-site guards, which is the right shape.
 
 | order | items | why |
 |---|---|---|
-| 1 | CV-1, CKR-2 | two guards and one doc correction; both unblock what follows |
+| 1 | CKR-2 | the classifier guard; it is what makes CKR-3 and CKR-4 visible (CV-1 already landed) |
 | 2 | CKR-3, CKR-4 | the provenance defects, which CKR-2 makes visible |
 | 3 | CKR-1, CKR-5, CKR-6, CKR-7, CKR-8, CKR-9 | independent, no decisions, all S |
-| 4 | the eight decision items | each needs one answer before a lane starts |
+| 4 | the thirteen decision items (CKR-10 to CKR-20, CV-2, CV-3) | each needs one answer before a lane starts |
 | 5 | CKR-19 part A | cheap, measurable, and the budget caps are wrong until it lands |
 
-The repair spec's "roughly six to ten weeks for one lane" for wave R0 does not survive: of the fifteen
-defects, thirteen verified at size S and the two sized M are a guard file and a store-manifest sweep. The
-expensive items are the ones it sizes L and XL — the task record, the package boundary, and workspace
-isolation — and two of those three need a decision before any of it is work.
+The repair spec's "roughly six to ten weeks for one lane" for wave R0 does not survive. Of the fifteen
+defects, **twelve verified at size S** in the first pass and three at M (D7, D10, D11); the adversarial
+pass then reduced two of those three — D7 to a config-only persona sweep and D10 to a single guard file —
+leaving one genuine M among the fifteen (D11, and only its persona half). The expensive items are the ones
+the spec already sizes L and XL — the task record, the package boundary, and workspace isolation — and two
+of those three need a decision before any of it is work.
