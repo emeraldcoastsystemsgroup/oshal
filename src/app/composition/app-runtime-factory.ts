@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Thread the pool into ConnectorMarketplaceService so its per-user enablement OVERRIDE layer (BACKLOG.md:2718) can persist/read per-user connector on/off; deployment-global catalog + state stay file-based.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the initializeToolRegistry bootstrap chain (migrations → tool-executor restore → baseline+connector-spec tool seed → default chat agent → persona authorizations) in runWithSystemIdentity. The detached boot chain ran with no request in scope; under OSHAL_DB_GUC_STRICT=deny that would scope its seed reads/writes anonymous (RLS zero-rows). Covered ~10 of the guc warn-audit's identity-less boot sites.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Make the primary API Postgres pool ceiling deployment-configurable and stamp application_name so a 47-backend managed cluster can be budgeted and audited without changing the existing local default.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | createOrchestrator takes the inline-turn cost ledger (oshal_cost_events writer) so every chat turn the controller orchestrator finishes lands in the per-event ledger the windowed budget caps read; without it inline spend only ever reached chat_tasks.
  */
 
 import path from 'path';
@@ -23,7 +24,7 @@ import { gucEnabled, wrapPoolWithGuc } from '@/shared/services/database/guc-pool
 import { wrapPoolWithRuntimeDdlGuard } from '@/shared/services/database/schema-bootstrap-policy';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { postgresApplicationName, resolvePoolMax } from '@/shared/services/database/pool-sizing';
-import { ToolExecutorService, TaskOrchestrator, type TaskOrchestratorDeps } from '@/features/chat-orchestration';
+import { ToolExecutorService, TaskOrchestrator, type TaskOrchestratorDeps, type InlineTurnCostLedger } from '@/features/chat-orchestration';
 // eslint-disable-next-line no-restricted-imports -- two-runtimes: LLM execution runtime, deliberately off the barrel graph (barrel split, TODO-BOUNDARY-FINDING)
 import { ClineRuntimeConfigSyncService } from '@/features/llm-provider/services';
 import {
@@ -115,6 +116,7 @@ export function createOrchestrator(
   switchFrameworkService?: SwitchFrameworkService,
   dynamicToolExecutorRegistry?: DynamicToolExecutorRegistry,
   connectorSpecToolService?: ConnectorSpecToolService,
+  costLedger?: InlineTurnCostLedger,
 ): TaskOrchestrator {
   const toolExecutor = new ToolExecutorService({
     streamManager,
@@ -153,6 +155,7 @@ export function createOrchestrator(
     toolAuthInterceptor,
     memoryService,
     ticketService,
+    costLedger,
   };
   return new TaskOrchestrator(deps);
 }
