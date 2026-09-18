@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary companion for "a bot's LLM provider is a row in a table": migration 147 as shipped on a DISPOSABLE PostgreSQL this spec owns, the real ProviderSwitchStore and ProviderSwitchSnapshot, and the real GUC pool wrapper — as the ENFORCING oshal_app role (self-validated: current_user, not superuser, not RLS-bypassing, table owner under FORCE RLS). Proves: an operator identity writes the fleet-default and per-bot rows, a non-operator identity is refused by the table's own policy (42501) and still reads, the CHECKs refuse a malformed scope, the snapshot resolves per-bot > fleet > registry from the rows Postgres holds, and a removed row falls back. No double on the boundary; the deployment database is never touched (the fixture publishes its own loopback port).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot row is the real agent_config record (migrations 001 + 011 applied beside 147): the store's listAll is proven to project agent_config.config_values.providerId/modelId/configUpdatedBy into the same ProviderSwitchRow shape as the fleet row, an 'auto' record is proven to be no row, and the table's CHECK is proven to refuse a per-bot scope so the fleet table can never become a second per-bot store. The ladder cases (bot-row > fleet > registry, refusal by name, fall-back on removal) now run over the two stores the deployment actually has.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Entry 2 was the defect (ADR-162 §7 failed for every bot on the box): an agent_config record is a machinery-written dispatch artefact, never a switch, and reading it as one let 70 rows outrank a fleet-default write. Inverted, not deleted: listAll is proven to read ONLY oshal_bot_provider_switch (a record that even claims an operator tag is not a row); a per-bot scope is ACCEPTED in the table for an operator and refused by the policy for anyone else; and a new describe reproduces the operator box's exact row shape from tests/fixtures/agent-config-provider-rows-2026-09-17.json (70 agents + agent_config records, blank/bot-local/oshal-push configUpdatedBy, zero switch rows), registers the package bots into the ACTIVE registry as the app loader does, and drives the REAL dispatch resolver (createAgentConfigRuntimeParamsResolver over the real AgentConfigService on this pool) to prove: zero rows = the registry rung and the agent_config record byte-identically; ONE fleet-default write moves ALL 70 (registry and package bots alike) in the resolver and in the stamped dispatch record; a second write moves all 70 again ("switch it to codex tomorrow"); an operator-written per-bot row beats the fleet row for that bot only; clearing returns every bot to where it started. Red on the pre-fix store (70 bots answered 'bot-row' with their agent_config provider after the fleet write).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Migration 148 applied beside 147, and a case for the fallback_order column on the real boundary: an ordered four-provider chain round-trips as TEXT[], a provider-only write leaves it untouched (a failover order must not vanish because someone changed the primary), and an explicit [] persists as [] rather than collapsing to null - the null/[] distinction the resolver turns on, and the one a JS-side double cannot prove.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -62,7 +63,10 @@ const FLEET_PROVIDER_NOBODY_HAS = 'openrouter';
 
 const database = new DisposablePostgres({
   purpose: 'provider-switch', database: 'provider_switch_fixture',
-  migrations: ['001-multi-agent-foundation.sql', '011-agent-config.sql', '147-bot-provider-switch.sql'], max: 4,
+  migrations: [
+    '001-multi-agent-foundation.sql', '011-agent-config.sql',
+    '147-bot-provider-switch.sql', '148-provider-fallback-order.sql',
+  ], max: 4,
 });
 /** The enforcing role's pool — every statement in the cases below goes through it. */
 let appPool: Pool;
@@ -352,5 +356,35 @@ describe('the operator box\'s row shape: 70 machinery-written agent_config recor
         providerId: row.providerId, ...(row.modelId ? { model: row.modelId } : {}), configVersion: row.configVersion,
       });
     }
+  });
+
+  it('an administrator ordered fallback chain survives the real column, and [] is not null', async () => {
+    // The whole point of migration 148: the chain is DATA. A unit double cannot prove a TEXT[]
+    // round-trip, and the resolver turns on null (inherit) vs [] (no failover) - two values a
+    // JS-side mock collapses into one.
+    const written = await runWithRequestIdentity(OPERATOR, () => store.upsert(
+      FLEET_DEFAULT_SWITCH_ID, 'gemini', 'gemini-3.8-flash', 'operator-sub',
+      ['claude-code', 'openrouter', 'anthropic', 'codex-cli'],
+    ));
+    expect(written.fallbackOrder, 'the order is the administrator and order matters')
+      .toEqual(['claude-code', 'openrouter', 'anthropic', 'codex-cli']);
+    const readBack = await runWithRequestIdentity(OPERATOR, () => store.get(FLEET_DEFAULT_SWITCH_ID));
+    expect(readBack?.fallbackOrder).toEqual(['claude-code', 'openrouter', 'anthropic', 'codex-cli']);
+
+    // Changing only the provider must NOT wipe the chain - that is how a failover order silently
+    // disappears and nobody notices until the primary is down.
+    const providerOnly = await runWithRequestIdentity(OPERATOR, () => store.upsert(
+      FLEET_DEFAULT_SWITCH_ID, 'anthropic', 'claude-sonnet-4-6', 'operator-sub',
+    ));
+    expect(providerOnly.fallbackOrder).toEqual(['claude-code', 'openrouter', 'anthropic', 'codex-cli']);
+
+    // An explicit empty array is a decision and must persist as one, distinct from null.
+    const noFailover = await runWithRequestIdentity(OPERATOR, () => store.upsert(
+      FLEET_DEFAULT_SWITCH_ID, 'anthropic', 'claude-sonnet-4-6', 'operator-sub', [],
+    ));
+    expect(noFailover.fallbackOrder, 'an empty array means no failover, not inherit').toEqual([]);
+    expect(noFailover.fallbackOrder).not.toBeNull();
+
+    await runWithRequestIdentity(OPERATOR, () => store.remove(FLEET_DEFAULT_SWITCH_ID));
   });
 });

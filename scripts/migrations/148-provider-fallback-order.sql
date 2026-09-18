@@ -31,9 +31,14 @@ BEGIN
     ALTER TABLE oshal_bot_provider_switch
       ADD CONSTRAINT oshal_bot_provider_switch_fallback_order CHECK (
         fallback_order IS NULL
-        OR NOT EXISTS (
-          SELECT 1 FROM unnest(fallback_order) AS entry
-          WHERE btrim(entry) = '' OR entry ~ '\s'
+        OR (
+          -- Subquery-free by necessity: PostgreSQL refuses a subquery in a CHECK constraint
+          -- ("cannot use subquery in check constraint"), so no unnest/EXISTS form is available.
+          -- array_position finds a blank or a NULL element; array_to_string skips NULLs, which is
+          -- why the NULL element is tested separately rather than folded into the regex.
+          array_position(fallback_order, '') IS NULL
+          AND array_position(fallback_order, NULL) IS NULL
+          AND array_to_string(fallback_order, ',') !~ '\s'
         )
       );
   END IF;
