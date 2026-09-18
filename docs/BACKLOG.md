@@ -1098,6 +1098,42 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** either a support request is filed for the three repos and a sample old SHA returns 404 while `git ls-remote origin 'refs/pull/*/head'` no longer reaches an attributed commit, or the operator records here that the residue is accepted.
 
 ### An abort inside the local embedding runtime takes the whole api process down (2026-09-15)
+- ✅ **CLOSED 2026-09-18 (branch `fix/embedding-abort-containment`).** The re-check the ⚠ below
+  asked for, done first: the strip (#592) is in the running api (`dist/features/rag/services/onnx-process-guards.js`
+  present in `oshal-local-api`; `removed {unhandledRejection:1, uncaughtException:1}` logged at
+  05:41:10Z on boot) and `docker inspect oshal-local-api` reads **`RestartCount=0`** from
+  `StartedAt=2026-09-18T05:36:49Z` through 07:41Z with two lanes running on the box — the
+  three-restarts-in-45-minutes shape has not recurred since the strip deployed. The probe is now
+  repeatable: `scripts/api-restart-count-probe.sh` prints RestartCount / StartedAt / commit / bare
+  `Aborted(` markers in the current log, `--record FILE` writes a baseline and `--baseline FILE`
+  exits 1 when RestartCount or StartedAt moved. **No worker thread was built** — the ⛔ gate held,
+  and the trap-and-degrade arm of the done-when is what shipped.
+- **What the abort actually does, measured against the real runtime.** The `Aborted(` marker is
+  Emscripten's `_abort` import — `function(){q("")}` in `ort-web.node.js`, import key `B` — which
+  prints `Aborted()` to stderr, sets ABORT and throws a `WebAssembly.RuntimeError` from inside the
+  wasm frame that reached it. `tests/fixtures/onnx-abort-hook.ts` keeps that real import and raises
+  it from inside the next wasm frame of a real run (the real quantized MiniLM `@xenova/transformers`
+  ships, real crash guards). Awaited under try/catch — the shape `embed()` uses — it is an ordinary
+  rejection: **exit 0, 10 bytes of stderr, listeners 1/1, process serving.** The same abort left
+  unawaited with the runtime's rethrow pair in place: **exit 7** — the api's signature, kept as the
+  suite's control. Inside `oshal-bot:latest` through the real `embed()`: origin/main returned null
+  for the aborting call but the NEXT call re-entered the aborted runtime (261 wasm import calls, a
+  384-dim vector from a heap with ABORT set) and logged only `count`; now the service goes
+  unavailable for the process (retry: null, 0 import calls — the same degrade a failed model load
+  takes) and its log line reads `caller:"probe", count:1, chars:63, maxChars:63, batchStart:0,
+  abort:true, error.name:"RuntimeError"`, with 840 bytes on stderr instead of 548 KB. Every call
+  site names itself (`rag-service.ingest`, `rag-service.search.pgvector`,
+  `rag-service.vectorSearch.chroma`, `semantic-projection.projectOwnerSegments`).
+- **Guard:** `tests/unit/local-embedding-abort-containment.spec.ts`, 11 cases — the classifier
+  against a real `WebAssembly.RuntimeError`, the bounded caller/size payload, the sticky policy
+  (extractor doubled; recorded in the real-boundary audit beside its real companions), the
+  real-runtime host child in contained and uncontained modes (the uncontained control is asserted
+  at exit ≠ 0, so a runtime that stops aborting fails the suite instead of passing it), and the
+  docker-gated in-image `embed()` case that reads the service's own log line back from its file
+  transport. Green 2026-09-18, host and image.
+- **Measured and left as is:** after its own abort the runtime still answered a direct
+  `session.run` with a 384-dim tensor (`after-abort-run: threw:false`). The sticky degrade is a
+  decision not to trust a heap with ABORT set, not evidence that the runtime stops working.
 - ⚠ **2026-09-16 — the observed signature is reproduced with NO wasm abort at all**, by the ONNX
   process-global rethrow-handler defect recorded above. A plain-`node` probe against
   `oshal-bot:latest`'s compiled `dist` (real crash guards, real `load()`, then one unawaited

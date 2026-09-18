@@ -55,6 +55,15 @@ interface ChildRun {
   probes: Record<string, any>;
 }
 
+/**
+ * @returns How many times Emscripten's own bare `Aborted()` line appears on stderr.
+ * transformers.js echoes the message once more inside its own "An error occurred
+ * during model execution" line, so the count is of the runtime's line, not the substring.
+ */
+function bareAbortMarkers(stderr: string): number {
+  return stderr.split(/\r?\n/).filter((line) => line.trim() === 'Aborted()').length;
+}
+
 /** @returns The JSON probe lines of a child's stdout keyed by stage. */
 function parseProbes(stdout: string): Record<string, any> {
   const probes: Record<string, any> = {};
@@ -183,7 +192,7 @@ describe('the real onnxruntime-web runtime aborting mid-inference (host child, r
     expect(run.probes['abort-caught'].message).toContain('Aborted(');
     expect(run.probes['abort-caught'].abortsRaised).toBe(1);
     expect(run.probes.survived.counts).toEqual(run.probes.baseline.counts);
-    expect(run.stderr.match(/Aborted\(/g)?.length).toBe(1);
+    expect(bareAbortMarkers(run.stderr), 'the runtime prints its marker exactly once').toBe(1);
     expect(run.stderrBytes).toBeLessThan(STDERR_CEILING_BYTES);
   });
 
@@ -248,7 +257,7 @@ describe.skipIf(!imageAvailable())(`the real embed() inside ${IMAGE} (requires t
     expect(line.chars).toBeGreaterThan(1);
     expect(String(line.error?.message)).toContain('Aborted(');
     expect(run.probes.survived.counts).toEqual(run.probes.baseline.counts);
-    expect(run.stderr.match(/Aborted\(/g)?.length).toBe(1);
+    expect(bareAbortMarkers(run.stderr), 'the runtime prints its marker exactly once').toBe(1);
     expect(run.stderrBytes).toBeLessThan(STDERR_CEILING_BYTES);
   }, IMAGE_TIMEOUT_MS);
 });
