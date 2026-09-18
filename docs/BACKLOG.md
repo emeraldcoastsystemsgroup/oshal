@@ -1382,9 +1382,38 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   `npm run test:provider-switch` (9 files); Test Lab scenario `provider-switch`. **Left:** the last
   done-when clause is live-only — an image deploy, then one bot flipped to `gemini` /
   `gemini-3.8-flash` from the cockpit answering on Gemini in its own log, which also needs the Cline
-  binary fix (PR #628, glibc on musl). Two stale `agent_config` rows on the operator box
-  (`project-manager` = gemini/gemini-3.1-pro from 2026-07-23, `task-manager` = openai/gpt-x from
-  2026-06-09) become live bot-rows at deploy — clear or correct them from the cockpit first.
+  binary fix (PR #628, glibc on musl). Eleven `agent_config` rows on the operator box name a
+  non-Codex provider (read-only SELECT, 2026-09-17: `project-manager` = gemini/gemini-3.1-pro,
+  `task-manager` = openai/gpt-x, `personal-finance-bot` = anthropic/claude-sonnet-4-20250514, and
+  eight `claude-code` package bots — `bake-off-analyst`, `capability-ideator`, `dungeon-master`,
+  `game-show-host`, `kid-lens-bot`, `lora-director`, `portrait-artist`, `sales-concierge`); all
+  eleven become live bot-rows at deploy and will NOT follow a fleet-default write, because a bot row
+  beats the fleet row by design. None was written by an operator — see the follow-up entry below.
+  Review guard added: `tests/unit/dispatch-switch-row-stamping.spec.ts` pins tier-1 dispatch
+  stamping (the only path a row reaches a dedicated bot node).
+
+### A machinery-written `agent_config` row should not outrank a fleet-default write (2026-09-17)
+
+- **What the switch rollout exposed.** The per-bot row is the `agent_config` record, and a bot row
+  beats the fleet row by design — right for a row an admin chose. Measured read-only on the operator
+  box (`docker exec oshal-local-db psql`, 2026-09-17): 70 `agent_config` records name a provider,
+  and none records an operator identity. 67 carry no `configUpdatedBy` and `configVersion`
+  1 — the exact shape `seedManifestBotRuntime` writes (`manifest-bot-runtime.ts`: "proven
+  provider/model defaults, not an operator override"), 59 of them `openai-codex` and 8
+  `claude-code` (`bake-off-analyst`, `capability-ideator`, `dungeon-master`, `game-show-host`,
+  `kid-lens-bot`, `lora-director`, `portrait-artist`, `sales-concierge`); 2 carry `bot-local`, the
+  bot's own reported change (`project-manager` = gemini/gemini-3.1-pro, 2026-07-23; `task-manager`
+  = openai/gpt-x, 2026-06-09); 1 carries `oshal-push`, the ConfigSyncService push-down
+  (`personal-finance-bot` = anthropic/claude-sonnet-4-20250514, 2026-08-03). After deploy every one
+  of the 70 is a bot row, so on the first fleet-default write all 70 hold — 38 of the 60 agent ids
+  in `swarm-bot-registry-local.ts` among them — and only the bots with no record move. Nothing on
+  the surface says why a bot held. `ProviderSwitchStore.listAll` already projects `configUpdatedBy`
+  as `updatedBy`, so the fact is readable; the rule does not consult it.
+- **Done when:** a per-bot row records who set it (an operator identity, or the machinery that
+  wrote it — never blank); a machinery-written row yields to the fleet default; an operator-written
+  row does not; `/api/agents` reports which of the two a `bot-row` is; and migration 146's rollout
+  note names, for the operator box, which of the 70 rows (the 11 non-Codex ones by name) move on
+  the first fleet write and which hold. Until then all 70 hold — not implemented inside PR #633.
 
 
 ### Jarvis briefing preferences (operator ask, 2026-08-09)

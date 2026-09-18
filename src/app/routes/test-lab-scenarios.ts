@@ -70,6 +70,7 @@
  * Appearance | maintainer@emeraldcoastsystemsgroup.com | Register the read-only Workspace asset check and linked actual browser proof.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Registered the Notifications per-channel account tier card (NOTIFICATION_SCENARIOS): a read-only step over GET /api/notify/prefs with its route, page and sender suites. Guard: tests/unit/test-lab-notification-registration.spec.ts.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'provider-switch' scenario ("a bot's LLM provider is a row in a table"): a read-only probe of the fleet-default row + snapshot and of the rung every bot reports through /api/agents, failing on a switch-refused bot; regressionTests attach the unit/integration/browser guards that ship with the switch.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | Attached tests/unit/dispatch-switch-row-stamping.spec.ts to the 'provider-switch' regressionTests: the tier-1 dispatch-stamping guard (a fleet or per-bot row reaching a DEDICATED bot node), added after review found that rung unguarded.
  * @module test-lab-scenarios
  */
 
@@ -335,6 +336,7 @@ export const SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/bot-provider-precedence.spec.ts' },
       { level: 'unit', path: 'tests/unit/harness-resolution.spec.ts' },
       { level: 'unit', path: 'tests/unit/bot-node-provider-switch.spec.ts' },
+      { level: 'unit', path: 'tests/unit/dispatch-switch-row-stamping.spec.ts' },
       { level: 'unit', path: 'tests/unit/compose-bot-provider-literal.spec.ts' },
       { level: 'integration', path: 'tests/unit/provider-switch-store-postgres.spec.ts' },
       { level: 'integration', path: 'tests/unit/provider-switch-routes.spec.ts' },
