@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Named guard provider-switch-cockpit (headless Chromium over the REAL config-admin page, the REAL AgentProfileController, the REAL /runtime and fleet-default routes, the REAL precedence rule and a REAL ProviderSwitchSnapshot): the per-bot provider select is ENABLED for a registry-declared bot (PR #97 made it read-only because it did nothing; the row makes it do something), its reported source starts at 'registry-harness'; writing the fleet default from the panel is one save and every bot with no row reports 'fleet-default'; saving a provider on one bot writes its own row and it reports 'bot-row' while the other bot stays on the fleet default; clearing the fleet default returns the row-less bot to 'registry-harness'. Doubles: the agent-profile persistence, the config-sync push (pushed:true, persisting into the same in-memory agent_config the switch store reads) and the switch store itself — the database boundary is provider-switch-store-postgres.spec.ts. Chromium is headless; nothing opens on the desktop.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot switch row is an operator-written row of oshal_bot_provider_switch, never the agent_config record: the store double now holds per-bot rows written ONLY through the runtime route's writeBotSwitch seam (wired as agent-provider-mount.ts wires it) and listAll no longer projects agentConfig — the pre-fix projection let the bot-row case pass with the seam absent. The case now asserts the row itself (scope, provider, updatedBy = the session's sub) and that the other bot has none; with the seam unwired the case is red (no bot-row ever appears).
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -36,10 +37,12 @@ const [BOT_A, BOT_B] = getActiveRegistry()
   .filter((b) => b.agentId && b.harnessType && b.harnessType !== 'cline' && b.harnessType !== 'a2a')
   .slice(0, 2) as Array<{ agentId: string; name: string; harnessType: string; apiType?: string }>;
 
-/** The persistence doubles: profiles (agents table), agent_config rows, and the fleet row. */
+/** The persistence doubles: profiles (agents table), agent_config records, and the switch rows (the fleet row and the per-bot rows). */
 const profiles = new Map<string, Record<string, unknown>>();
 const agentConfig = new Map<string, Record<string, unknown>>();
 let fleetRow: ProviderSwitchRow | null = null;
+/** The per-bot rows of oshal_bot_provider_switch: written ONLY through the runtime route's writeBotSwitch seam, never projected from agentConfig. */
+const perBotRows = new Map<string, ProviderSwitchRow>();
 
 function profileOf(agentId: string, name: string): Record<string, unknown> {
   return {
@@ -49,26 +52,25 @@ function profileOf(agentId: string, name: string): Record<string, unknown> {
   };
 }
 
+/** listAll as the FIXED ProviderSwitchStore reads it: the switch table only — agentConfig is the ADR-034 record beneath the fleet row, never a row here. */
 function switchRowsFromDoubles(): ProviderSwitchRow[] {
-  const rows: ProviderSwitchRow[] = fleetRow ? [fleetRow] : [];
-  for (const [agentId, values] of agentConfig) {
-    const providerId = String(values.providerId ?? '').trim();
-    if (!providerId || providerId.toLowerCase() === 'auto') continue;
-    rows.push({ scopeId: agentId, providerId, modelId: (values.modelId as string | null) ?? null, updatedBy: 'operator', updatedAt: null });
-  }
-  return rows;
+  return [...(fleetRow ? [fleetRow] : []), ...perBotRows.values()];
 }
 
 async function startFixture(): Promise<string> {
   const catalog = buildProviderSwitchCatalog(Object.keys(HARNESS_FACTORIES));
   const store = {
     listAll: async () => switchRowsFromDoubles(),
-    get: async (scopeId: string) => (scopeId === FLEET_DEFAULT_SWITCH_ID ? fleetRow : null),
+    get: async (scopeId: string) => (scopeId === FLEET_DEFAULT_SWITCH_ID ? fleetRow : perBotRows.get(scopeId) ?? null),
     upsert: async (scopeId: string, providerId: string, modelId: string | null, updatedBy: string) => {
-      fleetRow = { scopeId, providerId, modelId, updatedBy, updatedAt: new Date().toISOString() };
-      return fleetRow;
+      const row: ProviderSwitchRow = { scopeId, providerId, modelId, updatedBy, updatedAt: new Date().toISOString() };
+      if (scopeId === FLEET_DEFAULT_SWITCH_ID) fleetRow = row; else perBotRows.set(scopeId, row);
+      return row;
     },
-    remove: async () => { const had = fleetRow !== null; fleetRow = null; return had; },
+    remove: async (scopeId: string) => {
+      if (scopeId === FLEET_DEFAULT_SWITCH_ID) { const had = fleetRow !== null; fleetRow = null; return had; }
+      return perBotRows.delete(scopeId);
+    },
   } as unknown as ProviderSwitchStore;
   const snapshot = new ProviderSwitchSnapshot(store, catalog);
   await snapshot.refresh();
@@ -122,6 +124,8 @@ async function startFixture(): Promise<string> {
   app.get('/api/:provider/oauth/status', (_req, res) => res.json({ authenticated: true }));
   app.use('/api/agents', createConfigRuntimeRoutes(configSync, agentConfigService, {
     resolveSwitch, catalog: () => catalog, onRuntimeChanged: async () => { await snapshot.refresh(); },
+    // Wired exactly as agent-provider-mount.ts wires it: the operator's provider pick is the bot's own row.
+    writeBotSwitch: async (agentId, providerId, modelId, updatedBy) => { await store.upsert(agentId, providerId, modelId, updatedBy); },
   }));
   app.use('/api/agents', createProviderSwitchRoutes({ store, snapshot: () => snapshot, catalog: () => catalog }));
   app.use('/api/agents', createAgentProfileRoutes(controller));
@@ -193,6 +197,10 @@ describe('provider-switch-cockpit', () => {
     await page!.selectOption('#agentProviderInput', 'gemini');
     await page!.click('#saveAgentProfileButton');
     await page!.waitForSelector('#agentProviderPrecedence[data-provider-source="bot-row"]');
+    // The rung came from the bot's OWN switch row, written by the route under the session's sub; the
+    // agent_config record is still the ADR-034 push-before-persist record beside it, not the rung.
+    expect(perBotRows.get(BOT_A.agentId)).toMatchObject({ scopeId: BOT_A.agentId, providerId: 'gemini', updatedBy: OPERATOR });
+    expect(perBotRows.has(BOT_B.agentId)).toBe(false);
     expect(agentConfig.get(BOT_A.agentId)).toMatchObject({ providerId: 'gemini' });
     await openBot(BOT_B.agentId);
     expect(await providerSource()).toBe('fleet-default');
