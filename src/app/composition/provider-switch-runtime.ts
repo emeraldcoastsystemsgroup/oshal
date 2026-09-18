@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Expose the installed catalog (installedProviderSwitchCatalog) so the fleet-default routes validate a written id against the same runnable set the resolver refuses on.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The api-side seam for "a bot's LLM provider is a row in a table": builds the runnable catalog from the REAL HARNESS_FACTORIES keys + provider definitions, holds the one installed ProviderSwitchSnapshot so resolveHarnessForAgent (sync, inside getProvider) and dispatch stamping (async) answer from the same rows, and turns a REFUSED resolution into a provider that refuses every request with the reason — fail closed at the point of use, never a silent fall-through to the registry literal or FORCE_LLM_PROVIDER. With nothing installed every reader answers "registry", which is today's behaviour byte-identically.
  */
 
@@ -74,6 +75,14 @@ export async function installProviderSwitchSnapshot(
  */
 export function installedProviderSwitchSnapshot(): ProviderSwitchSnapshot | null {
   return installed;
+}
+
+/**
+ * @description The catalog the installed snapshot validates against, for the write routes.
+ * @returns The catalog, or null when nothing is installed.
+ */
+export function installedProviderSwitchCatalog(): ProviderSwitchCatalog | null {
+  return installedCatalog;
 }
 
 /**

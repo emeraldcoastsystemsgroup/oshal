@@ -5,12 +5,15 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added agent-profile runtime wiring helper for dedicated persisted chat-agent profile endpoints
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Wired workspace config sync so model/provider profile changes propagate to runtime globalState.json
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Inject the installed provider-switch resolution into AgentProfileController so /api/agents reports the rung (bot-row | fleet-default | registry) that will serve the next dispatch.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { AgentProfileRepository } from '@/entities/agent';
 import { AgentProfileController, AgentProfileService, WorkspaceConfigSyncService } from '@/features/agent-profile';
+import { resolveInstalledProviderSwitch } from './provider-switch-runtime';
+import { registryHarnessEntry } from '@/app/extensions/swarm/swarm-bot-registry';
 
 const logger = createChildLogger({ module: 'agent-profile-runtime' });
 
@@ -31,6 +34,12 @@ export function createAgentProfileComponents(
     recomposeSelector,
     syncWorkspaceConfig: (agentId, patch) => workspaceConfigSync.syncAgentWorkspaceConfig(agentId, patch),
   });
-  const agentProfileController = new AgentProfileController(agentProfileService, logger);
+  // /api/agents reports the rung that will serve the next dispatch: the installed switch
+  // snapshot (agent_config row > fleet default) over the registry declaration.
+  const agentProfileController = new AgentProfileController(
+    agentProfileService,
+    logger,
+    (agentId) => resolveInstalledProviderSwitch(agentId, registryHarnessEntry(agentId)),
+  );
   return { agentProfileController, agentProfileService };
 }

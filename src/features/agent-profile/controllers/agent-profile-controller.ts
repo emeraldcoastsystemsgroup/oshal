@@ -18,6 +18,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | K2/K3 identity canon (BACKLOG kernel audit): a0…0018 is 'system-architect' in every map (was 'architect-bot' here while dispatch resolved by the other name); the LEGACY unported a0…0034 row is relabeled 'legacy-system-architect' so exactly ONE identity carries the canonical name; self-healing-bot moves a0…030 → a0…056 (030 belongs to codex-packer — the three-way collision made 030's attribution ambiguous). Mirrors registries + compose + migration 100.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | enrichProfileWithHarness now also returns the EFFECTIVE provider + which tier won (effectiveProvider / effectiveModel / providerSource / providerOverridable / modelOverridable / precedenceNote) via the shared resolveEffectiveBotProvider. Reading /api/agents used to give harnessType and providerId side by side with no indication that the first silently outranks the second, so a cockpit panel could only guess - and a per-bot provider picker that guesses is a picker that lies. Computed server-side from ONE rule; a registry-read failure no longer drops the fields (it falls through and answers from the DB record, which is the honest answer in that case).
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Return resolved provider-precedence fields after profile updates so Config Admin never renders stale policy
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | "A bot's LLM provider is a row in a table": the controller takes an injected switch resolver (composition root → installed ProviderSwitchSnapshot) and feeds its resolution into resolveEffectiveBotProvider, so /api/agents reports providerSource 'bot-row' | 'fleet-default' | 'registry-harness' (or 'switch-refused' with the reason) from the rung that will serve the next dispatch. No snapshot (no pool) → the legacy answer, unchanged.
  */
 
 import { Request, Response, type RequestHandler } from 'express';
@@ -28,14 +29,21 @@ import {
 } from '@/entities/agent';
 import { AgentProfileService } from '../services';
 import { validateFile } from '@/shared/api/validation';
-import { resolveEffectiveBotProvider } from '@/shared/llm-runtime';
+import { resolveEffectiveBotProvider, type BotProviderSwitchResolution } from '@/shared/llm-runtime';
+
+/** The switch-row resolution for one agent, injected by the composition root (null → no snapshot). */
+export type AgentSwitchResolver = (agentId: string) => BotProviderSwitchResolution | null;
 
 /**
  * @description Controller for dedicated agent-profile persistence endpoints.
  * This separates bot identity/persona-lite fields from the broader `/api/config` document.
  */
 export class AgentProfileController extends BaseController {
-  constructor(private readonly agentProfileService: AgentProfileService, logger: any) {
+  constructor(
+    private readonly agentProfileService: AgentProfileService,
+    logger: any,
+    private readonly resolveSwitch: AgentSwitchResolver = () => null,
+  ) {
     super(logger);
   }
 
@@ -48,7 +56,7 @@ export class AgentProfileController extends BaseController {
     try {
       const dbAgents = await this.agentProfileService.listAgents();
       agents = dbAgents.map((agent) => ({
-        ...enrichProfileWithHarness(String(agent.agentId), agent),
+        ...enrichProfileWithHarness(String(agent.agentId), agent, this.resolveSwitch),
         agent_id: agent.agentId,
       }));
     } catch (error) {
@@ -84,14 +92,14 @@ export class AgentProfileController extends BaseController {
     if (!profile) {
       const seedProfile = getSeedAgentProfileFallback(agentId);
       if (seedProfile) {
-        return this.success(res, { agentId, profile: enrichProfileWithHarness(agentId, seedProfile) });
+        return this.success(res, { agentId, profile: enrichProfileWithHarness(agentId, seedProfile, this.resolveSwitch) });
       }
       return this.notFound(res, `Agent ${agentId} not found`);
     }
 
     return this.success(res, {
       agentId,
-      profile: enrichProfileWithHarness(agentId, profile),
+      profile: enrichProfileWithHarness(agentId, profile, this.resolveSwitch),
     });
   });
 
@@ -108,7 +116,7 @@ export class AgentProfileController extends BaseController {
 
     return this.success(res, {
       agentId,
-      profile: enrichProfileWithHarness(agentId, updated),
+      profile: enrichProfileWithHarness(agentId, updated, this.resolveSwitch),
       message: 'Agent profile updated successfully',
     });
   });
@@ -193,7 +201,11 @@ function buildDataUrl(file: Express.Multer.File): string {
  * Called at read time so callers always receive the authoritative harness config without a DB schema change.
  * If the agent is not in the registry, the profile is returned unchanged.
  */
-function enrichProfileWithHarness(agentId: string, profile: Record<string, unknown>): Record<string, unknown> {
+function enrichProfileWithHarness(
+  agentId: string,
+  profile: Record<string, unknown>,
+  resolveSwitch: AgentSwitchResolver,
+): Record<string, unknown> {
   let harnessType: string | null = null;
   let apiType: string | null = null;
   let inRegistry = false;
@@ -223,6 +235,9 @@ function enrichProfileWithHarness(agentId: string, profile: Record<string, unkno
     dbProviderId: (profile.providerId as string | null | undefined) ?? null,
     dbModelId: (profile.modelId as string | null | undefined) ?? null,
     registryReadable,
+    // The switch rung (agent_config row > fleet default) from the installed snapshot, so the
+    // reported providerSource is the rung that will actually serve the next dispatch.
+    switchResolution: resolveSwitch(agentId),
   });
   return {
     ...profile,
