@@ -7,10 +7,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin the ci-local `secret-scan` scanner double in the audit. Its guard replaces `docker` on PATH, so the gitleaks image - the boundary that exits 0 on a tree it could not read - never runs, and the audit carried no row for it. This case reads the shipped gate and helper, so the registration goes red if the scanner tag or the calibrated wording version moves away from what the row records.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The SEC-05 durable-memory proof was a file on disk: written, never listed in a required suite, and recorded in the audit as an open blocker. This case requires it to be in the e2e green set, to still be a real-Pool/NOBYPASSRLS proof rather than a double, and to be named by an audit row that no longer reads as open; it also pins both halves of the ledger-broker contract the recorded mutations exercised, so loosening either without re-recording the result turns the gate red.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The green-set registration checks were substring matches on the RAW suite text, so a spec commented out with a leading `#` still satisfied them while scripts/e2e-green.mjs drops every such line and never runs it (reviewer's proof on PR #620: commenting out the SEC-05 line left 6 of 6 green). Membership is now asserted against the list parsed exactly as the runner parses it - trimmed, blank and `#` lines dropped - and the runner's filter is pinned so the mirror cannot drift from it silently.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The mirror is gone: the guard imports the same parser the runner uses (scripts/e2e-green-list.mjs) and, instead of grepping the runner for three strings, asks it (`--list`) what it would hand to playwright and requires that to equal the parsed list. The source-text pin from seq 4 was satisfied by three semantically different runners (an extra filter, a different file, the expressions kept only in a comment) - PR #620 second review.
  */
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { readGreenSuite } from '../../scripts/e2e-green-list.mjs';
 
 const read = (file: string): string => readFileSync(file, 'utf8');
 
@@ -21,19 +25,21 @@ const read = (file: string): string => readFileSync(file, 'utf8');
  * still contains the path and never runs.
  * @returns The spec paths the green gate runs, in list order.
  */
-const greenSuiteFiles = (): string[] =>
-  read('tests/e2e-green-suite.txt')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith('#'));
+const GREEN_LIST = path.resolve('tests/e2e-green-suite.txt');
+const greenSuiteFiles = (): string[] => readGreenSuite(GREEN_LIST) as string[];
 
-// The exact filter the runner applies. If it changes, greenSuiteFiles() above has to change
-// with it, or the registration checks would again describe a list the gate does not run.
-const RUNNER_FILTER = [
-  ".split(/\\r?\\n/)",
-  '.map((line) => line.trim())',
-  ".filter((line) => line.length > 0 && !line.startsWith('#'))",
-];
+/**
+ * @description Asks the real runner which spec paths it would hand to playwright. This is the
+ * runner boundary itself: a runner that filters, re-points or re-parses the list answers
+ * differently, whatever its source text still contains.
+ * @returns The runner's list, one path per line.
+ */
+const runnerWouldRun = (): string[] => {
+  const r = spawnSync(process.execPath, ['scripts/e2e-green.mjs', '--list'], { encoding: 'utf8', timeout: 30_000 });
+  expect(r.status, `e2e-green.mjs --list failed: ${r.stderr}`).toBe(0);
+  return r.stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+};
+
 
 describe('real-boundary regression doctrine', () => {
   it('keeps the coding rule and the explicit audit linked', () => {
@@ -49,16 +55,14 @@ describe('real-boundary regression doctrine', () => {
     const audit = read('docs/governance/real-boundary-regression-audit.md');
     const source = read(spec);
     const requiredE2e = greenSuiteFiles();
-    const runner = read('scripts/e2e-green.mjs');
     const migration = read('scripts/migrations/117-swarm-memory-provenance.sql');
     const service = read('src/features/agent-management/services/swarm-memory-service.ts');
 
     // A proof nothing runs is not evidence. This is the whole reason the row stayed open. The
     // membership is over the list the runner builds, not the file's text: a `#`-commented line
     // still contains the path and is exactly what the runner drops.
-    for (const fragment of RUNNER_FILTER) {
-      expect(runner, 'scripts/e2e-green.mjs must still parse the list the way greenSuiteFiles() mirrors').toContain(fragment);
-    }
+    // The runner is asked, not grepped: what it would run must be exactly what the parser says.
+    expect(runnerWouldRun(), 'scripts/e2e-green.mjs would run a different list than the shared parser reads').toEqual(requiredE2e);
     expect(requiredE2e, `${spec} must be in the required e2e set, not merely on disk`).toContain(spec);
 
     // And it has to still be the real seam: a real Pool, a role RLS can apply to, the shipped

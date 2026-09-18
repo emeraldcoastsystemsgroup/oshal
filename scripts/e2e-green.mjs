@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Green-ratchet runner: run only the curated-passing Playwright e2e specs (tests/e2e-green-suite.txt). The gate ratchets up as specs are normalized; the full suite is red and normalized separately (BACKLOG).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preflight the vite chat bundle: src/api/dist is gitignored and neither ci.yml nor ci-local builds it, so on a clean checkout /dist/chat-ui.js 404s, chat-config-modal.mjs (which imports ChatApp from it) never evaluates, and every /chat modal spec times out "element is not visible" (the 2026-07-09 agent-profile-persistence quarantine). Build it when missing, fail loud when the build fails.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The list is parsed by scripts/e2e-green-list.mjs, shared with the registration guard, so the two cannot drift; `--list` prints the paths this runner would hand to playwright and exits before any preflight, which is what the guard compares against the parser (PR #620 review: a source-text pin was satisfied by three runners that ran a different list).
  */
 
 /**
@@ -20,12 +21,21 @@
  * @returns Exits with playwright's exit code.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readGreenSuite } from './e2e-green-list.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const listPath = path.join(repoRoot, 'tests', 'e2e-green-suite.txt');
+
+// `--list` prints the spec paths this runner WOULD hand to playwright, one per line, and
+// exits - before any preflight, so a guard can compare the runner's real list against the
+// shared parser without a chat bundle, a browser or playwright being present.
+if (process.argv.includes('--list')) {
+  for (const file of readGreenSuite(listPath)) console.log(file);
+  process.exit(0);
+}
 
 // The standalone /chat surface imports ChatApp from /dist/chat-ui.js — a vite build output
 // (npm run build:chat) that is gitignored and built by Dockerfile.oshal but by NO CI step.
@@ -43,10 +53,7 @@ if (!existsSync(chatBundle)) {
   }
 }
 
-const files = readFileSync(listPath, 'utf8')
-  .split(/\r?\n/)
-  .map((line) => line.trim())
-  .filter((line) => line.length > 0 && !line.startsWith('#'));
+const files = readGreenSuite(listPath);
 
 if (files.length === 0) {
   console.error('[e2e-green] tests/e2e-green-suite.txt has no spec files — nothing to run.');
