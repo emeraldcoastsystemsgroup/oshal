@@ -11,51 +11,27 @@ To comment, write under an entry in this file and tell me, or just say the entry
 
 ---
 
-## Right now — 7
+## Right now — 3
 
-Short-lived and blocking today. Source: `docs/backlog/operator-now.json` (as of 2026-09-17).
+Short-lived and blocking today. Source: `docs/backlog/operator-now.json` (as of 2026-09-18).
 
-### Claim swarm root
+### Grant the GitHub session the packages scope (30 seconds, browser)
 
-swarm_roles is empty — 0 rows. Nobody holds any role, so no grant of any kind can be made, including to yourself. Every mutating authorization route requires root or admin; POST /claim-root needs only your signed-in session and is the designed bootstrap for exactly this state.
+The admin PAT in .env (GITHUB_ADMIN_TOKEN, ghp_) answers 401 Unauthorized under every auth form, tested 2026-09-18 00:50Z - GitHub no longer accepts it. The project pushes on a different token, the gho_ OAuth token gh auth login minted (OSHAL_DEV_REPO_TOKEN and the git credential store), whose scopes are gist, repo, workflow - it cannot write packages, and OAuth scopes cannot be widened after issue. So nothing on this box can publish the container image, and every default install keeps pulling the July build. An agent must not mint a credential, and the grant flow needs your browser.
 
-**Do:** Click Claim swarm root in the cockpit.
+**Do:** gh auth refresh -h github.com -s write:packages,read:packages - it prints a code, opens the browser, you click Authorize. Nothing to paste: afterwards the refreshed token is read with gh auth token, wired as OSHAL_GHCR_TOKEN/OSHAL_GHCR_USER for the nightly gate, and the first green main gate publishes.
 
-### Activate Little Monsters
+### The student: open Little Monsters once (signing in was not enough)
 
-swarm_applications says status=inactive while its own manifest says active, so it was toggled off deliberately after install. A grant against an inactive package is refused 404 before authorization runs — so Ella cannot be given it until this flips. 13 of 89 apps are in the same state.
+Her 2026-09-17 sign-in reached / and /cockpit/ only - the api log shows no Little Monsters route for her sub, and lm_students.external_issuer is still NULL (row last updated 2026-08-25). The issuer self-heal lives in the app's own access path (education-access.ts, the legacy branch: same external_id, NULL issuer -> UPDATE sets the issuer), so it runs the first time she opens the app, not at login. The grant itself is right: little-monsters, role student, issuer accounts.google.com.
 
-**Do:** Activate it from the app surface, or tell me to and I will report the exact call first.
+**Do:** Have her click into Little Monsters once. Then say so and I will confirm the issuer was written.
 
-### Decide what Ella gets
+### PINNED by you - rotate the Alpaca paper keys
 
-She already exists: lm_students carries the student row for her (name, address and Google sub are on the row — read them from the database, never from a published file), role student. Her external_issuer is NULL where yours is populated — worth checking before granting, because issuer-keyed lookups are exactly what silently failed elsewhere. Jarvis needs no grant at all (legacy mode); Little Monsters needs activation first and declares no prerequisites, so nothing else comes with it.
+A lane's bad redaction printed ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA_KEY into its own transcript. You said you will take care of it later; this stays here so it is not forgotten. (The oshal verification PAT that was pasted into chat has since been re-minted: .env carries one and the deploy gate reads it.)
 
-**Do:** Confirm the scope and I will prepare the grant for your approval rather than applying it.
-
-### Mint a GHCR token
-
-Nothing has ever published this trunk's container image. ghcr.io/.../oshal-bot:latest is still the pre-cutover 2026-07-26 artifact, and --mode 1 (the default documented install) hands that to every new machine. That is what made the second computer look like it was missing features. The publish mechanism is merged and fail-closed; it needs a credential an agent must not mint.
-
-**Do:** A PAT with write:packages, set as OSHAL_GHCR_TOKEN and OSHAL_GHCR_USER in the environment the nightly gate runs under, then add --publish-image to that scheduled command.
-
-### Rotate two credentials that were exposed in a transcript
-
-A lane's bad redaction printed the values of ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA_KEY into its own transcript; it disclosed this unprompted. Separately, the oshal PAT was pasted into chat. Neither left this machine, but neither should sit in a log.
-
-**Do:** Rotate the Alpaca paper keys; re-mint OSHAL_VERIFY_OPERATOR_PAT from a signed-in session and replace the line in .env.
-
-### Deploy when you are ready
-
-The running api is 12+ commits behind main, so POST /api/authorization/package-plan 404s on the box and the rail change is not picked up. Nothing is broken by waiting. A deploy signs you out and takes about 20 minutes.
-
-**Do:** bash scripts/oshal-deploy.sh — or tell me to run it. For the rail change alone, no deploy is needed: POST /api/ui/profile/reload with your PAT.
-
-### Fix .wslconfig
-
-wsl reports: Unknown key 'wsl2.autoMemoryReclaim' in %USERPROFILE%\.wslconfig:4. The key is being rejected, so whatever it was meant to do is not happening. The docker-desktop WSL2 distro stopped three times last night and the engine was at 1.4 GB free of 15.7 GB; this may be the cause rather than a coincidence.
-
-**Do:** Say the word and I will read the file and tell you exactly what is malformed.
+**Do:** When you get to it: rotate the paper keys in the Alpaca dashboard and replace the three lines in .env.
 
 ---
 
