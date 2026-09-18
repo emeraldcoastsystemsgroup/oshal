@@ -5,24 +5,165 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the integration-boundary doctrine and its first audited companions: real ticket/RLS stores, real package alias resolution, and mutation-tested build artifacts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin the ci-local `secret-scan` scanner double in the audit. Its guard replaces `docker` on PATH, so the gitleaks image - the boundary that exits 0 on a tree it could not read - never runs, and the audit carried no row for it. This case reads the shipped gate and helper, so the registration goes red if the scanner tag or the calibrated wording version moves away from what the row records.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The SEC-05 durable-memory proof was a file on disk: written, never listed in a required suite, and recorded in the audit as an open blocker. This case requires it to be in the e2e green set, to still be a real-Pool/NOBYPASSRLS proof rather than a double, and to be named by an audit row that no longer reads as open; it also pins both halves of the ledger-broker contract the recorded mutations exercised, so loosening either without re-recording the result turns the gate red.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The green-set registration checks were substring matches on the RAW suite text, so a spec commented out with a leading `#` still satisfied them while scripts/e2e-green.mjs drops every such line and never runs it (reviewer's proof on PR #620: commenting out the SEC-05 line left 6 of 6 green). Membership is now asserted against the list parsed exactly as the runner parses it - trimmed, blank and `#` lines dropped - and the runner's filter is pinned so the mirror cannot drift from it silently.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The mirror is gone: the guard imports the same parser the runner uses (scripts/e2e-green-list.mjs) and, instead of grepping the runner for three strings, asks it (`--list`) what it would hand to playwright and requires that to equal the parsed list. The source-text pin from seq 4 was satisfied by three semantically different runners (an extra filter, a different file, the expressions kept only in a comment) - PR #620 second review.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The guard drives the runner body with a recording spawner and pins the playwright ARGV to the parsed list; `--list` compared the parser to itself through a second derivation, and a filter at the spawn site passed it (third review, X1-X4). parseGreenSuite gets its own case for CRLF, indentation, trailing whitespace, `#` lines and blanks.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | The guard drives main() - the function the CLI entry calls - rather than the body beneath it, and pins the argv to exactly the parsed list with no flags appended, so an entry that re-points the list or adds --grep-invert goes red (fourth review, X6/X6b).
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | The program is run out of process with a recording npx (a copy of the runner, its parser and the list in a scratch tree shaped like the repo), and the argv it hands playwright is pinned to the parsed list with no flags - the only drive that reaches the module default list path and the entry line (fifth review: X10, X6', X8 passed the in-process drive). The in-process drive stays as the fast path and no longer supplies listPath, so main's own default is exercised. The "only the exit is undriven" wording is withdrawn.
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, copyFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import { parseGreenSuite, readGreenSuite } from '../../scripts/e2e-green-list.mjs';
+import { main as runGreenGate } from '../../scripts/e2e-green.mjs';
 
 const read = (file: string): string => readFileSync(file, 'utf8');
 
+/**
+ * @description The spec files scripts/e2e-green.mjs will actually hand to Playwright: the
+ * same split/trim/drop-comments filter the runner applies to tests/e2e-green-suite.txt. A
+ * substring check on the raw file text is not registration - a line commented out with `#`
+ * still contains the path and never runs.
+ * @returns The spec paths the green gate runs, in list order.
+ */
+const GREEN_LIST = path.resolve('tests/e2e-green-suite.txt');
+const greenSuiteFiles = (): string[] => readGreenSuite(GREEN_LIST) as string[];
+
+/**
+ * @description Runs main() - the function the CLI entry calls - in process with a recording
+ * spawner and returns the playwright argv it produced. This is the fast path: it reaches the
+ * body and main's own defaults, but not the entry line itself, which programHandsPlaywright()
+ * below covers by running the program as the gate does.
+ * @returns The spec paths the runner handed to playwright, in order.
+ */
+const runnerHandsPlaywright = (): string[] => {
+  const calls: string[][] = [];
+  const result = runGreenGate([], {
+    // No listPath: the program's OWN default is what must resolve to the parsed list.
+    exists: () => true, // the chat bundle is the page under test, not the list under test
+    spawn: (cmd: string, args: string[]) => { calls.push([cmd, ...args]); return { status: 0 }; },
+    log: () => undefined,
+    error: () => undefined,
+  });
+  expect(result.status).toBe(0);
+  expect(calls, 'the runner spawned something other than one playwright run').toHaveLength(1);
+  // Exactly this argv and nothing appended: a filter flag added by the entry would be a way to
+  // skip a listed spec while the list itself still names it.
+  const [cmd, tool, verb, ...rest] = calls[0];
+  expect([cmd, tool, verb]).toEqual(['npx', 'playwright', 'test']);
+  expect(rest.filter((arg) => arg.startsWith('-')), 'the gate appended playwright flags of its own').toEqual([]);
+  return rest;
+};
+
+
+/**
+ * @description Runs scripts/e2e-green.mjs AS A PROGRAM, the way the gate does, with a recording
+ * `npx` first on PATH, and returns the argv it handed playwright. A copy of the runner, its parser
+ * and the list is laid out in a scratch directory with the same shape as the repo, so the
+ * program's own default list path, its top-level statements and the entry line's argv expression
+ * all execute for real. Nothing here can be satisfied by what the guard supplies, because the
+ * guard supplies nothing but PATH.
+ * @returns The spec paths (and any flags) the program handed playwright, in order.
+ */
+const programHandsPlaywright = (): string[] => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'e2e-green-program-'));
+  try {
+    for (const rel of ['scripts/e2e-green.mjs', 'scripts/e2e-green-list.mjs', 'tests/e2e-green-suite.txt']) {
+      mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+      copyFileSync(path.resolve(rel), path.join(root, rel));
+    }
+    // The chat bundle is the page under test, not the list under test: an empty file skips the
+    // unrelated vite preflight the way a built checkout would.
+    mkdirSync(path.join(root, 'src', 'api', 'dist'), { recursive: true });
+    writeFileSync(path.join(root, 'src', 'api', 'dist', 'chat-ui.js'), '');
+    const bin = path.join(root, 'bin');
+    mkdirSync(bin);
+    const record = path.join(root, 'npx-argv.txt');
+    // `shell: true` resolves `npx` through cmd.exe on Windows and sh elsewhere; both shims append
+    // their argv, space-joined, to the record and exit 0.
+    writeFileSync(path.join(bin, 'npx.cmd'), `@echo off\r\necho %*>> "${record}"\r\n`);
+    writeFileSync(path.join(bin, 'npx'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${record.replace(/\\/g, '/')}"\n`, { mode: 0o755 });
+    const r = spawnSync(process.execPath, [path.join(root, 'scripts', 'e2e-green.mjs')], {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 60_000,
+      env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` },
+    });
+    expect(r.status, `the program did not exit 0: ${r.stdout}${r.stderr}`).toBe(0);
+    expect(existsSync(record), 'the program never invoked npx').toBe(true);
+    const lines = readFileSync(record, 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+    expect(lines, 'the program invoked npx more than once').toHaveLength(1);
+    const [tool, verb, ...rest] = lines[0].split(/\s+/);
+    expect([tool, verb]).toEqual(['playwright', 'test']);
+    return rest;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+};
+
 describe('real-boundary regression doctrine', () => {
+  it('hands playwright exactly the parsed list when run as the gate runs it', () => {
+    // Out of process, through the real entry line and the module's own default list path.
+    const handed = programHandsPlaywright();
+    expect(handed.filter((arg) => arg.startsWith('-')), 'the program appended playwright flags of its own').toEqual([]);
+    expect(handed, 'the program handed playwright a different list than the shared parser reads').toEqual(greenSuiteFiles());
+  });
+
+  it('parses the green list the one way both the runner and this guard depend on', () => {
+    const text = ' tests/a.spec.ts \r\n\n#tests/commented.spec.ts\r\n  # indented comment\n\ttests/b.spec.ts\t\ntests/c.spec.ts';
+    expect(parseGreenSuite(text)).toEqual(['tests/a.spec.ts', 'tests/b.spec.ts', 'tests/c.spec.ts']);
+    expect(parseGreenSuite('')).toEqual([]);
+    expect(parseGreenSuite('# only a comment\n\n')).toEqual([]);
+  });
+
   it('keeps the coding rule and the explicit audit linked', () => {
     const rules = read('CLAUDE.md');
     const audit = read('docs/governance/real-boundary-regression-audit.md');
     expect(rules).toContain('Integration-boundary corollary');
     expect(rules).toContain('real-boundary-regression-audit.md');
-    expect(audit).toContain('Open SEC-05 blocker');
+    expect(audit).toContain('integration-boundary corollary');
+  });
+
+  it('proves the durable swarm-memory ledger against a real PostgreSQL, inside a required gate', () => {
+    const spec = 'tests/swarm-memory-rls-live.spec.ts';
+    const audit = read('docs/governance/real-boundary-regression-audit.md');
+    const source = read(spec);
+    const requiredE2e = greenSuiteFiles();
+    const migration = read('scripts/migrations/117-swarm-memory-provenance.sql');
+    const service = read('src/features/agent-management/services/swarm-memory-service.ts');
+
+    // A proof nothing runs is not evidence. This is the whole reason the row stayed open. The
+    // membership is over the list the runner builds, not the file's text: a `#`-commented line
+    // still contains the path and is exactly what the runner drops.
+    // The runner is driven, not grepped: the argv it hands playwright must be exactly the parsed list.
+    expect(runnerHandsPlaywright(), 'scripts/e2e-green.mjs handed playwright a different list than the shared parser reads').toEqual(requiredE2e);
+    expect(requiredE2e, `${spec} must be in the required e2e set, not merely on disk`).toContain(spec);
+
+    // And it has to still be the real seam: a real Pool, a role RLS can apply to, the shipped
+    // migration text, and the production GUC wrapper — no module mocking anywhere.
+    expect(source).toContain('new Pool');
+    expect(source).toContain('NOBYPASSRLS');
+    expect(source).toContain("readFileSync('scripts/migrations/117-swarm-memory-provenance.sql'");
+    expect(source).toContain('wrapPoolWithGuc');
+    expect(source).not.toContain('vi.mock(');
+
+    const row = audit.split('\n').find((line) => line.includes(spec));
+    expect(row, 'the durable-memory boundary must be registered in the audit by spec path').toBeTruthy();
+    expect(row, 'the row must not still read as an open blocker once the proof has run').not.toContain('Open SEC-05 blocker');
+
+    // Both halves of the broker contract the recorded mutations exercised. Moving either one
+    // without re-running and re-recording would leave the audit describing code that is gone.
+    expect(migration).toContain('FORCE ROW LEVEL SECURITY');
+    expect(migration).toContain("USING (current_setting('oshal.swarm_memory_ledger_broker', true) = 'on')");
+    expect(service).toContain("set_config('oshal.swarm_memory_ledger_broker', 'on', true)");
   });
 
   it('runs ticket ingress over the real Postgres store and enforcing role', () => {
-    const requiredE2e = read('tests/e2e-green-suite.txt');
+    const requiredE2e = greenSuiteFiles();
     for (const file of [
       'tests/alert-intake-rls-live.spec.ts',
       'tests/connector-webhook-rls-live.spec.ts',
@@ -32,7 +173,7 @@ describe('real-boundary regression doctrine', () => {
       expect(source, file).toContain('PostgresTicketStore');
       expect(source, file).toContain('NOBYPASSRLS');
       expect(source, file).not.toContain('vi.mock(');
-      expect(requiredE2e).toContain(file);
+      expect(requiredE2e, `${file} must be in the list the green gate runs, not merely in the file text`).toContain(file);
     }
   });
 

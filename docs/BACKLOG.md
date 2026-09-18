@@ -914,7 +914,21 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** exact pre/post disk figures are recorded, the intended orphan only is removed, and all active swarm volumes and databases pass health checks afterward.
 
 ### Real-boundary regression doctrine
-- **Remaining:** run the existing migration-117 disposable-PostgreSQL proof through the protected promotion job and retain its result. The corrected provenance ledger, connection-scoped broker, two-owner/operator fixture, and real-Pool live spec are implemented locally, but an unexecuted live spec is not RLS evidence.
+- **Remaining:** the durable-memory half is done. `tests/swarm-memory-rls-live.spec.ts` was run on
+  2026-09-17 against a real PostgreSQL 16 in a disposable container (1 passed, 431 ms), and it is
+  now listed in `tests/e2e-green-suite.txt`, so the promotion gate runs it instead of it sitting on
+  disk. The audit row records the result and both mutations that make it evidence: loosening the
+  ledger-broker policy to `USING (true)` leaks 2 rows instead of 0 to the unbrokered NOBYPASSRLS
+  read, and removing the service's transaction-local broker marker makes PostgreSQL refuse the
+  write so the store answers 200 instead of 201. Still owed: (1) the spec's FIRST run inside the
+  promotion job itself - the 2026-09-17 run was a direct Playwright invocation, and the nightly
+  `ci-local.sh` e2e gate has not executed since it joined the list (that gate is also inside the
+  twelve-night failure streak entry below); (2) the one other audit row still marked `Owed` on a
+  boundary reachable locally - the `secret-scan` row, which needs one real
+  `zricethezav/gitleaks:latest` run over an export holding a path the scanner cannot read, plus
+  evidence that the floating `:latest` tag still writes one of the five wordings
+  `GITLEAKS_UNREAD_PATTERN` was calibrated against. Every remaining row besides those two is
+  deployment-, hardware-, cluster- or vendor-token-gated and is dated in its own row.
 - **Done when:** the durable-memory ledger has the same real-boundary evidence already recorded for ticket/store gateways, aliased module resolution, and built-image artifacts, and the audit contains no unresolved local boundary.
 
 ### Installer and chat-channel strings still use the retired standalone product name
