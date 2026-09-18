@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Named the stores behind the rungs so no reader invents a fourth: the per-bot row IS the existing agent_config record (config_values.providerId/modelId — what PUT /api/agents/:id/runtime writes and ADR-034 dispatch stamping carries), the fleet default is the one reserved row of oshal_bot_provider_switch (migration 147). The rule itself is unchanged; ProviderSwitchRow is the common shape both stores project to.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Entry 2 named the wrong store for the per-bot rung. An agent_config record is a machinery-written dispatch artefact (manifest seeding, the bot's own broadcast-up, a config push — the operator box holds 70 and not one was a person's choice), and treating it as the per-bot switch let every one of them outrank a fleet-default write, failing ADR-162 §7 for the whole fleet. Both rungs now live in oshal_bot_provider_switch: a per-bot row (scope = agent id) exists only when an operator wrote one through the api, the fleet default is the reserved row, and agent_config is ADR-034 tier 2 of the carried record BENEATH the fleet row. The rule itself is still unchanged — what changed is that the store no longer hands it agent_config as a botRow.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | requireModelForClineBackedId: a Cline-backed id written without a model is refused with the reason (the Cline wrapper would otherwise pick the container's FORCE_LLM_MODEL seed — gpt-5.5 — through ClineCLIWrapper._resolveBackingProvider's fallback chain, the same 'models/gpt-5.5 is not found' failure by another door). Native harness ids keep their own runtime default; no default model is ever picked for a Cline-backed id.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The FALLBACK ORDER resolves by the same rule as the provider id: resolveProviderFallbackChain reads the bot row, then the fleet row, then an environment override, then nothing. It names no provider, because the hardcoded chain it replaces (a three-name union and a literal Record in bot-node-runtime.ts) made an exhausted vendor unrecoverable by configuration - the only other name in the literal had been exhausted too, and no setting anywhere could add a third. A row's EMPTY array is a real answer (no failover, fail visibly) and does not inherit; only null/absent does. An id the platform cannot run is dropped and reported, never silently kept, and never allowed to disable failover for the rest of the chain.
  *
  * @module shared/llm-runtime/bot-provider-switch
  */
@@ -29,6 +30,11 @@ export interface ProviderSwitchRow {
   modelId: string | null;
   updatedBy: string | null;
   updatedAt: string | null;
+  /**
+   * Ordered provider ids to try when this row's provider fails a failover-eligible way.
+   * `null`/absent = inherit the next precedence rung. An EMPTY array = no failover, deliberately.
+   */
+  fallbackOrder?: readonly string[] | null;
 }
 
 /** The registry facts the rule reads for one bot. Structural, so both registries satisfy it. */
@@ -233,4 +239,81 @@ export function resolveBotProviderSwitch(input: {
     ok: true, source: 'registry', providerId: registryApiType ?? registryHarness,
     harnessType: registryHarness, apiType: registryApiType, modelId: null, row: null,
   };
+}
+
+/** Where a resolved fallback chain came from, so a surface can say why it is what it is. */
+export type FallbackChainSource = 'bot-row' | 'fleet-default' | 'environment' | 'none';
+
+/** An ordered, runnable fallback chain and the rung that supplied it. */
+export interface ProviderFallbackChain {
+  /** Provider ids to try, in order, after the primary. Never contains the primary. */
+  order: readonly string[];
+  source: FallbackChainSource;
+  /** Ids that were configured but refused, each with the reason, so nothing fails silently. */
+  refused: readonly RefusedProviderId[];
+}
+
+/**
+ * @description Resolve the ordered fallback chain for one bot. ONE rule, most specific first,
+ * the same shape {@link resolveBotProviderSwitch} uses for the provider itself: the bot's own
+ * switch row, else the fleet-default row, else an environment override, else no failover.
+ *
+ * No provider is named here, and none may be. The chain is entirely what an administrator wrote,
+ * in the order they wrote it, for as many providers as they listed. A hardcoded chain is what this
+ * function exists to delete: it made a vendor's exhausted subscription unrecoverable by
+ * configuration, because the only other name in the literal had been exhausted too.
+ *
+ * A configured id the platform cannot run is DROPPED from the order and reported in `refused`,
+ * rather than refusing the whole chain — one bad entry must not disable failover for the rest.
+ * The primary is filtered out (a provider cannot fail over to itself) and duplicates collapse to
+ * their first position.
+ *
+ * @param input - The bot's row, the fleet row, an environment override, the primary provider id
+ *   that is failing over, and the runnable catalog.
+ * @returns The ordered chain, its source rung, and any refused entries.
+ */
+export function resolveProviderFallbackChain(input: {
+  botRow?: ProviderSwitchRow | null;
+  fleetRow?: ProviderSwitchRow | null;
+  /** Operator escape hatch, read only when no row supplies a chain. Comma or space separated. */
+  environmentOrder?: string | null;
+  primaryProviderId?: string | null;
+  catalog: ProviderSwitchCatalog;
+}): ProviderFallbackChain {
+  const configured = ((): { raw: readonly string[]; source: FallbackChainSource } => {
+    // A row's EMPTY array is a real answer — "no failover" — and must not fall through to the
+    // next rung. Only null/absent inherits. That distinction is the whole point of the column.
+    if (input.botRow && Array.isArray(input.botRow.fallbackOrder)) {
+      return { raw: input.botRow.fallbackOrder, source: 'bot-row' };
+    }
+    if (input.fleetRow && Array.isArray(input.fleetRow.fallbackOrder)) {
+      return { raw: input.fleetRow.fallbackOrder, source: 'fleet-default' };
+    }
+    const env = meaningful(input.environmentOrder);
+    if (env) {
+      const parsed = env.split(/[\s,]+/).map((entry) => entry.trim()).filter(Boolean);
+      const off = parsed.length === 1 && ['none', 'off', 'false'].includes(parsed[0].toLowerCase());
+      return { raw: off ? [] : parsed, source: 'environment' };
+    }
+    return { raw: [], source: 'none' };
+  })();
+
+  const primary = meaningful(input.primaryProviderId)?.toLowerCase() ?? null;
+  const order: string[] = [];
+  const refused: RefusedProviderId[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of configured.raw) {
+    const id = meaningful(entry);
+    if (!id) continue;
+    const key = id.toLowerCase();
+    // A provider cannot fail over to itself, and a repeated id adds no rung.
+    if (key === primary || seen.has(key)) continue;
+    const classified = classifyProviderId(id, input.catalog);
+    if (!classified.ok) { refused.push(classified); continue; }
+    seen.add(key);
+    order.push(classified.providerId);
+  }
+
+  return { order, source: order.length === 0 && configured.source === 'none' ? 'none' : configured.source, refused };
 }
