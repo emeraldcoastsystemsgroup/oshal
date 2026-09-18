@@ -226,6 +226,18 @@ including explicit denies and clears. Owner reads require the subject and verifi
 database request context. Package stop and uninstall are swarm-operator actions, independent of
 application business roles.
 
+A fleet service-secret call (`X-Service-Secret`) that carries `X-Oshal-User-Sub-B64` names a subject but
+no identity provider, so the tier gate and the dynamic route mounter refuse it with
+`403 app_access_identity_required` before any tier is resolved. That is a decision, not a gap: a subject
+is unique only inside its issuer, the secret is held by injectable bot processes, and the alternatives
+(assume `urn:oshal:local-auth`, or read the subject across every issuer) would let a forwarded string
+select a principal. `src/app/server.ts` stamps such a request with no subject and no issuer on its
+request identity; `appAccessCallerSub` still resolves the carried subject, `appAccessCallerIssuer`
+returns null, and the gate stops there. User-bound automation reaches a declared route through the
+workload-delegation rail (verified `principal_iss` on the request identity) or the application service
+principal. Pinned at the HTTP boundary by `tests/unit/swarm-app-gate-access.spec.ts` and
+`tests/unit/manifest-route-mounter.spec.ts`.
+
 Run `npm run test:authorization` locally. It includes isolated policy/import, identity, loaded-package
 HTTP, typed-tool, real Chromium, worker-boundary, and disposable PostgreSQL tests. The existing AI Test
 Lab registers their source paths under `authorization-management`; its live catalog step is read-only

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: shared request-subject, rollout-mode, and method/tier policy for both dynamic package routes and hard-mounted kernel routes.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve issuer from the same verified identity rail as subject; never accept caller-supplied issuer hints or infer local provenance.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Document why a carried trusted-service subject resolves to a null issuer on purpose: the fleet secret carries a subject string and no identity provider, so the gate and mounter refuse it (app_access_identity_required) instead of inferring local-auth or reading every issuer. Second review of PR 605.
  */
 
 import type { Request } from 'express';
@@ -36,7 +37,17 @@ export function appAccessCallerSub(req: Request): string | null {
   return carried ?? getTrustedServiceUserSub(req);
 }
 
-/** @description Resolve issuer for the same principal selected by appAccessCallerSub. */
+/**
+ * @description Resolve the issuer for the same principal selected by appAccessCallerSub. Null is
+ * deliberate for a subject that arrived without a verified issuer - a fleet service-secret call
+ * carrying only `X-Oshal-User-Sub-B64`, or an older derived credential - and both enforcement
+ * paths refuse such a request (`app_access_identity_required`) rather than inferring local-auth
+ * or reading the subject across every issuer: the secret is held by injectable bot processes, and
+ * a subject string alone cannot name a principal. Issuer-bearing automation rides the
+ * workload-delegation rail, whose verified `principal_iss` is stamped on the request identity.
+ * @param req - Express request after authentication and identity middleware.
+ * @returns The verified issuer for the selected subject, or null when none was established.
+ */
 export function appAccessCallerIssuer(req: Request): string | null {
   const scoped = getRequestIdentity();
   if (scoped?.sub) return scoped.principalIssuer || null;

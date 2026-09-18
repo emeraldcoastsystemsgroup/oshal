@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: prove the global app gate enforces tiers on hard-mounted kernel routes while preserving inactive precedence, legacy manifests, and anonymous guest-matrix ownership.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove verified issuer forwarding, missing-issuer refusal, and same-subject cross-issuer isolation at the real HTTP boundary.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin the fleet service-secret rail at the HTTP boundary: a call carrying X-Oshal-User-Sub-B64 resolves its subject (appAccessCallerSub) but has no verified issuer, and the gate refuses it with app_access_identity_required before any tier is resolved. Second review of PR 605 found that refusal undocumented and untested; the decision to keep it is recorded in docs/security/application-authorization.md.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,7 +15,7 @@ import type { AddressInfo } from 'net';
 import type { AppAccessResolver, ResolvedAppAccess, SwarmAppService } from '../../src/features/swarm-apps';
 import { createSwarmAppGateMiddleware } from '../../src/app/middleware/swarm-app-gate-middleware';
 import { runWithRequestIdentity } from '../../src/shared/services/database/request-identity';
-import { appAccessCallerIssuer } from '../../src/app/middleware/app-access-policy';
+import { appAccessCallerIssuer, appAccessCallerSub } from '../../src/app/middleware/app-access-policy';
 
 const ACCESS = { supported: ['deny', 'viewer', 'editor', 'admin'] as const, defaultTier: 'viewer' as const };
 const ISSUER = 'https://identity.example.test';
@@ -94,6 +95,37 @@ describe('hard-mounted kernel app access gate', () => {
       expect(await response.json()).not.toHaveProperty('reached');
       expect(resolve).not.toHaveBeenCalled();
     } finally { await stop(server); }
+  });
+
+  it('refuses a fleet service-secret caller that carries a user subject but no verified issuer', async () => {
+    process.env.SWARM_SERVICE_SECRET = 'example-gate-fixture-secret';
+    const declaration = { ...ACCESS, supported: [...ACCESS.supported] };
+    const ownerOf = vi.fn().mockReturnValue({ appName: 'kernel-app', status: 'active', access: declaration });
+    const resolve = vi.fn().mockResolvedValue({ appName: 'kernel-app', userSub: 'carried-sub', tier: 'admin', bundle: null, source: 'explicit' });
+    let carried: string | null = null;
+    const app = express();
+    // The production stamp for a fleet-secret call (server.ts identity middleware): no subject,
+    // operator-level system traffic. The subject travels only in the trusted-service header.
+    app.use((_req, _res, next) => runWithRequestIdentity({ sub: null, isOperator: true }, () => next()));
+    app.use((req, _res, next) => { carried = appAccessCallerSub(req); next(); });
+    app.use(createSwarmAppGateMiddleware(
+      { ownerOf } as unknown as SwarmAppService,
+      { resolveForPrincipal: resolve } as unknown as AppAccessResolver,
+    ));
+    app.all('/api/kernel/*rest', (_req, res) => res.json({ reached: true }));
+    const server = createServer(app);
+    await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const response = await fetch(`${base}/api/kernel/write`, { method: 'POST', headers: {
+        'x-service-secret': 'example-gate-fixture-secret',
+        'x-oshal-user-sub-b64': Buffer.from('carried-sub', 'utf8').toString('base64url'),
+      } });
+      expect(carried, 'the carried subject IS resolved; it is the verified issuer that is missing').toBe('carried-sub');
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: 'app_access_identity_required' });
+      expect(resolve, 'no tier is guessed as local-auth or read across every issuer').not.toHaveBeenCalled();
+    } finally { await stop(server); delete process.env.SWARM_SERVICE_SECRET; }
   });
 
   it('does not reuse another issuer\'s admin tier for the same subject', async () => {

@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove package @/ alias resolution through the real tsconfig-paths hook and Node createRequire against an external temporary package; no resolver mock can mask the production seam.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2 route-boundary matrix: deny blocks every method, viewer blocks writes, editor/admin defer to package code, missing declarations preserve legacy behavior, shadow observes, resolver failure closes, and delegated request identity is evaluated.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Require verified issuer forwarding and same-subject issuer isolation before dispatching package handlers.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Pin the fleet service-secret rail on a declared package route: a call carrying X-Oshal-User-Sub-B64 gets its subject handed to the package (oshalCallerSub) but has no verified issuer, and the mounter refuses it with app_access_identity_required before package code. Second review of PR 605.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -580,6 +581,22 @@ describe('manifest app access boundary (ADR-118 Phase 2)', () => {
       expect((await fetch(`${base}/api/pkgtest/ping`, { method: 'POST' })).status).toBe(200);
       expect(resolveForPrincipal).toHaveBeenCalledExactlyOnceWith('pkgtest', 'session-sub', ISSUER, ALL_ACCESS);
     } finally { server.close(); }
+  });
+
+  it('refuses a fleet service-secret caller carrying a user subject but no verified issuer before package code', async () => {
+    process.env.SWARM_SERVICE_SECRET = 'example-mounter-fixture-secret';
+    const resolveForPrincipal = vi.fn(accessResolver('admin').resolveForPrincipal);
+    const { server, base, mounter } = await bootApp({ flag: true, appAccess: { resolveForPrincipal } });
+    try {
+      await mounter.mount('pkgtest', pkgDir, ROUTES, ALL_ACCESS);
+      const response = await fetch(`${base}/api/pkgtest/ping`, { method: 'POST', headers: {
+        'x-service-secret': 'example-mounter-fixture-secret',
+        'x-oshal-user-sub-b64': Buffer.from('carried-sub', 'utf8').toString('base64url'),
+      } });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: 'app_access_identity_required' });
+      expect(resolveForPrincipal, 'no tier is guessed as local-auth or read across every issuer').not.toHaveBeenCalled();
+    } finally { server.close(); delete process.env.SWARM_SERVICE_SECRET; }
   });
 
   it('refuses a subject without a verified issuer before package code despite issuer hints', async () => {
