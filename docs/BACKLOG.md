@@ -1125,8 +1125,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   abort:true, error.name:"RuntimeError"`, with 840 bytes on stderr instead of 548 KB. Every call
   site names itself (`rag-service.ingest`, `rag-service.search.pgvector`,
   `rag-service.vectorSearch.chroma`, `semantic-projection.projectOwnerSegments`,
-  `related-relevance.scoreAgainstQuery` — the last was unlabelled until the review of PR #640
-  found it, so the ADR-100 relatedRecall route logged `caller:"unknown"` on a backend failure).
+  `related-relevance.scoreAgainstQuery`, `rag-embed-backfill` — the last two were unlabelled until
+  successive reviews of PR #640 found them, so the ADR-100 relatedRecall route and the corpus
+  backfill, the heaviest embedding workload here, logged `caller:"unknown"` on a backend failure).
+  **A call already in flight degrades with everyone else:** the sticky flag is re-checked before every
+  batch, because an aborted runtime answers with a tensor rather than throwing and ingest would
+  otherwise persist vectors from a heap with ABORT set.
 - **Guard:** `tests/unit/local-embedding-abort-containment.spec.ts`, 11 cases — the classifier
   against a real `WebAssembly.RuntimeError`, the bounded caller/size payload, the sticky policy
   (extractor doubled; recorded in the real-boundary audit beside its real companions), the
