@@ -4,6 +4,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | New. Nothing has ever published this trunk's container image: the only pusher is the workflow_dispatch-only image job in .github/workflows/ci.yml, whose run count on this repository is zero, so ghcr.io .../oshal-bot:latest is still the pre-cutover 2026-07-26 artifact and `--mode 1` - the DEFAULT documented install - hands it to every new user. A stale image does not look stale: the remote box that installed it reported MISSING FEATURES and cost a day of misdirected configuration work. This publishes from the nightly local gate instead of hosted runners, which spends none of the constrained resource and puts the build, the kernel-skills image probe, the smoke boot and the Trivy scan in front of the push. It is fail-closed on every input: a red run, an unpinned sha, or an absent credential publishes nothing.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Load OSHAL_GHCR_TOKEN / OSHAL_GHCR_USER from .env via scripts/lib/ghcr-env.sh when the environment does not carry them. Nothing on the scheduled path sources .env, so a token the operator added there (after gh auth refresh -s write:packages, 2026-09-18) was inert and this script refused exactly as if none existed. An explicit environment value still wins; absent names still refuse.
 #
 # Usage:  publish-image.sh --sha <short-sha> --local <local-tag> --remote <repo> [--failed "<gate names>"]
 #
@@ -49,6 +50,13 @@ if [ -z "$LOCAL_TAG" ] || [ -z "$REMOTE" ]; then
   exit 64
 fi
 
+# The credential lives in .env with every other secret on the box, and the scheduled path
+# never sources that file - load the two names from it when the environment does not already
+# carry them. An explicit value still wins; a missing file or name is a no-op and the refusal
+# below still fires. The loader never prints a value.
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+. "$REPO_DIR/scripts/lib/ghcr-env.sh"
+oshal_ghcr_load_env
 TOKEN="${OSHAL_GHCR_TOKEN:-}"
 GHCR_USER="${OSHAL_GHCR_USER:-}"
 if [ -z "$TOKEN" ] || [ -z "$GHCR_USER" ]; then

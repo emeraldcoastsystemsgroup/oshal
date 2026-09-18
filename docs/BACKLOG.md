@@ -11,6 +11,51 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ## Promotion, deployment, and regression proof
 
+### A bot that cannot reach Postgres in its first 20 seconds is pool-less for life, and says it is healthy (2026-09-17)
+
+- **Status (branch `botnode-pool-recovery`, awaiting merge + image deploy): (1), (3), (4) done and
+  guarded by `tests/unit/bot-node-database-pool-recovery.spec.ts`, which starts a real disposable
+  PostgreSQL on a reserved loopback port AFTER the bot-side connect has exhausted its window and
+  proves the pool object handed out at exhaustion is the one that later answers. (2) is done in
+  code — `/health` and `/api/health` answer 503 until a configured database has answered once,
+  and `Dockerfile.oshal`'s `HEALTHCHECK` is `curl -f http://localhost:5000/health`, which the spec
+  runs verbatim against the real routes (exit 22 while pool-less, exit 0 after) — but the
+  built-image probe the done-when asks for has NOT been run: no image build was permitted on the
+  memory-constrained box. The running fleet keeps the old behaviour until `oshal-deploy.sh` ships
+  this commit. Also not done: the mesh bid responder captures the boot-time capabilities by
+  value, so a bot that recovers late bids with its YAML capabilities, not the persisted profile's,
+  until its next restart.
+
+- **Measured 2026-09-17, 22:24Z.** The Docker daemon bounced inside a VM that stayed up: 51 of 52
+  containers carry a `StartedAt` in the same minute. Every bot-node cold-started beside a cold
+  Postgres. `bot-node-runtime` retries its connect `maxAttempts: 10` at 2 s — a 20 second window —
+  logs `Postgres not ready — retrying in 2s` ten times and then serves without a pool for the rest of
+  the process's life. **28 of 36 bots lost that race**, including jarvis-bot, general-bot,
+  trading-bot, career-bot and email-bot. All 36 reported healthy; a wrap-up written minutes later
+  recorded "42/42 containers running and healthy" and was true.
+- **How it presents.** Nothing is logged until a request arrives, so an idle fleet shows no error at
+  all. The first protected execution then fails in ~4 ms inside `readProtectedBotApplication`
+  (`src/app/bot-node-application-authorization.ts:51`, `hasPool: false`) with
+  `authorization_bot_posture_unavailable`, HTTP 503 — which reads as an authorization fault and sends
+  the reader to the grant check, which passes. Jarvis answers "couldn't do that just now".
+- **This is the second occurrence in two days** (2026-09-16: all 37 bots, same shape, found only
+  because Jarvis was asked something). The recovery both times was a human noticing and restarting
+  the bots. `scripts/oshal-up.sh` exists for this, but it only runs when someone runs it; a daemon
+  bounce runs nothing.
+- **The defect is the permanence, not the race.** Losing a cold-start race is expected. Deciding at
+  second 20 that the database will never exist, and continuing to answer `/health` 200, is the bug.
+- **Done when:** (1) a bot-node with no pool keeps trying to get one in the background with backoff,
+  and the FIRST success installs the pool everywhere the boot path would have — proven against a
+  real Postgres that is started AFTER the bot, not a mocked connect (integration-boundary corollary:
+  the failing boundary is the socket); (2) while there is no pool, the container healthcheck reports
+  unhealthy, so the deployment's own restart policy and `docker ps` both tell the truth — proven by
+  a probe against a built image, not a unit double of the handler; (3) the pool-less refusal names
+  its cause (`database_pool_unavailable`) instead of borrowing an authorization error code, with the
+  refusal itself unchanged — this must NOT weaken `src/app/bot-node-protected-execution.ts`, which
+  refusing without a pool is correct; (4) a guard fails if `maxAttempts` exhaustion can again leave a
+  process serving 200 without a pool.
+
+
 ### Nothing publishes the container image, so the default install ships whatever was last pushed by hand
 
 - **Measured 2026-09-16.** `ghcr.io/emeraldcoastsystemsgroup/oshal-bot:latest` resolves to digest
@@ -607,13 +652,40 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **P5 - the cross-framework benchmark measures competitors, not us.** `bench/` runs the same task
   on the same free model across vanilla/langgraph/crewai and records real tokens, but the oshal leg
   is not wired: it reports `not-run`. So the cheaper-routing claim remains asserted.
-- **P6 - the cost figure is small-n.** `$1.30` against a `$4.05` median for incident RCA are real
-  `chat_tasks` rows, one workload, one corpus. Directionally strong; not a benchmark.
-- **Neither blocks operation** - both block a slide. Do not publish the determinism/cost head-to-head
-  until measured.
+- **P6 is CLOSED (2026-09-17).** `$1.30` (n=1) against a `$4.05` (n=7) median for incident RCA are
+  real `chat_tasks` rows for one workload on one corpus — directionally strong, not a benchmark, and
+  every surface that states them now says so in the same sentence as the number.
+- **What closed P6.** `scripts/evidence/cost-per-ticket-type.ts` reads the real per-ticket spend out
+  of `chat_tasks`, joined to `tickets` through the product's own `ticket_task_links`, inside a
+  `SET TRANSACTION READ ONLY` transaction, and emits a dated census with an n on every ticket type
+  (`docs/business/cost-per-ticket-type.json`, published as a generated table in the sibling `.md`).
+  Every count in it — ticket types, tickets, calls, dollars, the n on each row — lives in that
+  artifact and nowhere else; this entry does not restate them, because a restated count is a
+  hand-typed one. Each chat task is attributed once: a task linked to several tickets (sibling
+  subtasks dispatched into one workspace accumulate into one task row) is split evenly across
+  them, and the artifact carries the ledger totals it was read beside so the tie is published, not
+  asserted. The `incident` row is the type the headline pair is about, and its n there is small —
+  which is exactly why the pair stays labelled as one workload instead of a rate.
+- **Guard:** `tests/unit/cost-claim-carries-its-n.spec.ts` + `scripts/cost-claim-check.js`. The
+  surfaces are DISCOVERED, not allowlisted: every tracked text file under `README.md`, `ROADMAP.md`,
+  `docs/`, `ai-lab/bot-personas/`, `swarm-apps/` and `site/` is scanned, and a FIGURE whose own
+  span carries no `n=` — per figure, so a bare first figure cannot borrow the n that the second
+  figure in the same sentence carries — or whose block carries none of the limits phrases fails
+  the gate. Red on the
+  tree before the sweep — 38 findings across nine files: `README.md`, `OSHAL-WHITEPAPER.md`,
+  `WHY_OSHAL.md`, the deck markdown, `build_oshal_deck.py`, both capture personas, the fluency
+  register and this entry. Mutation cases strip the n from one figure while its neighbour keeps it,
+  strip the limits, hand-edit the published census table, inflate the census above its ledger,
+  drop the ledger, and invent a tenth surface; each goes red on its own. `OSHAL-overview.pptx` was
+  rebuilt from the generator (a verified four-line text delta); the PNG-derived `.html`/`.pdf`
+  beside it need a PowerPoint export, which is an operator step (`build_html.py` reads
+  `_thumbs/Slide*.PNG`).
+- **P5 does not block operation** - it blocks a slide. Do not publish the determinism/cost
+  head-to-head until the oshal leg is measured.
 - **Done when:** `run_oshal` POSTs to the real dispatch and reads `chat_tasks` input/output token
-  columns so the benchmark reports oshal alongside the others at a stated n; the cost claim covers
-  more than one ticket type with its n and limits kept in the same sentence as the number.
+  columns so the benchmark reports oshal alongside the others at a stated n;
+  ~~the cost claim covers more than one ticket type with its n and limits kept in the same sentence
+  as the number~~ DONE 2026-09-17.
 
 ### Trading DB specs race on schema bootstrap
 - **The bootstrap half is CLOSED (2026-09-16).** All seventeen `oshal_trading_*` lazy bootstraps now
@@ -763,12 +835,46 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** root-cause the specs outside the current green ratchet and separate product defects, fixture/auth defects, and intentionally unsupported cases.
 - **Done when:** every spec uses the configured origin, each unsupported case has an explicit disposition, and the complete CI Playwright job is green without retry-dependent success.
 
-### Dev-console `/work` under Linux user-namespace remapping
-- **Remaining:** make the ADR-077 sandbox scratch mount writable to remapped container users without widening host access beyond the per-run directory.
-- **Done when:** a GitHub-Actions-equivalent userns-remap container writes inside `/work`, cannot escape it, and the focused sandbox/security guards pass. See [ADR-077](adr/077-self-developing-platform-and-super-admin-dev-console.md).
+### Dev-console `/work` under Linux user-namespace remapping — DONE 2026-09-17
+- **Done:** `SandboxedAgentRunner` prepares the bind mount on every run instead of assuming the
+  container owns it. Under a userns-remapped daemon the container's root is a host subuid that owns
+  nothing, so a `mkdtemp` (0700) scratch holding 0644 seeded files denied it both traversal and
+  writes. The per-run directory is now set to `0o777`, every file inside it is widened by a+rw
+  (`mode | 0o666` — a seeded `0755` script stays executable, because the seeder copies modes and
+  a set to `0o666` had been stripping them), and the scratch ROOT that contains them is locked to
+  `0o700`: the daemon resolves the mount without traversing the
+  root, a second host user must traverse it and is refused, so host reach does not extend past the
+  per-run directory. Symlinks inside the scratch are never chmodded — `chmod` follows them, which
+  would widen a target outside it. Windows has no POSIX mode bits, so the plan is computed and
+  declared unapplied rather than pretended.
+- **Proved on a real kernel**, not inferred: `scripts/sandbox-userns-mount-proof.sh` runs in one
+  disposable container as uid 165536 — the first subuid a default `dockremap` mapping hands to
+  container root — and reports `unprepared_write=denied`, `prepared_write=ok`, `prepared_create=ok`,
+  `prepared_exec=ok`, `escape_parent=denied`, `escape_root=denied`, `owner_cleanup=ok` in a single
+  run; driven with the old modes (`OSHAL_SCRATCH_DIR_MODE=700 OSHAL_SCRATCH_FILE_MODE=644`) the same
+  container reports `prepared_write=FAILED`, and with files SET to `666` instead of widened it
+  reports `prepared_exec=FAILED`.
+- **Guard:** `tests/unit/sandbox-scratch-userns-remap.spec.ts` (10 cases) — the plan and its mode
+  bits, that a seeded executable is widened and not narrowed (the pure decision on every platform,
+  the real inode on POSIX), the symlink refusal, the root lock, and that `run()`, `runStreaming()`
+  and the orchestrator all prepare before the container starts; the container proof is the tenth
+  case, opt-in via
+  `OSHAL_SANDBOX_USERNS_PROOF=1` because it starts a container, and it FAILS rather than skips when
+  Docker cannot be reached. Mutation-proven red on removing preparation from the run paths (3 red),
+  on narrowing the directory mode (1 red), on deleting the symlink refusal (1 red), and on setting
+  files to `0o666` instead of widening them (2 red: the decision `0o666 ≠ 0o777`, and the container
+  `prepared_exec=FAILED`).
+- **Not claimed:** nothing here was run against an actual userns-remapped daemon — the operator's
+  engine is Docker Desktop. The uid the proof uses is the one such a daemon presents, and the kernel
+  check it exercises is the same one; the remaining step is a CI run of the dev-console container
+  tests on the Actions daemon, which is blocked behind the manual-only CI state, not behind this.
+  See [ADR-077](adr/077-self-developing-platform-and-super-admin-dev-console.md).
 
 ### Remote-client full-suite flake
-- **Remaining:** test the module-level registry and rate-limiter state leads in the auth spec; isolate file state or serialize only the affected specs if needed.
+- **Cause found and fixed 2026-09-17 — the two stated leads are both disproven.** Module-level *registry* state cannot leak between files: vitest runs each spec file in its own isolated fork, and inside each file the registered clientIds are disjoint. Module-level *rate-limiter* state cannot leak either: `createRemoteClientRateLimiter()` is called from inside `createRemoteClientRoutes()` (`src/app/routes/remote-client-routes.ts:225`), so every `bootApp()` gets a fresh limiter over a fresh store. The flake was accounting. Four specs (`remote-client-auth`, `-device-ownership`, `-node-token`, `-rate-limit`) called `await import('../../src/app/routes/remote-client-routes')` from inside their first `it()`, so that ONE test paid the one-time dynamic import/transform of the whole router graph out of its own timeout budget. Measured with only those four files running on an idle box: **17,255ms / 17,260ms / 17,173ms / 17,274ms**, against the 30s each file had bought to hide it, while every sibling test in the same files ran in 14-101ms. Under the full parallel unit sweep the same import contends for the same cores and the budget goes — that is the remote-client timeout. The import now loads once in a file-level `beforeAll` (its own explicit 120s hook budget); the route FACTORY still runs per boot, so per-test env is read exactly as before. The inflated 30s per-test budgets are back down to the sibling 15s, which is the fix showing rather than a mask. Same shape the `remote-client-reregistration` spec already took. This is file-local: no concurrency setting, no global timeout, nothing serialized.
+- **Guard:** `tests/helpers/router-graph-import-budget.ts` + a first test in each of the four specs that measures the import from inside a test and fails above 500ms. It is a measurement, not a substring: red at 17,2xx ms before the hoist, green at 2-5ms after. What it proves is that the graph is resident before the first test runs: undoing the hoist (deleting the `beforeAll` so the first test pays the transform) goes red — 3,892ms measured against the 500ms ceiling on 2026-09-17. What it does not detect is a test-scoped `await import(...)` of the graph that coexists with the `beforeAll`: that stays green (2ms measured, same run) because with the hoist in place the import is a cache hit and costs nothing, so it is not the flake.
+- **Proved:** all 11 `tests/unit/remote-client-*.spec.ts` files, 106 tests, **20 consecutive runs, 0 failures, no test over 3s** (2026-09-17). The four formerly-13s tests now run in 367-693ms.
+- **Remaining:** the literal "full unit suite, 20 consecutive runs" confirmation. It is blocked on *Tree-walk guard stability* below, not on remote-client: `npm run test:unit` still drives a live Postgres from `alert-incident-cutover`, `alert-incident-reopen` and `topology-traversal` inside the parallel sweep, so on a developer box it resolves at the operator's live database and must not be run there. Run it once those specs have their own serial project/pool, against a disposable Postgres.
 - **Done when:** the full unit suite passes 20 consecutive runs with no remote-client timeout; any serialization is local and documented, not a global concurrency reduction.
 
 ### Tree-walk guard stability
@@ -1294,6 +1400,145 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** a new `tests/unit/` spec that reaches `oshal-local-db` through `docker exec` fails the gate; the live-stack e2e suites still pass it; and the guard spec carries a case for each side.
 
 ## Workflow, agent, and model runtime
+
+### Jarvis in dev mode should see what this workspace sees: an indexed developer corpus (operator, 2026-09-18)
+
+- **What the operator asked for, verbatim:** "i would like to have a package that is indexed for jarvis
+  when in dev mode and building on the software itself.. it would be great to have a docs package
+  already indexed for devmode and all the scratchpads that would be relevant and internal notes so that
+  the developers workspace really looks like this workspace.. then when jarvis is in dev mode he really
+  has all the information."
+- **What exists to build on:** the RAG rail (`src/features/rag/`, ChromaDB `infra-runbooks`,
+  `scripts/rag-enable-embeddings.sh`), the dev console and self-developing platform (ADR-077), the
+  oshal-developer bot, and the documentation the sessions already keep in the tree: `docs/adr/`,
+  `docs/BACKLOG.md`, `docs/runbooks/`, `docs/backlog/` handovers, `docs/governance/`. The corpus a
+  human developer actually works from also includes material that is deliberately NOT in git:
+  `COLLABORATE.md` (untracked by design), the operator-local session notes, and lane scratch notes.
+- **Shape:** a store package (`dev-workspace-index` or an extension of `oshal-dev`) that builds a
+  dev-mode-only RAG collection FROM THE LOCAL CHECKOUT at index time - so it matches this workspace,
+  not a published snapshot - with a curated manifest of what is in and what is out. In: the tracked
+  docs above, `CLAUDE.md`, `CONTRIBUTING.md`, ADR index, package READMEs; optionally the local
+  `COLLABORATE.md` and a named local notes directory. Out, always: `.env`, `config-seed/`, anything
+  the publish gate refuses, lane clones and transcripts, and any file carrying a person's identifier
+  (the corpus is read by a bot that answers other people).
+- **Dev mode is the gate:** the collection is queryable only when the caller is in the ADR-077 dev
+  console context (operator-owned request, dev mode on); a normal Jarvis turn cannot reach it.
+- **Done when:** (1) `oshal-app.yaml` declares the collection and the index manifest; (2) one command
+  (re)builds the index from the checkout and reports counts - generated, never typed - of documents,
+  chunks, and skipped-by-rule files; (3) a Jarvis dev-mode ask that names an ADR number, a BACKLOG
+  entry title, or a runbook returns the cited `doc_id` from this corpus (Test Lab case, headless);
+  (4) the same ask outside dev mode does not reach the collection (refusal case); (5) the exclusion
+  list is a guard that goes red when a secret-shaped or identifier-carrying file is indexed;
+  (6) the operator opens the dev console and asks Jarvis about tonight's handover and gets the file.
+
+
+### A bot's LLM provider is a row in a table, not a literal in the registry (operator, 2026-09-17)
+
+- **What the operator hit.** Codex ran out of tokens for one login and the instruction was "set the
+  default to Gemini 3.8 Flash — it should literally be a switch in a table". There is no such switch.
+  Measured on the box the same hour: all 38 LLM bots carry `harnessType: 'codex-cli'` /
+  `apiType: 'openai-codex'` as source literals in both registries; `resolveHarnessForAgent()` in
+  `src/app/composition/provider-runtime.ts` reads that literal BEFORE any record and has no override;
+  the cockpit's per-bot provider select was made read-only in PR #97 (2026-08-01) precisely because
+  it did nothing; `FORCE_LLM_PROVIDER` only reaches agents with no registry entry; and the one
+  settings-driven layer - the JS failover's `cline-cli` fallback, backed by each container's
+  persisted `global-config.json` - cannot start: `spawnSync
+  /usr/local/lib/node_modules/cline/bin/.cline ENOENT` in the shipped image. Measured on a real
+  ticket the same hour: Codex refused with "You've hit your usage limit ... try again at Sep 20th",
+  the failover FIRED (the CLI error banner classifies as `provider_runtime_failure`), Cline exited 1,
+  and the ticket landed in `escalated`. Chat survived only because the ADR-127 hosted-brain retry
+  answered on `gemini-2.5-flash`; tickets have no such retry. A carried ADR-034 dispatch config does
+  not switch a bot either - `bot-node-execution-handler.ts` refuses a provider that differs from the
+  active one.
+  PR #97's own residual said "either make harnessType overridable or document it as source-only —
+  don't build another picker until that's decided". **Decided: overridable.**
+- **Precedence, most specific first, each a real record:** per-bot row → fleet default row →
+  registry literal. The per-bot row is the existing `agent_config` record (`providerId`/`modelId` —
+  the same keys `GET /api/agents/:id/runtime` serves and ADR-034 dispatch stamping already reads),
+  so a bot that has a row is dispatched and resolved from the same fact. The fleet default is one
+  row with a reserved id, so "switch the default" is one write. No row anywhere = today's behaviour,
+  byte-identical, so the fleet does not move when this merges.
+- **Accepted values:** any `HARNESS_FACTORIES` key, or a Cline-backed API provider id from
+  `provider-definitions.ts` (`gemini`, `openrouter`, `anthropic`, …) with a model id from the row.
+  The row carries NO secret; keys stay in the container environment where they already are
+  (`GEMINI_API_KEY` is forwarded by compose from `GOOGLE_API_KEY`). An unknown provider id fails
+  closed with the reason in the response, never silently falls to the registry.
+- **Surface:** the disabled select in the cockpit bot settings becomes live and writes the row;
+  `/api/agents` reports the RESOLVED harness with its source (`bot-row` | `fleet-default` |
+  `registry`) so the UI can show where a value came from. A fleet-default control lives beside it.
+- **Out of scope here:** the Cline fallback's missing binary - its own change with an image-level
+  guard, because it restores agentic work on the persisted Gemini config without touching resolution.
+  **That change landed as its own entry below** ("The Cline fallback brain could not start").
+- **The layer model, as the operator stated it (2026-09-17) and as the code already partly has it.**
+  There are two owners of a brain choice and they nest. Measured in `src/app/routes/user-brain-resolution.ts`
+  (ADR-127) and `src/app/bot-node-execution-handler.ts`:
+  - **A user's own turn** (chat, Jarvis): *user preference → (demo) CLI default → the user's explicit BYO
+    credentials → the user's free-tier connections → the portal admin's operator-key lane → none.* A CLI
+    preference is stamped on the dispatch record and the node reconciles to it. This exists and works.
+  - **Swarm-owned work** (tickets, schedules, agentic runs — nobody's turn): *`agent_config` row → registry
+    literal.* No admin default exists here except compose/env literals. **This is the gap this entry fills.**
+  - Target precedence, most specific first, each a real record and none a literal: *user per-bot preference
+    → user general preference → admin per-bot row → admin fleet-default row → registry (default only).* A
+    user's choice governs that user's turns; the admin's rows govern everything else and are the fallback
+    when the user has chosen nothing. Credentials stay with their owner: a user's BYO key is never the
+    fleet's, and the fleet's env key is never a user's.
+  - Follow-ups this entry does NOT close, each its own entry: (1) the admin fallback for user turns is
+    env-only (`OSHAL_OPERATOR_LLM_PROVIDER/MODEL/LANES`) and gated on `DEMO_MODE` — it should be a cockpit
+    control with the same row semantics; (2) users have no per-bot preference — `oshal_user_llm_prefs` is
+    keyed by user only; (3) the user preference vocabulary is closed
+    (`auto | claude-code | openai-codex | any-llm | free-tier`, `LLM_PREFERENCE_IDS`) so a user cannot name
+    Gemini or Cline as a CLI brain.
+- **Acceptance, in the operator's words (2026-09-17): "so this is flexible configuration right ...
+  im not going to switch it to codex tomorrow and we have to hard code a bunch of shit."** The test
+  is literal: the day after this merges and deploys, moving the whole fleet back to Codex is ONE
+  write of the fleet-default row from the cockpit - no pull request, no image deploy, no container
+  restart - and the next dispatch to an idle bot runs on it (the reconciler already applies a
+  carried record to an idle bot; the ADR-034 post-execution check must then agree with what ran).
+  A change that leaves ANY per-service compose literal or registry edit on that path has not met
+  this entry, whatever else it proves.
+- **Done when:** a unit spec proves a per-bot row overrides the registry, a fleet-default row
+  overrides the registry for a bot without its own row, a per-bot row beats the fleet default, no
+  rows resolve byte-identically to today (the existing registry-wins spec is inverted, not deleted),
+  and an unknown provider id refuses with a reason; the record read crosses the real database
+  boundary (a real `agent_config` query against the enforcing role, recorded in the real-boundary
+  audit) rather than a mocked store; the cockpit select is enabled and a browser case writes a row
+  and sees the resolved source change; and the operator flips one bot to `gemini` /
+  `gemini-3.8-flash` from the cockpit and it answers on Gemini in the bot's own log.
+
+### The Cline fallback brain could not start: a glibc executable on a musl base (2026-09-17)
+
+- **What was measured.** On a real ticket at 22:57Z: Codex refused on its usage limit, the JS
+  `ProviderFailoverProvider` fired (`provider_runtime_failure`, primary=openai-codex,
+  fallback=cline-cli), and the fallback died with `spawnSync
+  /usr/local/lib/node_modules/cline/bin/.cline ENOENT` - a file that EXISTS (151 MB ELF,
+  `PT_INTERP /lib64/ld-linux-x86-64.so.2`; `/lib64` did not exist; base is Alpine). `cline@latest`
+  floated from the pure-JS 2.x line onto 3.x, whose npm package is a Bun-compiled glibc
+  executable with no musl build. With the binary starting (a container hot-fixed with unconfined
+  gcompat at 23:11Z) the next failed-over ticket at 23:16:33Z died a second way: the wrapper passed
+  `-m gpt-5.5` (the fleet default `ClineProvider` was constructed with) to the resolved gemini
+  backing provider - `models/gpt-5.5 is not found for API version v1beta`.
+- **Landed (PR "fix(image): the Cline fallback brain could not start"):** `Dockerfile.oshal` pins
+  cline by `ARG CLINE_VERSION`, installs the gcompat loader stub CONFINED to the glibc executable
+  (the `/lib` glibc aliases are removed so node still refuses glibc-only native addons - measured
+  before and after on the msgpackr glibc build) and asserts inside the layer that `cline --version`
+  prints the pinned version; `scripts/check-cline-entrypoint.mjs` runs the real launcher inside an
+  image or a running container and `scripts/oshal-deploy.sh` refuses an image that fails it;
+  `ClineProvider` gates and spawns with the backing provider's model. Guards:
+  `tests/unit/cline-entrypoint-probe.spec.ts`, `tests/unit/cline-provider-fallback-model.spec.ts`.
+  Runbook: `docs/runbooks/cline-fallback-entrypoint.md` (includes the per-container operator
+  hot-fix).
+- **Proof so far:** the probe is FAIL (`glibc-binary-no-loader`) on `oshal-bot:latest` and on
+  `oshal-local-api`, PASS on a throwaway container carrying the new layer, where a real Gemini
+  task also completed; the Dockerfile RUN body executed in a throwaway container from the shipped
+  image exits 0 with the pinned version and 1 with a drifted one.
+- **Remaining:** no image was built on the box (memory constrained), so the in-layer assert has not
+  run inside a real `docker build`; the running fleet still carries the broken image; nothing
+  exercises cline 3.x's migration of the wrapper's `config.json` into its own `providers.json`.
+- **Done when:** `bash scripts/oshal-deploy.sh` builds the image with the layer green, its image
+  verify prints `image verified: cline fallback entrypoint starts`, and a ticket that fails over
+  from Codex completes on the persisted Gemini config with `provider: 'cline-cli'` and
+  `model: gemini-3.8-flash` on its `chat_tasks` row.
+
 
 ### Jarvis briefing preferences (operator ask, 2026-08-09)
 - **Source proof:** registered application sources, exact-user settings, announcement cadence, channel delivery and Kalshi producer adoption pass isolated PostgreSQL/HTTP/browser and package tests. [The contract](apps/jarvis-briefings.md) distinguishes announcement cadence from collection schedules.

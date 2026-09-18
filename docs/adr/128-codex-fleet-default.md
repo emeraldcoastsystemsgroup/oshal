@@ -1,6 +1,8 @@
 # ADR-128 — Codex is the fleet default: one CLI/API/LLM, model floor gpt-5.5
 
 Status: Accepted — shipped in PR #195 (merge `4ee6ced1`), deployed 2026-08-12
+
+**Superseded on the "one default brain" decision by [ADR-162](162-a-bots-brain-is-layered-records.md) (2026-09-17):** the registry no longer chooses the fleet's brain; it is the last rung beneath admin and user records. Codex stays a valid choice. The harness, adapter and model-floor work here is untouched.
 Date: 2026-08-12
 
 ## Context

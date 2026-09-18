@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Read the asked-about agent id out of the parameter position it is actually bound at. The ownership reader no longer sends an inline query whose first bind is the executable id; it calls oshal_application_execution_claims(kind, id, app, enforce) (migration 142), so call[1][0] became the literal 'bots' and this case asserted ['bots','bots'] against the two agent ids - red on the branch that made the change, and invisible in its verification list. The case now pins the kind and the id separately AND pins that the read goes through the derived helper, so a silent return to the inline query (which oshal_bot cannot run - BUG-25) is a failure here rather than a passing assertion about a different parameter.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A pool-less refusal is named database_pool_unavailable (same 503, same fail-closed throw) instead of borrowing the authorization code.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { configureApplicationExecutionPolicy, runWithApplicationExecution } from '../../src/shared/application-authorization-execution';
@@ -103,6 +104,6 @@ describe('protected application execution', () => {
     expect(query.mock.calls.map(call => call[1][1])).toEqual(['protected-bot','other-bot']);
     // The bot role cannot read the ownership tables; it holds EXECUTE on the derived helper only.
     expect(query.mock.calls.every(call => /oshal_application_execution_claims\(/.test(String(call[0])))).toBe(true);
-    await expect(assertBotNodeApplicationTransport(null, 'bot', 'bot')).rejects.toMatchObject({ code: 'authorization_bot_posture_unavailable' });
+    await expect(assertBotNodeApplicationTransport(null, 'bot', 'bot')).rejects.toMatchObject({ code: 'database_pool_unavailable', status: 503 });
   });
 });

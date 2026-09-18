@@ -142,6 +142,13 @@ so no schema change needed there.
    a transient timeout during a 20-container cold start left the bot DB-less (no profile seeding, no
    cost tracking) with no retry. Now retries the probe (`BOT_DB_CONNECT_ATTEMPTS`, default 10×2s) and
    degrades to no-DB only after retries are exhausted.
+   **Amended 2026-09-17:** "degrades to no-DB" was permanent — 28 of 36 bots lost a daemon-bounce
+   race and were pool-less for life while `/health` said 200. The long-lived server now keeps the
+   pool through exhaustion and recovers it in the background (`src/app/bot-node-database-pool.ts`),
+   answers 503 on `/health` until the database has answered once, and refuses protected work with
+   `database_pool_unavailable` rather than an authorization code. The bounded null-on-exhaustion
+   contract survives only for one-shot callers (batch pod, `record-cost`, `finalize-incident`).
+   Status and the built-image gap: `docs/BACKLOG.md`, "A bot that cannot reach Postgres…".
 4. ✅ **[DONE — and the 2026-06-13 premise below was already false when written]** Migration
    transactionality. The original wording — *"`database-bootstrap-service.ts` applies each migration
    without a `BEGIN/COMMIT/ROLLBACK`; a mid-migration failure can leave partial state that re-runs

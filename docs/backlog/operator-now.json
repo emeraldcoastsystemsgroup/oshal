@@ -1,21 +1,21 @@
 {
-  "asOf": "2026-09-17",
+  "asOf": "2026-09-18",
   "note": "Hand-maintained. Short-lived items that are blocking right now and are not in the triage ledger. Delete an entry once it is done.",
   "items": [
     {
-      "title": "Sign Ella in once, to close the last gap",
-      "why": "lm_students has her row with role=student, but external_issuer is still NULL where yours is populated. The package self-heals it on first login — education-access.ts writes UPDATE lm_students SET external_issuer at line 236 — but until she actually signs in, the issuer-keyed lookup at line 175 will not match her. Issuer-keyed lookups silently failing is exactly the failure that took Jarvis down for three days, so this is worth closing rather than assuming.",
-      "how": "Have her log in once with her Google account and open Little Monsters. Then tell me and I will confirm the issuer got written."
+      "title": "Grant the GitHub session the packages scope (30 seconds, browser)",
+      "why": "The admin PAT in .env (GITHUB_ADMIN_TOKEN, ghp_) answers 401 Unauthorized under every auth form, tested 2026-09-18 00:50Z - GitHub no longer accepts it. The project pushes on a different token, the gho_ OAuth token gh auth login minted (OSHAL_DEV_REPO_TOKEN and the git credential store), whose scopes are gist, repo, workflow - it cannot write packages, and OAuth scopes cannot be widened after issue. So nothing on this box can publish the container image, and every default install keeps pulling the July build. An agent must not mint a credential, and the grant flow needs your browser.",
+      "how": "gh auth refresh -h github.com -s write:packages,read:packages - it prints a code, opens the browser, you click Authorize. Nothing to paste: afterwards the refreshed token is read with gh auth token, wired as OSHAL_GHCR_TOKEN/OSHAL_GHCR_USER for the nightly gate, and the first green main gate publishes."
     },
     {
-      "title": "Give the GitHub token the packages scope",
-      "why": "Your PATs are already god-level — that is not the problem, and there is nothing for you to mint. The problem is narrower: the gh CLI session on this box was authorized without write:packages, so the publish step cannot push the image even with a good token. Nothing has ever published this trunk's container image, so ghcr.io/.../oshal-bot:latest is still the pre-cutover 2026-07-26 artifact, and --mode 1 (the default documented install) hands that to every new machine. That is what made the second computer look like it was missing features.",
-      "how": "gh auth refresh -h github.com -s write:packages — then add --publish-image to the nightly gate command. The publish mechanism is merged and fail-closed; it will refuse rather than publish something wrong."
+      "title": "The student: open Little Monsters once (signing in was not enough)",
+      "why": "Her 2026-09-17 sign-in reached / and /cockpit/ only - the api log shows no Little Monsters route for her sub, and lm_students.external_issuer is still NULL (row last updated 2026-08-25). The issuer self-heal lives in the app's own access path (education-access.ts, the legacy branch: same external_id, NULL issuer -> UPDATE sets the issuer), so it runs the first time she opens the app, not at login. The grant itself is right: little-monsters, role student, issuer accounts.google.com.",
+      "how": "Have her click into Little Monsters once. Then say so and I will confirm the issuer was written."
     },
     {
-      "title": "Rotate two credentials that were exposed in a transcript",
-      "why": "A lane's bad redaction printed the values of ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA_KEY into its own transcript; it disclosed this unprompted. Separately, the oshal PAT was pasted into chat. Neither left this machine, but neither should sit in a log.",
-      "how": "Rotate the Alpaca paper keys; re-mint OSHAL_VERIFY_OPERATOR_PAT from a signed-in session and replace the line in .env. The deploy path now reads .env for that name, so replacing the line is enough."
+      "title": "PINNED by you - rotate the Alpaca paper keys",
+      "why": "A lane's bad redaction printed ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA_KEY into its own transcript. You said you will take care of it later; this stays here so it is not forgotten. (The oshal verification PAT that was pasted into chat has since been re-minted: .env carries one and the deploy gate reads it.)",
+      "how": "When you get to it: rotate the paper keys in the Alpaca dashboard and replace the three lines in .env."
     }
   ]
 }

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Tests for the ADR-077 Phase 2 Slice 2 Sandboxed Agent Runner. Change-set extraction is pure; container isolation tests skip when Docker is unavailable.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The gate comment no longer names userns-remap as an engine the sandbox cannot run on; the scratch mount is prepared for a remapped uid and has its own guard.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -43,9 +44,10 @@ describe('SandboxedAgentRunner — change-set extraction (no docker)', () => {
   });
 });
 
-// sandboxUsable() (not dockerAvailable()) so these skip on engines where Docker responds
-// but the /work bind mount is not writable by the container user — e.g. CI's userns-remapped
-// daemon. See SandboxedAgentRunner.sandboxUsable().
+// sandboxUsable() (not dockerAvailable()) so these skip on engines where Docker responds but the
+// sandbox cannot actually run. A userns-remapped daemon is no longer such an engine: the runner
+// prepares the /work mount for a container uid that owns nothing on the host, and
+// tests/unit/sandbox-scratch-userns-remap.spec.ts holds that line. See sandboxUsable().
 const hasDocker = SandboxedAgentRunner.sandboxUsable();
 
 describe('SandboxedAgentRunner — container isolation (needs docker)', () => {
