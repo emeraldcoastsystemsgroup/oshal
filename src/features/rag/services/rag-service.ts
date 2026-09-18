@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Hybrid retrieval: ingest stores locally-computed MiniLM vectors (this Chroma's REST path never embedded — every query was silently BM25 over a full-collection fetch); search now runs vector + BM25 in parallel and fuses by reciprocal rank. Every vector failure degrades to lexical, never breaks. ADR-091 tracks the pgvector end-state.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Ingest embeds BEFORE any Chroma round-trip and the add POST retries once on a thrown network error: tens-of-seconds WASM embedding left the pooled keep-alive socket half-closed (uvicorn ~5s idle) and the big vector add died with EPIPE — undici never retries POSTs on its own.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-091: RAG_ENGINE=pgvector routes storage/retrieval to PgvectorRagEngine (rag_chunks in the existing Postgres, both legs indexed, RLS'd) with sticky feature-detected fallback to the chroma path; chunking/embedding/permissions stay here, engine-neutral. New deleteCollection() for engine-agnostic reseeds. The chroma code is kept in place unchanged during the soak — formal port extraction rides the eventual Chroma removal.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Name the caller on every localEmbeddings.embed() call (ingest, pgvector search, chroma vectorSearch) so a backend failure is logged against the call site and its input size instead of an anonymous text count.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -210,7 +211,7 @@ export class RagService {
       // big batch takes tens of seconds, and a Chroma keep-alive socket left idle
       // that long is half-closed by uvicorn (~5s) — the subsequent add write EPIPEs.
       // Null (model unavailable/disabled) degrades to the historical documents-only add.
-      const embeddings = await localEmbeddings.embed(allChunks);
+      const embeddings = await localEmbeddings.embed(allChunks, 'rag-service.ingest');
 
       // ADR-091: pgvector engine stores straight into rag_chunks — no Chroma round-trips.
       if (await this.usePgvector()) {
@@ -290,7 +291,7 @@ export class RagService {
     // shares hybrid-fusion.ts with the chroma path, so ranking semantics match.
     if (await this.usePgvector()) {
       try {
-        const queryEmbedding = await localEmbeddings.embed([query]);
+        const queryEmbedding = await localEmbeddings.embed([query], 'rag-service.search.pgvector');
         const { results, scorer } = await pgvectorRagEngine.search(collection, query, queryEmbedding?.[0] ?? null, fetchK);
         const finalized = this.finalizeResults(results, topK, context);
         logger.info({ collection, resultCount: finalized.length, candidates: results.length, scorer, engine: 'pgvector', permissioned: Boolean(context) }, 'RAG search complete');
@@ -361,7 +362,7 @@ export class RagService {
     fetchK: number,
   ): Promise<RagSearchResult[]> {
     try {
-      const queryEmbedding = await localEmbeddings.embed([query]);
+      const queryEmbedding = await localEmbeddings.embed([query], 'rag-service.vectorSearch.chroma');
       if (!queryEmbedding) return [];
       const qRes = await this.chromaFetch(`${this.chromaUrl}/api/v1/collections/${colId}/query`, {
         method: 'POST',
