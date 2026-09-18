@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for tier-1 dispatch stamping (dispatch-runtime-params.ts readSwitchRow): the ONLY path by which a fleet-default or per-bot switch row reaches a DEDICATED bot node. Review of PR #633 proved the gap by mutation — replacing `const switched = resolver(agentId)` with `null` left every related spec green, so a silent regression would have inline bots following a fleet write while every bot-node dispatch kept carrying the agent_config/registry provider. This spec builds the resolver WITH its third argument wired exactly as the composition root wires it (the installed ProviderSwitchSnapshot over the real switch rule and the real catalog, the real registry for general-bot) and pins: the fleet row above a no-opinion agent_config record and above the registry; the per-bot row above the fleet row, answered by the switch rule; no rows byte-identical to the two-argument resolver; a refused id carried as written into the node's fail-closed seam. The fleet-row and refused-id cases are the ones the reviewer's mutation turns red.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot switch row is an operator-written row of oshal_bot_provider_switch, never the agent_config record: ADR-162 §7 failed for all 70 records on the operator box because the store projected each machinery-written record as a bot-row above the fleet default. The listAll double now mirrors the FIXED store (the fleet row plus explicit per-bot rows; agent_config is never projected) and the per-bot cases write that row explicitly. New REGRESSION cases seed the box's three record shapes — manifest-seeded claude-code with blank configUpdatedBy and configVersion 1, gemini 'bot-local', anthropic 'oshal-push' — beside an 'openrouter' fleet row no record names, and pin the fleet row as the stamped record for each, the record's version riding along. Red on the pre-fix projection (each record answered its own provider as 'bot-row'), green after.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -46,11 +47,16 @@ const CATALOG = buildProviderSwitchCatalog(Object.keys(HARNESS_FACTORIES));
 /** The runtimes a bot node builds — the shape resolveBotNodeSwitch reads (name → instance). */
 const BUILT_RUNTIMES = { 'openai-codex': {}, 'claude-code': {}, 'cline-cli': {} };
 
+/** A provider id none of the operator box's 70 agent_config records names, so a move onto it cannot be vacuous. */
+const FLEET_PROVIDER_NOBODY_HAS = 'openrouter';
+
 /** One agent_config record's config_values, as getConfig returns them. */
 interface ConfigValues {
   providerId?: string;
   modelId?: string;
   configVersion?: number;
+  /** Who wrote the record on the box: blank (manifest seeding), 'bot-local' (broadcast-up) or 'oshal-push'. */
+  configUpdatedBy?: string;
 }
 
 /** The in-memory agent_config table: agent id → config_values. */
@@ -68,35 +74,32 @@ function fleetRow(providerId: string, modelId: string | null = null): ProviderSw
   return { scopeId: FLEET_DEFAULT_SWITCH_ID, providerId, modelId, updatedBy: 'operator', updatedAt: null };
 }
 
+/** A bot's own row of oshal_bot_provider_switch — written by an operator through PUT /runtime, never by machinery. */
+function botRow(agentId: string, providerId: string, modelId: string | null = null): ProviderSwitchRow {
+  return { scopeId: agentId, providerId, modelId, updatedBy: 'operator-sub', updatedAt: null };
+}
+
 /**
- * listAll exactly as ProviderSwitchStore projects the two stores: the fleet row first, then every
- * agent_config record whose providerId is non-empty and not the 'auto' sentinel. The per-bot row
- * IS the agent_config record, so the two fixtures can never disagree.
+ * listAll exactly as the FIXED ProviderSwitchStore reads it: the rows of oshal_bot_provider_switch
+ * and nothing else — the fleet row first, then the per-bot rows an operator wrote. agent_config is
+ * NOT projected here on purpose: its providerId is the ADR-034 tier-2 dispatch record beneath the
+ * fleet row, and projecting it is the defect the machinery-written REGRESSION case turns red on.
  */
-function switchRows(fleet: ProviderSwitchRow | null, table: AgentConfigTable): ProviderSwitchRow[] {
-  const perBot = Object.entries(table)
-    .filter(([, v]) => (v.providerId ?? '').trim().length > 0 && (v.providerId ?? '').trim().toLowerCase() !== 'auto')
-    .map(([scopeId, v]): ProviderSwitchRow => ({
-      scopeId,
-      providerId: (v.providerId as string).trim(),
-      modelId: (v.modelId ?? '').trim() || null,
-      updatedBy: null,
-      updatedAt: null,
-    }));
-  return fleet ? [fleet, ...perBot] : perBot;
+function switchRows(fleet: ProviderSwitchRow | null, perBot: readonly ProviderSwitchRow[]): ProviderSwitchRow[] {
+  return fleet ? [fleet, ...perBot] : [...perBot];
 }
 
 /** Install a loaded snapshot over the rows, then hand back the composition root's tier-1 lambda. */
-async function installSwitch(fleet: ProviderSwitchRow | null, table: AgentConfigTable): Promise<ProviderSwitchResolver> {
-  const snapshot = new ProviderSwitchSnapshot({ listAll: async () => switchRows(fleet, table) }, CATALOG);
+async function installSwitch(fleet: ProviderSwitchRow | null, perBot: readonly ProviderSwitchRow[]): Promise<ProviderSwitchResolver> {
+  const snapshot = new ProviderSwitchSnapshot({ listAll: async () => switchRows(fleet, perBot) }, CATALOG);
   await snapshot.refresh();
   setInstalledProviderSwitchSnapshot(snapshot, CATALOG);
   return (agentId) => resolveInstalledProviderSwitch(agentId, registryHarnessEntry(agentId));
 }
 
 /** The resolver as the composition root builds it: agent_config + registry + the switch rows. */
-async function resolverWithRows(fleet: ProviderSwitchRow | null, table: AgentConfigTable) {
-  const resolveSwitch = await installSwitch(fleet, table);
+async function resolverWithRows(fleet: ProviderSwitchRow | null, table: AgentConfigTable, perBot: readonly ProviderSwitchRow[] = []) {
+  const resolveSwitch = await installSwitch(fleet, perBot);
   return createAgentConfigRuntimeParamsResolver(agentConfigStore(table), registryDeclaredProvider, resolveSwitch);
 }
 
@@ -128,6 +131,7 @@ describe('the fixture is live: general-bot is a registry LLM bot the fleet defau
     expect(CATALOG.harnessTypes).toContain('claude-code');
     expect(CATALOG.clineApiProviders).toContain('anthropic');
     expect(CATALOG.clineApiProviders).toContain('nousResearch');
+    expect(CATALOG.clineApiProviders).toContain(FLEET_PROVIDER_NOBODY_HAS);
   });
 });
 
@@ -154,6 +158,29 @@ describe('tier 1: a fleet-default row is carried above the agent_config record a
     expect(await resolver(GENERAL_BOT_AGENT_ID)).toEqual({ providerId: 'claude-code', configVersion: 2 });
   });
 
+  it("REGRESSION (ADR-162 §7): the fleet row beats a MACHINERY-WRITTEN agent_config record — the operator box's three shapes", async () => {
+    // Measured read-only on the operator box (2026-09-17): 70 agent_config records name a provider
+    // and none was written by a person — 67 manifest-seeded (blank configUpdatedBy, configVersion 1),
+    // 2 'bot-local', 1 'oshal-push'. Each is the ADR-034 tier-2 record, never a switch row, so ONE
+    // fleet-default write must move every one of them; the record's version still rides along.
+    const shapes: Array<[string, ConfigValues]> = [
+      ['manifest-seeded claude-code (blank configUpdatedBy, configVersion 1)', { providerId: 'claude-code', modelId: 'claude-sonnet-4-6', configVersion: 1 }],
+      ["the bot's own broadcast-up ('bot-local') gemini", { providerId: 'gemini', modelId: 'gemini-3.1-pro', configVersion: 39, configUpdatedBy: 'bot-local' }],
+      ["a ConfigSyncService push ('oshal-push') anthropic", { providerId: 'anthropic', modelId: 'claude-sonnet-4-20250514', configVersion: 1, configUpdatedBy: 'oshal-push' }],
+    ];
+    for (const [label, record] of shapes) {
+      const resolver = await resolverWithRows(fleetRow(FLEET_PROVIDER_NOBODY_HAS, 'anthropic/claude-sonnet-4.6'), { [GENERAL_BOT_AGENT_ID]: record });
+      expect(await resolver(GENERAL_BOT_AGENT_ID), label).toEqual({
+        providerId: FLEET_PROVIDER_NOBODY_HAS, model: 'anthropic/claude-sonnet-4.6', configVersion: record.configVersion,
+      });
+      // ...and the node parses exactly that off the stamped request, landing on cline-cli fronting it.
+      const carried = parseCarriedDispatchConfig(await pushOnDispatchFields(resolver, GENERAL_BOT_AGENT_ID));
+      expect(carried, label).toEqual({ providerId: FLEET_PROVIDER_NOBODY_HAS, model: 'anthropic/claude-sonnet-4.6', configVersion: record.configVersion });
+      expect(resolveBotNodeSwitch(carried!.providerId, BUILT_RUNTIMES, CATALOG.clineApiProviders), label)
+        .toEqual({ runtime: 'cline-cli', apiProvider: FLEET_PROVIDER_NOBODY_HAS });
+    }
+  });
+
   it('REGRESSION: the stamped request the node parses names the fleet row, with the required marker', async () => {
     const resolver = await resolverWithRows(fleetRow('anthropic', 'claude-sonnet-4-6'), {});
     const fields = await pushOnDispatchFields(resolver, GENERAL_BOT_AGENT_ID);
@@ -177,11 +204,13 @@ describe('tier 1: a fleet-default row is carried above the agent_config record a
   });
 });
 
-describe('tier 1: a per-bot row is carried above the fleet row', () => {
-  it('the agent_config record (the per-bot row) wins over the fleet default', async () => {
-    const resolver = await resolverWithRows(fleetRow('gemini', 'gemini-2.5-pro'), {
-      [GENERAL_BOT_AGENT_ID]: { providerId: 'claude-code', modelId: 'claude-sonnet-4-6', configVersion: 4 },
-    });
+describe("tier 1: a bot's own switch row — an operator's write — is carried above the fleet row", () => {
+  it('REGRESSION: the per-bot row wins over the fleet default AND over the agent_config record beneath both', async () => {
+    const resolver = await resolverWithRows(
+      fleetRow('gemini', 'gemini-2.5-pro'),
+      { [GENERAL_BOT_AGENT_ID]: { providerId: 'openai-codex', modelId: 'gpt-5.5', configVersion: 4 } },
+      [botRow(GENERAL_BOT_AGENT_ID, 'claude-code', 'claude-sonnet-4-6')],
+    );
     expect(await resolveDispatchConfigFields(resolver, GENERAL_BOT_AGENT_ID)).toEqual({
       providerId: 'claude-code', model: 'claude-sonnet-4-6', configVersion: 4,
     });
@@ -190,12 +219,23 @@ describe('tier 1: a per-bot row is carried above the fleet row', () => {
   it('REGRESSION: the per-bot rung answers through the switch rule — the id lands in the catalog spelling', async () => {
     // classifyProviderId answers with the catalog's own spelling (`nousResearch`), which tier 2
     // never does: that difference is how this case tells tier 1 from a tier-2 fallback.
-    const resolver = await resolverWithRows(fleetRow('claude-code'), {
-      [GENERAL_BOT_AGENT_ID]: { providerId: 'nousresearch', modelId: 'Hermes-4-405B', configVersion: 11 },
-    });
+    const resolver = await resolverWithRows(
+      fleetRow('claude-code'),
+      { [GENERAL_BOT_AGENT_ID]: { configVersion: 11 } },
+      [botRow(GENERAL_BOT_AGENT_ID, 'nousresearch', 'Hermes-4-405B')],
+    );
     expect(await resolver(GENERAL_BOT_AGENT_ID)).toEqual({
       providerId: 'nousResearch', model: 'Hermes-4-405B', configVersion: 11,
     });
+  });
+
+  it('a per-bot row for one bot does not move another: the other bot still follows the fleet default', async () => {
+    const resolver = await resolverWithRows(
+      fleetRow('claude-code', 'claude-sonnet-4-6'),
+      {},
+      [botRow(UNDECLARED_AGENT_ID, 'anthropic')],
+    );
+    expect(await resolver(GENERAL_BOT_AGENT_ID)).toEqual({ providerId: 'claude-code', model: 'claude-sonnet-4-6' });
   });
 });
 
@@ -244,9 +284,11 @@ describe('a refused id is carried AS WRITTEN so the node refuses the dispatch by
   });
 
   it('a per-bot row naming a refused id is stamped verbatim too, never the fleet row beneath it', async () => {
-    const resolver = await resolverWithRows(fleetRow('claude-code'), {
-      [GENERAL_BOT_AGENT_ID]: { providerId: 'a2a', configVersion: 3 },
-    });
+    const resolver = await resolverWithRows(
+      fleetRow('claude-code'),
+      { [GENERAL_BOT_AGENT_ID]: { configVersion: 3 } },
+      [botRow(GENERAL_BOT_AGENT_ID, 'a2a')],
+    );
     expect(await resolver(GENERAL_BOT_AGENT_ID)).toEqual({ providerId: 'a2a', configVersion: 3 });
     expect(resolveBotNodeSwitch('a2a', BUILT_RUNTIMES, CATALOG.clineApiProviders)).toBeNull();
   });
