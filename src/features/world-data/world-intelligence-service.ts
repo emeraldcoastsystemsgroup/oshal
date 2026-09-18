@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | scheduledEventsBetween(eventType, fromIso, toIso) — ranged sibling of upcomingEvents (now()-anchored) for the Strategy Lab earnings-gate walks, which need "who prints between session D and D+N" for past walk dates; ingested calendar rows persist, so pinned regression windows replay identically.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Read the windowed averages and the subject catalog from the pre-aggregated HEAD (world-preaggregate) instead of re-scanning the running stream on every call. The trading autopilot's 100-name basket read cost 10.5s every 5 minutes and listEntities cost 7.8s to return 402 rows; both are now sub-200ms. Means are recovered as sum/count, which is arithmetically identical to avg over the same rows — verified equal across 6,714 (entity,metric) pairs.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Put the rollup's four per-entity reads behind the bounded, coalescing series gate, and answer a whole-day sentiment window from the daily HEAD instead of scanning the stream per source. The 2026-09-14 saturation had both shapes: 19 concurrent sessions on oshal-local-tsdb (282% CPU) all running perSourceSentimentHours, and overlapping pulses recomputing the same aggregate twice. Measured read-only on the live store: the 24h stream read is 786ms planning + 366ms execution and the 168h one 810 + 651, against 245 + 16 and 303 + 20 for the same answers off world_metrics_daily — which carries `source`, so it can answer the per-source question. Whole-day windows are now day-aligned, matching the head-backed metricAvg the trading gate already reads these features back through.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Own the memoized TimescaleDB pool's connection 'error' events (ownPoolConnectionErrors) - a server-terminated connection on an unowned pool is an uncaught exception that ends the api process.
  */
 
 /**
@@ -25,6 +26,7 @@ import { Pool } from 'pg';
 import { readWorldCoverage } from './world-coverage-read';
 import { createGraphConnector, type GraphConnector, type GraphNode, type GraphEdge } from '@/features/graph';
 import { createChildLogger } from '@/shared/logger';
+import { ownPoolConnectionErrors } from '@/shared/services/database';
 import type { WorldContribution } from './world-types';
 import { computeSentimentBreakdown, type SentimentRow } from './sentiment-math';
 import {
@@ -708,7 +710,7 @@ export function createWorldIntelligenceService(env: NodeJS.ProcessEnv = process.
   if (memoized) return memoized;
   const connector = createGraphConnector();
   if (!connector) { logger.warn('World service disabled — ARANGO_URL unset (no graph engine)'); return null; }
-  const svc = new WorldIntelligenceService(connector, new Pool({ connectionString: tsdbUrl }));
+  const svc = new WorldIntelligenceService(connector, ownPoolConnectionErrors(new Pool({ connectionString: tsdbUrl }), 'world-intelligence'));
   serviceMemo.set(tsdbUrl, svc);
   return svc;
 }

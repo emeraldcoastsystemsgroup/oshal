@@ -14,12 +14,14 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Thread the pool into ConnectorMarketplaceService so its per-user enablement OVERRIDE layer (BACKLOG.md:2718) can persist/read per-user connector on/off; deployment-global catalog + state stay file-based.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Wrapped the initializeToolRegistry bootstrap chain (migrations → tool-executor restore → baseline+connector-spec tool seed → default chat agent → persona authorizations) in runWithSystemIdentity. The detached boot chain ran with no request in scope; under OSHAL_DB_GUC_STRICT=deny that would scope its seed reads/writes anonymous (RLS zero-rows). Covered ~10 of the guc warn-audit's identity-less boot sites.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Make the primary API Postgres pool ceiling deployment-configurable and stamp application_name so a 47-backend managed cluster can be budgeted and audited without changing the existing local default.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Own the main pool's connection 'error' events (ownPoolConnectionErrors): this pool had no pool-level or client-level listener at all, so a server-terminated connection - idle or checked out - was an uncaught exception and, through the crash guards, the end of the api process (the 2026-09-05 deploy).
  */
 
 import path from 'path';
 import { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { gucEnabled, wrapPoolWithGuc } from '@/shared/services/database/guc-pool';
+import { ownPoolConnectionErrors } from '@/shared/services/database/pool-connection-errors';
 import { wrapPoolWithRuntimeDdlGuard } from '@/shared/services/database/schema-bootstrap-policy';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { postgresApplicationName, resolvePoolMax } from '@/shared/services/database/pool-sizing';
@@ -79,6 +81,8 @@ export function createDatabasePool(): Pool {
           idleTimeoutMillis: 30000,
           connectionTimeoutMillis: 10000,
         });
+
+  ownPoolConnectionErrors(pool, 'main');
 
   // RLS keystone: wrap by default so every query/connect stamps the caller identity
   // (oshal.current_sub/is_operator) for row-level security. OSHAL_DB_GUC=off is

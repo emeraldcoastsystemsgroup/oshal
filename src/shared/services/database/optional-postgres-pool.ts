@@ -5,11 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of optional Postgres pool factory for persistence-capable stores
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Share the bounded pool-size parser, add application_name observability, and let direct URLs own their TLS object so verify-full/sslrootcert cannot be overridden by a synthesized boolean.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Own every connection's 'error' event at construction (ownPoolConnectionErrors). A checked-out client that the server terminates - idle_in_transaction_session_timeout during the 2026-09-05 bot-recreate storm - had no listener and took the api down through the crash guards; now it is one ERROR line and one rejected statement.
  */
 
 import { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { gucEnabled, wrapPoolWithGuc } from './guc-pool';
+import { ownPoolConnectionErrors } from './pool-connection-errors';
 import { wrapPoolWithRuntimeDdlGuard } from './schema-bootstrap-policy';
 import { postgresApplicationName, resolvePoolMax } from './pool-sizing';
 
@@ -33,7 +35,7 @@ export function createOptionalPostgresPool(owner: string): Pool | null {
     { owner, hasConnectionString: Boolean(poolConfig.connectionString), gucEnabled: gucEnabled() },
     'Creating Postgres pool',
   );
-  const pool = new Pool(poolConfig);
+  const pool = ownPoolConnectionErrors(new Pool(poolConfig), owner);
   const scopedPool = gucEnabled() ? wrapPoolWithGuc(pool) : pool;
   return wrapPoolWithRuntimeDdlGuard(scopedPool);
 }

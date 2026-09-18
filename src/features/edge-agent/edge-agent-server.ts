@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Edge agent GUI server — local web UI for one-click swarm connection
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Full cockpit: activity feed, ticket submission, bot messaging, bidirectional swarm control
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-04: stop advertising or executing MCP tools from unauthenticated mesh payloads; discovery remains diagnostic until an owner-bound task broker is wired.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Own the edge pool's connection 'error' events (ownPoolConnectionErrors) - a server-terminated connection on an unowned pool is an uncaught exception that ends the process.
  */
 
 /* eslint-disable no-console -- standalone process: operator-facing startup banner printed to the console */
@@ -18,6 +19,7 @@ import express from 'express';
 import Redis from 'ioredis';
 import { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { ownPoolConnectionErrors } from '@/shared/services/database';
 import {
   RedisMeshTransport,
   AgentRuntimeRegistryService,
@@ -133,7 +135,7 @@ async function connect(opts: {
 
   // Postgres — same DB as the swarm (for agent profile, routing, tickets)
   if (opts.databaseUrl) {
-    state.pool = new Pool({ connectionString: opts.databaseUrl, max: 5 });
+    state.pool = ownPoolConnectionErrors(new Pool({ connectionString: opts.databaseUrl, max: 5 }), 'edge-agent');
     // Verify connection
     await state.pool.query('SELECT 1');
     logger.info('Connected to Postgres');
