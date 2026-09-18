@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-124 (RLS Phase 2): oshal_cost_events is now FORCE-RLS'd (migration 112), so an insert whose owner_sub does not match the stamped connection identity is REFUSED by Postgres with SQLSTATE 42501. Both ledger catches logged every failure at warn and moved on, which meant an RLS refusal silently dropped a cost row and windowed budget caps quietly failed OPEN — the exact shape of the ADR-119 intake defect, where a swallowed row-level-security rejection looked like success for weeks. The refusal now logs at ERROR, names both halves of the mismatch (the row's ownerSub and the fact that the connection identity is what has to match it), and is distinguishable in logs from a genuinely missing table. Behaviour is otherwise unchanged: the write stays non-fatal so a cost-ledger gap can never brick a dispatch.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add recordCostOnce(outboxId, event): receipt insertion, chat_tasks mutation, and cost-ledger append share one transaction so durable remote-task settlement replay cannot double bill or acknowledge a partial cost publication.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Serialize distinct remote-task cost effects for the same chat-task rollup with a transaction advisory lock, preventing concurrent outbox workers from losing an increment.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | recordLedgerEvent(event): the oshal_cost_events append alone, for a producer that already owns its chat_tasks rollup (the inline orchestrator's taskStore.recordUsage). Routing inline turns through recordCost would add every turn to chat_tasks twice; skipping the ledger left windowed budget caps blind to inline spend.
  */
 
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
@@ -144,6 +145,20 @@ export class CostTrackingService {
       { agentId: event.agentId, model: event.modelId, cost: event.totalCost, tokens: event.inputTokens + event.outputTokens },
       'Cost event recorded',
     );
+  }
+
+  /**
+   * @description Appends ONE oshal_cost_events row for an event whose chat_tasks rollup is
+   * owned by someone else. The inline orchestrator persists its own lifetime totals through
+   * taskStore.recordUsage, so routing it through recordCost would bill every turn twice on
+   * chat_tasks; this is the ledger half alone — same insert, same 090 legacy fallback, same
+   * loud RLS-refusal logging, and non-fatal like the rest of the ledger path.
+   * @param event - This event's cost only (never a running total); ownerSub is the row's owner.
+   * @returns Resolves once the row is written or the failure has been logged.
+   * @throws Error when the service has no pool — a memory-only deployment has no ledger to append to.
+   */
+  async recordLedgerEvent(event: CostEvent): Promise<void> {
+    await this.appendCostLedgerRow(event, event.ownerSub ?? null, this.requirePool(), false);
   }
 
   /**
@@ -579,7 +594,7 @@ export class CostTrackingService {
            (task_id, owner_sub, agent_id, provider_id, model_id, cost_usd, input_tokens, output_tokens, duration_ms)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
-          event.taskId, ownerSub, event.agentId, event.providerId, event.modelId, event.totalCost,
+          event.taskId, ownerSub, event.agentId || null, event.providerId, event.modelId, event.totalCost,
           normalizeCount(event.inputTokens), normalizeCount(event.outputTokens), normalizeDurationMs(event.durationMs),
         ],
       );
@@ -622,7 +637,7 @@ export class CostTrackingService {
       await database.query(
         `INSERT INTO oshal_cost_events (task_id, owner_sub, agent_id, provider_id, model_id, cost_usd)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [event.taskId, ownerSub, event.agentId, event.providerId, event.modelId, event.totalCost],
+        [event.taskId, ownerSub, event.agentId || null, event.providerId, event.modelId, event.totalCost],
       );
       logger.warn(
         { taskId: event.taskId },

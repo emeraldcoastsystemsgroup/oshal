@@ -58,6 +58,7 @@
   tr:last-child td { border-bottom: none; }
   td.wrap-cell { white-space: normal; overflow-wrap: anywhere; max-width: 40ch; }
   .num { font-variant-numeric: tabular-nums; }
+    .unit-split { display: block; margin-top: 2px; font-size: 11px; opacity: 0.75; white-space: nowrap; }
   .dash { color: var(--muted); }
   .bar { position: relative; width: 120px; height: 7px; border-radius: 999px;
     background: var(--panel2); overflow: hidden; }
@@ -163,6 +164,29 @@
     return td;
   }
 
+  /**
+   * The spend cell. When the API supplied a split (GET /api/budgets/spend answers spendByUnit),
+   * the units are named under the figure: a metered bill, a subscription price-equivalent and a
+   * BYO token count are three different things, and one sum that adds them is not a number anyone
+   * can act on. The enforcement figure stays on top, because a cap is one number.
+   */
+  function spendCell(value, byUnit) {
+    const td = usdCell(value);
+    if (!byUnit || td.classList.contains('dash')) return td;
+    const parts = [];
+    if (Number(byUnit.billed) > 0) parts.push('billed $' + Number(byUnit.billed).toFixed(4));
+    if (Number(byUnit.priceEquivalent) > 0) parts.push('price-equivalent $' + Number(byUnit.priceEquivalent).toFixed(4));
+    if (Number(byUnit.byo) > 0 || (parts.length && Number(byUnit.byo) === 0)) parts.push('BYO $' + Number(byUnit.byo || 0).toFixed(4) + ' (tokens only)');
+    if (!parts.length) return td;
+    const split = document.createElement('div');
+    split.className = 'unit-split';
+    split.textContent = parts.join(' · ');
+    td.appendChild(split);
+    td.title = 'Enforcement counts the sum. Units: ' + parts.join('; ')
+      + '. A price-equivalent is a subscription turn priced as if metered; BYO records tokens only, billed to the caller\u2019s own account.';
+    return td;
+  }
+
   /** USD with 4 decimals, or an em-dash for null/undefined (unknown, NOT zero). */
   function usdCell(value) {
     if (value === null || value === undefined || !Number.isFinite(Number(value))) {
@@ -231,7 +255,7 @@
       tr.appendChild(cell(String(b.scopeType ?? '')));
       tr.appendChild(cell(String(b.scopeKey ?? ''), 'wrap-cell'));
       tr.appendChild(usdCell(b.dailyUsd));
-      tr.appendChild(usdCell(b.spendUsd));
+      tr.appendChild(spendCell(b.spendUsd, b.spendByUnit));
       tr.appendChild(usageCell(b.spendUsd, b.dailyUsd));
       tr.appendChild(b.hard
         ? pillCell('hard', 'hard', 'A definitive breach HALTS work on this scope.')
@@ -302,16 +326,20 @@
     const withSpend = [];
     for (const b of rows) {
       let spendUsd = null;
+      let spendByUnit = null;
       try {
         const q = new URLSearchParams({ scope: String(b.scopeType) + ':' + String(b.scopeKey), windowHours: String(hours) });
         const sr = await fetch('/api/budgets/spend?' + q.toString(), { credentials: 'same-origin' });
         const sb = await readJson(sr);
         // 200 => a real number. 503 => store unavailable. 403 => cross-user scope (not self).
         spendUsd = sr.ok && sb && Number.isFinite(Number(sb.spendUsd)) ? Number(sb.spendUsd) : null;
+        // The API omits the split when its own read fails; absent means unlabelled, never zero.
+        spendByUnit = sr.ok && sb && sb.spendByUnit && typeof sb.spendByUnit === 'object' ? sb.spendByUnit : null;
       } catch (err) {
         spendUsd = null; // network failure is unknown spend, not zero
+        spendByUnit = null;
       }
-      withSpend.push(Object.assign({}, b, { spendUsd }));
+      withSpend.push(Object.assign({}, b, { spendUsd, spendByUnit }));
     }
     $capsHead.textContent = 'Your cap';
     renderCaps(withSpend);

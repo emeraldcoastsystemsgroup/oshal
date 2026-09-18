@@ -4,8 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Server-side renderer for GET /api/trace/:ticketId.html — a self-contained (no external assets), theme-aware waterfall: a totals header + one horizontal bar per span positioned/sized by its real time offset + duration, cost/model/agent per row. Pure string builder over an assembled RunTrace so it is unit-testable and shares the exact numbers the JSON endpoint returns. All dynamic text is HTML-escaped: ticket/agent/model ids are user-influenced, so they are never interpolated raw into the page.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | An llm-call row's cost carries its unit label when the unit is not a bill: `price-equivalent (subscription)` for a CLI turn, `BYO (tokens only)` for a caller-owned endpoint (shown even at $0, so a BYO call is visible as a call). ADR-127: one total across providers is adding different units.
  */
 
+import { COST_UNIT_LABELS } from '@/features/cost-governance';
 import type { RunTrace, TraceSpan } from './trace-service';
 
 /** Bar colour per kind — a fixed 3-hue scale so a phase/bot/llm-call reads at a glance. */
@@ -74,7 +76,7 @@ function renderRow(s: TraceSpan, minMs: number, totalMs: number): string {
   const color = KIND_COLOR[s.kind];
   const meta = [
     s.durationMs !== null ? fmtMs(s.durationMs) : null,
-    s.costUsd !== undefined && s.costUsd > 0 ? `$${s.costUsd.toFixed(6)}` : null,
+    fmtCost(s),
     s.tokens !== undefined && s.tokens > 0 ? `${s.tokens.toLocaleString()} tok` : null,
     s.model ? esc(s.model) : null,
   ].filter(Boolean).join(' &middot; ');
@@ -85,6 +87,19 @@ function renderRow(s: TraceSpan, minMs: number, totalMs: number): string {
       </div>
       <div class="mt">${meta || '&nbsp;'}</div>
     </div>`;
+}
+
+/**
+ * @description The cost cell for one row: the figure plus its unit label whenever the unit is
+ * not a bill. A BYO call shows its label even at $0 — the ledger records tokens only for it,
+ * and a blank cell would read as "no call" rather than "billed elsewhere".
+ */
+function fmtCost(s: TraceSpan): string | null {
+  const unit = s.costUnit && s.costUnit !== 'billed' ? esc(COST_UNIT_LABELS[s.costUnit]) : null;
+  const figure = s.costUsd !== undefined && s.costUsd > 0 ? `$${s.costUsd.toFixed(6)}` : null;
+  if (figure && unit) return `${figure} ${unit}`;
+  if (figure) return figure;
+  return s.costUnit === 'byo' ? unit : null;
 }
 
 /** @description Clamps a percentage into [0, 100]. */

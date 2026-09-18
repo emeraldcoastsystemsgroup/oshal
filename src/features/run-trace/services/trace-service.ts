@@ -5,10 +5,12 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial run-trace read-model: TraceService.getTrace assembles ONE time-ordered waterfall for a ticket (ticket -> phase spans from ticket_status_history -> bot spans from ticket_task_links+chat_tasks -> per-LLM-call spans from the oshal_cost_events ledger) purely from data ALREADY persisted — no new correlation-id instrumentation across the controller/bot boundary. Totals.costUsd sums the SAME ticket->ticket_task_links->oshal_cost_events join the cost-governance budget uses, so a trace total agrees with the budget + cockpit ticket-cost rollups. Caller-scoped: a non-operator sees only a ticket they own (owner_sub); anything else returns null so a ticket id is never oracle-able (no existence leak).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | llm-call spans surface the ledger's new token split + duration (migration 090; BACKLOG: traces showed per-call cost but not tokens/durations). mapLlmSpan stops hard-coding tokens/durationMs to undefined/null and populates them when the row carries them; pre-090 rows (NULL columns) keep the old shape, so backward compat is by-value, not by-branch. loadLlmSpans selects e.* so a DB that predates 090 doesn't fail the query and silently drop every llm-call span. Totals are unchanged on purpose: totals.tokens still sums bot (chat_tasks) spans because ledger rows mirror the SAME tokens the rollup accumulates — summing both would double-count.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | llm-call spans carry costUnit (billed / price-equivalent / byo, classified from the ledger row's provider_id) so the trace can say which calls were subscription price-equivalents or BYO token counts instead of presenting every cost_usd as spend (ADR-127).
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { classifyCostUnit, type CostUnit } from '@/features/cost-governance';
 
 const logger = createChildLogger({ module: 'run-trace-service' });
 
@@ -29,6 +31,8 @@ export interface TraceSpan {
   endedAt: string | null;
   durationMs: number | null;
   costUsd?: number;
+  /** The unit costUsd is in (ADR-127): only `billed` is money that changed hands. llm-call spans only. */
+  costUnit?: CostUnit;
   tokens?: number;
   model?: string;
   provider?: string;
@@ -289,6 +293,7 @@ export function mapLlmSpan(row: LlmRow): TraceSpan {
     endedAt: null,
     durationMs: durationMs > 0 ? durationMs : null,
     costUsd: amount(row.cost_usd),
+    costUnit: classifyCostUnit(row.provider_id),
     ...(tokens > 0 ? { tokens } : {}),
     model: row.model_id ?? undefined,
     provider: row.provider_id ?? undefined,

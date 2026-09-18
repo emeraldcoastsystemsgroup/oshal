@@ -148,11 +148,13 @@ two tiers cannot drift the way "copy the checks into the new caller" always even
   above, still reach a model without clearing anything — and this ADR does not change one of them.
   The count is deliberately not written here: it was hand-typed as "twelve" in an earlier draft and
   was wrong, in the half of the deliverable the done-when asks for. Run the two commands above.
-- The budget gate reads `oshal_cost_events`, and **no inline chat path writes that ledger** — inline
-  turns land usage in `chat_tasks` only. So the cap an inline turn now honours is fed by node,
-  A2A, Argo and vision spend. That gap has its own BACKLOG entry ("Inline chat spend is invisible to
-  windowed budget enforcement") and is not closed here; until it is, an inline-only user's own spend
-  does not move their own window.
+- The budget gate reads `oshal_cost_events`, and at the time of this ADR **no inline chat path wrote
+  that ledger** — inline turns landed usage in `chat_tasks` only, so the cap an inline turn honoured
+  was fed by node, A2A, Argo and vision spend alone. **Closed 2026-09-18** (branch
+  `inline-chat-cost-ledger`): `TaskOrchestrator` appends per-model ledger rows under the owner sub
+  after every finished turn, and `tests/unit/inline-chat-cost-ledger-postgres.spec.ts` proves on a
+  real forced-RLS Postgres that an inline turn moves the owner's window and a HARD cap then refuses
+  their next turn. An inline-only user's own spend now moves their own window.
 - The ADR-090 skill-profile carrier still lives in `executeBotOrInline` and does not run on the
   Tier-B path. That is a no-op today rather than a gap: `send-message` carries no `app`/`capability`
   on its request, so the profile would resolve to the empty string. Adding a body-supplied app id to
