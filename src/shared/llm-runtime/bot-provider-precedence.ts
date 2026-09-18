@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot switch row IS the agent_config record (BACKLOG entry verbatim), so the notes no longer describe a separate "legacy" per-bot store below the registry: with a snapshot installed the caller's switchResolution already reflects agent_config, and the dbProviderId rungs below only answer when no snapshot exists (no Postgres pool). Notes now say what a save writes: the bot's own agent_config record, resolved above the fleet default and the registry literal.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The switch rows outrank the registry (operator, 2026-09-17: "it should literally be a switch in a table"). A per-bot or fleet-default switch row resolved by bot-provider-switch.ts is now the top of the ladder, reported as providerSource 'bot-row' / 'fleet-default' (or 'switch-refused' when the row names an id this build cannot run — fail closed, with the reason as the note). Consequence for the surface: a registry-pinned harness is no longer the ceiling, so providerOverridable is TRUE for every readable-registry bot and the panel's disabled select comes alive. The legacy per-agent record (agents.api_provider_id / agent_config providerId) keeps exactly the rank it had — below a non-cline registry harness — because the box measured on 2026-09-17 holds 11 such rows that differ from the registry (8 on the cancelled claude-code subscription) and honouring them at merge would have moved the fleet.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot provider precedence rule, extracted as ONE pure function so the cockpit can show a bot's EFFECTIVE provider and say plainly when the registry outranks the operator's pick. This was previously only knowable by reading three files: provider-runtime.ts:841 (a registry harnessType short-circuits the whole DB/cockpit path), claude-code-provider.ts:246 (inside the cline harness the ORDER is request > agent profile > registry apiType > global config), and bot-node-config-bootstrap.ts:184 (a DB modelId reaches even a registry-pinned harness through CODEX_MODEL/CLAUDE_CODE_MODEL, which is why the model stays overridable when the provider does not). Lives in shared/ because both the agent-profile feature and any surface over it need the same answer; duplicating it in browser JS is how the panel would start lying.
  *
@@ -144,9 +145,8 @@ export function resolveEffectiveBotProvider(inputs: BotProviderInputs): Effectiv
       providerOverridable: true,
       modelOverridable: true,
       precedenceNote: `The bot registry declares harness '${harness}' for this bot and no switch row `
-        + "overrides it. Saving a provider here writes the bot's own switch row, which is resolved "
-        + 'ABOVE the registry literal; the fleet default (one row) sits between the two. The legacy '
-        + 'per-bot record stays below the registry and is not what a save writes.',
+        + "overrides it. Saving a provider here writes the bot's own runtime record (its switch row), "
+        + 'which is resolved ABOVE the registry literal; the fleet default (one row) sits between the two.',
     };
   }
 
@@ -220,7 +220,7 @@ function resolveFromSwitchRow(
     modelOverridable: true,
     precedenceNote: `${rung} decides: '${resolution.providerId}' runs through harness '${resolution.harnessType}'. `
       + (resolution.source === 'bot-row'
-        ? 'It outranks the fleet default and the registry literal; clear it to fall back to them.'
+        ? 'It outranks the fleet default and the registry literal; clear the runtime record to fall back to them.'
         : 'No per-bot row exists, so the fleet default outranks the registry literal; save a provider here to give this bot its own row.'),
   };
 }

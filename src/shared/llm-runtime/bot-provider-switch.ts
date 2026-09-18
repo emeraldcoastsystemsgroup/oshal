@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | A bot's LLM provider is a row in a table, not a literal in the registry (operator, 2026-09-17: "it should literally be a switch in a table"). ONE pure rule, most specific first: per-bot switch row -> fleet-default switch row -> the registry literal. Each rung is a real record; no rows anywhere resolves byte-identically to the registry, so the fleet does not move when the rule lands. A provider id the platform cannot run fails CLOSED with a reason — it never falls silently to the registry. Lives in shared/ because the api-side harness resolver, dispatch stamping, the /runtime boot pull and the cockpit all have to answer the same question, and duplicating the rule is how a surface starts lying.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Named the stores behind the rungs so no reader invents a fourth: the per-bot row IS the existing agent_config record (config_values.providerId/modelId — what PUT /api/agents/:id/runtime writes and ADR-034 dispatch stamping carries), the fleet default is the one reserved row of oshal_bot_provider_switch (migration 146). The rule itself is unchanged; ProviderSwitchRow is the common shape both stores project to.
  *
  * @module shared/llm-runtime/bot-provider-switch
  */
@@ -14,9 +15,12 @@ export const FLEET_DEFAULT_SWITCH_ID = 'fleet-default';
 /** Where a resolved provider came from — the rung of the precedence ladder that answered. */
 export type BotProviderSwitchSource = 'bot-row' | 'fleet-default' | 'registry';
 
-/** One switch record as the table holds it: no secret, ever — keys stay in the container env. */
+/**
+ * One switch record: an agent_config per-bot record (providerId/modelId) or the fleet-default row
+ * of oshal_bot_provider_switch, projected to one shape. No secret, ever — keys stay in the env.
+ */
 export interface ProviderSwitchRow {
-  /** An agent id, or {@link FLEET_DEFAULT_SWITCH_ID}. */
+  /** An agent id (its agent_config record), or {@link FLEET_DEFAULT_SWITCH_ID}. */
   scopeId: string;
   providerId: string;
   modelId: string | null;
