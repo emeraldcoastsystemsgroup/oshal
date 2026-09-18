@@ -4,9 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Proof for scripts/api-storm-probe.sh, the gate that stops scripts/oshal-deploy.sh printing DEPLOYED over a mid-deploy api restart (BACKLOG "Deploy — the api process exits during the bot-recreate storm"). The boundary the probe reads is the Docker engine - `docker inspect` RestartCount and `docker logs --since` - so nothing there is doubled: each case runs the real script in a real Git Bash against a real disposable alpine container. One stays up (PASS), one Docker restarts inside the window (FAIL on RestartCount), one writes the termination line inside the window (FAIL on the log count), one does not exist (exit 2, never a PASS).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two cases the review found missing: a container whose LOGS cannot be read is exit 2 rather than a PASS (the count and the read were one pipeline, and `grep -c` exits 1 on zero matches, so a failed read looked exactly like a clean window), and the two failure shapes name themselves - FAIL(restarted) vs FAIL(terminated) - because the deploy text branches on that and a survived termination must not send anyone after a restart.
  */
 
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, delimiter } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -134,4 +138,48 @@ describe('scripts/api-storm-probe.sh', () => {
     expect(verify.output).not.toContain('PASS');
     expect(probe().status).toBe(2);
   }, 60_000);
+
+  it('a container whose LOGS it cannot read is exit 2 too, never a PASS', () => {
+    // The count and the read used to be one pipeline, and `grep -c` exits 1 on zero matches -
+    // so a read that FAILED was indistinguishable from a window with no terminations, and the
+    // deploy went on to report that the api lived through the recreate. A log driver that
+    // cannot be read is the same fact as a container that cannot be inspected.
+    const dir = mkdtempSync(join(tmpdir(), 'storm-probe-stub-'));
+    try {
+      // `inspect` answers, `logs` fails - exactly what a non-readable logging driver does.
+      writeFileSync(join(dir, 'docker'),
+        '#!/usr/bin/env bash\n'
+        + 'if [ "$1" = "inspect" ]; then echo 0; exit 0; fi\n'
+        + 'if [ "$1" = "logs" ]; then echo "configured logging driver does not support reading" >&2; exit 1; fi\n'
+        + 'exit 0\n', { mode: 0o755 });
+      const run = spawnSync(BASH, [PROBE, 'verify', '0', '2026-01-01T00:00:00Z', 'stubbed'], {
+        encoding: 'utf8',
+        timeout: DOCKER_TIMEOUT_MS,
+        env: { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH ?? ''}` },
+      });
+      const output = `${run.stdout || ''}\n${run.stderr || ''}`;
+      expect(output, 'a window nobody could read must never read as a pass').not.toContain('PASS');
+      expect(run.status, 'an unreadable log window is a check that could not be taken, not a clean one').toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('names WHICH failure it saw, because a survived termination is not a restart', () => {
+    // The deploy's operator-facing text branches on this: telling someone to read a restart
+    // that never happened is the defect the UNVERIFIED arm exists to avoid, mirrored.
+    const restarted = fixtureContainer('sleep 1; exit 1', 'on-failure:5');
+    const begun = snapshot(probe('begin', restarted).output);
+    const terminated = fixtureContainer(`sleep 2; echo "${TERMINATION_LINE}"; sleep 120`);
+    const begunTerm = snapshot(probe('begin', terminated).output);
+    return new Promise<void>((done) => setTimeout(done, 6000)).then(() => {
+      const a = probe('verify', begun.restarts, begun.since, restarted);
+      expect(a.status).toBe(1);
+      expect(a.output).toContain('FAIL(restarted)');
+      const b = probe('verify', begunTerm.restarts, begunTerm.since, terminated);
+      expect(b.status).toBe(1);
+      expect(b.output, 'a process that survived must not be reported as restarted').toContain('FAIL(terminated)');
+      expect(b.output).not.toContain('FAIL(restarted)');
+    });
+  }, 90_000);
 });

@@ -15,6 +15,7 @@
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | wait_api waits on a DEADLINE (OSHAL_DEPLOY_API_HEALTH_SECONDS, default 900) and fails fast only on unhealthy/exited/dead/restarting. A fixed 40x3s window rolled back a healthy deploy on 2026-09-16 because this box loads 83 swarm apps at boot and took about eight minutes under load; the rollback's api needed more than 120 s for the same reason, so the script then reported a DEGRADED stack that was serving fine minutes later. A slow boot is not a failed boot, and the elapsed time is now logged so the difference is visible.
 # 10 | maintainer@emeraldcoastsystemsgroup.com   | Image verify also asks whether the Cline FALLBACK can start (scripts/check-cline-entrypoint.mjs --image). The 2026-09-17 image passed the commit label and the kernel-skills probe, every container was healthy, and every ticket that failed over from Codex died on `spawnSync .../cline/bin/.cline ENOENT` - a glibc executable on a musl base with no loader. That is an artifact defect only the artifact can show, so it is gated here, before any container is touched, alongside the other two image probes.
 # 11 | maintainer@emeraldcoastsystemsgroup.com   | The api must live THROUGH the bot recreate, and the run now says whether it did. On 2026-09-05 the storm starved the api's event loop, a transaction idled past Postgres's idle_in_transaction_session_timeout, the termination reached a checked-out pg client nothing owned, the crash guards exited the process, Docker restarted it, and this script printed DEPLOYED over about a minute of api downtime that only the container's RestartCount recorded. scripts/api-storm-probe.sh snapshots RestartCount + the clock before the recreate and, after the census gate, counts restarts and `idle-in-transaction` api-log lines inside that window; a non-zero verdict is exit 6 (deployed and SERVING - the downtime already happened, so nothing is rolled back - but the api did not survive its own deploy). The recreate pacing is unchanged and now printed with the RestartCount, so the log states which of pacing or the connection-error fix the run relied on. The fix itself is src/shared/services/database/pool-connection-errors.ts; the probe's own proof is tests/unit/api-storm-probe.spec.ts.
+# 12 | maintainer@emeraldcoastsystemsgroup.com   | The exit-6 text branches on which trigger the probe reported. A terminated transaction the api survived is the line this change's own connection owner writes, so it is the likelier exit 6 after this lands, and reporting it as a restart sends the operator after one that never happened - the defect the exit-2 arm above exists to avoid.
 # =============================================================================
 #
 # Usage:  bash scripts/oshal-deploy.sh [--preview] [--skip-build] [--no-rollback] [--allow-unpushed] [--dry-run]
@@ -408,9 +409,20 @@ if [ "$STORM_RC" -eq 2 ]; then
 elif [ "$STORM_RC" -ne 0 ]; then
   log ""
   log "✗ deployed ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots healthy, parity clean, ${VERIFY_TAIL},"
-  log "  but the API DID NOT LIVE THROUGH THE BOT RECREATE (api-storm-probe lines above)."
-  log "  The new image IS live and serving and was deliberately NOT rolled back."
-  log "  Read the restart: docker logs --since $STORM_SINCE $API_CONTAINER 2>&1 | grep -i -E 'UNCAUGHT|idle-in-transaction'"
+  # The probe fails for two different facts and they need different sentences. A terminated
+  # transaction the api SURVIVED is the line this change's own owner writes, so after this
+  # lands it is the likelier exit 6 - and telling the operator to "read the restart" under the
+  # probe's own "RestartCount 0 -> 0" is the same false claim the exit-2 arm exists to avoid.
+  if printf '%s' "$STORM_VERDICT" | grep -q 'FAIL(terminated)'; then
+    log "  but a DATABASE TRANSACTION WAS TERMINATED during the recreate (api-storm-probe lines above)."
+    log "  The api process did NOT restart - RestartCount is unchanged - and the new image IS live,"
+    log "  serving, and deliberately NOT rolled back."
+    log "  Read the termination: docker logs --since $STORM_SINCE $API_CONTAINER 2>&1 | grep -i idle-in-transaction"
+  else
+    log "  but the API DID NOT LIVE THROUGH THE BOT RECREATE (api-storm-probe lines above)."
+    log "  The new image IS live and serving and was deliberately NOT rolled back."
+    log "  Read the restart: docker logs --since $STORM_SINCE $API_CONTAINER 2>&1 | grep -i -E 'UNCAUGHT|idle-in-transaction'"
+  fi
   log "  Runbook: docs/runbooks/deploy-parity.md   Full log: $RUN_LOG"
   exit 6
 fi
