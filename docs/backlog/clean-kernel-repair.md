@@ -66,12 +66,20 @@ planner would size the work against.
    persona files across 25 keys** — `runtime` (18), `personality` (18), `logging_level` (7), `extends`
    (7), and a long tail. `extends` is merely the 4th most common key in a broadly unvalidated schema.
 
-5. **D14's severity is over-read.** The fail-open primitive is exactly as described and its own docstring
-   admits it — but no reachable path today obtains an unrestricted set. The three field-omitting callers
-   sit in the legacy `any-bot` Express app that `bot-entrypoint.sh:206` refuses with exit 78 and that no
-   compose service or installer points at. Latent defence-in-depth, not a live hole. Also, "scopes behave
-   the same way" is **false**: `normalizeAuthorizedScopes` returns null only for `undefined`/`null` and
-   deny-all for every other non-array.
+5. **D14's severity is over-read, but its claim is right — including the part I first called false.**
+   The fail-open primitive is exactly as described and its own docstring admits it. No reachable path
+   today obtains an unrestricted set: the three field-omitting callers sit in the legacy `any-bot` Express
+   app that `bot-entrypoint.sh:206` refuses with exit 78 and that no compose service or installer points
+   at. Latent defence-in-depth, not a live hole.
+
+   **Correction of record.** An earlier draft of this file said the assessment's "scopes behave the same
+   way" was false. It is true, for the case D14 names. Run the probe: `absent tools true / absent scopes
+   true / malformed tools true / malformed scopes false`. `normalizeAuthorizedScopes` returns `null` for
+   `undefined` (`dispatch-capabilities.js:43`) and `hasOperationScope` returns `true` for `null` (`:57`) —
+   so an **absent** scope list fails open exactly like an absent tool list, which is what "absent means
+   unrestricted" asserts. The two primitives diverge only on a **malformed** non-array: tools normalize to
+   `null` (unrestricted), scopes to an empty `Set` (deny-all). That divergence is a separate finding, and
+   it is the narrower one.
 
 6. **D12 is real but not where the assessment looked.** The tools-framework "Layer 1" has no identifiers,
    types or columns — so it cannot collide there. What it does have is **live model-visible text**:
@@ -95,18 +103,28 @@ planner would size the work against.
 Workflow Studio compiles "multi-stage → the `staged` executor with per-stage approval gates". There is no
 staged executor. `workflow-publish-compiler.ts:143` sets `pipeline: 'graph'` for staged mode;
 `dispatch-routing.ts:148-149` states the executor "has been retired"; `queue-manager-service.ts:743-747`
-is an orphan JSDoc for a function that does not exist. The compiler's own comment at :120-121 compounds
-it by saying `'staged'` remains "available for hand-authored manifests", which is the trap in D2.
+is an orphan JSDoc for a function that does not exist. **Seven** text sites repeated or implied the
+opposite — `CLAUDE.md:564`, `docs/framework-developer-guide.md:223`, `ROADMAP.md:117` (status column:
+Shipped), the compiler's own comment at `:120-121` saying `'staged'` remains "available for hand-authored
+manifests", and three in the dispatcher itself. That is the trap in D2.
 
 This is the live half of D2: an author who believes those four sentences writes `pipeline: staged`, gets
 a single-bot run with every approval gate skipped, and nothing logs it.
 
-- **Done — verified in this change:** `git grep -n "the .staged. executor"` over `CLAUDE.md`,
-  `docs/framework-developer-guide.md` and `workflow-publish-compiler.ts` returns zero hits, and
-  `git grep -n dispatchStagedTicket -- ':!docs/backlog/'` returns zero hits. (Both the pathspec and the
-  exact phrase are load-bearing: this file names the identifier, so an unscoped grep can never pass, and
-  grepping the bare word `staged` proves nothing —
-  it legitimately remains an author-time mode name at `framework-developer-guide.md:485`, `:565`, `:569`.)
+- **Done — verified in this change:** `git grep -n "the .staged. executor" -- ':!docs/backlog/'` returns
+  zero hits **repo-wide**. The first attempt at this criterion scoped the grep to the three files that had
+  already been edited, which is exactly the narrowing Rule 0 forbids — run unscoped it found a fourth,
+  `ROADMAP.md:117`, carrying the identical sentence in a row whose status column reads **Shipped**. That
+  is corrected here too. The only exclusion is this file, which quotes the sentence to describe it.
+  Grepping the bare word `staged` proves nothing — it legitimately remains an author-time mode name at
+  `framework-developer-guide.md:485`, `:565`, `:569`, and in README/site copy describing the publish mode.
+
+  Four further assertions that the executor exists were found by the same unscoped sweep and corrected
+  as comments, with no behaviour change: `dispatch-routing.ts:22-27` ("Executed by dispatch-staged-worker",
+  a file that does not exist, in the same file whose `chooseDispatchPath` records the retirement), its
+  built-in list at `:44`, its `stages` field doc at `:53`, and `swarm-app-service.ts:1206-1208` ("carried
+  into the registry so the staged dispatcher can run the operator-pinned bots in order"), which directly
+  contradicted the sentence this change writes into the developer guide.
 
 ### CV-2 — every untrusted-source incident ticket is created into `approval_required`, overriding the caller (S, decision)
 
@@ -317,8 +335,10 @@ dispatch boundary the integration-boundary corollary requires. (3)
 `npx vitest run tests/unit/any-bot-runtime-containment.spec.ts tests/unit/any-bot-provider-failover.spec.ts tests/unit/task-controller-direct-mode.spec.ts`
 is green.
 
-> Do **not** carry over the assessment's "scopes behave the same way" — `normalizeAuthorizedScopes`
-> (`dispatch-capabilities.js:42-48`) returns null only for `undefined`/`null` and deny-all otherwise.
+> The assessment's "scopes behave the same way" is **correct for absence**, which is what D14 is about:
+> the probe in criterion (1) prints `true true` today. The primitives diverge only on a malformed
+> non-array — tools → `null` (unrestricted), scopes → empty `Set` (deny-all) — so a fix must close both
+> the absent and the malformed shape, and a test that only covers `undefined` will miss the divergence.
 
 ### CKR-8 — a database-less bot node resolves to zero tools, including the completion tool (D15, part 1) — S
 
@@ -625,7 +645,9 @@ verbatim and recording which option was chosen, **and** `tests/unit/compose-work
 subpath, that the mounting set equals the `<<: *bot-common` inheritors plus exactly `code-server`, and that
 the totals are **39 and 40** — `oshal-api` is itself an anchor inheritor (`:811`), so the invariant is
 inheritors + 1, not + 2. (2) A two-container proof: a marker file in ticket A's workspace, and a proof that
-ticket B cannot read it through `execute_command`. (3) A spec asserts `execute_command` is reachable only
+ticket B cannot read it through `execute_command`. Note for whoever takes this: `ToolExecutorService` is
+constructed in the controller (`app-runtime-factory.ts:125`), not on the bot-nodes, so the traversal proof
+has to exercise the path that actually runs the shell. (3) A spec asserts `execute_command` is reachable only
 where intended — that `tool-capability-scope.ts:148` short-circuits `CORE_RUNTIME_TOOL_NAMES` before
 capability matching — so a later reader cannot repeat the false belief that persona YAML gates the shell
 tool.

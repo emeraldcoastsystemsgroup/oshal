@@ -43,6 +43,7 @@
  * 38 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers: only a REQUIRED app dependency blocks an uninstall and counts toward orphans; apps that list the target as OPTIONAL are reported (optionalDependents) and never block. Group members and the connector allow-list read through @/shared/app-dependencies so the tiered and legacy forms agree.
  * 39 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 rail discoverability: synthesiseProfile takes an optional per-person discovery port (the ui-profile route binds it to the verified actor) and, when given, hands the static tiles plus every installed record to lockUndiscoverableTiles — a tile under ANOTHER active package's mount that the person cannot discover comes back `locked` (kept in place; the cockpit renders the guest-disabled style with the role-guidance link) instead of a dead frame. No port = the manifest-static rail exactly as before. The logic lives in swarm-app-tile-discoverability.ts; this file is over its size budget.
  * 40 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 landing half: the synthesised defaultView now comes from openableDefaultView, so a locked tile is never the view the cockpit opens on. Locking only the rail button left a launcher whose ribbon.defaultView names another package's surface opening straight onto the kernel's role-guidance 403 inside the frame.
+ * 41 | maintainer@emeraldcoastsystemsgroup.com   | Comment correction only. The stages copy said it was "carried into the registry so the staged dispatcher can run the operator-pinned bots in order"; no staged dispatcher exists, and the comment contradicted the developer guide's own statement that no runtime reads the field.
  */
 
 import type { Pool } from 'pg';
@@ -1204,8 +1205,8 @@ export class SwarmAppService {
       // workflow that declared a reviewer never actually got one.
       reviewerBot: manifest.workflow.reviewerBot,
       maxRevisions: manifest.workflow.maxRevisions,
-      // Authored stage list for 'staged' workflows — carried into the registry so
-      // the staged dispatcher can run the operator-pinned bots in order.
+      // Authored stage list for 'staged' workflows. VESTIGIAL: there is no staged dispatcher.
+      // The copy is kept only so the field round-trips until CKR-10 decides to delete it.
       stages: manifest.workflow.stages,
       // Compiled ProcessDefinition for 'graph' workflows — the graph dispatcher runs it.
       processDefinition: manifest.workflow.processDefinition,

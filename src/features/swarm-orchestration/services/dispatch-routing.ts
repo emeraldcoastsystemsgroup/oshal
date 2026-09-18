@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted WorkflowDefinition + WORKFLOW_PIPELINES + chooseDispatchPath from queue-manager-service.ts (2377-line file → first piece of decomposition per audit P0)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | WorkflowDefinition.autoStart — carried from the manifest so the queue manager can auto-approve tickets of an auto-start workflow.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-083: 'task' workflow default workerBot project-manager → general-bot. The owner is now chosen by the knowledge-owner call-out (task-call-out.ts); the workflow default is only the last resort, and it must be a tool-capable DOER, not the PM planner (whose claude-code 401s escalated task tickets).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Comment corrections only. The pipeline doc block said 'staged' is "Executed by dispatch-staged-worker" - no such file exists - and the built-in list advertised it, in the same file whose chooseDispatchPath records the executor as retired and has no branch for it. A manifest declaring pipeline: staged silently becomes a single-bot manifest-worker run with every approval gate dropped.
  */
 
 /**
@@ -19,12 +20,11 @@
  *                     are opt-in via manifest; default is one-and-done.
  *   'swarm'         — 7-phase swarm pipeline: PM decomposes, specialists build,
  *                     parent assembles. FIXED phases, DYNAMIC bot selection.
- *   'staged'        — operator-AUTHORED multi-bot workflow: an ordered list of
- *                     stages, each pinned to a specific existing bot, each able to
- *                     end in a human approval gate. Unlike 'swarm', the stages and
- *                     their bots are exactly what the author chose. Executed by
- *                     dispatch-staged-worker. This is "Branch B" of authoring; the
- *                     single-shot packed bot is the manifest-worker path.
+ *   'staged'        — RETIRED. There is no dispatch-staged-worker and no dispatcher
+ *                     reads `stages`; chooseDispatchPath has no 'staged' branch, so a
+ *                     manifest declaring it falls through to 'manifest-worker' and runs
+ *                     only workerBot, dropping every approval gate. Authored multi-bot
+ *                     workflows compile to 'graph' instead (workflow-publish-compiler).
  */
 export interface WorkflowStageDefinition {
   /** Existing bot persona name, pinned to this stage (resolved via agent registry). */
@@ -41,7 +41,7 @@ export interface WorkflowDefinition {
   ticketType: string;
   /** Human-readable workflow name */
   name: string;
-  /** Which pipeline handler processes this ticket type. Built-ins: 'incident-rca' | 'swarm' | 'staged' | 'graph'. Apps may contribute labels; unknown values fall through to the default 'swarm' dispatcher. */
+  /** Which pipeline handler processes this ticket type. Built-ins: 'incident-rca' | 'swarm' | 'graph' ('staged' is retired — see the pipeline notes above). Apps may contribute labels; unknown values fall through to the default 'swarm' dispatcher. */
   pipeline: string;
   /** Worker bot persona name (resolved via agent registry). For 'staged'/'graph' workflows this
    *  is informational only (the stages/graph drive execution); set it to the first stage's bot. */
@@ -50,7 +50,8 @@ export interface WorkflowDefinition {
   reviewerBot?: string;
   /** Max revision cycles before completing anyway. Default 1. */
   maxRevisions?: number;
-  /** Ordered stages for a 'staged' workflow. Ignored by other pipelines. */
+  /** Ordered stages for a 'staged' workflow. VESTIGIAL: no dispatcher reads this field on any
+   *  pipeline. The publish compiler builds its own local stage list and emits a processDefinition. */
   stages?: WorkflowStageDefinition[];
   /** Compiled ProcessDefinition (nodeGraph) for a 'graph' workflow — executed by the
    *  ProcessDefinitionExecutionEngine. Carried inline so the graph runs via the existing
