@@ -1401,6 +1401,37 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ## Workflow, agent, and model runtime
 
+### Jarvis in dev mode should see what this workspace sees: an indexed developer corpus (operator, 2026-09-18)
+
+- **What the operator asked for, verbatim:** "i would like to have a package that is indexed for jarvis
+  when in dev mode and building on the software itself.. it would be great to have a docs package
+  already indexed for devmode and all the scratchpads that would be relevant and internal notes so that
+  the developers workspace really looks like this workspace.. then when jarvis is in dev mode he really
+  has all the information."
+- **What exists to build on:** the RAG rail (`src/features/rag/`, ChromaDB `infra-runbooks`,
+  `scripts/rag-enable-embeddings.sh`), the dev console and self-developing platform (ADR-077), the
+  oshal-developer bot, and the documentation the sessions already keep in the tree: `docs/adr/`,
+  `docs/BACKLOG.md`, `docs/runbooks/`, `docs/backlog/` handovers, `docs/governance/`. The corpus a
+  human developer actually works from also includes material that is deliberately NOT in git:
+  `COLLABORATE.md` (untracked by design), the operator-local session notes, and lane scratch notes.
+- **Shape:** a store package (`dev-workspace-index` or an extension of `oshal-dev`) that builds a
+  dev-mode-only RAG collection FROM THE LOCAL CHECKOUT at index time - so it matches this workspace,
+  not a published snapshot - with a curated manifest of what is in and what is out. In: the tracked
+  docs above, `CLAUDE.md`, `CONTRIBUTING.md`, ADR index, package READMEs; optionally the local
+  `COLLABORATE.md` and a named local notes directory. Out, always: `.env`, `config-seed/`, anything
+  the publish gate refuses, lane clones and transcripts, and any file carrying a person's identifier
+  (the corpus is read by a bot that answers other people).
+- **Dev mode is the gate:** the collection is queryable only when the caller is in the ADR-077 dev
+  console context (operator-owned request, dev mode on); a normal Jarvis turn cannot reach it.
+- **Done when:** (1) `oshal-app.yaml` declares the collection and the index manifest; (2) one command
+  (re)builds the index from the checkout and reports counts - generated, never typed - of documents,
+  chunks, and skipped-by-rule files; (3) a Jarvis dev-mode ask that names an ADR number, a BACKLOG
+  entry title, or a runbook returns the cited `doc_id` from this corpus (Test Lab case, headless);
+  (4) the same ask outside dev mode does not reach the collection (refusal case); (5) the exclusion
+  list is a guard that goes red when a secret-shaped or identifier-carrying file is indexed;
+  (6) the operator opens the dev console and asks Jarvis about tonight's handover and gets the file.
+
+
 ### A bot's LLM provider is a row in a table, not a literal in the registry (operator, 2026-09-17)
 
 - **What the operator hit.** Codex ran out of tokens for one login and the instruction was "set the
