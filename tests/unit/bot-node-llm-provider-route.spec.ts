@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-034 bot-node config-surface guard: PUT /api/llm-provider applies + broadcasts exactly one swarm.config-change envelope (source bot-local, shape ConfigSyncService.reconcile accepts); X-Config-Source: oshal-push applies WITHOUT broadcasting (echo-loop guard); unknown provider → 400 with NO switch and NO broadcast; broadcast failure never fails the request; service-secret gate enforced when configured; wiring assertions pin the route mounted in bot-node-server.ts and the setActiveProvider seam in bot-node-runtime.ts. Goes red if the route, the echo guard, or the broadcast disappears — i.e. if push-down 404s again or a bot-node stops reporting local changes up.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Align all route cases with the strict bot-node service-secret posture and guard credential-field rejection before runtime mutation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The source-text seam guard follows the switch translation: the env overlay is applied to the resolved runtime (target.runtime) after resolveBotNodeSwitch, not to the raw normalized name.
  */
 
 import express from 'express';
@@ -215,6 +216,9 @@ describe('wiring: the route + seam are actually mounted (source assertions)', ()
     expect(source).toContain('UnknownBotNodeProviderError');
     // The env overlay must go through the SAME path the boot pull uses, so every
     // downstream env resolver agrees with the switch.
-    expect(source).toContain('applyPulledBotConfigToEnv({ providerId: normalized');
+    expect(source).toContain('applyPulledBotConfigToEnv({ providerId: target.runtime');
+    // A switch row's id is translated (runtime name, or a Cline-backed API provider onto
+    // cline-cli) before the overlay — bot-node-provider-switch.ts owns that rule.
+    expect(source).toContain('resolveBotNodeSwitch(requested, builtProviders, clineApiProviders)');
   });
 });

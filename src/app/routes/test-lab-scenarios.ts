@@ -69,6 +69,8 @@
  * ---------------------------------------------------------------------------
  * Appearance | maintainer@emeraldcoastsystemsgroup.com | Register the read-only Workspace asset check and linked actual browser proof.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Registered the Notifications per-channel account tier card (NOTIFICATION_SCENARIOS): a read-only step over GET /api/notify/prefs with its route, page and sender suites. Guard: tests/unit/test-lab-notification-registration.spec.ts.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'provider-switch' scenario ("a bot's LLM provider is a row in a table"): a read-only probe of the fleet-default row + snapshot and of the rung every bot reports through /api/agents, failing on a switch-refused bot; regressionTests attach the unit/integration/browser guards that ship with the switch.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | Attached tests/unit/dispatch-switch-row-stamping.spec.ts to the 'provider-switch' regressionTests: the tier-1 dispatch-stamping guard (a fleet or per-bot row reaching a DEDICATED bot node), added after review found that rung unguarded.
  * @module test-lab-scenarios
  */
 
@@ -324,6 +326,47 @@ export const SCENARIOS: Scenario[] = [
     '/api/workflow-studio/runs', undefined),
   smoke('connectors', 'Connector Marketplace — catalog', 'Read the connector marketplace catalog.',
     '/api/connectors', undefined),
+
+  // ── The LLM provider switch: per-bot row > fleet default > registry literal ────────────────────
+  {
+    id: 'provider-switch', title: 'LLM provider switch — the fleet default and the resolved rung per bot', group: 'tool',
+    description: 'Read the fleet-default switch row (operator-gated → degraded for non-operators) and confirm every bot reports the rung that will serve its next dispatch (bot-row | fleet-default | registry-harness). Read-only: nothing here writes a row.',
+    regressionTests: [
+      { level: 'unit', path: 'tests/unit/bot-provider-switch.spec.ts' },
+      { level: 'unit', path: 'tests/unit/bot-provider-precedence.spec.ts' },
+      { level: 'unit', path: 'tests/unit/harness-resolution.spec.ts' },
+      { level: 'unit', path: 'tests/unit/bot-node-provider-switch.spec.ts' },
+      { level: 'unit', path: 'tests/unit/dispatch-switch-row-stamping.spec.ts' },
+      { level: 'unit', path: 'tests/unit/compose-bot-provider-literal.spec.ts' },
+      { level: 'integration', path: 'tests/unit/provider-switch-store-postgres.spec.ts' },
+      { level: 'integration', path: 'tests/unit/provider-switch-routes.spec.ts' },
+      { level: 'integration', path: 'tests/unit/config-runtime-precedence.spec.ts' },
+      { level: 'browser', path: 'tests/unit/provider-switch-cockpit-browser.spec.ts' },
+    ],
+    steps: [
+      { id: 'fleet', app: 'config-admin', label: '1) GET /api/agents/provider-switch — the fleet row + snapshot', run: (c) => step(c, 'config-admin', 'fleet default', 'GET', '/api/agents/provider-switch', undefined,
+        (j) => {
+          if (!j?.success) return { state: 'gap', detail: 'unexpected shape (no success flag).' };
+          const accepted = Array.isArray(j.accepted) ? j.accepted.length : 0;
+          const snapshot = j.snapshot ? `snapshot ${j.snapshot.loaded ? 'loaded' : 'NOT loaded'}, ${j.snapshot.rowCount} row(s)` : 'no snapshot installed';
+          if (!accepted) return { state: 'degraded', detail: `reachable; ${snapshot}; no accepted ids yet (catalog not installed).`, output: j };
+          return { state: 'pass', detail: `${j.fleetDefault ? `fleet default ${j.fleetDefault.providerId}` : 'no fleet default (registry literal)'}; ${snapshot}; ${accepted} accepted id(s)`, output: { fleetDefault: j.fleetDefault, snapshot: j.snapshot } };
+        }) },
+      { id: 'rungs', app: 'config-admin', label: '2) GET /api/agents — every bot names its rung', run: (c) => step(c, 'config-admin', 'resolved rungs', 'GET', '/api/agents', undefined,
+        (j) => {
+          const agents: Array<Record<string, unknown>> = Array.isArray(j?.agents) ? j.agents : [];
+          if (!agents.length) return { state: 'degraded', detail: 'no agents listed.' };
+          const counts: Record<string, number> = {};
+          for (const a of agents) { const k = String(a.providerSource ?? 'unknown'); counts[k] = (counts[k] ?? 0) + 1; }
+          const refused = counts['switch-refused'] ?? 0;
+          const unknown = counts.unknown ?? 0;
+          const summary = Object.entries(counts).map(([k, n]) => `${k}=${n}`).join(', ');
+          if (refused) return { state: 'fail', detail: `${refused} bot(s) hold a switch row this build cannot run: ${summary}`, output: counts };
+          if (unknown === agents.length) return { state: 'gap', detail: 'no bot reports providerSource — the switch report is missing.', output: counts };
+          return { state: 'pass', detail: summary, output: counts };
+        }) },
+    ],
+  },
 
   // ── Jarvis routing + live visual delivery ───────────────────────────────────────────────────
   {

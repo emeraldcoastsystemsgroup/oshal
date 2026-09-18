@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit guard for resolveHarnessForAgent + the HARNESS_FACTORIES/HARNESS_RUNTIME_DEFAULTS totality (per-bot harnessType override vs the process-level FORCE_LLM_PROVIDER default). Previously exercised only via noop-mode e2e, though this is exactly the wiring that has broken before (a harnessType with no factory silently fell back to the wrong provider).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Switch-row cases for "a bot's LLM provider is a row in a table": with an installed snapshot a per-bot row retargets the harness, the fleet default reaches a registry LLM bot but not a harness-less one, a per-bot row beats the fleet default, an unknown id returns a RefusedProviderSwitch whose every request fails with the reason, and an installed-but-EMPTY snapshot resolves every mock bot to the same provider as no snapshot at all (the byte-identical no-row case).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -55,6 +56,13 @@ import {
   HARNESS_RUNTIME_DEFAULTS,
 } from '@/app/composition/provider-runtime';
 import { createChildLogger } from '@/shared/logger';
+import {
+  RefusedProviderSwitch,
+  buildProviderSwitchCatalog,
+  setInstalledProviderSwitchSnapshot,
+} from '@/app/composition/provider-switch-runtime';
+import { ProviderSwitchSnapshot } from '@/features/agent-management';
+import { FLEET_DEFAULT_SWITCH_ID, type ProviderSwitchRow } from '@/shared/llm-runtime';
 
 const logger = createChildLogger({ module: 'harness-resolution-test' });
 
@@ -142,5 +150,75 @@ describe('HARNESS_FACTORIES / HARNESS_RUNTIME_DEFAULTS — the mapping is total 
     const fallback = () => 'system-default-model';
     expect(HARNESS_RUNTIME_DEFAULTS.noop.resolveModel(fallback)).toBe('system-default-model');
     expect(HARNESS_RUNTIME_DEFAULTS.cline.resolveModel(fallback)).toBe('system-default-model');
+  });
+});
+
+describe('resolveHarnessForAgent — the switch rows outrank the registry literal', () => {
+  const savedBotName = process.env.BOT_NAME;
+  const savedAgentId = process.env.AGENT_ID;
+  const catalog = buildProviderSwitchCatalog(Object.keys(HARNESS_FACTORIES));
+
+  /** An installed snapshot over in-memory rows — the store is the boundary the Postgres spec proves. */
+  async function install(rows: ProviderSwitchRow[]): Promise<void> {
+    const snapshot = new ProviderSwitchSnapshot({ listAll: async () => rows }, catalog);
+    await snapshot.refresh();
+    setInstalledProviderSwitchSnapshot(snapshot, catalog);
+  }
+  function row(scopeId: string, providerId: string, modelId: string | null = null): ProviderSwitchRow {
+    return { scopeId, providerId, modelId, updatedBy: 'spec', updatedAt: null };
+  }
+
+  beforeAll(() => {
+    delete process.env.BOT_NAME;
+    delete process.env.AGENT_ID;
+    ModuleInternals._resolveFilename = function (request: string, ...rest: unknown[]) {
+      if (request === REGISTRY_SPECIFIER) return stubPath;
+      return originalResolveFilename.call(this, request, ...rest);
+    };
+    registryStub.__setRegistry(MOCK_REGISTRY);
+  });
+
+  afterAll(() => {
+    setInstalledProviderSwitchSnapshot(null);
+    ModuleInternals._resolveFilename = originalResolveFilename;
+    if (savedBotName === undefined) delete process.env.BOT_NAME; else process.env.BOT_NAME = savedBotName;
+    if (savedAgentId === undefined) delete process.env.AGENT_ID; else process.env.AGENT_ID = savedAgentId;
+  });
+
+  it('no rows: an installed but EMPTY snapshot resolves every bot exactly as no snapshot at all', async () => {
+    setInstalledProviderSwitchSnapshot(null);
+    const before = MOCK_REGISTRY.map((b) => resolveHarnessForAgent(b.agentId, logger)?.getProviderName() ?? null);
+    await install([]);
+    const after = MOCK_REGISTRY.map((b) => resolveHarnessForAgent(b.agentId, logger)?.getProviderName() ?? null);
+    expect(after).toEqual(before);
+    expect(before).toEqual(['noop', expect.stringContaining('codex-cli'), null, null]);
+  });
+
+  it('a per-bot row retargets a registry-pinned bot onto the harness the row names', async () => {
+    await install([row('a-codex', 'noop')]);
+    expect(resolveHarnessForAgent('a-codex', logger)!.getProviderName()).toBe('noop');
+    // ...and an explicit per-bot row even reaches a bot that has no harnessType at all.
+    await install([row('a-plain', 'noop')]);
+    expect(resolveHarnessForAgent('a-plain', logger)!.getProviderName()).toBe('noop');
+  });
+
+  it('the fleet default reaches a registry LLM bot, not a bot with no harness, and loses to a per-bot row', async () => {
+    await install([row(FLEET_DEFAULT_SWITCH_ID, 'noop')]);
+    expect(resolveHarnessForAgent('a-codex', logger)!.getProviderName()).toBe('noop');
+    expect(resolveHarnessForAgent('a-plain', logger)).toBeNull();
+    await install([row(FLEET_DEFAULT_SWITCH_ID, 'noop'), row('a-codex', 'codex-cli', 'gpt-5.5')]);
+    expect(resolveHarnessForAgent('a-codex', logger)!.getProviderName()).toContain('codex-cli');
+  });
+
+  it('an unknown provider id on the winning row fails CLOSED: a provider that refuses with the reason', async () => {
+    await install([row('a-codex', 'gemini-3.8-flash')]);
+    const refused = resolveHarnessForAgent('a-codex', logger);
+    expect(refused).toBeInstanceOf(RefusedProviderSwitch);
+    await expect(refused!.sendRequest({ messages: [{ role: 'user', content: 'hi' }] }))
+      .rejects.toThrow(/switch refused for agent a-codex \(bot-row row\): unknown provider id 'gemini-3.8-flash'/);
+    // The fleet default is refused the same way, for every LLM bot it reaches.
+    await install([row(FLEET_DEFAULT_SWITCH_ID, 'not-a-provider')]);
+    expect(resolveHarnessForAgent('a-noop', logger)).toBeInstanceOf(RefusedProviderSwitch);
+    expect(resolveHarnessForAgent('a-plain', logger)).toBeNull();
   });
 });

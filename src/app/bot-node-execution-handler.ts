@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: one audited carve in the SEC-05 preflight — a DEMO deployment may run an autonomous CLI harness for a request owned by a configured operator (DEMO_MODE alone, never MOCK_OIDC; exact OSHAL_OPERATOR_SUBS match). Off-demo, non-operator, and identity-less requests keep the refusal, so unattended content-driven work is never unlocked by the flag.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Use one-execution protected workspaces and empty capabilities, with current authority checks around hosted inference.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | The post-execution ADR-034 check passes the enforced identity's apiProvider alongside the runtime-reported provider/model, so a dispatch authorized as a switch row's Cline-backed id (gemini) and executed by cline-cli fronting gemini is a match, while the same record against cline-cli fronting anything else is still refused. Codex/claude paths unchanged.
  */
 
 /**
@@ -460,6 +461,10 @@ export function createBotNodeExecutionHandler(
         && !dispatchConfigMatchesActive(carriedConfig, {
           provider: actualProvider,
           model: actualModel,
+          // The backing provider is runtime state, not a result field: the Cline wrapper reads
+          // CLINE_API_PROVIDER (set by the switch) before every spawn, so the enforced identity
+          // is the one that ran when the reported runtime is cline-cli.
+          apiProvider: enforcedRuntimeIdentity?.apiProvider ?? null,
         })) {
         throw new AuthoritativeDispatchConfigError(
           'Execution reported a provider/model different from the authoritative dispatch record',

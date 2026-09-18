@@ -64,6 +64,8 @@
  * 57 | maintainer@emeraldcoastsystemsgroup.com   | Removed the Tier-2 LLM routing wiring (entry 35). It called codexQuickCall, which asserts the audited-harness guard and throws UNBROKERED_AUTONOMOUS_PROVIDER before any spawn, so the function threw on EVERY task ticket and AgentRouter caught it and returned null - Tier 2 has been dead since that guard landed, costing one WARN plus one INFO per routing decision and hiding the fact that Tier 3 was doing all the work. The router is now constructed with no llmRoutingFunction, which is the behavior that was already running. Not revived on a hosted rail: a controller-local LLM call is exactly what CLAUDE.md forbids. codex-quick-call.ts and its refusal test are untouched.
  * 58 | maintainer@emeraldcoastsystemsgroup.com   | Wire resolveHostedConnection for queued dispatch: a protected application worker only admits a direct request carrying a server-resolved hosted connection, so the queue now resolves the ticket owner's HOSTED ladder (resolveUserLlmConnection) for it. Deliberately not resolveUserBrain - that ladder answers with a local CLI brain first for a configured operator on a demo box, and a CLI brain can never satisfy the worker's hosted-reasoning contract.
  * 59 | maintainer@emeraldcoastsystemsgroup.com   | Pass registryDeclaredProvider into createAgentConfigRuntimeParamsResolver so ADR-034 push-on-dispatch can resolve tier 3 (registry apiType) when agent_config holds no providerId for the target. The registry lives in this layer and the resolver is a feature-layer service, so the reader is injected here rather than imported downward.
+ * 60 | maintainer@emeraldcoastsystemsgroup.com   | Dispatch stamping reads the provider switch rows (tier 1) from the same installed snapshot resolveHarnessForAgent reads, so inline execution and bot-node dispatch agree; the operator routes for the rows are mounted under /api/agents beside the ADR-034 runtime routes.
+ * 61 | maintainer@emeraldcoastsystemsgroup.com   | The /api/agents runtime + fleet-default switch mounts move to routes/agent-provider-mount.ts (this file crossed 800 code lines): the runtime routes take the switch seams (resolver, catalog, post-write snapshot refresh) and the fleet-default routes run over a ProviderSwitchStore on the GUC-wrapped pool, so the table's operator-only policy applies to the browser session that writes.
  */
 
 import type { Pool } from 'pg';
@@ -176,9 +178,10 @@ import { createMemoryRoutes } from './routes/memory-routes';
 import { createOpsIntelligenceRoutes } from './routes/ops-intelligence-routes';
 import { createBotRegistryRoutes } from './routes/bot-registry-routes';
 import { createConfigPropagationRoutes } from './routes/config-propagation-routes';
-import { createConfigRuntimeRoutes } from './routes/config-runtime-routes';
-import { SwarmBotRegistry, validatePersonaIdentities, getActiveRegistry, isBotAccessibleTo, registryDeclaredProvider, type SwarmRuntimeIdentity } from './swarm-bot-registry';
+import { SwarmBotRegistry, validatePersonaIdentities, getActiveRegistry, isBotAccessibleTo, registryDeclaredProvider, registryHarnessEntry, type SwarmRuntimeIdentity } from './swarm-bot-registry';
 import { resolveHarnessForAgent } from '@/app/composition/provider-runtime';
+import { resolveInstalledProviderSwitch } from '@/app/composition/provider-switch-runtime';
+import { mountAgentProviderRoutes } from './routes/agent-provider-mount';
 import { waitForBootstrapComplete } from '@/app/composition/app-runtime-factory';
 import { registerShutdownHook } from '@/shared/services/shutdown-hooks';
 import { resolveServerOperationCreds } from '@/app/routes/connector-token-broker';
@@ -643,7 +646,13 @@ export function createSwarmExtensionBindings(
   // dispatch paths. OSHAL_PUSH_ON_DISPATCH defaults on; without this DB-backed resolver the
   // request carries an unavailable-authority marker and the remote bot refuses before execution.
   const runtimeParamsResolver = agentConfigService
-    ? createAgentConfigRuntimeParamsResolver(agentConfigService, registryDeclaredProvider)
+    ? createAgentConfigRuntimeParamsResolver(
+      agentConfigService,
+      registryDeclaredProvider,
+      // Tier 1: the switch rows, read from the SAME installed snapshot resolveHarnessForAgent
+      // reads, so what the api runs inline and what it stamps on a bot-node dispatch agree.
+      (agentId) => resolveInstalledProviderSwitch(agentId, registryHarnessEntry(agentId)),
+    )
     : undefined;
   const toolRepository = pool ? new ToolRepository(pool) : undefined;
   const agentToolRepository = pool ? new AgentToolRepository(pool) : undefined;
@@ -983,7 +992,9 @@ export function registerSwarmExtensionRoutes(
   // ADR-034: OSHAL-owned per-agent runtime config (provider/model) — push-down + read.
   // serviceSecretOr (the /api/graph pattern): bot-nodes pull their own authoritative record
   // on boot (bot-node-config-bootstrap.ts) with X-Service-Secret; operators use OIDC as before.
-  app.use('/api/agents', serviceSecretOr(requiresAuth), createConfigRuntimeRoutes(bindings.configSyncService, bindings.agentConfigService));
+  // ...plus the fleet-default switch routes, both wired to the installed switch snapshot
+  // (routes/agent-provider-mount.ts).
+  mountAgentProviderRoutes(app, serviceSecretOr(requiresAuth), bindings);
   startRuntimeAgentHeartbeat(bindings);
   // Auto-seed this bot into the Postgres agents table so the router can find it.
   // Without this, only manually-created profiles are routable.

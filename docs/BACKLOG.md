@@ -1463,6 +1463,50 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   (6) the operator opens the dev console and asks Jarvis about tonight's handover and gets the file.
 
 
+### A failover the record configured must not have its completed work discarded (2026-09-17)
+
+- **Measured (2026-09-17, operator box, recorded by the PR #633 review):** with the fleet's Codex
+  login at its usage limit, the JS `ProviderFailoverProvider` fell back to Cline backed by Gemini and
+  completed an eight-iteration task ($0.059), and the ADR-034 post-execution check then threw
+  `AuthoritativeDispatchConfigError` because the dispatch record said codex: the result reports the
+  fallback's name (`any-bot/server/services/llm/ProviderFailoverProvider.js:97` sets `provider` to
+  `fallbackName`) and `src/app/bot-node-execution-handler.ts` compares it to the record through
+  `dispatchProviderMatches`. The completed work was discarded.
+- **What PR #633 does and does not do:** the switch row is the authority and the check is exact
+  ("what ran == what was authorized"): a Cline-backed id authorizes `cline-cli` fronting that id and
+  nothing else. No switch row or migration-147 column carries a failover chain, so a fallback that
+  completes is still refused — by the check's design, not by accident. ADR-034's amendment and
+  ADR-162 §3 say exactly this.
+- **Shape (not decided here):** the record — a row column or the stamped dispatch config — names the
+  chain it authorizes (primary plus an ordered fallback list), and the post-execution check accepts a
+  result whose reported provider is a member of THAT chain while still refusing anything outside it.
+  The result's `providerFailover` block (`reason`, `primary`, `fallback`) is the evidence the check
+  reads, and cost attribution records the provider that ran.
+- **Done when:** (1) a row (or the stamped record) can name an ordered failover chain and the api
+  refuses a chain member the catalog cannot run, by name; (2) `dispatchConfigMatchesActive` accepts a
+  result whose reported provider is in the authorized chain and REFUSES one that is not (unit cases in
+  both directions, red on the current exact-match check); (3) the 2026-09-17 shape is a regression
+  case — a codex primary with a Cline/Gemini fallback completing a task is kept, cost-attributed to
+  the provider that ran; (4) a record with no chain behaves exactly as today, byte for byte.
+
+### `src/app/server.ts` is past the decomposition threshold: move the post-bootstrap installs out (2026-09-17)
+
+- **Measured:** 959 code lines (non-blank, non-comment) at PR #633's merge with `main` — past the
+  800-line threshold at which CLAUDE.md requires a decomposition plan before code is added, under
+  the 1000-line hard cap. Not decomposed in #633 (scope).
+- **First candidates to move out:** the block PR #633 added to `server.ts` — the provider-switch
+  snapshot install (`installProviderSwitchSnapshot(new ProviderSwitchStore(pool),
+  Object.keys(HARNESS_FACTORIES))` awaited behind `waitForBootstrapComplete()` under
+  `runWithSystemIdentity`, with its `ProviderSwitchStore` / `HARNESS_FACTORIES` imports) — and its
+  neighbours of the same shape: the post-bootstrap installs that need only `ctx.pool` and the
+  composition root, which belong in a `src/app/composition/` boot module the way
+  `provider-switch-runtime.ts` already holds the snapshot itself. (#633 added no routes to
+  `server.ts`; its routes mount through `agent-provider-mount.ts`.)
+- **Done when:** `server.ts` is under 800 code lines by the same measure; the moved installs run in
+  the same order behind the same bootstrap gate — the `provider-switch` Test Lab scenario and
+  `tests/unit/harness-resolution.spec.ts` still green, and `GET /api/agents/provider-switch` on an
+  isolated server still reports the snapshot installed; no route registration changes.
+
 ### A bot's LLM provider is a row in a table, not a literal in the registry (operator, 2026-09-17)
 
 - **What the operator hit.** Codex ran out of tokens for one login and the instruction was "set the
@@ -1535,6 +1579,67 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   audit) rather than a mocked store; the cockpit select is enabled and a browser case writes a row
   and sees the resolved source change; and the operator flips one bot to `gemini` /
   `gemini-3.8-flash` from the cockpit and it answers on Gemini in the bot's own log.
+- **Status (2026-09-17, branch `feat/bot-provider-row`):** built and guarded, NOT yet deployed. The
+  per-bot row is an operator-written row of `oshal_bot_provider_switch` (scope = the agent id,
+  `updated_by` = the operator sub; written by `PUT /runtime` after the ADR-034 push, released by
+  `DELETE /api/agents/provider-switch/:agentId`; the 409 `provider_pinned` is gone), the fleet
+  default is the reserved row of the same table (migration 147,
+  `PUT/DELETE /api/agents/provider-switch/fleet-default`, Config Admin "Fleet Default" panel),
+  `resolveHarnessForAgent` and ADR-034 dispatch stamping read one installed snapshot, the bot node
+  translates a Cline-backed id onto `cline-cli` + `CLINE_API_PROVIDER`/`CLINE_API_MODEL` and the
+  post-execution check accepts exactly that, and the 18 compose `FORCE_LLM_*` literals are the
+  `x-bot-env` interpolation (guard `compose-bot-provider-literal.spec.ts`). Feature suite:
+  `npm run test:provider-switch` (9 files); Test Lab scenario `provider-switch`. **Left:** the last
+  done-when clause is live-only — an image deploy, then one bot flipped to `gemini` /
+  `gemini-3.8-flash` from the cockpit answering on Gemini in its own log, which also needs the Cline
+  binary fix (PR #628, glibc on musl). Eleven `agent_config` rows on the operator box name a
+  non-Codex provider (read-only SELECT, 2026-09-17: `project-manager` = gemini/gemini-3.1-pro,
+  `task-manager` = openai/gpt-x, `personal-finance-bot` = anthropic/claude-sonnet-4-20250514, and
+  eight `claude-code` package bots — `bake-off-analyst`, `capability-ideator`, `dungeon-master`,
+  `game-show-host`, `kid-lens-bot`, `lora-director`, `portrait-artist`, `sales-concierge`). None
+  was written by an operator, and none becomes a switch row at deploy — nothing is seeded from
+  `agent_config` — so the first fleet-default write moves all 70, the eleven included (proven on a
+  disposable PostgreSQL seeded with the box's row shape; see the follow-up entry below, DONE).
+  Review guard added: `tests/unit/dispatch-switch-row-stamping.spec.ts` pins tier-1 dispatch
+  stamping (the only path a row reaches a dedicated bot node).
+
+### A machinery-written `agent_config` row should not outrank a fleet-default write (2026-09-17)
+
+- **What the switch rollout exposed.** The per-bot row is the `agent_config` record, and a bot row
+  beats the fleet row by design — right for a row an admin chose. Measured read-only on the operator
+  box (`docker exec oshal-local-db psql`, 2026-09-17): 70 `agent_config` records name a provider,
+  and none records an operator identity. 67 carry no `configUpdatedBy` and `configVersion`
+  1 — the exact shape `seedManifestBotRuntime` writes (`manifest-bot-runtime.ts`: "proven
+  provider/model defaults, not an operator override"), 59 of them `openai-codex` and 8
+  `claude-code` (`bake-off-analyst`, `capability-ideator`, `dungeon-master`, `game-show-host`,
+  `kid-lens-bot`, `lora-director`, `portrait-artist`, `sales-concierge`); 2 carry `bot-local`, the
+  bot's own reported change (`project-manager` = gemini/gemini-3.1-pro, 2026-07-23; `task-manager`
+  = openai/gpt-x, 2026-06-09); 1 carries `oshal-push`, the ConfigSyncService push-down
+  (`personal-finance-bot` = anthropic/claude-sonnet-4-20250514, 2026-08-03). After deploy every one
+  of the 70 is a bot row, so on the first fleet-default write all 70 hold — 38 of the 60 agent ids
+  in `swarm-bot-registry-local.ts` among them — and only the bots with no record move. Nothing on
+  the surface says why a bot held. `ProviderSwitchStore.listAll` already projects `configUpdatedBy`
+  as `updatedBy`, so the fact is readable; the rule does not consult it.
+- **Done when:** a per-bot row records who set it (an operator identity, or the machinery that
+  wrote it — never blank); a machinery-written row yields to the fleet default; an operator-written
+  row does not; `/api/agents` reports which of the two a `bot-row` is; and migration 147's rollout
+  note names, for the operator box, which of the 70 rows (the 11 non-Codex ones by name) move on
+  the first fleet write and which hold.
+- **DONE (2026-09-17, PR #633, same branch):** the per-bot switch row moved out of `agent_config`
+  into `oshal_bot_provider_switch` (scope = the agent id), where only an operator can write it —
+  `PUT /runtime` writes it after the ADR-034 push with `updated_by` = the session's sub, and the
+  table's operator-only policy is the enforcement, so "operator-written" is a property of the
+  table, not of a string. `ProviderSwitchStore.listAll` reads only that table; a machinery-written
+  `agent_config` record is ADR-034 tier 2 beneath the fleet row and yields to it; an
+  operator-written row does not; a `bot-row` reported by `/api/agents` is therefore always an
+  operator's, and `GET /api/agents/provider-switch` lists them with `updatedBy`. Migration 147's
+  header states that nothing is seeded and that all 70 (the eleven by name) move on the first fleet
+  write. Proof: `tests/unit/provider-switch-store-postgres.spec.ts` ("the operator box's row
+  shape": the 70 records from `tests/fixtures/agent-config-provider-rows-2026-09-17.json` on a
+  disposable PostgreSQL, ONE fleet write moves all 70 in the resolver and the stamped dispatch
+  record; 9 of 15 cases red on the pre-fix store, 15 green after) and
+  `tests/unit/dispatch-switch-row-stamping.spec.ts` (the box's three record shapes beneath a fleet
+  row; red on the pre-fix projection, green after).
 
 ### The Cline fallback brain could not start: a glibc executable on a musl base (2026-09-17)
 

@@ -439,6 +439,24 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
       + 'credential-bearing mutation path before ConfigSyncService is invoked.',
   },
   {
+    id: 'fleet-default-provider-switch',
+    entryPoint: 'PUT/DELETE /api/agents/provider-switch/fleet-default (serviceSecretOr mount)',
+    file: 'src/app/extensions/swarm/routes/provider-switch-routes.ts',
+    auth: 'service-secret',
+    ownerScopedTables: [],
+    identity: {
+      kind: 'no-owner-scoped-write',
+      why:
+        'Every member REFUSES a machine-secret caller with 403 (requiresOperatorBrowser): the fleet '
+        + 'switch moves every bot, so only an exact operator browser session may write it, and the '
+        + 'table (migration 147, FORCE RLS) enforces the operator GUC underneath. Nothing owner-scoped.',
+    },
+    behaviorallyProven: true,
+    note:
+      'Mirrors agent-runtime-bootstrap-read: the secret is recognised only to be refused before any '
+      + 'store call; oshal_bot_provider_switch holds one fleet row and no per-person data.',
+  },
+  {
     id: 'claude-config-propagation-operator',
     entryPoint: 'POST/GET /api/swarm/config/propagate/claude-code-auth*',
     file: 'src/app/extensions/swarm/routes/config-propagation-routes.ts',

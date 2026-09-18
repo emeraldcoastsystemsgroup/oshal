@@ -18,6 +18,8 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | K2/K3 identity canon (BACKLOG kernel audit): a0…0018 is 'system-architect' in every map (was 'architect-bot' here while dispatch resolved by the other name); the LEGACY unported a0…0034 row is relabeled 'legacy-system-architect' so exactly ONE identity carries the canonical name; self-healing-bot moves a0…030 → a0…056 (030 belongs to codex-packer — the three-way collision made 030's attribution ambiguous). Mirrors registries + compose + migration 100.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | enrichProfileWithHarness now also returns the EFFECTIVE provider + which tier won (effectiveProvider / effectiveModel / providerSource / providerOverridable / modelOverridable / precedenceNote) via the shared resolveEffectiveBotProvider. Reading /api/agents used to give harnessType and providerId side by side with no indication that the first silently outranks the second, so a cockpit panel could only guess - and a per-bot provider picker that guesses is a picker that lies. Computed server-side from ONE rule; a registry-read failure no longer drops the fields (it falls through and answers from the DB record, which is the honest answer in that case).
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Return resolved provider-precedence fields after profile updates so Config Admin never renders stale policy
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | "A bot's LLM provider is a row in a table": the controller takes an injected switch resolver (composition root → installed ProviderSwitchSnapshot) and feeds its resolution into resolveEffectiveBotProvider, so /api/agents reports providerSource 'bot-row' | 'fleet-default' | 'registry-harness' (or 'switch-refused' with the reason) from the rung that will serve the next dispatch. No snapshot (no pool) → the legacy answer, unchanged.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | The registry reader is injected beside the switch resolver (RegistryReader; the composition root passes getActiveRegistry). The aliased require() stays as the default for callers that inject nothing, but it does not resolve under vitest, which made every controller-driven spec exercise only the 'registry-unreadable' branch — the browser guard for the live provider select needs the real registry through the real controller.
  */
 
 import { Request, Response, type RequestHandler } from 'express';
@@ -28,14 +30,34 @@ import {
 } from '@/entities/agent';
 import { AgentProfileService } from '../services';
 import { validateFile } from '@/shared/api/validation';
-import { resolveEffectiveBotProvider } from '@/shared/llm-runtime';
+import { resolveEffectiveBotProvider, type BotProviderSwitchResolution } from '@/shared/llm-runtime';
+
+/** The switch-row resolution for one agent, injected by the composition root (null → no snapshot). */
+export type AgentSwitchResolver = (agentId: string) => BotProviderSwitchResolution | null;
+
+/** One registry entry as the precedence rule reads it. */
+export interface RegistryHarnessDeclaration { agentId?: string; harnessType?: string; apiType?: string }
+
+/** Reads the active bot registry; injected by the composition root. Throwing means "unreadable". */
+export type RegistryReader = () => ReadonlyArray<RegistryHarnessDeclaration>;
+
+/** Production default: the app-layer registry through the module loader (kept for callers that inject nothing). */
+function requireActiveRegistry(): ReadonlyArray<RegistryHarnessDeclaration> {
+  const { getActiveRegistry } = require('@/app/extensions/swarm/swarm-bot-registry');
+  return getActiveRegistry() as ReadonlyArray<RegistryHarnessDeclaration>;
+}
 
 /**
  * @description Controller for dedicated agent-profile persistence endpoints.
  * This separates bot identity/persona-lite fields from the broader `/api/config` document.
  */
 export class AgentProfileController extends BaseController {
-  constructor(private readonly agentProfileService: AgentProfileService, logger: any) {
+  constructor(
+    private readonly agentProfileService: AgentProfileService,
+    logger: any,
+    private readonly resolveSwitch: AgentSwitchResolver = () => null,
+    private readonly readRegistry: RegistryReader = requireActiveRegistry,
+  ) {
     super(logger);
   }
 
@@ -48,7 +70,7 @@ export class AgentProfileController extends BaseController {
     try {
       const dbAgents = await this.agentProfileService.listAgents();
       agents = dbAgents.map((agent) => ({
-        ...enrichProfileWithHarness(String(agent.agentId), agent),
+        ...enrichProfileWithHarness(String(agent.agentId), agent, this.resolveSwitch, this.readRegistry),
         agent_id: agent.agentId,
       }));
     } catch (error) {
@@ -84,14 +106,14 @@ export class AgentProfileController extends BaseController {
     if (!profile) {
       const seedProfile = getSeedAgentProfileFallback(agentId);
       if (seedProfile) {
-        return this.success(res, { agentId, profile: enrichProfileWithHarness(agentId, seedProfile) });
+        return this.success(res, { agentId, profile: enrichProfileWithHarness(agentId, seedProfile, this.resolveSwitch, this.readRegistry) });
       }
       return this.notFound(res, `Agent ${agentId} not found`);
     }
 
     return this.success(res, {
       agentId,
-      profile: enrichProfileWithHarness(agentId, profile),
+      profile: enrichProfileWithHarness(agentId, profile, this.resolveSwitch, this.readRegistry),
     });
   });
 
@@ -108,7 +130,7 @@ export class AgentProfileController extends BaseController {
 
     return this.success(res, {
       agentId,
-      profile: enrichProfileWithHarness(agentId, updated),
+      profile: enrichProfileWithHarness(agentId, updated, this.resolveSwitch, this.readRegistry),
       message: 'Agent profile updated successfully',
     });
   });
@@ -193,15 +215,18 @@ function buildDataUrl(file: Express.Multer.File): string {
  * Called at read time so callers always receive the authoritative harness config without a DB schema change.
  * If the agent is not in the registry, the profile is returned unchanged.
  */
-function enrichProfileWithHarness(agentId: string, profile: Record<string, unknown>): Record<string, unknown> {
+function enrichProfileWithHarness(
+  agentId: string,
+  profile: Record<string, unknown>,
+  resolveSwitch: AgentSwitchResolver,
+  readRegistry: RegistryReader,
+): Record<string, unknown> {
   let harnessType: string | null = null;
   let apiType: string | null = null;
   let inRegistry = false;
   let registryReadable = false;
   try {
-    const { getActiveRegistry } = require('@/app/extensions/swarm/swarm-bot-registry');
-    const reg = getActiveRegistry() as Array<{ agentId?: string; harnessType?: string; apiType?: string }>;
-    const entry = reg.find((b) => b.agentId === agentId);
+    const entry = readRegistry().find((b) => b.agentId === agentId);
     if (entry) {
       inRegistry = true;
       harnessType = entry.harnessType ?? null;
@@ -223,6 +248,9 @@ function enrichProfileWithHarness(agentId: string, profile: Record<string, unkno
     dbProviderId: (profile.providerId as string | null | undefined) ?? null,
     dbModelId: (profile.modelId as string | null | undefined) ?? null,
     registryReadable,
+    // The switch rung (agent_config row > fleet default) from the installed snapshot, so the
+    // reported providerSource is the rung that will actually serve the next dispatch.
+    switchResolution: resolveSwitch(agentId),
   });
   return {
     ...profile,

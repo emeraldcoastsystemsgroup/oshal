@@ -3,7 +3,7 @@
 ## Status
 Accepted — 2026-06-08
 
-**Amended by [ADR-162](162-a-bots-brain-is-layered-records.md) (2026-09-17):** tier 2 gains a fleet-default row beneath the per-bot row; tier 3 (the registry literal, #604) fills a record only when neither exists; and the post-execution check accepts the failover chain the record itself configured, so work a configured fallback completes is not discarded.
+**Amended by [ADR-162](162-a-bots-brain-is-layered-records.md) (2026-09-17):** tier 2 gains a fleet-default row beneath the per-bot row; tier 3 (the registry literal, #604) fills a record only when neither exists; and the post-execution check holds exactly "what ran == what was authorized" with the switch row as the authority — a Cline-backed id (`gemini`) authorizes the `cline-cli` runtime fronting that id and nothing else. A configured failover chain is NOT part of the record today: no switch row or migration-147 column carries one, and a run the JS failover completes reports the fallback's name (`any-bot/server/services/llm/ProviderFailoverProvider.js:97`), which `dispatchProviderMatches` refuses — that work is still discarded (BACKLOG: "A failover the record configured must not have its completed work discarded").
 
 Implements the configuration model declared in [ADR-006](006-multi-agent-configuration-architecture.md) (accepted but never built — `src/features/config-sync/` shipped as an empty placeholder) and completes the control/runtime boundary described in [any-bot-swarm-separation-design.md](../research/any-bot-swarm-separation-design.md). Extends the runtime contract of [ADR-018](018-swarm-processing-runtime-contract.md).
 

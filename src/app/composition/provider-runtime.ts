@@ -19,6 +19,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Switched the seven deep harness-adapter imports to the new sanctioned '@/features/llm-provider/harness' entry point (barrel split, TODO-BOUNDARY-FINDING 2026-07-19) — behavior unchanged; this file stays the harness stack's sole composition root.
  * 14 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. resolveRuntimeProviderName's env fallback is openai-codex (was claude-code) and the generic DEFAULT_MODEL is gpt-5.5 (was claude-sonnet-4-6) — both only reachable with no persisted config and no LLM_PROVIDER/LLM_MODEL, i.e. exactly the self-install shape. The claude-code harness factory, its apiType check, and the recursion guards are untouched.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Share the current model resolver with manifest bot initialization.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | A bot's LLM provider is a row in a table (operator, 2026-09-17). resolveHarnessForAgent now asks the installed switch snapshot (provider-switch-runtime.ts) BEFORE reading the registry literal: a per-bot row, else the fleet-default row for a registry LLM bot, else the literal exactly as before. A winning row that names an id this build cannot run returns a RefusedProviderSwitch — every request fails with the reason — instead of falling to the process provider. createProviderResolver installs the snapshot when it has a pool (the read is awaited by the composition root through installProviderSwitchSnapshot). With no rows the resolution, the factory config and the log lines are byte-identical to the previous revision; guarded by tests/unit/harness-resolution.spec.ts.
  */
 
 import fs from 'fs';
@@ -57,6 +58,7 @@ import {
   type HarnessType,
 } from '@/features/llm-provider/harness';
 import { createA2ACostStamper } from './a2a-cost-stamper';
+import { RefusedProviderSwitch, resolveInstalledProviderSwitch } from './provider-switch-runtime';
 import {
   resolveAgentCapabilitiesFromSwarmRegistry,
   type AgentCapabilityResolver,
@@ -973,52 +975,68 @@ export function resolveHarnessForAgent(
     const botName = process.env.BOT_NAME?.trim() || process.env.AGENT_ID?.trim();
     const entry = registry.find((b) => b.agentId === agentId)
       ?? (botName ? registry.find((b) => b.name === botName) : undefined);
-    if (!entry?.harnessType) {
+    // The switch rows (per-bot row > fleet default) are consulted BEFORE the registry literal.
+    // With no rows installed this answers 'registry' and the literal path below is unchanged.
+    const switched = resolveInstalledProviderSwitch(agentId, entry ?? null);
+    if (!switched.ok) {
+      compositionLogger.error(
+        { agentId, source: switched.source, providerId: switched.providerId, reason: switched.reason },
+        'resolveHarnessForAgent: switch row names a provider this build cannot run — refusing, not falling back',
+      );
+      return new RefusedProviderSwitch(agentId, switched.source, switched.reason);
+    }
+    const selection = switched.source === 'registry'
+      ? (entry?.harnessType ? { harnessType: entry.harnessType, apiType: entry.apiType, modelId: null } : null)
+      : { harnessType: switched.harnessType as string, apiType: switched.apiType ?? undefined, modelId: switched.modelId };
+    if (!selection) {
       return null;
     }
-    const factory = lookupHarnessFactory(entry.harnessType);
+    const factory = lookupHarnessFactory(selection.harnessType);
     if (!factory) {
       compositionLogger.warn(
-        { agentId, harnessType: entry.harnessType },
+        { agentId, harnessType: selection.harnessType },
         'Bot has harnessType but no factory found in HARNESS_FACTORIES — falling back to process provider',
       );
       return null;
     }
     compositionLogger.info(
-      { agentId, harnessType: entry.harnessType, apiType: entry.apiType ?? '(unset)' },
+      {
+        agentId, harnessType: selection.harnessType, apiType: selection.apiType ?? '(unset)',
+        ...(switched.source !== 'registry' ? { providerSource: switched.source, switchProviderId: switched.providerId } : {}),
+      },
       'resolveHarnessForAgent: using per-bot harness override',
     );
     // Per-harness model + binary resolution lives in HARNESS_RUNTIME_DEFAULTS
     // (typed Record<HarnessType, …>) — adding a harness = one entry, not
-    // two if/else arms here.
-    const harnessKey = entry.harnessType as HarnessType;
+    // two if/else arms here. A switch row's model, when it names one, wins.
+    const harnessKey = selection.harnessType as HarnessType;
     const defaults = HARNESS_RUNTIME_DEFAULTS[harnessKey] ?? HARNESS_RUNTIME_DEFAULTS.cline;
-    const modelId = defaults.resolveModel(resolveRuntimeModelName);
+    const modelId = selection.modelId ?? defaults.resolveModel(resolveRuntimeModelName);
     const cliBinaryPath = defaults.resolveBinary();
     // Controller-inline least privilege (BACKLOG "Harden inline controller bots"): a bot whose
     // registry container IS the api executes inside the process that holds the platform's own
     // credentials, so it gets a shell-free tool list and an env scrub. { inline: false } for
     // every bot-node bot, leaving both fields undefined.
-    const inlineScope = resolveControllerInlineScope(entry.container);
+    const inlineScope = resolveControllerInlineScope(entry?.container);
     if (inlineScope.inline) {
       compositionLogger.info(
-        { agentId, container: entry.container, allowedTools: inlineScope.allowedTools },
+        { agentId, container: entry?.container, allowedTools: inlineScope.allowedTools },
         'resolveHarnessForAgent: controller-inline bot — shell tools removed and platform-plane env scrubbed',
       );
     }
     return factory({
-      providerId: entry.harnessType,
-      apiType: entry.apiType,
+      providerId: selection.harnessType,
+      apiType: selection.apiType,
       modelId,
       cliBinaryPath,
-      container: entry.container,
+      container: entry?.container,
       allowedTools: inlineScope.allowedTools,
       scrubEnvKeys: inlineScope.scrubEnvKeys,
       resolveAgentCapabilities,
       // The a2a harness derives its per-bot credential env from the bot name and
       // reads its endpoint from the registry-declared env var; harmless elsewhere.
-      botName: entry.name,
-      a2aEndpointEnv: entry.a2aEndpointEnv,
+      botName: entry?.name,
+      a2aEndpointEnv: entry?.a2aEndpointEnv,
     });
   } catch (err) {
     compositionLogger.warn({ err, agentId }, 'resolveHarnessForAgent: error resolving registry entry');

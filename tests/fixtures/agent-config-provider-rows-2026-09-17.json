@@ -1,0 +1,636 @@
+{
+  "_source": "Read-only SELECT on the operator box (docker exec oshal-local-db psql), 2026-09-17: every agent_config record whose config_values.providerId is non-empty and not 'auto', joined to agents for the name and manifest app. Columns are the dispatch-record keys only; no credential or secret exists in these rows.",
+  "_shape": "70 rows: 59 openai-codex + 8 claude-code with blank configUpdatedBy and configVersion 1 (seedManifestBotRuntime), project-manager gemini + task-manager openai written by the bot itself ('bot-local'), personal-finance-bot anthropic written by a ConfigSyncService push ('oshal-push'). None was written by a person.",
+  "rows": [
+    {
+      "agentId": "b0ae0000-0000-0000-0000-000000000001",
+      "name": "aero-designer",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "aero-lab"
+    },
+    {
+      "agentId": "e48e0e14-a2eb-44c1-a1dc-b82c661cadcb",
+      "name": "animatronics-director",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "animatronics"
+    },
+    {
+      "agentId": "b0be0000-0000-0000-0000-000000000001",
+      "name": "bake-off-analyst",
+      "providerId": "claude-code",
+      "modelId": null,
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "bake-off"
+    },
+    {
+      "agentId": "7d0c2f4e-5b1a-4c8e-9f3d-2a6b8e1c4d70",
+      "name": "cad-studio-designer",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "cad-studio"
+    },
+    {
+      "agentId": "b0200000-0000-0000-0000-000000000001",
+      "name": "camera-operator",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "camera"
+    },
+    {
+      "agentId": "cadf0000-0000-4000-8000-000000000001",
+      "name": "campaign-director",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "marketing-engine"
+    },
+    {
+      "agentId": "c1de0000-0000-0000-0000-000000000001",
+      "name": "capability-ideator",
+      "providerId": "claude-code",
+      "modelId": "claude-sonnet-4-6",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "capability-ideator"
+    },
+    {
+      "agentId": "b0000000-0000-0000-0000-000000000041",
+      "name": "capture-coordinator",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "capture-crm"
+    },
+    {
+      "agentId": "b0000000-0000-0000-0000-000000000040",
+      "name": "capture-specialist",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "federal-capture"
+    },
+    {
+      "agentId": "cb000000-0000-0000-0000-000000000001",
+      "name": "career-hunter",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "career-hunter"
+    },
+    {
+      "agentId": "ad93b29f-5533-45f6-bda3-4a881391d0cd",
+      "name": "circuit-lab-engineer",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "circuit-lab"
+    },
+    {
+      "agentId": "ed000000-0000-0000-0000-000000000002",
+      "name": "class-tutor",
+      "providerId": "openai-codex",
+      "modelId": "gpt-4.1",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "little-monsters"
+    },
+    {
+      "agentId": "d0000000-0000-0000-0000-000000000002",
+      "name": "cloud-ops-bot",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "cloud"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000002",
+      "name": "code-developer",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "oshal-engineering"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000003",
+      "name": "code-reviewer",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "oshal-engineering"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000030",
+      "name": "codex-packer",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "codex-packer"
+    },
+    {
+      "agentId": "b0000000-0000-0000-0000-000000000001",
+      "name": "communications-bot",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "switchboard"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000042",
+      "name": "deck-builder",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "presentations"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000004",
+      "name": "documentation-writer",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "oshal-engineering"
+    },
+    {
+      "agentId": "b00f0000-0000-0000-0000-000000000001",
+      "name": "drone-operator",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "drone"
+    },
+    {
+      "agentId": "dd000000-0000-0000-0000-000000000001",
+      "name": "dungeon-master",
+      "providerId": "claude-code",
+      "modelId": null,
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "dnd"
+    },
+    {
+      "agentId": "6206a063-907d-4507-b8e4-9332150051f4",
+      "name": "embodied-operator",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "embodied"
+    },
+    {
+      "agentId": "fd000000-0000-0000-0000-000000000001",
+      "name": "feeds-curator",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "feeds"
+    },
+    {
+      "agentId": "6a5e0000-0000-0000-0000-000000000001",
+      "name": "game-show-host",
+      "providerId": "claude-code",
+      "modelId": null,
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "game-show"
+    },
+    {
+      "agentId": "cadf0000-0000-4000-8000-000000000003",
+      "name": "growth-analyst",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "marketing-engine"
+    },
+    {
+      "agentId": "d0000000-0000-0000-0000-000000000001",
+      "name": "home-bot",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "home"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000045",
+      "name": "identity-advisor",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "identity"
+    },
+    {
+      "agentId": "e0000000-0000-0000-0000-000000000100",
+      "name": "incident-remediation-bot",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "intelligent-operations"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-00000000000b",
+      "name": "incident-response-bot",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "intelligent-operations"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000043",
+      "name": "kid-lens-bot",
+      "providerId": "claude-code",
+      "modelId": "claude-sonnet-4-6",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "youtube-kids"
+    },
+    {
+      "agentId": "cadf0000-0000-4000-8000-000000000004",
+      "name": "launch-coordinator",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "marketing-engine"
+    },
+    {
+      "agentId": "ed000000-0000-0000-0000-000000000001",
+      "name": "lecture-scribe",
+      "providerId": "openai-codex",
+      "modelId": "gpt-4.1",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "little-monsters"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000065",
+      "name": "lora-director",
+      "providerId": "claude-code",
+      "modelId": null,
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "lora"
+    },
+    {
+      "agentId": "cadf0000-0000-4000-8000-000000000002",
+      "name": "market-analyst",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "marketing-engine"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000050",
+      "name": "oshal-assistant",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "jarvis"
+    },
+    {
+      "agentId": "de000000-0000-0000-0000-000000000001",
+      "name": "oshal-developer",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "oshal-dev"
+    },
+    {
+      "agentId": "d94570af-e1ea-4d0f-b72b-dc3d81e2eed5",
+      "name": "personal-finance-bot",
+      "providerId": "anthropic",
+      "modelId": "claude-sonnet-4-20250514",
+      "configUpdatedBy": "oshal-push",
+      "configVersion": 1,
+      "manifestApp": null
+    },
+    {
+      "agentId": "b0100000-0000-0000-0000-000000000001",
+      "name": "portrait-artist",
+      "providerId": "claude-code",
+      "modelId": "claude-sonnet-4-6",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "portrait-studio"
+    },
+    {
+      "agentId": "b7c1e340-5a92-4f18-9d63-2f80c4a1e551",
+      "name": "print-ingest-bot",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "print-ingest"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000001",
+      "name": "project-manager",
+      "providerId": "gemini",
+      "modelId": "gemini-3.1-pro",
+      "configUpdatedBy": "bot-local",
+      "configVersion": 39,
+      "manifestApp": "oshal-engineering"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000054",
+      "name": "pumpkin-bot",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "pumpkin"
+    },
+    {
+      "agentId": "f0000000-0000-0000-0000-000000000001",
+      "name": "queue-bot",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "oshal-engineering"
+    },
+    {
+      "agentId": "ed000000-0000-0000-0000-000000000003",
+      "name": "quiz-master",
+      "providerId": "openai-codex",
+      "modelId": "gpt-4.1",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "little-monsters"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000016",
+      "name": "rca-specialist",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "intelligent-operations"
+    },
+    {
+      "agentId": "569e21a7-3cb2-4703-8558-cc70be68ebab",
+      "name": "relay-designer",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "drone-relay"
+    },
+    {
+      "agentId": "15000000-0000-0000-0000-000000000001",
+      "name": "sales-concierge",
+      "providerId": "claude-code",
+      "modelId": null,
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "intelligent-sales"
+    },
+    {
+      "agentId": "b0102000-0000-0000-0000-000000000001",
+      "name": "sat-operator",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "sat-ops"
+    },
+    {
+      "agentId": "b4039c9b-a918-48b1-a98f-c66ecc70c4b4",
+      "name": "scan-to-print-operator",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "scan-to-print"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000052",
+      "name": "screenplay-writer",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "video"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000047",
+      "name": "security-analyst",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "security-center"
+    },
+    {
+      "agentId": "b0300000-0000-0000-0000-000000000001",
+      "name": "spaces-operator",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "spaces"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000041",
+      "name": "storage-assistant",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "storage"
+    },
+    {
+      "agentId": "ed000000-0000-0000-0000-000000000005",
+      "name": "study-coach",
+      "providerId": "openai-codex",
+      "modelId": "gpt-4.1",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "little-monsters"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000006",
+      "name": "task-manager",
+      "providerId": "openai",
+      "modelId": "gpt-x",
+      "configUpdatedBy": "bot-local",
+      "configVersion": 3,
+      "manifestApp": null
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000005",
+      "name": "test-engineer",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "oshal-engineering"
+    },
+    {
+      "agentId": "ed000000-0000-0000-0000-000000000004",
+      "name": "textbook-librarian",
+      "providerId": "openai-codex",
+      "modelId": "gpt-4.1",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "little-monsters"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000046",
+      "name": "trading-analyst",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "intelligent-trades"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000049",
+      "name": "trading-research-analyst",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "intelligent-trades"
+    },
+    {
+      "agentId": "b00c0000-0000-0000-0000-000000000001",
+      "name": "travel-concierge",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "travel"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-0000000000d0",
+      "name": "vault-bot",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "devops"
+    },
+    {
+      "agentId": "b7000000-0000-0000-0000-000000000002",
+      "name": "venture-bom-analyst",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "venture-plan"
+    },
+    {
+      "agentId": "b7000000-0000-0000-0000-000000000003",
+      "name": "venture-market-analyst",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "venture-plan"
+    },
+    {
+      "agentId": "b7000000-0000-0000-0000-000000000004",
+      "name": "venture-ops-analyst",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "venture-plan"
+    },
+    {
+      "agentId": "b7000000-0000-0000-0000-000000000001",
+      "name": "venture-strategist",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "venture-plan"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000048",
+      "name": "video-director",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "video"
+    },
+    {
+      "agentId": "b00e0000-0000-0000-0000-000000000001",
+      "name": "vids-operator",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "vids"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-00000000004a",
+      "name": "weather-analyst",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "intelligent-trades"
+    },
+    {
+      "agentId": "a0000000-0000-0000-0000-000000000051",
+      "name": "workflow-assistant",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "workflow-studio"
+    },
+    {
+      "agentId": "b00d0000-0000-0000-0000-000000000001",
+      "name": "world-analyst",
+      "providerId": "openai-codex",
+      "modelId": "gpt-5.5",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "world"
+    },
+    {
+      "agentId": "ed000000-0000-0000-0000-000000000006",
+      "name": "writing-coach",
+      "providerId": "openai-codex",
+      "modelId": "gpt-4.1",
+      "configUpdatedBy": null,
+      "configVersion": 1,
+      "manifestApp": "little-monsters"
+    }
+  ]
+}

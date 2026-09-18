@@ -18,3 +18,17 @@ export {
   type BotProviderSource,
   type EffectiveBotProvider,
 } from './bot-provider-precedence';
+export {
+  FLEET_DEFAULT_SWITCH_ID,
+  classifyProviderId,
+  requireModelForClineBackedId,
+  resolveBotProviderSwitch,
+  type BotProviderSwitchResolution,
+  type BotProviderSwitchSource,
+  type ClassifiedProviderId,
+  type ProviderIdClassification,
+  type ProviderSwitchCatalog,
+  type ProviderSwitchRow,
+  type RefusedProviderId,
+  type SwitchRegistryEntry,
+} from './bot-provider-switch';

@@ -15,9 +15,11 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Rebased per-bot config theme choices onto the shared cockpit theme catalog so Config Admin matches cockpit and swarm workspace options
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | CM-6: Decomposed 1277-line file into orchestrator + 4 modules; added RAG + Google Search MCP service runtime sections
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Removed the retired Presentron + deprecated Google Search MCP service-runtime sections (wiring, state, load, render); RAG runtime config retained
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Fleet-default LLM provider switch panel (config-admin-fleet-default.js) above the per-bot section: loaded with the rest of the page, rendered from state, Save/Clear wired to PUT/DELETE /api/agents/provider-switch/fleet-default. The per-bot provider select is live now that the API reports providerOverridable for every registry bot (its save path is unchanged: PUT /runtime writes the bot's own row).
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
+import { clearFleetDefault, loadFleetDefault, renderFleetDefaultPanel, saveFleetDefault } from './config-admin-fleet-default.js';
 import {
   fetchJson, postJson, requestJson,
   readString, readRecord, readSelectedAgentIdFromUrl, readScopeFromUrl,
@@ -54,6 +56,7 @@ class ConfigAdminApp {
       selectedAgentProfile: null,
       selectedAgentTools: [],
       selectedAgentRuntimeConfig: null,
+      fleetDefault: null,
     };
 
     this.elements = {
@@ -85,6 +88,7 @@ class ConfigAdminApp {
       redisUrlInput: document.getElementById('redisUrlInput'),
       refreshButton: document.getElementById('refreshButton'),
       selectedAgentPanel: document.getElementById('selectedAgentPanel'),
+      fleetDefaultPanel: document.getElementById('fleetDefaultPanel'),
       sharedConfigForm: document.getElementById('sharedConfigForm'),
       statusBanner: document.getElementById('statusBanner'),
     };
@@ -140,6 +144,19 @@ class ConfigAdminApp {
       const trigger = event.target.closest('[data-agent-config-id]');
       if (!trigger) { return; }
       await loadSelectedAgentDetails(this, trigger.dataset.agentConfigId);
+    });
+
+    this.elements.fleetDefaultPanel?.addEventListener('submit', async (event) => {
+      if (event.target.matches('#fleetDefaultForm')) {
+        event.preventDefault();
+        await saveFleetDefault(this);
+      }
+    });
+    this.elements.fleetDefaultPanel?.addEventListener('click', async (event) => {
+      if (event.target.closest('#clearFleetDefaultButton')) {
+        event.preventDefault();
+        await clearFleetDefault(this);
+      }
     });
 
     this.elements.selectedAgentPanel.addEventListener('submit', async (event) => {
@@ -211,6 +228,7 @@ class ConfigAdminApp {
       this.state.providers = Array.isArray(providers) ? providers : [];
       this.state.agents = Array.isArray(agents.agents) ? agents.agents : [];
       this.state.selectedAgentId = resolveSelectedAgentId(this.state.selectedAgentId, this.state.agents);
+      await loadFleetDefault(this);
 
       this.render();
       this.setStatus('Config admin loaded from mounted OSHAL APIs.', 'success');
@@ -235,6 +253,7 @@ class ConfigAdminApp {
     renderRagRuntimeForm(this.elements, this.state.ragConfig);
     renderOwnershipCards(this.elements, this.state.ownership);
     renderAgentCards(this.elements, this.state.agents);
+    renderFleetDefaultPanel(this);
     renderSelectedAgentPanelMarkup(this);
     renderSelectedAgentAuthState(this);
   }

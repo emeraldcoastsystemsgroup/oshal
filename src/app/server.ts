@@ -198,6 +198,7 @@
  * 182 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/access-review - the read-only join over the three authorization axes (swarm role and its provenance, governance permissions, per-application assignments). requiresAuth only: every signed-in person may ask about themselves, naming another subject is admin-only inside the route, and the per-application read still runs through the authorization service's own management checks. No write member exists on the route.
  * 183 | maintainer@emeraldcoastsystemsgroup.com   | ADR-145 D5: the swarm-apps router receives recentAppTasks, the kernel-owned jarvis_tasks read behind a status card for an app that declares no summary: probe. The router owns no pool, so the composition root binds it here. Same-line wiring; no new code line in this file.
  * 184 | maintainer@emeraldcoastsystemsgroup.com | Resolve artifact destination tiers for the complete verified principal.
+ * 185 | maintainer@emeraldcoastsystemsgroup.com   | Install the LLM provider switch snapshot (migration 147, "a bot's LLM provider is a row in a table") once the DB bootstrap completes: one awaited read of oshal_bot_provider_switch under the SYSTEM identity, then the periodic refresh. Independent of the autoload chain; a failed read logs and leaves the registry behaviour in place.
  */
 
 require('dotenv').config();
@@ -370,7 +371,8 @@ import { createSwarmAppGateMiddleware } from './middleware/swarm-app-gate-middle
 import { ManifestRouteMounterImpl } from './composition/manifest-route-mounter';
 import { TakeoutSliceRegistry } from './takeout-slice-registry';
 import { ManifestServiceRouteScheduleRegistry } from './manifest-service-route-schedule';
-import { waitForBootstrapComplete } from './composition';
+import { HARNESS_FACTORIES, installProviderSwitchSnapshot, waitForBootstrapComplete } from './composition';
+import { ProviderSwitchStore } from '@/features/agent-management';
 import { seedDemoData, shouldSeedDemoData } from '@/features/demo-mode';
 import { createScheduleController } from './schedule-runtime';
 import { registerSwarmExtensionRoutes } from '@/app/extensions';
@@ -1580,6 +1582,17 @@ function createApp(): express.Application {
   // the fallback answers real 404s regardless, so a broken dependency can't 503 /api forever.
   let packageRoutesSettled = false;
   const bootWindowDeadline = Date.now() + Number(process.env.OSHAL_API_BOOT_WINDOW_MS ?? 180_000);
+  // The LLM provider switch rows (migration 147): per-bot row > fleet default > registry literal.
+  // Read once after the bootstrap so the table exists, then refreshed on a timer. Until the first
+  // read lands every bot resolves from the registry literal — the no-row case, unchanged.
+  if (ctx.pool) {
+    const switchPool = ctx.pool;
+    void runWithSystemIdentity(() => waitForBootstrapComplete().then(() => installProviderSwitchSnapshot(
+      new ProviderSwitchStore(switchPool), Object.keys(HARNESS_FACTORIES),
+    ))).catch((err) => {
+      logger.error({ err }, 'Provider switch snapshot could not be installed — bots resolve from the registry literal');
+    });
+  }
   void runWithSystemIdentity(() => waitForBootstrapComplete().then((migrated) => {
     if (!migrated) logger.warn('Swarm app auto-load proceeding without confirmed DB bootstrap completion');
     return swarmAppService.autoLoadAllWithRetry();

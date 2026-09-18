@@ -7,18 +7,44 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Make this the authoritative provider-precedence write surface: reject pinned-provider writes, push before persistence, preserve provider-free model changes, and return explicit applied/pushed/version/effective runtime truth
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Kept signed bot bootstrap reads while restricting credential-bearing runtime mutations to exact operator browser sessions; established human principals remain authoritative when a service-secret header is also present
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: reject every credential field before config lookup/push and remove the raw secret carrier; provider/model mutations remain non-secret.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | "A bot's LLM provider is a row in a table": the record this route writes IS the per-bot switch row, so (a) the precedence policy is resolved through the injected switch resolver (bot-row > fleet-default > registry) and the provider_pinned 409 for a declared harness is gone with it — providerOverridable is true for every readable-registry bot; (b) a write refuses an id the build cannot run BEFORE the push (400 with the reason and the accepted ids — classifyProviderId, the same rule the resolver refuses on), so a typo never reaches agent_config; (c) a successful write refreshes the installed snapshot through onRuntimeChanged so the next dispatch carries it without waiting for the timer; (d) the read serves the RESOLVED provider/model as runtime.providerId/modelId with providerSource, and answers 200 from the fleet default for a bot with no record, because the bot-node boot pull reads exactly those two fields and a restarted bot must come up on the fleet switch.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Entry 5's "the record IS the per-bot switch row" was the defect: agent_config is also written by manifest seeding, the bot's broadcast-up and config push, so every machinery-written record outranked a fleet-default write (70 of them on the operator box). The per-bot switch is now a row an OPERATOR wrote in oshal_bot_provider_switch, and this route is where that happens: after the ADR-034 push-before-persist succeeds, a mutation naming a providerId writes the bot's own switch row through the injected writeBotSwitch seam under the caller's identity (updated_by = the operator sub; the table's operator-only policy is the enforcement), and a model-only mutation updates that row's model when the bot already has one. The agent_config record is still written exactly as before — it is the dispatch record beneath the fleet row, never a switch.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | refuseUnrunnableSwitch extracted from applyRuntimeMutation (57 -> 49 code lines, the 50-line rule) and grown by one refusal: a Cline-backed providerId with no modelId in the same mutation is 400 model_required before the push and before any row — the Cline runtime would otherwise run on the container's FORCE_LLM_MODEL seed. The cockpit sends the model with a provider pick (the model select re-renders from the provider's definition), so the panel is unchanged.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
-import { resolveEffectiveBotProvider, type EffectiveBotProvider } from '@/shared/llm-runtime';
+import {
+  classifyProviderId,
+  requireModelForClineBackedId,
+  resolveEffectiveBotProvider,
+  type BotProviderSwitchResolution,
+  type EffectiveBotProvider,
+  type ProviderSwitchCatalog,
+} from '@/shared/llm-runtime';
 import type { ConfigSyncService, RuntimeParams } from '@/features/config-sync';
 import type { AgentConfigService } from '@/features/agent-management';
 import { getActiveRegistry } from '../swarm-bot-registry';
-import { hasAuthenticatedUserIdentity, hasValidServiceSecret, requiresOperator } from '@/shared/middleware/authz';
+import { getCaller, hasAuthenticatedUserIdentity, hasValidServiceSecret, requiresOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'config-runtime-routes' });
 type ConfigValues = Record<string, unknown>;
+
+/** The switch seams the composition root injects; every member is optional (no Postgres → none). */
+export interface RuntimeRouteSwitchDeps {
+  /** The switch resolution for one agent from the installed snapshot (bot-row > fleet > registry). */
+  resolveSwitch?: (agentId: string) => BotProviderSwitchResolution | null;
+  /** The runnable catalog, so a written providerId is refused before it reaches the record. */
+  catalog?: () => ProviderSwitchCatalog | null;
+  /** Called after a persisted write so the installed snapshot re-reads the rows. */
+  onRuntimeChanged?: () => Promise<void>;
+  /**
+   * Writes the bot's OWN switch row (oshal_bot_provider_switch, scope = the canonical agent id)
+   * under the caller's identity. Absent (no Postgres pool) → only the ADR-034 record is written,
+   * which a fleet-default row outranks.
+   */
+  writeBotSwitch?: (agentId: string, providerId: string, modelId: string | null, updatedBy: string) => Promise<void>;
+}
 
 interface ParsedMutation {
   params?: RuntimeParams;
@@ -65,7 +91,7 @@ function parseMutation(input: unknown): ParsedMutation {
  * Resolve provider precedence from the same live registry that composes the bot. Registry read
  * failure is deliberately fail-closed: the highest-precedence tier cannot be assumed absent.
  */
-function resolvePolicy(agentId: string, values: ConfigValues): EffectiveBotProvider {
+function resolvePolicy(agentId: string, values: ConfigValues, switches: RuntimeRouteSwitchDeps): EffectiveBotProvider {
   let registryReadable = false;
   let entry: { harnessType?: string; apiType?: string } | undefined;
   try {
@@ -80,19 +106,37 @@ function resolvePolicy(agentId: string, values: ConfigValues): EffectiveBotProvi
     dbProviderId: optionalString(values.providerId) ?? null,
     dbModelId: optionalString(values.modelId) ?? null,
     registryReadable,
+    switchResolution: switches.resolveSwitch?.(agentId) ?? null,
   });
+}
+
+/**
+ * The provider/model the bot-node boot pull applies: the switch rung when a row won (bot-row or
+ * fleet-default, or a refused row carried by name so the bot refuses it rather than booting
+ * something else), else the record's own values exactly as before.
+ */
+function resolvedRuntimeFields(
+  agentId: string, values: ConfigValues, switches: RuntimeRouteSwitchDeps,
+): { providerId: unknown; modelId: unknown; providerSource: string } {
+  const switched = switches.resolveSwitch?.(agentId) ?? null;
+  if (switched && switched.source !== 'registry') {
+    const modelId = switched.ok ? switched.modelId : optionalString(switched.row.modelId) ?? null;
+    return { providerId: switched.providerId, modelId: modelId ?? values.modelId ?? null, providerSource: switched.source };
+  }
+  return { providerId: values.providerId ?? null, modelId: values.modelId ?? null, providerSource: 'registry' };
 }
 
 function policyPayload(
   policy: EffectiveBotProvider,
-): Pick<EffectiveBotProvider, 'effectiveProvider' | 'effectiveModel'> {
-  return { effectiveProvider: policy.effectiveProvider, effectiveModel: policy.effectiveModel };
+): Pick<EffectiveBotProvider, 'effectiveProvider' | 'effectiveModel' | 'providerSource'> {
+  return { effectiveProvider: policy.effectiveProvider, effectiveModel: policy.effectiveModel, providerSource: policy.providerSource };
 }
 
 async function handleRuntimeRead(
   req: Request,
   res: Response,
   agentConfig: AgentConfigService | undefined,
+  switches: RuntimeRouteSwitchDeps,
 ): Promise<void> {
   const agentId = String(req.params.agentId);
   const startedAt = Date.now();
@@ -103,23 +147,26 @@ async function handleRuntimeRead(
       return;
     }
     const config = await agentConfig.getConfig(agentId);
-    if (!config) {
+    const fleetApplies = (switches.resolveSwitch?.(agentId)?.source ?? 'registry') === 'fleet-default';
+    if (!config && !fleetApplies) {
       res.status(404).json({ success: false, error: `No config record for agent ${agentId}` });
       return;
     }
-    const values = (config.values || {}) as ConfigValues;
+    const values = (config?.values || {}) as ConfigValues;
+    const resolved = resolvedRuntimeFields(agentId, values, switches);
     res.json({
       success: true,
-      agentId: config.agentId,
+      agentId: config?.agentId ?? agentId,
       runtime: {
-        providerId: values.providerId ?? null,
-        modelId: values.modelId ?? null,
+        providerId: resolved.providerId,
+        modelId: resolved.modelId,
         mode: values.mode ?? null,
         requestTimeoutMs: values.requestTimeoutMs ?? null,
       },
+      record: { providerId: values.providerId ?? null, modelId: values.modelId ?? null },
       configVersion: Number(values.configVersion ?? 0),
-      ...policyPayload(resolvePolicy(agentId, values)),
-      updatedAt: config.updatedAt,
+      ...policyPayload(resolvePolicy(agentId, values, switches)),
+      updatedAt: config?.updatedAt ?? null,
     });
   } catch (err) {
     logger.error({ err, agentId }, 'Failed to read agent runtime config');
@@ -146,6 +193,31 @@ function precedenceConflict(
 }
 
 /**
+ * The record is the switch row: an id the build cannot run, or a Cline-backed id written without a
+ * model (the Cline runtime would fall back to the container's FORCE_LLM_MODEL seed), is refused
+ * here by name before anything is pushed or persisted — the same rule the resolver would refuse it
+ * with later. An accepted id is canonicalized in place (a row written `nousresearch` reaches the
+ * `nousResearch` definition).
+ * @returns True when a 400 was written and the mutation must stop.
+ */
+function refuseUnrunnableSwitch(res: Response, params: RuntimeParams, switches: RuntimeRouteSwitchDeps): boolean {
+  const catalog = switches.catalog?.() ?? null;
+  if (!params.providerId || !catalog) return false;
+  const classified = classifyProviderId(params.providerId, catalog);
+  if (!classified.ok) {
+    res.status(400).json({ success: false, applied: false, pushed: false, code: 'provider_unknown', error: classified.reason });
+    return true;
+  }
+  const modelLess = requireModelForClineBackedId(classified, params.modelId ?? null);
+  if (modelLess) {
+    res.status(400).json({ success: false, applied: false, pushed: false, code: 'model_required', error: modelLess.reason });
+    return true;
+  }
+  params.providerId = classified.providerId;
+  return false;
+}
+
+/**
  * Validate one mutation against current precedence, then delegate the push-before-persist
  * transaction to ConfigSyncService. Every early response means the authoritative record stayed
  * unchanged.
@@ -156,6 +228,7 @@ async function applyRuntimeMutation(
   agentId: string,
   configSync: ConfigSyncService | undefined,
   agentConfig: AgentConfigService | undefined,
+  switches: RuntimeRouteSwitchDeps,
 ): Promise<void> {
   const parsed = parseMutation(req.body);
   if (!parsed.params) {
@@ -166,9 +239,10 @@ async function applyRuntimeMutation(
     res.status(503).json({ success: false, applied: false, error: 'Config services unavailable (no Postgres pool)' });
     return;
   }
+  if (refuseUnrunnableSwitch(res, parsed.params, switches)) return;
   const before = await agentConfig.getConfig(agentId);
   const beforeValues = (before?.values || {}) as ConfigValues;
-  const beforePolicy = resolvePolicy(agentId, beforeValues);
+  const beforePolicy = resolvePolicy(agentId, beforeValues, switches);
   const conflict = precedenceConflict(req.body as Record<string, unknown>, beforePolicy);
   if (conflict) {
     res.status(409).json({
@@ -185,8 +259,12 @@ async function applyRuntimeMutation(
     });
     return;
   }
+  await writeOwnSwitchRow(req, before?.agentId ?? agentId, parsed.params, switches);
+  if (switches.onRuntimeChanged) {
+    await switches.onRuntimeChanged();
+  }
   const afterValues = { ...beforeValues, ...parsed.params, configVersion: result.newVersion };
-  const afterPolicy = resolvePolicy(agentId, afterValues);
+  const afterPolicy = resolvePolicy(agentId, afterValues, switches);
   res.json({
     success: true, agentId, applied: true, pushed: result.pushed,
     configVersion: result.newVersion ?? Number(beforeValues.configVersion ?? 0),
@@ -194,17 +272,43 @@ async function applyRuntimeMutation(
   });
 }
 
+/**
+ * The operator's provider pick is the bot's own switch row — the only per-bot record that beats
+ * the fleet default. A provider mutation writes the row with the model it names (or none: the
+ * harness default, never a model left over from another provider); a model-only mutation updates
+ * the row's model when the bot already has one, and otherwise writes nothing here, because a
+ * record with no switch row is governed by the fleet default.
+ */
+async function writeOwnSwitchRow(
+  req: Request,
+  agentId: string,
+  params: RuntimeParams,
+  switches: RuntimeRouteSwitchDeps,
+): Promise<void> {
+  if (!switches.writeBotSwitch) return;
+  const updatedBy = getCaller(req).sub ?? 'operator';
+  if (params.providerId) {
+    await switches.writeBotSwitch(agentId, params.providerId, params.modelId ?? null, updatedBy);
+    return;
+  }
+  const own = switches.resolveSwitch?.(agentId) ?? null;
+  if (params.modelId && own && own.source === 'bot-row' && own.row) {
+    await switches.writeBotSwitch(agentId, own.row.providerId, params.modelId, updatedBy);
+  }
+}
+
 async function handleRuntimeWrite(
   req: Request,
   res: Response,
   configSync: ConfigSyncService | undefined,
   agentConfig: AgentConfigService | undefined,
+  switches: RuntimeRouteSwitchDeps,
 ): Promise<void> {
   const agentId = String(req.params.agentId);
   const startedAt = Date.now();
   logger.info({ agentId }, 'Agent runtime config mutation started');
   try {
-    await applyRuntimeMutation(req, res, agentId, configSync, agentConfig);
+    await applyRuntimeMutation(req, res, agentId, configSync, agentConfig, switches);
   } catch (err) {
     logger.error({ err, agentId }, 'Failed to push agent runtime config');
     res.status(500).json({ success: false, applied: false, error: (err as Error).message });
@@ -222,22 +326,24 @@ async function handleRuntimeWrite(
  * after acceptance through ConfigSyncService.
  * @param configSync - Bidirectional runtime synchronization service.
  * @param agentConfig - Authoritative per-agent config store.
+ * @param switches - The switch resolver, catalog and post-write refresh (all optional).
  * @returns Router mounted under /api/agents.
  */
 export function createConfigRuntimeRoutes(
   configSync: ConfigSyncService | undefined,
   agentConfig: AgentConfigService | undefined,
+  switches: RuntimeRouteSwitchDeps = {},
 ): Router {
   const router = Router();
   router.get(
     '/:agentId/runtime',
     requiresOperatorOrService,
-    (req, res) => void handleRuntimeRead(req, res, agentConfig),
+    (req, res) => void handleRuntimeRead(req, res, agentConfig, switches),
   );
   router.put(
     '/:agentId/runtime',
     requiresOperatorBrowser,
-    (req, res) => void handleRuntimeWrite(req, res, configSync, agentConfig),
+    (req, res) => void handleRuntimeWrite(req, res, configSync, agentConfig, switches),
   );
   return router;
 }
