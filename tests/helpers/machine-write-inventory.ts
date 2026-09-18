@@ -449,7 +449,7 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
       why:
         'Every member REFUSES a machine-secret caller with 403 (requiresOperatorBrowser): the fleet '
         + 'switch moves every bot, so only an exact operator browser session may write it, and the '
-        + 'table (migration 146, FORCE RLS) enforces the operator GUC underneath. Nothing owner-scoped.',
+        + 'table (migration 147, FORCE RLS) enforces the operator GUC underneath. Nothing owner-scoped.',
     },
     behaviorallyProven: true,
     note:

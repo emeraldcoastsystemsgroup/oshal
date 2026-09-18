@@ -44,14 +44,14 @@ export function mountAgentProviderRoutes(app: Application, auth: RequestHandler,
     {
       resolveSwitch: resolveSwitchFor,
       catalog: installedProviderSwitchCatalog,
-      // A provider pick is the bot's own switch row (migration 146, scope = agent id), written under
+      // A provider pick is the bot's own switch row (migration 147, scope = agent id), written under
       // the request identity so the table's operator-only policy is the enforcement.
       ...(store ? { writeBotSwitch: async (agentId, providerId, modelId, updatedBy) => { await store.upsert(agentId, providerId, modelId, updatedBy); } } : {}),
       // The row this route writes must be read now, not on the timer.
       onRuntimeChanged: async () => { await installedProviderSwitchSnapshot()?.refresh(); },
     },
   ));
-  // The fleet-default switch (migration 146): one row, one write, resolved above the registry literal;
+  // The fleet-default switch (migration 147): one row, one write, resolved above the registry literal;
   // DELETE /provider-switch/:agentId releases a bot's own row back to it.
   app.use('/api/agents', auth, createProviderSwitchRoutes({
     store,

@@ -1461,7 +1461,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   `gemini-3.8-flash` from the cockpit and it answers on Gemini in the bot's own log.
 - **Status (2026-09-17, branch `feat/bot-provider-row`):** built and guarded, NOT yet deployed. The
   per-bot row is `agent_config` (unchanged store, unchanged `PUT /runtime` write path; the 409
-  `provider_pinned` is gone), the fleet default is the one row of migration 146
+  `provider_pinned` is gone), the fleet default is the one row of migration 147
   (`PUT/DELETE /api/agents/provider-switch/fleet-default`, Config Admin "Fleet Default" panel),
   `resolveHarnessForAgent` and ADR-034 dispatch stamping read one installed snapshot, the bot node
   translates a Cline-backed id onto `cline-cli` + `CLINE_API_PROVIDER`/`CLINE_API_MODEL` and the
@@ -1499,7 +1499,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   as `updatedBy`, so the fact is readable; the rule does not consult it.
 - **Done when:** a per-bot row records who set it (an operator identity, or the machinery that
   wrote it — never blank); a machinery-written row yields to the fleet default; an operator-written
-  row does not; `/api/agents` reports which of the two a `bot-row` is; and migration 146's rollout
+  row does not; `/api/agents` reports which of the two a `bot-row` is; and migration 147's rollout
   note names, for the operator box, which of the 70 rows (the 11 non-Codex ones by name) move on
   the first fleet write and which hold. Until then all 70 hold — not implemented inside PR #633.
 
