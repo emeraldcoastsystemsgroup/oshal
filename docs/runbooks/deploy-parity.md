@@ -42,7 +42,9 @@ match a fresh fetch exactly. Detached, unpublished, remote-diverged and fetch-fa
 previews are refused. `--allow-unpushed` cannot be combined with preview mode.
 The build archives the captured commit even if the shared checkout advances, and
 the image label must match it even with `--skip-build` or `--dry-run`. API-first
-recreation, worker batching, kernel-skill verification, rollback and parity gates
+recreation, worker batching, kernel-skill verification, the Cline fallback entrypoint
+probe (`scripts/check-cline-entrypoint.mjs --image`, see
+[cline-fallback-entrypoint.md](cline-fallback-entrypoint.md)), rollback and parity gates
 remain in force. Default releases use `main`; previews confer no merge approval.
 
 The source-admission regressions use temporary local Git repositories and invoke

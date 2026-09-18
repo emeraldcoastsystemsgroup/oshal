@@ -13,6 +13,19 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ### A bot that cannot reach Postgres in its first 20 seconds is pool-less for life, and says it is healthy (2026-09-17)
 
+- **Status (branch `botnode-pool-recovery`, awaiting merge + image deploy): (1), (3), (4) done and
+  guarded by `tests/unit/bot-node-database-pool-recovery.spec.ts`, which starts a real disposable
+  PostgreSQL on a reserved loopback port AFTER the bot-side connect has exhausted its window and
+  proves the pool object handed out at exhaustion is the one that later answers. (2) is done in
+  code — `/health` and `/api/health` answer 503 until a configured database has answered once,
+  and `Dockerfile.oshal`'s `HEALTHCHECK` is `curl -f http://localhost:5000/health`, which the spec
+  runs verbatim against the real routes (exit 22 while pool-less, exit 0 after) — but the
+  built-image probe the done-when asks for has NOT been run: no image build was permitted on the
+  memory-constrained box. The running fleet keeps the old behaviour until `oshal-deploy.sh` ships
+  this commit. Also not done: the mesh bid responder captures the boot-time capabilities by
+  value, so a bot that recovers late bids with its YAML capabilities, not the persisted profile's,
+  until its next restart.
+
 - **Measured 2026-09-17, 22:24Z.** The Docker daemon bounced inside a VM that stayed up: 51 of 52
   containers carry a `StartedAt` in the same minute. Every bot-node cold-started beside a cold
   Postgres. `bot-node-runtime` retries its connect `maxAttempts: 10` at 2 s — a 20 second window —
@@ -901,7 +914,21 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done when:** exact pre/post disk figures are recorded, the intended orphan only is removed, and all active swarm volumes and databases pass health checks afterward.
 
 ### Real-boundary regression doctrine
-- **Remaining:** run the existing migration-117 disposable-PostgreSQL proof through the protected promotion job and retain its result. The corrected provenance ledger, connection-scoped broker, two-owner/operator fixture, and real-Pool live spec are implemented locally, but an unexecuted live spec is not RLS evidence.
+- **Remaining:** the durable-memory half is done. `tests/swarm-memory-rls-live.spec.ts` was run on
+  2026-09-17 against a real PostgreSQL 16 in a disposable container (1 passed, 431 ms), and it is
+  now listed in `tests/e2e-green-suite.txt`, so the promotion gate runs it instead of it sitting on
+  disk. The audit row records the result and both mutations that make it evidence: loosening the
+  ledger-broker policy to `USING (true)` leaks 2 rows instead of 0 to the unbrokered NOBYPASSRLS
+  read, and removing the service's transaction-local broker marker makes PostgreSQL refuse the
+  write so the store answers 200 instead of 201. Still owed: (1) the spec's FIRST run inside the
+  promotion job itself - the 2026-09-17 run was a direct Playwright invocation, and the nightly
+  `ci-local.sh` e2e gate has not executed since it joined the list (that gate is also inside the
+  twelve-night failure streak entry below); (2) the one other audit row still marked `Owed` on a
+  boundary reachable locally - the `secret-scan` row, which needs one real
+  `zricethezav/gitleaks:latest` run over an export holding a path the scanner cannot read, plus
+  evidence that the floating `:latest` tag still writes one of the five wordings
+  `GITLEAKS_UNREAD_PATTERN` was calibrated against. Every remaining row besides those two is
+  deployment-, hardware-, cluster- or vendor-token-gated and is dated in its own row.
 - **Done when:** the durable-memory ledger has the same real-boundary evidence already recorded for ticket/store gateways, aliased module resolution, and built-image artifacts, and the audit contains no unresolved local boundary.
 
 ### Installer and chat-channel strings still use the retired standalone product name
@@ -1388,6 +1415,37 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ## Workflow, agent, and model runtime
 
+### Jarvis in dev mode should see what this workspace sees: an indexed developer corpus (operator, 2026-09-18)
+
+- **What the operator asked for, verbatim:** "i would like to have a package that is indexed for jarvis
+  when in dev mode and building on the software itself.. it would be great to have a docs package
+  already indexed for devmode and all the scratchpads that would be relevant and internal notes so that
+  the developers workspace really looks like this workspace.. then when jarvis is in dev mode he really
+  has all the information."
+- **What exists to build on:** the RAG rail (`src/features/rag/`, ChromaDB `infra-runbooks`,
+  `scripts/rag-enable-embeddings.sh`), the dev console and self-developing platform (ADR-077), the
+  oshal-developer bot, and the documentation the sessions already keep in the tree: `docs/adr/`,
+  `docs/BACKLOG.md`, `docs/runbooks/`, `docs/backlog/` handovers, `docs/governance/`. The corpus a
+  human developer actually works from also includes material that is deliberately NOT in git:
+  `COLLABORATE.md` (untracked by design), the operator-local session notes, and lane scratch notes.
+- **Shape:** a store package (`dev-workspace-index` or an extension of `oshal-dev`) that builds a
+  dev-mode-only RAG collection FROM THE LOCAL CHECKOUT at index time - so it matches this workspace,
+  not a published snapshot - with a curated manifest of what is in and what is out. In: the tracked
+  docs above, `CLAUDE.md`, `CONTRIBUTING.md`, ADR index, package READMEs; optionally the local
+  `COLLABORATE.md` and a named local notes directory. Out, always: `.env`, `config-seed/`, anything
+  the publish gate refuses, lane clones and transcripts, and any file carrying a person's identifier
+  (the corpus is read by a bot that answers other people).
+- **Dev mode is the gate:** the collection is queryable only when the caller is in the ADR-077 dev
+  console context (operator-owned request, dev mode on); a normal Jarvis turn cannot reach it.
+- **Done when:** (1) `oshal-app.yaml` declares the collection and the index manifest; (2) one command
+  (re)builds the index from the checkout and reports counts - generated, never typed - of documents,
+  chunks, and skipped-by-rule files; (3) a Jarvis dev-mode ask that names an ADR number, a BACKLOG
+  entry title, or a runbook returns the cited `doc_id` from this corpus (Test Lab case, headless);
+  (4) the same ask outside dev mode does not reach the collection (refusal case); (5) the exclusion
+  list is a guard that goes red when a secret-shaped or identifier-carrying file is indexed;
+  (6) the operator opens the dev console and asks Jarvis about tonight's handover and gets the file.
+
+
 ### A bot's LLM provider is a row in a table, not a literal in the registry (operator, 2026-09-17)
 
 - **What the operator hit.** Codex ran out of tokens for one login and the instruction was "set the
@@ -1424,6 +1482,7 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   `registry`) so the UI can show where a value came from. A fleet-default control lives beside it.
 - **Out of scope here:** the Cline fallback's missing binary - its own change with an image-level
   guard, because it restores agentic work on the persisted Gemini config without touching resolution.
+  **That change landed as its own entry below** ("The Cline fallback brain could not start").
 - **The layer model, as the operator stated it (2026-09-17) and as the code already partly has it.**
   There are two owners of a brain choice and they nest. Measured in `src/app/routes/user-brain-resolution.ts`
   (ADR-127) and `src/app/bot-node-execution-handler.ts`:
@@ -1520,6 +1579,40 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   record; 9 of 15 cases red on the pre-fix store, 15 green after) and
   `tests/unit/dispatch-switch-row-stamping.spec.ts` (the box's three record shapes beneath a fleet
   row; red on the pre-fix projection, green after).
+
+### The Cline fallback brain could not start: a glibc executable on a musl base (2026-09-17)
+
+- **What was measured.** On a real ticket at 22:57Z: Codex refused on its usage limit, the JS
+  `ProviderFailoverProvider` fired (`provider_runtime_failure`, primary=openai-codex,
+  fallback=cline-cli), and the fallback died with `spawnSync
+  /usr/local/lib/node_modules/cline/bin/.cline ENOENT` - a file that EXISTS (151 MB ELF,
+  `PT_INTERP /lib64/ld-linux-x86-64.so.2`; `/lib64` did not exist; base is Alpine). `cline@latest`
+  floated from the pure-JS 2.x line onto 3.x, whose npm package is a Bun-compiled glibc
+  executable with no musl build. With the binary starting (a container hot-fixed with unconfined
+  gcompat at 23:11Z) the next failed-over ticket at 23:16:33Z died a second way: the wrapper passed
+  `-m gpt-5.5` (the fleet default `ClineProvider` was constructed with) to the resolved gemini
+  backing provider - `models/gpt-5.5 is not found for API version v1beta`.
+- **Landed (PR "fix(image): the Cline fallback brain could not start"):** `Dockerfile.oshal` pins
+  cline by `ARG CLINE_VERSION`, installs the gcompat loader stub CONFINED to the glibc executable
+  (the `/lib` glibc aliases are removed so node still refuses glibc-only native addons - measured
+  before and after on the msgpackr glibc build) and asserts inside the layer that `cline --version`
+  prints the pinned version; `scripts/check-cline-entrypoint.mjs` runs the real launcher inside an
+  image or a running container and `scripts/oshal-deploy.sh` refuses an image that fails it;
+  `ClineProvider` gates and spawns with the backing provider's model. Guards:
+  `tests/unit/cline-entrypoint-probe.spec.ts`, `tests/unit/cline-provider-fallback-model.spec.ts`.
+  Runbook: `docs/runbooks/cline-fallback-entrypoint.md` (includes the per-container operator
+  hot-fix).
+- **Proof so far:** the probe is FAIL (`glibc-binary-no-loader`) on `oshal-bot:latest` and on
+  `oshal-local-api`, PASS on a throwaway container carrying the new layer, where a real Gemini
+  task also completed; the Dockerfile RUN body executed in a throwaway container from the shipped
+  image exits 0 with the pinned version and 1 with a drifted one.
+- **Remaining:** no image was built on the box (memory constrained), so the in-layer assert has not
+  run inside a real `docker build`; the running fleet still carries the broken image; nothing
+  exercises cline 3.x's migration of the wrapper's `config.json` into its own `providers.json`.
+- **Done when:** `bash scripts/oshal-deploy.sh` builds the image with the layer green, its image
+  verify prints `image verified: cline fallback entrypoint starts`, and a ticket that fails over
+  from Codex completes on the persisted Gemini config with `provider: 'cline-cli'` and
+  `model: gemini-3.8-flash` on its `chat_tasks` row.
 
 
 ### Jarvis briefing preferences (operator ask, 2026-08-09)

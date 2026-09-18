@@ -144,6 +144,10 @@ Related runbooks that live with their domain:
 - [localhost-wedge-wslrelay.md](localhost-wedge-wslrelay.md) — Windows Docker Desktop `wslrelay`
   ::1-squatter diagnosis (extracted from the Little Monsters runbook when LM was carved out to
   the app store — its app docs now live in the oshal-applications store repo, ADR-085).
+- [cline-fallback-entrypoint.md](cline-fallback-entrypoint.md) — the JS failover's `cline-cli`
+  brain could not start in the shipped image (cline 3.x is a glibc executable, the base is musl):
+  what was measured, the confined gcompat layer, `scripts/check-cline-entrypoint.mjs` against an
+  image or a running container, and the per-container operator hot-fix until the next deploy.
 - [deploy-parity.md](deploy-parity.md) — `scripts/deploy-parity-check.sh`: catch the api and
   bot-node containers drifting onto different `any-bot:latest` builds (the split-image bug that
   ships two-half features broken). Run after any `--force-recreate`; `oshal-up.sh` runs it too.

@@ -29,6 +29,7 @@
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Forward the signed providerConfigRequired authority marker into swarm execution so missing provider records are distinguishable from intentional legacy dispatches and fail closed before task creation.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Forward the validated app/capability/pattern prompt carrier from /api/swarm-execute into the execution envelope; malformed trusted configuration now fails closed at the HTTP boundary.
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Capture protected execution authority after signed replay verification and refuse unbound Token Chase replay for protected bots.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com | A bot that loses the cold-start race to Postgres is no longer pool-less for life while reporting healthy. The runtime is built with recoverDatabase, so the pool survives boot-window exhaustion and recovers in the background; /health and /api/health moved to bot-node-health-routes.ts and answer 503 until a configured database has answered once (the container HEALTHCHECK is curl -f /health); and the boot-only database step - the agent profile seed and the persisted heartbeat role/capabilities - re-runs on the first late connect.
  */
 
 /**
@@ -60,6 +61,7 @@ import { getActiveRegistry } from '@/app/extensions/swarm/swarm-bot-registry';
 import { seedAgentProfile } from '@/app/extensions/swarm/agent-profile-boot-seeder';
 import { type AgentProfile } from '@/entities/agent';
 import { createBotNodeRuntime } from './bot-node-runtime';
+import { registerBotNodeHealthRoutes } from './bot-node-health-routes';
 import { buildBotNodeHttpResponse } from './bot-node-http-response';
 import {
   canonicalBotWorkspaceId,
@@ -117,7 +119,7 @@ async function start(): Promise<void> {
   // Identity, Postgres (+GUC/RLS wrapper), repositories, the any-bot LLM provider
   // stack and the envelope execution handler all come from ONE construction path,
   // shared with the one-shot batch runner (bot-node-batch.ts, ADR-078 §1).
-  const runtime = await createBotNodeRuntime();
+  const runtime = await createBotNodeRuntime({ recoverDatabase: true });
   const {
     agentId, botName, pool, agentProfileRepository, workItemRepository,
     costTrackingService, ticketService, executionHandler, agenticController,
@@ -144,7 +146,8 @@ async function start(): Promise<void> {
   // rows that never matched the heartbeat id (observed live: two duplicate
   // general-bot rows, making the call-out's general fallback unreachable).
   let persistedProfile: AgentProfile | null = null;
-  if (agentProfileRepository) {
+  const seedAndReadProfile = async (): Promise<void> => {
+    if (!agentProfileRepository) return;
     try {
       await seedAgentProfile(pool, runtime.identity);
       // System identity: this boot path has no request-identity middleware, and the day the
@@ -157,10 +160,21 @@ async function start(): Promise<void> {
     } catch (err) {
       logger.warn({ err, agentId }, 'Agent profile seed failed — non-blocking');
     }
-  }
+  };
+  await seedAndReadProfile();
 
-  const heartbeatRole = resolveHeartbeatRole(runtime.role, persistedProfile);
-  const heartbeatCapabilities = resolveHeartbeatCapabilities(runtime.capabilities, persistedProfile);
+  let heartbeatRole = resolveHeartbeatRole(runtime.role, persistedProfile);
+  let heartbeatCapabilities = resolveHeartbeatCapabilities(runtime.capabilities, persistedProfile);
+  // Lost the cold-start race: the seed above ran against a database that was not there. Run it
+  // again on the first successful connect so a recovered bot ends up where a warm boot would have.
+  if (runtime.database.status().configured && !runtime.database.status().ready) {
+    void runtime.database.whenReady.then(async () => {
+      await seedAndReadProfile();
+      heartbeatRole = resolveHeartbeatRole(runtime.role, persistedProfile);
+      heartbeatCapabilities = resolveHeartbeatCapabilities(runtime.capabilities, persistedProfile);
+      logger.info({ agentId }, 'Late database connect: agent profile seeded and heartbeat identity refreshed');
+    });
+  }
   // ── Ticket terminal check ───────────────────────────────────────
   const isTicketTerminal = pool
     ? async (ticketId: string): Promise<boolean> => {
@@ -254,12 +268,12 @@ async function start(): Promise<void> {
   // GET health/metrics probes are the only deliberate public surface.
   app.use(authorizeBotNodeBeforeBody);
   app.use(express.json({ limit: '5mb' }));
-  app.get('/health', (_req, res) => res.json({ status: 'ok' }));
-  app.get('/api/health', (_req, res) => res.json({
-    status: 'ok', runtime: 'bot-node', agentId, botName,
-    provider: activeLlm().provider, model: activeLlm().model,
-    timestamp: new Date().toISOString(),
-  }));
+  // Database-aware: 503 while a configured database has never answered, so the container
+  // HEALTHCHECK (curl -f /health) and `docker ps` tell the truth about a pool-less bot.
+  registerBotNodeHealthRoutes(app, {
+    databaseStatus: runtime.database.status,
+    describe: () => ({ runtime: 'bot-node', agentId, botName, provider: activeLlm().provider, model: activeLlm().model }),
+  });
   // Prometheus scrape target — the series the ADR-119 container-health rules key on.
   // Same exposure class as /health (process liveness, start time, CPU, RSS); no persona,
   // no workspace paths, no credentials. cAdvisor cannot see these containers at all on
@@ -540,6 +554,7 @@ async function start(): Promise<void> {
     clearInterval(heartbeatInterval);
     await agentWorker.stop();
     await delegationRuntime.close();
+    runtime.database.stop();
     if (pool) await pool.end();
     process.exit(0);
   };

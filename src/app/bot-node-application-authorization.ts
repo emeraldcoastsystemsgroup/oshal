@@ -7,11 +7,13 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve durable protected ownership for verified hosted execution while keeping unbound transports unavailable.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Say WHY the posture is unavailable. readProtectedBotApplication ended in a bare `catch { throw ... }` that discarded the cause, so a bot answered 503 authorization_bot_posture_unavailable for every execution with nothing anywhere recording the reason. That is not hypothetical: migration 140 exists because oshal_bot could not SELECT the tables this guard reads, the 42501 was swallowed here, the api surfaced "Bot node returned 500", and the page spoke a generic apology. The refusal is CORRECT and both throws keep their exact code and 503 status — what changes is that the cause is logged at ERROR and attached to the error, and a conflicting-ownership refusal (a real posture decision) is distinguished in the log from an infrastructure fault (undetermined). Guard: tests/unit/bot-node-application-authorization.spec.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Correct the live comment that named migration 140. That migration is deleted by this change - the bot reads the derived helper oshal_application_execution_claims instead - and a comment pointing at a file that no longer exists is how a later lane gets misdirected. The Change Log entries above are left exactly as written: they record what was true when each change landed.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Name the pool outage. A bot that lost the cold-start race to Postgres refused every protected execution with authorization_bot_posture_unavailable, which reads as an authorization fault and sent readers to a grant check that passes (2026-09-16 and 2026-09-17, 28 of 36 bots). A missing pool, or an ownership read that failed because the database could not be REACHED, now refuses with database_pool_unavailable. The refusal is unchanged in every other respect: same class, same 503, still thrown before any execution, and a database that ANSWERS with an error (42501, missing helper) or a conflicting ownership keeps authorization_bot_posture_unavailable. Guard: tests/unit/bot-node-application-authorization.spec.ts and tests/unit/bot-node-database-pool-recovery.spec.ts.
  */
 /** Protected package execution requires both durable ownership and current caller permits. */
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { readApplicationExecutionOwnership } from './application-execution-ownership';
+import { DATABASE_POOL_UNAVAILABLE, isDatabaseUnavailableError } from './bot-node-database-pool';
 
 const logger = createChildLogger({ module: 'bot-node-application-authorization' });
 export class BotApplicationAuthorizationError extends Error {
@@ -45,7 +47,14 @@ export async function assertBotNodeApplicationTransport(pool: Pick<Pool, 'query'
  * @returns The protected owning application, or null for an unprotected execution.
  */
 export async function readProtectedBotApplication(pool: Pick<Pool, 'query'> | null, localAgentId: string, requestedAgentId: string): Promise<string | null> {
-  if (!pool || !localAgentId || !requestedAgentId) {
+  if (!pool) {
+    // Fail closed exactly as before; what changes is that the refusal says the DATABASE is the
+    // cause, so nobody audits grants for a bot that simply has no pool.
+    logger.error({ hasPool: false, localAgentId, requestedAgentId },
+      'bot posture undetermined: no database pool; failing closed');
+    throw new BotApplicationAuthorizationError(DATABASE_POOL_UNAVAILABLE);
+  }
+  if (!localAgentId || !requestedAgentId) {
     // Same fail-closed throw as before. Logged because this code reaches the operator as a
     // bare 503 and a missing pool is indistinguishable from a denial without it.
     logger.error({ hasPool: Boolean(pool), localAgentId, requestedAgentId },
@@ -65,6 +74,11 @@ export async function readProtectedBotApplication(pool: Pick<Pool, 'query'> | nu
     // infrastructure fault (a 42501 from the ownership read) and is merely UNDETERMINED.
     // Both refuse; only the log tells them apart.
     const conflicting = err instanceof Error && err.message === 'Conflicting protected bot ownership';
+    if (!conflicting && isDatabaseUnavailableError(err)) {
+      logger.error({ err, localAgentId, requestedAgentId },
+        'bot posture undetermined: database unreachable; failing closed');
+      throw new BotApplicationAuthorizationError(DATABASE_POOL_UNAVAILABLE, err);
+    }
     logger.error({ err, localAgentId, requestedAgentId, conflicting },
       conflicting
         ? 'bot posture refused: conflicting protected bot ownership'
