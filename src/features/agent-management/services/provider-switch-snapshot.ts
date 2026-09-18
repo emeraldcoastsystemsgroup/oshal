@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | In-memory snapshot of the switch table so the SYNCHRONOUS harness resolver (resolveHarnessForAgent runs inside getProvider(agentId), which has no await) and the async dispatch stamper read the same rows and therefore agree. Refreshed at boot, after every write through the api, and on a timer so a row written straight into the table ("literally a switch in a table") takes effect without an api restart. A failed refresh keeps the last good rows and logs the error; a snapshot that never loaded resolves as "no rows", which is today's registry behaviour.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | resolveFallbackChain: the fallback_order column had no reader. The cockpit wrote a row and the panel reported it while every bot resolved an empty chain, because resolveProviderFallbackChain had zero production callers. The chain now resolves from the same rows, by the same precedence, as the provider id.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -11,6 +12,8 @@ import { runWithSystemIdentity } from '@/shared/services/database/request-identi
 import {
   FLEET_DEFAULT_SWITCH_ID,
   resolveBotProviderSwitch,
+  resolveProviderFallbackChain,
+  type ProviderFallbackChain,
   type BotProviderSwitchResolution,
   type ProviderSwitchCatalog,
   type ProviderSwitchRow,
@@ -137,6 +140,23 @@ export class ProviderSwitchSnapshot {
       botRow: this.rowFor(agentId),
       fleetRow: this.fleetDefault(),
       registry,
+      catalog: this.catalog,
+    });
+  }
+
+  /**
+   * @description Resolve the ordered FALLBACK CHAIN for one bot from the same rows, by the same
+   * precedence as the provider itself. Without this the fallback_order column reaches nothing: the
+   * cockpit wrote a row, the panel reported it, and every bot resolved an empty chain.
+   * @param agentId - The bot's agent id.
+   * @param primaryProviderId - The provider that would be failing over, excluded from its own chain.
+   * @returns The ordered chain and the rung that supplied it.
+   */
+  resolveFallbackChain(agentId: string, primaryProviderId: string | null): ProviderFallbackChain {
+    return resolveProviderFallbackChain({
+      botRow: this.rowFor(agentId),
+      fleetRow: this.fleetDefault(),
+      primaryProviderId,
       catalog: this.catalog,
     });
   }

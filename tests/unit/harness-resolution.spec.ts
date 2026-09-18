@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit guard for resolveHarnessForAgent + the HARNESS_FACTORIES/HARNESS_RUNTIME_DEFAULTS totality (per-bot harnessType override vs the process-level FORCE_LLM_PROVIDER default). Previously exercised only via noop-mode e2e, though this is exactly the wiring that has broken before (a harnessType with no factory silently fell back to the wrong provider).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Switch-row cases for "a bot's LLM provider is a row in a table": with an installed snapshot a per-bot row retargets the harness, the fleet default reaches a registry LLM bot but not a harness-less one, a per-bot row beats the fleet default, an unknown id returns a RefusedProviderSwitch whose every request fails with the reason, and an installed-but-EMPTY snapshot resolves every mock bot to the same provider as no snapshot at all (the byte-identical no-row case).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | antigravity-cli added to the expected union. This guard went red on the branch that added the harness, which is the guard working: a union member without BOTH a factory and a runtime-defaults entry falls back to the cline defaults silently.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -69,7 +70,7 @@ const logger = createChildLogger({ module: 'harness-resolution-test' });
 /** The complete HarnessType union (harness-adapter.ts). Both parallel records must be keyed
  *  by EXACTLY this set — a union member added without a factory OR a runtime-defaults entry is
  *  the maintenance hazard the code comments call out, and this list is what makes it visible. */
-const EXPECTED_HARNESS_TYPES = ['a2a', 'claude-code', 'cline', 'codex-cli', 'gemini-cli', 'noop'];
+const EXPECTED_HARNESS_TYPES = ['a2a', 'antigravity-cli', 'claude-code', 'cline', 'codex-cli', 'gemini-cli', 'noop'];
 
 describe('resolveHarnessForAgent — per-bot harness override vs process default', () => {
   // The name-fallback arm reads BOT_NAME/AGENT_ID; clear them so an unknown-agentId lookup

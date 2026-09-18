@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-034 boot bootstrap-pull (env-as-seed): on bot-node startup, pull this agent's authoritative provider/model record from the controller (GET /api/agents/:id/runtime) and apply it to the process env BEFORE the any-bot LLM stack is built, so FORCE_LLM_PROVIDER / CODEX_MODEL / CLAUDE_CODE_MODEL become first-boot seeds that defer to the pulled record. Fail-open by design: controller unreachable, no record (404), or malformed response → the legacy env self-resolve behavior is untouched (WARN/INFO logged). Kill switch OSHAL_BOT_CONFIG_BOOTSTRAP=off. The live mid-flight config-change envelope remains the other half of the backlog item.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Thundering-herd fix (BACKLOG 2026-07-19 "bot-recreate herd on /api/config/runtime"): on a mass cold-start (engine-restart auto-start, install.sh, unbatched deploys) ~35 bots pulled GET /api/agents/:id/runtime simultaneously, exceeding the api's 20-client pg pool and blowing its 10s connectionTimeoutMillis (bots then fell open to env self-resolve). runBootConfigBootstrap now sleeps a uniform-random jitter before the pull. Knob: OSHAL_BOT_CONFIG_BOOTSTRAP_JITTER_MS = the jitter WINDOW in ms (delay is uniform in [0, window)); default 12000 spreads 35 bots to ~3 pulls/sec; 0 disables (tests/CI). rng + sleep are injectable for tests. The jitter stays BEFORE the LLM stack build, so no request is ever served on stale config mid-boot, and the fail-open contract is untouched.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The boot pull carries the FALLBACK ORDER, not just the provider. It is the only path from a switch row to a bot node, so without it the fallback_order column and the cockpit control that writes it reached nothing - an administrator got a success banner and a persisted row while every bot resolved an empty chain, and the only way to configure failover was a host .env edit plus a container recreate. An absent field leaves the container as it is (an older controller); an EMPTY array is a real answer and is applied as one.
  */
 
 /**
@@ -46,6 +47,12 @@ const DEFAULT_BOOT_JITTER_WINDOW_MS = 12000;
 export interface PulledBotConfig {
   providerId: string | null;
   modelId: string | null;
+  /**
+   * The administrator's ordered fallback chain, resolved api-side from the switch rows. `null` when
+   * the controller did not send one (an older api), which leaves whatever the container already has;
+   * an EMPTY array is a real answer — no failover — and is applied as such.
+   */
+  fallbackOrder: readonly string[] | null;
   configVersion: number | null;
 }
 
@@ -139,7 +146,7 @@ export async function pullBotConfigFromController(
     }
     const body = await response.json() as {
       success?: boolean;
-      runtime?: { providerId?: unknown; modelId?: unknown };
+      runtime?: { providerId?: unknown; modelId?: unknown; fallbackOrder?: unknown };
       configVersion?: unknown;
     };
     const runtime = body?.runtime;
@@ -150,6 +157,10 @@ export async function pullBotConfigFromController(
     return {
       providerId: readNonEmptyString(runtime.providerId),
       modelId: readNonEmptyString(runtime.modelId),
+      // Absent stays null (an older controller); [] is a real answer and must survive as [].
+      fallbackOrder: Array.isArray(runtime.fallbackOrder)
+        ? runtime.fallbackOrder.map((entry) => String(entry ?? '').trim()).filter(Boolean)
+        : null,
       configVersion: typeof body.configVersion === 'number' && Number.isFinite(body.configVersion)
         ? body.configVersion
         : null,
@@ -187,6 +198,13 @@ export function applyPulledBotConfigToEnv(
   if (provider) {
     env.FORCE_LLM_PROVIDER = provider;
     applied.push('FORCE_LLM_PROVIDER');
+  }
+  if (pulled.fallbackOrder) {
+    // The row is the authority. Writing '' for an empty chain is deliberate and is why the node's
+    // resolver selects on truthiness rather than `??`: an empty value means "no chain here", and
+    // the legacy single-name variables are then free to answer.
+    env.OSHAL_PROVIDER_FALLBACK_ORDER = pulled.fallbackOrder.join(',');
+    applied.push('OSHAL_PROVIDER_FALLBACK_ORDER');
   }
   if (pulled.modelId) {
     env.FORCE_LLM_MODEL = pulled.modelId;

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the codex fleet default (operator directive 2026-08-12). Pins four invariants: (1) every LLM-harness bot in BOTH registries is codex-cli/openai-codex (a2a is the only exception — an external-agent boundary, not an LLM harness), with hard count floors so an emptied registry can't pass vacuously; (2) the codex model defaults never fall below gpt-5.5 and gpt-5.3-codex (the API-key-only name that 400s on a ChatGPT login) never reappears as a default — compose interpolation defaults included; (3) both codex spawn paths pin `-c model_reasoning_effort` (default high) — asserted on the REAL spawn argv via a stubbed spawnImpl, because the per-task codex home copies the HOST config.toml and a host-side effort tuned for gpt-5.6-sol (ultra) 400s every fleet turn on gpt-5.5/gpt-5.4 (verified live); (4) the compose fleet-provider defaults stay openai-codex.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-128 Amendment 1 guard rows: DEMO_CLI_ORDER is codex-only, a harness-less manifest bot inherits codex-cli, an explicit per-bot claude-code still wins, a stalled codex node never auto-fails-over onto claude-code, and a NAMED claude-code failover still resolves. Mutation-tested: restoring all five defaults turns four rows red.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The codex floor is asserted against the new architecture. The hardcoded per-primary fallback map this case pinned was deleted 2026-09-18 (the administrator names the chain; no code names a provider), so the case now proves the STRONGER form of the same rule: an unconfigured node produces no fallback at all and therefore cannot reach claude-code by any route, and a configured chain is honoured exactly as written. BEHAVIOUR CHANGE, deliberate and called out in the PR: a node with nothing configured no longer auto-fails-over, where before it walked a chain it was given in code.
  */
 
 import { EventEmitter } from 'events';
@@ -232,11 +233,26 @@ describe('ADR-128 Amendment 1 — no automatic chain may default to claude-code'
         'openai-codex': { name: 'codex-sentinel' },
         'cline-cli': { name: 'cline-sentinel' },
       };
-      const wrapped = maybeWrapBotNodeProviderFailover({ name: 'codex-primary' }, 'openai-codex', providers);
+      // THE MECHANISM MOVED, THE INTENT DID NOT. Until 2026-09-18 an unconfigured node walked a
+      // hardcoded per-primary map, and this case pinned the one rule that map encoded: codex must
+      // never degrade onto the cancelled Claude subscription. That map is gone - an administrator
+      // now names the chain and its order, and no code names a provider - so the strongest form of
+      // the same rule is that an UNCONFIGURED node produces no fallback at all, and therefore
+      // cannot produce claude-code by any route.
+      const unconfigured: { fallbackName?: string; fallback?: unknown } =
+        maybeWrapBotNodeProviderFailover({ name: 'codex-primary' }, 'openai-codex', providers);
+      expect(unconfigured.fallbackName, 'codex must not degrade onto a cancelled subscription').not.toBe('claude-code');
+      expect(unconfigured.fallback, 'nothing in code may hand back the claude-code provider')
+        .not.toBe(providers['claude-code']);
+      expect(unconfigured.fallbackName, 'an unconfigured node invents no chain').toBeUndefined();
 
-      expect(wrapped.fallbackName, 'codex must not degrade onto a cancelled subscription').not.toBe('claude-code');
-      expect(wrapped.fallback).not.toBe(providers['claude-code']);
-      expect(wrapped.fallbackName).toBe('cline-cli');
+      // And when an administrator DOES configure one, it is theirs - including the ability to name
+      // claude-code deliberately, which the old map could not express at all.
+      const configured = maybeWrapBotNodeProviderFailover(
+        { name: 'codex-primary' }, 'openai-codex', providers, ['cline-cli'],
+      );
+      expect(configured.fallbackName).toBe('cline-cli');
+      expect(configured.fallback).toBe(providers['cline-cli']);
     } finally {
       if (priorFallback === undefined) delete process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER;
       else process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER = priorFallback;

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extract the unattended CLI denial into a dependency-free policy module so controller-side preflight callers do not import the bot-node harness runtime.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: export isUnbrokeredAutonomousProvider so the chat entry points can test "would this registry harness be refused?" against the ONE policy set instead of duplicating it. The refusal itself is unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | antigravity-cli joins the refused set. It was added to the HarnessType union and HARNESS_FACTORIES but not here, so assertAuditedAutonomousHarness('antigravity-cli') returned without throwing - the only local CLI in the inventory the guard did not refuse - while three separate comments claimed it was gated like every other one. The blast radius was wider than spawn: agentRequiresHostedBrain is built on the same predicate, so an inline bot on this harness would have skipped the ADR-127 hosted-brain ladder and spawned a controller-local CLI.
  */
 
 const UNBROKERED_AUTONOMOUS_PROVIDERS: ReadonlySet<string> = new Set([
@@ -12,6 +13,7 @@ const UNBROKERED_AUTONOMOUS_PROVIDERS: ReadonlySet<string> = new Set([
   'codex-cli',
   'claude-code',
   'gemini-cli',
+  'antigravity-cli',
 ]);
 
 /**
