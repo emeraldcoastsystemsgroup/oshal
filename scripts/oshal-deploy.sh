@@ -48,6 +48,11 @@
 #           nothing is known to work: supply OSHAL_VERIFY_OPERATOR_PAT. Not rolled back.
 #           4 and 5 are different facts — proved broken vs never proved — and a caller that
 #           collapses them loses the only distinction that says which one to go fix.
+#         6 deployed and SERVING, but the api did NOT live through the bot-recreate storm.
+#           Not rolled back: the image is live and the downtime already happened, so
+#           restoring the previous image would only recreate the storm. A storm check that
+#           could not be taken is neither 0 nor 6 — it exits 0 with an UNVERIFIED tail,
+#           because "I could not look" is not "it survived".
 #
 # Env:    OSHAL_DEPLOY_SKIP_LIVE_VERIFY=1  skip the post-deploy live verification entirely.
 #         The ONLY switch that skips it, and it exists for a deployment that carries no
@@ -393,9 +398,13 @@ fi
 # inspect the container", which is a gate that could not verify, not a restart. Saying
 # the api died because docker answered 500 sends the operator after a restart that never
 # happened - the same doctrine this script already applies to a snapshot it cannot take.
+STORM_TAIL="api lived through the recreate (RestartCount $STORM_RESTARTS unchanged)"
 if [ "$STORM_RC" -eq 2 ]; then
   log "storm probe: UNVERIFIED - the api container could not be inspected; this run proves nothing about the recreate storm"
-  FAILED_CHECKS="${FAILED_CHECKS:+$FAILED_CHECKS }api-storm-unverified"
+  # The verdict has to reach the ONE line an operator reads, not just the scrollback above it:
+  # saying UNVERIFIED here and "api lived through the recreate" below is the same false claim
+  # moved down a line. Same shape the live verification already uses for its own tail.
+  STORM_TAIL="the api storm check is UNVERIFIED - the container could not be inspected, so this run proves NOTHING about the recreate"
 elif [ "$STORM_RC" -ne 0 ]; then
   log ""
   log "✗ deployed ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots healthy, parity clean, ${VERIFY_TAIL},"
@@ -406,7 +415,7 @@ elif [ "$STORM_RC" -ne 0 ]; then
   exit 6
 fi
 
-log "DEPLOYED ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots, parity clean, 0 unhealthy, ${VERIFY_TAIL}, api lived through the recreate (RestartCount $STORM_RESTARTS unchanged)"
+log "DEPLOYED ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots, parity clean, 0 unhealthy, ${VERIFY_TAIL}, ${STORM_TAIL}"
 log "advisory error scan (api, this boot):"
 docker logs "$API_CONTAINER" 2>&1 | grep -c '"level":50' | xargs -I{} echo "  error-level lines: {}" | tee -a "$RUN_LOG"
 exit 0
