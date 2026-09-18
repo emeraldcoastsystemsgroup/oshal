@@ -101,7 +101,7 @@ describe('a server-terminated checked-out connection', () => {
     expect(serverTerminations()).toBeGreaterThan(before);
   }, 90_000);
 
-  it('owned: is one ERROR line, one rejected statement, and a pool that still serves', () => {
+  it('owned: is an ERROR line per pg error event (two for one termination: the server’s 25P03 and pg’s own connection-terminated event, milliseconds apart), one rejected statement, and a pool that still serves', () => {
     const before = serverTerminations();
     const run = runChild(true);
     expect(run.probes['in-transaction'], run.output.slice(0, 600)).toBeDefined();

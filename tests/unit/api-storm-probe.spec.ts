@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Proof for scripts/api-storm-probe.sh, the gate that stops scripts/oshal-deploy.sh printing DEPLOYED over a mid-deploy api restart (BACKLOG "Deploy — the api process exits during the bot-recreate storm"). The boundary the probe reads is the Docker engine - `docker inspect` RestartCount and `docker logs --since` - so nothing there is doubled: each case runs the real script in a real Git Bash against a real disposable alpine container. One stays up (PASS), one Docker restarts inside the window (FAIL on RestartCount), one writes the termination line inside the window (FAIL on the log count), one does not exist (exit 2, never a PASS).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two cases the review found missing: a container whose LOGS cannot be read is exit 2 rather than a PASS (the count and the read were one pipeline, and `grep -c` exits 1 on zero matches, so a failed read looked exactly like a clean window), and the two failure shapes name themselves - FAIL(restarted) vs FAIL(terminated) - because the deploy text branches on that and a survived termination must not send anyone after a restart.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A stub whose inspect reports a CHANGED count and whose logs refuse: the probe must answer FAIL(restarted) exit 1. The earlier stub case only covered an unchanged count, which is why nothing caught the read being ordered ahead of the restart verdict and a measured restart being downgraded to exit 2.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -160,6 +161,31 @@ describe('scripts/api-storm-probe.sh', () => {
       const output = `${run.stdout || ''}\n${run.stderr || ''}`;
       expect(output, 'a window nobody could read must never read as a pass').not.toContain('PASS');
       expect(run.status, 'an unreadable log window is a check that could not be taken, not a clean one').toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('answers a MEASURED restart even when the log window cannot be read', () => {
+    // Evidence in hand is never discarded for evidence that could not be gathered. Reading the
+    // logs before deciding the restart downgraded a measured restart to "could not look", and the
+    // deploy then printed DEPLOYED over it - the outcome this probe exists to prevent.
+    const dir = mkdtempSync(join(tmpdir(), 'storm-probe-stub-'));
+    try {
+      // inspect answers a CHANGED count; logs refuse, as a non-readable driver does.
+      writeFileSync(join(dir, 'docker'),
+        '#!/usr/bin/env bash\n'
+        + 'if [ "$1" = "inspect" ]; then echo 3; exit 0; fi\n'
+        + 'if [ "$1" = "logs" ]; then echo "configured logging driver does not support reading" >&2; exit 1; fi\n'
+        + 'exit 0\n', { mode: 0o755 });
+      const run = spawnSync(BASH, [PROBE, 'verify', '0', '2026-01-01T00:00:00Z', 'stubbed'], {
+        encoding: 'utf8',
+        timeout: DOCKER_TIMEOUT_MS,
+        env: { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH ?? ''}` },
+      });
+      const output = `${run.stdout || ''}\n${run.stderr || ''}`;
+      expect(output, 'the restart was already measured; it must be reported').toContain('FAIL(restarted)');
+      expect(run.status, 'a measured failure must not be downgraded to could-not-look').toBe(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

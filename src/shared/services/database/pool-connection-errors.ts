@@ -30,7 +30,7 @@ interface ClientWithBackendPid {
  * exactly that: the bot-recreate storm starved the api's event loop, a transaction idled past the
  * server's timeout, Postgres terminated it, and the whole api died mid-deploy.
  *
- * After this owner is attached the same termination is one ERROR line and one rejected statement.
+ * After this owner is attached the same termination is an ERROR line per pg error event (two for one termination: the server’s 25P03 and pg’s own connection-terminated event, milliseconds apart) and one rejected statement.
  * The transaction is still lost - the caller's next `query()` rejects and its own catch runs
  * ROLLBACK/release, which is the ordinary failed-transaction path every call site already has.
  * What changes is that one lost transaction no longer costs every in-flight request in the

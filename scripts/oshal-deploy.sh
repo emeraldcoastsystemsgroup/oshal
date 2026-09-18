@@ -16,6 +16,7 @@
 # 10 | maintainer@emeraldcoastsystemsgroup.com   | Image verify also asks whether the Cline FALLBACK can start (scripts/check-cline-entrypoint.mjs --image). The 2026-09-17 image passed the commit label and the kernel-skills probe, every container was healthy, and every ticket that failed over from Codex died on `spawnSync .../cline/bin/.cline ENOENT` - a glibc executable on a musl base with no loader. That is an artifact defect only the artifact can show, so it is gated here, before any container is touched, alongside the other two image probes.
 # 11 | maintainer@emeraldcoastsystemsgroup.com   | The api must live THROUGH the bot recreate, and the run now says whether it did. On 2026-09-05 the storm starved the api's event loop, a transaction idled past Postgres's idle_in_transaction_session_timeout, the termination reached a checked-out pg client nothing owned, the crash guards exited the process, Docker restarted it, and this script printed DEPLOYED over about a minute of api downtime that only the container's RestartCount recorded. scripts/api-storm-probe.sh snapshots RestartCount + the clock before the recreate and, after the census gate, counts restarts and `idle-in-transaction` api-log lines inside that window; a non-zero verdict is exit 6 (deployed and SERVING - the downtime already happened, so nothing is rolled back - but the api did not survive its own deploy). The recreate pacing is unchanged and now printed with the RestartCount, so the log states which of pacing or the connection-error fix the run relied on. The fix itself is src/shared/services/database/pool-connection-errors.ts; the probe's own proof is tests/unit/api-storm-probe.spec.ts.
 # 12 | maintainer@emeraldcoastsystemsgroup.com   | The exit-6 text branches on which trigger the probe reported. A terminated transaction the api survived is the line this change's own connection owner writes, so it is the likelier exit 6 after this lands, and reporting it as a restart sends the operator after one that never happened - the defect the exit-2 arm above exists to avoid.
+# 13 | maintainer@emeraldcoastsystemsgroup.com   | Exit 2 has two causes since the probe began refusing unreadable log windows, so the UNVERIFIED sentences say "could not be taken (not inspectable, or log window not readable)" instead of naming only inspection - the probe line directly above them would otherwise contradict the reason given.
 # =============================================================================
 #
 # Usage:  bash scripts/oshal-deploy.sh [--preview] [--skip-build] [--no-rollback] [--allow-unpushed] [--dry-run]
@@ -401,11 +402,11 @@ fi
 # happened - the same doctrine this script already applies to a snapshot it cannot take.
 STORM_TAIL="api lived through the recreate (RestartCount $STORM_RESTARTS unchanged)"
 if [ "$STORM_RC" -eq 2 ]; then
-  log "storm probe: UNVERIFIED - the api container could not be inspected; this run proves nothing about the recreate storm"
+  log "storm probe: UNVERIFIED - the storm check could not be taken (the container could not be inspected, or its log window could not be read); this run proves nothing about the recreate storm"
   # The verdict has to reach the ONE line an operator reads, not just the scrollback above it:
   # saying UNVERIFIED here and "api lived through the recreate" below is the same false claim
   # moved down a line. Same shape the live verification already uses for its own tail.
-  STORM_TAIL="the api storm check is UNVERIFIED - the container could not be inspected, so this run proves NOTHING about the recreate"
+  STORM_TAIL="the api storm check is UNVERIFIED - it could not be taken (container not inspectable, or its log window not readable), so this run proves NOTHING about the recreate"
 elif [ "$STORM_RC" -ne 0 ]; then
   log ""
   log "✗ deployed ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots healthy, parity clean, ${VERIFY_TAIL},"

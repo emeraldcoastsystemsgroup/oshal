@@ -5,7 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of optional Postgres pool factory for persistence-capable stores
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Share the bounded pool-size parser, add application_name observability, and let direct URLs own their TLS object so verify-full/sslrootcert cannot be overridden by a synthesized boolean.
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | Own every connection's 'error' event at construction (ownPoolConnectionErrors). A checked-out client that the server terminates - idle_in_transaction_session_timeout during the 2026-09-05 bot-recreate storm - had no listener and took the api down through the crash guards; now it is one ERROR line and one rejected statement.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Own every connection's 'error' event at construction (ownPoolConnectionErrors). A checked-out client that the server terminates - idle_in_transaction_session_timeout during the 2026-09-05 bot-recreate storm - had no listener and took the api down through the crash guards; now it is an ERROR line per pg error event (two for one termination: the server’s 25P03 and pg’s own connection-terminated event, milliseconds apart) and one rejected statement.
  */
 
 import { Pool } from 'pg';
