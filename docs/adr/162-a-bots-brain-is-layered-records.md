@@ -57,13 +57,21 @@ credentials and defaults generally and or on a bot by bot level."*
    |---|---|---|
    | user per-bot preference | *(follow-up — does not exist yet)* | that user's turns on that bot |
    | user general preference | `oshal_user_llm_prefs` (ADR-127) | that user's turns |
-   | admin per-bot row | `agent_config` (ADR-034 tier 2) | everything else on that bot |
+   | admin per-bot row | an operator-written row of `oshal_bot_provider_switch` (scope = the agent id; `updated_by` records who) | everything else on that bot |
    | admin fleet-default row | one reserved id in the same store | every bot without its own row |
    | registry entry | `swarm-bot-registry*.ts` (ADR-034 tier 3) | nothing, unless no row exists |
 
    A user's choice governs only that user's turns and only selects something the user may already use
    (ADR-127's rule: a preference is not an authorization). Swarm-owned work — tickets, schedules,
    agentic runs, anything that is nobody's turn — resolves from the admin rows.
+
+   The `agent_config` record (ADR-034 tier 2) is not a rung of this table. It is the dispatch record
+   machinery writes — manifest seeding, the bot's own broadcast-up, a config push — and the
+   fleet-default row outranks it. Amended 2026-09-17, the same day: the first build of the admin half
+   read every `agent_config` record as the admin per-bot row; measured on the operator box, all 70
+   such records were machinery-written and would have held on the first fleet write, failing §7 for
+   the whole fleet. Nothing is seeded into the switch table from `agent_config`; a per-bot row exists
+   only when an operator writes one.
 
 3. **The authoritative dispatch record carries the winning rung.** ADR-034's post-execution check
    ("what ran is what was authorized") stays. Its authority becomes the resolved row, so a switch is one
@@ -91,9 +99,11 @@ credentials and defaults generally and or on a bot by bot level."*
 - [ADR-128](128-codex-fleet-default.md) is **superseded on its "one default brain" decision.** Codex
   remains a valid choice; it is no longer the choice the registry makes for the fleet. Its harness
   and adapter work is untouched.
-- [ADR-034](034-bidirectional-config-ownership-sync.md) is **amended**: tier 2 gains the fleet-default
-  row beneath the per-bot row; tier 3 (the registry) fills a record only when neither exists; and the
-  post-execution check accepts the failover chain the record configured.
+- [ADR-034](034-bidirectional-config-ownership-sync.md) is **amended**: the switch rows — the bot's
+  own operator-written row, else the fleet-default row — are tier 1 of the carried record, above the
+  `agent_config` record (tier 2, machinery-written) and the registry (tier 3), which fill a record
+  only when no switch row governs the bot; and the post-execution check accepts the failover chain
+  the record configured.
 - [ADR-033](033-multi-harness-execution-framework.md) and [ADR-127](127-demo-mode-cli-brain-and-user-provider-preference.md)
   stand. ADR-127's ladder is the user half of §2.
 - HTTP 409 `provider_pinned` and the read-only cockpit select (#97, #142) go away for any bot a row

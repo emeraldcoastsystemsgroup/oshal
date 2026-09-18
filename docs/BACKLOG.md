@@ -1460,9 +1460,11 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   and sees the resolved source change; and the operator flips one bot to `gemini` /
   `gemini-3.8-flash` from the cockpit and it answers on Gemini in the bot's own log.
 - **Status (2026-09-17, branch `feat/bot-provider-row`):** built and guarded, NOT yet deployed. The
-  per-bot row is `agent_config` (unchanged store, unchanged `PUT /runtime` write path; the 409
-  `provider_pinned` is gone), the fleet default is the one row of migration 147
-  (`PUT/DELETE /api/agents/provider-switch/fleet-default`, Config Admin "Fleet Default" panel),
+  per-bot row is an operator-written row of `oshal_bot_provider_switch` (scope = the agent id,
+  `updated_by` = the operator sub; written by `PUT /runtime` after the ADR-034 push, released by
+  `DELETE /api/agents/provider-switch/:agentId`; the 409 `provider_pinned` is gone), the fleet
+  default is the reserved row of the same table (migration 147,
+  `PUT/DELETE /api/agents/provider-switch/fleet-default`, Config Admin "Fleet Default" panel),
   `resolveHarnessForAgent` and ADR-034 dispatch stamping read one installed snapshot, the bot node
   translates a Cline-backed id onto `cline-cli` + `CLINE_API_PROVIDER`/`CLINE_API_MODEL` and the
   post-execution check accepts exactly that, and the 18 compose `FORCE_LLM_*` literals are the
@@ -1474,9 +1476,10 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   non-Codex provider (read-only SELECT, 2026-09-17: `project-manager` = gemini/gemini-3.1-pro,
   `task-manager` = openai/gpt-x, `personal-finance-bot` = anthropic/claude-sonnet-4-20250514, and
   eight `claude-code` package bots — `bake-off-analyst`, `capability-ideator`, `dungeon-master`,
-  `game-show-host`, `kid-lens-bot`, `lora-director`, `portrait-artist`, `sales-concierge`); all
-  eleven become live bot-rows at deploy and will NOT follow a fleet-default write, because a bot row
-  beats the fleet row by design. None was written by an operator — see the follow-up entry below.
+  `game-show-host`, `kid-lens-bot`, `lora-director`, `portrait-artist`, `sales-concierge`). None
+  was written by an operator, and none becomes a switch row at deploy — nothing is seeded from
+  `agent_config` — so the first fleet-default write moves all 70, the eleven included (proven on a
+  disposable PostgreSQL seeded with the box's row shape; see the follow-up entry below, DONE).
   Review guard added: `tests/unit/dispatch-switch-row-stamping.spec.ts` pins tier-1 dispatch
   stamping (the only path a row reaches a dedicated bot node).
 
@@ -1501,7 +1504,22 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   wrote it — never blank); a machinery-written row yields to the fleet default; an operator-written
   row does not; `/api/agents` reports which of the two a `bot-row` is; and migration 147's rollout
   note names, for the operator box, which of the 70 rows (the 11 non-Codex ones by name) move on
-  the first fleet write and which hold. Until then all 70 hold — not implemented inside PR #633.
+  the first fleet write and which hold.
+- **DONE (2026-09-17, PR #633, same branch):** the per-bot switch row moved out of `agent_config`
+  into `oshal_bot_provider_switch` (scope = the agent id), where only an operator can write it —
+  `PUT /runtime` writes it after the ADR-034 push with `updated_by` = the session's sub, and the
+  table's operator-only policy is the enforcement, so "operator-written" is a property of the
+  table, not of a string. `ProviderSwitchStore.listAll` reads only that table; a machinery-written
+  `agent_config` record is ADR-034 tier 2 beneath the fleet row and yields to it; an
+  operator-written row does not; a `bot-row` reported by `/api/agents` is therefore always an
+  operator's, and `GET /api/agents/provider-switch` lists them with `updatedBy`. Migration 147's
+  header states that nothing is seeded and that all 70 (the eleven by name) move on the first fleet
+  write. Proof: `tests/unit/provider-switch-store-postgres.spec.ts` ("the operator box's row
+  shape": the 70 records from `tests/fixtures/agent-config-provider-rows-2026-09-17.json` on a
+  disposable PostgreSQL, ONE fleet write moves all 70 in the resolver and the stamped dispatch
+  record; 9 of 15 cases red on the pre-fix store, 15 green after) and
+  `tests/unit/dispatch-switch-row-stamping.spec.ts` (the box's three record shapes beneath a fleet
+  row; red on the pre-fix projection, green after).
 
 
 ### Jarvis briefing preferences (operator ask, 2026-08-09)
