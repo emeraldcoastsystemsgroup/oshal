@@ -197,7 +197,8 @@
  * 181 | maintainer@emeraldcoastsystemsgroup.com   | One MOCK_OIDC predicate, not three readings: this file tested MOCK_OIDC === 'true' at the /api/auth/user mode string and at the demo-auth mount, while the bypass itself uses isMockOidcEnabled() (true|1|yes, any case) - so MOCK_OIDC=1 authenticated every request as the mock user while the probe reported mode 'oidc' and the demo /login,/logout were never mounted. Both sites now go through ./routes/auth-state-routes (createAuthStateRoutes, mountDemoAuthRoutes), which read that one helper; the probe moves verbatim and keeps its position, ungated, right after the global auth middleware. Guard: tests/unit/mock-oidc-one-predicate.spec.ts.
  * 182 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/access-review - the read-only join over the three authorization axes (swarm role and its provenance, governance permissions, per-application assignments). requiresAuth only: every signed-in person may ask about themselves, naming another subject is admin-only inside the route, and the per-application read still runs through the authorization service's own management checks. No write member exists on the route.
  * 183 | maintainer@emeraldcoastsystemsgroup.com   | ADR-145 D5: the swarm-apps router receives recentAppTasks, the kernel-owned jarvis_tasks read behind a status card for an app that declares no summary: probe. The router owns no pool, so the composition root binds it here. Same-line wiring; no new code line in this file.
- * 184 | maintainer@emeraldcoastsystemsgroup.com   | Install the LLM provider switch snapshot (migration 147, "a bot's LLM provider is a row in a table") once the DB bootstrap completes: one awaited read of oshal_bot_provider_switch under the SYSTEM identity, then the periodic refresh. Independent of the autoload chain; a failed read logs and leaves the registry behaviour in place.
+ * 184 | maintainer@emeraldcoastsystemsgroup.com | Resolve artifact destination tiers for the complete verified principal.
+ * 185 | maintainer@emeraldcoastsystemsgroup.com   | Install the LLM provider switch snapshot (migration 147, "a bot's LLM provider is a row in a table") once the DB bootstrap completes: one awaited read of oshal_bot_provider_switch under the SYSTEM identity, then the periodic refresh. Independent of the autoload chain; a failed read logs and leaves the registry behaviour in place.
  */
 
 require('dotenv').config();
@@ -1263,7 +1264,10 @@ function createApp(): express.Application {
       if (!visible.has(manifest.name) || !manifest.artifacts) continue;
       if (applicationAuthorization.runtime.protectedApp(manifest.name)
         && !await applicationAuthorization.runtime.canDiscover(manifest.name, await applicationAuthorization.resolveActor(req))) continue;
-      if (manifest.access && (await appAccessService.resolve(manifest.name, sub, manifest.access)).tier === 'deny') continue;
+      if (manifest.access) {
+        const actor = await applicationAuthorization.resolveActor(req);
+        if ((await appAccessService.resolveForPrincipal(manifest.name, actor.sub, actor.issuer, manifest.access)).tier === 'deny') continue;
+      }
       readable.set(manifest.name, manifest.displayName || manifest.name);
     }
     return readable;

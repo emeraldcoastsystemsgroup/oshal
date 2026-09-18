@@ -71,6 +71,37 @@ Baseline mappings considered by the decision:
 - Migration 121 provides the FORCE-RLS `oshal_app_access` store keyed by exact
   `(user_sub, app_name)`. Explicit assignments win over manifest defaults; an explicit `deny`
   always wins, and an assignment made stale by a later manifest fails closed to `deny`.
+- **Amended 2026-09-16 (migration 145).** A subject identifier is unique only inside its issuer,
+  and the original store recorded no issuer, so the only safe reading of a row was "a canonical
+  local account". The application-authorization control plane enforced that by refusing to resolve
+  a tier at all for any other issuer — which also made an assignment an operator had deliberately
+  written for a federated identity unreadable, so every OIDC-signed-in user resolved `deny` on
+  every application and a catalog-less one answered `authorization_app_admin_required`. Migration
+  145 adds a nullable `user_issuer`; resolution is keyed on `(user_sub, user_issuer, app_name)`,
+  and a row with no issuer resolves as the 2026-09-17 amendment below records (this bullet first
+  said "only for `urn:oshal:local-auth`"; migration 146 superseded that reading). The generated
+  `principal_issuer` key preserves that NULL provenance and identifies NULL and explicit local
+  issuer as the same principal. Different issuers retain independent rows, including explicit
+  denies; assign and clear never replace another principal's assignment. Owner RLS compares
+  both subject and the verified issuer stamped and reset by the database pool. A missing issuer
+  cannot read an owner row. Request routes, discovery and artifact/Test Lab visibility carry the
+  verified issuer; the old `resolve` API is retained only for canonical-local compatibility.
+- **Amended 2026-09-17 (migration 146).** Before 145 the assignment SQL was subject-only, so a
+  pre-145 row was enforced for its subject under every issuer; reading NULL as local-only dropped
+  every existing deny and viewer ceiling the moment a federated user signed in. 146 records the
+  corrected contract without rewriting a row: a NULL-issuer row is the full assignment for
+  `urn:oshal:local-auth` AND a ceiling for every other issuer of the same subject - a legacy deny
+  still denies, a legacy viewer still caps, a legacy grant never lifts another issuer above the
+  manifest default - and a row bound to the caller's issuer is the operator's re-bind for that
+  issuer alone. `resolveForPrincipal` reads that exact `(subject, app, issuer-or-NULL)` predicate
+  under the system identity, because 145's owner-read policy compares `principal_issuer` to the
+  caller's issuer and hid the NULL row from a federated caller on the gate, mounter and visibility
+  paths; `listAssignments`, assign and clear still run under the caller. Proof:
+  `tests/authorization-issuer-tier-live.spec.ts` on a real PostgreSQL under a NOBYPASSRLS role,
+  including a non-operator caller through the real gate middleware. **The re-key is one-way:** 145
+  and 146 have no down migration, the deploy's image rollback does not restore the subject-only
+  key, and the pre-145 upsert (`ON CONFLICT (user_sub, app_name)`) then fails with
+  `no unique or exclusion constraint matching the ON CONFLICT spec` - roll forward, never back.
 - The framework-owned operator API and Applications cockpit matrix list, assign and clear tiers.
   Apps cannot administer the platform doorway or self-promote.
 - Both route shapes enforce the same decision after authentication and before app code: dynamic

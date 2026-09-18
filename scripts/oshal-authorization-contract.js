@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Permit explicit asset filenames while refusing dot-segment traversal and keeping parameter grammar unchanged.
  */
 /* ADR-149 shared CLI/runtime contract. Pure catalog validation; loading is package-confined. */
 'use strict';
@@ -35,7 +36,8 @@ function list(value, label) {
 }
 function has(record, key) { return Object.prototype.hasOwnProperty.call(record, key); }
 function route(value) {
-  if (typeof value !== 'string' || value.length > 512 || !/^\/(?:[A-Za-z0-9_-]+|:[A-Za-z][A-Za-z0-9_]*)(?:\/(?:[A-Za-z0-9_-]+|:[A-Za-z][A-Za-z0-9_]*))*$/.test(value)) {
+  if (typeof value !== 'string' || value.length > 512 || !/^\/(?:[A-Za-z0-9_.-]+|:[A-Za-z][A-Za-z0-9_]*)(?:\/(?:[A-Za-z0-9_.-]+|:[A-Za-z][A-Za-z0-9_]*))*$/.test(value)
+    || value.split('/').some(segment => segment === '.' || segment === '..')) {
     if (value !== '/') fail('HTTP path must use literal segments or named parameters');
   }
 }

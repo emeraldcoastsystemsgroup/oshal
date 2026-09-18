@@ -1,3 +1,8 @@
+/**
+ * CHANGE LOG
+ * SEQ | AUTHOR | DESCRIPTION
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify issuer stamping and reset on pooled queries and connected clients alongside existing identity isolation.
+ */
 import { describe, it, expect, vi } from 'vitest';
 import { gucEnabled, wrapPoolWithGuc } from '../../src/shared/services/database/guc-pool';
 import { runWithRequestIdentity, runWithSystemIdentity } from '../../src/shared/services/database/request-identity';
@@ -87,7 +92,7 @@ describe('wrapPoolWithGuc', () => {
       (wrapped as { query: (t: string) => Promise<unknown> }).query('SELECT 2'),
     );
 
-    expect(client.calls[0].params).toEqual(['user-123', 'off']);
+    expect(client.calls[0].params).toEqual(['user-123', '', 'off']);
     expect(client.calls[1]).toEqual({ text: 'SELECT 2', params: undefined });
   });
 
@@ -99,8 +104,26 @@ describe('wrapPoolWithGuc', () => {
       (wrapped as { query: (t: string) => Promise<unknown> }).query('SELECT public_route_read'),
     );
 
-    expect(client.calls[0].params).toEqual(['', 'off']);
+    expect(client.calls[0].params).toEqual(['', '', 'off']);
     expect(client.calls[1]).toEqual({ text: 'SELECT public_route_read', params: undefined });
+  });
+
+  it('stamps and resets the verified issuer for query and connected-client lifetimes', async () => {
+    const client = makeFakeClient();
+    const wrapped = wrapPoolWithGuc(makeFakePool(client) as never);
+    const principal = { sub: 'shared-sub', principalIssuer: 'https://identity.fixture.test', isOperator: false };
+    await runWithRequestIdentity(principal, () => wrapped.query('SELECT owner_rows'));
+    expect(client.calls[0].params).toEqual([principal.sub, principal.principalIssuer, 'off']);
+    expect(String(client.calls[2].text)).toContain('RESET oshal.current_issuer');
+    client.calls.length = 0;
+    await runWithRequestIdentity(principal, async () => {
+      const connected = await wrapped.connect();
+      await connected.query('SELECT connected_owner_rows');
+      connected.release();
+    });
+    await vi.waitFor(() => expect(client.calls).toHaveLength(3));
+    expect(client.calls[0].params).toEqual([principal.sub, principal.principalIssuer, 'off']);
+    expect(String(client.calls[2].text)).toContain('RESET oshal.current_issuer');
   });
 
   it('stamps trusted service-secret requests as operator without requiring a user sub', async () => {
@@ -111,7 +134,7 @@ describe('wrapPoolWithGuc', () => {
       (wrapped as { query: (t: string) => Promise<unknown> }).query('SELECT internal_service_read'),
     );
 
-    expect(client.calls[0].params).toEqual(['', 'on']);
+    expect(client.calls[0].params).toEqual(['', '', 'on']);
     expect(client.calls[1]).toEqual({ text: 'SELECT internal_service_read', params: undefined });
   });
 

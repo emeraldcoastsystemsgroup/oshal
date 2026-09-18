@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: enforce the canonical no-AI 503 before entering a manifest route that declares requiresAi.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Stage package specialist readers with successful route factories and retract them on empty reload or unmount.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Publish all declared package tools across route factories as one activation and fence unload synchronously.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Resolve app tiers for exact verified subject/issuer pairs and refuse missing issuer before dispatch.
  */
 
 import type { Express, Request, Response, NextFunction, RequestHandler } from 'express';
@@ -36,7 +37,7 @@ import type {
   SwarmAppRouteDeclaration,
 } from '@/features/swarm-apps';
 import type { AppContext } from '@/app/composition/app-context';
-import { appAccessCallerSub, appAccessDenial, appAccessEnforcementMode } from '@/app/middleware/app-access-policy';
+import { appAccessCallerSub, appAccessCallerIssuer, appAccessDenial, appAccessEnforcementMode } from '@/app/middleware/app-access-policy';
 import type { ApplicationRouteAuthorization } from './application-authorization-runtime';
 import type { SpecialistContextRegistry } from '@/shared/specialist-context';
 import type { PackageToolRegistry } from '@/shared/package-tools';
@@ -411,7 +412,9 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
         invoke();
         return;
       }
-      const decision = await this.appAccess.resolve(entry.appName, userSub, entry.access);
+      const issuer = appAccessCallerIssuer(req);
+      if (!issuer) { res.status(403).json({ error: 'app_access_identity_required' }); return; }
+      const decision = await this.appAccess.resolveForPrincipal(entry.appName, userSub, issuer, entry.access);
       res.locals.oshalAppAccess = decision;
       const denial = appAccessDenial(req.method, decision);
       if (!denial) {

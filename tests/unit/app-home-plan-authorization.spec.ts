@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the Home plan admits an installed application only through current application policy, converging with workspace discovery across grant, revocation and explicit coarse deny.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin the guest outcome: a guest session keeps the unprotected framework application and never receives the protected one, even while a current grant on it exists. Red without the degrade - the route answers 401 and Home renders its read-failure copy.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Use the issuer-qualified coarse-access port in the Home and workspace fixture.
  */
 /** Real Express, package loading and authorization; only persistence, identity and coarse access are isolated doubles. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -127,7 +128,7 @@ beforeEach(async () => {
     };
     next();
   };
-  const access: Pick<AppAccessService, 'resolve'> = { resolve: async (appName, userSub) => ({ appName, userSub,
+  const access: Pick<AppAccessService, 'resolveForPrincipal'> = { resolveForPrincipal: async (appName, userSub) => ({ appName, userSub,
     tier: denyCoarse.has(appName) ? 'deny' : 'admin', bundle: null, source: 'default' }) };
   const context = { pool, applicationAuthorization: runtime } as unknown as AppContext;
   const mounter = new ManifestRouteMounterImpl(app, requiresAuth, context, access as AppAccessService, runtime);

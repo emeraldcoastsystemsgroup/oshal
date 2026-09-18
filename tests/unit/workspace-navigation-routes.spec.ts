@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify workspace discovery over real HTTP, installed profile synthesis and current application policy without dispatching package pages.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Use the issuer-qualified coarse visibility port for every workspace request.
  */
 /** Real Express, package loading, profile synthesis and authorization; only persistence, identity and coarse access are isolated doubles. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -123,7 +124,7 @@ beforeEach(async () => {
   const requiresAuth: RequestHandler = (req, res, next) => {
     if (req.get('x-fixture-user')) { next(); return; } res.status(401).json({ error: 'fixture_auth_required' });
   };
-  const access: Pick<AppAccessService, 'resolve'> = { resolve: async (appName, userSub) => ({ appName, userSub,
+  const access: Pick<AppAccessService, 'resolveForPrincipal'> = { resolveForPrincipal: async (appName, userSub) => ({ appName, userSub,
     tier: denyCoarse.has(appName) ? 'deny' : 'admin', bundle: null, source: 'default' }) };
   const context = { pool, applicationAuthorization: runtime, fixtureDispatch: () => { dispatches++; } } as unknown as AppContext;
   const mounter = new ManifestRouteMounterImpl(app, requiresAuth, context, access as AppAccessService, runtime);

@@ -45,7 +45,7 @@ worth restarting.
 
 ## The open design question, in the operator's words
 
-> "i dont understand why ella has to be an admin just to be a user of an aplication. thats some
+> "i dont understand why [the student] has to be an admin just to be a user of an aplication. thats some
 > bullshit."
 
 He is right, and it is a real defect, not a misunderstanding. What was verified:
@@ -105,3 +105,5 @@ single-separator Windows, and JSON-escaped — is refused by `scripts/publish-ga
 test that goes red when the pattern is reverted; plus one check of whether the hook actually ran on
 the #619 push. The real patterns stay in the untracked `scripts/publish-gate.local.patterns`; a
 tracked fixture must use a placeholder, never the operator's name, or the guard becomes the leak.
+
+Resumed work and current rollout steps: [September 17 authorization resume](session-resume-2026-09-17.md).

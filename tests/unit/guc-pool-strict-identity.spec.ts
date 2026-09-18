@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Repo-audit (guc-pool fail-open-to-operator): proves OSHAL_DB_GUC_STRICT — default 'off' keeps identity-less work as trusted operator context (is_operator='on'); 'warn' keeps operator but audits each unique fail-open call site once; 'deny' stamps anonymous non-operator (is_operator='off', RLS scopes to nothing). A request WITH identity is always scoped to that identity regardless of the knob.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Deny-by-default flip: the DEFAULT (no env) is now 'deny' — identity-less is stamped anonymous non-operator (is_operator='off'). 'off' is the break-glass that restores operator; unrecognized values fall back to deny (fail-closed). Added: the runWithSystemIdentity sentinel is STILL stamped operator under the deny default (the escape hatch background work uses).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin the shipped local stack to the completed deny rollout; a compose regression back to the former warn soak now fails beside the runtime-mode matrix.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Keep absent issuer explicit in the scoped identity stamp without changing operator strictness.
  */
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
@@ -120,7 +121,7 @@ describe('guc-pool fail-open strict mode', () => {
       await runWithRequestIdentity({ sub: 'auth0|alice', isOperator: false }, () => pool.query('SELECT 1'));
       // scoped to the caller: sub set, is_operator off — never fails open to operator
       const stamp = client.setConfigCalls.find((c) => Array.isArray(c.params));
-      expect(stamp?.params).toEqual(['auth0|alice', 'off']);
+      expect(stamp?.params).toEqual(['auth0|alice', '', 'off']);
     }
   });
 

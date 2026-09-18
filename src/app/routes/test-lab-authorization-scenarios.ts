@@ -12,6 +12,8 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register the authorization schema-readiness recovery proof: a bootstrap that loses the pool acquire at boot must be retried by the next operation rather than refusing for the life of the process.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the joined access review - the one surface that answers "what am I allowed to do" across swarm role, governance permissions and per-application assignments - with a read-only self probe.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Register the package grant plan guards with the access-administration scenario: the resolver runs against the real PostgreSQL policy store and its HTTP adapter against the real routes, so the Lab lists them beside the rest of this feature. Also restores authorization-readiness-consumers.spec.ts to the test:authorization command - it was registered here but missing from the command, which had left this scenario's own registration assertion red on main.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Attach the principal-qualified app-access proofs beside package-plan and readiness regressions.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Register issuer pool reset, lifecycle authority and reviewed package assignment browser regressions.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -83,6 +85,11 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/authorization-readiness-consumers.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-runtime.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-app-access-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/swarm-app-lifecycle-authorization.spec.ts' },
+    { level: 'unit', path: 'tests/unit/guc-pool.spec.ts' },
+    { level: 'unit', path: 'tests/unit/guc-pool-strict-identity.spec.ts' },
+    { level: 'unit', path: 'tests/unit/app-access-tier.spec.ts' },
+    { level: 'integration', path: 'tests/authorization-issuer-tier-live.spec.ts' },
     { level: 'unit', path: 'tests/unit/kernel-skills.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-execution-boundary.spec.ts' },
     { level: 'integration', path: 'tests/unit/installer-root-bootstrap.spec.ts' },
@@ -101,6 +108,7 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'browser', path: 'tests/unit/authorization-audit-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/package-grant-plan-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/package-grant-plan-routes.spec.ts' },
+    { level: 'browser', path: 'tests/unit/package-grant-browser.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'authorization', label: 'Caller-visible access catalog', run: authorizationCatalog }],
 }, {
