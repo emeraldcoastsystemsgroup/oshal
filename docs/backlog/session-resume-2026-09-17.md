@@ -97,9 +97,9 @@ Read-only preflight found 37 healthy application containers, API health HTTP 200
 All five rollout steps completed on local preview:
 1. WSL/Docker memory upgraded to 6.21 GB (`.wslconfig`). Stale containers pruned.
 2. Core preview deployed via `scripts/oshal-deploy.sh --preview` (PR 605, image `480affd99a53`). Migration 145 applied. Post-deploy verifications passed.
-3. Legacy `@app-admin` fallback assignments for Operator and Ella revoked under old catalog revision via audited `store.transaction`.
+3. Legacy `@app-admin` fallback assignments for Operator and the student revoked under old catalog revision via audited `store.transaction`.
 4. Little Monsters 1.3.2 staged and activated via `POST /api/swarm/apps/load`. Primary bot `lecture-scribe` active. Deploy parity 37/37 clean on `480affd99a53`.
-5. Ella granted `student` role (tier: `editor`, study operations allowed, teaching denied); Operator granted `admin` role (tier: `admin`). Policy revision: 90. Full release record at [little-monsters-person-roles-2026-09-17.md](../releases/little-monsters-person-roles-2026-09-17.md).
+5. The student was granted the `student` role (tier: `editor`, study operations allowed, teaching denied); Operator granted `admin` role (tier: `admin`). Policy revision: 90. Full release record at [little-monsters-person-roles-2026-09-17.md](../releases/little-monsters-person-roles-2026-09-17.md).
 
 ## Still open
 

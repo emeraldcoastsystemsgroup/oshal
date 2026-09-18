@@ -6,7 +6,7 @@ package-bot integrity and explicit person-role authorization checks passed.
 
 Little Monsters 1.3.2 introduces explicit structural person-roles (`student`,
 `teacher`, and `admin`) protected by named permissions and exact issuer-qualified
-identity boundaries. Ella is granted the `student` role (tier: `editor`),
+identity boundaries. The student is granted the `student` role (tier: `editor`),
 granting full voice-first ADHD study companion capabilities while denying
 teaching and administration operations.
 
@@ -29,7 +29,7 @@ teaching and administration operations.
   12/12 authorization integration tests) staged into the live workspace volume
   `/app/workspace-shared/deployed-apps/little-monsters`.
 - Catalog migration and adoption:
-  - Revoked legacy `@app-admin` fallback assignments for Operator and Ella under
+  - Revoked legacy `@app-admin` fallback assignments for Operator and the student under
     the old catalog revision through an audited `store.transaction`.
   - Loaded and activated Little Monsters 1.3.2 via `POST /api/swarm/apps/load`.
     `swarm_applications` records version 1.3.2, status `active`.
@@ -37,7 +37,7 @@ teaching and administration operations.
     primary bot `lecture-scribe` (`ed000000-0000-0000-0000-000000000001`) active
     (`RESULT: PASS`).
 - Explicit person-role assignments:
-  - Ella (`113439769752756917575` / `https://accounts.google.com`): granted named
+  - The student (`REDACTED` / `https://accounts.google.com`): granted named
     `student` role (tier: `editor`). Verified via `/api/authorization/explain` that
     `app.open` and `study.read` are allowed; `teaching.read` is denied.
   - Operator (`REDACTED` / `https://accounts.google.com`): granted
