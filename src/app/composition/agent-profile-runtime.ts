@@ -13,7 +13,7 @@ import { createChildLogger } from '@/shared/logger';
 import { AgentProfileRepository } from '@/entities/agent';
 import { AgentProfileController, AgentProfileService, WorkspaceConfigSyncService } from '@/features/agent-profile';
 import { resolveInstalledProviderSwitch } from './provider-switch-runtime';
-import { registryHarnessEntry } from '@/app/extensions/swarm/swarm-bot-registry';
+import { getActiveRegistry, registryHarnessEntry } from '@/app/extensions/swarm/swarm-bot-registry';
 
 const logger = createChildLogger({ module: 'agent-profile-runtime' });
 
@@ -40,6 +40,7 @@ export function createAgentProfileComponents(
     agentProfileService,
     logger,
     (agentId) => resolveInstalledProviderSwitch(agentId, registryHarnessEntry(agentId)),
+    getActiveRegistry,
   );
   return { agentProfileController, agentProfileService };
 }
