@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The fleet-default switch surface for "a bot's LLM provider is a row in a table" (operator acceptance, 2026-09-17: moving the whole fleet back to Codex is ONE write of the fleet-default row from the cockpit — no pull request, no image deploy, no container restart). GET reports the fleet row, the snapshot's freshness and the accepted provider ids; PUT validates the id against the REAL runnable catalog (classifyProviderId — an unknown id is a 400 carrying the reason and the accepted list, never a silent write), upserts the one reserved row under the caller's identity (the table's operator-only policy is the enforcement, not this file), and refreshes the installed snapshot so the next dispatch carries it; DELETE clears it so resolution falls to the registry literal. Operator browser sessions only: a service secret is refused exactly as the per-bot runtime writes refuse it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot switch rows live in the same table now (migration 146 entry 2: a row an operator wrote through PUT /:agentId/runtime, the only per-bot record that beats the fleet default). GET lists them as perBot so an operator can see which bots hold their own row and who wrote it; DELETE takes the scope — 'fleet-default' as before, or an agent id to release that bot back to the fleet default — and refreshes the snapshot. The PUT stays fleet-only: a per-bot write goes through the runtime route, which pushes to the bot first (ADR-034) and then writes the row.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -43,10 +44,12 @@ async function handleRead(res: Response, deps: ProviderSwitchRouteDeps): Promise
       return;
     }
     const snapshot = deps.snapshot();
-    const fleetDefault = await deps.store.get(FLEET_DEFAULT_SWITCH_ID);
+    const rows = await deps.store.listAll();
     res.json({
       success: true,
-      fleetDefault,
+      fleetDefault: rows.find((row) => row.scopeId === FLEET_DEFAULT_SWITCH_ID) ?? null,
+      // The bots that hold their own row (and who wrote it): these do NOT follow the fleet default.
+      perBot: rows.filter((row) => row.scopeId !== FLEET_DEFAULT_SWITCH_ID),
       snapshot: snapshot?.status() ?? null,
       accepted: acceptedIds(deps.catalog()),
     });
@@ -97,21 +100,28 @@ async function handleWrite(req: Request, res: Response, deps: ProviderSwitchRout
   }
 }
 
-async function handleRemove(res: Response, deps: ProviderSwitchRouteDeps): Promise<void> {
+/**
+ * Remove one switch row: the fleet default (resolution falls to the registry literal) or a bot's
+ * own row (that bot rejoins the fleet default). The scope is the URL segment as written; an
+ * unknown scope simply removes nothing and says so (removed:false).
+ */
+async function handleRemove(res: Response, deps: ProviderSwitchRouteDeps, scopeId: string): Promise<void> {
   const startedAt = Date.now();
+  logger.info({ scopeId }, 'Provider switch clear started');
   try {
     if (!deps.store) {
       res.status(503).json({ success: false, applied: false, error: 'Provider switch store unavailable (no Postgres pool)' });
       return;
     }
-    const removed = await deps.store.remove(FLEET_DEFAULT_SWITCH_ID);
+    const removed = await deps.store.remove(scopeId);
     await deps.snapshot()?.refresh();
-    res.json({ success: true, applied: true, removed, fleetDefault: null, snapshot: deps.snapshot()?.status() ?? null });
+    const fleetDefault = scopeId === FLEET_DEFAULT_SWITCH_ID ? null : await deps.store.get(FLEET_DEFAULT_SWITCH_ID);
+    res.json({ success: true, applied: true, removed, scopeId, fleetDefault, snapshot: deps.snapshot()?.status() ?? null });
   } catch (err) {
-    logger.error({ err }, 'Failed to clear the fleet-default provider switch');
+    logger.error({ err, scopeId }, 'Failed to clear the provider switch row');
     res.status(500).json({ success: false, applied: false, error: (err as Error).message });
   } finally {
-    logger.info({ statusCode: res.statusCode, durationMs: Date.now() - startedAt }, 'Fleet-default switch clear completed');
+    logger.info({ scopeId, statusCode: res.statusCode, durationMs: Date.now() - startedAt }, 'Provider switch clear completed');
   }
 }
 
@@ -132,8 +142,11 @@ function requiresOperatorBrowser(req: Request, res: Response, next: NextFunction
 }
 
 /**
- * @description The fleet-default LLM provider switch routes, mounted under /api/agents:
- * GET /provider-switch, PUT /provider-switch/fleet-default, DELETE /provider-switch/fleet-default.
+ * @description The LLM provider switch routes, mounted under /api/agents: GET /provider-switch
+ * (the fleet row, the per-bot rows, the snapshot status and the accepted ids),
+ * PUT /provider-switch/fleet-default (ONE write moves every bot without its own row), and
+ * DELETE /provider-switch/:scopeId — 'fleet-default' to clear the fleet, or an agent id to
+ * release that bot's own row back to the fleet default.
  * @param deps - Store, installed snapshot and catalog accessors.
  * @returns The router.
  */
@@ -141,6 +154,6 @@ export function createProviderSwitchRoutes(deps: ProviderSwitchRouteDeps): Route
   const router = Router();
   router.get('/provider-switch', requiresOperatorBrowser, (_req, res) => void handleRead(res, deps));
   router.put('/provider-switch/fleet-default', requiresOperatorBrowser, (req, res) => void handleWrite(req, res, deps));
-  router.delete('/provider-switch/fleet-default', requiresOperatorBrowser, (_req, res) => void handleRemove(res, deps));
+  router.delete('/provider-switch/:scopeId', requiresOperatorBrowser, (req, res) => void handleRemove(res, deps, String(req.params.scopeId)));
   return router;
 }

@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Kept signed bot bootstrap reads while restricting credential-bearing runtime mutations to exact operator browser sessions; established human principals remain authoritative when a service-secret header is also present
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: reject every credential field before config lookup/push and remove the raw secret carrier; provider/model mutations remain non-secret.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | "A bot's LLM provider is a row in a table": the record this route writes IS the per-bot switch row, so (a) the precedence policy is resolved through the injected switch resolver (bot-row > fleet-default > registry) and the provider_pinned 409 for a declared harness is gone with it — providerOverridable is true for every readable-registry bot; (b) a write refuses an id the build cannot run BEFORE the push (400 with the reason and the accepted ids — classifyProviderId, the same rule the resolver refuses on), so a typo never reaches agent_config; (c) a successful write refreshes the installed snapshot through onRuntimeChanged so the next dispatch carries it without waiting for the timer; (d) the read serves the RESOLVED provider/model as runtime.providerId/modelId with providerSource, and answers 200 from the fleet default for a bot with no record, because the bot-node boot pull reads exactly those two fields and a restarted bot must come up on the fleet switch.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Entry 5's "the record IS the per-bot switch row" was the defect: agent_config is also written by manifest seeding, the bot's broadcast-up and config push, so every machinery-written record outranked a fleet-default write (70 of them on the operator box). The per-bot switch is now a row an OPERATOR wrote in oshal_bot_provider_switch, and this route is where that happens: after the ADR-034 push-before-persist succeeds, a mutation naming a providerId writes the bot's own switch row through the injected writeBotSwitch seam under the caller's identity (updated_by = the operator sub; the table's operator-only policy is the enforcement), and a model-only mutation updates that row's model when the bot already has one. The agent_config record is still written exactly as before — it is the dispatch record beneath the fleet row, never a switch.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -22,7 +23,7 @@ import {
 import type { ConfigSyncService, RuntimeParams } from '@/features/config-sync';
 import type { AgentConfigService } from '@/features/agent-management';
 import { getActiveRegistry } from '../swarm-bot-registry';
-import { hasAuthenticatedUserIdentity, hasValidServiceSecret, requiresOperator } from '@/shared/middleware/authz';
+import { getCaller, hasAuthenticatedUserIdentity, hasValidServiceSecret, requiresOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'config-runtime-routes' });
 type ConfigValues = Record<string, unknown>;
@@ -35,6 +36,12 @@ export interface RuntimeRouteSwitchDeps {
   catalog?: () => ProviderSwitchCatalog | null;
   /** Called after a persisted write so the installed snapshot re-reads the rows. */
   onRuntimeChanged?: () => Promise<void>;
+  /**
+   * Writes the bot's OWN switch row (oshal_bot_provider_switch, scope = the canonical agent id)
+   * under the caller's identity. Absent (no Postgres pool) → only the ADR-034 record is written,
+   * which a fleet-default row outranks.
+   */
+  writeBotSwitch?: (agentId: string, providerId: string, modelId: string | null, updatedBy: string) => Promise<void>;
 }
 
 interface ParsedMutation {
@@ -235,6 +242,7 @@ async function applyRuntimeMutation(
     });
     return;
   }
+  await writeOwnSwitchRow(req, before?.agentId ?? agentId, parsed.params, switches);
   if (switches.onRuntimeChanged) {
     await switches.onRuntimeChanged();
   }
@@ -245,6 +253,31 @@ async function applyRuntimeMutation(
     configVersion: result.newVersion ?? Number(beforeValues.configVersion ?? 0),
     ...policyPayload(afterPolicy),
   });
+}
+
+/**
+ * The operator's provider pick is the bot's own switch row — the only per-bot record that beats
+ * the fleet default. A provider mutation writes the row with the model it names (or none: the
+ * harness default, never a model left over from another provider); a model-only mutation updates
+ * the row's model when the bot already has one, and otherwise writes nothing here, because a
+ * record with no switch row is governed by the fleet default.
+ */
+async function writeOwnSwitchRow(
+  req: Request,
+  agentId: string,
+  params: RuntimeParams,
+  switches: RuntimeRouteSwitchDeps,
+): Promise<void> {
+  if (!switches.writeBotSwitch) return;
+  const updatedBy = getCaller(req).sub ?? 'operator';
+  if (params.providerId) {
+    await switches.writeBotSwitch(agentId, params.providerId, params.modelId ?? null, updatedBy);
+    return;
+  }
+  const own = switches.resolveSwitch?.(agentId) ?? null;
+  if (params.modelId && own && own.source === 'bot-row' && own.row) {
+    await switches.writeBotSwitch(agentId, own.row.providerId, params.modelId, updatedBy);
+  }
 }
 
 async function handleRuntimeWrite(
