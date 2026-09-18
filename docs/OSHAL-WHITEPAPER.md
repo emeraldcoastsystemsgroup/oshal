@@ -190,10 +190,12 @@ registry · Redis · Postgres. This loop is the line between a *starter repo* an
 
 ## 11. Evidence
 
-- **Economics.** A real database‑incident root‑cause analysis costs **~$1.30** with one persona‑gated bot, versus
-  **~$4.05** for the same work in a two‑bot worker→reviewer pipeline — a **~68% reduction** —
-  while still producing reviewer‑grade output. Cost is read from the canonical `chat_tasks` table, not
-  estimated from logs.
+- **Economics.** A real database‑incident root‑cause analysis costs **~$1.30 (n=1)** with one
+  persona‑gated bot, against a **~$4.05 (n=7 historical incident tickets)** median for the same work
+  in a two‑bot worker→reviewer pipeline — a **~68% reduction** — while still producing
+  reviewer‑grade output. Cost is read from the canonical `chat_tasks` table, not estimated from
+  logs; it is one workload on one corpus and is not a benchmark. The per‑ticket‑type census, with an
+  n on every row, is in [docs/business/cost-per-ticket-type.md](business/cost-per-ticket-type.md).
 - **Live‑insertion benchmark.** An aggressive validation pass registered **18 runtime tools**, created
   **18 dynamic agents**, and launched **18 bot containers** — all healthy, heartbeating, registry‑visible,
   and mesh‑subscribed — in **~52 seconds**, with cleanup leaving zero residue.
@@ -250,7 +252,7 @@ constant — **more agents, more workflows, more vendors, joining one swarm that
 | Standard tools | 31 across 16 categories |
 | Built‑in pipelines | build (7‑phase) · incident RCA (3‑phase) |
 | Kernel app manifests | 10 in `swarm-apps/` (incident operations, document intake, Jarvis, Workflow Studio, the Bot Forge, …); every other app is a store package |
-| Incident RCA cost | ~$1.30 (vs ~$4.05 two‑bot) — ~68% lower |
+| Incident RCA cost | ~$1.30 (n=1) vs ~$4.05 (n=7) two‑bot — ~68% lower, one workload, not a benchmark |
 | Live insertion | 18 tools + 18 agents + 18 containers in ~52s |
 
 ### Appendix B — Glossary

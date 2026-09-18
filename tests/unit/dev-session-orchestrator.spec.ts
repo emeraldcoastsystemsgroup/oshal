@@ -4,7 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Integration test for the ADR-077 Phase 2 Dev Session Orchestrator — sandboxed agent edit applied to the governed worktree. Skips when Docker is unavailable.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Gate on sandboxUsable() not dockerAvailable(): CI's userns-remapped Docker responds but cannot write /work, so the sandbox can't actually run there — skip instead of failing the fast unit lane.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Gate on sandboxUsable() not dockerAvailable(): the probe reports whether the sandbox can actually run on this engine, rather than only whether Docker answers.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -14,8 +14,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DevSessionEngine, DevSessionOrchestrator, SandboxedAgentRunner } from '@/features/dev-console';
 
-// sandboxUsable() (not dockerAvailable()) so this skips where Docker responds but the /work
-// bind mount is not writable by the container user (e.g. CI's userns-remapped daemon).
+// sandboxUsable() (not dockerAvailable()) so this skips where Docker responds but the sandbox
+// cannot actually run. A userns-remapped daemon is no longer such an engine — the scratch mount is
+// prepared for a container uid that owns nothing on the host (sandbox-scratch-userns-remap.spec.ts).
 const hasDocker = SandboxedAgentRunner.sandboxUsable();
 
 function git(cwd: string, args: string[]): string {

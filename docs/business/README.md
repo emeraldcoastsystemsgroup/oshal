@@ -18,6 +18,12 @@ Positioning, go-to-market, and pitch material. The engineering-facing "why OSHAL
   analytics products with free-tier and entry prices (sourced, ±30% bands, unverified figures
   marked), the self-hostable open-source stack, and the email/SMS compliance rules (CAN-SPAM,
   GDPR/ePrivacy, CASL, Gmail/Yahoo bulk-sender, RFC 8058, TCPA, CTIA).
+- [cost-per-ticket-type.md](./cost-per-ticket-type.md) — **what a ticket actually costs, by ticket
+  type.** The generated multi-workload census behind the economics claim: median, range, LLM calls
+  and an **n** for every ticket type the operator's cluster has billed, read out of `chat_tasks`
+  by [`scripts/evidence/cost-per-ticket-type.ts`](../../scripts/evidence/cost-per-ticket-type.ts)
+  inside a read-only transaction. The headline incident-RCA pair is one workload; this is the wider
+  picture that keeps it from being read as a rate.
 - [competitive-landscape.md](./competitive-landscape.md) — competitive landscape.
 - [competitive-claims-honest.md](./competitive-claims-honest.md) — **the
   adversarially-verified record of which claims survive.** Two "exclusive" claims (runtime agent spawn,

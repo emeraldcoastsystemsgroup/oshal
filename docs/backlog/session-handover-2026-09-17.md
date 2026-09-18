@@ -50,12 +50,11 @@ worth restarting.
 
 He is right, and it is a real defect, not a misunderstanding. What was verified:
 
-- The grant **did land**. `oshal_authorization_assignments` carries `little-monsters` for Google sub
-  `113439769752756917575` at issuer `https://accounts.google.com`, role `@app-admin`, tier admin.
+- The grant **did land**. `oshal_authorization_assignments` carries `little-monsters` for Google subject at issuer `https://accounts.google.com`, role `@app-admin`, tier admin.
 - `little-monsters` is `active` again (it and eight others were silently deactivated at 05:07 when
   `persistence-activation` timed out during the crash recovery).
 - `swarm_roles` has one row — swarm root is claimed.
-- Ella's `lm_students` row is `role=student` with **`external_issuer` still NULL**. The package
+- the student's `lm_students` row is `role=student` with **`external_issuer` still NULL**. The package
   self-heals that on her first login (`education-access.ts:236`), so she needs to sign in once.
 
 The cause is one branch in `src/features/application-authorization/service.ts:159-163`: an app with
@@ -66,7 +65,7 @@ platform tier. So the label is wrong rather than the access being wrong.
 
 **What was NOT verified, and should be before anyone calls this harmless:** whether any platform
 surface *outside* the package — uninstall, grant management for that app — accepts an `@app-admin`
-and would therefore accept Ella. That is the open question. The fix is a role catalog, which is what
+and would therefore accept the student. That is the open question. The fix is a role catalog, which is what
 the stopped workflow was building.
 
 ## Do not repeat these

@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Barrel for the dev-console feature (ADR-077 Phase 2 Dev Session Engine).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export the dev-node app factory + jsonOnlyBody (the JSON-only wall shared by the host dev-node and the api's /api/dev-console proxy) so scripts/dev-node.ts stays a thin entrypoint and the contract is unit-testable.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the dev-mode change classifier, the live-apply fast lanes, and the deploy promoter — the three pieces that let a self-edit take the lane its own content requires instead of routing every change through an image rebuild.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export the scratch-mount modes and preparation report so the userns-remap guard asserts the shipped constants rather than repeating literals.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export scratchEntryMode (the per-entry mode decision) so the guard asserts on every platform that a seeded executable keeps its execute bits.
  */
 
 export { DevSessionEngine } from './services/dev-session-engine';
@@ -18,12 +20,22 @@ export type {
   VerifyResult,
   CommitResult,
 } from './services/dev-session-engine';
-export { SandboxedAgentRunner } from './services/sandboxed-agent-runner';
+export {
+  SandboxedAgentRunner,
+  scratchEntryMode,
+  SCRATCH_DIR_MODE,
+  SCRATCH_FILE_MODE,
+  SCRATCH_ROOT_MODE,
+} from './services/sandboxed-agent-runner';
 export type {
   SandboxRunnerConfig,
   SandboxRunResult,
   SandboxRunExtra,
   IsolationReport,
+  ScratchEntryKind,
+  ScratchMountEntry,
+  ScratchMountPlan,
+  ScratchMountPreparation,
 } from './services/sandboxed-agent-runner';
 export { DevSessionOrchestrator } from './services/dev-session-orchestrator';
 export type { AgentEditResult, AgentEditOptions } from './services/dev-session-orchestrator';

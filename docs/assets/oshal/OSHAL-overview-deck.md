@@ -486,12 +486,12 @@ One framework contract, reused across very different products:
 
 | Approach | Cost per real incident RCA |
 |---|---|
-| 2‑bot worker→reviewer pipeline | **$4.05** |
-| OSHAL single persona‑gated bot | **$1.30** |
+| 2‑bot worker→reviewer pipeline — one workload | **$4.05** (n=7) |
+| OSHAL single persona‑gated bot — one corpus | **$1.30** (n=1) |
 
 ### ≈ 68% lower cost — one bot, reviewer‑grade output.
 
-<span class="muted">Source: PROMPT‑ITERATION‑LOG.md. Cost is read from the canonical `chat_tasks` table, not estimated.</span>
+<span class="muted">Source: PROMPT‑ITERATION‑LOG.md. Cost is read from the canonical `chat_tasks` table, not estimated. One workload, one corpus, one model — a persona‑iteration measurement, not a benchmark. Every ticket type the cluster has billed, with its own n: docs/business/cost-per-ticket-type.md</span>
 
 ---
 
@@ -583,7 +583,8 @@ The aggressive validation pass, against the local Docker swarm:
 - **2** built‑in pipelines (7‑phase build · 3‑phase incident)
 - **~115** services in the full local swarm compose
 - **18** bots inserted & discovered in **~52s**
-- **$1.30 vs $4.05** per incident RCA (**−68%**)
+- **$1.30 (n=1) vs $4.05 (n=7)** per incident RCA (**−68%**)
+- that pair is one workload on one corpus — not a benchmark
 
 </div>
 </div>
