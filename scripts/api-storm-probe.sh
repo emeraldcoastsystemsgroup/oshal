@@ -9,7 +9,7 @@
 #
 # usage:
 #   scripts/api-storm-probe.sh begin  [container]                      -> "restarts=<n> since=<rfc3339>"
-#   scripts/api-storm-probe.sh verify <restarts> <since> [container]   -> exit 0 unchanged + 0 lines, 1 otherwise, 2 cannot inspect
+#   scripts/api-storm-probe.sh verify <restarts> <since> [container]   -> exit 0 unchanged + 0 lines, 1 otherwise, 2 the check could not be taken
 #
 # container defaults to oshal-local-api. `since` is the value `begin` printed (docker logs --since).
 

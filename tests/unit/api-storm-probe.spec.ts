@@ -111,8 +111,12 @@ describe('scripts/api-storm-probe.sh', () => {
   }, 60_000);
 
   it('FAIL: Docker restarted the container inside the window', async () => {
-    const name = fixtureContainer('sleep 1; exit 1', 'on-failure:5');
+    // `sleep 1` gave begin about one second to snapshot before the first restart; when it lost
+    // that race the case failed with RestartCount 1 -> 1. Widen the window and assert the
+    // snapshot really is the pre-restart one, the way the PASS case above does.
+    const name = fixtureContainer('sleep 8; exit 1', 'on-failure:5');
     const { restarts, since } = snapshot(probe('begin', name).output);
+    expect(restarts, 'begin snapshotted after a restart; the window would be meaningless').toBe('0');
     await waitForRestart(name);
     const verify = probe('verify', restarts, since, name);
     expect(verify.status, verify.output).toBe(1);
