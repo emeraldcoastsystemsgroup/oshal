@@ -15,11 +15,11 @@ To comment, write under an entry in this file and tell me, or just say the entry
 
 Short-lived and blocking today. Source: `docs/backlog/operator-now.json` (as of 2026-09-18).
 
-### Grant the GitHub session the packages scope (30 seconds, browser)
+### Decide: enable billing on the Google project, or keep the fleet on Claude Code
 
-The admin PAT in .env (GITHUB_ADMIN_TOKEN, ghp_) answers 401 Unauthorized under every auth form, tested 2026-09-18 00:50Z - GitHub no longer accepts it. The project pushes on a different token, the gho_ OAuth token gh auth login minted (OSHAL_DEV_REPO_TOKEN and the git credential store), whose scopes are gist, repo, workflow - it cannot write packages, and OAuth scopes cannot be widened after issue. So nothing on this box can publish the container image, and every default install keeps pulling the July build. An agent must not mint a credential, and the grant flow needs your browser.
+The provider switch is live and proven (2026-09-18 05:47Z: one write of the fleet-default row, no restart, no deploy, and a real ticket completed on claude-code). It was written to gemini / gemini-3.8-flash first, as you asked, and the node ran Gemini - Google refused with 429 RESOURCE_EXHAUSTED: the GOOGLE_API_KEY in .env is the FREE tier, GenerateRequestsPerDayPerProjectPerModel-FreeTier = 20 requests per day per model, and the day's 20 were spent by tonight's runs. Twenty requests a day cannot carry a fleet. Codex is out until Sep 20 05:15. So the fleet default is claude-code right now (your own suggestion), which spends the Claude subscription.
 
-**Do:** gh auth refresh -h github.com -s write:packages,read:packages - it prints a code, opens the browser, you click Authorize. Nothing to paste: afterwards the refreshed token is read with gh auth token, wired as OSHAL_GHCR_TOKEN/OSHAL_GHCR_USER for the nightly gate, and the first green main gate publishes.
+**Do:** Either enable billing on the Google Cloud project that owns the key (the same key then runs paid Gemini 3.8 Flash), or leave it. Flipping the fleet is one write either way: Access Administration → fleet default, or PUT /api/agents/provider-switch/fleet-default {"providerId":"gemini","modelId":"gemini-3.8-flash"}. No deploy, no restart.
 
 ### The student: open Little Monsters once (signing in was not enough)
 
