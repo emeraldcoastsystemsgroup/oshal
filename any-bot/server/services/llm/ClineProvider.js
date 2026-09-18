@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: deny constrained execution before autonomous Cline CLI can bypass server tool authorization.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The model Cline drives is the BACKING provider's model, resolved per call, not the fleet default it was constructed with. startup-core-services hands this provider `config.llm.defaultModel` - the PRIMARY harness's model (LLM_MODEL=gpt-5.5 on the Codex fleet) - and generateResponse passed it straight to `-m`. On 2026-09-17, with the Cline binary fixed and global-config.json naming gemini/gemini-3.8-flash on every container, the first failed-over ticket still died: `models/gpt-5.5 is not found for API version v1beta` (provider gemini, -m gpt-5.5, measured in the general-bot log at 23:16:33Z). The wrapper already resolves the backing provider AND model through one precedence chain (CLINE_API_* -> global-config.json -> env file); this file now asks it before gating and before spawning, so the model gate, the -m flag and the cost row all name the model that actually ran. A deployment whose chain names no model keeps today's constructor default.
  */
 
 /**
@@ -101,11 +102,12 @@ class ClineProvider {
     // is enabled on the controller. Runs BEFORE the try so a hard deny propagates
     // (not swallowed into an error-text response).
     const { gateLlmCall } = require('./llmGate');
-    const gate = await gateLlmCall(this.config.model, messages, options);
+    const callModel = this._resolveCallModel();
+    const gate = await gateLlmCall(callModel, messages, options);
     if (!gate.allowed) {
       throw new Error(`LLM call denied by model gateway (${gate.reason})`);
     }
-    const gatedModel = gate.model || this.config.model;
+    const gatedModel = gate.model || callModel;
 
     try {
       // ⭐ PHASE_58: Extract dynamic agentId for persona loading
@@ -278,6 +280,33 @@ class ClineProvider {
         error: error.message,
       };
     }
+  }
+
+  /**
+   * @description The model Cline actually drives on THIS call. This provider is constructed with
+   * the fleet default (`config.llm.defaultModel`, i.e. the PRIMARY harness's LLM_MODEL), but the
+   * Cline CLI runs against its own backing provider, which the wrapper resolves per call from
+   * CLINE_API_PROVIDER/CLINE_API_MODEL, then the persisted global-config.json, then the env file.
+   * Handing the primary's model to a different backing provider is how the 2026-09-17 failover
+   * asked Gemini for `gpt-5.5` and lost every ticket. The resolved backing model wins when the
+   * chain names one; the constructor model stays the fallback for a deployment that names none,
+   * so a box with no Cline configuration behaves exactly as before.
+   * @returns {string} The model id to gate, pass as `-m`, and report on the cost row.
+   * @private
+   */
+  _resolveCallModel() {
+    try {
+      const backing = this.wrapper._resolveBackingProvider();
+      if (backing && backing.model) {
+        if (backing.model !== this.config.model) {
+          logger.info(`[ClineProvider] Backing provider ${backing.provider} names model ${backing.model}; not passing the fleet default ${this.config.model} to it`);
+        }
+        return backing.model;
+      }
+    } catch (err) {
+      logger.warn(`[ClineProvider] Backing provider unresolved (${err.message}); using constructor model ${this.config.model}`);
+    }
+    return this.config.model;
   }
 
   /**
