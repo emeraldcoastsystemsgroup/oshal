@@ -69,6 +69,7 @@ export {
   type DispatchRuntimeParams,
   type RuntimeParamsResolver,
   type DispatchConfigFields,
+  type ProviderSwitchResolver,
 } from './dispatch-runtime-params';
 export { ProviderSwitchStore } from './provider-switch-store';
 export {

@@ -24,6 +24,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. Doc-only here: the inline-bot comments said '(claude-code)' while the fleet has run codex since 2026-08-12 — corrected to '(codex)'. No registry entry changed.
  * 20 | maintainer@emeraldcoastsystemsgroup.com  | Signed delegation, core queued ticket types (BACKLOG "Signed delegation refuses every ticket whose worker bot runs inline"): with controller signing on, a worker with no dedicated bot-node endpoint is refused - dispatch-manifest-worker throws 'Signed HTTP delegation requires a dedicated bot-node endpoint' and the incident path rethrows 'No endpoint found for agent ...' for the same missing endpoint (the first appears five times in this box's api log in the 24h to 2026-09-16). rca-specialist, system-architect and queue-bot already NAME a running compose node and were forced inline only by the codex rule, so they take requiresOwnNode (the remedy resolve-bot-node-endpoint.ts already logs). workflow-assistant owns the queued 'workflow-build' ticket type and moves off container oshal-api onto its own node (security-analyst has no definition in this registry) - a queued type must cross the signed hop, and triaging untrusted scanner output inside the control-plane container was the blast radius controller-inline-scope.ts names. Guard: tests/unit/signed-delegation-core-ticket-types.spec.ts. These four catalog rows are shadowed at runtime by their LOCAL counterparts (SWARM_BOT_REGISTRY dedupes by agentId with local first), so the edit is for consistency under the mirrored-registry rule, not a behaviour change in full mode.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Add registryDeclaredProvider(agentId): the registry apiType a bot declares, ADR-034 section 1a tier 3. Dispatch stamping needs it because agent_config is written only when something CHANGES a bot provider, so a bot that has always run its declared provider has no row and push-on-dispatch reported no actionable record — the bot then refused the dispatch and the ticket escalated.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | Add registryHarnessEntry(agentId): the harnessType/apiType pair the switch rule needs (fleet default reaches LLM harnesses only) for dispatch stamping, read from the active registry by id or name exactly as registryDeclaredProvider does.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -265,6 +266,22 @@ export function registryDeclaredProvider(agentId: string | null | undefined): st
   const entry = getActiveRegistry().find((b) => b.agentId === agentId || b.name === agentId);
   const declared = (entry?.apiType ?? '').trim();
   return declared.length > 0 ? declared : null;
+}
+
+/**
+ * @description The registry's harness declaration for one bot — the pair the provider switch rule
+ * reads (bot-provider-switch.ts) so the fleet default reaches LLM harnesses and never an a2a
+ * boundary. Same lookup as {@link registryDeclaredProvider}: by agent UUID or registry name.
+ * @param agentId - The bot's agent UUID, or its registry name.
+ * @returns The declared harnessType/apiType, or null when the bot is absent from the registry.
+ */
+export function registryHarnessEntry(
+  agentId: string | null | undefined,
+): { harnessType: string | null; apiType: string | null } | null {
+  if (!agentId) return null;
+  const entry = getActiveRegistry().find((b) => b.agentId === agentId || b.name === agentId);
+  if (!entry) return null;
+  return { harnessType: entry.harnessType ?? null, apiType: entry.apiType ?? null };
 }
 
 /**
