@@ -14,6 +14,7 @@
 # 8 | maintainer@emeraldcoastsystemsgroup.com | A deploy is not finished until Jarvis answers and a ticket moves. Every gate this script already had measures the STACK — containers healthy, image parity clean, /health 200, zero unhealthy — and on 2026-09-15 all of them were green while Jarvis answered nothing and an operator ticket raised at 00:51Z escalated on manifest_worker_dispatch_failed instead of being worked. The run said DEPLOYED. Post-deploy live verification (scripts/lib/deploy-verify.sh) now runs after those gates and before the DEPLOYED line: the bot role can still SELECT the table its own ADR-149 posture guard reads, Jarvis answers a fixed question as the operator, and one synthetic ticket leaves the queue without parking in a failed state. A failure carries its own exit code (4) and deliberately does NOT roll back — the new image is already live and serving, and swapping it for the previous one would add a version surprise to a product outage. OSHAL_DEPLOY_SKIP_LIVE_VERIFY=1 is the one documented skip, for a box with no operator identity. Guard: tests/unit/deploy-live-verification.spec.ts.
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | wait_api waits on a DEADLINE (OSHAL_DEPLOY_API_HEALTH_SECONDS, default 900) and fails fast only on unhealthy/exited/dead/restarting. A fixed 40x3s window rolled back a healthy deploy on 2026-09-16 because this box loads 83 swarm apps at boot and took about eight minutes under load; the rollback's api needed more than 120 s for the same reason, so the script then reported a DEGRADED stack that was serving fine minutes later. A slow boot is not a failed boot, and the elapsed time is now logged so the difference is visible.
 # 10 | maintainer@emeraldcoastsystemsgroup.com   | Image verify also asks whether the Cline FALLBACK can start (scripts/check-cline-entrypoint.mjs --image). The 2026-09-17 image passed the commit label and the kernel-skills probe, every container was healthy, and every ticket that failed over from Codex died on `spawnSync .../cline/bin/.cline ENOENT` - a glibc executable on a musl base with no loader. That is an artifact defect only the artifact can show, so it is gated here, before any container is touched, alongside the other two image probes.
+# 11 | maintainer@emeraldcoastsystemsgroup.com   | The api must live THROUGH the bot recreate, and the run now says whether it did. On 2026-09-05 the storm starved the api's event loop, a transaction idled past Postgres's idle_in_transaction_session_timeout, the termination reached a checked-out pg client nothing owned, the crash guards exited the process, Docker restarted it, and this script printed DEPLOYED over about a minute of api downtime that only the container's RestartCount recorded. scripts/api-storm-probe.sh snapshots RestartCount + the clock before the recreate and, after the census gate, counts restarts and `idle-in-transaction` api-log lines inside that window; a non-zero verdict is exit 6 (deployed and SERVING - the downtime already happened, so nothing is rolled back - but the api did not survive its own deploy). The recreate pacing is unchanged and now printed with the RestartCount, so the log states which of pacing or the connection-error fix the run relied on. The fix itself is src/shared/services/database/pool-connection-errors.ts; the probe's own proof is tests/unit/api-storm-probe.spec.ts.
 # =============================================================================
 #
 # Usage:  bash scripts/oshal-deploy.sh [--preview] [--skip-build] [--no-rollback] [--allow-unpushed] [--dry-run]
@@ -291,7 +292,16 @@ log "recreating api"
 "${DC[@]}" up -d --force-recreate --no-deps "$API_SERVICE" >>"$RUN_LOG" 2>&1 || rollback
 wait_api || rollback
 
-log "recreating ${#BOT_SERVICES[@]} bots (batched)"
+# The api must LIVE THROUGH the bot recreate. On 2026-09-05 it did not: the storm starved its event
+# loop, a transaction idled past the server's idle_in_transaction_session_timeout, the termination
+# reached a checked-out pg client nothing owned, and the crash guards exited the process. Docker
+# restarted it, it was healthy 40 s later, and this script printed DEPLOYED over about a minute of
+# api downtime that only RestartCount recorded. The snapshot here and the verdict after the census
+# gate make that a named outcome (exit 6). A snapshot that cannot be taken is refused like any other
+# gate that cannot verify - the bots are untouched at this point, so the rollback is cheap.
+STORM_SNAPSHOT=$(bash scripts/api-storm-probe.sh begin "$API_CONTAINER") || { log "api-storm-probe cannot snapshot $API_CONTAINER"; rollback; }
+STORM_RESTARTS=${STORM_SNAPSHOT#restarts=}; STORM_RESTARTS=${STORM_RESTARTS%% *}; STORM_SINCE=${STORM_SNAPSHOT##*since=}
+log "recreating ${#BOT_SERVICES[@]} bots (batches of ${OSHAL_UP_BATCH_SIZE:-5}, ${OSHAL_UP_BATCH_SETTLE:-18}s settle - pacing unchanged; api RestartCount=$STORM_RESTARTS before)"
 recreate_bots || rollback
 
 # ── Verify the DEPLOY ───────────────────────────────────────────────────────
@@ -319,6 +329,12 @@ for i in $(seq 1 40); do
 done
 [ -z "$UNHEALTHY" ] || { log "unhealthy after grace window: $UNHEALTHY"; rollback; }
 log "census: $(docker ps --filter "ancestor=$IMAGE" --format '{{.Status}}' | grep -c healthy) healthy / $(docker ps --filter "ancestor=$IMAGE" --format '{{.Names}}' | wc -l) app containers"
+
+# Did the api live through the recreate? RestartCount unchanged and no idle-in-transaction
+# termination in its log since the snapshot. Measured here, decided after the product checks, so a
+# restart never hides their verdict and they never hide a restart.
+STORM_VERDICT=$(bash scripts/api-storm-probe.sh verify "$STORM_RESTARTS" "$STORM_SINCE" "$API_CONTAINER" 2>&1); STORM_RC=$?
+while IFS= read -r line; do log "  $line"; done <<<"$STORM_VERDICT"
 
 # ── Verify the PRODUCT, not just the stack ──────────────────────────────────
 # Everything above measures containers. On 2026-09-15 every line above was green while
@@ -370,7 +386,20 @@ if [ "${OSHAL_VERIFY_UNVERIFIED:-0}" -eq 0 ]; then
 else
   VERIFY_TAIL="${OSHAL_VERIFY_UNVERIFIED} check(s) UNVERIFIED — UNPROVEN as a product on ${OSHAL_VERIFY_UNPROVEN_STREAK:-1} consecutive run(s) (see above)"
 fi
-log "DEPLOYED ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots, parity clean, 0 unhealthy, ${VERIFY_TAIL}"
+# The api restarted (or lost a transaction to the server) INSIDE the bot recreate. The new image is
+# live and serving and the downtime already happened, so a rollback would only recreate the storm;
+# but a run that carried a mid-deploy api outage does not get to say DEPLOYED.
+if [ "$STORM_RC" -ne 0 ]; then
+  log ""
+  log "✗ deployed ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots healthy, parity clean, ${VERIFY_TAIL},"
+  log "  but the API DID NOT LIVE THROUGH THE BOT RECREATE (api-storm-probe lines above)."
+  log "  The new image IS live and serving and was deliberately NOT rolled back."
+  log "  Read the restart: docker logs --since $STORM_SINCE $API_CONTAINER 2>&1 | grep -i -E 'UNCAUGHT|idle-in-transaction'"
+  log "  Runbook: docs/runbooks/deploy-parity.md   Full log: $RUN_LOG"
+  exit 6
+fi
+
+log "DEPLOYED ${HEAD_SHA:0:12} on image ${NEW_ID:7:12} — api + ${#BOT_SERVICES[@]} bots, parity clean, 0 unhealthy, ${VERIFY_TAIL}, api lived through the recreate (RestartCount $STORM_RESTARTS unchanged)"
 log "advisory error scan (api, this boot):"
 docker logs "$API_CONTAINER" 2>&1 | grep -c '"level":50' | xargs -I{} echo "  error-level lines: {}" | tee -a "$RUN_LOG"
 exit 0

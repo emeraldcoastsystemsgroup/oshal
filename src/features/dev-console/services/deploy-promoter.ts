@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Dev-mode promote step (ADR-077 gap 1): the missing link between a merged commit and a serving container. scripts/oshal-deploy.sh was referenced by docs, oshal-up.sh and tests but by NO code path — so self-development landed in git and the running api kept serving the previously baked dist indefinitely. This wraps that script as a single-flight host operation with its four-outcome exit contract preserved (0 deployed / 1 rolled back and serving / 2 preflight / 3 degraded, needs hands), because collapsing 1 and 3 into "failed" is the exact 2026-07-29 incident the script's exit codes exist to prevent.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Decode the two post-deploy-verification exit codes. The script grew exit 4 (deployed and SERVING, but the live verification proved the product broken) and now exit 5 (deployed and SERVING, but the product was never proved to work for more consecutive runs than the gate tolerates). Both fell into the default arm, which answers stackServing: false and needsHands: true - the precise inversion the entry above exists to prevent, sending an operator to oshal-up.sh for a stack that is up and serving. Neither needs hands: 4 needs the named check fixed, 5 needs an operator-minted PAT, and both leave the previous image untouched because the deploy deliberately does not roll back on a product verdict.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Decode exit 6: deployed and SERVING, but the api did not live through the bot recreate (scripts/api-storm-probe.sh saw its RestartCount change or an idle-in-transaction termination inside the window). Same shape as 4 and 5 - the stack is up, nothing was rolled back, no hands needed - so it must not fall into the default arm either.
  */
 
 import { spawn } from 'node:child_process';
@@ -23,6 +24,7 @@ export type PromoteStatus =
   | 'degraded-needs-hands'
   | 'deployed-product-broken'
   | 'deployed-unproven'
+  | 'deployed-api-restarted'
   | 'unknown';
 
 /** The decoded meaning of one deploy exit code. */
@@ -126,8 +128,9 @@ export function resolveDeployShell(
  * 3 means nothing is serving, and conflating them is what let a dead api sit unnoticed behind a
  * success-shaped failure on 2026-07-29. 4 and 5 are the same distinction one layer up: both mean
  * the image IS live and serving and was deliberately not rolled back, and they differ in whether
- * the product was proved BROKEN (4) or never proved at all (5). An unrecognized code fails closed
- * — needs hands.
+ * the product was proved BROKEN (4) or never proved at all (5). 6 is the same posture again: live,
+ * serving, not rolled back, but the api restarted inside the bot recreate. An unrecognized code
+ * fails closed — needs hands.
  * @param exitCode - The script's exit code (null when it was killed or never ran).
  * @returns The decoded verdict.
  */
@@ -171,6 +174,15 @@ export function promoteVerdictForExit(exitCode: number | null): PromoteVerdict {
         stackServing: true,
         summary: 'deployed and serving, but the product could not be PROVED to work and the grace for'
           + ' that is spent — supply OSHAL_VERIFY_OPERATOR_PAT and re-verify; nothing was rolled back',
+      };
+    case 6:
+      return {
+        status: 'deployed-api-restarted',
+        needsHands: false,
+        stackServing: true,
+        summary: 'deployed and serving, but the api did NOT live through the bot recreate (RestartCount'
+          + ' changed or a transaction was terminated inside the window) — read the api log for the'
+          + ' restart; nothing was rolled back',
       };
     default:
       return {
