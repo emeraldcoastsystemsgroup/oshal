@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-PostgreSQL proof that an ADR-118 explicit tier resolves for the exact (subject, issuer) principal it was written for: a federated identity holding an admin assignment reaches a catalog-less application, the same identity without one is still refused, an issuer-less legacy row answers only a canonical local account, a row bound to one issuer never answers another, and one subject's grant never answers a different subject.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove simultaneous issuer isolation, independent clear and deny retention, owner RLS and nonoperator write refusal, local alias equivalence and migration compatibility.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Review findings on PR 605. (1) A pre-145 deny or viewer written for a federated subject must still apply after 145+146: the fixture rebuilds the pre-145 shape, inserts the row, runs both migrations and resolves for the Google issuer. (2) The owner-RLS reset case was vacuous - its last wrapped read carried no issuer and stamped the empty issuer itself, so removing the RESET stayed green; the last wrapped read now carries an issuer and an unwrapped read must see nothing.
  */
 
 import { expect, test } from '@playwright/test';
@@ -76,6 +77,18 @@ async function insertLegacyRow(userSub: string, tier: string): Promise<void> {
   );
 }
 
+/** Both issuer migrations, in order: 145 re-keys the table, 146 records the legacy-row contract. */
+async function applyIssuerMigrations(client: { query: (sql: string) => Promise<unknown> }): Promise<void> {
+  await client.query(readFileSync('scripts/migrations/145-app-access-principal-issuer.sql', 'utf8'));
+  await client.query(readFileSync('scripts/migrations/146-app-access-legacy-issuerless-rows.sql', 'utf8'));
+}
+
+/** Put the table back in its pre-145 shape (subject-only key, no issuer column). */
+async function revertToPre145(): Promise<void> {
+  await adminPool.query(`ALTER TABLE ${quotedIdentifier(SCHEMA)}.oshal_app_access DROP COLUMN user_issuer CASCADE`);
+  await adminPool.query(`ALTER TABLE ${quotedIdentifier(SCHEMA)}.oshal_app_access ADD PRIMARY KEY (user_sub, app_name)`);
+}
+
 async function createFixture(): Promise<void> {
   const admin = await adminPool.connect();
   try {
@@ -85,7 +98,7 @@ async function createFixture(): Promise<void> {
     await admin.query('CREATE TABLE swarm_applications (name VARCHAR(100) PRIMARY KEY)');
     await admin.query('INSERT INTO swarm_applications(name) VALUES ($1)', [APP]);
     await admin.query(readFileSync('scripts/migrations/121-app-access-tiers.sql', 'utf8'));
-    await admin.query(readFileSync('scripts/migrations/145-app-access-principal-issuer.sql', 'utf8'));
+    await applyIssuerMigrations(admin);
     for (const statement of AUTHORIZATION_SCHEMA) await admin.query(statement);
     await admin.query(`CREATE ROLE ${quotedIdentifier(PROBE_ROLE)} LOGIN PASSWORD 'probe-${RUN}' NOSUPERUSER NOBYPASSRLS`);
     await admin.query(`GRANT USAGE ON SCHEMA ${quotedIdentifier(SCHEMA)} TO ${quotedIdentifier(PROBE_ROLE)}`);
@@ -172,7 +185,7 @@ test('the same federated identity without an assignment is still refused', async
   expect(resolved).toMatchObject({ tier: 'deny', source: 'default' });
 });
 
-test('an issuer-less legacy row answers a local account and never a federated subject that matches', async () => {
+test('an issuer-less legacy grant answers a local account and never lifts a federated subject that matches', async () => {
   await clearAssignments();
   await insertLegacyRow(SHARED_SUB, 'admin');
 
@@ -182,9 +195,56 @@ test('an issuer-less legacy row answers a local account and never a federated su
   });
 
   const google = await asOperator(() => authorization.authorize(actor(SHARED_SUB, GOOGLE_ISSUER), { app: APP }));
-  expect(google, 'a matching subject string under another issuer is a different person').toMatchObject({
+  expect(google, 'a legacy grant is a ceiling for another issuer, never a lift above the default').toMatchObject({
     allowed: false, reason: 'authorization_app_admin_required',
   });
+});
+
+test('legacy deny on a federated subject still denies after migrations 145 and 146', async () => {
+  await clearAssignments();
+  // The exact pre-145 shape: subject-only key, no issuer column, a deny an operator wrote for a
+  // Google-shaped subject while the SQL was subject-only and therefore enforced for any issuer.
+  await revertToPre145();
+  try {
+    await insertLegacyRow(SHARED_SUB, 'deny');
+    await applyIssuerMigrations(adminPool);
+  } catch (error) {
+    await applyIssuerMigrations(adminPool).catch(() => undefined);
+    throw error;
+  }
+
+  const google = await asOperator(() => authorization.authorize(actor(SHARED_SUB, GOOGLE_ISSUER), { app: APP }));
+  expect(google, 'main denied this subject for every issuer; 145 alone answered admin source=default').toMatchObject({
+    allowed: false, reason: 'authorization_explicit_deny', tier: 'deny',
+  });
+  const declared = { supported: ['deny', 'viewer', 'editor', 'admin'] as const, defaultTier: 'admin' as const };
+  const resolved = await asOperator(() => appAccess.resolveForPrincipal(APP, SHARED_SUB, GOOGLE_ISSUER,
+    { ...declared, supported: [...declared.supported] }));
+  expect(resolved, 'a default-admin manifest must not out-rank the legacy deny').toMatchObject({ tier: 'deny', source: 'explicit' });
+  const local = await asOperator(() => authorization.authorize(actor(SHARED_SUB, LOCAL_AUTH_PRINCIPAL_ISSUER), { app: APP }));
+  expect(local).toMatchObject({ allowed: false, reason: 'authorization_explicit_deny' });
+});
+
+test('a legacy viewer ceiling caps a federated subject and an issuer-bound row is the re-bind', async () => {
+  await clearAssignments();
+  await insertLegacyRow(SHARED_SUB, 'viewer');
+  const editorByDefault = { supported: ['deny', 'viewer', 'editor', 'admin'] as const, defaultTier: 'editor' as const };
+  const declare = () => ({ ...editorByDefault, supported: [...editorByDefault.supported] });
+
+  expect(await asOperator(() => appAccess.resolveForPrincipal(APP, SHARED_SUB, GOOGLE_ISSUER, declare())),
+    'the ceiling lowers the manifest default').toMatchObject({ tier: 'viewer', source: 'explicit' });
+  expect(await asOperator(() => appAccess.resolveForPrincipal(APP, SHARED_SUB, 'urn:oshal:mock-oidc', declare())),
+    'every issuer of the subject, not one').toMatchObject({ tier: 'viewer', source: 'explicit' });
+  expect(await asOperator(() => appAccess.resolveForPrincipal(APP, OTHER_SUB, GOOGLE_ISSUER, declare())),
+    'a different subject is untouched').toMatchObject({ tier: 'editor', source: 'default' });
+
+  await asOperator(() => appAccess.assign({ userSub: SHARED_SUB, userIssuer: GOOGLE_ISSUER,
+    appName: APP, tier: 'admin', assignedBySub: OPERATOR, reason: 'Operator re-bound the federated identity' }));
+  expect(await asOperator(() => appAccess.resolveForPrincipal(APP, SHARED_SUB, GOOGLE_ISSUER, declare())),
+    'the issuer-bound row wins for its own issuer').toMatchObject({ tier: 'admin', source: 'explicit' });
+  expect(await asOperator(() => appAccess.resolveForPrincipal(APP, SHARED_SUB, 'urn:oshal:mock-oidc', declare())),
+    'the legacy ceiling keeps applying to every issuer that was not re-bound').toMatchObject({ tier: 'viewer', source: 'explicit' });
+  expect(await asOperator(() => appAccess.listAssignments())).toHaveLength(2);
 });
 
 test('an assignment bound to one issuer never answers another issuer with the same subject', async () => {
@@ -218,22 +278,26 @@ test('an explicit deny written for a federated identity is honoured, not ignored
 test('a database without migration 145 keeps its pre-145 behaviour instead of failing', async () => {
   await clearAssignments();
   await insertLegacyRow(SHARED_SUB, 'admin');
+  await insertLegacyRow(OTHER_SUB, 'deny');
   // Recreate the pre-145 key rather than leaving a partially migrated schema.
-  await adminPool.query(`ALTER TABLE ${quotedIdentifier(SCHEMA)}.oshal_app_access DROP COLUMN user_issuer CASCADE`);
-  await adminPool.query(`ALTER TABLE ${quotedIdentifier(SCHEMA)}.oshal_app_access ADD PRIMARY KEY (user_sub, app_name)`);
+  await revertToPre145();
   try {
     const local = await asOperator(() => authorization.authorize(actor(SHARED_SUB, LOCAL_AUTH_PRINCIPAL_ISSUER), { app: APP }));
     expect(local, 'the local account keeps the tier it already had').toMatchObject({ allowed: true, tier: 'admin' });
     const google = await asOperator(() => authorization.authorize(actor(SHARED_SUB, GOOGLE_ISSUER), { app: APP }));
-    expect(google, 'every stored row is issuer-less here, so no federated identity matches one').toMatchObject({
+    expect(google, 'every stored row is issuer-less here, so a legacy grant lifts no federated identity').toMatchObject({
       allowed: false, reason: 'authorization_app_admin_required',
+    });
+    const denied = await asOperator(() => authorization.authorize(actor(OTHER_SUB, GOOGLE_ISSUER), { app: APP }));
+    expect(denied, 'and a legacy deny still denies every issuer, as the subject-only SQL always did').toMatchObject({
+      allowed: false, reason: 'authorization_explicit_deny',
     });
     await expect(asOperator(() => appAccess.assign({
       userSub: OTHER_SUB, userIssuer: GOOGLE_ISSUER, appName: APP, tier: 'admin',
       assignedBySub: OPERATOR, reason: 'issuer binding that cannot be stored yet',
     })), 'an issuer binding must never be dropped silently').rejects.toThrow(/migration 145/);
   } finally {
-    await adminPool.query(readFileSync('scripts/migrations/145-app-access-principal-issuer.sql', 'utf8'));
+    await applyIssuerMigrations(adminPool);
   }
 });
 
@@ -272,8 +336,13 @@ test('owner RLS reads only its issuer and clears the issuer before connection re
   expect((await read(GOOGLE_ISSUER)).rows).toHaveLength(1);
   expect((await read('https://second.identity.test')).rows).toHaveLength(0);
   expect((await read()).rows).toHaveLength(0);
+  // The LAST wrapped read must carry an issuer. With the issuer-less read last, a wrapper that
+  // never RESET the issuer still passed: that read stamped the empty issuer itself.
+  expect((await read(GOOGLE_ISSUER)).rows).toHaveLength(1);
   const stamp = await probePool.query("SELECT current_setting('oshal.current_issuer', true) AS issuer");
-  expect(stamp.rows[0].issuer || '').toBe('');
+  expect(stamp.rows[0].issuer || '', 'the issuer must not survive on the pooled connection').toBe('');
+  const unwrapped = await probePool.query('SELECT user_sub FROM oshal_app_access');
+  expect(unwrapped.rows, 'an unstamped connection must see no owner row').toHaveLength(0);
 });
 
 test('legacy NULL and canonical local are one principal without overwriting a federated row', async () => {
@@ -287,8 +356,8 @@ test('legacy NULL and canonical local are one principal without overwriting a fe
   expect(rows).toHaveLength(2);
   expect(rows.find(row => row.userIssuer === GOOGLE_ISSUER)?.tier).toBe('admin');
   expect(rows.find(row => row.userIssuer === LOCAL_AUTH_PRINCIPAL_ISSUER)?.tier).toBe('editor');
-  // Re-running the migration preserves both rows and NULL/local still has one key.
-  await adminPool.query(readFileSync('scripts/migrations/145-app-access-principal-issuer.sql', 'utf8'));
+  // Re-running the migrations preserves both rows and NULL/local still has one key.
+  await applyIssuerMigrations(adminPool);
   expect(await asOperator(() => appAccess.listAssignments())).toHaveLength(2);
 });
 
@@ -318,6 +387,6 @@ test('an additive-only issuer migration cannot fall back to a subject-only write
       appName: APP, assignedBySub: OPERATOR, reason: 'Clear local only' }))).toBe(false);
     expect((await asOperator(() => appAccess.listAssignments()))[0]).toMatchObject({ userIssuer: GOOGLE_ISSUER, tier: 'deny' });
   } finally {
-    await adminPool.query(readFileSync('scripts/migrations/145-app-access-principal-issuer.sql', 'utf8'));
+    await applyIssuerMigrations(adminPool);
   }
 });

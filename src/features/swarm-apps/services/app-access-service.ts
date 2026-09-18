@@ -6,12 +6,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: durable per-user app assignments, explicit-deny-wins resolution, unsupported-stale-assignment fail-closed behavior, and operator assignment/list/clear operations.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve and record an assignment against the FULL verified principal. A subject identifier is unique only inside its issuer, so keying on the subject alone left the control plane unable to tell a federated identity from a local account and it refused every non-local issuer a tier outright. An assignment stored before migration 145 carries no issuer and keeps its only safe meaning: a canonical local account, never a federated subject that happens to match.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Isolate same-subject principals in every lookup, upsert and clear; legacy NULL and explicit local issuer share one key.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Keep a pre-145 issuer-less row applying to EVERY issuer of its subject as a ceiling (migration 146). Reading NULL as local-only silently dropped a deny or viewer ceiling that main enforced for any issuer through its subject-only SQL, and the subject then received the manifest default (admin on security, devops and oshal-dev). The legacy row is still the full assignment for the canonical local account and lifts no other issuer above its default; an issuer-bound row written for that issuer is the operator re-bind and takes precedence for it.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
 import {
+  APP_ACCESS_TIERS,
   isAppAccessTier,
   type AppAccessTier,
   type SwarmAppAccessDeclaration,
@@ -47,6 +49,17 @@ export interface ResolvedAppAccess {
   tier: AppAccessTier;
   bundle: string | null;
   source: 'explicit' | 'default' | 'unsupported_explicit';
+}
+
+/** One resolved (tier, source) pair before the legacy ceiling is applied. */
+interface TierDecision {
+  tier: AppAccessTier;
+  source: ResolvedAppAccess['source'];
+}
+
+/** @description Rank a tier so a ceiling can be compared: deny < viewer < editor < admin. */
+function tierRank(tier: AppAccessTier): number {
+  return APP_ACCESS_TIERS.indexOf(tier);
 }
 
 /** Narrow port consumed by the app-layer dynamic route boundary. */
@@ -144,10 +157,13 @@ export class AppAccessService implements AppAccessResolver {
    * different people and must not read each other's assignment.
    *
    * An assignment stored before scripts/migrations/145-app-access-principal-issuer.sql has no
-   * issuer, and the only identity that could have written it is a canonical local account, so
-   * it answers for `urn:oshal:local-auth` and for nothing else. That legacy rule is the reason
-   * the control plane used to refuse a tier to every other issuer outright; carrying the rule
-   * in the predicate keeps it exact while letting an assignment that names its issuer resolve.
+   * issuer. Before 145 it was enforced for ANY issuer of that subject (the SQL was subject-only),
+   * so it is read two ways, as scripts/migrations/146-app-access-legacy-issuerless-rows.sql
+   * records: for `urn:oshal:local-auth` it is the full assignment, and for every other issuer it
+   * is a CEILING - a legacy deny still denies and a legacy viewer still caps a federated subject,
+   * but a legacy grant never lifts another issuer above the manifest default. A row bound to the
+   * caller's issuer is the operator's re-bind for that issuer and takes precedence over the
+   * legacy row for that issuer alone.
    *
    * @param appName - Application slug the assignment is scoped to.
    * @param userSub - Verified subject identifier.
@@ -165,44 +181,44 @@ export class AppAccessService implements AppAccessResolver {
     assertSubject(userSub, 'userSub');
     assertIssuer(userIssuer);
 
-    const assigned = await withIssuerColumn(
-      async () => {
-        const result = await this.pool.query<Pick<AssignmentRow, 'tier'>>(
-          `SELECT tier
-             FROM oshal_app_access
-            WHERE user_sub = $1 AND app_name = $2
-              AND COALESCE(user_issuer, 'urn:oshal:local-auth') = $3
-            LIMIT 1`,
-          [userSub, appName, userIssuer],
-        );
-        return storedTier(result.rows[0]?.tier);
-      },
-      async () => {
-        // Pre-145 every row is issuer-less, so only a local account can match one.
-        if (userIssuer !== LOCAL_AUTH_PRINCIPAL_ISSUER) return null;
-        const result = await this.pool.query<Pick<AssignmentRow, 'tier'>>(
-          `SELECT tier
-             FROM oshal_app_access
-            WHERE user_sub = $1 AND app_name = $2
-            LIMIT 1`,
-          [userSub, appName],
-        );
-        return storedTier(result.rows[0]?.tier);
-      },
+    const rows = await withIssuerColumn(
+      async () => (await this.pool.query<Pick<AssignmentRow, 'tier' | 'user_issuer'>>(
+        `SELECT tier, user_issuer
+           FROM oshal_app_access
+          WHERE user_sub = $1 AND app_name = $2
+            AND (COALESCE(user_issuer, 'urn:oshal:local-auth') = $3 OR user_issuer IS NULL)`,
+        [userSub, appName, userIssuer],
+      )).rows,
+      async () => (await this.pool.query<Pick<AssignmentRow, 'tier'>>(
+        // Pre-145 every row is issuer-less: the local account's full assignment and every other
+        // issuer's ceiling, exactly as the subject-only SQL enforced it before this column existed.
+        `SELECT tier
+           FROM oshal_app_access
+          WHERE user_sub = $1 AND app_name = $2
+          LIMIT 1`,
+        [userSub, appName],
+      )).rows.map(row => ({ ...row, user_issuer: null })),
       { appName, operation: 'resolveForPrincipal' },
     );
 
-    return this.decide(appName, userSub, assigned, declaration);
+    const bound = rows.find(row => (row.user_issuer ?? LOCAL_AUTH_PRINCIPAL_ISSUER) === userIssuer);
+    // For the local account the NULL row IS the bound row. For any other issuer, a row bound to
+    // that issuer is the operator's re-bind and the legacy row no longer speaks for it.
+    const legacy = bound || userIssuer === LOCAL_AUTH_PRINCIPAL_ISSUER ? undefined : rows.find(row => row.user_issuer === null);
+    return this.decide(appName, userSub, storedTier(bound?.tier), declaration, storedTier(legacy?.tier));
   }
 
   /**
    * @description Apply the ADR-118 precedence to one already-looked-up assignment: an explicit
    * deny always wins, a tier the current manifest no longer supports fails closed to deny
-   * rather than widening to the default, and absence falls back to the declared default.
+   * rather than widening to the default, and absence falls back to the declared default. A
+   * legacy issuer-less row for the same subject then acts as a ceiling: it can only lower the
+   * answer, never lift it, so a pre-145 deny or viewer keeps applying to every issuer.
    * @param appName - Application slug being resolved.
    * @param userSub - Subject the decision belongs to, or null for an anonymous caller.
-   * @param assigned - The stored tier, or null when no assignment matched.
+   * @param assigned - The stored tier bound to this principal, or null when none matched.
    * @param declaration - Manifest access declaration bounding the tier vocabulary.
+   * @param legacy - The pre-145 issuer-less tier for a non-local issuer, or null when none exists.
    * @returns The resolved coarse access decision.
    */
   private decide(
@@ -210,22 +226,14 @@ export class AppAccessService implements AppAccessResolver {
     userSub: string | null,
     assigned: AppAccessTier | null,
     declaration: SwarmAppAccessDeclaration,
+    legacy: AppAccessTier | null = null,
   ): ResolvedAppAccess {
-    let tier: AppAccessTier;
-    let source: ResolvedAppAccess['source'];
-    if (assigned === 'deny') {
-      tier = 'deny';
-      source = 'explicit';
-    } else if (assigned !== null && declaration.supported.includes(assigned)) {
-      tier = assigned;
-      source = 'explicit';
-    } else if (assigned !== null) {
-      tier = 'deny';
-      source = 'unsupported_explicit';
-      logger.warn({ appName, userSub, assigned }, 'Unsupported app access assignment failed closed');
-    } else {
-      tier = declaration.defaultTier;
-      source = 'default';
+    let { tier, source } = this.precedence(appName, userSub, assigned, declaration);
+    if (legacy !== null) {
+      // At or below the default the legacy row is the governing explicit answer: a legacy deny
+      // on a default-deny application is still an explicit deny, not a default.
+      const ceiling = this.precedence(appName, userSub, legacy, declaration);
+      if (tierRank(ceiling.tier) <= tierRank(tier)) ({ tier, source } = ceiling);
     }
 
     return {
@@ -235,6 +243,22 @@ export class AppAccessService implements AppAccessResolver {
       bundle: declaration.mappings?.[tier] ?? null,
       source,
     };
+  }
+
+  /** @description The explicit-deny-wins / unsupported-fails-closed / default rule for ONE stored tier. */
+  private precedence(
+    appName: string,
+    userSub: string | null,
+    assigned: AppAccessTier | null,
+    declaration: SwarmAppAccessDeclaration,
+  ): TierDecision {
+    if (assigned === 'deny') return { tier: 'deny', source: 'explicit' };
+    if (assigned !== null && declaration.supported.includes(assigned)) return { tier: assigned, source: 'explicit' };
+    if (assigned !== null) {
+      logger.warn({ appName, userSub, assigned }, 'Unsupported app access assignment failed closed');
+      return { tier: 'deny', source: 'unsupported_explicit' };
+    }
+    return { tier: declaration.defaultTier, source: 'default' };
   }
 
   /** @description List assignments for the operator user-by-app matrix. RLS requires operator. */

@@ -4,6 +4,7 @@
 -- -----------------------------------------------------------------------------
 -- 1   | maintainer@emeraldcoastsystemsgroup.com     | Record the verified issuer an ADR-118 app-access assignment was written for, so a tier can be resolved for a federated identity on its full principal; rows written before this migration stay NULL and are answered only for canonical local accounts.
 -- 2   | maintainer@emeraldcoastsystemsgroup.com     | Isolate simultaneous same-subject identities in the key, mutations and owner RLS; preserve NULL provenance as the canonical local principal.
+-- 3   | maintainer@emeraldcoastsystemsgroup.com     | APPLIED ON A LIVE DEPLOYMENT (operator preview, 2026-09-17 21:41Z, recorded in app_migrations) - the statements below are frozen and this note is comment-only. The NULL-issuer rule stated here was too narrow: main enforced an issuer-less row for ANY issuer of its subject, so reading it as local-only dropped every federated deny and viewer ceiling. 146-app-access-legacy-issuerless-rows.sql records the corrected contract; there is no down migration (the re-key is one-way).
 -- -----------------------------------------------------------------------------
 
 -- ADR-118 keyed an assignment on `user_sub` alone. A subject identifier is unique only
