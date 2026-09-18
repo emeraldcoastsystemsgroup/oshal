@@ -1363,6 +1363,25 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   `registry`) so the UI can show where a value came from. A fleet-default control lives beside it.
 - **Out of scope here:** the Cline fallback's missing binary - its own change with an image-level
   guard, because it restores agentic work on the persisted Gemini config without touching resolution.
+- **The layer model, as the operator stated it (2026-09-17) and as the code already partly has it.**
+  There are two owners of a brain choice and they nest. Measured in `src/app/routes/user-brain-resolution.ts`
+  (ADR-127) and `src/app/bot-node-execution-handler.ts`:
+  - **A user's own turn** (chat, Jarvis): *user preference → (demo) CLI default → the user's explicit BYO
+    credentials → the user's free-tier connections → the portal admin's operator-key lane → none.* A CLI
+    preference is stamped on the dispatch record and the node reconciles to it. This exists and works.
+  - **Swarm-owned work** (tickets, schedules, agentic runs — nobody's turn): *`agent_config` row → registry
+    literal.* No admin default exists here except compose/env literals. **This is the gap this entry fills.**
+  - Target precedence, most specific first, each a real record and none a literal: *user per-bot preference
+    → user general preference → admin per-bot row → admin fleet-default row → registry (default only).* A
+    user's choice governs that user's turns; the admin's rows govern everything else and are the fallback
+    when the user has chosen nothing. Credentials stay with their owner: a user's BYO key is never the
+    fleet's, and the fleet's env key is never a user's.
+  - Follow-ups this entry does NOT close, each its own entry: (1) the admin fallback for user turns is
+    env-only (`OSHAL_OPERATOR_LLM_PROVIDER/MODEL/LANES`) and gated on `DEMO_MODE` — it should be a cockpit
+    control with the same row semantics; (2) users have no per-bot preference — `oshal_user_llm_prefs` is
+    keyed by user only; (3) the user preference vocabulary is closed
+    (`auto | claude-code | openai-codex | any-llm | free-tier`, `LLM_PREFERENCE_IDS`) so a user cannot name
+    Gemini or Cline as a CLI brain.
 - **Acceptance, in the operator's words (2026-09-17): "so this is flexible configuration right ...
   im not going to switch it to codex tomorrow and we have to hard code a bunch of shit."** The test
   is literal: the day after this merges and deploys, moving the whole fleet back to Codex is ONE
