@@ -35,7 +35,7 @@ export function createAgentProfileComponents(
     syncWorkspaceConfig: (agentId, patch) => workspaceConfigSync.syncAgentWorkspaceConfig(agentId, patch),
   });
   // /api/agents reports the rung that will serve the next dispatch: the installed switch
-  // snapshot (agent_config row > fleet default) over the registry declaration.
+  // snapshot (the bot's own operator-written row > fleet default) over the registry declaration.
   const agentProfileController = new AgentProfileController(
     agentProfileService,
     logger,

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | A bot's LLM provider is a row in a table, not a literal in the registry (operator, 2026-09-17: "it should literally be a switch in a table"). ONE pure rule, most specific first: per-bot switch row -> fleet-default switch row -> the registry literal. Each rung is a real record; no rows anywhere resolves byte-identically to the registry, so the fleet does not move when the rule lands. A provider id the platform cannot run fails CLOSED with a reason — it never falls silently to the registry. Lives in shared/ because the api-side harness resolver, dispatch stamping, the /runtime boot pull and the cockpit all have to answer the same question, and duplicating the rule is how a surface starts lying.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Named the stores behind the rungs so no reader invents a fourth: the per-bot row IS the existing agent_config record (config_values.providerId/modelId — what PUT /api/agents/:id/runtime writes and ADR-034 dispatch stamping carries), the fleet default is the one reserved row of oshal_bot_provider_switch (migration 146). The rule itself is unchanged; ProviderSwitchRow is the common shape both stores project to.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Entry 2 named the wrong store for the per-bot rung. An agent_config record is a machinery-written dispatch artefact (manifest seeding, the bot's own broadcast-up, a config push — the operator box holds 70 and not one was a person's choice), and treating it as the per-bot switch let every one of them outrank a fleet-default write, failing ADR-162 §7 for the whole fleet. Both rungs now live in oshal_bot_provider_switch: a per-bot row (scope = agent id) exists only when an operator wrote one through the api, the fleet default is the reserved row, and agent_config is ADR-034 tier 2 of the carried record BENEATH the fleet row. The rule itself is still unchanged — what changed is that the store no longer hands it agent_config as a botRow.
  *
  * @module shared/llm-runtime/bot-provider-switch
  */
@@ -16,11 +17,12 @@ export const FLEET_DEFAULT_SWITCH_ID = 'fleet-default';
 export type BotProviderSwitchSource = 'bot-row' | 'fleet-default' | 'registry';
 
 /**
- * One switch record: an agent_config per-bot record (providerId/modelId) or the fleet-default row
- * of oshal_bot_provider_switch, projected to one shape. No secret, ever — keys stay in the env.
+ * One switch record: a row of oshal_bot_provider_switch — a bot's own switch (an operator wrote
+ * it) or the fleet default. Never an agent_config record: that is the ADR-034 dispatch artefact
+ * beneath the fleet row. No secret, ever — keys stay in the env.
  */
 export interface ProviderSwitchRow {
-  /** An agent id (its agent_config record), or {@link FLEET_DEFAULT_SWITCH_ID}. */
+  /** An agent id (that bot's operator-written switch), or {@link FLEET_DEFAULT_SWITCH_ID}. */
   scopeId: string;
   providerId: string;
   modelId: string | null;
