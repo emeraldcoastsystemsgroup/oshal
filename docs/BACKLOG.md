@@ -9,6 +9,10 @@ Every item has an observable **Done when**. Live-proof requirements cannot be cl
 The operator's [ranked ten priorities](backlog/next-priorities.md) link each autonomous implementation
 outcome to its local proof. This queue retains the remaining rollout and broader acceptance work.
 
+Twenty kernel and orchestration items verified out of the clean-kernel repair specification live in
+[backlog/clean-kernel-repair.md](backlog/clean-kernel-repair.md) rather than here, because each one
+carries the evidence that survived an adversarial re-derivation and the corrections that did not.
+
 ## Promotion, deployment, and regression proof
 
 ### A bot that cannot reach Postgres in its first 20 seconds is pool-less for life, and says it is healthy (2026-09-17)

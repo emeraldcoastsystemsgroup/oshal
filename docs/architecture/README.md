@@ -13,6 +13,12 @@ The guiding model is:
 ## Current Documents
 
 ### Core Runtime
+- [clean-kernel/](./clean-kernel/README.md)
+  - DRAFT design series (2026-09-17): a language-neutral specification of what oshal should be if
+    designed again from what this project has learned. Goals, principles, keep / copy / re-architect /
+    drop triage of today's platform, target architecture (one admission door, kernel object model,
+    build-enforced dependency graph, versioned package SDK), requirements with acceptance criteria,
+    and the dated measurements behind the verdicts. Phase 0 after ADR-121; does not reopen it
 - [data-model/](./data-model/README.md)
   - generated schema diagrams for every database: core Postgres tables by domain, the TimescaleDB
     and SQLite stores, the ownership + RLS contract every table follows, and how each application

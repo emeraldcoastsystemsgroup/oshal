@@ -220,7 +220,7 @@ Key files:
 - `src/features/swarm-orchestration/services/queue-manager-service.ts`
 - `src/features/swarm-apps/services/swarm-app-service.ts`
 
-Workflow Studio publishes to runtime: its **Publish** action (`POST /api/swarm/apps/publish`) compiles a definition into a caller-scoped manifest and loads it as a live ticket queue — single-shot → `manifest-worker`, staged → the `staged` executor (approval gates), or a full branching/parallel graph → an executable nodeGraph. Manifest workflows remain the other runtime registration path.
+Workflow Studio publishes to runtime: its **Publish** action (`POST /api/swarm/apps/publish`) compiles a definition into a caller-scoped manifest and loads it as a live ticket queue — single-shot → a one-stage nodeGraph, staged → a compiled nodeGraph whose `approvalAfter` stages become `approval-gate` nodes, or a full branching/parallel graph → the same nodeGraph shape. All three run on the process-definition engine; the interim `staged` executor was retired and no runtime reads a workflow's `stages`. Manifest workflows remain the other runtime registration path.
 
 ## Add An Agent
 

@@ -6,6 +6,7 @@
  * (new)               | workflow-publish            | Compiles an authored workflow spec into a SwarmAppManifest. This is the bridge that turns a Workflow-Studio canvas / builder-bot spec into a runnable app == queue. Two emit targets: a single-shot bot (manifest-worker pipeline, "Branch A") or an authored multi-bot workflow (staged pipeline, "Branch B"). Owner/scope are applied by the publish route from the session — NOT taken from this spec.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | mode:'graph' (Branch C) compiles a full canvas graph (branches/parallel/decisions) to an executable nodeGraph; per-workflow autoStart passthrough; agent-cluster node accepted (config.agents>=1, counts as an agent node).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-097: both emit paths stamp suite: ai-productivity — published workflows are user-authored automations and must not land unshelved (loader warns on a missing suite).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Comment correction only. The normalize comment said 'staged' remained available for hand-authored manifests; it does not. Its executor was retired in favour of the graph engine, so a manifest declaring pipeline: staged routes to manifest-worker and silently drops every approval gate. Two governance documents repeated the same false statement and were corrected with it.
  */
 
 import type { SwarmAppManifest, SwarmAppScope, SwarmAppWorkflow } from '../types';
@@ -117,8 +118,10 @@ export function compileWorkflowSpec(spec: WorkflowPublishSpec, scope: SwarmAppSc
 
   // Normalize both modes to an ordered stage list, then compile to a graph the engine runs.
   // Unifying on the 'graph' pipeline means ONE runtime engine for published workflows
-  // (single-shot is just a one-stage graph). 'staged'/'manifest-worker' remain available for
-  // hand-authored manifests but publish no longer emits them.
+  // (single-shot is just a one-stage graph). 'manifest-worker' remains a valid hand-authored
+  // pipeline; 'staged' does NOT — its executor was retired (see chooseDispatchPath), so a manifest
+  // declaring it falls through to manifest-worker and runs only workerBot, dropping every approval
+  // gate silently. Publish never emits it, which is why that trap is unreachable from here.
   let stages: Array<{ bot: string; name?: string; approvalAfter?: boolean }>;
   if (spec.mode === 'staged') {
     const raw = Array.isArray(spec.stages) ? spec.stages : [];
