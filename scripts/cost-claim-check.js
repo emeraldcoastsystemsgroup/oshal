@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG P6 guard: the incident-RCA cost head-to-head ($1.30 vs $4.05) was published on nine surfaces as a bare number. This module holds the rule that the number never travels alone — its n in the same sentence/table row, its limits in the same block — and renders the per-ticket-type census table from the generated artifact so the published table cannot be hand-typed.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review of #623: the n was tested once per SEGMENT, so a bare "$1.30" passed whenever "$4.05 (n=7 …)" sat in the same sentence. The n is now required per FIGURE — in the span from that figure up to the next one, or the text before it when it is the first — and the census artifact must tie to the ledger it was read from (totals.costUsd == ledger.costUsd), so a join that charges one task to several tickets cannot publish an inflated total again.
  */
 
 /**
@@ -13,10 +14,12 @@
  *
  * Two rules, both from the BACKLOG "Benchmark and cost claims are still un-earned" entry:
  *
- *   1. Every segment (a sentence, or a markdown table row) that states `$1.30` or `$4.05`
- *      states the n behind it, and the block around it states the limits. The figures are a
- *      SINGLE-workload persona-iteration measurement; without the n a reader takes them for a
- *      benchmark, which is exactly what the entry says they are not.
+ *   1. Every FIGURE (`$1.30` or `$4.05`) states the n behind it in its own span of the segment
+ *      (a sentence, or a markdown table row) — the text from that figure up to the next figure,
+ *      plus whatever precedes the first one — and the block around it states the limits. The
+ *      figures are a SINGLE-workload persona-iteration measurement; without the n a reader takes
+ *      them for a benchmark, which is exactly what the entry says they are not. Per figure, not
+ *      per segment: "$1.30 against a $4.05 (n=7)" leaves the $1.30 bare and is a failure.
  *   2. The multi-ticket-type census published in docs/business/cost-per-ticket-type.md is
  *      rendered from docs/business/cost-per-ticket-type.json, not hand-typed — the same
  *      "counts are generated" discipline BUG-9 imposed on the doc counts.
@@ -39,6 +42,8 @@ const SURFACE_EXT = /\.(md|py|ya?ml|html|js|ts)$/;
 
 /** The two figures the entry names. Written as `$1.30`, `~$1.30`, `**$1.30**`, `$1.30/RCA`. */
 const FIGURE = /\$(?:1\.30|4\.05)(?![0-9])/;
+/** Every occurrence, for the per-figure split. */
+const EVERY_FIGURE = new RegExp(FIGURE.source, 'g');
 /** The n that has to travel with the figure: `n=1`, `n = 7`, `n=7 historical incident tickets`. */
 const N_MARKER = /\bn\s*=\s*\d+/i;
 /**
@@ -105,6 +110,22 @@ function claimSegments(file, text) {
 }
 
 /**
+ * @description Splits one segment into one span per figure it states. A figure owns the text
+ * from itself up to the next figure; the first figure also owns whatever precedes it, so a row
+ * such as `median of n=7 tickets | $4.05` still carries its n. Testing the n per span is what
+ * stops a bare `$1.30` borrowing the n of a `$4.05 (n=7)` later in the same sentence.
+ * @param {string} text - One segment.
+ * @returns {Array<{figure: string, text: string}>} The figure each span states and the span itself.
+ */
+function figureSpans(text) {
+  const starts = [...text.matchAll(EVERY_FIGURE)].map((match) => ({ figure: match[0], at: match.index }));
+  return starts.map((entry, index) => ({
+    figure: entry.figure,
+    text: text.slice(index === 0 ? 0 : entry.at, index + 1 < starts.length ? starts[index + 1].at : text.length),
+  }));
+}
+
+/**
  * @description Every published cost figure that travels without its n or without its limits.
  * @param {(file: string) => string} [readFile] - Reads a repo-relative file; defaults to disk.
  * @param {string[]} [files] - Surfaces to scan; defaults to the discovered tracked set.
@@ -117,8 +138,10 @@ function claimErrors(readFile = (file) => fs.readFileSync(path.join(REPO, file),
     if (!FIGURE.test(text)) continue;
     for (const segment of claimSegments(file, text)) {
       if (!FIGURE.test(segment.text)) continue;
-      if (!N_MARKER.test(segment.text)) {
-        errors.push(`${file}:${segment.line} states a cost figure with no n in the same segment: ${segment.text.trim().slice(0, 120)}`);
+      for (const span of figureSpans(segment.text)) {
+        if (!N_MARKER.test(span.text)) {
+          errors.push(`${file}:${segment.line} states ${span.figure} with no n in the same segment attached to that figure: ${segment.text.trim().slice(0, 120)}`);
+        }
       }
       if (!LIMIT_MARKERS.some((marker) => segment.block.toLowerCase().includes(marker))) {
         errors.push(`${file}:${segment.line} states a cost figure whose block carries none of the limits [${LIMIT_MARKERS.join(', ')}]`);
@@ -149,6 +172,40 @@ function renderCensusTable(census) {
   ].join('\n');
 }
 
+/** A summed census may differ from the ledger only by the per-row rounding it publishes at. */
+const COST_TIE_TOLERANCE_USD = 0.01;
+
+/**
+ * @description The census total must be the ledger total. Each cost-bearing task is read once
+ * from `chat_tasks`; the census splits it across the tickets it is linked to, so the sum over
+ * ticket types has to come back to what the ledger holds. #623 first published $149.82 against a
+ * $92.05 ledger because the join charged one task to every ticket it was linked to — this is the
+ * check that would have gone red.
+ * @param {object} census - Parsed census artifact.
+ * @param {number} typeCount - Number of ticket types, which bounds the rounding drift on calls.
+ * @returns {string[]} Failure messages; empty when the totals tie.
+ */
+function ledgerTieErrors(census, typeCount) {
+  const errors = [];
+  const ledger = census.ledger;
+  const totals = census.totals;
+  if (!ledger || typeof ledger.costUsd !== 'number' || typeof ledger.llmRequests !== 'number' || !(ledger.tasks >= 1)) {
+    errors.push(`${CENSUS_JSON}: missing ledger {tasks, llmRequests, costUsd} — the census total cannot be shown to tie to the rows it was read from`);
+    return errors;
+  }
+  if (!totals || typeof totals.costUsd !== 'number' || typeof totals.llmRequests !== 'number') {
+    errors.push(`${CENSUS_JSON}: missing totals {costUsd, llmRequests}`);
+    return errors;
+  }
+  if (Math.abs(totals.costUsd - ledger.costUsd) > COST_TIE_TOLERANCE_USD) {
+    errors.push(`${CENSUS_JSON}: the census sums to $${totals.costUsd} but the ledger holds $${ledger.costUsd} across ${ledger.tasks} tasks — a task is being charged to more than one ticket, or dropped`);
+  }
+  if (Math.abs(totals.llmRequests - ledger.llmRequests) > 0.5 * typeCount) {
+    errors.push(`${CENSUS_JSON}: the census counts ${totals.llmRequests} LLM calls but the ledger holds ${ledger.llmRequests}`);
+  }
+  return errors;
+}
+
 /**
  * @description Everything wrong with the census artifact or the page that publishes it.
  * @param {object} census - Parsed census artifact.
@@ -167,6 +224,7 @@ function censusErrors(census, doc) {
     if (!census[field]) errors.push(`${CENSUS_JSON}: missing ${field} — an undated, unsourced number is the defect this replaces`);
   }
   if (!Array.isArray(census.limits) || census.limits.length === 0) errors.push(`${CENSUS_JSON}: missing limits`);
+  errors.push(...ledgerTieErrors(census, types.length));
   const start = doc.indexOf(TABLE_START);
   const end = doc.indexOf(TABLE_END);
   if (start < 0 || end < start) {
@@ -196,7 +254,7 @@ function main() {
 
 module.exports = {
   CENSUS_DOC, CENSUS_JSON, FIGURE, LIMIT_MARKERS, N_MARKER, SURFACE_ROOTS, TABLE_END, TABLE_START,
-  claimErrors, claimSegments, censusErrors, renderCensusTable, surfaceFiles,
+  claimErrors, claimSegments, censusErrors, figureSpans, ledgerTieErrors, renderCensusTable, surfaceFiles,
 };
 
 if (require.main === module) main();

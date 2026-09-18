@@ -27,11 +27,11 @@ behind it and the limits around it.
 
 | ticket type | tickets with cost | median $/ticket | range | LLM calls | window |
 |---|--:|--:|---|--:|---|
-| `build` | n=60 | $1.0409 | $0.1196 – $8.8715 | 343 | 2026-06-21 → 2026-07-20 |
+| `build` | n=60 | $0.6434 | $0.0820 – $2.2386 | 162 | 2026-06-21 → 2026-07-20 |
 | `intelligent-processing` | n=28 | $1.1376 | $0.4566 – $2.2697 | 54 | 2026-08-01 → 2026-08-02 |
-| `task` | n=17 | $0.0489 | $0.0139 – $0.5787 | 17 | 2026-06-26 → 2026-08-04 |
+| `task` | n=17 | $0.0489 | $0.0069 – $0.5787 | 15 | 2026-06-26 → 2026-08-04 |
 | `daily-trade-recap` | n=8 | $0.0347 | $0.0107 – $0.2143 | 21 | 2026-06-26 → 2026-06-30 |
-| `chat` | n=6 | $0.0201 | $0.0002 – $0.0429 | 6 | 2026-06-28 → 2026-08-13 |
+| `chat` | n=6 | $0.0101 | $0.0002 – $0.0214 | 4 | 2026-06-28 → 2026-08-13 |
 | `federal-capture` | n=3 | $0.1440 | $0.0148 – $0.5540 | 3 | 2026-06-01 → 2026-06-29 |
 | `incident` | n=2 | $1.8076 | $0.8622 – $2.7530 | 4 | 2026-04-26 → 2026-07-08 |
 | `durable-probe` | n=2 | $0.4439 | $0.3828 – $0.5050 | 5 | 2026-07-05 → 2026-07-05 |
@@ -59,6 +59,11 @@ behind it and the limits around it.
   choosing which rows to show.
 - **Costs are LLM spend only** — what the provider billed for the calls linked to the ticket.
   Compute, storage and human time are not in it.
+- **Each chat task is counted once.** A bot-node task is keyed by the workspace it runs in, so
+  sibling subtasks dispatched into one workspace accumulate into one task row that is linked to
+  each of them. That row is split evenly across its tickets — the ledger does not record which
+  ticket drove which call — and the artifact's `totals` tie to its `ledger` block, which is the
+  same rows read once. A census whose total exceeds its ledger fails the guard.
 
 ## What this still does not prove
 

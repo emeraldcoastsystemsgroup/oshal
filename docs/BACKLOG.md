@@ -614,20 +614,27 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   of `chat_tasks`, joined to `tickets` through the product's own `ticket_task_links`, inside a
   `SET TRANSACTION READ ONLY` transaction, and emits a dated census with an n on every ticket type
   (`docs/business/cost-per-ticket-type.json`, published as a generated table in the sibling `.md`).
-  The first capture is 17 ticket types over 138 cost-bearing tickets: `build` n=60 at a $1.0409
-  median, `intelligent-processing` n=28 at $1.1376, down to seven types at n=1. `incident` itself is
-  n=2 — which is exactly why the headline pair stays labelled as one workload instead of a rate.
+  Every count in it — ticket types, tickets, calls, dollars, the n on each row — lives in that
+  artifact and nowhere else; this entry does not restate them, because a restated count is a
+  hand-typed one. Each chat task is attributed once: a task linked to several tickets (sibling
+  subtasks dispatched into one workspace accumulate into one task row) is split evenly across
+  them, and the artifact carries the ledger totals it was read beside so the tie is published, not
+  asserted. The `incident` row is the type the headline pair is about, and its n there is small —
+  which is exactly why the pair stays labelled as one workload instead of a rate.
 - **Guard:** `tests/unit/cost-claim-carries-its-n.spec.ts` + `scripts/cost-claim-check.js`. The
   surfaces are DISCOVERED, not allowlisted: every tracked text file under `README.md`, `ROADMAP.md`,
-  `docs/`, `ai-lab/bot-personas/`, `swarm-apps/` and `site/` is scanned, and a figure whose segment
-  carries no `n=` or whose block carries none of the limits phrases fails the gate. Red on the tree
-  before the sweep — 38 findings across nine files: `README.md`, `OSHAL-WHITEPAPER.md`,
+  `docs/`, `ai-lab/bot-personas/`, `swarm-apps/` and `site/` is scanned, and a FIGURE whose own
+  span carries no `n=` — per figure, so a bare first figure cannot borrow the n that the second
+  figure in the same sentence carries — or whose block carries none of the limits phrases fails
+  the gate. Red on the
+  tree before the sweep — 38 findings across nine files: `README.md`, `OSHAL-WHITEPAPER.md`,
   `WHY_OSHAL.md`, the deck markdown, `build_oshal_deck.py`, both capture personas, the fluency
-  register and this entry. Green after: `1 failed | 9 passed` → `10 passed` in 5.20s. Mutation cases
-  strip the n, strip the limits, hand-edit the published census table and invent a tenth surface,
-  and each goes red on its own. `OSHAL-overview.pptx` was rebuilt from the generator (a verified
-  four-line text delta); the PNG-derived `.html`/`.pdf` beside it need a PowerPoint export, which is
-  an operator step (`build_html.py` reads `_thumbs/Slide*.PNG`).
+  register and this entry. Mutation cases strip the n from one figure while its neighbour keeps it,
+  strip the limits, hand-edit the published census table, inflate the census above its ledger,
+  drop the ledger, and invent a tenth surface; each goes red on its own. `OSHAL-overview.pptx` was
+  rebuilt from the generator (a verified four-line text delta); the PNG-derived `.html`/`.pdf`
+  beside it need a PowerPoint export, which is an operator step (`build_html.py` reads
+  `_thumbs/Slide*.PNG`).
 - **P5 does not block operation** - it blocks a slide. Do not publish the determinism/cost
   head-to-head until the oshal leg is measured.
 - **Done when:** `run_oshal` POSTs to the real dispatch and reads `chat_tasks` input/output token

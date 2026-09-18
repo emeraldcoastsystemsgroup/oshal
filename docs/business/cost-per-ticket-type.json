@@ -1,8 +1,14 @@
 {
   "generator": "scripts/evidence/cost-per-ticket-type.ts",
-  "capturedAt": "2026-09-17T16:41:08.276Z",
+  "capturedAt": "2026-09-18T00:39:54.380Z",
   "proofTier": "live",
-  "source": "chat_tasks joined to tickets through the product's own ticket_task_links, read inside a READ ONLY transaction on the operator's live cluster",
+  "source": "chat_tasks joined to tickets through the product's own ticket_task_links, each task counted once and split evenly across the tickets it is linked to, read inside a READ ONLY transaction on the operator's live cluster",
+  "attribution": "A task linked to N tickets contributes 1/N of its cost, tokens and calls to each; the census totals therefore equal the ledger totals.",
+  "ledger": {
+    "tasks": 159,
+    "llmRequests": 284,
+    "costUsd": 92.0508
+  },
   "window": {
     "firstSeen": "2026-04-25",
     "lastSeen": "2026-08-13"
@@ -10,25 +16,26 @@
   "totals": {
     "ticketTypes": 17,
     "tickets": 138,
-    "llmRequests": 469,
-    "costUsd": 149.8218
+    "llmRequests": 284,
+    "costUsd": 92.0507
   },
   "limits": [
     "One operator cluster, one model mix, and whatever workloads that operator actually ran — not a controlled benchmark.",
     "A ticket type with a small n is a sample, not a rate: read the range beside the median, never the median alone.",
     "Cost is what the provider billed for the LLM calls linked to the ticket. Compute, storage and human time are not in it.",
-    "Ticket types named smoke-*, *-probe and test-* are harness fixtures kept in the table so the n is not quietly curated."
+    "Ticket types named smoke-*, *-probe and test-* are harness fixtures kept in the table so the n is not quietly curated.",
+    "A chat task linked to several tickets (sibling subtasks run in one workspace accumulate into one task row) is counted once and split evenly across them; the ledger does not record which ticket drove which call."
   ],
   "ticketTypes": [
     {
       "ticketType": "build",
       "tickets": 60,
-      "medianCostUsd": 1.0409,
-      "minCostUsd": 0.1196,
-      "maxCostUsd": 8.8715,
-      "totalCostUsd": 102.9611,
-      "meanTokens": 238226,
-      "llmRequests": 343,
+      "medianCostUsd": 0.6434,
+      "minCostUsd": 0.082,
+      "maxCostUsd": 2.2386,
+      "totalCostUsd": 45.3087,
+      "meanTokens": 77718,
+      "llmRequests": 162,
       "firstSeen": "2026-06-21",
       "lastSeen": "2026-07-20"
     },
@@ -48,11 +55,11 @@
       "ticketType": "task",
       "tickets": 17,
       "medianCostUsd": 0.0489,
-      "minCostUsd": 0.0139,
+      "minCostUsd": 0.0069,
       "maxCostUsd": 0.5787,
-      "totalCostUsd": 1.9022,
-      "meanTokens": 3988,
-      "llmRequests": 17,
+      "totalCostUsd": 1.8428,
+      "meanTokens": 3754,
+      "llmRequests": 15,
       "firstSeen": "2026-06-26",
       "lastSeen": "2026-08-04"
     },
@@ -71,12 +78,12 @@
     {
       "ticketType": "chat",
       "tickets": 6,
-      "medianCostUsd": 0.0201,
+      "medianCostUsd": 0.0101,
       "minCostUsd": 0.0002,
-      "maxCostUsd": 0.0429,
-      "totalCostUsd": 0.1192,
-      "meanTokens": 2363,
-      "llmRequests": 6,
+      "maxCostUsd": 0.0214,
+      "totalCostUsd": 0.0599,
+      "meanTokens": 1700,
+      "llmRequests": 4,
       "firstSeen": "2026-06-28",
       "lastSeen": "2026-08-13"
     },
