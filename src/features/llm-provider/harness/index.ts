@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | New harness entry point (barrel split, TODO-BOUNDARY-FINDING 2026-07-19). The main llm-provider barrels re-exported the harness runtime, so ANY controller import of '@/features/llm-provider' (types, cost resolver, credentials) statically loaded the whole harness stack — violating the two-runtimes doctrine (CLAUDE.md: the controller orchestrates, bot nodes own LLM execution). This second sanctioned entry point ('@/features/llm-provider/harness', mirroring the existing governance/ sub-entry) carries the harness stack for its ONE legitimate consumer: the harness composition root (src/app/composition/provider-runtime.ts). Controller consumers keep using '@/features/llm-provider' and never touch this path. Guarded by tests/unit/controller-runtime-boundary.spec.ts, which pins provider-runtime.ts as this barrel's sole importer.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exports AntigravityCliHarnessAdapter beside the Gemini one: two registered Google terminal agents, both selectable, either usable as a fallback rung.
  */
 
 /**
@@ -36,6 +37,10 @@ export {
   GeminiCliHarnessAdapter,
   type GeminiCliHarnessConfig,
 } from '../services/gemini-cli-harness-adapter';
+export {
+  AntigravityCliHarnessAdapter,
+  type AntigravityCliHarnessConfig,
+} from '../services/antigravity-cli-harness-adapter';
 export {
   A2AHarnessAdapter,
   deriveA2ATokenEnvName,
