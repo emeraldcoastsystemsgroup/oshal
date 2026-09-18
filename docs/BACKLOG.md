@@ -1509,6 +1509,12 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ### A bot's LLM provider is a row in a table, not a literal in the registry (operator, 2026-09-17)
 
+- **Status 2026-09-18 05:47Z — BUILT (#633, migration 147) and PROVEN LIVE.** Deployed on `74ea6660`; one write
+  of the fleet-default row moved `general-bot` to `providerSource: fleet-default` with no restart, and the next
+  dispatch reconciled the node and completed a real ticket ('approved' → 'complete', 41 s) — on `claude-code`,
+  because the `gemini / gemini-3.8-flash` row written first ran Gemini and Google refused it: the key is the
+  free tier (20 requests/day/model, exhausted). The mechanism is closed; the Gemini half of the live clause
+  waits on billing for the key (operator queue).
 - **What the operator hit.** Codex ran out of tokens for one login and the instruction was "set the
   default to Gemini 3.8 Flash — it should literally be a switch in a table". There is no such switch.
   Measured on the box the same hour: all 38 LLM bots carry `harnessType: 'codex-cli'` /
