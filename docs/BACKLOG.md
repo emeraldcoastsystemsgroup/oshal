@@ -795,9 +795,40 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** root-cause the specs outside the current green ratchet and separate product defects, fixture/auth defects, and intentionally unsupported cases.
 - **Done when:** every spec uses the configured origin, each unsupported case has an explicit disposition, and the complete CI Playwright job is green without retry-dependent success.
 
-### Dev-console `/work` under Linux user-namespace remapping
-- **Remaining:** make the ADR-077 sandbox scratch mount writable to remapped container users without widening host access beyond the per-run directory.
-- **Done when:** a GitHub-Actions-equivalent userns-remap container writes inside `/work`, cannot escape it, and the focused sandbox/security guards pass. See [ADR-077](adr/077-self-developing-platform-and-super-admin-dev-console.md).
+### Dev-console `/work` under Linux user-namespace remapping — DONE 2026-09-17
+- **Done:** `SandboxedAgentRunner` prepares the bind mount on every run instead of assuming the
+  container owns it. Under a userns-remapped daemon the container's root is a host subuid that owns
+  nothing, so a `mkdtemp` (0700) scratch holding 0644 seeded files denied it both traversal and
+  writes. The per-run directory is now set to `0o777`, every file inside it is widened by a+rw
+  (`mode | 0o666` — a seeded `0755` script stays executable, because the seeder copies modes and
+  a set to `0o666` had been stripping them), and the scratch ROOT that contains them is locked to
+  `0o700`: the daemon resolves the mount without traversing the
+  root, a second host user must traverse it and is refused, so host reach does not extend past the
+  per-run directory. Symlinks inside the scratch are never chmodded — `chmod` follows them, which
+  would widen a target outside it. Windows has no POSIX mode bits, so the plan is computed and
+  declared unapplied rather than pretended.
+- **Proved on a real kernel**, not inferred: `scripts/sandbox-userns-mount-proof.sh` runs in one
+  disposable container as uid 165536 — the first subuid a default `dockremap` mapping hands to
+  container root — and reports `unprepared_write=denied`, `prepared_write=ok`, `prepared_create=ok`,
+  `prepared_exec=ok`, `escape_parent=denied`, `escape_root=denied`, `owner_cleanup=ok` in a single
+  run; driven with the old modes (`OSHAL_SCRATCH_DIR_MODE=700 OSHAL_SCRATCH_FILE_MODE=644`) the same
+  container reports `prepared_write=FAILED`, and with files SET to `666` instead of widened it
+  reports `prepared_exec=FAILED`.
+- **Guard:** `tests/unit/sandbox-scratch-userns-remap.spec.ts` (10 cases) — the plan and its mode
+  bits, that a seeded executable is widened and not narrowed (the pure decision on every platform,
+  the real inode on POSIX), the symlink refusal, the root lock, and that `run()`, `runStreaming()`
+  and the orchestrator all prepare before the container starts; the container proof is the tenth
+  case, opt-in via
+  `OSHAL_SANDBOX_USERNS_PROOF=1` because it starts a container, and it FAILS rather than skips when
+  Docker cannot be reached. Mutation-proven red on removing preparation from the run paths (3 red),
+  on narrowing the directory mode (1 red), on deleting the symlink refusal (1 red), and on setting
+  files to `0o666` instead of widening them (2 red: the decision `0o666 ≠ 0o777`, and the container
+  `prepared_exec=FAILED`).
+- **Not claimed:** nothing here was run against an actual userns-remapped daemon — the operator's
+  engine is Docker Desktop. The uid the proof uses is the one such a daemon presents, and the kernel
+  check it exercises is the same one; the remaining step is a CI run of the dev-console container
+  tests on the Actions daemon, which is blocked behind the manual-only CI state, not behind this.
+  See [ADR-077](adr/077-self-developing-platform-and-super-admin-dev-console.md).
 
 ### Remote-client full-suite flake
 - **Cause found and fixed 2026-09-17 — the two stated leads are both disproven.** Module-level *registry* state cannot leak between files: vitest runs each spec file in its own isolated fork, and inside each file the registered clientIds are disjoint. Module-level *rate-limiter* state cannot leak either: `createRemoteClientRateLimiter()` is called from inside `createRemoteClientRoutes()` (`src/app/routes/remote-client-routes.ts:225`), so every `bootApp()` gets a fresh limiter over a fresh store. The flake was accounting. Four specs (`remote-client-auth`, `-device-ownership`, `-node-token`, `-rate-limit`) called `await import('../../src/app/routes/remote-client-routes')` from inside their first `it()`, so that ONE test paid the one-time dynamic import/transform of the whole router graph out of its own timeout budget. Measured with only those four files running on an idle box: **17,255ms / 17,260ms / 17,173ms / 17,274ms**, against the 30s each file had bought to hide it, while every sibling test in the same files ran in 14-101ms. Under the full parallel unit sweep the same import contends for the same cores and the budget goes — that is the remote-client timeout. The import now loads once in a file-level `beforeAll` (its own explicit 120s hook budget); the route FACTORY still runs per boot, so per-test env is read exactly as before. The inflated 30s per-test budgets are back down to the sibling 15s, which is the fix showing rather than a mask. Same shape the `remote-client-reregistration` spec already took. This is file-local: no concurrency setting, no global timeout, nothing serialized.

@@ -5,11 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Sandboxed Agent Runner (ADR-077 Phase 2 Slice 2): run an untrusted edit command in a locked-down container (only its scratch dir writable, no host .git/creds/network), then extract the file changes as a change set for the Dev Session Engine. A container is a real boundary; a cwd is not (Phase-2 red-team).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add sandboxUsable(): a real write-to-/work probe stricter than dockerAvailable(), so integration tests skip on engines where Docker responds but the /work bind mount is not writable by the container user (CI userns-remap). Linux userns-remap /work-writability is a tracked follow-up.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prepare the /work mount for a userns-remapped container uid: every run sets the per-run scratch tree to fixed modes (dirs 0777, files 0666) and the scratch ROOT that contains it stays owner-only 0700, so the widening reaches the per-run directory and nothing above it. Symlinks are never chmodded (chmod follows them, which would widen a target outside the tree). Windows has no POSIX mode bits, so preparation is a declared no-op there.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Files are widened (mode | 0666) instead of set to 0666: the seeder's cpSync preserves modes, so a 0755 script copied from the worktree was leaving preparation as 0666 and no longer executable by the container uid. Directories are still set to 0777. The decision is scratchEntryMode(), exported so it is assertable on a host without mode bits.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createChildLogger } from '@/shared/logger';
@@ -31,6 +33,68 @@ import type { ChangeSetEdit } from './dev-session-engine';
 
 const logger = createChildLogger({ module: 'sandboxed-agent-runner' });
 const IGNORED_DIRS = new Set(['.git', 'node_modules', '.tokenchase']);
+
+/**
+ * Mount modes that make the bind-mounted /work usable by a container uid that does NOT own it on
+ * the host — which is every container under a Linux userns-remapped daemon (GitHub Actions), where
+ * container-root is a host subuid. A `mkdtemp` scratch is 0700 and a seeded file 0644, so the
+ * remapped uid can neither traverse nor write and every /work write is "Permission denied".
+ *
+ * The widening is deliberately scoped: the per-run directory and the files inside it become
+ * world-writable, and the scratch ROOT that contains it is locked to owner-only. A bind mount is
+ * resolved by the daemon, so the container reaches /work without traversing the root — while a
+ * second host user must traverse the root and is refused there. Host reach therefore does not
+ * extend past the per-run directory.
+ *
+ * Directories are SET to {@link SCRATCH_DIR_MODE}; files are WIDENED by {@link SCRATCH_FILE_MODE}
+ * (`mode | 0o666`). The seeder copies the worktree with its modes, so a 0755 script arrives as
+ * one and must leave preparation executable — a set to 0666 stripped that and the container uid
+ * could no longer run it. See {@link scratchEntryMode}.
+ */
+export const SCRATCH_ROOT_MODE = 0o700;
+export const SCRATCH_DIR_MODE = 0o777;
+export const SCRATCH_FILE_MODE = 0o666;
+
+/** The kinds of scratch entry that get a mode; symlinks are not one (they are skipped). */
+export type ScratchEntryKind = 'directory' | 'file';
+
+/**
+ * @description Decides the mode one scratch entry needs for a foreign container uid, from what it
+ * has now. A directory becomes {@link SCRATCH_DIR_MODE}. A file keeps every permission bit it
+ * arrived with and gains {@link SCRATCH_FILE_MODE}: a seeded 0644 becomes 0666, a seeded 0755
+ * becomes 0777 and stays executable. Special bits (setuid/setgid/sticky) are dropped — the
+ * scratch is a copy the container edits, not a place a privileged binary belongs. Pure, so the
+ * decision is assertable on a host that has no mode bits to inspect afterwards.
+ * @param kind - Whether the entry is a directory or a regular file.
+ * @param currentMode - The entry's current `st_mode` (any bits above the permission bits are ignored).
+ * @returns The mode to apply.
+ */
+export function scratchEntryMode(kind: ScratchEntryKind, currentMode: number): number {
+  if (kind === 'directory') return SCRATCH_DIR_MODE;
+  return (currentMode & 0o777) | SCRATCH_FILE_MODE;
+}
+
+/** One entry of the scratch tree and the mode it needs for a foreign container uid to use it. */
+export interface ScratchMountEntry {
+  path: string;
+  mode: number;
+}
+
+/** What the scratch tree needs, decided without touching it — the platform-independent half. */
+export interface ScratchMountPlan {
+  /** Every directory and file inside the scratch, with the mode it needs. */
+  entries: ScratchMountEntry[];
+  /** Symlinks found inside the scratch and deliberately left alone (chmod would follow them out). */
+  skippedSymlinks: string[];
+}
+
+/** What {@link SandboxedAgentRunner.prepareScratchMount} actually did, so a guard can assert it. */
+export interface ScratchMountPreparation extends ScratchMountPlan {
+  /** The entries whose mode was really changed. Empty on Windows, which has no POSIX mode bits. */
+  applied: ScratchMountEntry[];
+  /** True on platforms without POSIX mode bits (Windows): the plan is computed and not applied. */
+  skipped: boolean;
+}
 
 export interface SandboxRunnerConfig {
   /** Container image (has the agent's toolchain). Defaults to a tiny base for the self-test. */
@@ -98,21 +162,24 @@ export class SandboxedAgentRunner {
    * @description Whether the sandbox can ACTUALLY run — stricter than {@link dockerAvailable}:
    * Docker must respond AND a throwaway container must be able to write to the bind-mounted
    * /work scratch. Some engines report a Docker version yet cannot support the sandbox: e.g.
-   * GitHub Actions' userns-remapped daemon maps container-root to a host subuid that does not
-   * own the `mkdtemp` (mode-0700) bind mount, so every write to /work is "Permission denied"
-   * and the isolation self-test fails for an ENVIRONMENT reason, not a real regression. The
-   * Docker integration tests gate on this so they run where the sandbox works (e.g. the
-   * operator's Docker Desktop) and skip cleanly where the host Docker cannot support it.
-   * Linux userns-remap /work-writability is a tracked dev-console follow-up (BACKLOG).
+   * a userns-remapped daemon maps container-root to a host subuid that owns nothing on the host.
+   * {@link prepareScratchMount} is what makes that case work, so the probe is now a real check of
+   * this engine rather than a standing exclusion: it mounts a per-run directory inside a private
+   * 0700 root, exactly as a session run does, and reports whether the container wrote to it.
    * @returns true only when a trivial write-to-/work sandbox run succeeds end to end.
    */
   static sandboxUsable(): boolean {
     if (!SandboxedAgentRunner.dockerAvailable()) return false;
     let dir: string | undefined;
     try {
+      // The private root is never the mount: mounting a mkdtemp directly would force the widening
+      // onto a directory sitting straight under a world-traversable /tmp. The mount is its child.
       dir = mkdtempSync(path.join(tmpdir(), 'sar-probe-'));
+      SandboxedAgentRunner.lockScratchRoot(dir);
+      const work = path.join(dir, 'work');
+      mkdirSync(work, { recursive: true });
       const result = new SandboxedAgentRunner().run(
-        dir,
+        work,
         ['sh', '-c', 'echo ok > /work/.probe && cat /work/.probe'],
         30_000,
       );
@@ -135,6 +202,7 @@ export class SandboxedAgentRunner {
    * @returns exit code + combined output + whether it timed out.
    */
   run(scratchDir: string, command: string[], timeoutMs = 600_000, extra: SandboxRunExtra = {}): SandboxRunResult {
+    SandboxedAgentRunner.prepareScratchMount(scratchDir);
     const args = this.dockerArgs(scratchDir, command, extra);
     const result = spawnSync('docker', args, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 });
     const timedOut = Boolean((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT' || result.signal);
@@ -163,6 +231,7 @@ export class SandboxedAgentRunner {
     // Name the container so we can reap it directly: SIGKILL on the `docker run` CLI does NOT
     // stop the container (it runs in the engine/VM, not as a child of the CLI), so we must
     // `docker kill <name>` on timeout, abort, or client disconnect — otherwise it leaks.
+    SandboxedAgentRunner.prepareScratchMount(scratchDir);
     const name = `oshal-dev-${randomUUID().slice(0, 12)}`;
     const args = this.dockerArgs(scratchDir, command, extra);
     args.splice(2, 0, '--name', name);
@@ -189,6 +258,81 @@ export class SandboxedAgentRunner {
       child.on('error', (error) => finish({ exitCode: null, output: `${output}\n${error instanceof Error ? error.message : String(error)}`.slice(0, 200_000), timedOut }));
       child.on('close', (code) => finish({ exitCode: code, output: output.slice(0, 200_000), timedOut }));
     });
+  }
+
+  /**
+   * @description Locks the directory that CONTAINS per-run scratch directories to owner-only, so
+   * the per-run widening below cannot be reached by another user on the host. Call it once on the
+   * scratch root; the per-run directory inside it is prepared by {@link prepareScratchMount}.
+   * @param root - Absolute path of the scratch root (the parent of the per-run directories).
+   * @returns true when the 0700 mode was applied; false on Windows or when the chmod failed.
+   */
+  static lockScratchRoot(root: string): boolean {
+    if (process.platform === 'win32') return false;
+    try {
+      chmodSync(root, SCRATCH_ROOT_MODE);
+      return true;
+    } catch (error) {
+      logger.warn({ root, error }, 'could not lock sandbox scratch root to owner-only');
+      return false;
+    }
+  }
+
+  /**
+   * @description Makes the per-run scratch writable by the container uid that will be bind-mounted
+   * on it. Under a Linux userns-remapped daemon that uid is a host subuid owning nothing, so a
+   * 0700 `mkdtemp` directory and its 0644 seeded files deny every write to /work; the sandbox then
+   * fails for a host-configuration reason rather than a real isolation regression. Widening is
+   * confined to this directory tree: symlinks are skipped (chmod follows them, which would widen a
+   * target outside the scratch) and the ignored trees are not descended into.
+   * @param scratchDir - Absolute path of the per-run directory that will be mounted at /work.
+   * @returns What was widened, which symlinks were skipped, and whether the platform has no modes.
+   */
+  static prepareScratchMount(scratchDir: string): ScratchMountPreparation {
+    const plan = SandboxedAgentRunner.scratchMountPlan(scratchDir);
+    const prepared: ScratchMountPreparation = { ...plan, applied: [], skipped: process.platform === 'win32' };
+    if (prepared.skipped) return prepared;
+    for (const entry of plan.entries) {
+      try {
+        chmodSync(entry.path, entry.mode);
+        prepared.applied.push(entry);
+      } catch (error) {
+        logger.warn({ entry, error }, 'could not widen sandbox scratch entry for a remapped container uid');
+      }
+    }
+    return prepared;
+  }
+
+  /**
+   * @description Decides, without changing anything, which entries of the scratch tree need which
+   * mode. Split out from {@link prepareScratchMount} so the decision — walk order, the ignored
+   * trees, the symlink refusal, and which mode each kind of entry gets — is assertable on a host
+   * that has no POSIX mode bits to inspect afterwards.
+   * @param scratchDir - Absolute path of the per-run directory that will be mounted at /work.
+   * @returns The entries to widen and the symlinks deliberately left alone.
+   */
+  static scratchMountPlan(scratchDir: string): ScratchMountPlan {
+    const plan: ScratchMountPlan = { entries: [], skippedSymlinks: [] };
+    const visit = (target: string): void => {
+      let stats;
+      try {
+        stats = lstatSync(target);
+      } catch {
+        return; // raced away between readdir and lstat; nothing to widen
+      }
+      if (stats.isSymbolicLink()) { plan.skippedSymlinks.push(target); return; }
+      if (stats.isDirectory()) {
+        plan.entries.push({ path: target, mode: scratchEntryMode('directory', stats.mode) });
+        for (const entry of readdirSync(target)) {
+          if (IGNORED_DIRS.has(entry)) continue;
+          visit(path.join(target, entry));
+        }
+        return;
+      }
+      if (stats.isFile()) plan.entries.push({ path: target, mode: scratchEntryMode('file', stats.mode) });
+    };
+    visit(path.resolve(scratchDir));
+    return plan;
   }
 
   /**
