@@ -76,9 +76,14 @@ credentials and defaults generally and or on a bot by bot level."*
 3. **The authoritative dispatch record carries the winning rung.** ADR-034's post-execution check
    ("what ran is what was authorized") stays. Its authority becomes the resolved row, so a switch is one
    write and the next dispatch to an idle bot runs on it: the node already reconciles an idle bot to the
-   carried record and refuses only a concurrent mismatch. A failover chain the platform itself
-   configured must be part of what the record authorizes; work a configured fallback completes is not
-   discarded for differing from the primary.
+   carried record and refuses only a concurrent mismatch. The check is exact: a Cline-backed id
+   authorizes `cline-cli` fronting that id and nothing else. A failover chain is NOT part of the
+   record — no switch row or migration-147 column carries one — and work the JS failover's fallback
+   completes is still refused by the check, because the result reports the fallback's name
+   (`any-bot/server/services/llm/ProviderFailoverProvider.js:97`) and `dispatchProviderMatches`
+   compares it to the row. Making a configured failover part of what the record authorizes is a
+   BACKLOG entry ("A failover the record configured must not have its completed work discarded"),
+   not this ADR.
 
 4. **No rows = today, byte for byte.** A deployment that has written nothing behaves exactly as before
    this ADR. The change is additive.
@@ -102,8 +107,10 @@ credentials and defaults generally and or on a bot by bot level."*
 - [ADR-034](034-bidirectional-config-ownership-sync.md) is **amended**: the switch rows — the bot's
   own operator-written row, else the fleet-default row — are tier 1 of the carried record, above the
   `agent_config` record (tier 2, machinery-written) and the registry (tier 3), which fill a record
-  only when no switch row governs the bot; and the post-execution check accepts the failover chain
-  the record configured.
+  only when no switch row governs the bot; and the post-execution check holds "what ran == what
+  was authorized" against the row exactly — a failover chain is not part of the record, and a
+  fallback's completed work is still refused (§3; BACKLOG "A failover the record configured must
+  not have its completed work discarded").
 - [ADR-033](033-multi-harness-execution-framework.md) and [ADR-127](127-demo-mode-cli-brain-and-user-provider-preference.md)
   stand. ADR-127's ladder is the user half of §2.
 - HTTP 409 `provider_pinned` and the read-only cockpit select (#97, #142) go away for any bot a row

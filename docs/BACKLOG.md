@@ -1446,6 +1446,50 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   (6) the operator opens the dev console and asks Jarvis about tonight's handover and gets the file.
 
 
+### A failover the record configured must not have its completed work discarded (2026-09-17)
+
+- **Measured (2026-09-17, operator box, recorded by the PR #633 review):** with the fleet's Codex
+  login at its usage limit, the JS `ProviderFailoverProvider` fell back to Cline backed by Gemini and
+  completed an eight-iteration task ($0.059), and the ADR-034 post-execution check then threw
+  `AuthoritativeDispatchConfigError` because the dispatch record said codex: the result reports the
+  fallback's name (`any-bot/server/services/llm/ProviderFailoverProvider.js:97` sets `provider` to
+  `fallbackName`) and `src/app/bot-node-execution-handler.ts` compares it to the record through
+  `dispatchProviderMatches`. The completed work was discarded.
+- **What PR #633 does and does not do:** the switch row is the authority and the check is exact
+  ("what ran == what was authorized"): a Cline-backed id authorizes `cline-cli` fronting that id and
+  nothing else. No switch row or migration-147 column carries a failover chain, so a fallback that
+  completes is still refused — by the check's design, not by accident. ADR-034's amendment and
+  ADR-162 §3 say exactly this.
+- **Shape (not decided here):** the record — a row column or the stamped dispatch config — names the
+  chain it authorizes (primary plus an ordered fallback list), and the post-execution check accepts a
+  result whose reported provider is a member of THAT chain while still refusing anything outside it.
+  The result's `providerFailover` block (`reason`, `primary`, `fallback`) is the evidence the check
+  reads, and cost attribution records the provider that ran.
+- **Done when:** (1) a row (or the stamped record) can name an ordered failover chain and the api
+  refuses a chain member the catalog cannot run, by name; (2) `dispatchConfigMatchesActive` accepts a
+  result whose reported provider is in the authorized chain and REFUSES one that is not (unit cases in
+  both directions, red on the current exact-match check); (3) the 2026-09-17 shape is a regression
+  case — a codex primary with a Cline/Gemini fallback completing a task is kept, cost-attributed to
+  the provider that ran; (4) a record with no chain behaves exactly as today, byte for byte.
+
+### `src/app/server.ts` is past the decomposition threshold: move the post-bootstrap installs out (2026-09-17)
+
+- **Measured:** 959 code lines (non-blank, non-comment) at PR #633's merge with `main` — past the
+  800-line threshold at which CLAUDE.md requires a decomposition plan before code is added, under
+  the 1000-line hard cap. Not decomposed in #633 (scope).
+- **First candidates to move out:** the block PR #633 added to `server.ts` — the provider-switch
+  snapshot install (`installProviderSwitchSnapshot(new ProviderSwitchStore(pool),
+  Object.keys(HARNESS_FACTORIES))` awaited behind `waitForBootstrapComplete()` under
+  `runWithSystemIdentity`, with its `ProviderSwitchStore` / `HARNESS_FACTORIES` imports) — and its
+  neighbours of the same shape: the post-bootstrap installs that need only `ctx.pool` and the
+  composition root, which belong in a `src/app/composition/` boot module the way
+  `provider-switch-runtime.ts` already holds the snapshot itself. (#633 added no routes to
+  `server.ts`; its routes mount through `agent-provider-mount.ts`.)
+- **Done when:** `server.ts` is under 800 code lines by the same measure; the moved installs run in
+  the same order behind the same bootstrap gate — the `provider-switch` Test Lab scenario and
+  `tests/unit/harness-resolution.spec.ts` still green, and `GET /api/agents/provider-switch` on an
+  isolated server still reports the snapshot installed; no route registration changes.
+
 ### A bot's LLM provider is a row in a table, not a literal in the registry (operator, 2026-09-17)
 
 - **What the operator hit.** Codex ran out of tokens for one login and the instruction was "set the
