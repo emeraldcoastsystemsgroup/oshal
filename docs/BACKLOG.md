@@ -13,6 +13,19 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ### A bot that cannot reach Postgres in its first 20 seconds is pool-less for life, and says it is healthy (2026-09-17)
 
+- **Status (branch `botnode-pool-recovery`, awaiting merge + image deploy): (1), (3), (4) done and
+  guarded by `tests/unit/bot-node-database-pool-recovery.spec.ts`, which starts a real disposable
+  PostgreSQL on a reserved loopback port AFTER the bot-side connect has exhausted its window and
+  proves the pool object handed out at exhaustion is the one that later answers. (2) is done in
+  code — `/health` and `/api/health` answer 503 until a configured database has answered once,
+  and `Dockerfile.oshal`'s `HEALTHCHECK` is `curl -f http://localhost:5000/health`, which the spec
+  runs verbatim against the real routes (exit 22 while pool-less, exit 0 after) — but the
+  built-image probe the done-when asks for has NOT been run: no image build was permitted on the
+  memory-constrained box. The running fleet keeps the old behaviour until `oshal-deploy.sh` ships
+  this commit. Also not done: the mesh bid responder captures the boot-time capabilities by
+  value, so a bot that recovers late bids with its YAML capabilities, not the persisted profile's,
+  until its next restart.
+
 - **Measured 2026-09-17, 22:24Z.** The Docker daemon bounced inside a VM that stayed up: 51 of 52
   containers carry a `StartedAt` in the same minute. Every bot-node cold-started beside a cold
   Postgres. `bot-node-runtime` retries its connect `maxAttempts: 10` at 2 s — a 20 second window —
@@ -639,13 +652,40 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **P5 - the cross-framework benchmark measures competitors, not us.** `bench/` runs the same task
   on the same free model across vanilla/langgraph/crewai and records real tokens, but the oshal leg
   is not wired: it reports `not-run`. So the cheaper-routing claim remains asserted.
-- **P6 - the cost figure is small-n.** `$1.30` against a `$4.05` median for incident RCA are real
-  `chat_tasks` rows, one workload, one corpus. Directionally strong; not a benchmark.
-- **Neither blocks operation** - both block a slide. Do not publish the determinism/cost head-to-head
-  until measured.
+- **P6 is CLOSED (2026-09-17).** `$1.30` (n=1) against a `$4.05` (n=7) median for incident RCA are
+  real `chat_tasks` rows for one workload on one corpus — directionally strong, not a benchmark, and
+  every surface that states them now says so in the same sentence as the number.
+- **What closed P6.** `scripts/evidence/cost-per-ticket-type.ts` reads the real per-ticket spend out
+  of `chat_tasks`, joined to `tickets` through the product's own `ticket_task_links`, inside a
+  `SET TRANSACTION READ ONLY` transaction, and emits a dated census with an n on every ticket type
+  (`docs/business/cost-per-ticket-type.json`, published as a generated table in the sibling `.md`).
+  Every count in it — ticket types, tickets, calls, dollars, the n on each row — lives in that
+  artifact and nowhere else; this entry does not restate them, because a restated count is a
+  hand-typed one. Each chat task is attributed once: a task linked to several tickets (sibling
+  subtasks dispatched into one workspace accumulate into one task row) is split evenly across
+  them, and the artifact carries the ledger totals it was read beside so the tie is published, not
+  asserted. The `incident` row is the type the headline pair is about, and its n there is small —
+  which is exactly why the pair stays labelled as one workload instead of a rate.
+- **Guard:** `tests/unit/cost-claim-carries-its-n.spec.ts` + `scripts/cost-claim-check.js`. The
+  surfaces are DISCOVERED, not allowlisted: every tracked text file under `README.md`, `ROADMAP.md`,
+  `docs/`, `ai-lab/bot-personas/`, `swarm-apps/` and `site/` is scanned, and a FIGURE whose own
+  span carries no `n=` — per figure, so a bare first figure cannot borrow the n that the second
+  figure in the same sentence carries — or whose block carries none of the limits phrases fails
+  the gate. Red on the
+  tree before the sweep — 38 findings across nine files: `README.md`, `OSHAL-WHITEPAPER.md`,
+  `WHY_OSHAL.md`, the deck markdown, `build_oshal_deck.py`, both capture personas, the fluency
+  register and this entry. Mutation cases strip the n from one figure while its neighbour keeps it,
+  strip the limits, hand-edit the published census table, inflate the census above its ledger,
+  drop the ledger, and invent a tenth surface; each goes red on its own. `OSHAL-overview.pptx` was
+  rebuilt from the generator (a verified four-line text delta); the PNG-derived `.html`/`.pdf`
+  beside it need a PowerPoint export, which is an operator step (`build_html.py` reads
+  `_thumbs/Slide*.PNG`).
+- **P5 does not block operation** - it blocks a slide. Do not publish the determinism/cost
+  head-to-head until the oshal leg is measured.
 - **Done when:** `run_oshal` POSTs to the real dispatch and reads `chat_tasks` input/output token
-  columns so the benchmark reports oshal alongside the others at a stated n; the cost claim covers
-  more than one ticket type with its n and limits kept in the same sentence as the number.
+  columns so the benchmark reports oshal alongside the others at a stated n;
+  ~~the cost claim covers more than one ticket type with its n and limits kept in the same sentence
+  as the number~~ DONE 2026-09-17.
 
 ### Trading DB specs race on schema bootstrap
 - **The bootstrap half is CLOSED (2026-09-16).** All seventeen `oshal_trading_*` lazy bootstraps now
@@ -795,12 +835,46 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Remaining:** root-cause the specs outside the current green ratchet and separate product defects, fixture/auth defects, and intentionally unsupported cases.
 - **Done when:** every spec uses the configured origin, each unsupported case has an explicit disposition, and the complete CI Playwright job is green without retry-dependent success.
 
-### Dev-console `/work` under Linux user-namespace remapping
-- **Remaining:** make the ADR-077 sandbox scratch mount writable to remapped container users without widening host access beyond the per-run directory.
-- **Done when:** a GitHub-Actions-equivalent userns-remap container writes inside `/work`, cannot escape it, and the focused sandbox/security guards pass. See [ADR-077](adr/077-self-developing-platform-and-super-admin-dev-console.md).
+### Dev-console `/work` under Linux user-namespace remapping — DONE 2026-09-17
+- **Done:** `SandboxedAgentRunner` prepares the bind mount on every run instead of assuming the
+  container owns it. Under a userns-remapped daemon the container's root is a host subuid that owns
+  nothing, so a `mkdtemp` (0700) scratch holding 0644 seeded files denied it both traversal and
+  writes. The per-run directory is now set to `0o777`, every file inside it is widened by a+rw
+  (`mode | 0o666` — a seeded `0755` script stays executable, because the seeder copies modes and
+  a set to `0o666` had been stripping them), and the scratch ROOT that contains them is locked to
+  `0o700`: the daemon resolves the mount without traversing the
+  root, a second host user must traverse it and is refused, so host reach does not extend past the
+  per-run directory. Symlinks inside the scratch are never chmodded — `chmod` follows them, which
+  would widen a target outside it. Windows has no POSIX mode bits, so the plan is computed and
+  declared unapplied rather than pretended.
+- **Proved on a real kernel**, not inferred: `scripts/sandbox-userns-mount-proof.sh` runs in one
+  disposable container as uid 165536 — the first subuid a default `dockremap` mapping hands to
+  container root — and reports `unprepared_write=denied`, `prepared_write=ok`, `prepared_create=ok`,
+  `prepared_exec=ok`, `escape_parent=denied`, `escape_root=denied`, `owner_cleanup=ok` in a single
+  run; driven with the old modes (`OSHAL_SCRATCH_DIR_MODE=700 OSHAL_SCRATCH_FILE_MODE=644`) the same
+  container reports `prepared_write=FAILED`, and with files SET to `666` instead of widened it
+  reports `prepared_exec=FAILED`.
+- **Guard:** `tests/unit/sandbox-scratch-userns-remap.spec.ts` (10 cases) — the plan and its mode
+  bits, that a seeded executable is widened and not narrowed (the pure decision on every platform,
+  the real inode on POSIX), the symlink refusal, the root lock, and that `run()`, `runStreaming()`
+  and the orchestrator all prepare before the container starts; the container proof is the tenth
+  case, opt-in via
+  `OSHAL_SANDBOX_USERNS_PROOF=1` because it starts a container, and it FAILS rather than skips when
+  Docker cannot be reached. Mutation-proven red on removing preparation from the run paths (3 red),
+  on narrowing the directory mode (1 red), on deleting the symlink refusal (1 red), and on setting
+  files to `0o666` instead of widening them (2 red: the decision `0o666 ≠ 0o777`, and the container
+  `prepared_exec=FAILED`).
+- **Not claimed:** nothing here was run against an actual userns-remapped daemon — the operator's
+  engine is Docker Desktop. The uid the proof uses is the one such a daemon presents, and the kernel
+  check it exercises is the same one; the remaining step is a CI run of the dev-console container
+  tests on the Actions daemon, which is blocked behind the manual-only CI state, not behind this.
+  See [ADR-077](adr/077-self-developing-platform-and-super-admin-dev-console.md).
 
 ### Remote-client full-suite flake
-- **Remaining:** test the module-level registry and rate-limiter state leads in the auth spec; isolate file state or serialize only the affected specs if needed.
+- **Cause found and fixed 2026-09-17 — the two stated leads are both disproven.** Module-level *registry* state cannot leak between files: vitest runs each spec file in its own isolated fork, and inside each file the registered clientIds are disjoint. Module-level *rate-limiter* state cannot leak either: `createRemoteClientRateLimiter()` is called from inside `createRemoteClientRoutes()` (`src/app/routes/remote-client-routes.ts:225`), so every `bootApp()` gets a fresh limiter over a fresh store. The flake was accounting. Four specs (`remote-client-auth`, `-device-ownership`, `-node-token`, `-rate-limit`) called `await import('../../src/app/routes/remote-client-routes')` from inside their first `it()`, so that ONE test paid the one-time dynamic import/transform of the whole router graph out of its own timeout budget. Measured with only those four files running on an idle box: **17,255ms / 17,260ms / 17,173ms / 17,274ms**, against the 30s each file had bought to hide it, while every sibling test in the same files ran in 14-101ms. Under the full parallel unit sweep the same import contends for the same cores and the budget goes — that is the remote-client timeout. The import now loads once in a file-level `beforeAll` (its own explicit 120s hook budget); the route FACTORY still runs per boot, so per-test env is read exactly as before. The inflated 30s per-test budgets are back down to the sibling 15s, which is the fix showing rather than a mask. Same shape the `remote-client-reregistration` spec already took. This is file-local: no concurrency setting, no global timeout, nothing serialized.
+- **Guard:** `tests/helpers/router-graph-import-budget.ts` + a first test in each of the four specs that measures the import from inside a test and fails above 500ms. It is a measurement, not a substring: red at 17,2xx ms before the hoist, green at 2-5ms after. What it proves is that the graph is resident before the first test runs: undoing the hoist (deleting the `beforeAll` so the first test pays the transform) goes red — 3,892ms measured against the 500ms ceiling on 2026-09-17. What it does not detect is a test-scoped `await import(...)` of the graph that coexists with the `beforeAll`: that stays green (2ms measured, same run) because with the hoist in place the import is a cache hit and costs nothing, so it is not the flake.
+- **Proved:** all 11 `tests/unit/remote-client-*.spec.ts` files, 106 tests, **20 consecutive runs, 0 failures, no test over 3s** (2026-09-17). The four formerly-13s tests now run in 367-693ms.
+- **Remaining:** the literal "full unit suite, 20 consecutive runs" confirmation. It is blocked on *Tree-walk guard stability* below, not on remote-client: `npm run test:unit` still drives a live Postgres from `alert-incident-cutover`, `alert-incident-reopen` and `topology-traversal` inside the parallel sweep, so on a developer box it resolves at the operator's live database and must not be run there. Run it once those specs have their own serial project/pool, against a disposable Postgres.
 - **Done when:** the full unit suite passes 20 consecutive runs with no remote-client timeout; any serialization is local and documented, not a global concurrency reduction.
 
 ### Tree-walk guard stability
@@ -1364,6 +1438,33 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Out of scope here:** the Cline fallback's missing binary - its own change with an image-level
   guard, because it restores agentic work on the persisted Gemini config without touching resolution.
   **That change landed as its own entry below** ("The Cline fallback brain could not start").
+- **The layer model, as the operator stated it (2026-09-17) and as the code already partly has it.**
+  There are two owners of a brain choice and they nest. Measured in `src/app/routes/user-brain-resolution.ts`
+  (ADR-127) and `src/app/bot-node-execution-handler.ts`:
+  - **A user's own turn** (chat, Jarvis): *user preference → (demo) CLI default → the user's explicit BYO
+    credentials → the user's free-tier connections → the portal admin's operator-key lane → none.* A CLI
+    preference is stamped on the dispatch record and the node reconciles to it. This exists and works.
+  - **Swarm-owned work** (tickets, schedules, agentic runs — nobody's turn): *`agent_config` row → registry
+    literal.* No admin default exists here except compose/env literals. **This is the gap this entry fills.**
+  - Target precedence, most specific first, each a real record and none a literal: *user per-bot preference
+    → user general preference → admin per-bot row → admin fleet-default row → registry (default only).* A
+    user's choice governs that user's turns; the admin's rows govern everything else and are the fallback
+    when the user has chosen nothing. Credentials stay with their owner: a user's BYO key is never the
+    fleet's, and the fleet's env key is never a user's.
+  - Follow-ups this entry does NOT close, each its own entry: (1) the admin fallback for user turns is
+    env-only (`OSHAL_OPERATOR_LLM_PROVIDER/MODEL/LANES`) and gated on `DEMO_MODE` — it should be a cockpit
+    control with the same row semantics; (2) users have no per-bot preference — `oshal_user_llm_prefs` is
+    keyed by user only; (3) the user preference vocabulary is closed
+    (`auto | claude-code | openai-codex | any-llm | free-tier`, `LLM_PREFERENCE_IDS`) so a user cannot name
+    Gemini or Cline as a CLI brain.
+- **Acceptance, in the operator's words (2026-09-17): "so this is flexible configuration right ...
+  im not going to switch it to codex tomorrow and we have to hard code a bunch of shit."** The test
+  is literal: the day after this merges and deploys, moving the whole fleet back to Codex is ONE
+  write of the fleet-default row from the cockpit - no pull request, no image deploy, no container
+  restart - and the next dispatch to an idle bot runs on it (the reconciler already applies a
+  carried record to an idle bot; the ADR-034 post-execution check must then agree with what ran).
+  A change that leaves ANY per-service compose literal or registry edit on that path has not met
+  this entry, whatever else it proves.
 - **Done when:** a unit spec proves a per-bot row overrides the registry, a fleet-default row
   overrides the registry for a bot without its own row, a per-bot row beats the fleet default, no
   rows resolve byte-identically to today (the existing registry-wins spec is inverted, not deleted),

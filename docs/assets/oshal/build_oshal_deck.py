@@ -593,7 +593,7 @@ def s_numbers():
         col, row = i % 4, i // 4
         box(s, x0 + col * (w + gx), y0 + row * (h + gy), w, h,
             [[(big, 34, GREEN, True)], [(lab, 12, WHITE, False)]], fill=PANEL, border=CYAN)
-    box(s, 0.7, 5.7, 11.9, 0.85, [[("$1.30 vs $4.05", 22, GREEN, True), ("   per real incident RCA  ", 15, WHITE, True), ("(−68%)", 18, CYAN, True)]],
+    box(s, 0.7, 5.7, 11.9, 0.85, [[("$1.30 (n=1) vs $4.05 (n=7)", 22, GREEN, True), ("   per real incident RCA, one workload — not a benchmark  ", 13, WHITE, True), ("(−68%)", 18, CYAN, True)]],
         fill=PANEL2, border=GREEN)
     footer(s, "every number is from the repo")
 
@@ -601,9 +601,10 @@ def s_numbers():
 def s_proof():
     s = newslide(); heading(s, "Proof — economics + live insertion")
     box(s, 0.7, 1.6, 5.85, 4.4, [[("The economics", 17, CYAN, True)], [("", 8, WHITE, False)],
-        [("2-bot worker→reviewer pipeline", 15, WHITE, False)], [("$4.05", 30, MUTED, True)], [("", 6, WHITE, False)],
-        [("OSHAL single persona-gated bot", 15, WHITE, False)], [("$1.30", 36, GREEN, True)], [("", 6, WHITE, False)],
-        [("≈ 68% lower — reviewer-grade output from one bot", 14, CYAN, True)]],
+        [("2-bot worker→reviewer pipeline", 15, WHITE, False)], [("$4.05 (n=7)", 30, MUTED, True)], [("", 6, WHITE, False)],
+        [("OSHAL single persona-gated bot", 15, WHITE, False)], [("$1.30 (n=1)", 36, GREEN, True)], [("", 6, WHITE, False)],
+        [("≈ 68% lower — reviewer-grade output from one bot", 14, CYAN, True)],
+        [("one workload, one corpus, one model — not a benchmark", 11, MUTED, False)]],
         fill=PANEL, border=CYAN, align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP)
     box(s, 6.75, 1.6, 5.85, 4.4, [[("The live-insertion benchmark", 17, GREEN, True)], [("", 8, WHITE, False)],
         [("18 runtime tools · 18 agents · 18 containers", 15, WHITE, False)],

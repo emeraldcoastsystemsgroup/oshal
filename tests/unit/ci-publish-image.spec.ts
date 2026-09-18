@@ -14,6 +14,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — covers the four refusals (red run, unpinned sha, missing credential, missing arguments), the success path's tag/push ORDER (the immutable sha- tag is pushed before `latest`, so a run that dies between the two never leaves `latest` pointing at something the registry has no record of), a failing push, and the secret discipline: the token reaches docker only on stdin and appears in neither the script's output nor any command line.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cover the CALLER, which had no coverage at all: deleting the `--failed` forwarding from ci-local.sh left this file 8/8 green, so the refusal that matters most - a red run never reaching the publish script - rested on reading the code. The production publish block is now sliced out of the shipped ci-local.sh and driven with recording stand-ins, the way ci-local-inherited-export.spec.ts drives the gate sequence. Also pins both push-failure registry states rather than one wording, the logout on the failure path, and the dangling-flag refusal.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every case is pinned to a nonexistent OSHAL_GHCR_ENV_FILE so no test can read the checkout's real .env; two cases cross the publisher boundary itself - the real script logs in with a credential read from a scratch .env, and refuses with no registry call when there is neither .env nor environment; three cases pin the scheduled source-posture refusal (unpinned HEAD refused, pinned origin/main allowed, interactive left to the operator).
  */
 import { describe, expect, it, beforeAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -78,6 +79,18 @@ interface Run {
  * @returns Exit status, combined output, and the docker argv the script produced.
  */
 function run(args: string[], env: Record<string, string> = {}): Run {
+  return runWith(args, process.env as Record<string, string>, env);
+}
+
+/**
+ * @description Same as run(), but over an explicit base environment so a case can DELETE a name
+ * rather than only override it.
+ * @param args - Arguments for the publish script.
+ * @param base - The complete base environment.
+ * @param env - Overrides applied on top of the base.
+ * @returns Exit status, combined output, and the docker argv the script produced.
+ */
+function runWith(args: string[], base: Record<string, string>, env: Record<string, string>): Run {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'publish-image-'));
   const log = path.join(dir, 'docker-calls.log');
   // `login` consumes the credential from stdin and throws it away: the stand-in must never
@@ -91,7 +104,14 @@ function run(args: string[], env: Record<string, string> = {}): Run {
   const r = spawnSync(BASH, [SCRIPT.replace(/\\/g, '/'), ...args], {
     encoding: 'utf8',
     timeout: RUN_TIMEOUT_MS,
-    env: { ...process.env, ...env, PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}` },
+    // Every case is pinned to a nonexistent env file unless it says otherwise, so no test can
+    // ever read the checkout's real .env (the operator trunk holds a live token).
+    env: {
+      ...base,
+      OSHAL_GHCR_ENV_FILE: path.join(dir, 'no-such.env'),
+      ...env,
+      PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`,
+    },
   });
   const calls = fs.existsSync(log)
     ? fs.readFileSync(log, 'utf8').split('\n').filter((l) => l.trim() !== '')
@@ -114,6 +134,38 @@ describe('publish-image.sh refuses before it reaches the registry', () => {
     const r = run([...OK_ARGS], { OSHAL_GHCR_TOKEN: '', OSHAL_GHCR_USER: '' });
     expect(r.status).toBe(3);
     expect(r.calls, 'an unauthenticated run reached docker').toEqual([]);
+  });
+
+  it('reads the credential from .env when the environment does not carry it - the publisher, not just the library', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'publish-image-env-'));
+    const envFile = path.join(dir, '.env');
+    fs.writeFileSync(envFile, `OSHAL_GHCR_TOKEN="${TOKEN}"\r\nOSHAL_GHCR_USER='scratch-org'\r\n`);
+    const env: Record<string, string> = { ...process.env } as Record<string, string>;
+    delete env.OSHAL_GHCR_TOKEN;
+    delete env.OSHAL_GHCR_USER;
+    const r = runWith([...OK_ARGS], env, { OSHAL_GHCR_ENV_FILE: envFile });
+    expect(r.calls[0], 'the publisher did not log in with the .env credential').toBe(`login ghcr.io --username scratch-org --password-stdin`);
+    expect(r.out, 'the token reached the output').not.toContain(TOKEN);
+  });
+
+  it('an explicit EMPTY value refuses even when .env holds a credential - blanking isolates a process', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'publish-image-blank-'));
+    const envFile = path.join(dir, '.env');
+    fs.writeFileSync(envFile, `OSHAL_GHCR_TOKEN=${TOKEN}
+OSHAL_GHCR_USER=scratch-org
+`);
+    const r = run([...OK_ARGS], { OSHAL_GHCR_TOKEN: '', OSHAL_GHCR_USER: '', OSHAL_GHCR_ENV_FILE: envFile });
+    expect(r.status, 'a blanked credential was back-filled from .env').toBe(3);
+    expect(r.calls).toEqual([]);
+  });
+
+  it('still refuses, reaching no registry, when there is no .env and no environment credential', () => {
+    const env: Record<string, string> = { ...process.env } as Record<string, string>;
+    delete env.OSHAL_GHCR_TOKEN;
+    delete env.OSHAL_GHCR_USER;
+    const r = runWith([...OK_ARGS], env, {});
+    expect(r.status).toBe(3);
+    expect(r.calls).toEqual([]);
   });
 
   it('refuses a tag that is not the pinned commit', () => {
@@ -238,6 +290,23 @@ describe('ci-local.sh refuses before it ever reaches the publish script', () => 
     const r = runCaller('PUBLISH_IMAGE=1; SKIP_IMAGE=0; SKIP_E2E=0; FAILED_GATES=(trivy)');
     expect(r.ran, 'a red run reached the publish script').toBe(false);
     expect(r.out).toContain('the run is red');
+  });
+
+  it('does not reach it on a scheduled run that fell back to local HEAD', () => {
+    const r = runCaller('PUBLISH_IMAGE=1; SKIP_IMAGE=0; SKIP_E2E=0; SCHEDULED=1; SOURCE_POSTURE=DEGRADED_FETCH_FAILED_HEAD_FALLBACK; FAILED_GATES=()');
+    expect(r.ran, 'an unpinned scheduled run reached the publish script').toBe(false);
+    expect(r.out).toContain('not pinned to origin/main');
+    expect(r.out).toContain('FINAL_FAILED [publish-image-refused-unpinned-source]');
+  });
+
+  it('reaches it on a scheduled run pinned to origin/main', () => {
+    const r = runCaller('PUBLISH_IMAGE=1; SKIP_IMAGE=0; SKIP_E2E=0; SCHEDULED=1; SOURCE_POSTURE=scheduled-origin-main; FAILED_GATES=()');
+    expect(r.ran).toBe(true);
+  });
+
+  it('leaves an interactive run to the operator', () => {
+    const r = runCaller('PUBLISH_IMAGE=1; SKIP_IMAGE=0; SKIP_E2E=0; SCHEDULED=0; SOURCE_POSTURE=interactive-head; FAILED_GATES=()');
+    expect(r.ran).toBe(true);
   });
 
   it('does not reach it when the image was never built', () => {

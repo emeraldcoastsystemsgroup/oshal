@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Dev Session Orchestrator (ADR-077 Phase 2): composes the sandboxed agent runner + the dev session engine into one governed agentic-edit step (sandbox edit -> extract -> apply -> reviewable diff). Commit stays a separate, verify-gated, operator-approved step on the engine.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Lock the scratch ROOT to owner-only before seeding a session scratch, so the per-run widening that lets a userns-remapped container uid write /work is not reachable by another user on the host.
  */
 
 import { cpSync, mkdirSync, rmSync } from 'node:fs';
@@ -66,9 +67,7 @@ export class DevSessionOrchestrator {
    * @returns What the agent changed + the resulting worktree diff.
    */
   runAgentEdit(session: DevSession, agentCommand: string[], options: AgentEditOptions = {}): AgentEditResult {
-    const scratch = path.join(this.scratchRoot, session.id);
-    rmSync(scratch, { recursive: true, force: true });
-    mkdirSync(scratch, { recursive: true });
+    const scratch = this.prepareScratchDir(session);
     try {
       this.seedScratch(session, scratch);
       const before = this.runner.snapshot(scratch);
@@ -109,9 +108,7 @@ export class DevSessionOrchestrator {
     options: AgentEditOptions = {},
     signal?: AbortSignal,
   ): Promise<AgentEditResult> {
-    const scratch = path.join(this.scratchRoot, session.id);
-    rmSync(scratch, { recursive: true, force: true });
-    mkdirSync(scratch, { recursive: true });
+    const scratch = this.prepareScratchDir(session);
     try {
       await this.seedScratchAsync(session, scratch);
       const before = this.runner.snapshot(scratch);
@@ -130,6 +127,21 @@ export class DevSessionOrchestrator {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * Creates the per-session scratch under a scratch root locked to owner-only. The root lock is
+   * what keeps the per-run widening (which is what lets a userns-remapped container uid write
+   * /work) from reaching any further than this one directory: the daemon resolves the bind mount
+   * without traversing the root, another host user cannot.
+   */
+  private prepareScratchDir(session: DevSession): string {
+    const scratch = path.join(this.scratchRoot, session.id);
+    rmSync(scratch, { recursive: true, force: true });
+    mkdirSync(this.scratchRoot, { recursive: true });
+    SandboxedAgentRunner.lockScratchRoot(this.scratchRoot);
+    mkdirSync(scratch, { recursive: true });
+    return scratch;
   }
 
   /** Copies the worktree's files (minus .git/node_modules/.tokenchase) into the sandbox scratch. */

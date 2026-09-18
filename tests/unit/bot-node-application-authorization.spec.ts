@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for the bot posture check that refused without saying why (live-board fault B4). readProtectedBotApplication ended in a bare `catch { throw ... }`, so a 42501 from the ownership read — the exact failure migration 140 exists for — reached the operator as a bare 503 authorization_bot_posture_unavailable with nothing logged and no cause attached. These cases assert the pair that matters: every refusal still fails closed with its EXACT existing code (nothing here widens execution authority) AND an undetermined posture is now reported, while a posture the guard genuinely DECIDED is distinguishable from one it could not determine. A fix that logged on every path, or that stopped failing closed, fails these cases.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Same correction as the module: the live comment named migration 140, which this change deletes. The case itself is unchanged - it still pins that a 42501 from the ownership read is reported as UNDETERMINED rather than swallowed.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The pool-less refusal names its cause. A missing pool, and an ownership read whose wrapped cause is a socket refusal, refuse with database_pool_unavailable / 503; a database that ANSWERS with 42501 keeps the authorization code, so the two outages stop reading as one.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -54,11 +55,11 @@ describe('readProtectedBotApplication — the decided cases stay quiet', () => {
 });
 
 describe('readProtectedBotApplication — the refusals still refuse, and now say why', () => {
-  it('fails closed with the exact code when the pool is absent, and REPORTS it', async () => {
-    await expect(readProtectedBotApplication(null, LOCAL, TARGET)).rejects.toMatchObject({
-      code: 'authorization_bot_posture_unavailable',
-      status: 503,
-    });
+  it('fails closed when the pool is absent, NAMES the database as the cause, and REPORTS it', async () => {
+    const raised = await readProtectedBotApplication(null, LOCAL, TARGET).catch(err => err);
+    expect(raised).toBeInstanceOf(BotApplicationAuthorizationError);
+    expect(raised).toMatchObject({ code: 'database_pool_unavailable', status: 503 });
+    expect(ownership.readApplicationExecutionOwnership).not.toHaveBeenCalled();
 
     expect(errorCalls()).toHaveLength(1);
     expect(errorCalls()[0][0]).toMatchObject({ hasPool: false });
@@ -66,6 +67,18 @@ describe('readProtectedBotApplication — the refusals still refuse, and now say
 
   it('fails closed with the exact code when the identity is absent, and REPORTS it', async () => {
     await expect(readProtectedBotApplication(POOL, '', TARGET)).rejects.toBeInstanceOf(BotApplicationAuthorizationError);
+    expect(errorCalls()).toHaveLength(1);
+  });
+
+  it('names the database when the ownership read failed because nothing answered the socket', async () => {
+    // The shape the real reader throws: its own error class, the driver failure carried as cause.
+    const refused = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), { code: 'ECONNREFUSED' });
+    const wrapped = new Error('Application execution ownership is unavailable', { cause: refused });
+    ownership.readApplicationExecutionOwnership.mockRejectedValue(wrapped);
+
+    const raised = await readProtectedBotApplication(POOL, LOCAL, TARGET).catch(err => err);
+    expect(raised).toBeInstanceOf(BotApplicationAuthorizationError);
+    expect(raised).toMatchObject({ code: 'database_pool_unavailable', status: 503, reason: wrapped });
     expect(errorCalls()).toHaveLength(1);
   });
 
