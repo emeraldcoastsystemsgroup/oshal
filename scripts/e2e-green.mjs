@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preflight the vite chat bundle: src/api/dist is gitignored and neither ci.yml nor ci-local builds it, so on a clean checkout /dist/chat-ui.js 404s, chat-config-modal.mjs (which imports ChatApp from it) never evaluates, and every /chat modal spec times out "element is not visible" (the 2026-07-09 agent-profile-persistence quarantine). Build it when missing, fail loud when the build fails.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The list is parsed by scripts/e2e-green-list.mjs, shared with the registration guard, so the two cannot drift; `--list` prints the paths this runner would hand to playwright and exits before any preflight, which is what the guard compares against the parser (PR #620 review: a source-text pin was satisfied by three runners that ran a different list).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The body is an exported function with the spawner and the preflight existence check injectable, and the CLI entry calls it with the real ones. The registration guard calls it with a recording spawner and asserts the playwright argv - the list the gate actually runs. `--list` is removed: it re-derived the list in its own branch, so a filter at the spawn site passed the guard while playwright never received the spec (PR #620 third review, mutations X1-X4).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | main(argv, boundaries) is the program and the CLI entry is only process.exit(main(argv).status): the guard drives main([]) with a recording spawner and pins the argv exactly, so an entry that re-points the list or adds a playwright filter flag goes red (PR #620 fourth review, X6/X6b). Only the exit line is undriven.
  */
 
 /**
@@ -80,8 +81,20 @@ export function runGreenSuite({
   return { status: result.status ?? 1, files };
 }
 
+/**
+ * @description The program: builds the run's options from argv and runs the body. The CLI entry
+ * below is `process.exit(main(argv).status)` and nothing else, so everything the gate does -
+ * which list, which passthrough flags, which spawner - is reachable by the guard through this one
+ * function; the only line it cannot drive is the exit.
+ * @param argv - The process arguments after the script path; all are passed through to playwright.
+ * @param boundaries - Injectable process boundaries (spawn, exists, log, error) for the guard.
+ * @returns The run's status and the spec files handed to playwright.
+ */
+export function main(argv = [], boundaries = {}) {
+  return runGreenSuite({ ...boundaries, passthrough: [...argv] });
+}
+
 // CLI entry: only when this file is the program, never when the guard imports it.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { status } = runGreenSuite({ passthrough: process.argv.slice(2) });
-  process.exit(status);
+  process.exit(main(process.argv.slice(2)).status);
 }

@@ -9,13 +9,14 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The green-set registration checks were substring matches on the RAW suite text, so a spec commented out with a leading `#` still satisfied them while scripts/e2e-green.mjs drops every such line and never runs it (reviewer's proof on PR #620: commenting out the SEC-05 line left 6 of 6 green). Membership is now asserted against the list parsed exactly as the runner parses it - trimmed, blank and `#` lines dropped - and the runner's filter is pinned so the mirror cannot drift from it silently.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The mirror is gone: the guard imports the same parser the runner uses (scripts/e2e-green-list.mjs) and, instead of grepping the runner for three strings, asks it (`--list`) what it would hand to playwright and requires that to equal the parsed list. The source-text pin from seq 4 was satisfied by three semantically different runners (an extra filter, a different file, the expressions kept only in a comment) - PR #620 second review.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The guard drives the runner body with a recording spawner and pins the playwright ARGV to the parsed list; `--list` compared the parser to itself through a second derivation, and a filter at the spawn site passed it (third review, X1-X4). parseGreenSuite gets its own case for CRLF, indentation, trailing whitespace, `#` lines and blanks.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | The guard drives main() - the function the CLI entry calls - rather than the body beneath it, and pins the argv to exactly the parsed list with no flags appended, so an entry that re-points the list or adds --grep-invert goes red (fourth review, X6/X6b).
  */
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseGreenSuite, readGreenSuite } from '../../scripts/e2e-green-list.mjs';
-import { runGreenSuite } from '../../scripts/e2e-green.mjs';
+import { main as runGreenGate } from '../../scripts/e2e-green.mjs';
 
 const read = (file: string): string => readFileSync(file, 'utf8');
 
@@ -30,14 +31,15 @@ const GREEN_LIST = path.resolve('tests/e2e-green-suite.txt');
 const greenSuiteFiles = (): string[] => readGreenSuite(GREEN_LIST) as string[];
 
 /**
- * @description Runs the real runner body with a recording spawner and returns the playwright argv
- * it produced. This is the boundary the registration is about: whatever the runner filters,
- * re-points or re-parses, it can only reach playwright through this call.
+ * @description Runs the program - main(), the same function the CLI entry calls - with a
+ * recording spawner and returns the playwright argv it produced. Whatever the runner or its
+ * entry filters, re-points, re-parses or appends, it reaches playwright only through this call;
+ * the one line the guard cannot drive is process.exit.
  * @returns The spec paths the runner handed to playwright, in order.
  */
 const runnerHandsPlaywright = (): string[] => {
   const calls: string[][] = [];
-  const result = runGreenSuite({
+  const result = runGreenGate([], {
     listPath: GREEN_LIST,
     exists: () => true, // the chat bundle is the page under test, not the list under test
     spawn: (cmd: string, args: string[]) => { calls.push([cmd, ...args]); return { status: 0 }; },
@@ -46,8 +48,11 @@ const runnerHandsPlaywright = (): string[] => {
   });
   expect(result.status).toBe(0);
   expect(calls, 'the runner spawned something other than one playwright run').toHaveLength(1);
+  // Exactly this argv and nothing appended: a filter flag added by the entry would be a way to
+  // skip a listed spec while the list itself still names it.
   const [cmd, tool, verb, ...rest] = calls[0];
   expect([cmd, tool, verb]).toEqual(['npx', 'playwright', 'test']);
+  expect(rest.filter((arg) => arg.startsWith('-')), 'the gate appended playwright flags of its own').toEqual([]);
   return rest;
 };
 
