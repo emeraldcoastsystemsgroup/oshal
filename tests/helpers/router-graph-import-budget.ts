@@ -10,17 +10,22 @@
  * timeout budget. Measured on an idle box with three spec files running, that
  * single test cost 12.9s-13.6s while every sibling in the same file cost 14-101ms;
  * on a cold vite cache it cost 17.5s. The specs compensated with a 30s budget,
- * which is a mask: under the full 990-file parallel sweep the same import is
+ * which is a mask: under the full parallel unit sweep the same import is
  * competing for the same cores and blows straight through it, and the file dies
  * with a remote-client timeout.
  *
  * The fix is to load the router graph in a file-level `beforeAll`, where the cost
  * belongs and where the hook budget is explicit. This helper is what keeps it
- * fixed: each affected spec asserts, from inside a test, that importing the router
- * graph resolves from the module cache. If the `beforeAll` is removed or a new
- * test-scoped `await import(...)` of the graph creeps back in, the measured cost
- * jumps by three orders of magnitude and the assertion goes red — it cannot be
- * satisfied by a substring or by raising a timeout.
+ * fixed: the FIRST test in each affected spec asserts that importing the router
+ * graph resolves from the module cache, i.e. that the graph was already resident
+ * before any test ran. What that proves, exactly: remove the `beforeAll` (undo the
+ * hoist) and the first test pays the transform itself — measured 3,892ms against
+ * the 500ms ceiling, red. What it does NOT prove: a test-scoped
+ * `await import(...)` of the graph that coexists with the `beforeAll` stays green
+ * (measured 2ms), because with the hoist in place that import is a cache hit and
+ * costs nothing — it is not the flake, and this guard does not pretend to see it.
+ * The assertion is a measurement: it cannot be satisfied by a substring or by
+ * raising a timeout.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
