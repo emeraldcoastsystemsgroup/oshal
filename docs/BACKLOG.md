@@ -1371,6 +1371,20 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   audit) rather than a mocked store; the cockpit select is enabled and a browser case writes a row
   and sees the resolved source change; and the operator flips one bot to `gemini` /
   `gemini-3.8-flash` from the cockpit and it answers on Gemini in the bot's own log.
+- **Status (2026-09-17, branch `feat/bot-provider-row`):** built and guarded, NOT yet deployed. The
+  per-bot row is `agent_config` (unchanged store, unchanged `PUT /runtime` write path; the 409
+  `provider_pinned` is gone), the fleet default is the one row of migration 146
+  (`PUT/DELETE /api/agents/provider-switch/fleet-default`, Config Admin "Fleet Default" panel),
+  `resolveHarnessForAgent` and ADR-034 dispatch stamping read one installed snapshot, the bot node
+  translates a Cline-backed id onto `cline-cli` + `CLINE_API_PROVIDER`/`CLINE_API_MODEL` and the
+  post-execution check accepts exactly that, and the 18 compose `FORCE_LLM_*` literals are the
+  `x-bot-env` interpolation (guard `compose-bot-provider-literal.spec.ts`). Feature suite:
+  `npm run test:provider-switch` (9 files); Test Lab scenario `provider-switch`. **Left:** the last
+  done-when clause is live-only — an image deploy, then one bot flipped to `gemini` /
+  `gemini-3.8-flash` from the cockpit answering on Gemini in its own log, which also needs the Cline
+  binary fix (PR #628, glibc on musl). Two stale `agent_config` rows on the operator box
+  (`project-manager` = gemini/gemini-3.1-pro from 2026-07-23, `task-manager` = openai/gpt-x from
+  2026-06-09) become live bot-rows at deploy — clear or correct them from the cockpit first.
 
 
 ### Jarvis briefing preferences (operator ask, 2026-08-09)
