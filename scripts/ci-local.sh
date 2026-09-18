@@ -49,7 +49,7 @@
 #                 the HEAD export always npm-ci's its own node_modules)
 #   --publish-image  after an ALL-GREEN run, push the image this run built to the container
 #                 registry as :latest and :sha-<pinned commit>. Needs OSHAL_GHCR_TOKEN and
-#                 OSHAL_GHCR_USER in the environment (the operator mints those; this script
+#                 OSHAL_GHCR_USER - in the environment, or in .env (the publisher loads them; it
 #                 never creates or prints a credential). Refuses on a red run, on --skip-image,
 #                 and when either variable is absent. Nothing publishes without this flag.
 #   --store-compatibility-only  run just the committed core/store gate, without Docker
