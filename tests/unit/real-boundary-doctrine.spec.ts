@@ -8,13 +8,14 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The SEC-05 durable-memory proof was a file on disk: written, never listed in a required suite, and recorded in the audit as an open blocker. This case requires it to be in the e2e green set, to still be a real-Pool/NOBYPASSRLS proof rather than a double, and to be named by an audit row that no longer reads as open; it also pins both halves of the ledger-broker contract the recorded mutations exercised, so loosening either without re-recording the result turns the gate red.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The green-set registration checks were substring matches on the RAW suite text, so a spec commented out with a leading `#` still satisfied them while scripts/e2e-green.mjs drops every such line and never runs it (reviewer's proof on PR #620: commenting out the SEC-05 line left 6 of 6 green). Membership is now asserted against the list parsed exactly as the runner parses it - trimmed, blank and `#` lines dropped - and the runner's filter is pinned so the mirror cannot drift from it silently.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The mirror is gone: the guard imports the same parser the runner uses (scripts/e2e-green-list.mjs) and, instead of grepping the runner for three strings, asks it (`--list`) what it would hand to playwright and requires that to equal the parsed list. The source-text pin from seq 4 was satisfied by three semantically different runners (an extra filter, a different file, the expressions kept only in a comment) - PR #620 second review.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The guard drives the runner body with a recording spawner and pins the playwright ARGV to the parsed list; `--list` compared the parser to itself through a second derivation, and a filter at the spawn site passed it (third review, X1-X4). parseGreenSuite gets its own case for CRLF, indentation, trailing whitespace, `#` lines and blanks.
  */
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { readGreenSuite } from '../../scripts/e2e-green-list.mjs';
+import { parseGreenSuite, readGreenSuite } from '../../scripts/e2e-green-list.mjs';
+import { runGreenSuite } from '../../scripts/e2e-green.mjs';
 
 const read = (file: string): string => readFileSync(file, 'utf8');
 
@@ -29,19 +30,36 @@ const GREEN_LIST = path.resolve('tests/e2e-green-suite.txt');
 const greenSuiteFiles = (): string[] => readGreenSuite(GREEN_LIST) as string[];
 
 /**
- * @description Asks the real runner which spec paths it would hand to playwright. This is the
- * runner boundary itself: a runner that filters, re-points or re-parses the list answers
- * differently, whatever its source text still contains.
- * @returns The runner's list, one path per line.
+ * @description Runs the real runner body with a recording spawner and returns the playwright argv
+ * it produced. This is the boundary the registration is about: whatever the runner filters,
+ * re-points or re-parses, it can only reach playwright through this call.
+ * @returns The spec paths the runner handed to playwright, in order.
  */
-const runnerWouldRun = (): string[] => {
-  const r = spawnSync(process.execPath, ['scripts/e2e-green.mjs', '--list'], { encoding: 'utf8', timeout: 30_000 });
-  expect(r.status, `e2e-green.mjs --list failed: ${r.stderr}`).toBe(0);
-  return r.stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+const runnerHandsPlaywright = (): string[] => {
+  const calls: string[][] = [];
+  const result = runGreenSuite({
+    listPath: GREEN_LIST,
+    exists: () => true, // the chat bundle is the page under test, not the list under test
+    spawn: (cmd: string, args: string[]) => { calls.push([cmd, ...args]); return { status: 0 }; },
+    log: () => undefined,
+    error: () => undefined,
+  });
+  expect(result.status).toBe(0);
+  expect(calls, 'the runner spawned something other than one playwright run').toHaveLength(1);
+  const [cmd, tool, verb, ...rest] = calls[0];
+  expect([cmd, tool, verb]).toEqual(['npx', 'playwright', 'test']);
+  return rest;
 };
 
 
 describe('real-boundary regression doctrine', () => {
+  it('parses the green list the one way both the runner and this guard depend on', () => {
+    const text = ' tests/a.spec.ts \r\n\n#tests/commented.spec.ts\r\n  # indented comment\n\ttests/b.spec.ts\t\ntests/c.spec.ts';
+    expect(parseGreenSuite(text)).toEqual(['tests/a.spec.ts', 'tests/b.spec.ts', 'tests/c.spec.ts']);
+    expect(parseGreenSuite('')).toEqual([]);
+    expect(parseGreenSuite('# only a comment\n\n')).toEqual([]);
+  });
+
   it('keeps the coding rule and the explicit audit linked', () => {
     const rules = read('CLAUDE.md');
     const audit = read('docs/governance/real-boundary-regression-audit.md');
@@ -61,8 +79,8 @@ describe('real-boundary regression doctrine', () => {
     // A proof nothing runs is not evidence. This is the whole reason the row stayed open. The
     // membership is over the list the runner builds, not the file's text: a `#`-commented line
     // still contains the path and is exactly what the runner drops.
-    // The runner is asked, not grepped: what it would run must be exactly what the parser says.
-    expect(runnerWouldRun(), 'scripts/e2e-green.mjs would run a different list than the shared parser reads').toEqual(requiredE2e);
+    // The runner is driven, not grepped: the argv it hands playwright must be exactly the parsed list.
+    expect(runnerHandsPlaywright(), 'scripts/e2e-green.mjs handed playwright a different list than the shared parser reads').toEqual(requiredE2e);
     expect(requiredE2e, `${spec} must be in the required e2e set, not merely on disk`).toContain(spec);
 
     // And it has to still be the real seam: a real Pool, a role RLS can apply to, the shipped
