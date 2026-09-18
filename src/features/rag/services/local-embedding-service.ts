@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Local sentence embeddings (transformers.js all-MiniLM-L6-v2) so RagService can do real vector retrieval on the existing Chroma 0.4.24 (whose REST /query rejects query_texts — everything was falling back to BM25). Fully local + free per the self-host ethos; fail-open: any load/inference failure returns null and retrieval degrades to lexical, never breaks.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Strip the ONNX runtime's process-global rethrow listeners once the model load settles. onnxruntime-web's Emscripten Node shell appends `process.on('unhandledRejection', t => { throw t })` and a matching `uncaughtException` rethrow the moment the wasm initialises, BEHIND installProcessCrashGuards — from that instant a stray rejection anywhere in the controller (not just in RAG) was rethrown into an uncaught exception, rethrown again, and killed the api with exit 7 and ~548 KB of minified bundle on stderr, before the crash guards' 250 ms log flush. Measured: exit 7 / 548,709 bytes without the strip, exit 0 / 54 bytes with it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Contain an Emscripten abort raised inside the wasm runtime mid-inference. The abort is a WebAssembly.RuntimeError that the awaited call already surfaced to the catch, but the catch treated it like any transient error: it logged only a text count, named no caller, and left the runtime — which has ABORT set and an undefined heap after it — armed for the next call. Now an abort makes the service unavailable for the process, the same degrade a failed model load takes, and every inference failure logs the caller, the input size (count, total and longest chars, failing batch) and a bounded error summary instead of whatever the backend printed.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Two review findings. `WebAssembly` is a lib.dom/lib.webworker global and the server build compiles with lib ES2022 + types node, so naming it broke `npm run typecheck` and would have broken the image build (Dockerfile.oshal runs that tsconfig with no noEmitOnError); the constructor is read off globalThis instead. And the sticky degrade only guarded the ENTRY to embed(): a multi-batch call already in flight kept awaiting the extractor after another caller aborted the runtime, and an aborted runtime answers with a tensor rather than throwing, so ingest would persist vectors from a heap with ABORT set. The flag is re-checked before every batch.
  */
 
 import { resolve } from 'path';
@@ -60,7 +61,13 @@ export interface EmbeddingFailure {
  * @returns Whether the backend runtime itself aborted.
  */
 export function isRuntimeAbort(err: unknown): boolean {
-  if (typeof WebAssembly !== 'undefined' && err instanceof WebAssembly.RuntimeError) return true;
+  // `WebAssembly` is declared in lib.dom/lib.webworker, and the server build compiles with
+  // lib ES2022 + types node - naming it directly does not compile there, and the image build
+  // runs exactly that tsconfig with no noEmitOnError. The constructor is read off globalThis
+  // instead, which is the same check at runtime and compiles under both configs.
+  const runtimeErrorCtor = (globalThis as { WebAssembly?: { RuntimeError?: unknown } })
+    .WebAssembly?.RuntimeError;
+  if (typeof runtimeErrorCtor === 'function' && err instanceof (runtimeErrorCtor as new () => Error)) return true;
   const message = err instanceof Error ? err.message : String(err);
   return /\bAborted\(/.test(message);
 }
@@ -136,6 +143,16 @@ class LocalEmbeddingService {
     try {
       const out: number[][] = [];
       for (; batchStart < texts.length; batchStart += BATCH_SIZE) {
+        // Another caller can abort the shared runtime between batches. The entry check above
+        // cannot see that, and the aborted runtime does NOT throw - it answers with a tensor
+        // from a heap with ABORT set, which ingest would persist as real vectors. Re-check
+        // before every batch so an in-flight call degrades with everyone else.
+        if (this.unavailable) {
+          return this.degradeAfterFailure(
+            new Error('Aborted(): the embedding runtime went unavailable while this call was in flight'),
+            texts, caller, batchStart,
+          );
+        }
         const tensor = await extractor(texts.slice(batchStart, batchStart + BATCH_SIZE), { pooling: 'mean', normalize: true });
         out.push(...tensor.tolist());
       }

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Backfill embeddings for rag_chunks rows that have none (legacy corpora copied docs-only from Chroma — runbook collections were FTS-only, and english-stemmed ts_rank ranks domain-specific tokens worse than the old tuned BM25; vectors restore hybrid RRF). Runs INSIDE the api container so it reuses the dist local-embedding-service + DATABASE_URL.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Name this script as the caller on localEmbeddings.embed(). It was the sixth call site and the one the labelling sweep missed - it embeds the corpus in batches inside the api container, the heaviest embedding workload here, so an abort on this path logged caller "unknown" exactly where the caller matters most.
  */
 
 /*
@@ -35,7 +36,7 @@ async function main() {
     const batch = await pool.query(
       `SELECT chunk_id, document FROM rag_chunks WHERE ${where} ORDER BY chunk_id LIMIT ${BATCH}`, params);
     if (!batch.rows.length) break;
-    const vectors = await localEmbeddings.embed(batch.rows.map((r) => r.document));
+    const vectors = await localEmbeddings.embed(batch.rows.map((r) => r.document), 'rag-embed-backfill');
     if (!vectors) throw new Error('embedder unavailable — aborting (rows left NULL, retrieval stays FTS-only)');
     for (let i = 0; i < batch.rows.length; i++) {
       await pool.query('UPDATE rag_chunks SET embedding = $2::vector WHERE chunk_id = $1',

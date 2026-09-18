@@ -28,6 +28,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the abort classifier against a real WebAssembly.RuntimeError, the bounded caller/size log payload, the service's sticky-after-abort policy, the real-runtime host child in contained and uncontained modes, and the in-image embed() case.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two review corrections: the model is cached after a download rather than shipped in the package (the case name said "ships"), and a new case pins that a call ALREADY IN FLIGHT degrades when another caller aborts the runtime. The sticky flag was checked only at the entry to embed(), so a multi-batch call kept awaiting an aborted extractor - which answers with a tensor instead of throwing - and handed those vectors to ingest.
  */
 import { spawnSync } from 'child_process';
 import { existsSync } from 'fs';
@@ -178,10 +179,35 @@ describe('localEmbeddings after an inference failure (extractor doubled; the run
     expect(await localEmbeddings.embed(['a'], 'spec')).toBeNull();
     expect(calls).toBe(1);
   });
+
+  it('a call already in flight degrades too: another caller aborts the runtime between batches', async () => {
+    // The entry check cannot see an abort that happens mid-call, and an aborted runtime does NOT
+    // throw - it answers with a tensor from a heap with ABORT set. Without the per-batch re-check
+    // this call returned real-looking vectors that rag-service.ingest would have persisted.
+    const BATCHES = 3;
+    const texts = Array.from({ length: 32 * BATCHES }, (_, i) => 'text-' + i);
+    let released: (() => void) | null = null;
+    const firstBatchHeld = new Promise<void>((resolve) => { released = resolve; });
+    let batches = 0;
+    svc.extractor = async (slice: string[]) => {
+      batches += 1;
+      calls += 1;
+      if (batches === 1) await firstBatchHeld; // hold batch 0 open, as a long ingest does
+      return { tolist: () => slice.map(() => [0.5, 0.5]) };
+    };
+    const inFlight = localEmbeddings.embed(texts, 'rag-service.ingest');
+    await new Promise((tick) => setImmediate(tick));
+    // Another caller aborts the shared runtime while batch 0 is still open.
+    svc.unavailable = true;
+    svc.extractor = null;
+    released!();
+    expect(await inFlight, 'the in-flight call returned vectors from an aborted runtime').toBeNull();
+    expect(batches, 'it must not start another batch after the abort').toBe(1);
+  });
 });
 
 describe('the real onnxruntime-web runtime aborting mid-inference (host child, real quantized MiniLM)', () => {
-  it('ships the model this case needs', () => {
+  it('has cached the model this case needs', () => {
     expect(existsSync(MODEL), `expected ${MODEL}`).toBe(true);
   });
 
