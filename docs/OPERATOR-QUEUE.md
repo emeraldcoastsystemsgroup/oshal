@@ -11,45 +11,27 @@ To comment, write under an entry in this file and tell me, or just say the entry
 
 ---
 
-## Right now — 6
+## Right now — 3
 
-Short-lived and blocking today. Source: `docs/backlog/operator-now.json` (as of 2026-09-17).
+Short-lived and blocking today. Source: `docs/backlog/operator-now.json` (as of 2026-09-18).
 
-### Ella has access — and the way she got it is the bug
+### Grant the GitHub session the packages scope (30 seconds, browser)
 
-The grant landed: oshal_authorization_assignments carries little-monsters for Google sub 113439769752756917575 at issuer accounts.google.com. But the role it had to use is @app-admin, which is your objection and it is a fair one. The cause is a single branch in src/features/application-authorization/service.ts: when an app ships no role catalog, the only grantable role is @app-admin at tier admin — there is no vocabulary for 'ordinary user', so the code falls back to the one role it knows. Two things are true at once and they should not be confused: inside the package she is a student, because little-monsters/src-routes/education-access.ts keys every route on lm_students.role and never reads the platform tier; at the platform layer she is labelled an admin of that app. What I have NOT verified is whether any platform surface outside the package (uninstall, grant management for that app) accepts an @app-admin — that is the part worth checking before this is called harmless.
+The admin PAT in .env (GITHUB_ADMIN_TOKEN, ghp_) answers 401 Unauthorized under every auth form, tested 2026-09-18 00:50Z - GitHub no longer accepts it. The project pushes on a different token, the gho_ OAuth token gh auth login minted (OSHAL_DEV_REPO_TOKEN and the git credential store), whose scopes are gist, repo, workflow - it cannot write packages, and OAuth scopes cannot be widened after issue. So nothing on this box can publish the container image, and every default install keeps pulling the July build. An agent must not mint a credential, and the grant flow needs your browser.
 
-**Do:** Nothing to do today; she can use it. The fix is to give little-monsters a real role catalog with a student role so the grant can say 'student'. That work was started and stopped when the tokens ran out — the next session should pick it up first.
+**Do:** gh auth refresh -h github.com -s write:packages,read:packages - it prints a code, opens the browser, you click Authorize. Nothing to paste: afterwards the refreshed token is read with gh auth token, wired as OSHAL_GHCR_TOKEN/OSHAL_GHCR_USER for the nightly gate, and the first green main gate publishes.
 
-### Sign Ella in once, to close the last gap
+### Ella: open Little Monsters once (signing in was not enough)
 
-lm_students has her row with role=student, but external_issuer is still NULL where yours is populated. The package self-heals it on first login — education-access.ts writes UPDATE lm_students SET external_issuer at line 236 — but until she actually signs in, the issuer-keyed lookup at line 175 will not match her. Issuer-keyed lookups silently failing is exactly the failure that took Jarvis down for three days, so this is worth closing rather than assuming.
+Her 2026-09-17 sign-in reached / and /cockpit/ only - the api log shows no Little Monsters route for her sub, and lm_students.external_issuer is still NULL (row last updated 2026-08-25). The issuer self-heal lives in the app's own access path (education-access.ts, the legacy branch: same external_id, NULL issuer -> UPDATE sets the issuer), so it runs the first time she opens the app, not at login. The grant itself is right: little-monsters, role student, issuer accounts.google.com.
 
-**Do:** Have her log in once with her Google account and open Little Monsters. Then tell me and I will confirm the issuer got written.
+**Do:** Have her click into Little Monsters once. Then say so and I will confirm the issuer was written.
 
-### Give the GitHub token the packages scope
+### PINNED by you - rotate the Alpaca paper keys
 
-Your PATs are already god-level — that is not the problem, and there is nothing for you to mint. The problem is narrower: the gh CLI session on this box was authorized without write:packages, so the publish step cannot push the image even with a good token. Nothing has ever published this trunk's container image, so ghcr.io/.../oshal-bot:latest is still the pre-cutover 2026-07-26 artifact, and --mode 1 (the default documented install) hands that to every new machine. That is what made the second computer look like it was missing features.
+A lane's bad redaction printed ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA_KEY into its own transcript. You said you will take care of it later; this stays here so it is not forgotten. (The oshal verification PAT that was pasted into chat has since been re-minted: .env carries one and the deploy gate reads it.)
 
-**Do:** gh auth refresh -h github.com -s write:packages — then add --publish-image to the nightly gate command. The publish mechanism is merged and fail-closed; it will refuse rather than publish something wrong.
-
-### Rotate two credentials that were exposed in a transcript
-
-A lane's bad redaction printed the values of ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA_KEY into its own transcript; it disclosed this unprompted. Separately, the oshal PAT was pasted into chat. Neither left this machine, but neither should sit in a log.
-
-**Do:** Rotate the Alpaca paper keys; re-mint OSHAL_VERIFY_OPERATOR_PAT from a signed-in session and replace the line in .env. The deploy path now reads .env for that name, so replacing the line is enough.
-
-### Deploy when you are ready
-
-The running api is on 49686ac4 — 25 commits behind main, measured, not estimated. So POST /api/authorization/package-plan still 404s on the box and none of last night's merges are live. Nothing is broken by waiting. A deploy signs you out and takes about 20 minutes.
-
-**Do:** bash scripts/oshal-deploy.sh — or tell me to run it. For the cockpit rail change alone, no deploy is needed: POST /api/ui/profile/reload with your PAT.
-
-### Fix .wslconfig line 4 — this is the memory problem
-
-wsl reports: Unknown key 'wsl2.autoMemoryReclaim' in %USERPROFILE%/.wslconfig:4. The key is rejected, so whatever it was meant to do is not happening. You said the gateway went down almost immediately and that you think the box is memory constrained — that matches: the docker-desktop WSL2 distro stopped three times overnight and the engine was at 1.4 GB free of 15.7 GB. This is the most likely single cause of the instability you felt.
-
-**Do:** Say the word and I will read the file and tell you exactly what is malformed. It is a one-line edit plus wsl --shutdown.
+**Do:** When you get to it: rotate the paper keys in the Alpaca dashboard and replace the three lines in .env.
 
 ---
 
