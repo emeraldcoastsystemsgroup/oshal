@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | New. Host child for the embedding-abort containment guard. Real crash guards, the real onnxruntime-web wasm runtime, the real quantized MiniLM that @xenova/transformers ships in its cache, and the runtime's own abort raised from inside a wasm frame in the middle of a real run. `contained` mode awaits the run under try/catch (the shape embed() uses) and proves the process is still serving afterwards; `uncontained` mode leaves the aborting run unawaited with the runtime's rethrow listeners in place, which is the exit-7 signature the api showed — the control that proves the abort is real and lethal when nothing traps it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Correct the model provenance: @xenova/transformers does not ship the quantized MiniLM (its package `files` list is src/dist/types); the weights are downloaded once and cached under the package, so a fresh checkout fails this guard loudly until the cache exists.
  */
 
 import { readFileSync } from 'fs';
@@ -25,7 +26,12 @@ function counts(): { unhandledRejection: number; uncaughtException: number } {
   };
 }
 
-/** @returns The quantized all-MiniLM-L6-v2 that @xenova/transformers ships in its package cache. */
+/**
+ * @returns The quantized all-MiniLM-L6-v2 cached under @xenova/transformers after its first
+ * download. The npm package does NOT ship the weights (its `files` list is src/dist/types), so on
+ * a fresh `npm ci` checkout this path does not exist yet and the cases fail loudly on the
+ * existsSync assert rather than skipping - a skipped guard is a guard that does not exist.
+ */
 function modelPath(): string {
   const pkg = path.dirname(require.resolve('@xenova/transformers/package.json'));
   return path.join(pkg, '.cache', 'Xenova', 'all-MiniLM-L6-v2', 'onnx', 'model_quantized.onnx');

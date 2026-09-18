@@ -14,7 +14,9 @@
  *      input size instead of the backend's output.
  *
  * The host cases drive the real onnxruntime-web runtime with the real quantized
- * MiniLM that @xenova/transformers ships, raising the runtime's OWN abort import from
+ * MiniLM that @xenova/transformers caches after its first download (the npm package does
+ * not ship the weights, so a fresh checkout fails these cases loudly on the fixture's
+ * existsSync assert until the cache exists), raising the runtime's OWN abort import from
  * inside a wasm frame mid-run (tests/fixtures/onnx-abort-hook.ts). The uncontained
  * control proves the abort is real and lethal when nothing traps it, so a runtime
  * that stops aborting fails this suite instead of passing it vacuously. The image

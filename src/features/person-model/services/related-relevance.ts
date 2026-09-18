@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phase 3 follow-up: the relevance floor for "possibly related" recall hits. The retrieval engine fuses its vector and lexical legs by RECIPROCAL RANK, so a fused score says where a chunk placed, not how close it is — and when the store holds fewer chunks than the fetch bound, every chunk places. The 2026-09-12 live proof returned "Can we order pizza tonight" beside two real volleyball paraphrases at an indistinguishable 1/60-vs-1/63. This module scores each candidate against the recall query on the SAME MiniLM the projection embedded with, and drops anything under a cosine floor, so the related list is evidence rather than the store's contents in rank order. The exact count never passes through here.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Name this path as the caller on localEmbeddings.embed(). It was the one unlabelled call site left, so a backend failure on the ADR-100 relatedRecall route logged caller "unknown" - the review found it while checking the claim that every site names itself.
  */
 
 import { localEmbeddings } from '@/features/rag';
@@ -76,7 +77,7 @@ export function cosineSimilarity(a: readonly number[], b: readonly number[]): nu
  */
 export async function scoreAgainstQuery(query: string, texts: readonly string[]): Promise<number[] | null> {
   if (texts.length === 0) return [];
-  const vectors = await localEmbeddings.embed([query, ...texts]);
+  const vectors = await localEmbeddings.embed([query, ...texts], 'related-relevance.scoreAgainstQuery');
   if (!vectors || vectors.length !== texts.length + 1) {
     logger.warn({ operation: 'scoreAgainstQuery', candidates: texts.length }, 'embedder returned no vectors — related hits cannot be scored');
     return null;

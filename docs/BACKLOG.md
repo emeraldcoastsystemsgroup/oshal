@@ -1113,7 +1113,8 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   prints `Aborted()` to stderr, sets ABORT and throws a `WebAssembly.RuntimeError` from inside the
   wasm frame that reached it. `tests/fixtures/onnx-abort-hook.ts` keeps that real import and raises
   it from inside the next wasm frame of a real run (the real quantized MiniLM `@xenova/transformers`
-  ships, real crash guards). Awaited under try/catch — the shape `embed()` uses — it is an ordinary
+  caches after its first download — the package does not ship the weights, and a fresh checkout fails
+  these cases loudly rather than skipping — real crash guards). Awaited under try/catch — the shape `embed()` uses — it is an ordinary
   rejection: **exit 0, 10 bytes of stderr, listeners 1/1, process serving.** The same abort left
   unawaited with the runtime's rethrow pair in place: **exit 7** — the api's signature, kept as the
   suite's control. Inside `oshal-bot:latest` through the real `embed()`: origin/main returned null
@@ -1123,7 +1124,9 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   takes) and its log line reads `caller:"probe", count:1, chars:63, maxChars:63, batchStart:0,
   abort:true, error.name:"RuntimeError"`, with 840 bytes on stderr instead of 548 KB. Every call
   site names itself (`rag-service.ingest`, `rag-service.search.pgvector`,
-  `rag-service.vectorSearch.chroma`, `semantic-projection.projectOwnerSegments`).
+  `rag-service.vectorSearch.chroma`, `semantic-projection.projectOwnerSegments`,
+  `related-relevance.scoreAgainstQuery` — the last was unlabelled until the review of PR #640
+  found it, so the ADR-100 relatedRecall route logged `caller:"unknown"` on a backend failure).
 - **Guard:** `tests/unit/local-embedding-abort-containment.spec.ts`, 11 cases — the classifier
   against a real `WebAssembly.RuntimeError`, the bounded caller/size payload, the sticky policy
   (extractor doubled; recorded in the real-boundary audit beside its real companions), the
