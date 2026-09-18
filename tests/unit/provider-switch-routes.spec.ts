@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Named guard fleet-default-provider-switch (the machine-write inventory entry of the same id points here): the fleet switch is ONE write from an operator browser session — PUT validates the id against the real catalog (400 with the reason and the accepted ids for an unknown one, nothing written), upserts the reserved row and refreshes the snapshot; DELETE clears it and refreshes; a service-secret caller is refused with 403 before any store call; a signed-in non-operator is refused; GET reports the row, the snapshot status and the accepted ids. The store is doubled here (its real companion is provider-switch-store-postgres.spec.ts on a disposable PostgreSQL as the enforcing role); the registry catalog is the real HARNESS_FACTORIES + provider-definitions.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | GET lists the per-bot rows (perBot, with updatedBy) beside the fleet row; DELETE /provider-switch/:scopeId releases a bot's own row back to the fleet default (removed:true, the fleet row reported, snapshot refreshed) and answers removed:false for an unknown scope. The per-bot WRITE stays on PUT /api/agents/:id/runtime (config-runtime-precedence.spec.ts): this router only lists and releases.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A Cline-backed id written to the fleet default without a model is 400 model_required and nothing is written; the same id with its model and a native id without one are accepted (the door the review measured: a model-less gemini row made the Cline wrapper pick the FORCE_LLM_MODEL seed).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -150,6 +151,32 @@ describe('fleet-default-provider-switch', () => {
     expect(cleared.status).toBe(200);
     expect(await cleared.json()).toMatchObject({ applied: true, removed: true, fleetDefault: null, snapshot: { rowCount: 0 } });
     expect(snapshot.resolve('some-bot', { harnessType: 'claude-code', apiType: 'claude-code' })).toMatchObject({ source: 'registry' });
+  });
+
+  it('REGRESSION: a Cline-backed id with no model is refused with the reason and nothing is written — the seed model is never picked', async () => {
+    const { store, rows, upsert } = memoryStore();
+    const snapshot = new ProviderSwitchSnapshot(store, buildProviderSwitchCatalog(Object.keys(HARNESS_FACTORIES)));
+    const base = await listen(store, snapshot, { sub: OPERATOR });
+
+    // The door the review measured: CLINE_API_PROVIDER=gemini with no CLINE_API_MODEL makes the
+    // Cline wrapper pick the container's FORCE_LLM_MODEL seed (gpt-5.5). No such row can be written.
+    const modelLess = await send(`${base}/fleet-default`, 'PUT', { providerId: 'gemini' });
+    expect(modelLess.status).toBe(400);
+    expect(await modelLess.json()).toMatchObject({
+      success: false, applied: false, code: 'model_required', error: expect.stringMatching(/'gemini'.*needs a modelId/),
+    });
+    expect(upsert).not.toHaveBeenCalled();
+    expect(rows.size).toBe(0);
+
+    // The same id with its model is the write the panel makes.
+    const written = await send(`${base}/fleet-default`, 'PUT', { providerId: 'gemini', modelId: 'gemini-3.8-flash' });
+    expect(written.status).toBe(200);
+    expect(rows.get(FLEET_DEFAULT_SWITCH_ID)).toMatchObject({ providerId: 'gemini', modelId: 'gemini-3.8-flash' });
+
+    // A native id may still omit the model: that runtime's own default, never another provider's.
+    const codex = await send(`${base}/fleet-default`, 'PUT', { providerId: 'codex-cli' });
+    expect(codex.status).toBe(200);
+    expect(rows.get(FLEET_DEFAULT_SWITCH_ID)).toMatchObject({ providerId: 'codex-cli', modelId: null });
   });
 
   it('a service-secret caller and a signed-in non-operator are both refused before any store call', async () => {

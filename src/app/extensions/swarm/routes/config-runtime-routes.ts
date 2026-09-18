@@ -9,12 +9,14 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: reject every credential field before config lookup/push and remove the raw secret carrier; provider/model mutations remain non-secret.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | "A bot's LLM provider is a row in a table": the record this route writes IS the per-bot switch row, so (a) the precedence policy is resolved through the injected switch resolver (bot-row > fleet-default > registry) and the provider_pinned 409 for a declared harness is gone with it — providerOverridable is true for every readable-registry bot; (b) a write refuses an id the build cannot run BEFORE the push (400 with the reason and the accepted ids — classifyProviderId, the same rule the resolver refuses on), so a typo never reaches agent_config; (c) a successful write refreshes the installed snapshot through onRuntimeChanged so the next dispatch carries it without waiting for the timer; (d) the read serves the RESOLVED provider/model as runtime.providerId/modelId with providerSource, and answers 200 from the fleet default for a bot with no record, because the bot-node boot pull reads exactly those two fields and a restarted bot must come up on the fleet switch.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Entry 5's "the record IS the per-bot switch row" was the defect: agent_config is also written by manifest seeding, the bot's broadcast-up and config push, so every machinery-written record outranked a fleet-default write (70 of them on the operator box). The per-bot switch is now a row an OPERATOR wrote in oshal_bot_provider_switch, and this route is where that happens: after the ADR-034 push-before-persist succeeds, a mutation naming a providerId writes the bot's own switch row through the injected writeBotSwitch seam under the caller's identity (updated_by = the operator sub; the table's operator-only policy is the enforcement), and a model-only mutation updates that row's model when the bot already has one. The agent_config record is still written exactly as before — it is the dispatch record beneath the fleet row, never a switch.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | refuseUnrunnableSwitch extracted from applyRuntimeMutation (57 -> 49 code lines, the 50-line rule) and grown by one refusal: a Cline-backed providerId with no modelId in the same mutation is 400 model_required before the push and before any row — the Cline runtime would otherwise run on the container's FORCE_LLM_MODEL seed. The cockpit sends the model with a provider pick (the model select re-renders from the provider's definition), so the panel is unchanged.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import {
   classifyProviderId,
+  requireModelForClineBackedId,
   resolveEffectiveBotProvider,
   type BotProviderSwitchResolution,
   type EffectiveBotProvider,
@@ -191,6 +193,31 @@ function precedenceConflict(
 }
 
 /**
+ * The record is the switch row: an id the build cannot run, or a Cline-backed id written without a
+ * model (the Cline runtime would fall back to the container's FORCE_LLM_MODEL seed), is refused
+ * here by name before anything is pushed or persisted — the same rule the resolver would refuse it
+ * with later. An accepted id is canonicalized in place (a row written `nousresearch` reaches the
+ * `nousResearch` definition).
+ * @returns True when a 400 was written and the mutation must stop.
+ */
+function refuseUnrunnableSwitch(res: Response, params: RuntimeParams, switches: RuntimeRouteSwitchDeps): boolean {
+  const catalog = switches.catalog?.() ?? null;
+  if (!params.providerId || !catalog) return false;
+  const classified = classifyProviderId(params.providerId, catalog);
+  if (!classified.ok) {
+    res.status(400).json({ success: false, applied: false, pushed: false, code: 'provider_unknown', error: classified.reason });
+    return true;
+  }
+  const modelLess = requireModelForClineBackedId(classified, params.modelId ?? null);
+  if (modelLess) {
+    res.status(400).json({ success: false, applied: false, pushed: false, code: 'model_required', error: modelLess.reason });
+    return true;
+  }
+  params.providerId = classified.providerId;
+  return false;
+}
+
+/**
  * Validate one mutation against current precedence, then delegate the push-before-persist
  * transaction to ConfigSyncService. Every early response means the authoritative record stayed
  * unchanged.
@@ -212,17 +239,7 @@ async function applyRuntimeMutation(
     res.status(503).json({ success: false, applied: false, error: 'Config services unavailable (no Postgres pool)' });
     return;
   }
-  const catalog = switches.catalog?.() ?? null;
-  if (parsed.params.providerId && catalog) {
-    // The record is the switch row: an id the build cannot run is refused here, by name, before
-    // anything is pushed or persisted — the same rule the resolver would refuse it with later.
-    const classified = classifyProviderId(parsed.params.providerId, catalog);
-    if (!classified.ok) {
-      res.status(400).json({ success: false, applied: false, pushed: false, code: 'provider_unknown', error: classified.reason });
-      return;
-    }
-    parsed.params.providerId = classified.providerId;
-  }
+  if (refuseUnrunnableSwitch(res, parsed.params, switches)) return;
   const before = await agentConfig.getConfig(agentId);
   const beforeValues = (before?.values || {}) as ConfigValues;
   const beforePolicy = resolvePolicy(agentId, beforeValues, switches);

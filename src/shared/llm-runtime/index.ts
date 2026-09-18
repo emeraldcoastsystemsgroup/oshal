@@ -21,6 +21,7 @@ export {
 export {
   FLEET_DEFAULT_SWITCH_ID,
   classifyProviderId,
+  requireModelForClineBackedId,
   resolveBotProviderSwitch,
   type BotProviderSwitchResolution,
   type BotProviderSwitchSource,

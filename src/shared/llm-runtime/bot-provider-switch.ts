@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | A bot's LLM provider is a row in a table, not a literal in the registry (operator, 2026-09-17: "it should literally be a switch in a table"). ONE pure rule, most specific first: per-bot switch row -> fleet-default switch row -> the registry literal. Each rung is a real record; no rows anywhere resolves byte-identically to the registry, so the fleet does not move when the rule lands. A provider id the platform cannot run fails CLOSED with a reason — it never falls silently to the registry. Lives in shared/ because the api-side harness resolver, dispatch stamping, the /runtime boot pull and the cockpit all have to answer the same question, and duplicating the rule is how a surface starts lying.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Named the stores behind the rungs so no reader invents a fourth: the per-bot row IS the existing agent_config record (config_values.providerId/modelId — what PUT /api/agents/:id/runtime writes and ADR-034 dispatch stamping carries), the fleet default is the one reserved row of oshal_bot_provider_switch (migration 147). The rule itself is unchanged; ProviderSwitchRow is the common shape both stores project to.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Entry 2 named the wrong store for the per-bot rung. An agent_config record is a machinery-written dispatch artefact (manifest seeding, the bot's own broadcast-up, a config push — the operator box holds 70 and not one was a person's choice), and treating it as the per-bot switch let every one of them outrank a fleet-default write, failing ADR-162 §7 for the whole fleet. Both rungs now live in oshal_bot_provider_switch: a per-bot row (scope = agent id) exists only when an operator wrote one through the api, the fleet default is the reserved row, and agent_config is ADR-034 tier 2 of the carried record BENEATH the fleet row. The rule itself is still unchanged — what changed is that the store no longer hands it agent_config as a botRow.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | requireModelForClineBackedId: a Cline-backed id written without a model is refused with the reason (the Cline wrapper would otherwise pick the container's FORCE_LLM_MODEL seed — gpt-5.5 — through ClineCLIWrapper._resolveBackingProvider's fallback chain, the same 'models/gpt-5.5 is not found' failure by another door). Native harness ids keep their own runtime default; no default model is ever picked for a Cline-backed id.
  *
  * @module shared/llm-runtime/bot-provider-switch
  */
@@ -171,6 +172,29 @@ export function classifyProviderId(
     ok: false, providerId,
     reason: `unknown provider id '${providerId}' — not a harness (${catalog.harnessTypes.filter((h) => !UNSWITCHABLE_HARNESSES.has(h)).join(', ')}) `
       + `and not a Cline-backed API provider; accepted ids: ${Array.from(new Set(accepted)).sort().join(', ')}`,
+  };
+}
+
+/**
+ * @description A Cline-backed id must carry its model on the row. The Cline wrapper resolves its
+ * model as CLINE_API_MODEL → persisted config → FORCE_LLM_MODEL → LLM_MODEL
+ * (ClineCLIWrapper._resolveBackingProvider), so a row naming `gemini` with no model would run on the
+ * container's seed model (`gpt-5.5` on the operator box) — the "models/gpt-5.5 is not found" failure
+ * through a different door. A native harness id may omit the model (that runtime's own default is
+ * its own); a Cline-backed id may not, and no default is picked for it here.
+ * @param classified - The accepted classification of the id being written.
+ * @param modelId - The model the write names, if any.
+ * @returns The refusal for a Cline-backed id with no model; null when the write may proceed.
+ */
+export function requireModelForClineBackedId(
+  classified: ClassifiedProviderId,
+  modelId: string | null | undefined,
+): RefusedProviderId | null {
+  if (!classified.clineApiProvider || meaningful(modelId)) return null;
+  return {
+    ok: false, providerId: classified.providerId,
+    reason: `'${classified.providerId}' is a Cline-backed API provider and needs a modelId on the row: `
+      + "without one the Cline runtime falls back to the container's FORCE_LLM_MODEL seed, a model of another provider",
   };
 }
 

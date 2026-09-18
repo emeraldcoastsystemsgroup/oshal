@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for "a bot's LLM provider is a row in a table, not a literal in the registry": each precedence rung (bot row > fleet default > registry), the byte-identical no-row case, the fail-closed unknown id, the a2a exclusions, and the catalog pinned to the REAL HARNESS_FACTORIES + provider-definitions so the accepted-id set cannot drift from what the build can run. Pure rule, no doubles.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | requireModelForClineBackedId: a Cline-backed id with no model (null, blank, the auto sentinel) is refused with a reason naming the seed fallback; the same id with a model, and a native id without one, pass.
  */
 
 import { describe, expect, it } from 'vitest';
 import {
   FLEET_DEFAULT_SWITCH_ID,
   classifyProviderId,
+  requireModelForClineBackedId,
   resolveBotProviderSwitch,
   resolveEffectiveBotProvider,
   type ProviderSwitchCatalog,
@@ -124,6 +126,21 @@ describe('bot-provider-switch: what an id means', () => {
     });
     // The catalog's own spelling is answered, so a differently-cased row still reaches the definition.
     expect(classifyProviderId('nousresearch', CATALOG)).toMatchObject({ ok: true, apiType: 'nousResearch' });
+  });
+
+  it('REGRESSION: a Cline-backed id with no model is refused — the Cline runtime would fall back to the container seed model', () => {
+    const gemini = classifyProviderId('gemini', CATALOG);
+    const codex = classifyProviderId('codex-cli', CATALOG);
+    expect(gemini.ok && codex.ok).toBe(true);
+    if (!gemini.ok || !codex.ok) return;
+    expect(requireModelForClineBackedId(gemini, null)).toMatchObject({
+      ok: false, providerId: 'gemini', reason: expect.stringMatching(/needs a modelId.*FORCE_LLM_MODEL/),
+    });
+    expect(requireModelForClineBackedId(gemini, '   ')).toMatchObject({ ok: false });
+    expect(requireModelForClineBackedId(gemini, 'auto')).toMatchObject({ ok: false });
+    expect(requireModelForClineBackedId(gemini, 'gemini-3.8-flash')).toBeNull();
+    // A native harness id keeps its own runtime default: the seed is that runtime's model.
+    expect(requireModelForClineBackedId(codex, null)).toBeNull();
   });
 
   it('a2a, the auto sentinel and blanks are refused with reasons', () => {

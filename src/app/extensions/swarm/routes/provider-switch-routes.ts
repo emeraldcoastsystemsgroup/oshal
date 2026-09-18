@@ -5,12 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The fleet-default switch surface for "a bot's LLM provider is a row in a table" (operator acceptance, 2026-09-17: moving the whole fleet back to Codex is ONE write of the fleet-default row from the cockpit — no pull request, no image deploy, no container restart). GET reports the fleet row, the snapshot's freshness and the accepted provider ids; PUT validates the id against the REAL runnable catalog (classifyProviderId — an unknown id is a 400 carrying the reason and the accepted list, never a silent write), upserts the one reserved row under the caller's identity (the table's operator-only policy is the enforcement, not this file), and refreshes the installed snapshot so the next dispatch carries it; DELETE clears it so resolution falls to the registry literal. Operator browser sessions only: a service secret is refused exactly as the per-bot runtime writes refuse it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot switch rows live in the same table now (migration 147 entry 2: a row an operator wrote through PUT /:agentId/runtime, the only per-bot record that beats the fleet default). GET lists them as perBot so an operator can see which bots hold their own row and who wrote it; DELETE takes the scope — 'fleet-default' as before, or an agent id to release that bot back to the fleet default — and refreshes the snapshot. The PUT stays fleet-only: a per-bot write goes through the runtime route, which pushes to the bot first (ADR-034) and then writes the row.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A Cline-backed id (gemini, anthropic, ...) written to the fleet default without a modelId is refused 400 model_required with the reason and nothing is written — the Cline runtime would otherwise fall back to the container's FORCE_LLM_MODEL seed (gpt-5.5), the exact 'models/gpt-5.5 is not found' failure by another door. Native ids (codex-cli, claude-code) may still omit the model.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { getCaller, hasAuthenticatedUserIdentity, hasValidServiceSecret, requiresOperator } from '@/shared/middleware/authz';
-import { FLEET_DEFAULT_SWITCH_ID, classifyProviderId, type ProviderSwitchCatalog } from '@/shared/llm-runtime';
+import { FLEET_DEFAULT_SWITCH_ID, classifyProviderId, requireModelForClineBackedId, type ProviderSwitchCatalog } from '@/shared/llm-runtime';
 import type { ProviderSwitchSnapshot, ProviderSwitchStore } from '@/features/agent-management';
 
 const logger = createChildLogger({ module: 'provider-switch-routes' });
@@ -80,6 +81,13 @@ async function handleWrite(req: Request, res: Response, deps: ProviderSwitchRout
     const classified = classifyProviderId(providerId, catalog);
     if (!classified.ok) {
       res.status(400).json({ success: false, applied: false, error: classified.reason, accepted: acceptedIds(catalog) });
+      return;
+    }
+    // A Cline-backed id with no model would run on the container's FORCE_LLM_MODEL seed: refused,
+    // never defaulted.
+    const modelLess = requireModelForClineBackedId(classified, modelId);
+    if (modelLess) {
+      res.status(400).json({ success: false, applied: false, code: 'model_required', error: modelLess.reason });
       return;
     }
     const updatedBy = getCaller(req).sub ?? 'operator';

@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Exercise mutations through an exact operator browser identity after the control-plane authorization gate became fail-closed.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | INVERTED, not deleted (BACKLOG "A bot's LLM provider is a row in a table"): the record this route writes IS the per-bot switch row, so a declared registry harness is no longer a ceiling — a provider write on a registry-pinned bot is ACCEPTED (200, pushed, and the switch snapshot re-read through onRuntimeChanged), while an id the build cannot run is refused by name with 400 provider_unknown before any push. The credential-carrier refusal, the model-only path and the 502 truth are unchanged.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The provider pick is the bot's own switch row (oshal_bot_provider_switch, scope = the agent id), written through the injected writeBotSwitch seam under the session's sub AFTER the ADR-034 push and before the snapshot refresh; an unknown id never reaches it; a model-only save writes no row for a bot without one (the fleet default governs it) and updates the model of a bot that has one. The agent_config record is never a switch row — the fixed store does not project it — so this route is the only way a per-bot row comes into being.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | A Cline-backed providerId with no modelId in the mutation is 400 model_required before the push, the row and the refresh; the same pick with its model is pushed and written (the model-less row was the seed-model door the review measured).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -144,6 +145,41 @@ describe('authoritative-runtime-config-precedence', () => {
     expect(pushToBot).toHaveBeenCalledWith(agentId, { providerId: 'gemini', modelId: 'gemini-3.8-flash' });
     expect(onRuntimeChanged).toHaveBeenCalledTimes(1);
     expect(await accepted.json()).toMatchObject({ applied: true, pushed: true, configVersion: 2 });
+  });
+
+  it('REGRESSION: a Cline-backed provider pick with no model is refused before the push — no push, no row, no refresh', async () => {
+    const pinned = getActiveRegistry().find((bot) => bot.agentId && bot.harnessType && bot.harnessType !== 'cline');
+    expect(pinned?.agentId, 'the shipped registry must retain a declared-harness bot for this guard').toBeTruthy();
+    const agentId = pinned!.agentId!;
+    // The record beneath carries the container's codex model: exactly what the Cline wrapper would
+    // have run on (FORCE_LLM_MODEL seed) had a model-less gemini row been written and pulled.
+    const getConfig = vi.fn(async () => ({
+      configId: 'config-1', agentId, schema: [], values: { providerId: 'openai-codex', modelId: 'gpt-5.5', configVersion: 1 }, updatedAt: '2026-09-17T00:00:00.000Z',
+    }));
+    const pushToBot = vi.fn(async () => ({ pushed: true, newVersion: 2 }));
+    const writeBotSwitch = vi.fn(async () => undefined);
+    const onRuntimeChanged = vi.fn(async () => undefined);
+    const catalog = buildProviderSwitchCatalog(Object.keys(HARNESS_FACTORIES));
+    const base = await listen(
+      { pushToBot } as unknown as ConfigSyncService,
+      { getConfig } as unknown as AgentConfigService,
+      { catalog: () => catalog, onRuntimeChanged, writeBotSwitch, resolveSwitch: () => null },
+    );
+
+    const modelLess = await jsonPut(`${base}/${encodeURIComponent(agentId)}/runtime`, { providerId: 'gemini' });
+    expect(modelLess.status).toBe(400);
+    expect(await modelLess.json()).toMatchObject({
+      success: false, applied: false, pushed: false, code: 'model_required', error: expect.stringMatching(/'gemini'.*needs a modelId/),
+    });
+    expect(pushToBot).not.toHaveBeenCalled();
+    expect(writeBotSwitch).not.toHaveBeenCalled();
+    expect(onRuntimeChanged).not.toHaveBeenCalled();
+
+    // The pick the cockpit makes (provider + the model its select re-rendered) is accepted.
+    const withModel = await jsonPut(`${base}/${encodeURIComponent(agentId)}/runtime`, { providerId: 'gemini', modelId: 'gemini-3.8-flash' });
+    expect(withModel.status).toBe(200);
+    expect(pushToBot).toHaveBeenCalledWith(agentId, { providerId: 'gemini', modelId: 'gemini-3.8-flash' });
+    expect(writeBotSwitch).toHaveBeenCalledWith(agentId, 'gemini', 'gemini-3.8-flash', 'runtime-config-operator');
   });
 
   it('refuses credential carriers, accepts a provider-free model mutation, and reports a push refusal truthfully', async () => {
