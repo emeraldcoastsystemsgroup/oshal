@@ -2545,6 +2545,31 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 
 ## Application-package follow-ups
 
+### The calendar package imports a core feature the image never compiles (2026-09-18)
+
+- **Measured on the operator box after the 2026-09-18 deploy of `74ea6660`.** `calendar` is the one
+  application that will not activate: `Cannot find module '@/features/google-calendar/services/google-calendar-service'`
+  from `/app/workspace-shared/deployed-apps/calendar/routes/sync.js`. The module exists and is tracked on
+  `main` (`src/features/google-calendar/{index,services/google-calendar-service}.ts`), but
+  `/app/dist/features/` has no `google-calendar` at all (82 feature dirs, 0 matches).
+- **Why.** `tsconfig.server.json` — the config `Dockerfile.oshal` compiles with — excludes `src/features/**`
+  and compiles a feature only when something in the entry graph imports it; `tsc -p tsconfig.server.json
+  --listFilesOnly` lists 0 files under `features/google-calendar`. Nothing in core imports it: the hits in
+  `kernel-skills.ts`, `connectors/runtime/marketplace.ts`, `spec-tools.ts` and the registry are the string id
+  `google-calendar`, not imports. The feature is dead code in core, and the store package is its only
+  consumer — through a deep import of a service module, which the FSD rule already forbids (packages
+  reach kernel capability through `uses:` kernel skills, ADR-090; barrels only, never `@/features/x/services/y`).
+  Store `calendar` **1.0.0** (on the box) and **1.1.0** (store trunk, #225) carry the same import, so
+  installing 1.1.0 changes nothing.
+- **Done when:** the calendar package reaches Google Calendar through a kernel skill declared in its
+  `uses:` block (or the connector runtime), with no `@/features/*/services/*` import anywhere in the package
+  (a store guard fails on such an import in any package); the core exposes that capability from a module
+  the server build actually compiles (proved by `tsc -p tsconfig.server.json --listFilesOnly` naming it, and
+  by the image probe that the deploy already runs); the package activates on the box and its sync route
+  answers; and `docs/apps/` records which core version the package needs. Until then the app stays
+  inactive — activating it fails at mount, it does not half-work.
+
+
 ### Editable CAD Studio and scan-to-design workflow
 
 - **Requested 2026-09-13 UTC:** connect Create's Scan-to-Print workflow to useful mechanical CAD, including an optional SOLIDWORKS integration.
