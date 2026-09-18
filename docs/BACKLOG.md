@@ -639,13 +639,40 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **P5 - the cross-framework benchmark measures competitors, not us.** `bench/` runs the same task
   on the same free model across vanilla/langgraph/crewai and records real tokens, but the oshal leg
   is not wired: it reports `not-run`. So the cheaper-routing claim remains asserted.
-- **P6 - the cost figure is small-n.** `$1.30` against a `$4.05` median for incident RCA are real
-  `chat_tasks` rows, one workload, one corpus. Directionally strong; not a benchmark.
-- **Neither blocks operation** - both block a slide. Do not publish the determinism/cost head-to-head
-  until measured.
+- **P6 is CLOSED (2026-09-17).** `$1.30` (n=1) against a `$4.05` (n=7) median for incident RCA are
+  real `chat_tasks` rows for one workload on one corpus — directionally strong, not a benchmark, and
+  every surface that states them now says so in the same sentence as the number.
+- **What closed P6.** `scripts/evidence/cost-per-ticket-type.ts` reads the real per-ticket spend out
+  of `chat_tasks`, joined to `tickets` through the product's own `ticket_task_links`, inside a
+  `SET TRANSACTION READ ONLY` transaction, and emits a dated census with an n on every ticket type
+  (`docs/business/cost-per-ticket-type.json`, published as a generated table in the sibling `.md`).
+  Every count in it — ticket types, tickets, calls, dollars, the n on each row — lives in that
+  artifact and nowhere else; this entry does not restate them, because a restated count is a
+  hand-typed one. Each chat task is attributed once: a task linked to several tickets (sibling
+  subtasks dispatched into one workspace accumulate into one task row) is split evenly across
+  them, and the artifact carries the ledger totals it was read beside so the tie is published, not
+  asserted. The `incident` row is the type the headline pair is about, and its n there is small —
+  which is exactly why the pair stays labelled as one workload instead of a rate.
+- **Guard:** `tests/unit/cost-claim-carries-its-n.spec.ts` + `scripts/cost-claim-check.js`. The
+  surfaces are DISCOVERED, not allowlisted: every tracked text file under `README.md`, `ROADMAP.md`,
+  `docs/`, `ai-lab/bot-personas/`, `swarm-apps/` and `site/` is scanned, and a FIGURE whose own
+  span carries no `n=` — per figure, so a bare first figure cannot borrow the n that the second
+  figure in the same sentence carries — or whose block carries none of the limits phrases fails
+  the gate. Red on the
+  tree before the sweep — 38 findings across nine files: `README.md`, `OSHAL-WHITEPAPER.md`,
+  `WHY_OSHAL.md`, the deck markdown, `build_oshal_deck.py`, both capture personas, the fluency
+  register and this entry. Mutation cases strip the n from one figure while its neighbour keeps it,
+  strip the limits, hand-edit the published census table, inflate the census above its ledger,
+  drop the ledger, and invent a tenth surface; each goes red on its own. `OSHAL-overview.pptx` was
+  rebuilt from the generator (a verified four-line text delta); the PNG-derived `.html`/`.pdf`
+  beside it need a PowerPoint export, which is an operator step (`build_html.py` reads
+  `_thumbs/Slide*.PNG`).
+- **P5 does not block operation** - it blocks a slide. Do not publish the determinism/cost
+  head-to-head until the oshal leg is measured.
 - **Done when:** `run_oshal` POSTs to the real dispatch and reads `chat_tasks` input/output token
-  columns so the benchmark reports oshal alongside the others at a stated n; the cost claim covers
-  more than one ticket type with its n and limits kept in the same sentence as the number.
+  columns so the benchmark reports oshal alongside the others at a stated n;
+  ~~the cost claim covers more than one ticket type with its n and limits kept in the same sentence
+  as the number~~ DONE 2026-09-17.
 
 ### Trading DB specs race on schema bootstrap
 - **The bootstrap half is CLOSED (2026-09-16).** All seventeen `oshal_trading_*` lazy bootstraps now

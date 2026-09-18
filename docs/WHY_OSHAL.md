@@ -26,8 +26,12 @@ The other thing that's different: **the persona IS the swarm**. We
 don't run a separate "reviewer agent" by default. Each bot's persona
 embeds Mode A/B/C classification, citation rules, the artifact set,
 and a 5-section escalation packet. One bot, one ticket, real quality
-output — at $1.30 per real database-incident RCA, vs. $4.05 for the same
-work in a 2-bot review pipeline.
+output — at $1.30 (n=1) per real database-incident RCA, against a
+$4.05 (n=7 historical incident tickets) median for the same work in a
+2-bot review pipeline. That is one workload on one corpus — a
+persona-iteration measurement, not a benchmark; the per-ticket-type
+census with an n on every row is in
+[cost-per-ticket-type.md](business/cost-per-ticket-type.md).
 
 ---
 
@@ -91,12 +95,12 @@ against different LLMs and read/write the same workspace.
 
 | persona shape | scenario | cost | tokens | source |
 |---|---|---|---|---|
-| Original `rca-specialist` (median of 7 historical incident tickets) | k8s OOMKilled, NS quota, etc. | **$4.05** | ~2.0M input | `chat_tasks.total_cost` |
-| Optimized RCA persona (post-iteration) | database OOM with seeded corpus | **$1.30** | 588k input (95.6% cached) | measured run |
+| Original `rca-specialist`, median of n=7 historical incident tickets | k8s OOMKilled, NS quota, etc. — one workload family | **$4.05** | ~2.0M input | `chat_tasks.total_cost` |
+| Optimized RCA persona (post-iteration), n=1 | database OOM against one corpus | **$1.30** | 588k input (95.6% cached) | measured run |
 
 **~68% cost reduction, ~71% fewer input tokens, structurally richer output** (4-row failure-mode taxonomy + 5-section escalation packet + Mode A/B/C marker that the original persona didn't have).
 
-**Why we do it this way:** other frameworks can gate too — CrewAI Task Guardrails, LangGraph/AG2 review rounds — but they typically bolt on a *separate* reviewer agent. OSHAL bakes the quality gate into the persona contract: enforced output structure (Mode classification, citation blocks, failure-mode taxonomy) makes a single bot reviewer-grade. That's what the 9 prompt-iteration rounds bought — and why one bot lands the RCA at $1.30 where a multi-agent review pipeline cost $4.05.
+**Why we do it this way:** other frameworks can gate too — CrewAI Task Guardrails, LangGraph/AG2 review rounds — but they typically bolt on a *separate* reviewer agent. OSHAL bakes the quality gate into the persona contract: enforced output structure (Mode classification, citation blocks, failure-mode taxonomy) makes a single bot reviewer-grade. That's what the 9 prompt-iteration rounds bought — and why one bot lands the RCA at $1.30 (n=1) where a multi-agent review pipeline cost $4.05 (n=7). Those two numbers are one workload on one corpus and are not a benchmark; the cost across every ticket type the cluster has billed, each with its own n, is in [cost-per-ticket-type.md](business/cost-per-ticket-type.md).
 
 ---
 

@@ -297,7 +297,7 @@ external agents collaborate over one mesh, while connector actions stay behind s
 server operations. The hard parts are inherited by each bot: caller ownership, contained prompts,
 per-user connectors without credential exposure, cost attribution, and bot-to-bot handoff.
 
-**The persona IS the swarm.** There is no separate "reviewer agent" by default. Each bot's persona embeds output classification, citation rules, a structured artifact set, and an escalation packet. One bot, one ticket, reviewer-grade output — at **$1.30 per real enterprise-database RCA vs $4.05** for the same work in a 2-bot review pipeline (measured).
+**The persona IS the swarm.** There is no separate "reviewer agent" by default. Each bot's persona embeds output classification, citation rules, a structured artifact set, and an escalation packet. One bot, one ticket, reviewer-grade output — at **$1.30 (n=1)** per real enterprise-database RCA against a **$4.05 (n=7 historical incident tickets)** median for the same work in a 2-bot review pipeline. Both are measured `chat_tasks` rows for one workload on one corpus — a persona-iteration measurement, not a benchmark. The per-ticket-type census, with an n on every row, is [docs/business/cost-per-ticket-type.md](docs/business/cost-per-ticket-type.md).
 
 | | OSHAL | LangGraph | CrewAI | AutoGen |
 |---|---|---|---|---|
