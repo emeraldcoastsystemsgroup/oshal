@@ -1131,9 +1131,11 @@ outcome to its local proof. This queue retains the remaining rollout and broader
   **A call already in flight degrades with everyone else:** the sticky flag is re-checked before every
   batch, because an aborted runtime answers with a tensor rather than throwing and ingest would
   otherwise persist vectors from a heap with ABORT set.
-- **Guard:** `tests/unit/local-embedding-abort-containment.spec.ts`, 11 cases — the classifier
+- **Guard:** `tests/unit/local-embedding-abort-containment.spec.ts`, 13 cases — the classifier
   against a real `WebAssembly.RuntimeError`, the bounded caller/size payload, the sticky policy
-  (extractor doubled; recorded in the real-boundary audit beside its real companions), the
+  (extractor doubled; recorded in the real-boundary audit beside its real companions), a call
+  already in flight degrading when another caller aborts the runtime, the classifier's constructor
+  branch against a bare wasm trap that carries no `Aborted(` marker, the
   real-runtime host child in contained and uncontained modes (the uncontained control is asserted
   at exit ≠ 0, so a runtime that stops aborting fails the suite instead of passing it), and the
   docker-gated in-image `embed()` case that reads the service's own log line back from its file

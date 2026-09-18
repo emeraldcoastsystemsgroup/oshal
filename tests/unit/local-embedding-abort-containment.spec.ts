@@ -114,6 +114,16 @@ describe('isRuntimeAbort', () => {
     expect(isRuntimeAbort(new Error('input tensor rank mismatch'))).toBe(false);
     expect(isRuntimeAbort('aborted download')).toBe(false);
   });
+
+  it('classifies a bare wasm trap - no Aborted( marker - by its constructor, not its message', () => {
+    // This is the branch the server-tsconfig fix rewrote. Every other case here also carries the
+    // marker, so the regex fallback alone satisfied them: killing the constructor check left the
+    // suite green while `unreachable` and an out-of-bounds trap would be treated as transient and
+    // the aborted runtime re-armed.
+    expect(isRuntimeAbort(new WebAssembly.RuntimeError('unreachable'))).toBe(true);
+    expect(isRuntimeAbort(new WebAssembly.RuntimeError('memory access out of bounds'))).toBe(true);
+    expect(isRuntimeAbort(new WebAssembly.CompileError('bad magic')), 'a compile error is not a runtime abort').toBe(false);
+  });
 });
 
 describe('describeEmbeddingFailure', () => {
