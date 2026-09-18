@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Honor DB_MAX_CONNECTIONS for the bot-node Postgres pool and stamp a per-bot application_name, making the existing fleet knob effective for managed-database connection budgets.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Admit verified hosted protected execution and keep only cost bookkeeping in explicit system context.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | "A bot's LLM provider is a row in a table" — the bot-node half: setActiveProvider (the ADR-034 reconcile and PUT /api/llm-provider both land here) now translates a switch row's id through resolveBotNodeSwitch: a runtime name/alias as before, or a Cline-backed API provider id (gemini, anthropic, openrouter, ... from the same ProviderRegistry the api validates against) onto the cline-cli runtime with CLINE_API_PROVIDER/CLINE_API_MODEL set to the row's id and model (the wrapper's precedence-1 keys, read before every spawn) and restored to the container's seeds on the way back. getActiveProvider reports the backing provider as apiProvider. Boot: a pulled Cline-backed id (FORCE_LLM_PROVIDER=gemini after the bootstrap overlay) used to be silently ignored and the bot booted codex; resolveCurrentProvider now lands it on cline-cli fronting that id. An id nothing knows still throws UnknownBotNodeProviderError with no state change.
  */
 import { createProtectedBotExecutionBoundary } from './bot-node-protected-execution';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -49,6 +50,8 @@ import { CostTrackingService } from '@/features/operational-intelligence';
 import { createBotNodeExecutionHandler } from './bot-node-execution-handler';
 import { applyPulledBotConfigToEnv, runBootConfigBootstrap } from './bot-node-config-bootstrap';
 import { UnknownBotNodeProviderError, type ActiveBotNodeProvider } from './bot-node-llm-provider-route';
+import { createClineBackingEnv, resolveBotNodeSwitch } from './bot-node-provider-switch';
+import { ProviderRegistry } from '@/features/llm-provider';
 import { createPromptAuthorizationResolver } from './prompt-authorization-resolver';
 
 const logger = createChildLogger({ module: 'bot-node-runtime' });
@@ -247,7 +250,22 @@ async function buildLlmStack(): Promise<{
   // task mid-loop. The gap-b dispatch reconcile therefore only switches when no other execution is
   // in flight (bot-node-execution-handler activeExecutions guard); the PUT /api/llm-provider push
   // path is operator-initiated and expected to be quiescent.
-  let activeProviderName = resolveCurrentProvider({ clineProvider, claudeCodeProvider, codexProvider });
+  // The ids a switch row may name beyond the three runtimes: the Cline-backed API providers the
+  // platform defines. Read once from the same definitions the api validates a row against.
+  const clineApiProviders = new ProviderRegistry().getAll().map((p) => p.id);
+  const clineBackingEnv = createClineBackingEnv();
+  const builtProviders: Record<string, unknown> = {
+    'claude-code': claudeCodeProvider,
+    'openai-codex': codexProvider,
+    'cline-cli': clineProvider,
+  };
+  const boot = resolveCurrentProvider({ clineProvider, claudeCodeProvider, codexProvider }, builtProviders, clineApiProviders);
+  let activeProviderName: string = boot.provider;
+  let activeApiProvider: string | null = boot.apiProvider;
+  if (activeApiProvider) {
+    // A boot pull that named a Cline-backed id: point Cline at it before the first spawn.
+    clineBackingEnv.apply(activeApiProvider, process.env.FORCE_LLM_MODEL || undefined);
+  }
   let activeModelName = resolveModelName(activeProviderName);
 
   const agenticController = new AgenticController(
@@ -259,7 +277,9 @@ async function buildLlmStack(): Promise<{
   );
   taskController.setLLMProvider(activeProviderName);
 
-  const getActiveProvider = (): ActiveBotNodeProvider => ({ provider: activeProviderName, model: activeModelName });
+  const getActiveProvider = (): ActiveBotNodeProvider => ({
+    provider: activeProviderName, model: activeModelName, apiProvider: activeApiProvider,
+  });
 
   /**
    * ADR-034 push-down / local-change switch. Validates against the BUILT provider map
@@ -272,25 +292,24 @@ async function buildLlmStack(): Promise<{
    */
   const setActiveProvider = (provider: string, model?: string): ActiveBotNodeProvider => {
     const requested = String(provider ?? '').trim();
-    const normalized = normalizeProviderName(requested) as 'claude-code' | 'openai-codex' | 'cline-cli' | string;
-    const builtProviders: Record<string, unknown> = {
-      'claude-code': claudeCodeProvider,
-      'openai-codex': codexProvider,
-      'cline-cli': clineProvider,
-    };
-    if (!(normalized in builtProviders) || !builtProviders[normalized]) {
+    // A switch row's id: a runtime name/alias, or a Cline-backed API provider the cline-cli
+    // runtime fronts (bot-node-provider-switch.ts). Unknown → refused by name, nothing switched.
+    const target = resolveBotNodeSwitch(requested, builtProviders, clineApiProviders);
+    if (!target) {
       throw new UnknownBotNodeProviderError(
         requested,
         Object.keys(builtProviders).filter((name) => Boolean(builtProviders[name])),
       );
     }
     const trimmedModel = typeof model === 'string' && model.trim().length > 0 ? model.trim() : undefined;
-    applyPulledBotConfigToEnv({ providerId: normalized, modelId: trimmedModel ?? null, configVersion: null });
-    taskController.setLLMProvider(normalized);
-    activeProviderName = normalized;
-    activeModelName = trimmedModel ?? resolveModelName(normalized);
+    applyPulledBotConfigToEnv({ providerId: target.runtime, modelId: trimmedModel ?? null, configVersion: null });
+    const backingKeys = clineBackingEnv.apply(target.apiProvider, trimmedModel);
+    taskController.setLLMProvider(target.runtime);
+    activeProviderName = target.runtime;
+    activeApiProvider = target.apiProvider;
+    activeModelName = trimmedModel ?? resolveModelName(target.runtime);
     logger.info(
-      { provider: activeProviderName, model: activeModelName },
+      { provider: activeProviderName, apiProvider: activeApiProvider, model: activeModelName, requested, backingKeys },
       'Bot-node active LLM provider switched (ADR-034)',
     );
     return getActiveProvider();
@@ -368,18 +387,28 @@ async function initCodex(): Promise<any> {
   }
 }
 
-/** @description Picks the active provider: FORCE_LLM_PROVIDER when it resolved, else first available. */
-function resolveCurrentProvider(p: { clineProvider: any; claudeCodeProvider: any; codexProvider: any }): string {
+/**
+ * @description Picks the active provider: FORCE_LLM_PROVIDER when it resolved (a runtime name, or a
+ * Cline-backed API provider id the boot pull applied from a switch row), else first available.
+ */
+function resolveCurrentProvider(
+  p: { clineProvider: any; claudeCodeProvider: any; codexProvider: any },
+  built: Record<string, unknown>,
+  clineApiProviders: readonly string[],
+): { provider: string; apiProvider: string | null } {
   const forced = process.env.FORCE_LLM_PROVIDER || '';
-  if ((forced === 'openai-codex' || forced === 'codex-cli') && p.codexProvider) return 'openai-codex';
-  if (forced === 'claude-code' && p.claudeCodeProvider) return 'claude-code';
+  if ((forced === 'openai-codex' || forced === 'codex-cli') && p.codexProvider) return { provider: 'openai-codex', apiProvider: null };
+  if (forced === 'claude-code' && p.claudeCodeProvider) return { provider: 'claude-code', apiProvider: null };
+  // A switch row's Cline-backed id (gemini, anthropic, ...) reaches boot through the pulled record.
+  const switched = forced ? resolveBotNodeSwitch(forced, built, clineApiProviders) : null;
+  if (switched?.apiProvider) return { provider: switched.runtime, apiProvider: switched.apiProvider };
   // Unforced order follows the fleet default (ADR-128; claude-code dropped as a default rung
   // 2026-08-13). Codex leads: a bot node with no FORCE_LLM_PROVIDER must not silently pick a
   // Claude subscription that is being cancelled just because that provider constructed first.
-  if (p.codexProvider) return 'openai-codex';
-  if (p.clineProvider) return 'cline-cli';
-  if (p.claudeCodeProvider) return 'claude-code';
-  return 'cline-cli';
+  if (p.codexProvider) return { provider: 'openai-codex', apiProvider: null };
+  if (p.clineProvider) return { provider: 'cline-cli', apiProvider: null };
+  if (p.claudeCodeProvider) return { provider: 'claude-code', apiProvider: null };
+  return { provider: 'cline-cli', apiProvider: null };
 }
 
 /** @description Resolves the model name for cost attribution and prompt-assembly decisions. */

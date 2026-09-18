@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-034 push-on-dispatch (bot half): parseCarriedDispatchConfig reads the optional providerId/model/configVersion the controller stamped on /api/swarm-execute, and reconcileDispatchProviderConfig compares them against the live active provider — a divergent bot self-corrects via the gap-(a) setActiveProvider seam BEFORE executing, logging the correction. Absent fields = the runtime is never touched (byte-identical legacy dispatch); an unknown/unavailable carried provider FAILS OPEN to the bot's self-resolved provider (a bad record must never block execution).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Retire the fail-open authority path: unavailable switches and post-switch mismatches now refuse execution, and expose a shared exact-match guard for concurrent dispatches.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The provider match goes through dispatchProviderMatches (bot-node-provider-switch.ts): a carried Cline-backed id ('gemini') matches ONLY a cline-cli runtime whose reported apiProvider is that id, so a switch row resolves to a match after reconcile and the post-execution "what ran == what was authorized" check stays exact — it no longer refuses a completed run because the row's spelling differs from the runtime's name, and it still refuses a runtime fronting anything else.
  */
 
 /**
@@ -33,7 +34,7 @@
  */
 
 import { createChildLogger } from '@/shared/logger';
-import { normalizePulledProviderName } from './bot-node-config-bootstrap';
+import { dispatchProviderMatches } from './bot-node-provider-switch';
 import type { ActiveBotNodeProvider } from './bot-node-llm-provider-route';
 
 const logger = createChildLogger({ module: 'bot-node-dispatch-config' });
@@ -105,8 +106,7 @@ export function dispatchConfigMatchesActive(
   carried: CarriedDispatchConfig,
   active: ActiveBotNodeProvider,
 ): boolean {
-  const providerMatches = normalizePulledProviderName(carried.providerId)
-    === normalizePulledProviderName(active.provider);
+  const providerMatches = dispatchProviderMatches(carried.providerId, active);
   const modelMatches = carried.model === undefined || carried.model === active.model;
   return providerMatches && modelMatches;
 }

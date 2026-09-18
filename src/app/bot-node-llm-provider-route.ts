@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-034 bot-node config surface: PUT /api/llm-provider (the endpoint BotNodeClient.switchProvider has always targeted but which 404'd on every bot-node worker, so ConfigSyncService.pushToBot returned pushed:false for the whole default fleet) + the broadcast-up helper publishing a MeshEnvelope on MESH_CHANNELS.configChange with the X-Config-Source: oshal-push echo-loop guard mirrored from any-bot's routes-llm-settings-stream.js. Applies via the runtime's setActiveProvider seam; unknown provider → 400, no switch, no broadcast.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: explicitly reject credential fields before provider mutation; this route accepts non-secret provider/model metadata only.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ActiveBotNodeProvider carries apiProvider — the Cline-backed provider id (gemini, anthropic, ...) the cline-cli runtime is fronting after a switch row named it — so /api/health and the ADR-034 match can tell 'cline fronting gemini' from 'cline on the container default'. Optional and null for native runtimes; nothing that reads provider/model changes.
  */
 
 /**
@@ -70,6 +71,8 @@ export class UnknownBotNodeProviderError extends Error {
 export interface ActiveBotNodeProvider {
   provider: string;
   model: string;
+  /** The Cline-backed API provider the cline-cli runtime is fronting (a switch row's id), else null/absent. */
+  apiProvider?: string | null;
 }
 
 /** @description Minimal publish surface of the bot-node's connected mesh transport. */
