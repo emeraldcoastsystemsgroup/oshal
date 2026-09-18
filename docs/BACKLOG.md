@@ -767,8 +767,10 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Done:** `SandboxedAgentRunner` prepares the bind mount on every run instead of assuming the
   container owns it. Under a userns-remapped daemon the container's root is a host subuid that owns
   nothing, so a `mkdtemp` (0700) scratch holding 0644 seeded files denied it both traversal and
-  writes. The per-run directory and its files are now widened (`0o777` / `0o666`) and the scratch
-  ROOT that contains them is locked to `0o700`: the daemon resolves the mount without traversing the
+  writes. The per-run directory is now set to `0o777`, every file inside it is widened by a+rw
+  (`mode | 0o666` — a seeded `0755` script stays executable, because the seeder copies modes and
+  a set to `0o666` had been stripping them), and the scratch ROOT that contains them is locked to
+  `0o700`: the daemon resolves the mount without traversing the
   root, a second host user must traverse it and is refused, so host reach does not extend past the
   per-run directory. Symlinks inside the scratch are never chmodded — `chmod` follows them, which
   would widen a target outside it. Windows has no POSIX mode bits, so the plan is computed and
@@ -776,15 +778,20 @@ outcome to its local proof. This queue retains the remaining rollout and broader
 - **Proved on a real kernel**, not inferred: `scripts/sandbox-userns-mount-proof.sh` runs in one
   disposable container as uid 165536 — the first subuid a default `dockremap` mapping hands to
   container root — and reports `unprepared_write=denied`, `prepared_write=ok`, `prepared_create=ok`,
-  `escape_parent=denied`, `escape_root=denied`, `owner_cleanup=ok` in a single run; driven with the
-  old modes (`OSHAL_SCRATCH_DIR_MODE=700 OSHAL_SCRATCH_FILE_MODE=644`) the same container reports
-  `prepared_write=FAILED`.
-- **Guard:** `tests/unit/sandbox-scratch-userns-remap.spec.ts` (9 cases) — the plan and its mode
-  bits, the symlink refusal, the root lock, and that `run()`, `runStreaming()` and the orchestrator
-  all prepare before the container starts; the container proof is the ninth case, opt-in via
+  `prepared_exec=ok`, `escape_parent=denied`, `escape_root=denied`, `owner_cleanup=ok` in a single
+  run; driven with the old modes (`OSHAL_SCRATCH_DIR_MODE=700 OSHAL_SCRATCH_FILE_MODE=644`) the same
+  container reports `prepared_write=FAILED`, and with files SET to `666` instead of widened it
+  reports `prepared_exec=FAILED`.
+- **Guard:** `tests/unit/sandbox-scratch-userns-remap.spec.ts` (10 cases) — the plan and its mode
+  bits, that a seeded executable is widened and not narrowed (the pure decision on every platform,
+  the real inode on POSIX), the symlink refusal, the root lock, and that `run()`, `runStreaming()`
+  and the orchestrator all prepare before the container starts; the container proof is the tenth
+  case, opt-in via
   `OSHAL_SANDBOX_USERNS_PROOF=1` because it starts a container, and it FAILS rather than skips when
   Docker cannot be reached. Mutation-proven red on removing preparation from the run paths (3 red),
-  on narrowing the directory mode (1 red) and on deleting the symlink refusal (1 red).
+  on narrowing the directory mode (1 red), on deleting the symlink refusal (1 red), and on setting
+  files to `0o666` instead of widening them (2 red: the decision `0o666 ≠ 0o777`, and the container
+  `prepared_exec=FAILED`).
 - **Not claimed:** nothing here was run against an actual userns-remapped daemon — the operator's
   engine is Docker Desktop. The uid the proof uses is the one such a daemon presents, and the kernel
   check it exercises is the same one; the remaining step is a CI run of the dev-console container

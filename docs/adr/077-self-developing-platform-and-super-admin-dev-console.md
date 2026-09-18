@@ -77,13 +77,14 @@ under a Linux userns-remapped daemon — GitHub Actions' — the container's roo
 nothing there. A `mkdtemp` scratch is 0700 and its seeded files 0644, so that uid could neither
 traverse nor write and every `/work` write was "Permission denied"; the sandbox's own integration
 tests treated such an engine as one the sandbox cannot run on. Each run now prepares the mount:
-the per-run directory and the files inside it are widened (`0o777` / `0o666`), symlinks are never
+the per-run directory is set to `0o777`, the files inside it are widened by a+rw (`mode | 0o666`,
+so a seeded `0755` script the seeder copied with its mode stays executable), symlinks are never
 chmodded — that would widen a target outside the scratch — and the scratch ROOT stays `0o700`. The
 daemon resolves the mount without traversing the root, a second host user must traverse it and is
 refused, so the widening reaches the per-run directory and nothing above it. Proved on a real
 kernel by `scripts/sandbox-userns-mount-proof.sh` as uid 165536 (the first subuid a default
 `dockremap` mapping hands container root): denied the unprepared mount, writing the prepared one,
-still refused beside it and through a locked root. Guard:
+still running its seeded script, still refused beside it and through a locked root. Guard:
 `tests/unit/sandbox-scratch-userns-remap.spec.ts`.
 
 **Slice 3 — the orchestrator (BUILT + proven end-to-end).**

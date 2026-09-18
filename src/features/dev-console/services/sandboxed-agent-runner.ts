@@ -5,7 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Sandboxed Agent Runner (ADR-077 Phase 2 Slice 2): run an untrusted edit command in a locked-down container (only its scratch dir writable, no host .git/creds/network), then extract the file changes as a change set for the Dev Session Engine. A container is a real boundary; a cwd is not (Phase-2 red-team).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add sandboxUsable(): a real write-to-/work probe stricter than dockerAvailable(), so integration tests skip on engines where Docker responds but the /work bind mount is not writable by the container user (CI userns-remap). Linux userns-remap /work-writability is a tracked follow-up.
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prepare the /work mount for a userns-remapped container uid: every run widens the per-run scratch tree (dirs a+rwx, files a+rw) and the scratch ROOT that contains it stays owner-only 0700, so the widening reaches the per-run directory and nothing above it. Symlinks are never chmodded (chmod follows them, which would widen a target outside the tree). Windows has no POSIX mode bits, so preparation is a declared no-op there.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prepare the /work mount for a userns-remapped container uid: every run sets the per-run scratch tree to fixed modes (dirs 0777, files 0666) and the scratch ROOT that contains it stays owner-only 0700, so the widening reaches the per-run directory and nothing above it. Symlinks are never chmodded (chmod follows them, which would widen a target outside the tree). Windows has no POSIX mode bits, so preparation is a declared no-op there.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Files are widened (mode | 0666) instead of set to 0666: the seeder's cpSync preserves modes, so a 0755 script copied from the worktree was leaving preparation as 0666 and no longer executable by the container uid. Directories are still set to 0777. The decision is scratchEntryMode(), exported so it is assertable on a host without mode bits.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -44,10 +45,34 @@ const IGNORED_DIRS = new Set(['.git', 'node_modules', '.tokenchase']);
  * resolved by the daemon, so the container reaches /work without traversing the root — while a
  * second host user must traverse the root and is refused there. Host reach therefore does not
  * extend past the per-run directory.
+ *
+ * Directories are SET to {@link SCRATCH_DIR_MODE}; files are WIDENED by {@link SCRATCH_FILE_MODE}
+ * (`mode | 0o666`). The seeder copies the worktree with its modes, so a 0755 script arrives as
+ * one and must leave preparation executable — a set to 0666 stripped that and the container uid
+ * could no longer run it. See {@link scratchEntryMode}.
  */
 export const SCRATCH_ROOT_MODE = 0o700;
 export const SCRATCH_DIR_MODE = 0o777;
 export const SCRATCH_FILE_MODE = 0o666;
+
+/** The kinds of scratch entry that get a mode; symlinks are not one (they are skipped). */
+export type ScratchEntryKind = 'directory' | 'file';
+
+/**
+ * @description Decides the mode one scratch entry needs for a foreign container uid, from what it
+ * has now. A directory becomes {@link SCRATCH_DIR_MODE}. A file keeps every permission bit it
+ * arrived with and gains {@link SCRATCH_FILE_MODE}: a seeded 0644 becomes 0666, a seeded 0755
+ * becomes 0777 and stays executable. Special bits (setuid/setgid/sticky) are dropped — the
+ * scratch is a copy the container edits, not a place a privileged binary belongs. Pure, so the
+ * decision is assertable on a host that has no mode bits to inspect afterwards.
+ * @param kind - Whether the entry is a directory or a regular file.
+ * @param currentMode - The entry's current `st_mode` (any bits above the permission bits are ignored).
+ * @returns The mode to apply.
+ */
+export function scratchEntryMode(kind: ScratchEntryKind, currentMode: number): number {
+  if (kind === 'directory') return SCRATCH_DIR_MODE;
+  return (currentMode & 0o777) | SCRATCH_FILE_MODE;
+}
 
 /** One entry of the scratch tree and the mode it needs for a foreign container uid to use it. */
 export interface ScratchMountEntry {
@@ -297,14 +322,14 @@ export class SandboxedAgentRunner {
       }
       if (stats.isSymbolicLink()) { plan.skippedSymlinks.push(target); return; }
       if (stats.isDirectory()) {
-        plan.entries.push({ path: target, mode: SCRATCH_DIR_MODE });
+        plan.entries.push({ path: target, mode: scratchEntryMode('directory', stats.mode) });
         for (const entry of readdirSync(target)) {
           if (IGNORED_DIRS.has(entry)) continue;
           visit(path.join(target, entry));
         }
         return;
       }
-      if (stats.isFile()) plan.entries.push({ path: target, mode: SCRATCH_FILE_MODE });
+      if (stats.isFile()) plan.entries.push({ path: target, mode: scratchEntryMode('file', stats.mode) });
     };
     visit(path.resolve(scratchDir));
     return plan;

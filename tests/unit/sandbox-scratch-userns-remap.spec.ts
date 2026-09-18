@@ -4,16 +4,18 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-077 sandbox scratch mount under a userns-remapped daemon: the per-run tree is widened for a container uid that owns nothing on the host, the scratch root that contains it stays owner-only, symlinks are never chmodded, and both run paths prepare the mount before the container starts. The real-kernel half runs scripts/sandbox-userns-mount-proof.sh in one disposable container.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A seeded executable stays executable: the tree carries a 0755 script, the mode decision is asserted as a pure function on every platform, the real inode on POSIX, and the foreign uid in the container proof (prepared_exec). Went red while files were SET to 0666 instead of widened.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   DevSessionOrchestrator,
   SandboxedAgentRunner,
+  scratchEntryMode,
   SCRATCH_DIR_MODE,
   SCRATCH_FILE_MODE,
   SCRATCH_ROOT_MODE,
@@ -50,6 +52,9 @@ function makeTree(): { root: string; work: string; outside: string } {
   mkdirSync(path.join(work, 'node_modules'), { recursive: true });
   writeFileSync(path.join(work, 'a.txt'), 'seeded\n');
   writeFileSync(path.join(work, 'sub', 'b.txt'), 'seeded\n');
+  // The seeder copies the worktree with its modes, so a tracked 0755 script arrives as one.
+  writeFileSync(path.join(work, 'tool.sh'), '#!/bin/sh\necho ran\n');
+  chmodSync(path.join(work, 'tool.sh'), 0o755);
   writeFileSync(path.join(work, 'node_modules', 'x.js'), 'ignored\n');
   const outside = path.join(root, 'outside');
   mkdirSync(outside, { recursive: true });
@@ -91,6 +96,25 @@ describe('sandbox scratch mount — prepared for a container uid that owns nothi
     expect(planned.has(path.join(work, 'node_modules', 'x.js'))).toBe(false);
   });
 
+  it('widens a file by a+rw and never narrows it: a seeded 0755 script is planned executable', () => {
+    // The decision, on every platform. A set to SCRATCH_FILE_MODE fails the first line.
+    expect(scratchEntryMode('file', 0o755)).toBe(0o777);
+    expect(scratchEntryMode('file', 0o644)).toBe(SCRATCH_FILE_MODE);
+    expect(scratchEntryMode('file', 0o600)).toBe(SCRATCH_FILE_MODE);
+    expect(scratchEntryMode('file', 0o100644)).toBe(SCRATCH_FILE_MODE); // S_IFREG bits are not a mode
+    expect(scratchEntryMode('file', 0o4755)).toBe(0o777); // special bits are dropped, not widened
+    expect(scratchEntryMode('directory', 0o700)).toBe(SCRATCH_DIR_MODE);
+
+    // The plan, from the real tree. Windows has no execute bit to preserve, so it can only show
+    // that a+rw was added; POSIX shows the execute bits the script arrived with survive.
+    const { work } = makeTree();
+    const plan = SandboxedAgentRunner.scratchMountPlan(work);
+    const tool = plan.entries.find((entry) => entry.path === path.join(work, 'tool.sh'));
+    expect(tool).toBeDefined();
+    expect(tool!.mode & SCRATCH_FILE_MODE).toBe(SCRATCH_FILE_MODE);
+    if (process.platform !== 'win32') expect(tool!.mode).toBe(0o777);
+  });
+
   it('never chmods a symlink — that would widen its target, which is outside the scratch', () => {
     const { work, outside } = makeTree();
     const link = path.join(work, 'escape');
@@ -121,6 +145,8 @@ describe('sandbox scratch mount — prepared for a container uid that owns nothi
     expect(lstatSync(path.join(work, 'sub')).mode & 0o777).toBe(SCRATCH_DIR_MODE);
     expect(lstatSync(path.join(work, 'a.txt')).mode & 0o777).toBe(SCRATCH_FILE_MODE);
     expect(lstatSync(path.join(work, 'sub', 'b.txt')).mode & 0o777).toBe(SCRATCH_FILE_MODE);
+    // The seeded script keeps its execute bits on the real inode: widened, not set.
+    expect(lstatSync(path.join(work, 'tool.sh')).mode & 0o777).toBe(0o777);
     // The root above the mount is untouched by preparation.
     expect(lstatSync(path.dirname(work)).mode & 0o007).toBe(0);
   });
@@ -232,7 +258,7 @@ describe('sandbox scratch mount — the shell proof and the runner agree on the 
 const proofRequested = process.env.OSHAL_SANDBOX_USERNS_PROOF === '1';
 
 describe('sandbox scratch mount — a foreign container uid on a real kernel', () => {
-  (proofRequested ? it : it.skip)('is denied the unprepared mount, writes the prepared one, and cannot reach past it', () => {
+  (proofRequested ? it : it.skip)('is denied the unprepared mount, writes the prepared one, still runs its seeded script, and cannot reach past it', () => {
     // Its own reachability check rather than dockerAvailable(): that helper's 15s budget is sized
     // for a gate deciding whether to skip, and a loaded engine answers slower than that.
     const version = spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { encoding: 'utf8', timeout: 90_000 });
@@ -252,6 +278,8 @@ describe('sandbox scratch mount — a foreign container uid on a real kernel', (
     expect(facts.get('unprepared_write')).toBe('denied');
     expect(facts.get('prepared_write')).toBe('ok');
     expect(facts.get('prepared_create')).toBe('ok');
+    // A seeded 0755 script is still executable by the foreign uid after preparation.
+    expect(facts.get('prepared_exec')).toBe('ok');
     expect(facts.get('escape_parent')).toBe('denied');
     expect(facts.get('escape_root')).toBe('denied');
     expect(facts.get('owner_cleanup')).toBe('ok');
