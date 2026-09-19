@@ -572,7 +572,43 @@ Criterion (a) turns all three red; a lane that flips "the two" leaves the third 
 `oshal-applications`, `git ls-files '*oshal-app.yaml' | xargs grep -l '^  pipeline: graph'` lists only
 files that also match `grep -l '^  processDefinition:'`.
 
-### CKR-12 — `approval_required` means five things, not three (D5) — S
+### CKR-12 — `approval_required` means five things, not three (D5) — **DONE 2026-09-19**
+
+**Shipped, by labelling** — the smaller blast radius this entry itself recommends.
+`APPROVAL_REQUIRED_REASONS` is the closed vocabulary and each reason maps to what it is actually
+waiting for, so the one badge stops meaning five things:
+
+| reason | nextAction |
+|---|---|
+| `approval_gate` | `operator_approve_to_resume` |
+| `planning_complete` | `none_children_dispatch_independently` |
+| `planner_returned_no_work` | `operator_review_plan` |
+| `incident_intake_triage` | `operator_approve_to_dispatch` |
+| `capture_lead_review` | `operator_approve_or_close` |
+| `unspecified_approval_required` | `operator_review_required` |
+
+The fallback is IN the vocabulary deliberately, so "every such ticket carries a reason from the
+closed set" is literally true rather than true-with-a-hole. A transition is **not** rejected for
+omitting one: these arrive from the cockpit too, and a 500 on an operator's own status change is
+worse than an unlabelled badge.
+
+**Two backstops, because there are two routes in.** `buildStatusTransitionMetadata` covers
+transitions; `createTicket` needs its own, because an incident held at intake is CREATED in the
+state and never passes through the transition path. The `federal-capture` draft is the same shape.
+
+All five writers name their reason, and (d) is done: both strings that claimed children wait for
+the build gate are gone. They had been false since 2026-06-22 — ADR-031's own amendment — and were
+read as fact by everyone who touched that file since.
+
+(c) needed no change: `updateStatus` already mirrors `reason` and `nextAction` onto the ticket row
+via `buildTicketRowStatusMetadataPatch`, and `GET /api/tickets/:id` returns the whole record.
+
+`tests/unit/approval-required-reason.spec.ts` — 7 cases, mutation-proven against three separate
+regressions: dropping the transition backstop (2 red), dropping the creation backstop (2 red), and
+a writer that stops naming its reason (1 red). The writer scan is a wiring gate, named as one.
+
+<details><summary>Original entry</summary>
+
 
 Three writers confirmed (`dispatch-graph-worker.ts:178` approval gate, `queue-manager-service.ts:1006`
 planning complete, `:1025` planner returned nothing), plus **CV-2**, the fourth and highest-volume one that
@@ -601,6 +637,8 @@ override and so needs the same `createTicket` backstop).
 (c) `GET /api/tickets/:id` returns `metadata.reason` and `metadata.nextAction` for any such ticket. (d) The
 strings "children will wait for the build gate" and "children are picked up after build approval" no longer
 appear in `queue-manager-service.ts`. **Not in scope:** CV-3.
+
+</details>
 
 ### CKR-13 — workflow position is unreadable from the ticket (D6) — S
 
