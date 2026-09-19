@@ -363,7 +363,18 @@ The opening-tag form is deliberate: that fixture string already contains the *cl
 assertion on the closing tag alone passes on an unpatched tree and pins nothing.
 Production change is one line in `src/features/chat-orchestration/services/agentic-loop.ts` before `:314`.
 
-### CKR-7 — the capability primitive is fail-open (D14) — S
+### CKR-7 — the capability primitive is fail-open (D14) — S — **SHIPPED**
+
+> Both primitives now deny on absence AND on a malformed non-array, closing the divergence the
+> entry names: `normalizeAllowedTools` returns an empty Set instead of null, `normalizeAuthorizedScopes`
+> no longer returns null for undefined, and neither predicate has an unrestricted value left.
+> Criterion (1) prints `false false` (was `true true`). Criterion (2): the boundary case is in the
+> real-controller block and asserts an omitted dispatch advertises ZERO tools — proven red, where it
+> previously offered every registered tool, so the fail-open reached the model and not merely the
+> normalizer. Criterion (3) green, plus 97 cases across the 10 specs that touch these primitives,
+> including `bot-node-protected-execution.spec.ts`. Confirmed latent rather than live before the fix:
+> the three field-omitting call sites (`PlaneMonitorService:352`, `AgentDispatchEngine:585` and `:723`)
+> are unreachable from `src/` and only load under the retired any-bot runtime, which exits 78.
 
 **Evidence.** `normalizeAllowedTools` returns null for any non-array
 (`any-bot/server/utils/untrusted-content.js:39`) and `isDispatchToolAllowed` returns true for null (`:54`).
