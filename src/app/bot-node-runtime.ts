@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | "A bot's LLM provider is a row in a table" — the bot-node half: setActiveProvider (the ADR-034 reconcile and PUT /api/llm-provider both land here) now translates a switch row's id through resolveBotNodeSwitch: a runtime name/alias as before, or a Cline-backed API provider id (gemini, anthropic, openrouter, ... from the same ProviderRegistry the api validates against) onto the cline-cli runtime with CLINE_API_PROVIDER/CLINE_API_MODEL set to the row's id and model (the wrapper's precedence-1 keys, read before every spawn) and restored to the container's seeds on the way back. getActiveProvider reports the backing provider as apiProvider. Boot: a pulled Cline-backed id (FORCE_LLM_PROVIDER=gemini after the bootstrap overlay) used to be silently ignored and the bot booted codex; resolveCurrentProvider now lands it on cline-cli fronting that id. An id nothing knows still throws UnknownBotNodeProviderError with no state change.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | The fallback CHAIN is configuration, not a literal (operator, 2026-09-18). Deleted: a `'claude-code' | 'openai-codex' | 'cline-cli'` union on the wrapper's parameters and a Record literal mapping each of those three names to its hardcoded successors. A provider outside those three could not be a fallback at all, an administrator could not reorder the chain, and that vendor exclusion of 2026-08-13 lived as a missing array entry - so when the single remaining name ran out of tokens, recovery required editing and redeploying code. Now: resolveBotNodeProviderFallbackOrder reads an ordered list from configuration (the fallback_order column of the bot or fleet switch row, carried to the node as OSHAL_PROVIDER_FALLBACK_ORDER; the legacy single-name variables still parse), the wrapper walks the WHOLE order by folding one ProviderFailoverProvider per rung so a chain of four is a chain of four, and no provider is named in this file. With nothing configured there is no failover, which is the honest answer - inventing a chain here is what caused the outage.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Three defects an adversarial review measured. (1) The wrapping loop mutated baseProviderMap while iterating, so later runtimes wrapped ALREADY-WRAPPED providers: replayed with three throwing providers, cline-cli realized a NINE-attempt sequence and a two-rung chain made it fail over to itself - each attempt a real subprocess against a vendor that had just returned 429. It now snapshots first and rungs are always raw providers. (2) The new env key sat at the head of a ?? chain while compose defines it as an EMPTY STRING on every bot, and ?? does not fall through on '', so it permanently shadowed all four legacy variables and disabled a working configuration; the chain is truthiness-based now. (3) Rung matching lost its lowercasing while the route kept it, so a capitalised entry vanished at the node.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | A fallback rung may name ANY provider the catalog knows. Rungs were resolved by indexing the three-key runtime map, so every id that is not a native runtime name - openrouter, anthropic, gemini, the ids the api accepts, the row stores, the cockpit renders and the boot pull carries - missed, landed in `unavailable`, and became one logger.warn nothing surfaces: the chain .env.example and the cockpit placeholder both advertise realized as a SINGLE rung. Rungs now resolve through resolveBotNodeSwitch, the same translator the primary already used, and a Cline-backed rung is wrapped by createClineBackedRungProvider so it fronts its OWN vendor for the duration of the call and restores what it found on entry (not the container seeds, so a Cline-backed primary keeps its backing when a rung returns); CLINE_API_MODEL is cleared rather than carried, because fallback_order stores provider ids only and one vendor's model id fails on another as a wrong-model error that looks nothing like a failover. Dedupe is on runtime+apiProvider, never the runtime alone, which had discarded the second of two Cline-backed vendors. resolveBotNodeProviderFallbackOrder also takes an injectable env so a guard can establish "unconfigured" across all five variables it reads instead of inheriting the ambient shell.
  */
 import { createProtectedBotExecutionBoundary } from './bot-node-protected-execution';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -228,10 +229,16 @@ async function buildLlmStack(): Promise<{
   // against ALREADY-WRAPPED providers: a nested tree whose shape depends on key order, in which a
   // two-rung chain could make a provider fail over to itself and a three-rung chain re-spawned a
   // just-429'd vendor up to nine times in one request. Rungs must always be the RAW providers.
+  // The ids a switch row may name beyond the three runtimes: the Cline-backed API providers the
+  // platform defines. Read once from the same definitions the api validates a row against, and
+  // read BEFORE the failover wrap, because a rung may name any of them.
+  const clineApiProviders = new ProviderRegistry().getAll().map((p) => p.id);
+  const clineBackingEnv = createClineBackingEnv();
+
   const rawProviders: Record<string, any> = { ...baseProviderMap };
   for (const runtimeName of Object.keys(rawProviders)) {
     (baseProviderMap as Record<string, any>)[runtimeName] = maybeWrapBotNodeProviderFailover(
-      rawProviders[runtimeName], runtimeName, rawProviders,
+      rawProviders[runtimeName], runtimeName, rawProviders, undefined, { clineApiProviders },
     );
   }
   claudeCodeProvider = baseProviderMap['claude-code'];
@@ -245,10 +252,6 @@ async function buildLlmStack(): Promise<{
   // task mid-loop. The gap-b dispatch reconcile therefore only switches when no other execution is
   // in flight (bot-node-execution-handler activeExecutions guard); the PUT /api/llm-provider push
   // path is operator-initiated and expected to be quiescent.
-  // The ids a switch row may name beyond the three runtimes: the Cline-backed API providers the
-  // platform defines. Read once from the same definitions the api validates a row against.
-  const clineApiProviders = new ProviderRegistry().getAll().map((p) => p.id);
-  const clineBackingEnv = createClineBackingEnv();
   const builtProviders: Record<string, unknown> = {
     'claude-code': claudeCodeProvider,
     'openai-codex': codexProvider,
@@ -418,6 +421,59 @@ function resolveModelName(currentProvider: string): string {
 }
 
 /**
+ * @description A fallback rung that runs on the cline-cli runtime while fronting a specific
+ * Cline-backed API provider, so a chain like "claude-code, openrouter, anthropic" reaches three
+ * distinct vendors instead of collapsing onto whichever backing happened to be set.
+ *
+ * The backing must travel through the environment because `ClineCLIWrapper._resolveBackingProvider`
+ * reads `CLINE_API_PROVIDER` at spawn time (precedence 1) and accepts no per-call override. The
+ * value is therefore applied immediately before delegating and restored in a `finally` — restored
+ * to what was there on entry, NOT to the container seeds, so an active primary that is itself
+ * Cline-backed keeps its own backing when a rung returns.
+ *
+ * `CLINE_API_MODEL` is CLEARED rather than carried: `fallback_order` stores provider ids only, so
+ * there is no per-rung model, and passing the primary vendor's model id to a different vendor
+ * would fail on a wrong-model error that looks nothing like the failover it actually is.
+ *
+ * Concurrency: this mutates process env around an await, exactly as the primary switch path
+ * already does (`clineBackingEnv.apply`). Two dispatches executing concurrently on one node share
+ * that env; the bot-node guards concurrent switches with `activeExecutions`, and the same
+ * constraint applies here.
+ * @param runtime - The cline-cli runtime instance this rung executes on.
+ * @param apiProvider - The catalog provider id this rung fronts.
+ * @param env - Environment to mutate (process.env in production; a plain object in tests).
+ * @returns A provider-shaped object delegating every other member to the runtime.
+ */
+export function createClineBackedRungProvider(
+  runtime: any,
+  apiProvider: string,
+  env: NodeJS.ProcessEnv = process.env,
+): any {
+  const generateResponse = async (messages: unknown, options: unknown = {}): Promise<unknown> => {
+    const priorProvider = env.CLINE_API_PROVIDER;
+    const priorModel = env.CLINE_API_MODEL;
+    env.CLINE_API_PROVIDER = apiProvider;
+    delete env.CLINE_API_MODEL;
+    try {
+      return await runtime.generateResponse(messages, options);
+    } finally {
+      if (priorProvider === undefined) delete env.CLINE_API_PROVIDER;
+      else env.CLINE_API_PROVIDER = priorProvider;
+      if (priorModel === undefined) delete env.CLINE_API_MODEL;
+      else env.CLINE_API_MODEL = priorModel;
+    }
+  };
+  return new Proxy(runtime, {
+    get(target: any, prop: string | symbol) {
+      if (prop === 'generateResponse') return generateResponse;
+      if (prop === 'oshalRungApiProvider') return apiProvider;
+      const value = Reflect.get(target, prop);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+/**
  * @description Wraps a provider so a runtime stall/failure fails over to a sibling provider.
  * @returns The wrapped provider, or the original when no usable fallback is configured.
  */
@@ -426,25 +482,49 @@ export function maybeWrapBotNodeProviderFailover(
   primaryName: string,
   providers: Record<string, any>,
   chain?: readonly string[],
+  deps: { clineApiProviders?: readonly string[]; env?: NodeJS.ProcessEnv } = {},
 ): any {
   if (!primaryProvider) return primaryProvider;
-  const order = (chain ?? resolveBotNodeProviderFallbackOrder(primaryName)).filter(Boolean);
+  const order = (chain ?? resolveBotNodeProviderFallbackOrder(primaryName, deps.env)).filter(Boolean);
   if (order.length === 0) return primaryProvider;
+  const clineApiProviders = deps.clineApiProviders ?? [];
 
-  // Walk the WHOLE administrator-defined order and keep every rung that has a live runtime, so a
+  // Walk the WHOLE administrator-defined order and keep every rung that can execute here, so a
   // chain of four is a chain of four. The previous implementation took one name and stopped, which
   // is why an exhausted vendor could strand the fleet: its single named backup was exhausted too.
+  //
+  // A rung is resolved through the SAME translator the primary uses (resolveBotNodeSwitch), not by
+  // indexing the three-key runtime map. Indexing was why a chain an administrator wrote as
+  // "claude-code, openrouter, anthropic" - accepted by the api, stored, rendered in the cockpit,
+  // carried on the boot pull - realized here as a single rung: every id that is not a native
+  // runtime name fell into `unavailable` and became one log line nothing surfaced.
   const rungs: Array<{ name: string; provider: any }> = [];
   const unavailable: string[] = [];
+  const seen = new Set<string>();
+  const primaryTarget = resolveBotNodeSwitch(primaryName, providers, clineApiProviders);
+  const targetKey = (target: { runtime: string; apiProvider: string | null }): string =>
+    `${target.runtime}|${target.apiProvider ?? ''}`;
+  if (primaryTarget) seen.add(targetKey(primaryTarget));
   for (const configured of order) {
-    const name = normalizeProviderName(String(configured).trim().toLowerCase());
-    // Compare normalized on BOTH sides: the route and the row path are case-insensitive, so a
-    // capitalised entry must not silently vanish here.
-    const primary = normalizeProviderName(String(primaryName).trim().toLowerCase());
-    if (!name || name === primary || rungs.some((r) => r.name === name)) continue;
-    const provider = providers[name];
-    if (provider) rungs.push({ name, provider });
-    else unavailable.push(name);
+    const requested = String(configured).trim();
+    const target = requested ? resolveBotNodeSwitch(requested, providers, clineApiProviders) : null;
+    if (!target) {
+      if (requested) unavailable.push(requested.toLowerCase());
+      continue;
+    }
+    // Two Cline-backed rungs share the runtime key and must stay distinct - deduping on the
+    // runtime alone silently discarded the second vendor in the administrator's order.
+    const key = targetKey(target);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const runtime = providers[target.runtime];
+    if (!runtime) { unavailable.push(requested.toLowerCase()); continue; }
+    rungs.push({
+      name: target.apiProvider ?? target.runtime,
+      provider: target.apiProvider
+        ? createClineBackedRungProvider(runtime, target.apiProvider, deps.env)
+        : runtime,
+    });
   }
   if (unavailable.length > 0) {
     logger.warn(
@@ -504,18 +584,23 @@ export function maybeWrapBotNodeProviderFailover(
  * administrator could change to recover — the fix required editing and redeploying code.
  *
  * @param primaryName - The provider being wrapped.
+ * @param env - Environment to read (injectable so a guard can establish "unconfigured" exactly,
+ *   rather than inheriting whatever five variables the ambient shell happens to carry).
  * @returns Provider ids to try, in order. Empty means no failover, which is a valid answer.
  */
-export function resolveBotNodeProviderFallbackOrder(primaryName: string): string[] {
+export function resolveBotNodeProviderFallbackOrder(
+  primaryName: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
   // Truthiness, NOT `??`: compose defines OSHAL_PROVIDER_FALLBACK_ORDER as an EMPTY STRING on
   // every bot, and `??` does not fall through on '' - so the new key at the head of the chain
   // permanently shadowed all four legacy variables and silently disabled a working configuration.
   const rawOrder = [
-    process.env.OSHAL_PROVIDER_FALLBACK_ORDER,
-    process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER,
-    process.env.CLAUDE_CODE_STALL_FALLBACK_PROVIDER,
-    process.env.OSHAL_PROVIDER_STALL_FALLBACK_PROVIDER,
-    process.env.OSHAL_PROVIDER_STALL_FALLBACK,
+    env.OSHAL_PROVIDER_FALLBACK_ORDER,
+    env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER,
+    env.CLAUDE_CODE_STALL_FALLBACK_PROVIDER,
+    env.OSHAL_PROVIDER_STALL_FALLBACK_PROVIDER,
+    env.OSHAL_PROVIDER_STALL_FALLBACK,
   ].find((value) => typeof value === 'string' && value.trim() !== '') ?? '';
   const parsed = String(rawOrder).split(/[\s,]+/).map((entry) => entry.trim()).filter(Boolean);
   const isOff = (value: string): boolean => ['none', 'off', 'false'].includes(value.toLowerCase());
@@ -532,7 +617,7 @@ export function resolveBotNodeProviderFallbackOrder(primaryName: string): string
 
   // Nothing configured. Auto-failover stays opt-out, but with no configured order there is no
   // order to walk — the honest answer is "no fallback", not a chain this file invented.
-  const autoFailover = String(process.env.OSHAL_PROVIDER_AUTO_FAILOVER ?? 'true').trim().toLowerCase();
+  const autoFailover = String(env.OSHAL_PROVIDER_AUTO_FAILOVER ?? 'true').trim().toLowerCase();
   if (isOff(autoFailover)) return [];
   logger.info(
     { primaryName },

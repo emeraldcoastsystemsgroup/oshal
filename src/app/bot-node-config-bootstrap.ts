@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-034 boot bootstrap-pull (env-as-seed): on bot-node startup, pull this agent's authoritative provider/model record from the controller (GET /api/agents/:id/runtime) and apply it to the process env BEFORE the any-bot LLM stack is built, so FORCE_LLM_PROVIDER / CODEX_MODEL / CLAUDE_CODE_MODEL become first-boot seeds that defer to the pulled record. Fail-open by design: controller unreachable, no record (404), or malformed response → the legacy env self-resolve behavior is untouched (WARN/INFO logged). Kill switch OSHAL_BOT_CONFIG_BOOTSTRAP=off. The live mid-flight config-change envelope remains the other half of the backlog item.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Thundering-herd fix (BACKLOG 2026-07-19 "bot-recreate herd on /api/config/runtime"): on a mass cold-start (engine-restart auto-start, install.sh, unbatched deploys) ~35 bots pulled GET /api/agents/:id/runtime simultaneously, exceeding the api's 20-client pg pool and blowing its 10s connectionTimeoutMillis (bots then fell open to env self-resolve). runBootConfigBootstrap now sleeps a uniform-random jitter before the pull. Knob: OSHAL_BOT_CONFIG_BOOTSTRAP_JITTER_MS = the jitter WINDOW in ms (delay is uniform in [0, window)); default 12000 spreads 35 bots to ~3 pulls/sec; 0 disables (tests/CI). rng + sleep are injectable for tests. The jitter stays BEFORE the LLM stack build, so no request is ever served on stale config mid-boot, and the fail-open contract is untouched.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The boot pull carries the FALLBACK ORDER, not just the provider. It is the only path from a switch row to a bot node, so without it the fallback_order column and the cockpit control that writes it reached nothing - an administrator got a success banner and a persisted row while every bot resolved an empty chain, and the only way to configure failover was a host .env edit plus a container recreate. An absent field leaves the container as it is (an older controller); an EMPTY array is a real answer and is applied as one.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The chain-less pull used to BLANK a configured node. Both route sites ended in `?? []`, so "no row and no environment override names a chain" was delivered as `[]` - and `[]` is truthy, so this function wrote OSHAL_PROVIDER_FALLBACK_ORDER='' on every boot pull in the DEFAULT configuration, the exact inverse of what .env.example and docker-compose.oshal-local.yml state. The env half of the feature therefore worked only when the controller was unreachable. Two fixes, both here: null now means "nothing to say, leave the container env exactly as it is" (which this function's own JSDoc already claimed), and an EMPTY array - a row that genuinely stores no failover - is applied as the resolver's `none` sentinel rather than as '', because a blank value falls through to the legacy single-name variables, two of which compose passes to every bot, so writing '' for "no failover" produced failover.
  */
 
 /**
@@ -48,9 +49,13 @@ export interface PulledBotConfig {
   providerId: string | null;
   modelId: string | null;
   /**
-   * The administrator's ordered fallback chain, resolved api-side from the switch rows. `null` when
-   * the controller did not send one (an older api), which leaves whatever the container already has;
-   * an EMPTY array is a real answer — no failover — and is applied as such.
+   * The administrator's ordered fallback chain, resolved api-side from the switch rows.
+   *
+   * `null` means the controller has nothing configured to send — an older api, an unreachable
+   * snapshot, or no row and no environment override anywhere — and the container's own env is
+   * left exactly as it is. An EMPTY array is a different answer: a chain IS configured and it is
+   * deliberately empty, i.e. no failover, which is applied as the resolver's `none` sentinel so it
+   * cannot fall through to the legacy single-name variables.
    */
   fallbackOrder: readonly string[] | null;
   configVersion: number | null;
@@ -200,10 +205,14 @@ export function applyPulledBotConfigToEnv(
     applied.push('FORCE_LLM_PROVIDER');
   }
   if (pulled.fallbackOrder) {
-    // The row is the authority. Writing '' for an empty chain is deliberate and is why the node's
-    // resolver selects on truthiness rather than `??`: an empty value means "no chain here", and
-    // the legacy single-name variables are then free to answer.
-    env.OSHAL_PROVIDER_FALLBACK_ORDER = pulled.fallbackOrder.join(',');
+    // Two distinct answers, and conflating them was the defect. A NON-EMPTY chain is written as
+    // the ordered list. An EMPTY chain is the administrator saying "no failover" — writing '' for
+    // it does the opposite of that instruction, because an empty value falls through to the legacy
+    // single-name variables, two of which compose passes to every bot. The resolver already has a
+    // word for this, so use it rather than inventing a second representation.
+    env.OSHAL_PROVIDER_FALLBACK_ORDER = pulled.fallbackOrder.length > 0
+      ? pulled.fallbackOrder.join(',')
+      : 'none';
     applied.push('OSHAL_PROVIDER_FALLBACK_ORDER');
   }
   if (pulled.modelId) {

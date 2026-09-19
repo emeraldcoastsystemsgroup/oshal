@@ -222,11 +222,13 @@ describe('ADR-128 Amendment 1 — no automatic chain may default to claude-code'
   });
 
   it('a stalled codex bot-node never auto-fails-over onto claude-code', () => {
-    const priorFallback = process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER;
-    const priorAuto = process.env.OSHAL_PROVIDER_AUTO_FAILOVER;
-    delete process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER;
-    delete process.env.OSHAL_PROVIDER_AUTO_FAILOVER;
-    try {
+    // An EXPLICIT empty env passed to the resolver, not deletions from the ambient one. This case
+    // used to clear two variables while the resolver reads five, so it went red on any machine
+    // that exported OSHAL_PROVIDER_FALLBACK_ORDER - which is the variable this very feature tells
+    // operators to set, and which .env.example ships with an inviting empty value. A guard that
+    // fails from the developer's own shell trains everyone to ignore it.
+    const unconfiguredEnv: NodeJS.ProcessEnv = {};
+    {
       // All three providers initialized — the pre-amendment order picked claude-code here.
       const providers = {
         'claude-code': { name: 'claude-sentinel' },
@@ -240,7 +242,9 @@ describe('ADR-128 Amendment 1 — no automatic chain may default to claude-code'
       // the same rule is that an UNCONFIGURED node produces no fallback at all, and therefore
       // cannot produce claude-code by any route.
       const unconfigured: { fallbackName?: string; fallback?: unknown } =
-        maybeWrapBotNodeProviderFailover({ name: 'codex-primary' }, 'openai-codex', providers);
+        maybeWrapBotNodeProviderFailover(
+          { name: 'codex-primary' }, 'openai-codex', providers, undefined, { env: unconfiguredEnv },
+        );
       expect(unconfigured.fallbackName, 'codex must not degrade onto a cancelled subscription').not.toBe('claude-code');
       expect(unconfigured.fallback, 'nothing in code may hand back the claude-code provider')
         .not.toBe(providers['claude-code']);
@@ -249,15 +253,10 @@ describe('ADR-128 Amendment 1 — no automatic chain may default to claude-code'
       // And when an administrator DOES configure one, it is theirs - including the ability to name
       // claude-code deliberately, which the old map could not express at all.
       const configured = maybeWrapBotNodeProviderFailover(
-        { name: 'codex-primary' }, 'openai-codex', providers, ['cline-cli'],
+        { name: 'codex-primary' }, 'openai-codex', providers, ['cline-cli'], { env: unconfiguredEnv },
       );
       expect(configured.fallbackName).toBe('cline-cli');
       expect(configured.fallback).toBe(providers['cline-cli']);
-    } finally {
-      if (priorFallback === undefined) delete process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER;
-      else process.env.OSHAL_PROVIDER_RUNTIME_FALLBACK_PROVIDER = priorFallback;
-      if (priorAuto === undefined) delete process.env.OSHAL_PROVIDER_AUTO_FAILOVER;
-      else process.env.OSHAL_PROVIDER_AUTO_FAILOVER = priorAuto;
     }
   });
 
