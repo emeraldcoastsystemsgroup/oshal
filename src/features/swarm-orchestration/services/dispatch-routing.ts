@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-083: 'task' workflow default workerBot project-manager → general-bot. The owner is now chosen by the knowledge-owner call-out (task-call-out.ts); the workflow default is only the last resort, and it must be a tool-capable DOER, not the PM planner (whose claude-code 401s escalated task tickets).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Comment corrections only. The pipeline doc block said 'staged' is "Executed by dispatch-staged-worker" - no such file exists - and the built-in list advertised it, in the same file whose chooseDispatchPath records the executor as retired and has no branch for it. A manifest declaring pipeline: staged silently becomes a single-bot manifest-worker run with every approval gate dropped.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | A fifth site in this file implied 'staged' is live: the workerBot doc said it is "informational only" for 'staged'/'graph'. For a manifest declaring the retired 'staged' pipeline the opposite is true - it falls through to manifest-worker and workerBot is the ONLY bot that runs.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | chooseDispatchPath routes `pipeline: graph` to the graph worker whether or not a processDefinition is present (CKR-11 / D4). The old `&& workflow.processDefinition` degraded a graph workflow missing its definition into a single-bot manifest-worker run with every authored approval gate dropped and nothing logged - the defer arm warns, that arm did not. dispatchGraphTicket already escalates this shape with reason 'graph_workflow_definition_missing'; that branch was simply unreachable, because routing never sent anything to it. The entry point is a hand-authored manifest - Publish cannot produce the shape, since all three of its modes emit a processDefinition unconditionally.
  */
 
 /**
@@ -151,7 +152,13 @@ export function chooseDispatchPath(
   // Authored workflow — runs the compiled ProcessDefinition graph via the engine
   // (linear AND branching). This is the canonical authored-workflow runtime; the earlier
   // interim 'staged' executor has been retired in favour of it.
-  if (workflow?.pipeline === 'graph' && workflow.processDefinition) return 'graph';
+  // Routed on the DECLARED pipeline, not on whether the definition happens to be present.
+  // Requiring processDefinition here sent a graph workflow missing its definition on to the
+  // manifest-worker arm, which runs workerBot alone and logs nothing - every approval gate the
+  // author wrote silently dropped. dispatchGraphTicket has escalated that exact shape since it
+  // was written ('graph_workflow_definition_missing'); this condition was what made that branch
+  // unreachable. An author who declares 'graph' now gets a graph run or an escalated ticket.
+  if (workflow?.pipeline === 'graph') return 'graph';
   if (ticketType !== 'build' && workflow?.workerBot && workflow.pipeline !== 'swarm') {
     return 'manifest-worker';
   }

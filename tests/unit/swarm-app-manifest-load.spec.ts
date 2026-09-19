@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Vitest unit guards for the swarm-app manifest loader: readManifest fails closed on malformed fields; SwarmAppService.loadApp registers the manifest's ticketType/workflow/bots and is idempotent on a re-load; autoLoadAll isolates a bad manifest (logs + reports it, never aborts the boot pass). Previously exercised only via the docker-stack swarm-apps-framework e2e.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Drive the manifest-to-registry bridge instead of grepping it (CKR-1). registerWorkflow is a hand-written object literal that has already lost a field in production - reviewerBot was silently dropped, so every app-contributed reviewer bot fell through to graceful completion - and the guard that shipped for it was a source-text regex that never executed the bridge. Two cases now: a manifest declaring EVERY SwarmAppWorkflow key is loaded by the real service and every value is read back off the real registry, and a second case derives the key list from the INTERFACE and fails when the literal does not copy one, so a newly added field cannot be forgotten the same way twice.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | `pipeline: staged` is refused at load (CKR-10). Its executor was retired for the graph engine, so a manifest declaring it fell through to manifest-worker and ran only workerBot with every authored approval gate dropped and nothing logged. Two cases: staged throws naming graph, and the pipelines that DO have an executor still load - so the refusal cannot quietly become a blanket pipeline check. The every-key fixture also drops `stages`, which the manifest type no longer declares.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The CKR-10 still-loads case gives its `graph` fixture a processDefinition. CKR-11 refuses `pipeline: graph` without one - there is no graph to walk, so every such ticket escalates on arrival - and this case caught that interaction the moment the refusal landed, which is the case doing its job. It stays valuable because it is what proves the two narrow refusals did not widen into each other.
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
@@ -282,6 +283,20 @@ describe('a pipeline with no executor is refused, not quietly degraded', () => {
 
   it('the pipelines that DO have an executor still load', () => {
     // The refusal must be specific to `staged`, not a blanket pipeline check.
+    // `graph` carries a processDefinition here because CKR-11 refuses one without it: a graph
+    // with no definition has nothing to walk and escalates on arrival. Both refusals are narrow,
+    // and this case is what proves neither widened into the other.
+    const GRAPH_DEFINITION = [
+      '  processDefinition:',
+      '    name: Fine',
+      '    nodeGraph:',
+      '      nodes:',
+      '        - id: n-start',
+      '          type: start',
+      '      edges: []',
+      '      topologicalOrder:',
+      '        - n-start',
+    ];
     for (const pipeline of ['graph', 'manifest-worker']) {
       expect(() => readManifest(writeManifest([
         `name: ok-${pipeline}`,
@@ -292,6 +307,7 @@ describe('a pipeline with no executor is refused, not quietly degraded', () => {
         '  name: Fine',
         `  pipeline: ${pipeline}`,
         '  workerBot: guard-worker',
+        ...(pipeline === 'graph' ? GRAPH_DEFINITION : []),
         '',
       ].join('\n'))), `${pipeline} must still load`).not.toThrow();
     }

@@ -540,7 +540,31 @@ required — this file names the identifier); CV-1's grep is clean; and a fixtur
 manifest declaring `pipeline: staged` makes `readManifest` throw an error whose message contains `graph`,
 asserted by a named case in `tests/unit/swarm-app-manifest-load.spec.ts`.
 
-### CKR-11 — a graph workflow with no process definition silently becomes a one-bot run (D4) — S
+### CKR-11 — a graph workflow with no process definition silently becomes a one-bot run (D4) — **DONE 2026-09-19**
+
+**Shipped.** `chooseDispatchPath` routes on the DECLARED pipeline, so `pipeline: graph` reaches the
+graph worker whether or not a definition is present. `dispatchGraphTicket` already escalated that
+shape with `reason: 'graph_workflow_definition_missing'` — the branch existed and was unreachable,
+because routing never sent anything to it. `readManifest` now refuses the shape at load, and also
+refuses a workflow with no `workerBot` and no executable graph (which fell through to the 7-phase
+`swarm` decompose pipeline). All three tests that codified the degradation are inverted, each with
+a Change Log line saying why the old assertion was wrong.
+
+Store landed first, as the entry required: `print-ingest` was the only manifest in either trunk
+with the broken shape. It got the approval gate its own comment promises (0.3.1,
+`oshal-applications` PR #238) — the package had traded the retired `staged` executor for a
+`graph` that dropped gates exactly the same way.
+
+Verified before landing: **11 core manifests and all 61 store packages load** under the new
+refusals, 0 refused; and `print-ingest` at 0.3.0 IS refused, which proves the ordering requirement
+was real rather than assumed. Mutation-proven both halves — restoring the old route fails 2 cases,
+removing the loader refusals fails 2 more.
+
+**Decision taken:** part (a) escalates rather than silently running one bot. Consistent with CKR-10,
+and with the principle the whole repair series rests on — a refused run beats a silently wrong one.
+
+<details><summary>Original entry</summary>
+
 
 Real, and worse than claimed in two ways: **three** tests codify the degradation
 (`tests/dispatch-routing.spec.ts:83,90`; `tests/unit/dispatch-path-routing.spec.ts:97,99`;
@@ -571,6 +595,8 @@ assertions are inverted, each carrying a Change Log line saying why the old asse
 Criterion (a) turns all three red; a lane that flips "the two" leaves the third failing. (e) **Land the store fix first or `print-ingest` stops installing:** in
 `oshal-applications`, `git ls-files '*oshal-app.yaml' | xargs grep -l '^  pipeline: graph'` lists only
 files that also match `grep -l '^  processDefinition:'`.
+
+</details>
 
 ### CKR-12 — `approval_required` means five things, not three (D5) — S
 

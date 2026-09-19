@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Turns the load-bearing comment in workflow-publish-compiler.ts ("unifying on the 'graph' pipeline means ONE runtime engine for published workflows") into an executable guard. workflow-publish-compiler.spec.ts asserts pipeline:'graph' per mode in isolation; this spec asserts the INVARIANT end to end — every publish mode (single-shot, multi-stage, full branching canvas) emits pipeline:'graph' with a runnable processDefinition, and feeding that compiled workflow to chooseDispatchPath routes it to the 'graph' dispatcher. That routing is what makes the run recorder observe every published run, so a regression to the retired 'staged'/'manifest-worker' executors would silently stop recording run history rather than fail loudly.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Inverted the not-graph assertion and retitled the case (CKR-11 / D4). The old assertion was wrong, not merely outdated: it codified a SILENT degradation as correct behaviour. A graph workflow missing its definition routed to manifest-worker, which runs workerBot alone and logs nothing, so every approval gate the author wrote was dropped without a trace. It now routes to 'graph', where dispatchGraphTicket escalates it with reason 'graph_workflow_definition_missing' - a branch that already existed and was unreachable. 'Never dispatches nothing' was the right instinct; manifest-worker was the wrong answer to it. The title also claimed processDefinition is load-bearing for ROUTING; it is load-bearing for EXECUTION, and conflating the two is what made the degradation look intentional.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fixes a RED main. CKR-10 removed `stages` from the manifest type and stopped the publish compiler emitting it, but left this assertion behind, so all three mode cases failed with "Target cannot be null or undefined" the moment that landed. The authored stages ARE the compiled graph now, so the count is read off the nodes that bind an agent - execute-agent and ai-decision - with the expected numbers MEASURED from the compiler rather than carried over. asRegistered also stopped copying `stages`, a field the compiler never emits any more.
  */
 
 import { readFileSync } from 'node:fs';
@@ -17,11 +19,11 @@ import {
 } from '@/features/swarm-orchestration/services/queue-manager-service';
 
 /** The three publish shapes the Workflow Studio canvas can produce. */
-const MODES: Array<{ label: string; spec: WorkflowPublishSpec; expectedStages: number }> = [
+const MODES: Array<{ label: string; spec: WorkflowPublishSpec; expectedAgentNodes: number }> = [
   {
     label: 'single-shot (one agent node)',
     spec: { name: 'single-shot-flow', mode: 'single-shot', workerBot: 'general-bot' },
-    expectedStages: 1,
+    expectedAgentNodes: 1,
   },
   {
     label: 'multi-stage (linear chain with a gate)',
@@ -34,7 +36,7 @@ const MODES: Array<{ label: string; spec: WorkflowPublishSpec; expectedStages: n
         { bot: 'reviewer-bot', name: 'Review' },
       ],
     },
-    expectedStages: 3,
+    expectedAgentNodes: 3,
   },
   {
     label: 'full branching canvas graph',
@@ -58,7 +60,7 @@ const MODES: Array<{ label: string; spec: WorkflowPublishSpec; expectedStages: n
         ],
       },
     },
-    expectedStages: 3,
+    expectedAgentNodes: 3,
   },
 ];
 
@@ -72,7 +74,6 @@ function asRegistered(ticketType: string, workflow: Record<string, unknown>): Wo
     name: String(workflow.name),
     pipeline: String(workflow.pipeline),
     workerBot: String(workflow.workerBot),
-    stages: workflow.stages as WorkflowDefinition['stages'],
     processDefinition: workflow.processDefinition as Record<string, unknown> | undefined,
   };
 }
@@ -95,7 +96,15 @@ describe('published workflows unify on the graph pipeline', () => {
         // A runnable graph needs an entry point the engine can start walking from.
         expect(nodeGraph?.nodes?.filter((n) => n.type === 'start')).toHaveLength(1);
         expect(nodeGraph?.topologicalOrder?.length).toBe(nodeGraph?.nodes?.length);
-        expect(manifest.workflow?.stages).toHaveLength(mode.expectedStages);
+        // Was `workflow.stages`, which the compiler no longer emits — the authored stages ARE the
+        // compiled graph now, so the count has to be read off the nodes that actually bind an agent.
+        // Measured, not assumed: single-shot emits [start, execute-agent, deliver]; the staged mode
+        // emits [start, execute-agent, execute-agent, approval-gate, execute-agent, deliver]; the
+        // branching canvas emits [start, ai-decision, execute-agent, execute-agent, deliver].
+        const agentNodes = (nodeGraph?.nodes ?? []).filter(
+          (n) => n.type === 'execute-agent' || n.type === 'ai-decision',
+        );
+        expect(agentNodes).toHaveLength(mode.expectedAgentNodes);
       });
 
       it("routes to the 'graph' dispatcher (never the retired staged/manifest-worker executors)", () => {
@@ -114,14 +123,17 @@ describe('published workflows unify on the graph pipeline', () => {
     });
   }
 
-  it("falls off the graph path when processDefinition is missing — proving processDefinition, not pipeline alone, is load-bearing", () => {
+  it('stays on the graph path when processDefinition is missing — the definition is load-bearing for EXECUTION, not for routing', () => {
     const manifest = compileWorkflowSpec(MODES[0].spec, 'person');
     const registered = asRegistered(
       String(manifest.ticketType),
       manifest.workflow as unknown as Record<string, unknown>,
     );
     const stripped: WorkflowDefinition = { ...registered, processDefinition: undefined };
-    expect(chooseDispatchPath(stripped.ticketType, stripped, builtIns)).not.toBe('graph');
+    // Publish cannot actually emit this shape — all three modes emit a processDefinition
+    // unconditionally — so this is the hand-authored case arriving at a published ticketType.
+    // It must reach the graph worker and escalate, not silently become a single-bot run.
+    expect(chooseDispatchPath(stripped.ticketType, stripped, builtIns)).toBe('graph');
   });
 });
 

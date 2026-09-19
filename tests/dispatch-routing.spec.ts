@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pure-function coverage for the dispatcher routing decision (defer / incident-rca / manifest-worker / swarm)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Inverted the graph-without-definition assertion (CKR-11 / D4). The old assertion was wrong, not merely outdated: it codified a SILENT degradation as correct behaviour. A graph workflow missing its definition routed to manifest-worker, which runs workerBot alone and logs nothing, so every approval gate the author wrote was dropped without a trace. It now routes to 'graph', where dispatchGraphTicket escalates it with reason 'graph_workflow_definition_missing' - a branch that already existed and was unreachable. 'Never dispatches nothing' was the right instinct; manifest-worker was the wrong answer to it.
  */
 
 import { test, expect } from '@playwright/test';
@@ -80,13 +81,15 @@ test.describe('chooseDispatchPath — startup race guard + routing', () => {
     expect(chooseDispatchPath('sales-pipeline', graph, builtIns)).toBe('graph');
   });
 
-  test('graph pipeline with NO ProcessDefinition → falls through (manifest-worker), never dispatches nothing', () => {
+  test('graph pipeline with NO ProcessDefinition → routes to graph, which escalates rather than degrading', () => {
     const emptyGraph: WorkflowDefinition = {
       ticketType: 'sales-pipeline',
       name: 'Sales Pipeline',
       pipeline: 'graph',
       workerBot: 'sales-intake-bot',
     };
-    expect(chooseDispatchPath('sales-pipeline', emptyGraph, builtIns)).toBe('manifest-worker');
+    // Routing on the DECLARED pipeline. The graph worker escalates a missing definition; the
+    // manifest-worker arm would have run sales-intake-bot alone and dropped every authored gate.
+    expect(chooseDispatchPath('sales-pipeline', emptyGraph, builtIns)).toBe('graph');
   });
 });

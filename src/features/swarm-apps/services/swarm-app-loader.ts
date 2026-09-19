@@ -23,6 +23,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Validate dependencies (required/optional tiers or the legacy flat form) through the shared CLI/runtime contract, fail-closed at load.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | ADR-157 S1: move the whole schedule contract (prompt + service-route rules, the static-JSON walker, probeBelongsToRoute and containsFixtureInterpolation) into manifest-schedule-validation.ts — this file was 836 code lines, past its 800 budget — and hand that validator the imported authorization catalog so a service schedule's `requires` is checked against the permissions the app actually defines.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Refuse `pipeline: staged` at load (CKR-10 / D2). Its executor was retired for the graph engine, so such a manifest fell through to manifest-worker and ran only workerBot with every authored approval gate dropped and nothing logged - a silently wrong run. Refused with the two pipelines that do work named in the message. Publish is unaffected: the studio compiles its own staged authoring into a graph and never emits this value.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | readManifest refuses two more silently-degrading workflow shapes (CKR-11 / D4). `pipeline: graph` with no processDefinition has no graph to execute, so every ticket of that type escalates on arrival; and a workflow with no workerBot and no executable graph falls through to the 7-phase 'swarm' decompose pipeline, which is both wrong and expensive. Refused at load rather than at dispatch, because by dispatch a ticket exists and a person is waiting on it. Audited before landing: every workflow in the ten core manifests and all 61 store packages declares a workerBot, and print-ingest was the only manifest in either trunk with the graph-without-definition shape - fixed in the store first.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -618,6 +619,41 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
       `dropping every approval gate. Use pipeline 'graph' with a processDefinition, which the ` +
       `workflow studio's Publish emits, or 'manifest-worker' for a single-bot workflow.`,
     );
+  }
+
+  // Two more shapes that run as something other than what the author declared. Both are refused
+  // here rather than at dispatch, because by dispatch a ticket already exists and a person is
+  // waiting on it.
+  const workflow = manifest.workflow as {
+    pipeline?: unknown; workerBot?: unknown; processDefinition?: unknown;
+  } | undefined;
+  if (workflow) {
+    const pipeline = String(workflow.pipeline ?? '').trim();
+    const hasDefinition = Boolean(workflow.processDefinition);
+    const hasWorkerBot = Boolean(String(workflow.workerBot ?? '').trim());
+
+    // 'graph' names the ProcessDefinition engine. Without a definition there is no graph to walk,
+    // so the ticket escalates on arrival - correct, but a load-time refusal tells the author now.
+    if (pipeline === 'graph' && !hasDefinition) {
+      throw new Error(
+        `Manifest ${absPath}: app '${manifest.name}' declares workflow.pipeline 'graph' but no ` +
+        `workflow.processDefinition. There is no graph to execute, so every ticket of type ` +
+        `'${String(manifest.ticketType ?? '')}' escalates on arrival. Add a processDefinition ` +
+        `(the workflow studio's Publish emits one), or use 'manifest-worker' for a single-bot run.`,
+      );
+    }
+
+    // No workerBot and nothing else to run means the ticket falls through to the 7-phase 'swarm'
+    // decompose pipeline - wrong, and expensive. An author who WANTS that says so explicitly.
+    const EXPLICIT_NO_WORKER_BOT = new Set(['swarm', 'incident-rca']);
+    if (!hasWorkerBot && !(pipeline === 'graph' && hasDefinition) && !EXPLICIT_NO_WORKER_BOT.has(pipeline)) {
+      throw new Error(
+        `Manifest ${absPath}: app '${manifest.name}' declares a workflow with no workflow.workerBot ` +
+        `and no executable graph, so tickets of type '${String(manifest.ticketType ?? '')}' would run ` +
+        `the 7-phase 'swarm' decompose pipeline instead. Name a workerBot, supply a ` +
+        `processDefinition, or declare pipeline 'swarm' if that is genuinely what you want.`,
+      );
+    }
   }
 
   try { readAppDependencies(manifest); } catch (err) { throw new Error(`Manifest ${absPath}: ${(err as Error).message}`); }
