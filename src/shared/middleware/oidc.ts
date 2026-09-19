@@ -28,7 +28,7 @@ import { auth, requiresAuth, ConfigParams } from 'express-openid-connect';
 import { type Request, type RequestHandler, type Response } from 'express';
 import http from 'http';
 import { createChildLogger } from '@/shared/logger';
-import { MOCK_OIDC_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
+import { MOCK_OIDC_PRINCIPAL_ISSUER, isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 import {
   DEFAULT_SESSION_COOKIE,
   type LoginProvider,
@@ -43,15 +43,9 @@ export { loginRestartPathForCallbackPath } from '@/shared/middleware/oidc-provid
 
 const logger = createChildLogger({ module: 'oidc-middleware' });
 
-/**
- * @description Checks if Mock OIDC mode is enabled via the MOCK_OIDC env var.
- *
- * @returns true if MOCK_OIDC is set to a truthy value ('true', '1', 'yes')
- */
-export function isMockOidcEnabled(): boolean {
-  const val = (process.env.MOCK_OIDC ?? '').toLowerCase().trim();
-  return val === 'true' || val === '1' || val === 'yes';
-}
+// The predicate itself lives in principal-issuer.ts, which nothing heavy imports — re-exported
+// here so every existing `from '@/shared/middleware/oidc'` import keeps working unchanged.
+export { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 
 /**
  * @description Checks if mock OIDC may read x-mock-oidc-* headers. This is

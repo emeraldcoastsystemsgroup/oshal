@@ -1212,9 +1212,6 @@ export class SwarmAppService {
       // workflow that declared a reviewer never actually got one.
       reviewerBot: manifest.workflow.reviewerBot,
       maxRevisions: manifest.workflow.maxRevisions,
-      // Authored stage list for 'staged' workflows. VESTIGIAL: there is no staged dispatcher.
-      // The copy is kept only so the field round-trips until CKR-10 decides to delete it.
-      stages: manifest.workflow.stages,
       // Compiled ProcessDefinition for 'graph' workflows — the graph dispatcher runs it.
       processDefinition: manifest.workflow.processDefinition,
       // Per-workflow auto-start — tickets of this type auto-approve so the workflow runs on arrival.

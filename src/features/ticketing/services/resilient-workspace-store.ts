@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added resilient workspace store wrapper that falls back to in-memory persistence during MOCK_OIDC localhost runs when Postgres is unavailable
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserved ownerSub list filters through the resilient store so fallback mode cannot broaden an authenticated workspace listing.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Deleted a code-identical private copy of isMockOidcEnabled and imported the shared one. The copy existed because the predicate lived in oidc.ts, which imports express-openid-connect, and a ticket store must not pull the auth stack to read an environment variable. It now lives in principal-issuer.ts, which nothing heavy imports.
  */
 
 import type { Pool } from 'pg';
@@ -12,6 +13,7 @@ import type { IWorkspaceStore, CreateInternalWorkspaceInput, InternalWorkspace }
 import { createChildLogger } from '@/shared/logger';
 import { InMemoryWorkspaceStore } from './in-memory-workspace-store';
 import { PostgresWorkspaceStore } from './workspace-store-postgres';
+import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 
 const logger = createChildLogger({ module: 'ResilientWorkspaceStore' });
 
@@ -120,11 +122,6 @@ export class ResilientWorkspaceStore implements IWorkspaceStore {
     }
     return this.primary;
   }
-}
-
-function isMockOidcEnabled(): boolean {
-  const value = (process.env.MOCK_OIDC ?? '').trim().toLowerCase();
-  return value === 'true' || value === '1' || value === 'yes';
 }
 
 function isDatabaseConnectionFailure(error: unknown): boolean {

@@ -31,6 +31,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Bind the fixed actor-mailbox Outlook reader into AppContext for token-safe package integrations.
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Bind the fixed owner-scoped RingCentral call-log reader into AppContext (screen-pop v2 call history), mirroring the Outlook seam.
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Hand the orchestrator the inline-turn cost ledger over the main (GUC-stamped) pool, so an inline chat turn's spend reaches oshal_cost_events under the request's owner sub and the windowed budget cap at the bot-invocation chokepoint can see it.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com   | Pass the orchestrator collaborators as one named object. costLedger is now a required field, so the inline-turn ledger wiring cannot be deleted from this call without failing the build - previously it was a trailing optional positional and its removal type-checked clean while silently zeroing every windowed budget cap.
  */
 
 import {
@@ -168,14 +169,17 @@ export function createAppContext(): CompositionAppContext {
     providerResolver.getProvider,
     getTools,
     getSystemPrompt,
-    memoryService,
-    ticketService,
-    workspaceService,
-    agentConfigService,
-    toolFramework.switchFrameworkService,
-    toolFramework.dynamicToolExecutorRegistry,
-    toolFramework.connectorSpecToolService,
-    createInlineTurnCostLedger(pool),
+    {
+      memoryService,
+      ticketService,
+      workspaceService,
+      agentConfigService,
+      switchFrameworkService: toolFramework.switchFrameworkService,
+      dynamicToolExecutorRegistry: toolFramework.dynamicToolExecutorRegistry,
+      connectorSpecToolService: toolFramework.connectorSpecToolService,
+      // Required by the type. Dropping it is a compile error, not a silent budget fail-open.
+      costLedger: createInlineTurnCostLedger(pool),
+    },
   );
   const verification = createVerificationComponents(pool, logger);
   const swarm = createSwarmExtensionBindings(pool, providerResolver.getProvider, { taskStore, messageStore });

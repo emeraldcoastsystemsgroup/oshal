@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Named guard fleet-default-provider-switch (the machine-write inventory entry of the same id points here): the fleet switch is ONE write from an operator browser session — PUT validates the id against the real catalog (400 with the reason and the accepted ids for an unknown one, nothing written), upserts the reserved row and refreshes the snapshot; DELETE clears it and refreshes; a service-secret caller is refused with 403 before any store call; a signed-in non-operator is refused; GET reports the row, the snapshot status and the accepted ids. The store is doubled here (its real companion is provider-switch-store-postgres.spec.ts on a disposable PostgreSQL as the enforcing role); the registry catalog is the real HARNESS_FACTORIES + provider-definitions.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | GET lists the per-bot rows (perBot, with updatedBy) beside the fleet row; DELETE /provider-switch/:scopeId releases a bot's own row back to the fleet default (removed:true, the fleet row reported, snapshot refreshed) and answers removed:false for an unknown scope. The per-bot WRITE stays on PUT /api/agents/:id/runtime (config-runtime-precedence.spec.ts): this router only lists and releases.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | A Cline-backed id written to the fleet default without a model is 400 model_required and nothing is written; the same id with its model and a native id without one are accepted (the door the review measured: a model-less gemini row made the Cline wrapper pick the FORCE_LLM_MODEL seed).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The three fallbackOrder refusal branches had no test anywhere: shape, an unrunnable rung, and a rung that is the primary. The third was also wrong - it compared spellings, so an alias of the primary passed - and is now pinned through an alias specifically, together with the identity dedupe that collapses two spellings of one harness to a single rung.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -44,8 +45,18 @@ afterEach(async () => {
 /** An in-memory store with the real store's surface; the Postgres companion proves the real one. */
 function memoryStore(): { store: ProviderSwitchStore; rows: Map<string, ProviderSwitchRow>; upsert: ReturnType<typeof vi.fn> } {
   const rows = new Map<string, ProviderSwitchRow>();
-  const upsert = vi.fn(async (scopeId: string, providerId: string, modelId: string | null, updatedBy: string) => {
-    const row: ProviderSwitchRow = { scopeId, providerId, modelId, updatedBy, updatedAt: new Date().toISOString() };
+  const upsert = vi.fn(async (
+    scopeId: string, providerId: string, modelId: string | null, updatedBy: string,
+    // The double dropped this argument, so nothing here could observe what the route writes for
+    // the chain - the fifth parameter arrived with migration 148 and the double was never widened.
+    // undefined means "leave the stored chain alone", which is the contract the route relies on.
+    fallbackOrder?: readonly string[],
+  ) => {
+    const previous = rows.get(scopeId);
+    const row: ProviderSwitchRow = {
+      scopeId, providerId, modelId, updatedBy, updatedAt: new Date().toISOString(),
+      fallbackOrder: fallbackOrder === undefined ? (previous?.fallbackOrder ?? null) : [...fallbackOrder],
+    };
     rows.set(scopeId, row);
     return row;
   });
@@ -177,6 +188,48 @@ describe('fleet-default-provider-switch', () => {
     const codex = await send(`${base}/fleet-default`, 'PUT', { providerId: 'codex-cli' });
     expect(codex.status).toBe(200);
     expect(rows.get(FLEET_DEFAULT_SWITCH_ID)).toMatchObject({ providerId: 'codex-cli', modelId: null });
+  });
+
+  it('refuses a fallback chain that is not an array, names an unrunnable id, or repeats its own primary', async () => {
+    const { store, rows, upsert } = memoryStore();
+    const snapshot = new ProviderSwitchSnapshot(store, buildProviderSwitchCatalog(Object.keys(HARNESS_FACTORIES)));
+    const base = await listen(store, snapshot, { sub: OPERATOR });
+
+    // (1) the shape. [] is a real answer and omitting it leaves the chain alone, so anything else
+    // that is not an array is a mistake, not an intention.
+    const badShape = await send(`${base}/fleet-default`, 'PUT', { providerId: 'codex-cli', fallbackOrder: 'claude-code' });
+    expect(badShape.status).toBe(400);
+    expect(await badShape.json()).toMatchObject({ success: false, applied: false, code: 'fallback_order_invalid' });
+
+    // (2) every rung is validated against the SAME runnable catalog as the provider itself.
+    const unknownRung = await send(`${base}/fleet-default`, 'PUT', {
+      providerId: 'codex-cli', fallbackOrder: ['claude-code', 'not-a-provider'],
+    });
+    expect(unknownRung.status).toBe(400);
+    expect(await unknownRung.json()).toMatchObject({
+      success: false, code: 'fallback_order_invalid', error: expect.stringContaining('not-a-provider'),
+    });
+
+    // (3) a provider cannot fail over to itself — INCLUDING through an alias. This compared raw
+    // spellings, so 'openai-codex' in a chain whose primary is 'codex-cli' was accepted 200 and
+    // stored as a failover that can never fire.
+    const selfByAlias = await send(`${base}/fleet-default`, 'PUT', {
+      providerId: 'codex-cli', fallbackOrder: ['openai-codex'],
+    });
+    expect(selfByAlias.status, 'an alias of the primary is still the primary').toBe(400);
+    expect(await selfByAlias.json()).toMatchObject({
+      success: false, code: 'fallback_order_invalid', error: expect.stringMatching(/cannot fail over to itself/),
+    });
+
+    expect(upsert, 'a refused chain writes nothing').not.toHaveBeenCalled();
+    expect(rows.size).toBe(0);
+
+    // The dedupe is on identity too: two spellings of one harness collapse to a single rung.
+    const deduped = await send(`${base}/fleet-default`, 'PUT', {
+      providerId: 'claude-code', fallbackOrder: ['codex-cli', 'openai-codex'],
+    });
+    expect(deduped.status).toBe(200);
+    expect(rows.get(FLEET_DEFAULT_SWITCH_ID)?.fallbackOrder).toEqual(['codex-cli']);
   });
 
   it('a service-secret caller and a signed-in non-operator are both refused before any store call', async () => {

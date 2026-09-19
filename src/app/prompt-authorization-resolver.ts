@@ -16,7 +16,7 @@ import {
   ANY_BOT_COMPLETION_TOOL,
   anyBotRuntimeToolFor,
   anyBotRuntimeToolScope,
-} from './any-bot-runtime-capabilities';
+} from '@/shared/llm-runtime';
 
 const logger = createChildLogger({ module: 'prompt-authorization-resolver' });
 

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the chart README's "Durability boundary" (BACKLOG: k8s durability posture for the shared-service tier). The chart is the single-box product - one replica per workload, dev-parity credentials, no backup - and the README declares durable Postgres/Timescale, a real Vault and volume backup OUT OF SCOPE, each with the boundary where a shared tenant takes over. A declaration like that rots the moment the chart changes, so this RENDERS THE REAL CHART with the helm binary and holds the section to the output: the volume table must equal the claims the chart creates with every optional flag on, in both directions; no workload above one replica; no backup, snapshot or restore object rendered or templated; every boundary switch the README names must remove its workload and withhold exactly the env it lists (an explicit container env entry beats envFrom, so a URL left in place would shadow the tenant's Secret); chart bots must take the managed DSN from swarm.botDatabaseUrl; and the Terraform sentence must name exactly the switches deploy/terraform/main.tf forwards. No helm on PATH is a loud failure, never a skip.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Hold deploy/terraform/README.md to the templates that exist. Its checklist item 5 listed TimescaleDB, ArangoDB, Vault, code-server, speaker-diarization and ollama as "Not yet in the chart (compose-only infra)" and said in bold that "trading cannot run on k8s until tsdb is templated" - all six had been templated since #198 (chart 0.3.0), so a tenant following that checklist kept trading off Kubernetes for no reason. The case DERIVES the service list from deploy/helm/oshal/templates/*.yaml rather than hardcoding it, because a literal list rots the same way the prose did.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -299,6 +300,67 @@ describe('each durability switch hands off exactly what the README says', () => 
       expect(url, `${b.metadata.name} does not carry swarm.botDatabaseUrl as DATABASE_URL`).toBe(dsn);
     }
   }, RENDER_TIMEOUT_MS);
+
+  it('the Terraform README never calls a templated service "not yet in the chart"', () => {
+    // DERIVED from the templates on disk, not from a literal list — a literal one rots exactly
+    // the way the prose it guards did. deploy/terraform/README.md claimed TimescaleDB, ArangoDB,
+    // Vault, code-server, speaker-diarization and ollama were "Not yet in the chart (compose-only
+    // infra)", and stated in bold that "trading cannot run on k8s until tsdb is templated". All
+    // six had been templated since #198, chart 0.3.0 — the README simply predated it and nothing
+    // re-read it. A tenant following that checklist would keep trading off k8s for no reason.
+    const files = fs.readdirSync(path.join(CHART_DIR, 'templates'))
+      .filter((f) => f.endsWith('.yaml'))
+      .map((f) => f.replace(/\.yaml$/, '').toLowerCase());
+    expect(files.length, 'no chart templates found - the parse is broken').toBeGreaterThan(5);
+
+    // Prose does not use file names. The first version of this case derived only from
+    // `templates/*.yaml` and therefore MISSED the very claim it was written for: the README said
+    // "TimescaleDB", the template is `tsdb.yaml`, and the guard passed while the false sentence
+    // sat there. It caught `ollama` only because that one happens to match its filename.
+    //
+    // So the search set is the union of three DERIVED sources plus one declared alias list:
+    //   - the template basenames,
+    //   - the `infra.*` keys in values.yaml (the switch vocabulary a tenant actually types),
+    //   - and the alias map below, which is the only hand-maintained part and is deliberately
+    //     tiny. A new alias is needed only when prose calls a service something neither its
+    //     template file nor its values key is called.
+    const ALIASES: Record<string, string[]> = {
+      tsdb: ['timescale', 'timescaledb'],
+      arangodb: ['arango'],
+      diarization: ['speaker-diarization', 'speaker diarization'],
+    };
+    const infraKeys = Object.keys((values.infra ?? {}) as Record<string, unknown>).map((k) => k.toLowerCase());
+    const templated = [...new Set([
+      ...files,
+      ...infraKeys,
+      ...files.flatMap((f) => ALIASES[f] ?? []),
+      ...infraKeys.flatMap((k) => ALIASES[k] ?? []),
+    ])];
+    for (const key of Object.keys(ALIASES)) {
+      expect(
+        [...files, ...infraKeys],
+        `the alias map names '${key}', which is neither a template nor an infra key - it has gone stale`,
+      ).toContain(key);
+    }
+
+    const tfReadme = fs.readFileSync(path.join(REPO_ROOT, 'deploy', 'terraform', 'README.md'), 'utf8');
+    // The claim shape, wherever it appears: a "not yet in the chart" / "compose-only" passage.
+    const claims = tfReadme
+      .split(/\n(?=\d+\. |## )/)
+      .filter((block) => /not yet in the chart|compose-only infra/i.test(block));
+
+    const offenders: string[] = [];
+    for (const block of claims) {
+      for (const name of templated) {
+        // Match the service name as a word, so 'vault.yaml' is not found inside 'vaulted'.
+        if (new RegExp(`\\b${name}\\b`, 'i').test(block)) offenders.push(name);
+      }
+    }
+    expect(
+      [...new Set(offenders)].sort(),
+      'deploy/terraform/README.md lists services as absent from the chart that the chart templates',
+    ).toEqual([]);
+  });
 
   it('the Terraform sentence names exactly the switches deploy/terraform/main.tf forwards', () => {
     const forwarded = [...TERRAFORM_MAIN.matchAll(/^\s*inCluster\s*=\s*var\.([a-z_]+)\s*$/gm)].map((m) => m[1]).sort();

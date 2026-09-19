@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Entry 5's "the record IS the per-bot switch row" was the defect: agent_config is also written by manifest seeding, the bot's broadcast-up and config push, so every machinery-written record outranked a fleet-default write (70 of them on the operator box). The per-bot switch is now a row an OPERATOR wrote in oshal_bot_provider_switch, and this route is where that happens: after the ADR-034 push-before-persist succeeds, a mutation naming a providerId writes the bot's own switch row through the injected writeBotSwitch seam under the caller's identity (updated_by = the operator sub; the table's operator-only policy is the enforcement), and a model-only mutation updates that row's model when the bot already has one. The agent_config record is still written exactly as before — it is the dispatch record beneath the fleet row, never a switch.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | refuseUnrunnableSwitch extracted from applyRuntimeMutation (57 -> 49 code lines, the 50-line rule) and grown by one refusal: a Cline-backed providerId with no modelId in the same mutation is 400 model_required before the push and before any row — the Cline runtime would otherwise run on the container's FORCE_LLM_MODEL seed. The cockpit sends the model with a provider pick (the model select re-renders from the provider's definition), so the panel is unchanged.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | The runtime read serves runtime.fallbackOrder, resolved from the switch rows by the same precedence as the provider. The boot pull is the only carrier from a row to a bot node, so without this the fallback_order column and the cockpit control that writes it reached nothing: an administrator got a success banner, a persisted row and a panel reporting the chain, while every bot resolved an empty one.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | fallbackOrder is served as null when nothing supplies a chain, never as []. `?? []` made an absent resolver indistinguishable from an administrator who wrote an empty chain, and the boot pull applies those two answers differently: null leaves the container env alone, [] deliberately disables failover. Carrying only [] meant the default configuration blanked the variable on every pull.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -42,7 +43,13 @@ export interface RuntimeRouteSwitchDeps {
    * (bot row > fleet row). Served on the runtime read because the bot-node boot pull is the ONLY
    * carrier from a row to a node — without it the fallback_order column reaches nothing.
    */
-  resolveFallbackChain?: (agentId: string, primaryProviderId: string | null) => readonly string[];
+  /**
+   * The administrator's chain, or NULL when no row and no environment override supplies one.
+   * The distinction is load-bearing on the wire: `[]` means "configured, and deliberately no
+   * failover", while null means "nothing configured here" and must leave the node's own env
+   * alone. Collapsing the two is what let every boot pull blank a deliberately-set variable.
+   */
+  resolveFallbackChain?: (agentId: string, primaryProviderId: string | null) => readonly string[] | null;
   /** Called after a persisted write so the installed snapshot re-reads the rows. */
   onRuntimeChanged?: () => Promise<void>;
   /**
@@ -170,9 +177,11 @@ async function handleRuntimeRead(
         // The administrator's ordered chain, carried to the node on the same pull that carries the
         // provider. A bot that restarts must come up on the CURRENT chain, not the one baked into
         // whatever env its container was created with.
+        // `?? null`, never `?? []`: an absent resolver means "this controller cannot tell you",
+        // which must not be delivered to a node as the administrator's deliberate empty chain.
         fallbackOrder: switches.resolveFallbackChain?.(
           agentId, typeof resolved.providerId === 'string' ? resolved.providerId : null,
-        ) ?? [],
+        ) ?? null,
         mode: values.mode ?? null,
         requestTimeoutMs: values.requestTimeoutMs ?? null,
       },

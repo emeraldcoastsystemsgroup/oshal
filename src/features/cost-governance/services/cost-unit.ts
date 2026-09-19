@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Cost-unit classification for the oshal_cost_events ledger. ADR-127 records that a CLI turn's cost_usd is a price-equivalent (a subscription already paid for the call) and that a BYO hosted turn records $0 by design (the caller's endpoint bills the caller, so only tokens are known). A surface that sums cost_usd across providers is adding three different units; this module names the unit for a provider id so every cost surface can say which is which instead of presenting one total as spend.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | antigravity-cli joins both price-equivalent sets. It was added to the harness union, the factory record, HARNESS_BY_ID and the unattended-denial set and not to these, so the same Google credential would have been read in two different cost units depending on which of its two CLIs answered.
  */
 
 /**
@@ -41,10 +42,15 @@ const PRICE_EQUIVALENT_PROVIDERS: ReadonlySet<string> = new Set([
   'openai-codex',
   'codex-cli',
   'gemini-cli',
+  // Same vendor, same key, same class as gemini-cli. It reached the HarnessType union,
+  // HARNESS_FACTORIES, HARNESS_BY_ID and the unattended-denial set without reaching here, so its
+  // turns would have classified as `billed` while its sibling on the identical credential
+  // classified as price-equivalent - two different unit readings for one Google account.
+  'antigravity-cli',
 ]);
 
 /** Harness adapters name themselves `harness:<HarnessType>`; only the CLI types are subscription-backed. */
-const PRICE_EQUIVALENT_HARNESS_TYPES: ReadonlySet<string> = new Set(['cline', 'codex-cli', 'claude-code', 'gemini-cli']);
+const PRICE_EQUIVALENT_HARNESS_TYPES: ReadonlySet<string> = new Set(['cline', 'codex-cli', 'claude-code', 'gemini-cli', 'antigravity-cli']);
 
 /**
  * @description Classifies a ledger provider id into the unit its `cost_usd` is expressed in.

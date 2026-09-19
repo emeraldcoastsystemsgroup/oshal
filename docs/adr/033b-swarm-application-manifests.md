@@ -172,10 +172,6 @@ ticketType: education
 workflow:
   name: Education Processing Pipeline
   pipeline: education
-  phases:
-    - intake
-    - processing
-    - delivery
   workerBot: lecture-scribe
 
 # Theme contributed by this application

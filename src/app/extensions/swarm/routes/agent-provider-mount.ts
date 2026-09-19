@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Mounts the two /api/agents provider surfaces in one place so the swarm extension index stays under its line budget: the ADR-034 per-agent runtime routes wired to the switch seams (resolver, catalog, post-write snapshot refresh) and the fleet-default switch routes over a ProviderSwitchStore on the GUC-wrapped pool. Both share the serviceSecretOr(requiresAuth) mount the bot-node boot pull relies on; each route file decides for itself what a service secret may do.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | One ProviderSwitchStore serves both routers, and the runtime routes get its upsert as writeBotSwitch: a provider pick through PUT /:agentId/runtime now writes the bot's own row in oshal_bot_provider_switch (the only per-bot record that beats the fleet default) under the caller's identity, so the table's operator-only policy — not this file — decides who may. The agent_config record the same PUT persists is the ADR-034 dispatch artefact beneath the fleet row, never a switch.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Supplies resolveFallbackChain from the installed snapshot, so the runtime read carries the administrator's ordered chain to the bot node alongside the provider.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | source 'none' now travels as null, not as []. resolveFallbackChain ended in `?? []`, which told every booting node that the administrator had deliberately chosen no failover whenever nothing was configured - and the node then blanked its own OSHAL_PROVIDER_FALLBACK_ORDER on the strength of it. Absence and a deliberate empty chain are different answers and must stay different on the wire.
  */
 
 import type { Application, RequestHandler } from 'express';
@@ -45,8 +46,15 @@ export function mountAgentProviderRoutes(app: Application, auth: RequestHandler,
     {
       resolveSwitch: resolveSwitchFor,
       catalog: installedProviderSwitchCatalog,
-      resolveFallbackChain: (agentId, primaryProviderId) =>
-        installedProviderSwitchSnapshot()?.resolveFallbackChain(agentId, primaryProviderId).order ?? [],
+      // source 'none' means no row and no environment override named a chain. That is NOT an
+      // empty chain: returning [] here told every booting node "the administrator chose no
+      // failover", which blanked OSHAL_PROVIDER_FALLBACK_ORDER on each pull in the default
+      // configuration. Only a real answer travels; absence stays absent.
+      resolveFallbackChain: (agentId, primaryProviderId) => {
+        const chain = installedProviderSwitchSnapshot()?.resolveFallbackChain(agentId, primaryProviderId);
+        if (!chain || chain.source === 'none') return null;
+        return chain.order;
+      },
       // A provider pick is the bot's own switch row (migration 147, scope = agent id), written under
       // the request identity so the table's operator-only policy is the enforcement.
       ...(store ? { writeBotSwitch: async (agentId, providerId, modelId, updatedBy) => { await store.upsert(agentId, providerId, modelId, updatedBy); } } : {}),

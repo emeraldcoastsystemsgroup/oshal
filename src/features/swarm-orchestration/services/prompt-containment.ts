@@ -6,10 +6,15 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add deterministic prompt trust
  *   separation, escaped untrusted blocks, bounded content, and a final server authority rebind.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fail closed on persisted role layers and require server provenance for policy-class platform/host/tenant layers.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A node with no database repository could not signal completion (CKR-8 / D15). With no resolver the binding falls back to server-authored persona declarations, and NO persona on this tree supplies a runnable tool list that way - so allowedTools came back empty, and an empty allowlist denies every tool including attempt_completion, the side-effect-free control a bot uses to say it is finished. The database-backed resolver has always floored completion unconditionally; only this branch did not, so one bot finished its task with a database and hung without one. Fails CLOSED either way, never open - the exposure is the federated bot-pod topology the Helm chart ships database-less on purpose. The branch now also says so in a WARN naming the agent and the resolved count.
  */
 
 import { createHash } from 'node:crypto';
 import type { PersonaLayer } from '@/features/agent-management';
+import { ANY_BOT_COMPLETION_SCOPE, ANY_BOT_COMPLETION_TOOL } from '@/shared/llm-runtime';
+import { createChildLogger } from '@/shared/logger';
+
+const logger = createChildLogger({ module: 'prompt-containment' });
 
 const MAX_UNTRUSTED_BLOCK_CHARS = 24_000;
 const MAX_TRUSTED_FRAGMENT_CHARS = 32_000;
@@ -159,9 +164,27 @@ export async function resolvePromptAuthorityBinding(
   input: PromptAuthorityInput,
 ): Promise<PromptAuthorityBinding> {
   const fallback = authorizationFromLayers(input.layers);
-  const authorization = input.resolver
+  if (!input.resolver) {
+    // A node with no database repository has no resolver, and the fallback reads ONLY layers that
+    // carry serverAuthored metadata. Of the personas on this tree none supplies a runnable tool
+    // list that way, so the binding came back empty - and an empty allowlist denies every tool
+    // INCLUDING attempt_completion, the side-effect-free control a bot uses to say it is done.
+    // The database-backed resolver has always floored completion (prompt-authorization-resolver
+    // adds it unconditionally); only this branch did not, so the same bot could finish a task
+    // with a database and hang without one. That is the shape the Helm federated bot-pod topology
+    // ships deliberately.
+    logger.warn(
+      { agentId: input.workloadId, resolvedToolCount: fallback.allowedTools.length },
+      'No prompt authorization resolver on this node; falling back to server-authored persona declarations with the completion floor',
+    );
+  }
+  const resolved = input.resolver
     ? await input.resolver(input.workloadId)
-    : fallback;
+    : {
+      allowedTools: [ANY_BOT_COMPLETION_TOOL, ...fallback.allowedTools],
+      scopes: [ANY_BOT_COMPLETION_SCOPE, ...fallback.scopes],
+    };
+  const authorization = resolved;
   return {
     userSub: input.userSub,
     ticketId: input.ticketId,

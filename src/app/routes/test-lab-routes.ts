@@ -28,6 +28,7 @@
  *            | documentation from the original eight-kind baseline to the current 15-kind catalog.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Obtain request-bound caller transport only for declared service smokes, keeping session data out of Node execution and public catalog results.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Serve the fixed package-batch UI asset; execution remains on existing guarded schedule routes.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Reads the ONE MOCK_OIDC predicate instead of testing `=== 'true'`. The auth bypass accepts true|1|yes in any case, so a deployment started with MOCK_OIDC=1 was authenticated as the mock user while this site read the flag as OFF - a deployment half in demo mode and half out of it. It failed CLOSED here, which is why it went unnoticed rather than becoming an incident; the hazard is the next person "fixing" the inconsistency in the permissive direction on one site alone.
  * ---------------------------------------------------------------------------
  * @module test-lab-routes
  */
@@ -41,6 +42,7 @@ import { renderCatalogVisual } from './test-lab-visual-catalog';
 import type { InstalledAppTestCatalog, InstalledTestAuth, InstalledAppTestCase, AppSmokeVerificationOptions } from '@/features/swarm-apps';
 import { createTestLabRunRoutes, type TestLabRunRouteOptions } from './test-lab-run-routes';
 import { createTestLabScheduleRoutes, type TestLabScheduleRouteOptions } from './test-lab-schedule-routes';
+import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 
 const logger = createChildLogger({ module: 'test-lab-routes' });
 const TOOLS_DIR = 'any-bot/server/services/tools/test-lab';
@@ -62,7 +64,7 @@ function resolveViewerSub(req: Request): string {
     const sub = u.sub || u.oid;
     if (sub) return String(sub);
   }
-  if (process.env.MOCK_OIDC === 'true') return 'demo-tester';
+  if (isMockOidcEnabled()) return 'demo-tester';
   throw Object.assign(new Error('Not authenticated'), { status: 401 });
 }
 

@@ -56,6 +56,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | GET /tasks now claims the PROTECTED success half too. Protected rows were dropped out of the summarize/repair pass and nothing else ever picked them up, so a protected ticket that finished correctly produced no summary, no finishTask and no thread turn - it simply went quiet. They are split out instead of discarded and handed to returnProtectedComplexSummaries, which records the derived lineage before it claims. The automatic half and the table-visual repair pass keep exactly the rows they had.
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Record WHICH half of the /ask session gate refused. The 404 session_not_found was emitted with no log line at all, so an operator reading the api log could not tell a foreign-owned session id from a store that failed to answer - the same indistinguishability that let a Jarvis ownership fault read as an empty conversation for three days. The decision, the status, the body and the short-circuit order are all unchanged; only the refusal is now written down.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | The tool block is built through the selector shadow step: a candidate selector is measured beside the shipped one and discarded, so a narrower cut can be judged on real traffic while the model keeps receiving exactly the block it received before.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | A decision timeout no longer files a ticket for a greeting or a question. The branch inferred that a slow turn was a big build and filed the user's own words as the title; with the operator's codex lane out of credits, every message timed out, so "Hi" was filed three times and escalated, alongside "what is 9 times 9" and "what screen am i on". Conversational messages now get the truth - the provider did not respond, nothing was filed - and substantive requests keep the existing hand-off.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -94,6 +95,7 @@ import { createJarvisVisualRoutes, createOptionalJarvisVisual } from './jarvis-v
 import {
   JARVIS_AGENT_ID,
   DECISION_TIMEOUT_MS,
+  looksLikeWorkRequest,
   APP_ROUTES,
   PLAN_DIRECTIVE_GUIDANCE,
   loadEffectiveRoutes,
@@ -837,9 +839,15 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         // The decision turn should be quick (answer or emit a hand-off). But the persona is only
         // model judgment — on a "build me X" request the codex agent will sometimes IGNORE the
         // hand-off rule and grind the whole build inline (observed: 8.6 min, 1.8M tokens). So we
-        // race it against a hard timeout: if it hasn't decided in time, it's clearly doing heavy
-        // work — stop waiting, FILE the request with the PM/swarm, and ack. (The grinding turn
-        // finishes harmlessly server-side; we just don't block the user on it.)
+        // race it against a hard timeout and, for a request that plausibly IS work, file it with
+        // the PM/swarm rather than block the user. (The grinding turn finishes harmlessly
+        // server-side; we just don't block the user on it.)
+        //
+        // What this must NOT do is infer "slow" means "big". A timeout equally means the brain is
+        // DOWN, and that inference filed "Hi" as an escalated build ticket three times, plus
+        // "what is 9 times 9" and "what screen am i on" — every one of them while the operator's
+        // codex lane sat on `You've hit your usage limit`. A greeting or a question is never a
+        // build, so on those a timeout is reported as what it is.
         let answer: string;
         try {
           const raced = await Promise.race([
@@ -849,6 +857,29 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
           answer = raced.answer;
         } catch (e) {
           if ((e as Error).message !== 'DECISION_TIMEOUT' || artifactSelection) throw e;
+
+          // A greeting or a question that timed out is an unavailable assistant, not a build.
+          // Filing it produces a ticket nobody asked for, titled with the user's small talk, that
+          // then escalates — and tells them something untrue about their own message.
+          if (!looksLikeWorkRequest(message)) {
+            const unavailable = 'I could not get an answer just now — my model provider did not '
+              + 'respond in time. Nothing was filed. Try again shortly, or pick a different '
+              + 'provider in Settings → AI Providers.';
+            await persistJarvisTurn(ctx, sessionId, 'assistant', unavailable);
+            await markJarvisSessionTaskStatus(ctx, sessionId, 'active');
+            const prior = askJobs.get(jobId);
+            askJobs.set(jobId, {
+              sub, issuer, label, taskId: sessionId, kind: 'chat', status: 'done',
+              createdAt: prior?.createdAt ?? Date.now(), finishedAt: Date.now(),
+              result: { answer: unavailable, routed: [], handoffs: [], dispatched: [] },
+            });
+            logger.warn(
+              { sessionId, messageLength: message.length },
+              'jarvis: decision timeout on a conversational message — reported as unavailable, nothing filed',
+            );
+            return;
+          }
+
           const workJobId = crypto.randomUUID();
           let ticketId: string | undefined;
           try {

@@ -216,7 +216,9 @@ describe('wiring: the route + seam are actually mounted (source assertions)', ()
     expect(source).toContain('UnknownBotNodeProviderError');
     // The env overlay must go through the SAME path the boot pull uses, so every
     // downstream env resolver agrees with the switch.
-    expect(source).toContain('applyPulledBotConfigToEnv({ providerId: target.runtime');
+    // Whitespace-tolerant: the call is formatted across lines, and a source guard that breaks on
+    // reformatting teaches everyone to edit the assertion rather than read it.
+    expect(source).toMatch(/applyPulledBotConfigToEnv\(\{\s*providerId: target\.runtime/);
     // A switch row's id is translated (runtime name, or a Cline-backed API provider onto
     // cline-cli) before the overlay — bot-node-provider-switch.ts owns that rule.
     expect(source).toContain('resolveBotNodeSwitch(requested, builtProviders, clineApiProviders)');

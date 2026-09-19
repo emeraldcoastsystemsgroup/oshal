@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for the LoRA automated curation judge. Runs the REAL scripts/comfyui-edge/make-curate.py over a real pool of image/caption pairs and inspects the artefact train-lora.py actually consumes - curated.zip - so "rejected candidates do not enter the training set" is proved at the training-set boundary rather than at the decision function. Also drives curation_judge.py's labelled-fixture mode: the false accept/reject rates are measured and shown to bite when the thresholds are loosened, and a fixture that cannot measure a rate is refused instead of reported as a perfect zero. Fails loudly (never skips) when Python is missing, because a skipped guard is no guard.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin that curating INTO the candidate pool refuses. curate() empties --dest first, and this change made --dest operator-supplied beside an independent --source, so --source X --dest X wiped the pool - measured on this fixture: 36 files to 0, then a traceback.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cover the AUTONOMOUS improve path, which had no judge at all. make-targeted-batch.recurate() zipped an even-sample straight into curated.zip, and overnight-loop.py trains on that exact path - so the judge was a make-curate-only feature and every unattended improve round trained on unjudged renders, rejects included. Two cases, both asserting on curated.zip rather than on the decision function, because the defect was in what got WRITTEN: every fixture reject stays out of the training set the loop consumes, and an unmeasurable run refuses instead of writing one.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -218,6 +219,98 @@ describe('LoRA automated curation judge', () => {
     expect(report.summary.rejected).toBe(ctx.fixture.candidates.filter((c) => c.label === 'reject').length);
     expect(report.summary.overridden).toBe(0);
     expect(Object.keys(report.summary.reject_reasons)).toContain('structural-identity-violation');
+  }, RUN_TIMEOUT_MS);
+
+  it('the AUTONOMOUS improve path judges too, so overnight training never sees a reject', () => {
+    // make-targeted-batch.recurate() used to zip an even-sample straight into curated.zip with no
+    // judgement at all, which made the judge a make-curate-only feature. overnight-loop.py runs
+    // make-targeted-batch and then trains on ~/overnight/curated.zip - the exact path recurate
+    // overwrites - so every autonomous improve round trained on unjudged renders while the manual
+    // path rejected them. Even sampling is DIVERSITY, never judgement.
+    //
+    // Asserted on curated.zip, the artefact train-lora.py consumes, not on the decision function:
+    // the defect lived in what got written, not in how a candidate was scored.
+    const fixture = loadFixture();
+    const work = mkdtempSync(join(tmpdir(), 'lora-improve-'));
+    const pool = join(work, 'img');
+    const destRoot = join(work, 'overnight');
+    mkdirSync(pool, { recursive: true });
+
+    // recurate() globs oshbrainrot_*.png, so the pool is built under the name the REAL code looks
+    // for; the fixture stays the source of truth for the verdicts and the measurements.
+    const measurements: Record<string, Record<string, number>> = {};
+    for (const row of fixture.candidates) {
+      const id = `oshbrainrot_${row.id}`;
+      writeFileSync(join(pool, `${id}.png`), PNG_1X1);
+      writeFileSync(join(pool, `${id}.txt`), `oshbrainrot, ${row.id.replace(/_/g, ' ')}\n`);
+      measurements[id] = row.measurements;
+    }
+    const measurementsPath = join(work, 'measurements.json');
+    writeFileSync(measurementsPath, JSON.stringify(measurements, null, 2));
+
+    const driver = [
+      'import importlib.util, json, sys',
+      'spec = importlib.util.spec_from_file_location("mtb", sys.argv[1])',
+      'm = importlib.util.module_from_spec(spec)',
+      'spec.loader.exec_module(m)',
+      'm.DATA = sys.argv[2]',
+      'm.DEST = sys.argv[3]',
+      'print(json.dumps({"kept": m.recurate(measurements_path=sys.argv[4])}))',
+    ].join('\n');
+    const r = spawnSync(
+      python(),
+      ['-c', driver, join(EDGE_DIR, 'make-targeted-batch.py'), pool, destRoot, measurementsPath],
+      { encoding: 'utf8', timeout: RUN_TIMEOUT_MS },
+    );
+    expect(r.status, `recurate failed: ${r.stderr}`).toBe(0);
+
+    const zipPath = join(destRoot, 'curated.zip');
+    expect(existsSync(zipPath), 'the improve path wrote no training set at all').toBe(true);
+    const names = zipNames(zipPath);
+
+    for (const row of fixture.candidates) {
+      const png = `oshbrainrot_${row.id}.png`;
+      if (row.label === 'reject') {
+        expect(names, `${row.id} (${row.failure}) reached the training set the overnight loop trains on`)
+          .not.toContain(png);
+      } else {
+        expect(names, `${row.id} was dropped from the training set`).toContain(png);
+      }
+    }
+    // recurate() logs to stdout as well, so take the last line, which is the driver's JSON.
+    const lines = r.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+    const kept = JSON.parse(lines[lines.length - 1] || '{}').kept as number;
+    expect(kept).toBe(fixture.candidates.filter((c) => c.label === 'keep').length);
+  }, RUN_TIMEOUT_MS);
+
+  it('the improve path REFUSES rather than writing an unjudged training set', () => {
+    // Fail-closed, matching curation_judge's own stance. If the run cannot be measured, a stopped
+    // loop beats a loop that trains on whatever it rendered - overnight-loop.py reads the non-zero
+    // exit as "targeted batch failed; stopping".
+    const work = mkdtempSync(join(tmpdir(), 'lora-improve-closed-'));
+    const pool = join(work, 'img');
+    mkdirSync(pool, { recursive: true });
+    writeFileSync(join(pool, 'oshbrainrot_unmeasured.png'), PNG_1X1);
+    writeFileSync(join(pool, 'oshbrainrot_unmeasured.txt'), 'oshbrainrot, unmeasured\n');
+
+    const driver = [
+      'import importlib.util, sys',
+      'spec = importlib.util.spec_from_file_location("mtb", sys.argv[1])',
+      'm = importlib.util.module_from_spec(spec)',
+      'spec.loader.exec_module(m)',
+      'm.DATA = sys.argv[2]',
+      'm.DEST = sys.argv[3]',
+      'm.INP = sys.argv[3]',  // no hero there, so it cannot measure
+      'm.recurate()',
+    ].join('\n');
+    const r = spawnSync(
+      python(),
+      ['-c', driver, join(EDGE_DIR, 'make-targeted-batch.py'), pool, join(work, 'overnight')],
+      { encoding: 'utf8', timeout: RUN_TIMEOUT_MS },
+    );
+    expect(r.status, 'an unmeasurable run must not exit 0').not.toBe(0);
+    expect(r.stderr).toMatch(/REFUSING to recurate unjudged/);
+    expect(existsSync(join(work, 'overnight', 'curated.zip')), 'it wrote a training set anyway').toBe(false);
   }, RUN_TIMEOUT_MS);
 
   it('refuses to curate INTO the candidate pool instead of deleting it', () => {

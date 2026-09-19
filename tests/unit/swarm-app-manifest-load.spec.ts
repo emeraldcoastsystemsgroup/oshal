@@ -4,10 +4,12 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Vitest unit guards for the swarm-app manifest loader: readManifest fails closed on malformed fields; SwarmAppService.loadApp registers the manifest's ticketType/workflow/bots and is idempotent on a re-load; autoLoadAll isolates a bad manifest (logs + reports it, never aborts the boot pass). Previously exercised only via the docker-stack swarm-apps-framework e2e.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Drive the manifest-to-registry bridge instead of grepping it (CKR-1). registerWorkflow is a hand-written object literal that has already lost a field in production - reviewerBot was silently dropped, so every app-contributed reviewer bot fell through to graceful completion - and the guard that shipped for it was a source-text regex that never executed the bridge. Two cases now: a manifest declaring EVERY SwarmAppWorkflow key is loaded by the real service and every value is read back off the real registry, and a second case derives the key list from the INTERFACE and fails when the literal does not copy one, so a newly added field cannot be forgotten the same way twice.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | `pipeline: staged` is refused at load (CKR-10). Its executor was retired for the graph engine, so a manifest declaring it fell through to manifest-worker and ran only workerBot with every authored approval gate dropped and nothing logged. Two cases: staged throws naming graph, and the pipelines that DO have an executor still load - so the refusal cannot quietly become a blanket pipeline check. The every-key fixture also drops `stages`, which the manifest type no longer declares.
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -168,6 +170,133 @@ function validManifestYaml(): string {
     '',
   ].join('\n');
 }
+
+describe('every declared workflow key survives the manifest-to-registry bridge', () => {
+  const EVERY_KEY_APP = 'every-key-guard';
+  const EVERY_KEY_TICKET = 'every-key-guard-ticket';
+
+  afterEach(() => {
+    registry().unregisterApp(EVERY_KEY_APP);
+  });
+
+  /**
+   * The bridge is a hand-written object literal in swarm-app-service.registerWorkflow. It has
+   * already lost a field in production: `reviewerBot` was silently dropped, which made every
+   * app-contributed reviewer bot fall through to graceful completion. The guard that shipped for
+   * that was a source-text regex over the file — it never executed the bridge, so it could only
+   * ever catch the deletion of one literal string it was told to look for.
+   *
+   * This drives the REAL loader and reads the REAL registry, and it is derived from the type's
+   * own key list, so a NEW field added to SwarmAppWorkflow and forgotten in the literal fails
+   * here rather than being discovered in production a second time.
+   */
+  it('a manifest declaring every SwarmAppWorkflow key round-trips all of them', async () => {
+    const svc = newService(new FakeRepo());
+    const declared = {
+      name: 'Every Key Flow',
+      pipeline: 'graph',
+      workerBot: 'guard-worker',
+      reviewerBot: 'guard-reviewer',
+      maxRevisions: 3,
+      autoStart: true,
+    };
+
+    const manifest = [
+      `name: ${EVERY_KEY_APP}`,
+      'displayName: Every Key Guard',
+      'suite: ai-engineering',
+      `ticketType: ${EVERY_KEY_TICKET}`,
+      'workflow:',
+      `  name: ${declared.name}`,
+      `  pipeline: ${declared.pipeline}`,
+      `  workerBot: ${declared.workerBot}`,
+      `  reviewerBot: ${declared.reviewerBot}`,
+      `  maxRevisions: ${declared.maxRevisions}`,
+      `  autoStart: ${declared.autoStart}`,
+      '  processDefinition:',
+      '    nodes:',
+      '      - id: start',
+      '        type: task',
+      'bots:',
+      `  - agentId: ${VALID_BOT_ID}`,
+      '    name: guard-worker',
+      '    role: guard/worker',
+      '    capabilities: [guarding]',
+      '',
+    ].join('\n');
+
+    await svc.loadApp(writeManifest(manifest));
+    const resolved = registry().resolve(EVERY_KEY_TICKET) as Record<string, unknown> | undefined;
+    expect(resolved, 'the workflow never reached the registry at all').toBeTruthy();
+
+    // Scalars, each asserted by VALUE — a key copied as `undefined` is the failure shape.
+    for (const [key, value] of Object.entries(declared)) {
+      expect(resolved?.[key], `workflow.${key} did not survive the bridge`).toEqual(value);
+    }
+    // The structured field, which a literal is just as capable of dropping.
+    expect(resolved?.processDefinition, 'workflow.processDefinition did not survive the bridge')
+      .toEqual({ nodes: [{ id: 'start', type: 'task' }] });
+  });
+
+  it('the bridge copies every key the TYPE declares, so a new field cannot be forgotten', () => {
+    // Derived from the interface, not from a list maintained here: the point of the original
+    // defect is that someone added a field and did not touch the literal.
+    const types = readFileSync(join(process.cwd(), 'src/features/swarm-apps/types.ts'), 'utf8');
+    const body = types.slice(
+      types.indexOf('export interface SwarmAppWorkflow {'),
+      types.indexOf('}', types.indexOf('export interface SwarmAppWorkflow {')),
+    );
+    const declaredKeys = [...body.matchAll(/^\s{2}(\w+)\??:/gm)].map((m) => m[1]);
+    expect(declaredKeys.length, 'parsed no keys off SwarmAppWorkflow - the parse is broken').toBeGreaterThan(5);
+
+    const service = readFileSync(
+      join(process.cwd(), 'src/features/swarm-apps/services/swarm-app-service.ts'), 'utf8',
+    );
+    const literal = service.match(/registerFromApp\(\s*manifest\.name,\s*\{[\s\S]*?\n\s*\}\s*\)/);
+    expect(literal, 'registerFromApp literal not found').toBeTruthy();
+
+    const missing = declaredKeys.filter((key) => !literal![0].includes(`manifest.workflow.${key}`));
+    expect(missing, 'SwarmAppWorkflow declares these keys and the bridge copies none of them').toEqual([]);
+  });
+});
+
+describe('a pipeline with no executor is refused, not quietly degraded', () => {
+  it("readManifest refuses `pipeline: staged` and names the pipeline that works", () => {
+    // The staged executor was retired for the graph engine. A manifest declaring it fell through
+    // chooseDispatchPath to manifest-worker: only workerBot ran, every approval gate the author
+    // wrote was dropped, and nothing was logged — a silently wrong run, which is worse than a
+    // refused load. Publish is unaffected; the studio compiles its own staged authoring INTO a
+    // graph and never emits this value.
+    expect(() => readManifest(writeManifest([
+      'name: staged-guard',
+      'displayName: Staged Guard',
+      'suite: ai-engineering',
+      'ticketType: staged-guard-ticket',
+      'workflow:',
+      '  name: Staged Flow',
+      '  pipeline: staged',
+      '  workerBot: guard-worker',
+      '',
+    ].join('\n')))).toThrow(/graph/);
+  });
+
+  it('the pipelines that DO have an executor still load', () => {
+    // The refusal must be specific to `staged`, not a blanket pipeline check.
+    for (const pipeline of ['graph', 'manifest-worker']) {
+      expect(() => readManifest(writeManifest([
+        `name: ok-${pipeline}`,
+        'displayName: OK',
+        'suite: ai-engineering',
+        `ticketType: ok-${pipeline}-ticket`,
+        'workflow:',
+        '  name: Fine',
+        `  pipeline: ${pipeline}`,
+        '  workerBot: guard-worker',
+        '',
+      ].join('\n'))), `${pipeline} must still load`).not.toThrow();
+    }
+  });
+});
 
 describe('SwarmAppService.loadApp — registers ticketType/workflow/bots', () => {
   afterEach(() => {

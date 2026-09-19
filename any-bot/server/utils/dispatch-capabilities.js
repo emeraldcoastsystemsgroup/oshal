@@ -40,7 +40,10 @@ function requireDispatchAuthorityList(value, field, maxEntryLength) {
 
 /** Normalize server-issued scopes while preserving null as the legacy interactive boundary. */
 function normalizeAuthorizedScopes(value) {
-  if (value === undefined || value === null) return null;
+  // Absence is not authority. This used to return null, which hasOperationScope read as
+  // unrestricted, so an omitted field granted every operation scope - while a MALFORMED value
+  // already produced a deny-all empty Set. Both shapes now deny, and the tool allowlist
+  // primitive agrees with this one on both.
   if (!Array.isArray(value)) return new Set();
   return new Set(value.filter((entry) => (
     typeof entry === 'string' && entry.length > 0 && entry.length <= 512
@@ -52,9 +55,9 @@ function requiredScope(toolName) {
   return toolName === COMPLETION_TOOL ? COMPLETION_SCOPE : `tool:${toolName}`;
 }
 
-/** Scope absence is allowed only on the legacy interactive path (null scope set). */
+/** No unrestricted value exists: a missing or non-Set scope set denies every operation. */
 function hasOperationScope(scopes, toolName) {
-  return scopes === null || scopes.has(requiredScope(toolName));
+  return scopes instanceof Set && scopes.has(requiredScope(toolName));
 }
 
 /**

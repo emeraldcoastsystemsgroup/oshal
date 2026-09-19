@@ -15,6 +15,26 @@ export const LOCAL_AUTH_PRINCIPAL_ISSUER = 'urn:oshal:local-auth';
 export const MOCK_OIDC_PRINCIPAL_ISSUER = 'urn:oshal:mock-oidc';
 export const GUEST_PRINCIPAL_ISSUER = 'urn:oshal:guest';
 
+/**
+ * @description THE predicate for "is this deployment running mock OIDC". One reading, so the
+ * auth bypass and everything that reasons about it can never disagree.
+ *
+ * It lives beside {@link MOCK_OIDC_PRINCIPAL_ISSUER} rather than in the OIDC middleware because
+ * that module pulls `express-openid-connect`, and a ticket store has no business importing the
+ * auth stack to answer a question about an environment variable — which is precisely why two
+ * copies of this function grew there.
+ *
+ * Accepted spellings are deliberately broader than `=== 'true'`: an operator who writes
+ * `MOCK_OIDC=1` gets the auth bypass, so every site that reasons about mock mode must agree with
+ * the bypass or the deployment ends up half in demo mode and half out of it.
+ * @param env - Environment to read; injectable so a guard can state the case exactly.
+ * @returns True when mock OIDC is on.
+ */
+export function isMockOidcEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = (env.MOCK_OIDC ?? '').trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
 const MAX_ISSUER_LENGTH = 2048;
 
 type OidcRequestShape = {

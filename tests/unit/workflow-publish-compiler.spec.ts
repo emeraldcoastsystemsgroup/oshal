@@ -34,8 +34,11 @@ describe('compileWorkflowSpec', () => {
     );
     expect(m.workflow?.pipeline).toBe('graph');
     expect(m.workflow?.workerBot).toBe('sales-intake-bot'); // informational = first stage
-    expect(m.workflow?.stages).toHaveLength(3);
     const graph = (m.workflow?.processDefinition as any)?.nodeGraph;
+    // Three authored stages become three execute-agent nodes. Asserted on the GRAPH, which is what
+    // the engine runs: the old assertion read workflow.stages, an informational copy no dispatcher
+    // ever consumed, and the field is gone with the retired staged pipeline (CKR-10).
+    expect(graph.nodes.filter((n: any) => n.type === 'execute-agent')).toHaveLength(3);
     // start, 3 execute-agent, 1 approval-gate (after Quote), deliver = 6 nodes
     expect(graph.nodes.map((n: any) => n.type)).toEqual([
       'start', 'execute-agent', 'execute-agent', 'approval-gate', 'execute-agent', 'deliver',

@@ -28,6 +28,9 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com | Declare read-only user-context installation smokes with a clearable caller PAT prerequisite.
  * 23 | maintainer@emeraldcoastsystemsgroup.com | manifest.dependencies gains the required/optional tiers (SwarmAppDependencyLists); the legacy flat apps/tools/connectors form stays valid and reads as all-required. Consumers read it through @/shared/app-dependencies, never the raw keys.
  * 24 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: a service-route schedule declares its principal class and its needs — `runsAs` (system | user) is the package's PROPOSAL, granting nothing until a person activates it, and `requires` names permissions from this app's own imported authorization catalog. Both optional and additive: a manifest that omits them loads exactly as before and its schedule is unclassified until an administrator classifies it at activation.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | Recorded WHY antigravity-cli is absent from the packaged-bot harness set. It is a registered, selectable harness, and "selectable like any other provider" was written on several surfaces without qualifying that the manifest boundary excludes it - so the omission read as an oversight someone would helpfully "fix", producing manifests that load and then fail at dispatch. The exclusion is deliberate and stays until a bot node can execute the harness.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Removed `phases` from SwarmAppWorkflow (CKR-1 / D1+D3). It was declared here, written in 16 shipped manifests across both repos, and taught by ADR-033b's canonical example - and copied by NOTHING. The bridge in swarm-app-service registerWorkflow is a hand-written object literal, the destination WorkflowDefinition has no slot for it, so it was never plumbed at all: authors were declaring a field that could not do anything. The same literal had already lost `reviewerBot` in production, which made every app-contributed reviewer fall through to graceful completion. Deleting rather than plumbing, because there is no staged dispatcher for phases to drive (CKR-10). Existing manifests keep the key harmlessly - the loader tolerates unknown keys, and a fail-closed unknown-key pass would break 13 installed store packages.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com   | Removed `stages` and SwarmAppWorkflowStage (CKR-10 / D2). The staged EXECUTOR was retired in favour of the graph engine, so a hand-authored `pipeline: staged` fell through chooseDispatchPath to manifest-worker and ran only workerBot - dropping every approval gate the author wrote, silently. The field was still typed on both sides and copied by the registry bridge, so the manifest format kept advertising a shape nothing could execute. Live blast radius was zero: no manifest in either repo declared it and Publish structurally cannot emit it - the studio compiles its own staged mode INTO a graph and never touches this type. Deleting rather than restoring an executor, which is what the repair entry recommends: the graph engine supersedes it. A manifest declaring it is now REFUSED by readManifest and pointed at graph.
  */
 
 import type { BriefingDeclaration } from '@/shared/briefings';
@@ -120,6 +123,11 @@ export const SWARM_APP_BOT_HARNESS_TYPES = [
   'gemini-cli',
   'a2a',
   'noop',
+  // DELIBERATELY NOT 'antigravity-cli'. It is a registered harness and selectable as a switch
+  // ROW, but no bot node can execute it (HARNESS_BY_ID gives it botNodeRuntime: null and Google
+  // publishes no musl build), so a packaged bot that declared it would load and then fail at
+  // dispatch. This list is the manifest boundary and it fails closed on purpose — add an entry
+  // here only once a node can actually run it. See docs/backlog/antigravity-and-node-footprint.md.
 ] as const;
 
 /** @description A validated packaged-bot execution harness. */
@@ -332,12 +340,6 @@ export interface SwarmAppSmokeDeclaration {
  *  optionally ending in a human approval gate. Mirrors WorkflowStageDefinition in
  *  dispatch-routing (structurally compatible; kept local so this types module stays
  *  free of a swarm-orchestration import). */
-export interface SwarmAppWorkflowStage {
-  bot: string;
-  name?: string;
-  approvalAfter?: boolean;
-}
-
 /** Workflow pipeline contributed to the WorkflowPipelineRegistry. */
 export interface SwarmAppWorkflow {
   name: string;
@@ -347,11 +349,7 @@ export interface SwarmAppWorkflow {
    * omitted the dispatcher hits the graceful-completion path after worker
    * deliverables — no review/revision cycle. */
   reviewerBot?: string;
-  phases?: string[];
   maxRevisions?: number;
-  /** Ordered stages for a 'staged' (authored multi-bot) workflow. Each stage pins an
-   *  existing bot and may end in a human approval gate. Ignored by other pipelines. */
-  stages?: SwarmAppWorkflowStage[];
   /** Compiled ProcessDefinition (nodeGraph) for a 'graph' workflow — executed by the
    *  ProcessDefinitionExecutionEngine via the queue-manager 'graph' dispatch path.
    *  Carried inline so it round-trips through the manifest. Loosely typed to keep this

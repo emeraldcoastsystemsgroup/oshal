@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add the opt-in Entra/local hybrid pilot composition: the established invited-user page remains at /login and offers Microsoft explicitly at /login/microsoft on the already-registered provider-suffixed callback; /login/local remains the recovery door. Door switches and logout clear sibling sessions so one browser principal is authoritative at a time.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Reads the one MOCK_OIDC predicate instead of a local truthiness helper. Seven places read this variable through FIVE different helpers, and they did not agree: two accepted `on` and five did not, so MOCK_OIDC=on meant "demo" to the deploy-mode resolver and "off" to the auth bypass. The accepted set is deliberately NOT widened to include `on` - widening would newly enable an auth bypass on any box that has the variable set to it, and a half-demo deployment was already not working. Now every reader answers identically by construction.
  */
 
 import type { Request, RequestHandler, Response } from 'express';
@@ -15,6 +16,7 @@ import {
   isEntraLocalIdentityBridgeEnabled,
 } from '@/app/middleware/entra-local-identity-bridge';
 import { createLocalAuthMiddlewareSet } from '@/app/routes/local-auth-routes';
+import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 import {
   createOidcMiddleware,
   resolveCookieDomainForHost,
@@ -92,7 +94,7 @@ function validateHybridConfiguration(env: NodeJS.ProcessEnv): void {
   if (!flag(env.LOCAL_AUTH)) {
     throw new Error('ENTRA_LOCAL_AUTH_HYBRID=true requires LOCAL_AUTH=true so /login/local remains available.');
   }
-  if (flag(env.MOCK_OIDC)) {
+  if (isMockOidcEnabled(env)) {
     throw new Error('ENTRA_LOCAL_AUTH_HYBRID refuses MOCK_OIDC; Microsoft sessions must be cryptographically verified.');
   }
   if (!flag(env.MICROSOFT_LOGIN)) {

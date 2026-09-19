@@ -741,11 +741,6 @@ export class QueueManagerService {
   }
 
   /**
-   * @description Thin delegator that wires this service's private dispatch state
-   * into the free dispatchStagedTicket function (the 'staged' authored-workflow
-   * pipeline). One call dispatches the ticket's CURRENT stage and advances it.
-   */
-  /**
    * @description Delegator for the 'graph' path — runs an authored workflow's compiled
    * ProcessDefinition through the engine, reusing this service's dispatch state + bot
    * client. The graph engine supersedes the staged executor (linear + branching).

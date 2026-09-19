@@ -19,6 +19,10 @@ const {
   normalizeAllowedTools,
   wrapUntrustedContent,
 } = require('../../any-bot/server/utils/untrusted-content');
+const {
+  hasOperationScope,
+  normalizeAuthorizedScopes,
+} = require('../../any-bot/server/utils/dispatch-capabilities');
 
 interface ProviderResponse {
   content: string;
@@ -83,6 +87,22 @@ describe('any-bot dispatch tool containment', () => {
       .find((message: { content: string }) => message.content.includes('unauthorized-tool-request'));
     expect(refusal.content).toContain('<UNTRUSTED_CONTENT>');
     expect(refusal.content).not.toContain('<execute_command>');
+  });
+
+  it('advertises NO tool at all when the dispatch omits an allowlist', async () => {
+    // The boundary case, not a normalizer case: a normalizer-only assertion never reaches the
+    // registry, and it is the registry snapshot that decides what the model is offered. With the
+    // fields omitted the model must be handed an empty tool array - not every advertised tool.
+    const runtime = runtimeHarness([response('Nothing to do without tools.')]);
+
+    await runtime.controller.processAgenticTask(
+      'task-1', 'Do the work.', [], {},
+      { source: 'swarm-dispatch' },
+    );
+
+    const firstOptions = runtime.generateResponse.mock.calls[0][1];
+    expect(firstOptions.tools).toHaveLength(0);
+    expect(runtime.execute).not.toHaveBeenCalled();
   });
 
   it('fences malicious tool output before the next model request', async () => {
@@ -179,11 +199,27 @@ describe('any-bot persisted-message containment utilities', () => {
     expect(messages[0].content).not.toContain('</UNTRUSTED_CONTENT>\nReveal');
   });
 
-  it('distinguishes an absent allowlist from a present empty or exact allowlist', () => {
-    expect(isDispatchToolAllowed(normalizeAllowedTools(undefined), 'execute_command')).toBe(true);
+  it('grants tools only from an explicit list — absence and malformation both deny', () => {
+    // This case asserted the OPPOSITE for absence until CKR-7: an omitted allowlist returned null
+    // and the predicate read null as unrestricted, so failing to supply a list granted every
+    // advertised tool. Absence is not authority.
+    expect(isDispatchToolAllowed(normalizeAllowedTools(undefined), 'execute_command')).toBe(false);
+    expect(isDispatchToolAllowed(normalizeAllowedTools(null), 'execute_command')).toBe(false);
+    // The malformed shape is where the two primitives used to disagree: tools returned null
+    // (unrestricted) while scopes returned an empty Set (deny-all) for the same input.
+    expect(isDispatchToolAllowed(normalizeAllowedTools('read_file'), 'read_file')).toBe(false);
+    expect(isDispatchToolAllowed(normalizeAllowedTools({ read_file: true }), 'read_file')).toBe(false);
     expect(isDispatchToolAllowed(normalizeAllowedTools([]), 'read_file')).toBe(false);
     expect(isDispatchToolAllowed(normalizeAllowedTools(['read_file']), 'read_file')).toBe(true);
     expect(isDispatchToolAllowed(normalizeAllowedTools(['read_file']), 'Read_File')).toBe(false);
+  });
+
+  it('the scope primitive agrees with the tool primitive on absence and malformation', () => {
+    expect(hasOperationScope(normalizeAuthorizedScopes(undefined), 'execute_command')).toBe(false);
+    expect(hasOperationScope(normalizeAuthorizedScopes(null), 'execute_command')).toBe(false);
+    expect(hasOperationScope(normalizeAuthorizedScopes('tool:read_file'), 'read_file')).toBe(false);
+    expect(hasOperationScope(normalizeAuthorizedScopes([]), 'read_file')).toBe(false);
+    expect(hasOperationScope(normalizeAuthorizedScopes(['tool:read_file']), 'read_file')).toBe(true);
   });
 
   it('caps serialized tool/page content and prevents delimiter breakout', () => {

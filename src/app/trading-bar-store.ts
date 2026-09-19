@@ -12,12 +12,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ensureBarSchema, chunked upsertBars (ON CONFLICT refresh), readBars (ordered window), barCoverage (count + first/last), latestClose. Instrument-agnostic OHLCV; RLS-enabled-but-open per migration 096.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Take the trading advisory lock like the rest of the family. This bootstrap issued bare pool.query DDL, so two concurrent fires could interleave the check-then-CREATE POLICY pair (42710) or race CREATE TABLE IF NOT EXISTS against itself (23505 on pg_type_typname_nsp_index). The `ensured` memo never helped: it is per-process, and the race is between processes.
  *
  * @module trading-bar-store
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import type { FuturesBar, Timeframe } from '@/features/trading';
 
 const logger = createChildLogger({ module: 'trading-bar-store' });
@@ -46,24 +48,37 @@ let ensured = false;
  */
 export async function ensureBarSchema(pool: Pool): Promise<void> {
   if (ensured) return;
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS market_bars (
-      symbol TEXT NOT NULL, timeframe TEXT NOT NULL, bar_ts TIMESTAMPTZ NOT NULL,
-      o DOUBLE PRECISION NOT NULL, h DOUBLE PRECISION NOT NULL, l DOUBLE PRECISION NOT NULL,
-      c DOUBLE PRECISION NOT NULL, v DOUBLE PRECISION NOT NULL DEFAULT 0,
-      source TEXT NOT NULL DEFAULT '', ingested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      PRIMARY KEY (symbol, timeframe, bar_ts)
-    );
-    CREATE INDEX IF NOT EXISTS idx_market_bars_symbol_tf ON market_bars (symbol, timeframe, bar_ts);
-    ALTER TABLE market_bars ENABLE ROW LEVEL SECURITY;
-  `);
-  await pool.query(`
-    DO $$ BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polname='market_bars_public' AND polrelid='market_bars'::regclass) THEN
-        EXECUTE 'CREATE POLICY market_bars_public ON market_bars AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true)';
-      END IF;
-    END $$;
-  `);
+  // Serialised on the trading advisory lock, like every other module in the family. Bare
+  // pool.query DDL races another bootstrap of the same table: the check-then-CREATE POLICY pair
+  // below is exactly the interleave that surfaces as 42710, and CREATE TABLE IF NOT EXISTS
+  // racing itself surfaces as 23505 on pg_type_typname_nsp_index. The `ensured` memo does not
+  // help - it is per-process, and the race is between processes.
+  //
+  // market_bars carries a PUBLIC permissive policy rather than owner-RLS, so it deliberately does
+  // NOT take buildOwnerRlsPolicyStatements; the policy statement is kept verbatim.
+  await runRuntimeSchemaBootstrap({
+    pool, moduleName: 'trading bars', lockKey: SCHEMA_LOCK_KEYS.trading,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS market_bars (
+         symbol TEXT NOT NULL, timeframe TEXT NOT NULL, bar_ts TIMESTAMPTZ NOT NULL,
+         o DOUBLE PRECISION NOT NULL, h DOUBLE PRECISION NOT NULL, l DOUBLE PRECISION NOT NULL,
+         c DOUBLE PRECISION NOT NULL, v DOUBLE PRECISION NOT NULL DEFAULT 0,
+         source TEXT NOT NULL DEFAULT '', ingested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+         PRIMARY KEY (symbol, timeframe, bar_ts)
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_market_bars_symbol_tf ON market_bars (symbol, timeframe, bar_ts)`,
+      `ALTER TABLE market_bars ENABLE ROW LEVEL SECURITY`,
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polname='market_bars_public' AND polrelid='market_bars'::regclass) THEN
+           EXECUTE 'CREATE POLICY market_bars_public ON market_bars AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true)';
+         END IF;
+       END $$`,
+    ],
+    requirements: [{
+      table: 'market_bars',
+      columns: ['symbol', 'timeframe', 'bar_ts', 'o', 'h', 'l', 'c', 'v', 'source', 'ingested_at'],
+    }],
+  });
   ensured = true;
   logger.info('market_bars schema ensured');
 }
