@@ -29,6 +29,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com | manifest.dependencies gains the required/optional tiers (SwarmAppDependencyLists); the legacy flat apps/tools/connectors form stays valid and reads as all-required. Consumers read it through @/shared/app-dependencies, never the raw keys.
  * 24 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: a service-route schedule declares its principal class and its needs — `runsAs` (system | user) is the package's PROPOSAL, granting nothing until a person activates it, and `requires` names permissions from this app's own imported authorization catalog. Both optional and additive: a manifest that omits them loads exactly as before and its schedule is unclassified until an administrator classifies it at activation.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Recorded WHY antigravity-cli is absent from the packaged-bot harness set. It is a registered, selectable harness, and "selectable like any other provider" was written on several surfaces without qualifying that the manifest boundary excludes it - so the omission read as an oversight someone would helpfully "fix", producing manifests that load and then fail at dispatch. The exclusion is deliberate and stays until a bot node can execute the harness.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Removed `phases` from SwarmAppWorkflow (CKR-1 / D1+D3). It was declared here, written in 16 shipped manifests across both repos, and taught by ADR-033b's canonical example - and copied by NOTHING. The bridge in swarm-app-service registerWorkflow is a hand-written object literal, the destination WorkflowDefinition has no slot for it, so it was never plumbed at all: authors were declaring a field that could not do anything. The same literal had already lost `reviewerBot` in production, which made every app-contributed reviewer fall through to graceful completion. Deleting rather than plumbing, because there is no staged dispatcher for phases to drive (CKR-10). Existing manifests keep the key harmlessly - the loader tolerates unknown keys, and a fail-closed unknown-key pass would break 13 installed store packages.
  */
 
 import type { BriefingDeclaration } from '@/shared/briefings';
@@ -353,7 +354,6 @@ export interface SwarmAppWorkflow {
    * omitted the dispatcher hits the graceful-completion path after worker
    * deliverables — no review/revision cycle. */
   reviewerBot?: string;
-  phases?: string[];
   maxRevisions?: number;
   /** Ordered stages for a 'staged' (authored multi-bot) workflow. Each stage pins an
    *  existing bot and may end in a human approval gate. Ignored by other pipelines. */

@@ -178,7 +178,24 @@ indication anything is wrong. Labelling it (D5) does not move it.
 
 ## Ready to ship — no operator decision needed
 
-### CKR-1 — the two workflow types cannot be kept in step, and one field is already dropped (D1 + D3) — S
+### CKR-1 — the two workflow types cannot be kept in step, and one field is already dropped (D1 + D3) — S — **SHIPPED**
+
+> `phases` deleted from `SwarmAppWorkflow` and from ADR-033b’s canonical example (the
+> `pipeline: education` line kept). Deleted rather than plumbed, because there is no staged
+> dispatcher for it to drive (CKR-10). Existing manifests keep the dead key harmlessly — the
+> loader tolerates unknown keys, and a fail-closed unknown-key pass would break 13 installed
+> store packages, which the entry warned about.
+>
+> The source-text regex in `security-review-fixes.spec.ts` is RETIRED, with a comment pointing at
+> its replacement. Two behavioural cases now: a manifest declaring every key is loaded by the real
+> service and each value read back off the real registry, and a second that derives the key list
+> from the INTERFACE so a newly added field missing from the literal fails BY NAME. Proven on both
+> mutations — deleting `reviewerBot:` reddens two cases, and adding a new field to the type
+> reddens the derived one naming it.
+>
+> One deviation, stated: the done-when asked that `grep -n "phases" types.ts` return nothing. The
+> field is gone, but the Change Log entry recording WHY still says the word. Deleting that
+> explanation to satisfy a literal grep would cost more than it buys.
 
 **Evidence.** `SwarmAppWorkflow` (`src/features/swarm-apps/types.ts:342-364`) and `WorkflowDefinition`
 (`src/features/swarm-orchestration/services/dispatch-routing.ts:39-66`) are two hand-maintained
