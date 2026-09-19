@@ -72,6 +72,7 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'provider-switch' scenario ("a bot's LLM provider is a row in a table"): a read-only probe of the fleet-default row + snapshot and of the rung every bot reports through /api/agents, failing on a switch-refused bot; regressionTests attach the unit/integration/browser guards that ship with the switch.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Attached tests/unit/dispatch-switch-row-stamping.spec.ts to the 'provider-switch' regressionTests: the tier-1 dispatch-stamping guard (a fleet or per-bot row reaching a DEDICATED bot node), added after review found that rung unguarded.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Attached the fallback-ORDER guards to the provider-switch regressionTests: provider-fallback-chain, antigravity-cli-harness and bot-node-config-bootstrap. Migration 148 added fallback_order to the same row the scenario already reads, and its guards shipped registered nowhere - a test file on disk is not Test Lab registration.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | Attached the database-less completion floor guard (CKR-8): a bot node with no database repository resolved to zero tools including attempt_completion, so it could not say it was finished. The Helm federated bot-pod topology ships database-less on purpose.
  * @module test-lab-scenarios
  */
 
@@ -342,6 +343,8 @@ export const SCENARIOS: Scenario[] = [
       // The fallback ORDER half of the same row (migration 148): the chain an administrator
       // writes, and the harnesses that cannot serve as a rung of it.
       { level: 'unit', path: 'tests/unit/provider-fallback-chain.spec.ts' },
+      // A node with no database repository must still be able to signal completion (CKR-8).
+      { level: 'unit', path: 'tests/unit/database-less-node-completion-floor.spec.ts' },
       { level: 'unit', path: 'tests/unit/antigravity-cli-harness.spec.ts' },
       { level: 'unit', path: 'tests/unit/bot-node-config-bootstrap.spec.ts' },
       { level: 'integration', path: 'tests/unit/provider-switch-store-postgres.spec.ts' },

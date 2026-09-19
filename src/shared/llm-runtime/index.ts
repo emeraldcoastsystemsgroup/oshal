@@ -13,6 +13,12 @@
  */
 
 export {
+  ANY_BOT_COMPLETION_SCOPE,
+  ANY_BOT_COMPLETION_TOOL,
+  anyBotRuntimeToolFor,
+  anyBotRuntimeToolScope,
+} from './any-bot-runtime-capabilities';
+export {
   resolveEffectiveBotProvider,
   type BotProviderInputs,
   type BotProviderSource,
