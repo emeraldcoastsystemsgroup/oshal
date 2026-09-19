@@ -1294,9 +1294,22 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   a cross-owner read sees 0, and a forged-owner insert is refused with 42501; mutation-proven red on
   `main`'s orchestrator (3 of 5 cases fail, spend stays 0). Units: `classifyCostUnit` (billed /
   price-equivalent / byo, ADR-127) labels run-trace llm-call spans + HTML and `GET /api/budgets/spend`
-  answers `spendByUnit` beside the enforcement sum. **Not done:** the cockpit ticket Cost tab still
-  shows one "Est. Cost" column with no unit (its per-agent rows carry no provider id server-side);
-  the BYO lane still records $0 by design (tokens only) — the label names it, it does not price it.
+  answers `spendByUnit` beside the enforcement sum.
+- **Status 2026-09-19 — the cockpit half is now done too.** The ticket Cost tab's per-agent rows
+  carry `providerId` and `costUnitLabel` server-side, so the "Provider" column stops rendering an
+  em dash for every bot and the "Est. Cost" cell names the unit its figure is in. The column was
+  structurally dead, not merely empty: `ticket-view-cost-renderer.js:51` has always read
+  `bot.providerId`, but `CockpitAgentUsageStats` never declared the field and all four construction
+  sites dropped it. `chat_tasks.provider_id` was populated the whole time (896 live rows across
+  openai-codex, claude-code, cline-cli, byo-llm, image-provider:openrouter and
+  deterministic-provider). The label reuses `classifyCostUnit`/`COST_UNIT_LABELS` — the same
+  ADR-127 classification `GET /api/budgets/spend` already reports by — rather than a second one,
+  and is left null for an unknown or cross-provider row because `classifyCostUnit` answers
+  `billed` for anything it does not recognise. `tests/unit/cockpit-cost-provider-column.spec.ts`
+  (9 cases) is mutation-proven against three separate regressions: dropping the provider from the
+  rollup, dropping the label from the per-task build, and removing the unknown/mixed guard.
+- **Still by design, not a defect:** the BYO lane records $0 (tokens only) — the label names the
+  unit, it does not price it. The caller's own endpoint bills the caller, so no price is knowable.
 
 ### Seeding-repair hygiene tail (2026-08-12)
 - **Remaining:** (1) rotate whatever `config-seed/claude-credentials.json` holds, then delete it — 25 KB of credential material, world-readable perms, zero consumers since the SEC-05 closure ("never revive a static config-seed token copy"); (2) mirror the eight `requiresOwnNode` entries that exist only in `swarm-bot-registry-local.ts` into the canonical registry (finance-analyst, identity-advisor, social-writer, storage-assistant, deck-builder, trading-analyst, communications-bot, weather-bot — "register in BOTH"); (3) point `WORLD_CLASSIFY_PROVIDERS` at a hosted provider so world classify stops degrading to lexicon-only (its 27 controller CLI refusals per 2h are BY DESIGN — never weaken `assertAuditedAutonomousHarness`).

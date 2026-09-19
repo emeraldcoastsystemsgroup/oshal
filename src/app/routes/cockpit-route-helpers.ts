@@ -10,6 +10,8 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Removed ticket cost rollup utilities into cockpit-cost-route-helpers.ts to bring this route helper back under the file-size limit
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Switched child ticket cost rollups to prefer direct chat_tasks aggregation so parent activity views include per-agent usage missed by task-store-only rollups
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Expanded child ticket fallback aggregation to include every linked task so per-bot rollups stay complete in localhost memory-backed runs
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | normalizeDirectUsageByAgent carries providerId. Tickets with a direct cost summary take this path instead of the task rollup, so leaving it out would have blanked the cockpit Provider column for precisely those tickets while the rollup path showed it.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Carries costUnitLabel through the direct-cost-summary path alongside providerId, so this surface labels a subscription price-equivalent and a BYO token count apart from metered spend instead of summing all three into one Est. Cost column.
  */
 
 import path from 'node:path';
@@ -24,6 +26,7 @@ import {
 } from './cockpit-work-item-helpers';
 import {
   type CockpitAgentUsageStats,
+  deriveCostUnitLabel,
   type CockpitModelUsageStats,
   mergeAgentUsageMaps,
   mergeModelUsageMaps,
@@ -919,6 +922,10 @@ function normalizeDirectUsageByAgent(value: unknown): Record<string, CockpitAgen
     normalized[agentId] = {
       agentId,
       agentName: readOptionalString(record.agentName) || agentId,
+      // Carried through here too: this is the path taken when a ticket has a direct cost
+      // summary, and dropping the field here would blank the column for exactly those tickets.
+      providerId: readOptionalString(record.providerId) || null,
+      costUnitLabel: deriveCostUnitLabel(readOptionalString(record.providerId) || null),
       totalInputTokens: readOptionalNumber(record.totalInputTokens) || 0,
       totalOutputTokens: readOptionalNumber(record.totalOutputTokens) || 0,
       totalTokens: readOptionalNumber(record.totalTokens) || 0,

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted cockpit ticket cost tab rendering to support per-bot usage tables while keeping the main detail renderer under the hard file-size limit
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The Est. Cost cell names the unit the figure is in (ADR-127). A CLI turn is a subscription price-equivalent and a BYO turn is $0 tokens-only, so a column that stacked those against metered spend was presenting three units as one number. The Provider column above it also stops rendering an em dash for every row: it reads bot.providerId, which the server never used to send. The label is omitted rather than guessed when the provider is unknown or the row merged across providers.
  */
 
 import { formatCost } from '../utils/formatters.js';
@@ -53,7 +54,7 @@ export function renderCostTab(body, ticket, costData) {
           <td>${escapeHtml(bot.totalInputTokens.toLocaleString())}</td>
           <td>${escapeHtml(bot.totalOutputTokens.toLocaleString())}</td>
           <td>${escapeHtml(bot.totalTokens.toLocaleString())}</td>
-          <td>${escapeHtml(formatCost(bot.totalCost))}</td>
+          <td>${escapeHtml(formatCost(bot.totalCost))}${bot.costUnitLabel ? `<span style="display:block;font-size:11px;color:var(--text-secondary)">${escapeHtml(bot.costUnitLabel)}</span>` : ''}</td>
         </tr>
       `).join('')}</tbody></table></div></div>`
     : '';

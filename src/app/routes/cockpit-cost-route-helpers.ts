@@ -5,9 +5,15 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted cockpit ticket cost and usage rollup helpers from cockpit-route-helpers.ts to satisfy governance decomposition requirements and support per-agent ticket cost breakdowns
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Re-estimate totalCost from model pricing at read time when persisted value is 0 but tokens are present (codex subscription returns no cost, etc.)
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | CockpitAgentUsageStats carries providerId, so the cockpit's "Provider" column stops rendering an em dash for every bot. The renderer at ticket-view-cost-renderer.js:51 has always read `bot.providerId || '-'` under a `<th>Provider</th>`, but the type never had the field and the rollup dropped it - the column was structurally dead, not empty for want of data. chat_tasks.provider_id is populated (896 live rows across openai-codex, claude-code, cline-cli, byo-llm, image-provider:openrouter and deterministic-provider) and the task store already maps it to providerId, so this only stops discarding it. A merge that spans two providers resolves to 'mixed' rather than keeping whichever arrived first, because one bot can legitimately run on more than one across tasks.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Each bot row also carries costUnitLabel, so the cockpit's Est. Cost column stops adding three different units as if they were one. ADR-127: a CLI turn's cost_usd is a subscription price-equivalent and a BYO turn records $0 by design, so a column that sums them beside real metered spend is not a spend figure. Reuses the existing classifyCostUnit/COST_UNIT_LABELS that /api/budgets/spend already reports by, rather than inventing a second classification. The label is null - not defaulted - for an unknown or 'mixed' provider, because classifyCostUnit answers 'billed' for anything unrecognised and asserting real money for a subscription equivalent is the exact error this is meant to stop.
  */
 
 import { resolveUsageCost } from '@/features/llm-provider';
+import { classifyCostUnit, COST_UNIT_LABELS } from '@/features/cost-governance';
+
+/** Sentinel provider for a bot whose spend spans more than one provider. */
+export const MIXED_PROVIDER = 'mixed';
 
 /**
  * @description Normalized usage totals for one model in cockpit ticket cost views.
@@ -28,6 +34,17 @@ export type CockpitModelUsageStats = {
 export type CockpitAgentUsageStats = {
   agentId: string;
   agentName: string;
+  /** Provider the bot's spend was booked against, for the cockpit's "Provider" column.
+   *  `null` means the source row had no provider_id, which the renderer shows as an em dash.
+   *  'mixed' when a merge spans two different providers - one bot CAN run on more than one
+   *  across tasks, and collapsing that to whichever arrived first would be a quiet lie. */
+  providerId: string | null;
+  /** ADR-127 unit the `totalCost` figure is expressed in, already rendered as an operator-facing
+   *  label. `null` when no single unit can be named - either the provider is unknown or the row
+   *  merged across providers. It is deliberately NOT defaulted: classifyCostUnit answers 'billed'
+   *  for anything it does not recognise, so labelling an unknown row would assert real metered
+   *  spend for what may be a subscription price-equivalent or a $0 BYO token count. */
+  costUnitLabel: string | null;
   totalInputTokens: number;
   totalOutputTokens: number;
   totalTokens: number;
@@ -143,9 +160,14 @@ export function mergeAgentUsageMaps(
 
   Object.entries(incoming).forEach(([agentId, stats]) => {
     const current = merged[agentId] || createEmptyAgentUsage(agentId, stats.agentName);
+    const mergedProviderId = mergeProviderId(current.providerId, stats.providerId);
     merged[agentId] = {
       agentId,
       agentName: stats.agentName || current.agentName || agentId,
+      providerId: mergedProviderId,
+      // Derived from the MERGED provider, never merged on its own: a label and a provider that
+      // disagree would be worse than no label at all.
+      costUnitLabel: deriveCostUnitLabel(mergedProviderId),
       totalInputTokens: current.totalInputTokens + (readOptionalNumber(stats.totalInputTokens) || 0),
       totalOutputTokens: current.totalOutputTokens + (readOptionalNumber(stats.totalOutputTokens) || 0),
       totalTokens: current.totalTokens + (readOptionalNumber(stats.totalTokens) || 0),
@@ -256,10 +278,16 @@ function buildTaskAgentUsage(
     return {};
   }
 
+  const taskProviderId = readOptionalIdentifier(task?.providerId) ?? null;
+
   return {
     [agentId]: {
       agentId,
       agentName: agentId,
+      // chat_tasks.provider_id, mapped to camelCase by the task store. Live rows carry
+      // openai-codex / claude-code / cline-cli / byo-llm / image-provider:* / deterministic-provider.
+      providerId: taskProviderId,
+      costUnitLabel: deriveCostUnitLabel(taskProviderId),
       totalInputTokens,
       totalOutputTokens,
       totalTokens,
@@ -294,10 +322,32 @@ function createEmptyModelUsage(): CockpitModelUsageStats {
   };
 }
 
+/**
+ * @description Combines two provider labels for one bot without inventing a winner.
+ * @param current - Provider already accumulated for this bot, or null when unknown.
+ * @param incoming - Provider on the row being merged in, or null when unknown.
+ * @returns The shared provider, the known one when only one side has it, or 'mixed' when they
+ *          genuinely differ - a bot may span providers across tasks and the column must say so.
+ */
+export function deriveCostUnitLabel(providerId: string | null): string | null {
+  // 'mixed' and null both mean "no single unit is knowable". classifyCostUnit would answer
+  // 'billed' for either, which reads as real money and may be neither.
+  if (!providerId || providerId === MIXED_PROVIDER) return null;
+  return COST_UNIT_LABELS[classifyCostUnit(providerId)];
+}
+
+function mergeProviderId(current: string | null, incoming: string | null): string | null {
+  if (!current) return incoming ?? null;
+  if (!incoming || incoming === current) return current;
+  return MIXED_PROVIDER;
+}
+
 function createEmptyAgentUsage(agentId: string, agentName = agentId): CockpitAgentUsageStats {
   return {
     agentId,
     agentName,
+    providerId: null,
+    costUnitLabel: null,
     totalInputTokens: 0,
     totalOutputTokens: 0,
     totalTokens: 0,
