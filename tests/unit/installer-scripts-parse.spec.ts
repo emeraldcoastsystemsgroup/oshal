@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the installer going DEAD ON ARRIVAL. installer/lib/install-swarm.ps1 shipped `$env$env:FORCE_LLM_PROVIDER = 'noop'` (doubled sigil), which is a HARD PowerShell parse error: the whole script failed to parse, so Install-OpenSwarm.bat could not execute a single step and no Windows user could complete a clean install. Nothing caught it — the installer has no test, no typecheck, and no CI gate, so a one-character corruption sat there silently. This spec parse-checks every installer script (real PowerShell parser on win32; static corruption + brace-balance checks everywhere) and asserts the ADR-085 `--profile little-monsters` reference stays gone, so the front door can never silently stop opening again.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Gave the real-parser case an explicit 120s vitest timeout. It inherited the 5s default while costing ~4.6s under full-suite load, so it flapped red on `vitest run tests/unit` and green in isolation — a guard that cries wolf is a guard nobody reads.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The wizard-open case stops pinning port 35457. It matched a regex hardcoding that port and went red the moment oshal-install.sh built its URL from $COCKPIT_PORT - no defect, just a port that became configurable, which is the same shape as the pool-ceiling guard that pinned a file path. It now asserts the LINK that actually matters: a variable is assigned a .../welcome destination, and a browser-open line uses that variable. A dropped /welcome or an open that stops using it still fails.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -204,8 +205,21 @@ describe('installer scripts stay executable', () => {
     '%s opens the onboarding wizard, not the bare cockpit',
     (rel) => {
       const text = codeOnly(fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'));
-      const opened = text.match(/https?:\/\/localhost:35457\/\S*/g) ?? [];
-      expect(opened.some((u) => u.includes('/welcome')), `${rel} never opens /welcome`).toBe(true);
+
+      // Structural, not port-pinned. This used to match /localhost:35457\/\S*/, which broke the
+      // moment the sh built its URL from $COCKPIT_PORT — a guard that a rename breaks and a
+      // deletion also breaks cannot tell you which happened. What actually matters is the LINK:
+      // some variable is assigned a .../welcome value, and the browser-open uses that variable.
+      const welcomeVars = [...text.matchAll(/\$?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*["'][^"'\n]*\/welcome["']/g)]
+        .map((m) => m[1]);
+      expect(welcomeVars.length, `${rel} assigns no .../welcome destination`).toBeGreaterThan(0);
+
+      const openLines = text.split('\n').filter((line) => /\b(start|xdg-open|Start-Process)\b/.test(line));
+      expect(openLines.length, `${rel} has no browser-open at all`).toBeGreaterThan(0);
+      expect(
+        openLines.some((line) => welcomeVars.some((v) => line.includes(`$${v}`) || line.includes(`$\{${v}}`))),
+        `${rel} opens a browser but not the .../welcome destination it built (${welcomeVars.join(', ')})`,
+      ).toBe(true);
     },
   );
 });

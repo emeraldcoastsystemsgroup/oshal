@@ -15,6 +15,7 @@
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | Lockstep with the ps1: --allow-stale-image plus the post-pull freshness gate, and the Windows WSL2 guidance on both docker preflight failures. Git Bash on Windows hits the same dead end as the ps1 path - 'docker daemon not running' with no hint that WSL2 is the engine that is missing. The sh path only ADVISES (it cannot elevate); the ps1 can actually enable it.
 # 10 | maintainer@emeraldcoastsystemsgroup.com  | The install ends with a USER who owns the swarm, not an allowlist entry. --auth-mode (basic|mock, default basic) picks the sign-in stack. basic writes LOCAL_AUTH=true/MOCK_OIDC=false, creates the administrator through the ADR-117 bootstrap (one-use proof from scripts/oshal-setup-root.mjs, swarm root claimed per ADR-148) with a random password nobody sees, then opens scripts/oshal-admin-link.mjs's one-time set-password link instead of /welcome: choosing the password signs that browser in and continues to the wizard, so the operator arrives authenticated and there is no generated credential to print and lose (the first cut printed one, and a hung closing step lost it). OSHAL_ADMIN_PASSWORD remains for headless automation. mock keeps the no-login demo posture but still claims root. Both write OSHAL_INSTALL_OWNER_SUB — the sha256-of-lowercased-email the local-auth store derives — so packages staged before any login belong to the operator. Unattended runs without --admin-email get admin@localhost. The Windows browser-open no longer hangs (cmd `start` read a lone quoted URL as a window title), and closing output gives the reissue command.
 # 11 | maintainer@emeraldcoastsystemsgroup.com  | The operator's first cockpit shows their applications. UI_PROFILE is written as oshal-framework (OSHAL_UI_PROFILE overrides): compose defaults to the 7-item starter cockpit, whose rail lists no installed application at all. Paired with the loader granting the install owner an explicit admin tier on each application it adopts — without one, the rail hid all 58 ADR-149 protected applications from the person who installed them.
+# 12 | maintainer@emeraldcoastsystemsgroup.com  | The store-source check fails OPEN and no longer breaks the offline install. store_is_public treated every non-200 as private, so a box with no curl, no network, a proxy, or a transient GitHub blip was told to supply a read token for the PUBLIC default store; only 401/403/404 now asks, and anything else proceeds. --from-archive skips the probe entirely - it is the documented zero-network path, it resolves to MODE=1, and this function runs before the mode dispatch, so the offline install was exiting 2 on a box that was working correctly. And the advertised "Enter to skip" no longer kills the run: under set -euo pipefail the skip path ended on a [ -n ] test returning 1, which terminated the installer with no message.
 # =============================================================================
 #
 # One-click:
@@ -276,12 +277,21 @@ require_auth_mode
 # store was undiscoverable: an operator had to already know the variable existed. It is
 # asked for here, and a credential is requested ONLY when the store does not answer
 # anonymously — read silently, so it is never echoed or left in shell history.
-store_is_public() {
-  _sc=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$1" 2>/dev/null || echo 000)
-  [ "$_sc" = "200" ]
+# Returns the HTTP status, or 000 when the probe could not be taken at all. The distinction is
+# load-bearing: a box with no curl, no network, or a proxy in the way is NOT a box with a private
+# store, and demanding a read token for the PUBLIC default store because a probe failed is a
+# wrong answer that stops the install dead.
+store_probe_status() {
+  command -v curl >/dev/null 2>&1 || { echo 000; return 0; }
+  curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$1" 2>/dev/null || echo 000
+  return 0
 }
 require_store_source() {
   [ "$MODE" = "3" ] && return 0                      # a leaf node stages nothing
+  # --from-archive is the documented ZERO-NETWORK install. It must not be gated on a network
+  # probe it cannot satisfy; it resolves to MODE=1 and this function runs before the mode
+  # dispatch, so without this line the offline path exits 2 on a box that is working correctly.
+  [ -n "$FROM_ARCHIVE" ] && return 0
   if [ "$STORE_REPO_NAMED" -eq 0 ] && [ -t 0 ]; then
     printf '   application store [%s]: ' "$STORE_REPO_DEFAULT"
     read -r _sr || true
@@ -289,16 +299,28 @@ require_store_source() {
   fi
   case "$STORE_REPO" in https://*) ;; *) echo "--store-repo must be an https URL: $STORE_REPO" >&2; exit 2 ;; esac
   [ -n "${OSHAL_STORE_TOKEN:-}" ] && return 0
-  store_is_public "$STORE_REPO" && return 0
+  _code=$(store_probe_status "$STORE_REPO")
+  [ "$_code" = "200" ] && return 0
+  # Only a DEFINITE refusal asks for a credential. Anything else — 000 (no curl, offline, DNS,
+  # proxy, timeout) or a server-side 5xx — means the probe could not tell, so the install
+  # proceeds and the store step surfaces a real error later if there genuinely is one.
+  case "$_code" in
+    401|403|404) ;;
+    *) return 0 ;;
+  esac
   if [ ! -t 0 ]; then
-    echo "$STORE_REPO is not readable anonymously and no credential was supplied." >&2
+    echo "$STORE_REPO refused an anonymous read (HTTP $_code) and no credential was supplied." >&2
     echo "Export OSHAL_STORE_TOKEN=<token with read access> and re-run." >&2
     exit 2
   fi
-  echo "   $STORE_REPO does not answer anonymously — it needs a read token."
+  echo "   $STORE_REPO refused an anonymous read (HTTP $_code) — it needs a read token."
   printf '   store access token (input hidden, Enter to skip): '
   stty -echo 2>/dev/null; read -r _st || true; stty echo 2>/dev/null; echo
   [ -n "$_st" ] && export OSHAL_STORE_TOKEN="$_st"
+  # `set -euo pipefail` is on. Without this the skip path's last command is the `[ -n ]` test,
+  # which returns 1, and the function invoked as a bare top-level command kills the installer
+  # with no message — on the prompt that literally says "Enter to skip".
+  return 0
 }
 require_store_source
 

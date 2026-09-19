@@ -164,7 +164,9 @@ x-bot-env: &bot-env
   # on disk with a different store's copies. The token is read only for a private store.
   OSHAL_STORE_REPO: ${OSHAL_STORE_REPO:-}
   OSHAL_STORE_REF: ${OSHAL_STORE_REF:-}
-  OSHAL_STORE_TOKEN: ${OSHAL_STORE_TOKEN:-}
+  # OSHAL_STORE_TOKEN is deliberately NOT here — see the oshal-api block. It is a registry read
+  # credential, every reader of it is controller-side, and this anchor merges into every
+  # bot-node. Same rule as the connector-token master key further down.
   OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
   OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
   OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
@@ -893,6 +895,12 @@ services:
       # Core API default ceiling: main 8 + four optional pools 2 each + RAG 2 = 18,
       # below oshal_app's 24-connection limit. Match the managed profile; these are
       # API-only settings. Operators must budget the aggregate when overriding them.
+      # CONTROLLER ONLY (kept out of *bot-env). Every reader is controller-side — the app
+      # registry routes, the store remote, the update-check cron and the registry store — and
+      # nothing under any-bot/ or the bot-node path touches it. Bots are this project's
+      # confirmed prompt-injection surface, so a repository read credential does not belong in
+      # their environment. Same rule as OSHAL_CONNECTOR_TOKEN_MASTER_KEY below.
+      OSHAL_STORE_TOKEN: ${OSHAL_STORE_TOKEN:-}
       OSHAL_DB_POOL_MAX: ${OSHAL_DB_POOL_MAX:-8}
       PGPOOL_MAX: ${PGPOOL_MAX:-2}
       RAG_DB_POOL_MAX: ${RAG_DB_POOL_MAX:-2}
