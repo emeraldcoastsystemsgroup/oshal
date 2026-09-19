@@ -33,9 +33,10 @@
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Hardened work-item persistence so duplicate deterministic unitIds do not recreate completed rows during retry cycles
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | TD-2: Regression loop-back — Phases 4-6 now wrapped in bounded loop. Testing/review failures trigger real re-execution of Phase 4 with regression feedback injection instead of escalating.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | Wired SwarmMetricsCollector into all processOneTicket exit paths — recordTicketMetrics now called on every ticket completion/escalation/planning-only finish
- * 31 | maintainer@emeraldcoastsystemsgroup.com   | Session 19: Imported enforceHandoverGate for handover enforcement hardening — gate checks now available on multi-round phase transitions
+ * 31 | maintainer@emeraldcoastsystemsgroup.com   | Session 19: Imported enforceHandoverGate for handover enforcement hardening — gate checks now available on multi-round phase transitions. CORRECTED (CKR-18): the import was never used in this file, so no gate check became available here; the function is called from planning-round-orchestrator, it assesses rather than enforces, and it is now named assessHandoverCoverage. The import is deleted.
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: propagate the durable TicketService authority to lifecycle memory persistence.
+ * 34 | maintainer@emeraldcoastsystemsgroup.com   | Deleted the unused enforceHandoverGate import (CKR-18 / R0.12). It was imported and never called, and entry 31 claimed importing it made gate checks available on multi-round phase transitions - it made nothing available. Entry 31 is corrected in place rather than rewritten, since it is a record of what was believed at the time.
  */
 
 import { randomUUID } from 'crypto';
@@ -106,7 +107,6 @@ import {
   resolveWorkspaceTaskId as resolveWorkspaceTaskIdHelper,
   awaitExecutionOutput as awaitExecutionOutputHelper,
   buildProcessingResult,
-  enforceHandoverGate,
 } from './swarm-ticket-lifecycle-helpers';
 import {
   SwarmRuntimeUnavailableError,
