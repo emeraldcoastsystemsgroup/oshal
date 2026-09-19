@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Vitest unit guards for the swarm-app manifest loader: readManifest fails closed on malformed fields; SwarmAppService.loadApp registers the manifest's ticketType/workflow/bots and is idempotent on a re-load; autoLoadAll isolates a bad manifest (logs + reports it, never aborts the boot pass). Previously exercised only via the docker-stack swarm-apps-framework e2e.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Drive the manifest-to-registry bridge instead of grepping it (CKR-1). registerWorkflow is a hand-written object literal that has already lost a field in production - reviewerBot was silently dropped, so every app-contributed reviewer bot fell through to graceful completion - and the guard that shipped for it was a source-text regex that never executed the bridge. Two cases now: a manifest declaring EVERY SwarmAppWorkflow key is loaded by the real service and every value is read back off the real registry, and a second case derives the key list from the INTERFACE and fails when the literal does not copy one, so a newly added field cannot be forgotten the same way twice.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | `pipeline: staged` is refused at load (CKR-10). Its executor was retired for the graph engine, so a manifest declaring it fell through to manifest-worker and ran only workerBot with every authored approval gate dropped and nothing logged. Two cases: staged throws naming graph, and the pipelines that DO have an executor still load - so the refusal cannot quietly become a blanket pipeline check. The every-key fixture also drops `stages`, which the manifest type no longer declares.
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
@@ -212,10 +213,6 @@ describe('every declared workflow key survives the manifest-to-registry bridge',
       `  reviewerBot: ${declared.reviewerBot}`,
       `  maxRevisions: ${declared.maxRevisions}`,
       `  autoStart: ${declared.autoStart}`,
-      '  stages:',
-      '    - bot: guard-worker',
-      '      name: Draft',
-      '      approvalAfter: true',
       '  processDefinition:',
       '    nodes:',
       '      - id: start',
@@ -236,9 +233,7 @@ describe('every declared workflow key survives the manifest-to-registry bridge',
     for (const [key, value] of Object.entries(declared)) {
       expect(resolved?.[key], `workflow.${key} did not survive the bridge`).toEqual(value);
     }
-    // The two structured fields, which a literal is just as capable of dropping.
-    expect(resolved?.stages, 'workflow.stages did not survive the bridge')
-      .toEqual([{ bot: 'guard-worker', name: 'Draft', approvalAfter: true }]);
+    // The structured field, which a literal is just as capable of dropping.
     expect(resolved?.processDefinition, 'workflow.processDefinition did not survive the bridge')
       .toEqual({ nodes: [{ id: 'start', type: 'task' }] });
   });
@@ -262,6 +257,44 @@ describe('every declared workflow key survives the manifest-to-registry bridge',
 
     const missing = declaredKeys.filter((key) => !literal![0].includes(`manifest.workflow.${key}`));
     expect(missing, 'SwarmAppWorkflow declares these keys and the bridge copies none of them').toEqual([]);
+  });
+});
+
+describe('a pipeline with no executor is refused, not quietly degraded', () => {
+  it("readManifest refuses `pipeline: staged` and names the pipeline that works", () => {
+    // The staged executor was retired for the graph engine. A manifest declaring it fell through
+    // chooseDispatchPath to manifest-worker: only workerBot ran, every approval gate the author
+    // wrote was dropped, and nothing was logged — a silently wrong run, which is worse than a
+    // refused load. Publish is unaffected; the studio compiles its own staged authoring INTO a
+    // graph and never emits this value.
+    expect(() => readManifest(writeManifest([
+      'name: staged-guard',
+      'displayName: Staged Guard',
+      'suite: ai-engineering',
+      'ticketType: staged-guard-ticket',
+      'workflow:',
+      '  name: Staged Flow',
+      '  pipeline: staged',
+      '  workerBot: guard-worker',
+      '',
+    ].join('\n')))).toThrow(/graph/);
+  });
+
+  it('the pipelines that DO have an executor still load', () => {
+    // The refusal must be specific to `staged`, not a blanket pipeline check.
+    for (const pipeline of ['graph', 'manifest-worker']) {
+      expect(() => readManifest(writeManifest([
+        `name: ok-${pipeline}`,
+        'displayName: OK',
+        'suite: ai-engineering',
+        `ticketType: ok-${pipeline}-ticket`,
+        'workflow:',
+        '  name: Fine',
+        `  pipeline: ${pipeline}`,
+        '  workerBot: guard-worker',
+        '',
+      ].join('\n'))), `${pipeline} must still load`).not.toThrow();
+    }
   });
 });
 

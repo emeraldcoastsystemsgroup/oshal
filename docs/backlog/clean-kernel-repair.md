@@ -503,7 +503,25 @@ row carries a verdict of exactly `promote to SDK` or `move to package`.
 
 ## Blocked on an operator decision
 
-### CKR-10 — `pipeline: staged` runs one bot and skips every approval gate (D2) — S
+### CKR-10 — `pipeline: staged` runs one bot and skips every approval gate (D2) — S — **SHIPPED**
+
+> **Decision taken 2026-09-19: DELETED, not restored.** The entry recommended deletion (“the graph
+> engine supersedes it”) and live blast radius was zero — no manifest in either repo declared it and
+> Publish structurally cannot emit it. Reversing it means restoring an executor, which was the
+> alternative the entry already weighed.
+>
+> `stages` and `SwarmAppWorkflowStage` are gone from the manifest type, the barrel, the registry
+> bridge and the orphan JSDoc; `git grep dispatchStagedTicket -- ':!docs/'` is clean. One correction
+> to my own reading: the publish compiler DID emit `stages` onto the manifest workflow at two sites
+> — I had said it never touched the type. Nothing read those rungs, so they are dropped there too,
+> and the compiler spec now asserts three authored stages become three execute-agent nodes in the
+> GRAPH, the form the engine actually runs.
+>
+> A manifest declaring `pipeline: staged` is now REFUSED by `readManifest` with `graph` and
+> `manifest-worker` named in the message, instead of loading and silently running only workerBot
+> with every authored approval gate dropped. Proven red both ways: removing the refusal reddens the
+> case, and a second case keeps the two working pipelines loading so the refusal cannot drift into
+> a blanket pipeline check.
 
 Mechanically confirmed in full: `stages` is typed on both sides, copied at `swarm-app-service.ts:1209`,
 read by no dispatcher; the executor is deleted down to the orphan JSDoc at
