@@ -5,11 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial demo data seeder — seeds Little Monsters classes, student, flashcards, assignments when the app boots in DEMO/MOCK_OIDC mode
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 LM carve-out: the entire seed set was Little Monsters data (lm_classes/students/flashcards/assignments), which no longer exists in core. seedDemoData is now a documented no-op preserving the exported API; demo data becomes each installed app package's responsibility (its own migrations/seeds).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reads the one MOCK_OIDC predicate instead of a local truthiness helper. Seven places read this variable through FIVE different helpers, and they did not agree: two accepted `on` and five did not, so MOCK_OIDC=on meant "demo" to the deploy-mode resolver and "off" to the auth bypass. The accepted set is deliberately NOT widened to include `on` - widening would newly enable an auth bypass on any box that has the variable set to it, and a half-demo deployment was already not working. Now every reader answers identically by construction.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import type { DemoSeedSummary } from '../types';
+import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 
 const logger = createChildLogger({ module: 'demo-data-seeder' });
 
@@ -40,5 +42,5 @@ export async function seedDemoData(_pool: Pool): Promise<DemoSeedSummary> {
  */
 export function shouldSeedDemoData(): boolean {
   const flag = (v?: string) => ['1', 'true', 'yes'].includes((v || '').toLowerCase());
-  return flag(process.env.DEMO_MODE) || flag(process.env.MOCK_OIDC);
+  return flag(process.env.DEMO_MODE) || isMockOidcEnabled();
 }

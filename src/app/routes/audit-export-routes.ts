@@ -16,6 +16,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Surface the connector DEK failure policy so governance cannot present an explicit shared-HKDF break-glass as the normal deny posture.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148: /whoami reports `source` (swarm-role | break-glass | none) plus root status, so the admin console can distinguish a role that lives in swarm_roles from one that exists only in the operator-local .env. The page cannot see either store, so it must be told; without this an admin granted on the Users page and an operator hard-coded into a file render identically.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | /whoami resolves its `source` through the shared grant-source resolver instead of its own two-way guess. The guess had no third answer, so an admin granted by an IdP ROLE CLAIM was reported as `break-glass` and the console told them to ask for a role that would survive an edit to an environment file they are not in. The resolver also reports every source that independently confers the role, and whether the swarm_roles snapshot has loaded at all — the joined access review reads the same function, so the two surfaces cannot disagree about one fact.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Reads the one MOCK_OIDC predicate instead of a local truthiness helper. Seven places read this variable through FIVE different helpers, and they did not agree: two accepted `on` and five did not, so MOCK_OIDC=on meant "demo" to the deploy-mode resolver and "off" to the auth bypass. The accepted set is deliberately NOT widened to include `on` - widening would newly enable an auth bypass on any box that has the variable set to it, and a half-demo deployment was already not working. Now every reader answers identically by construction. This route's envOn() was one of the two that accepted `on`, so its audit export reported a deployment as mock while the bypass was off.
  */
 
 /**
@@ -62,6 +63,7 @@ import {
 } from '@/features/governance';
 import { cspMode } from '@/features/security';
 import { envelopeDekFailureMode } from '@/app/routes/connector-token-crypto';
+import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 
 const logger = createChildLogger({ module: 'audit-export-routes' });
 
@@ -130,7 +132,7 @@ export function buildRuntimeSecurityControls(env: NodeJS.ProcessEnv = process.en
     internalRateLimit: envOn('OSHAL_RATE_LIMIT_INTERNAL', false, env),
     expensiveRateLimit: envOn('OSHAL_RATE_LIMIT_EXPENSIVE', false, env),
     alertWebhookHmac: Boolean(String(env.ALERT_WEBHOOK_HMAC_SECRET ?? '').trim()),
-    mockOidc: envOn('MOCK_OIDC', false, env),
+    mockOidc: isMockOidcEnabled(env),
     tlsRejectUnauthorized: (env.NODE_TLS_REJECT_UNAUTHORIZED ?? '1') !== '0',
     operatorAllowlistConfigured: Boolean(String(env.OSHAL_OPERATOR_SUBS || env.OSHAL_OPERATOR_EMAILS || '').trim()),
     // Governance phases 1–4 toggles (single-pane posture):
