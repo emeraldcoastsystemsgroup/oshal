@@ -335,6 +335,21 @@ export function withDependencyGate(
 }
 
 /**
+ * @description Read the version of a package staged in deployed-apps, if it is there at all.
+ * @param deployedDir - the workspace's deployed-apps directory. @param name - exact package name.
+ * @returns the on-disk version, '' when installed without a readable version, or null when absent.
+ */
+export function installedPackageVersion(deployedDir: string, name: string): string | null {
+  if (!NAME_RE.test(name)) return null;
+  const manifest = path.join(deployedDir, name, 'oshal-app.yaml');
+  if (!fs.existsSync(manifest)) return null;
+  try {
+    const found = /^version:\s*["']?([^"'\s#]+)/m.exec(fs.readFileSync(manifest, 'utf8'));
+    return found ? found[1] : '';
+  } catch { return ''; }
+}
+
+/**
  * @description Resolves a dependency app's state the way scripts/oshal-app.js does: an installed
  * package folder, then a framework manifest (swarm-apps/<name>.yaml), then the source's catalog.
  * @param deployedDir - the deploy directory the installer writes to.
@@ -557,7 +572,19 @@ export function createAppRegistryRoutes(pool: Pool, requiresAuth: RequestHandler
   });
 
   router.get('/catalog', ...guard, async (req: Request, res: Response) => {
-    try { res.json(await aggregateCatalog(pool, req.query.refresh === '1')); }
+    // Annotate what this swarm ALREADY has. Without it every surface reading this catalog shows a
+    // bare Install button for packages that are installed and running — a mode-2 install stages
+    // dozens of packages up front, so the operator's first look at the store is a list of things
+    // they already own with no way to tell them apart from what is genuinely new.
+    try {
+      const catalog = await aggregateCatalog(pool, req.query.refresh === '1');
+      const deployedDir = deps.deployedAppsDir || DEPLOYED_APPS_DIR;
+      const apps = (catalog.apps ?? []).map((app) => {
+        const installedVersion = installedPackageVersion(deployedDir, app.name);
+        return { ...app, installed: installedVersion !== null, ...(installedVersion ? { installedVersion } : {}) };
+      });
+      res.json({ ...catalog, apps });
+    }
     catch (err) { fail(res, err, 'GET /catalog'); }
   });
 

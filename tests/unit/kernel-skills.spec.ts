@@ -3,7 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 D8: lock the kernel-skill contract. The kernel's skills are its package-facing API — every declared module must exist AND be re-exported by the build anchor (the re-export is the only thing that carries a feature into dist/, since tsconfig.server.json excludes src/features/**). Also proves the manifest `uses:` validator fails CLOSED on an unknown skill id, so a typo dies at load instead of crashing an installed app at mount.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 D8: lock the kernel-skill contract. The kernel's skills are its package-facing API — every declared module must exist AND be re-exported by the build anchor (the re-export is what durably carries a feature into dist/: tsconfig.server.json USED to carry a blanket src/features/** exclude that made a named include a no-op, and although that exclude is now gone, a per-feature include is one line anybody can tidy away and nothing fails loudly when it is). Also proves the manifest `uses:` validator fails CLOSED on an unknown skill id, so a typo dies at load instead of crashing an installed app at mount.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #5 (finance): the contract grows to eleven — 'payments' is pinned as a declared skill because the finance rip removed its last core importer and BOTH the finance and payments store packages resolve @/features/payments from dist. The spec list is the guard that a future "cleanup" of the anchor can't silently unpin it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin authenticated-artifacts and package-tools in the exact declared capability contract.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin app-dependencies: the floor a manifest names when it uses dependencies.required/optional, so an older core refuses the package instead of installing it without its required dependencies.
@@ -49,6 +49,29 @@ function readTempManifest(yaml: string) {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+describe('the server build still carries the features packages resolve from dist', () => {
+  // google-calendar has no core importer, so it reaches dist ONLY through an explicit
+  // tsconfig.server.json include. That include is a single line with nothing pinning it and no
+  // loud failure when it goes — the feature just silently stops being built, which is the same
+  // shape as the disappearance this file's D8 contract was written for. A config pin, stated as
+  // one: it proves the wiring is present, not that tsc emitted the files.
+  const serverConfig = JSON.parse(
+    readFileSync(join(REPO_ROOT, 'tsconfig.server.json'), 'utf8').replace(/^\s*\/\/.*$/gm, ''),
+  ) as { include?: string[]; exclude?: string[] };
+
+  it('tsconfig.server.json includes the features that no core module imports', () => {
+    expect(serverConfig.include ?? [], 'google-calendar is no longer in the server program')
+      .toContain('src/features/google-calendar/**/*.ts');
+  });
+
+  it('no blanket features exclude has come back to make that include a no-op', () => {
+    // `exclude` filters `include`, so restoring this line would silently un-build the feature
+    // while leaving the include in place and every other test green.
+    expect(serverConfig.exclude ?? [], 'a blanket src/features/** exclude would nullify the include above')
+      .not.toContain('src/features/**');
+  });
+});
 
 describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
   const anchorSrc = readFileSync(join(REPO_ROOT, ANCHOR), 'utf8');

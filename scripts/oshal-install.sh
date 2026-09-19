@@ -13,6 +13,10 @@
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: mode 4 goes from a printed Terraform pointer to a REAL codeless k8s install — kubectl/helm preflight, cluster detection (offers a single-node kind cluster with the cockpit port mapped; REFUSES to create one beside a running compose swarm — that pairing OOM-wedged a 6GB engine twice), chart from the published OCI package with a repo-fetch fallback, fleet presets kernel|full (store bundles stay compose-only and say so), the same admin-email→MOCK_OIDC identity wiring as mode 1 (shared local_sub, hoisted above the mode dispatch), NodePort exposure with localhost/node-IP detection, /api/health postflight, and the /welcome open. New flags: --namespace, --k8s-context, --nodeport, --chart.
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | Mode 4 now INSTALLS its prerequisites instead of printing links and exiting 1 (operator: the installer should include the prereqs). kubectl and helm are fetched from their official sources into /usr/local/bin when writable, else ~/.local/bin (never a silent sudo); if no cluster is reachable it offers k3s on Linux (native, no Docker, survives reboot, NodePorts land on the host) and kind wherever Docker is present (fully scriptable — no GUI toggle), still refusing kind beside a running compose swarm. Every system-touching step asks first; --yes/-y accepts them for unattended installs, and a non-interactive shell DECLINES rather than surprise-installing.
 # 9 | maintainer@emeraldcoastsystemsgroup.com   | Lockstep with the ps1: --allow-stale-image plus the post-pull freshness gate, and the Windows WSL2 guidance on both docker preflight failures. Git Bash on Windows hits the same dead end as the ps1 path - 'docker daemon not running' with no hint that WSL2 is the engine that is missing. The sh path only ADVISES (it cannot elevate); the ps1 can actually enable it.
+# 10 | maintainer@emeraldcoastsystemsgroup.com  | The install ends with a USER who owns the swarm, not an allowlist entry. --auth-mode (basic|mock, default basic) picks the sign-in stack. basic writes LOCAL_AUTH=true/MOCK_OIDC=false, creates the administrator through the ADR-117 bootstrap (one-use proof from scripts/oshal-setup-root.mjs, swarm root claimed per ADR-148) with a random password nobody sees, then opens scripts/oshal-admin-link.mjs's one-time set-password link instead of /welcome: choosing the password signs that browser in and continues to the wizard, so the operator arrives authenticated and there is no generated credential to print and lose (the first cut printed one, and a hung closing step lost it). OSHAL_ADMIN_PASSWORD remains for headless automation. mock keeps the no-login demo posture but still claims root. Both write OSHAL_INSTALL_OWNER_SUB — the sha256-of-lowercased-email the local-auth store derives — so packages staged before any login belong to the operator. Unattended runs without --admin-email get admin@localhost. The Windows browser-open no longer hangs (cmd `start` read a lone quoted URL as a window title), and closing output gives the reissue command.
+# 11 | maintainer@emeraldcoastsystemsgroup.com  | The operator's first cockpit shows their applications. UI_PROFILE is written as oshal-framework (OSHAL_UI_PROFILE overrides): compose defaults to the 7-item starter cockpit, whose rail lists no installed application at all. Paired with the loader granting the install owner an explicit admin tier on each application it adopts — without one, the rail hid all 58 ADR-149 protected applications from the person who installed them.
+# 12 | maintainer@emeraldcoastsystemsgroup.com  | The store-source check fails OPEN and no longer breaks the offline install. store_is_public treated every non-200 as private, so a box with no curl, no network, a proxy, or a transient GitHub blip was told to supply a read token for the PUBLIC default store; only 401/403/404 now asks, and anything else proceeds. --from-archive skips the probe entirely - it is the documented zero-network path, it resolves to MODE=1, and this function runs before the mode dispatch, so the offline install was exiting 2 on a box that was working correctly. And the advertised "Enter to skip" no longer kills the run: under set -euo pipefail the skip path ended on a [ -n ] test returning 1, which terminated the installer with no message.
+# 13 | maintainer@emeraldcoastsystemsgroup.com  | Two review findings. valid_email constrained only the LOCAL part, so `me@example.com&whoami` passed; harmless in this script, which hands argv to docker exec, but oshal-install.ps1 interpolates the same value into a `cmd /c` string and lockstep is why both validators exist. The character is rejected anywhere now, and a second @ with it. And the one-time set-password link - swarm root for an hour - is no longer printed when stdout is not a terminal, because an unattended run is one whose output something is capturing. The reissue command is how it is obtained deliberately.
 # =============================================================================
 #
 # One-click:
@@ -52,7 +56,13 @@ ALLOW_STALE_IMAGE=0
 SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 K8S_NAMESPACE="oshal"; K8S_CONTEXT=""; K8S_NODEPORT="30500"; K8S_CHART=""; BUNDLE_EXPLICIT=0
 REPO_URL="https://github.com/emeraldcoastsystemsgroup/oshal"
-STORE_REPO="https://github.com/emeraldcoastsystemsgroup/oshal-apps"
+COCKPIT_PORT="${OSHAL_API_PORT:-35457}"
+AUTH_MODE="${OSHAL_AUTH_MODE:-basic}"     # basic = real login (ADR-117); mock = trust every caller
+ADMIN_PASSWORD="${OSHAL_ADMIN_PASSWORD:-}"
+DEFAULT_ADMIN_EMAIL="admin@localhost"
+STORE_REPO_DEFAULT="https://github.com/emeraldcoastsystemsgroup/oshal-apps"
+STORE_REPO="${OSHAL_STORE_REPO:-$STORE_REPO_DEFAULT}"
+STORE_REPO_NAMED=0; [ -n "${OSHAL_STORE_REPO:-}" ] && STORE_REPO_NAMED=1
 
 while [ $# -gt 0 ]; do case "$1" in
   --mode) MODE="$2"; shift 2 ;;
@@ -63,6 +73,8 @@ while [ $# -gt 0 ]; do case "$1" in
   --tag) TAG="$2"; shift 2 ;;
   --registry) REGISTRY="$2"; shift 2 ;;
   --admin-email) ADMIN_EMAIL="$2"; shift 2 ;;
+  --store-repo) STORE_REPO="$2"; STORE_REPO_NAMED=1; shift 2 ;;
+  --auth-mode) AUTH_MODE="$2"; shift 2 ;;
   --control-plane) CONTROL_PLANE="$2"; shift 2 ;;
   --join-code) JOIN_CODE="$2"; shift 2 ;;
   --enrollment-token) ENROLL_TOKEN="$2"; shift 2 ;;
@@ -79,6 +91,7 @@ while [ $# -gt 0 ]; do case "$1" in
 esac; done
 
 case "$PACKAGE_AUDIT_MODE" in compatible|enforce) ;; *) echo "--audit-mode must be compatible or enforce" >&2; exit 2 ;; esac
+case "$AUTH_MODE" in basic|mock) ;; *) echo "--auth-mode must be basic or mock" >&2; exit 2 ;; esac
 
 say()  { printf '\n== %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
@@ -179,8 +192,8 @@ if [ -z "$MODE" ]; then
       printf '   bundle (kernel/full/little-monsters/gaming/jobs) [%s]: ' "$BUNDLE"; read -r b; BUNDLE="${b:-$BUNDLE}"
       [ -n "${BUNDLE_PACKAGES[$BUNDLE]+x}" ] || { echo "unknown bundle: $BUNDLE"; exit 2; }
       # This is the LOGIN, not just an admin flag: MOCK_OIDC has no sign-in page, so whatever
-      # lands here is who the swarm thinks you are. Blank = the shared demo identity.
-      printf '   your email — becomes your local login AND the superadmin (blank = decide later): '; read -r ADMIN_EMAIL || true
+      # lands here is who the swarm thinks you are. require_admin_email below enforces it.
+      printf '   portal administrator email — your local login AND the superadmin: '; read -r ADMIN_EMAIL || true
       for p in ${BUNDLE_PACKAGES[$BUNDLE]:-}; do PKG_SET[$p]=1; done
     fi
   else
@@ -205,6 +218,119 @@ local_sub() {
   _lsh=$(printf '%s' "$_lsl" | { sha256sum 2>/dev/null || shasum -a 256 2>/dev/null; } | awk '{print $1}')
   printf 'local-%s' "$(printf '%s' "$_lsh" | cut -c1-16)"
 }
+
+# ── The portal administrator is REQUIRED, not optional ───────────────────────
+# MOCK_OIDC has no sign-in page: whatever lands here IS the identity the swarm
+# serves every request as. Left blank, the swarm silently runs as the fabricated
+# demo user, the operator who installed it is NOT its superadmin, and connector
+# tokens bind to a shared demo sub. So: prompt until it is answered, and on a
+# non-interactive host REFUSE rather than install a swarm nobody owns.
+valid_email() {
+  # The DOMAIN is constrained as well as the local part. It was not, so an address like
+  # `me@example.com&whoami` passed. Harmless here - this script hands argv to docker exec and
+  # never builds a shell string - but oshal-install.ps1 interpolates the same value into a
+  # `cmd /c "..."`, and lockstep is the whole reason these two validators exist. Reject the
+  # character anywhere rather than relying on every consumer to quote it correctly.
+  case "$1" in
+    *[!a-zA-Z0-9._%+@-]* | @* | *@ | *@*@* | *' '* ) return 1 ;;
+    *@*.* ) return 0 ;;
+    * ) return 1 ;;
+  esac
+}
+require_admin_email() {
+  [ "$MODE" = "3" ] && return 0                      # a leaf node joins an existing swarm's identity
+  while [ -z "$ADMIN_EMAIL" ] || ! valid_email "$ADMIN_EMAIL"; do
+    if [ -n "$ADMIN_EMAIL" ]; then echo "   not an email address: $ADMIN_EMAIL" >&2; ADMIN_EMAIL=""; fi
+    if [ ! -t 0 ]; then
+      # Unattended installs still get an owner: an unowned swarm is the failure mode this
+      # whole ceremony exists to prevent. The password is random per install, never a shipped
+      # constant, and nobody sees it - the operator sets one through the one-time link instead.
+      # It is NOT printed and there is no forced change at first login; an earlier version of
+      # this comment claimed both.
+      ADMIN_EMAIL="$DEFAULT_ADMIN_EMAIL"
+      note "no --admin-email given; the administrator is $ADMIN_EMAIL"
+      break
+    fi
+    printf '   portal administrator email — your local login AND the superadmin: '
+    read -r ADMIN_EMAIL || true
+  done
+}
+require_admin_email
+
+# ── How do people sign in? ───────────────────────────────────────────────────
+# MOCK_OIDC has no login page: it treats EVERY caller as the operator, and the api
+# publishes on 0.0.0.0, so anyone who can reach the port owns the swarm. That is a demo
+# posture, not a default. basic = LOCAL_AUTH (ADR-117): a real account, a real password,
+# and the first-admin bootstrap claims swarm root (ADR-148) so the operator-gated pages
+# answer instead of 403ing. The two modes are mutually exclusive by design — the server
+# throws at boot if both are set — so this is a choice, never a layer.
+require_auth_mode() {
+  [ "$MODE" = "3" ] && return 0
+  if [ -z "${OSHAL_AUTH_MODE:-}" ] && [ -t 0 ] && [ "$ASSUME_YES" -ne 1 ]; then
+    echo "   how should people sign in?"
+    echo "     1) basic  — a real login: you choose your password in the browser   [recommended]"
+    echo "     2) mock   — NO login page; every caller is treated as the operator (demo only)"
+    printf '   choose [1]: '; read -r _am || true
+    case "${_am:-1}" in 2|mock) AUTH_MODE=mock ;; *) AUTH_MODE=basic ;; esac
+  fi
+  # No password question. The administrator chooses it in the browser through a one-time
+  # set-password link, which also signs that browser in — so there is no generated password to
+  # print and lose, and the welcome screen opens already authenticated. OSHAL_ADMIN_PASSWORD
+  # remains for fully headless automation that must know the credential up front.
+}
+require_auth_mode
+
+# ── Where do the applications come from, and can this box read it? ───────────
+# The store was environment-only (OSHAL_STORE_REPO / OSHAL_STORE_TOKEN), so a private
+# store was undiscoverable: an operator had to already know the variable existed. It is
+# asked for here, and a credential is requested ONLY when the store does not answer
+# anonymously — read silently, so it is never echoed or left in shell history.
+# Returns the HTTP status, or 000 when the probe could not be taken at all. The distinction is
+# load-bearing: a box with no curl, no network, or a proxy in the way is NOT a box with a private
+# store, and demanding a read token for the PUBLIC default store because a probe failed is a
+# wrong answer that stops the install dead.
+store_probe_status() {
+  command -v curl >/dev/null 2>&1 || { echo 000; return 0; }
+  curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$1" 2>/dev/null || echo 000
+  return 0
+}
+require_store_source() {
+  [ "$MODE" = "3" ] && return 0                      # a leaf node stages nothing
+  # --from-archive is the documented ZERO-NETWORK install. It must not be gated on a network
+  # probe it cannot satisfy; it resolves to MODE=1 and this function runs before the mode
+  # dispatch, so without this line the offline path exits 2 on a box that is working correctly.
+  [ -n "$FROM_ARCHIVE" ] && return 0
+  if [ "$STORE_REPO_NAMED" -eq 0 ] && [ -t 0 ]; then
+    printf '   application store [%s]: ' "$STORE_REPO_DEFAULT"
+    read -r _sr || true
+    [ -n "$_sr" ] && STORE_REPO="$_sr"
+  fi
+  case "$STORE_REPO" in https://*) ;; *) echo "--store-repo must be an https URL: $STORE_REPO" >&2; exit 2 ;; esac
+  [ -n "${OSHAL_STORE_TOKEN:-}" ] && return 0
+  _code=$(store_probe_status "$STORE_REPO")
+  [ "$_code" = "200" ] && return 0
+  # Only a DEFINITE refusal asks for a credential. Anything else — 000 (no curl, offline, DNS,
+  # proxy, timeout) or a server-side 5xx — means the probe could not tell, so the install
+  # proceeds and the store step surfaces a real error later if there genuinely is one.
+  case "$_code" in
+    401|403|404) ;;
+    *) return 0 ;;
+  esac
+  if [ ! -t 0 ]; then
+    echo "$STORE_REPO refused an anonymous read (HTTP $_code) and no credential was supplied." >&2
+    echo "Export OSHAL_STORE_TOKEN=<token with read access> and re-run." >&2
+    exit 2
+  fi
+  echo "   $STORE_REPO refused an anonymous read (HTTP $_code) — it needs a read token."
+  printf '   store access token (input hidden, Enter to skip): '
+  stty -echo 2>/dev/null; read -r _st || true; stty echo 2>/dev/null; echo
+  [ -n "$_st" ] && export OSHAL_STORE_TOKEN="$_st"
+  # `set -euo pipefail` is on. Without this the skip path's last command is the `[ -n ]` test,
+  # which returns 1, and the function invoked as a bare top-level command kills the installer
+  # with no message — on the prompt that literally says "Enter to skip".
+  return 0
+}
+require_store_source
 
 # ── Mode 4: Kubernetes — codeless helm install (ADR-129) ─────────────────────
 # Same contract as mode 1, different substrate: registry image + published chart,
@@ -444,7 +570,12 @@ if [ "$MODE" = "4" ]; then
   note "setup:   $WELCOME"
   note "cockpit: $BASE/cockpit/   (after setup)"
   case "$(uname -s 2>/dev/null)" in
-    MINGW*|MSYS*|CYGWIN*|Windows*) start "" "$WELCOME" 2>/dev/null || cmd.exe /c start "$WELCOME" 2>/dev/null || true ;;
+    # cmd's `start` reads a lone quoted argument as the WINDOW TITLE, not a URL: the fallback
+    # opened an interactive cmd.exe that sat at a prompt and blocked the installer forever —
+    # the closing instructions, including the generated password, never printed. Empty title
+    # first, and detach stdin so nothing can wait on a console that has no operator.
+    MINGW*|MSYS*|CYGWIN*|Windows*) start "" "$WELCOME" 2>/dev/null \
+      || cmd.exe /c start "" "$WELCOME" </dev/null >/dev/null 2>&1 || true ;;
     Darwin*) open "$WELCOME" 2>/dev/null || true ;;
     *) xdg-open "$WELCOME" 2>/dev/null || true ;;
   esac
@@ -567,17 +698,30 @@ rand() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 
 ENV_FILE="$DIR/.env"; [ "$MODE" = "2" ] && ENV_FILE="$DIR/src/.env"
 if [ ! -f "$ENV_FILE" ]; then
-  say "generating $ENV_FILE (fresh secrets; MOCK_OIDC=true for local login)"
+  say "generating $ENV_FILE (fresh secrets; sign-in stack from --auth-mode, default basic)"
   {
     echo "# Generated by oshal-install.sh $(date -u +%Y-%m-%dT%H:%M:%SZ) — operator-local, never commit."
     echo "OSHAL_REGISTRY=$REGISTRY"
     echo "OSHAL_IMAGE_TAG=$TAG"
+    # Compose defaults OSHAL_BOT_IMAGE to oshal-bot:latest, which exists only after a SOURCE
+    # build. Name the image actually resolved so registry installs pull what they just pulled.
+    echo "OSHAL_BOT_IMAGE=$IMAGE"
     echo "OSHAL_PACKAGE_AUDIT_MODE=$PACKAGE_AUDIT_MODE"
+    # Record the store these packages actually came from: the api seeds its built-in registry
+    # from this at first boot. Left unset it seeds the PUBLIC default, and a swarm staged from
+    # the private trunk would be offered that store's copies as "updates" to what it has.
+    echo "OSHAL_STORE_REPO=$STORE_REPO"
+    echo "OSHAL_STORE_REF=main"
+    if [ -n "${OSHAL_STORE_TOKEN:-}" ]; then
+      echo "# Private-store credential, operator-local. Remove it and the cockpit simply"
+      echo "# reports the store unreadable; staged packages keep working either way."
+      echo "OSHAL_STORE_TOKEN=$OSHAL_STORE_TOKEN"
+    fi
     echo "POSTGRES_PASSWORD=$(rand)"
     echo "SWARM_SERVICE_SECRET=$(rand)"
     echo "SESSION_SECRET=$(rand)"
     echo "REMOTE_CLIENT_SHARED_SECRET=$(rand)"
-    echo "MOCK_OIDC=true"
+    if [ "$AUTH_MODE" = "mock" ]; then echo "MOCK_OIDC=true"; fi
     echo "REJECT_LOOP_TICKETS=true"
     [ -n "${BUNDLE_PROFILES[$BUNDLE]}" ] && echo "COMPOSE_PROFILES=${BUNDLE_PROFILES[$BUNDLE]}"
     echo "#"
@@ -604,6 +748,24 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "# tokens are keyed to YOU. Changing them later = a different user (a fresh, empty"
     echo "# workspace). For a real IdP instead: set OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET"
     echo "# and remove MOCK_OIDC, then list your real login email below."
+    # localSubForEmail() in the local-auth store derives the SAME sha256-of-lowercased-email,
+    # so the owner is knowable before the api ever boots — packages staged now can belong to
+    # the operator created later, instead of landing unowned and invisible to everyone.
+    if [ -n "$ADMIN_EMAIL" ]; then echo "OSHAL_INSTALL_OWNER_SUB=$(local_sub "$ADMIN_EMAIL")"; fi
+    # An app access assignment is keyed by (subject, ISSUER) since migration 145, so the grant
+    # must name the issuer this owner signs in under or it resolves for nobody.
+    if [ "$AUTH_MODE" = "mock" ]; then echo "OSHAL_INSTALL_OWNER_ISSUER=urn:oshal:mock-oidc"; else echo "OSHAL_INSTALL_OWNER_ISSUER=urn:oshal:local-auth"; fi
+    # Compose defaults UI_PROFILE to the 7-item starter cockpit, whose rail lists NO installed
+    # application — after staging dozens of them, the operator's first cockpit looked empty.
+    # The full operator cockpit (every app surface grouped) is oshal-framework; the starter
+    # view stays one ?profile=oshal-starter away. OSHAL_UI_PROFILE overrides.
+    echo "UI_PROFILE=${OSHAL_UI_PROFILE:-oshal-framework}"
+    if [ "$AUTH_MODE" = "basic" ]; then
+      echo "# ADR-117 local login: real accounts, real passwords. MOCK_OIDC must stay false —"
+      echo "# the server throws at boot if both are enabled rather than degrade to open auth."
+      echo "LOCAL_AUTH=true"
+      echo "MOCK_OIDC=false"
+    fi
     if [ -n "$ADMIN_EMAIL" ]; then
       echo "MOCK_OIDC_EMAIL=$ADMIN_EMAIL"
       echo "MOCK_OIDC_NAME=${ADMIN_EMAIL%%@*}"
@@ -681,6 +843,64 @@ for i in $(seq 1 50); do
   docker logs oshal-local-api 2>&1 | grep -q "Swarm app auto-load complete" && break; sleep 3
 done
 
+# ── The first account: a swarm with nobody in it is a swarm nobody owns ──────
+# Staging happens before any user can exist, so without this the roster is empty, swarm
+# root is UNCLAIMED, and every operator-gated page 403s at the person who just installed
+# the thing (ADR-148 names this exact failure). Both modes end with a real identity.
+seed_first_admin() {
+  [ "$MODE" = "3" ] && return 0
+  [ -n "$ADMIN_EMAIL" ] || return 0
+  _origin="http://localhost:$COCKPIT_PORT"
+  if [ "$AUTH_MODE" = "mock" ]; then
+    # No login page to bootstrap through: the mock principal IS the operator, so it only
+    # needs the root role that makes the access pages answer.
+    say "claiming swarm root for $ADMIN_EMAIL"
+    if curl -fsS -X POST "$_origin/api/swarm/roles/claim-root" -H 'content-type: application/json' \
+        -H "origin: $_origin" -d '{}' >/dev/null 2>&1; then
+      note "swarm root claimed"
+    else
+      note "root claim skipped (already held, or the route declined)"
+    fi
+    return 0
+  fi
+  say "creating the administrator account"
+  # Unless automation supplied one, the bootstrap password is random and NEVER shown: the
+  # operator replaces it through the set-password link below, which is also what signs their
+  # browser in. rand() is in scope here; the prompt block deliberately did not reach for it.
+  if [ -n "$ADMIN_PASSWORD" ]; then PASSWORD_SUPPLIED=1; else ADMIN_PASSWORD="$(rand)"; fi
+  # set -euo pipefail: a failing docker exec makes a pipeline non-zero and an unassignable
+  # substitution aborts the install. A swarm that is already up must not be torn down by a
+  # ceremony that could not start — every step below degrades to a printed manual path.
+  _proof="$( { docker exec oshal-local-api node scripts/oshal-setup-root.mjs --origin "$_origin" 2>/dev/null || true; } \
+    | sed -n 's/^Installer setup code: //p' | tr -d '\r' || true)"
+  if [ -z "$_proof" ]; then
+    note "could not issue the installer setup code — finish setup in the browser at $_origin/login"
+    return 0
+  fi
+  # The proof is one-use, origin-bound and expires in 15 minutes; it never reaches a log.
+  # An automation-supplied password may hold quotes or backslashes: escape before it meets JSON.
+  _pw_json=$(printf '%s' "$ADMIN_PASSWORD" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+  _body=$(printf '{"email":"%s","name":"%s","password":"%s","setupToken":"%s"}' \
+    "$ADMIN_EMAIL" "${ADMIN_EMAIL%%@*}" "$_pw_json" "$_proof")
+  if ! printf '%s' "$_body" | curl -fsS -X POST "$_origin/api/local-auth/bootstrap" \
+      -H 'content-type: application/json' -H "origin: $_origin" --data-binary @- >/dev/null 2>&1; then
+    note "account bootstrap declined — open $_origin/login and use setup code: $_proof"
+    return 0
+  fi
+  ADMIN_ACCOUNT_CREATED=1
+  note "administrator $ADMIN_EMAIL created; swarm root claimed"
+  [ "$PASSWORD_SUPPLIED" -eq 1 ] && return 0
+  _link="$( { docker exec oshal-local-api node scripts/oshal-admin-link.mjs --origin "$_origin" \
+    --email "$ADMIN_EMAIL" 2>/dev/null || true; } | tr -d '\r' || true)"
+  SET_PASSWORD_LINK="$(printf '%s\n' "$_link" | sed -n 's/^Set your password: //p' || true)"
+  SET_PASSWORD_EXPIRES="$(printf '%s\n' "$_link" | sed -n 's/^Expires: //p' || true)"
+}
+ADMIN_ACCOUNT_CREATED=0
+PASSWORD_SUPPLIED=0
+SET_PASSWORD_LINK=""
+SET_PASSWORD_EXPIRES=""
+seed_first_admin
+
 say "[3/3] bots — batched (a mass cold-start OOMs small engines)"
 if [ "${BUNDLE_SERVICES[$BUNDLE]}" = "__ALL__" ]; then
   remaining=$("${DC[@]}" config --services 2>/dev/null | grep -vxE 'oshal-db|oshal-redis|oshal-chromadb|oshal-api')
@@ -739,27 +959,55 @@ fi
 # actually lives. (/cockpit would 302 here anyway while onboarding is incomplete; landing on the
 # wizard directly is the honest version of the same redirect.) EXCEPT --no-ai: the wizard exists
 # to connect a model, which that posture explicitly declines — open the cockpit directly.
-WELCOME="http://localhost:35457/welcome"
-[ "$NO_AI" -eq 1 ] && WELCOME="http://localhost:35457/cockpit/"
+# Basic auth opens the one-time SET-PASSWORD link instead of /welcome: choosing the password
+# there signs this browser in, and the page then continues to / — which is the welcome wizard
+# while setup is incomplete. The operator arrives authenticated, never at a login form.
+WELCOME="http://localhost:$COCKPIT_PORT/welcome"
+[ "$NO_AI" -eq 1 ] && WELCOME="http://localhost:$COCKPIT_PORT/cockpit/"
+[ -n "$SET_PASSWORD_LINK" ] && WELCOME="$SET_PASSWORD_LINK"
 say "installed — opening your swarm"
 docker ps --format '{{.Names}}' | grep -c oshal | xargs -I{} echo "   containers up: {}"
-note "setup:   $WELCOME"
-note "cockpit: http://localhost:35457/cockpit/   (after setup)"
+note "cockpit: http://localhost:$COCKPIT_PORT/cockpit/"
 case "$(uname -s 2>/dev/null)" in
-  MINGW*|MSYS*|CYGWIN*|Windows*) start "" "$WELCOME" 2>/dev/null || cmd.exe /c start "$WELCOME" 2>/dev/null || true ;;
+  # cmd's `start` reads a lone quoted argument as the WINDOW TITLE, not a URL: that opened an
+  # interactive cmd.exe which blocked the installer forever. Empty title first, stdin detached.
+  MINGW*|MSYS*|CYGWIN*|Windows*) start "" "$WELCOME" 2>/dev/null \
+    || cmd.exe /c start "" "$WELCOME" </dev/null >/dev/null 2>&1 || true ;;
   Darwin*) open "$WELCOME" 2>/dev/null || true ;;
   *) xdg-open "$WELCOME" 2>/dev/null || true ;;
 esac
 
-say "what happens next, in the browser"
-if [ -n "$ADMIN_EMAIL" ]; then
-  note "You are $ADMIN_EMAIL — your local login AND the swarm superadmin. No sign-in page will"
-  note "appear: MOCK_OIDC trusts this machine, and .env says that machine is you."
+say "how you sign in"
+if [ "$AUTH_MODE" = "basic" ]; then
+  note "Local login (ADR-117). Your account: $ADMIN_EMAIL"
+  if [ "$ADMIN_ACCOUNT_CREATED" -eq 1 ]; then
+    note "It exists, holds swarm root, and owns every package this install staged."
+  fi
+  if [ -n "$SET_PASSWORD_LINK" ] && [ -t 1 ]; then
+    note "Your browser is opening a one-time page to choose your password; doing so signs you in."
+    note "If it did not open, use this link (expires $SET_PASSWORD_EXPIRES):"
+    note "  $SET_PASSWORD_LINK"
+  elif [ -n "$SET_PASSWORD_LINK" ]; then
+    # Unattended: stdout is being captured by something. That link confers swarm root for an
+    # hour, so it is not printed - the reissue command below is how it is obtained deliberately.
+    note "A one-time set-password link was issued. It is NOT printed on an unattended run;"
+    note "reissue it below when you are at a terminal."
+  elif [ "$PASSWORD_SUPPLIED" -eq 1 ]; then
+    note "Sign in at http://localhost:$COCKPIT_PORT/login with the password this install was given."
+  fi
+  note "Link expired or lost? Issue a new one — no password is ever lost for good:"
+  note "  docker exec oshal-local-api node scripts/oshal-admin-link.mjs \\"
+  note "    --origin http://localhost:$COCKPIT_PORT --email $ADMIN_EMAIL"
+  note "Invite other people from the cockpit (Users -> invite); each gets their own login."
+  note "Real identity provider instead (Google, Microsoft/Entra, any OIDC)? Set LOCAL_AUTH=false and"
+  note "MOCK_OIDC=false plus OIDC_ISSUER_URL / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET / APP_URL in"
+  note "$ENV_FILE, then restart the api. See INSTALL.md and docs/adr/117-local-auth-invited-users.md."
 else
-  note "You skipped the email prompt, so you are the shared demo identity (alex@demo.local) and"
-  note "NOT the superadmin. To become yourself, set MOCK_OIDC_EMAIL / MOCK_OIDC_NAME /"
-  note "MOCK_OIDC_SUB / OSHAL_OPERATOR_EMAILS in $ENV_FILE, then:"
-  note "  docker compose -f $COMPOSE_FILE restart oshal-api"
+  note "MOCK auth: there is NO sign-in page. Every request to this api is treated as"
+  note "$ADMIN_EMAIL — and the api publishes on 0.0.0.0, so anyone who can reach port"
+  note "$COCKPIT_PORT on this machine is that operator. Use it for a demo box, not a shared one."
+  note "To switch to a real login: set LOCAL_AUTH=true and MOCK_OIDC=false in $ENV_FILE, restart"
+  note "the api, then visit /login (the first account claims swarm root)."
 fi
 if [ "$NO_AI" -eq 1 ]; then
   note "This box was installed --no-ai: AI features stay disabled until a model is connected."

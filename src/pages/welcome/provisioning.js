@@ -71,7 +71,16 @@ export class ProvisioningController {
 
   key(item) { return `${item.registry}/${item.name}`; }
   selected(item) { return this.state.selected.some(value => this.key(value) === this.key(item)); }
-  installed(item) { return this.state.installed.some(value => this.key(value) === this.key(item)); }
+  /** Packages this swarm already carries, learned from the catalog (see `present`). */
+  alreadyPresent() { this.present = this.present || new Set(); return this.present; }
+
+  // "Installed" is not only what THIS wizard installed. A mode-2 install stages its packages
+  // before the first boot, so on first login every one of them read "Not installed by this
+  // setup." — literally true, and useless: the operator is offered a list of things they have.
+  installed(item) {
+    return this.state.installed.some(value => this.key(value) === this.key(item))
+      || this.alreadyPresent().has(this.key(item));
+  }
 
   /** @description Require selected installs to succeed or be explicitly deselected.
    * @returns {boolean} Whether the wizard may complete. */
@@ -131,7 +140,9 @@ export class ProvisioningController {
     const label = element('label', undefined, card);
     const checkbox = element('input', undefined, label); checkbox.type = 'checkbox'; checkbox.checked = this.selected(item);
     label.append(document.createTextNode(` ${item.displayName || item.name} (${item.registry})`));
-    const status = element('p', this.installed(item) ? 'Installed.' : 'Not installed by this setup.', card);
+    const status = element('p', this.installed(item)
+      ? `Installed.${item.installedVersion ? ` Version ${item.installedVersion}.` : ''}`
+      : 'Not installed by this setup.', card);
     status.setAttribute('role', 'status');
     checkbox.addEventListener('change', () => this.toggle(item, checkbox.checked, status));
     const review = element('button', 'Review installation', card); review.type = 'button';
@@ -155,7 +166,11 @@ export class ProvisioningController {
       const source = (data.sources || []).find(item => item.slug === this.state.source);
       if (!source?.ok) throw new Error(`Source ${this.state.source} is unavailable. Review it in Manage trusted sources.`);
       const apps = (data.apps || []).filter(item => item.registry === this.state.source);
-      for (const app of apps) { available.add(this.key(app)); this.appCard(app, section); }
+      for (const app of apps) {
+        available.add(this.key(app));
+        if (app.installed) this.alreadyPresent().add(this.key(app));
+        this.appCard(app, section);
+      }
       if (!apps.length) element('p', 'This source currently has no applications.', section);
     } catch (error) { element('p', error.message, section).setAttribute('role', 'alert'); }
     this.renderOtherSelections(section, available);

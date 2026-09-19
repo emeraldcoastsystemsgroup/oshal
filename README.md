@@ -29,7 +29,7 @@ curl -fsSLO https://raw.githubusercontent.com/emeraldcoastsystemsgroup/oshal/mai
 bash oshal-install.sh
 ```
 
-Docker is the only prerequisite for the default path. The installer asks four questions and does the rest — pulls the prebuilt image from GHCR (`ghcr.io/emeraldcoastsystemsgroup/oshal-bot`), generates every secret, brings the swarm up in health-ordered batches, opens your cockpit, and tells you how to become the **superadmin** of your swarm (`--admin-email` wires it automatically). No API keys, no identity provider: the default install runs a deterministic `noop` harness and a local mock login, so every surface is explorable before you connect anything real.
+Docker is the only prerequisite for the default path. The installer asks four questions and does the rest — pulls the prebuilt image from GHCR (`ghcr.io/emeraldcoastsystemsgroup/oshal-bot`), generates every secret, brings the swarm up in health-ordered batches, opens your cockpit, and tells you how to become the **superadmin** of your swarm (`--admin-email` wires it automatically). No API keys and no identity provider needed: the default install runs a deterministic `noop` harness and a **real local login** — the administrator email you give it becomes an account with a password, and that first account claims swarm root, so the access and user pages answer for you from the first visit. Pass `--auth-mode mock` for a demo box with no sign-in page at all.
 
 **Four install modes:**
 
@@ -150,7 +150,7 @@ Security is structural, not a checklist — every boundary below is enforced in 
 
 **Identity & access**
 - **Auth-gated routes with fail-closed defaults.** Sensitive surfaces require an explicit **operator allowlist** — an empty list means *nobody*, not everybody. The machine plane (bot↔controller) authenticates with a dedicated service secret that fails closed when unset; humans use OIDC sessions, the **invited-user local login** (`LOCAL_AUTH=true` — admin invites by email, one-time link sets a password, nobody uninvited signs in; [ADR-117](docs/adr/117-local-auth-invited-users.md)), or revocable **personal access tokens** (`swarm-cli login`).
-- **You are the superadmin.** The installer wires your email into the operator allowlist; operators mint join codes, approve real-money actions, and see fleet-wide views. Nobody else does.
+- **You are the superadmin.** The installer creates your account, claims swarm root for it and wires your email into the operator allowlist; operators mint join codes, approve real-money actions, and see fleet-wide views. Nobody else does. Everything the install stages belongs to that identity — an unowned swarm is one nobody can administer.
 
 **Data isolation**
 - **Row-level security, live.** User-owned tables carry Postgres RLS; the API stamps every request's identity into the database session (GUC identity), so a query physically cannot read another user's rows — the floor under every app, proven with two-user live tests.
