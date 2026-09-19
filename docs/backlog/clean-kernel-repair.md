@@ -342,7 +342,16 @@ between `llm-execution-handler.ts:226` and `:232` with no counterpart. **The com
 `src/`.** Explicitly out of scope: extracting a shared builder, and changing what either handler passes to
 `assemblePromptForAnyBot`.
 
-### CKR-6 — the chat runtime does not fence tool results as untrusted (D11-a) — S
+### CKR-6 — the chat runtime does not fence tool results as untrusted (D11-a) — S — **SHIPPED**
+
+> Fenced at the SOURCE — the single point in `runAgenticLoop` where a tool result enters the
+> conversation — rather than in each provider mapping, because per-mapping fencing has to be got
+> right in every future adapter too. The entry’s distinction holds and is now pinned both ways:
+> `byo-hosted-provider` keeps the protocol slot (`role: 'tool'`), while `anthropic-provider`
+> `JSON.stringify`s the whole content array into an ordinary `user` message and loses it. Guard:
+> `tests/unit/chat-runtime-tool-result-containment.spec.ts` (3 cases), proven red — all three fail
+> without the fence. The opening-tag assertion is deliberate: the fixture already carries a
+> CLOSING tag, so a closing-tag check would pass unpatched. An error result is fenced too.
 
 **Evidence.** Split out of D11 because it is a different defect from the one D11 names, and it is the half that is
 actually a boundary. Stated precisely, because the looser version is wrong: the chat path pushes a
