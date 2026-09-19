@@ -61,5 +61,9 @@ relevant ADR or feature documentation, release notes, and git history.
 - [jarvis-daily-dashboard.md](./jarvis-daily-dashboard.md) — Jarvis and the daily dashboard: the
   compact presentation, and recorded-report producer adoption with its pending publication and
   delivery acceptance.
+- [machine-auth-discovery-blind-spot.md](./machine-auth-discovery-blind-spot.md) — the
+  machine-auth discovery scan does not list `serviceSecretOr` or `getTrustedServiceUserSub`,
+  so eight route files authenticate a machine caller and nobody was ever asked what they
+  write. Three failures in `machine-write-identity.spec.ts` are red on main because of it.
 - [archive/](./archive/README.md) — dated snapshots of verified-resolved queue entries; these are
   searchable implementation history, not active work.
