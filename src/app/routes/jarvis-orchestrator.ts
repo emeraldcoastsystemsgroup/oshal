@@ -24,6 +24,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Freshness rule acts instead of asking: third live iteration on the gsquared staging box - Jarvis now knew the app and aged the stale pull, but still led with the old number and asked "I'd need your go-ahead to refresh". A data read is not outward; the rule now commands filing the fresh handoff in the same reply, no permission question, stale number not presented as the answer.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Catalog freshness rule: on the first live verification Jarvis stopped shrugging but answered the CRM question from a STALE OPEN WORK result ("0 in docs out, 4 total" against a live 473/7/2) - the OPEN WORK guidance's "read the RESULT and report it" was over-applied to a fresh data question. The catalog now states that an old task result answers questions about that task only; current-state questions get a fresh handoff or the owning app's link.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | buildCatalogBlock: the effective-route catalog (curated + dynamically discovered store apps, ADR-085/087) is injected into every live bot turn. The live path had NO catalog - the plan guidance said "the catalog keys above" over a message that never carried one, and the persona's baked specialist list was the bot's only (stale, platform-only) world model, so a CRM-only deployment had a Jarvis that had never heard of its own CRM and shrugged at a pipeline question (operator report 2026-09-04). Bounded, degrades to '' - a catalog failure never blocks the turn.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | looksLikeWorkRequest: the decision-timeout branch treated "the model did not answer in 75s" as "the model is grinding a big build", and filed a ticket titled with the user's own message. A timeout equally means the brain is unreachable, and on the operator box it did - the codex lane was answering `You've hit your usage limit`, so every message timed out and every message was filed: "Hi" three times, all escalated, plus "what is 9 times 9" and "what screen am i on" as build tickets. A work VERB now wins over grammar (a request can wear a question mark), and without one a greeting or a question is reported as an outage instead of opened as a project.
  *
  * @module jarvis-orchestrator
  */
@@ -76,6 +77,58 @@ const botClient = new BotNodeClient(createRegistryEndpointResolver());
 /** Max wait for the decision turn before we assume the model is grinding (building inline instead of
  *  handing off) and auto-file the request with the swarm. The persona usually decides in <20s. */
 export const DECISION_TIMEOUT_MS = Number(process.env.JARVIS_DECISION_TIMEOUT_MS) || 75_000;
+
+/**
+ * Verbs that make a message a request to CHANGE something, whatever grammar wraps them.
+ *
+ * `make` is deliberately narrow. As a bare word it matched "how much money did we **make** in the
+ * stock market today?" and "how much did we **make** or loose" — two questions the first draft of
+ * this predicate would have filed as build tickets, which is the very failure it exists to stop.
+ * It counts only in imperative position, where it takes an object.
+ */
+const WORK_VERBS = /\b(add|build|creat(?:e|ing)|implement|fix|deploy|write|set\s?up|integrat(?:e|ing)|remove|delete|updat(?:e|ing)|chang(?:e|ing)|refactor|migrat(?:e|ing)|install|configur(?:e|ing)|generat(?:e|ing)|automat(?:e|ing)|wire\s?up|hook\s?up|rename|revert|upgrade)\b|\bmake\s+(?:me\s+)?(?:a|an|the|it)\b/i;
+
+/** A whole message that is conversation, optionally addressed to someone. */
+const GREETING_ONLY = /^(hi|hey|hello|yo|sup|howdy|good\s+(morning|afternoon|evening)|thanks|thank\s+you|ty|ok|okay|cool|nice|great|morning|evening)(\s+(there|all|team|everyone|guys|folks|jarvis))?[\s!.,?]*$/i;
+
+/** Wh-words mark a question wherever they appear. */
+const WH_WORD = /\b(what|whats|who|whom|whose|when|where|why|how|which)\b/i;
+
+/**
+ * Subject-verb inversion marks a question only at the START. `is`, `was`, `did` and friends appear
+ * in ordinary statements constantly — "our trading **was** down all day" is a problem report, and
+ * treating it as a question would have dropped the most valuable kind of message in the queue.
+ */
+const QUESTION_OPENER = /^(is|are|was|were|do|does|did|can|could|should|would|will|am|have|has|had)\b/i;
+
+/**
+ * @description Is this message plausibly a request to DO work, such that filing it with the swarm
+ * on a decision timeout is the right answer?
+ *
+ * This exists because the timeout branch used to treat "the model did not answer in time" as
+ * "the model is grinding a big build". A timeout equally means the brain is unreachable, and on
+ * this deployment it did: with the operator's codex lane sitting on `You've hit your usage limit`,
+ * every message timed out and every message was filed. The queue collected "Hi" three times, all
+ * escalated, plus "what is 9 times 9" and "what screen am i on" as build tickets.
+ *
+ * A work verb wins over grammar, because "can you add google drive to our files app" is a real
+ * request wearing a question mark. Absent one, a greeting or a question is conversation, and a
+ * timeout on conversation is an outage to report rather than a project to open.
+ * @param message - The raw user message.
+ * @returns True when a timeout should file the request; false when it should report unavailability.
+ */
+export function looksLikeWorkRequest(message: string): boolean {
+  const text = String(message ?? '').trim();
+  if (!text) return false;
+  if (WORK_VERBS.test(text)) return true;
+  if (GREETING_ONLY.test(text)) return false;
+  if (text.endsWith('?')) return false;
+  if (WH_WORD.test(text)) return false;
+  if (QUESTION_OPENER.test(text)) return false;
+  // Nothing marks it as conversation, so treat it as work — a problem report like "our trading
+  // was down all day" is worth filing even though it names no verb.
+  return true;
+}
 
 /**
  * @description One app Jarvis can reach. `mode` decides handling:
