@@ -6,7 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted cockpit ticket cost and usage rollup helpers from cockpit-route-helpers.ts to satisfy governance decomposition requirements and support per-agent ticket cost breakdowns
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Re-estimate totalCost from model pricing at read time when persisted value is 0 but tokens are present (codex subscription returns no cost, etc.)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | CockpitAgentUsageStats carries providerId, so the cockpit's "Provider" column stops rendering an em dash for every bot. The renderer at ticket-view-cost-renderer.js:51 has always read `bot.providerId || '-'` under a `<th>Provider</th>`, but the type never had the field and the rollup dropped it - the column was structurally dead, not empty for want of data. chat_tasks.provider_id is populated (896 live rows across openai-codex, claude-code, cline-cli, byo-llm, image-provider:openrouter and deterministic-provider) and the task store already maps it to providerId, so this only stops discarding it. A merge that spans two providers resolves to 'mixed' rather than keeping whichever arrived first, because one bot can legitimately run on more than one across tasks.
- * 4 | maintainer@emeraldcoastsystemsgroup.com   | Each bot row also carries costUnitLabel, so the cockpit's Est. Cost column stops adding three different units as if they were one. ADR-127: a CLI turn's cost_usd is a subscription price-equivalent and a BYO turn records $0 by design, so a column that sums them beside real metered spend is not a spend figure. Reuses the existing classifyCostUnit/COST_UNIT_LABELS that /api/budgets/spend already reports by, rather than inventing a second classification. The label is null - not defaulted - for an unknown or 'mixed' provider, because classifyCostUnit answers 'billed' for anything unrecognised and asserting real money for a subscription equivalent is the exact error this is meant to stop.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Each bot row also carries costUnitLabel, so the cockpit's Est. Cost column stops adding three different units as if they were one. ADR-127: a CLI turn's cost_usd is a subscription price-equivalent and a BYO turn records $0 by design, so a column that sums them beside real metered spend is not a spend figure. Reuses the existing classifyCostUnit/COST_UNIT_LABELS that /api/budgets/spend already reports by, rather than inventing a second classification. The label is null - not defaulted - for an ABSENT or 'mixed' provider. It is NOT null for an unrecognised-but-present id: classifyCostUnit answers 'billed' for those deliberately, so a CLI provider added to the harness union but not to its price-equivalent set still reads as real metered money here, exactly as antigravity-cli once did. That is a cost-unit.ts concern, named in deriveCostUnitLabel's doc rather than papered over in a display helper.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Two corrections of record. The JSDoc above deriveCostUnitLabel actually documented mergeProviderId - two parameters it does not have and a return value it never produces - so an exported member had no doc of its own and mergeProviderId had none at all. And the claim that the label is null for an "unknown" provider was false: it is null for an ABSENT provider and for the 'mixed' sentinel, while an unrecognised-but-PRESENT id is labelled 'billed', which is classifyCostUnit's deliberate conservative default. Saying "unknown" turned that default into a guarantee this code does not make.
  */
 
 import { resolveUsageCost } from '@/features/llm-provider';
@@ -40,10 +41,13 @@ export type CockpitAgentUsageStats = {
    *  across tasks, and collapsing that to whichever arrived first would be a quiet lie. */
   providerId: string | null;
   /** ADR-127 unit the `totalCost` figure is expressed in, already rendered as an operator-facing
-   *  label. `null` when no single unit can be named - either the provider is unknown or the row
-   *  merged across providers. It is deliberately NOT defaulted: classifyCostUnit answers 'billed'
-   *  for anything it does not recognise, so labelling an unknown row would assert real metered
-   *  spend for what may be a subscription price-equivalent or a $0 BYO token count. */
+   *  label. `null` when the provider is ABSENT, or when the row merged across providers - in
+   *  neither case can a single unit be named, and classifyCostUnit would answer 'billed' for
+   *  both, which reads as real money and may be neither.
+   *
+   *  An unrecognised-but-PRESENT id is still labelled 'billed', which is classifyCostUnit's
+   *  deliberate conservative default rather than a claim this helper makes. See
+   *  deriveCostUnitLabel for why correcting that belongs in cost-unit.ts. */
   costUnitLabel: string | null;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -323,19 +327,31 @@ function createEmptyModelUsage(): CockpitModelUsageStats {
 }
 
 /**
- * @description Combines two provider labels for one bot without inventing a winner.
- * @param current - Provider already accumulated for this bot, or null when unknown.
- * @param incoming - Provider on the row being merged in, or null when unknown.
- * @returns The shared provider, the known one when only one side has it, or 'mixed' when they
- *          genuinely differ - a bot may span providers across tasks and the column must say so.
+ * @description Names the ADR-127 unit a bot row's cost figure is expressed in, for display.
+ * @param providerId - The row's merged provider id, the 'mixed' sentinel, or null when absent.
+ * @returns The operator-facing unit label, or null when no single unit can be named.
+ *
+ * Returns null for an ABSENT provider and for the 'mixed' sentinel. It does NOT return null for
+ * an unrecognised-but-present id: `classifyCostUnit` answers 'billed' for anything outside its
+ * known sets, deliberately, because the metered reading is the conservative one for a budget
+ * surface. So a CLI provider added to the harness union but not to PRICE_EQUIVALENT_PROVIDERS
+ * will read here as real metered money until it is added - which has happened before, and is
+ * recorded in cost-unit.ts's own Change Log for `antigravity-cli`. Fixing that belongs in
+ * cost-unit.ts, next to the sets, not in a display helper that would then disagree with the
+ * budget caps.
  */
 export function deriveCostUnitLabel(providerId: string | null): string | null {
-  // 'mixed' and null both mean "no single unit is knowable". classifyCostUnit would answer
-  // 'billed' for either, which reads as real money and may be neither.
   if (!providerId || providerId === MIXED_PROVIDER) return null;
   return COST_UNIT_LABELS[classifyCostUnit(providerId)];
 }
 
+/**
+ * @description Combines two provider labels for one bot without inventing a winner.
+ * @param current - Provider already accumulated for this bot, or null when absent.
+ * @param incoming - Provider on the row being merged in, or null when absent.
+ * @returns The shared provider, the known one when only one side has it, or 'mixed' when they
+ *          genuinely differ - a bot may span providers across tasks and the column must say so.
+ */
 function mergeProviderId(current: string | null, incoming: string | null): string | null {
   if (!current) return incoming ?? null;
   if (!incoming || incoming === current) return current;

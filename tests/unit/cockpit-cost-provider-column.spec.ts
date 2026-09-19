@@ -5,18 +5,22 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards the cockpit "Provider" column end to end. The renderer has always read `bot.providerId` under a `<th>Provider</th>`, but CockpitAgentUsageStats never declared the field and every rollup dropped it, so the column rendered an em dash for every bot on every ticket regardless of data. These cases cross the drop boundary - a chat_tasks-shaped row through the real rollup and merge - and assert the renderer's contract against the real renderer source rather than a restatement of it, so the column cannot go structurally dead again without a red test.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Also guards the ADR-127 cost-unit label. Est. Cost stacked a subscription price-equivalent, a $0 BYO token count and real metered spend into one figure. The load-bearing case is the negative one: classifyCostUnit answers 'billed' for anything it does not recognise, so an unknown or merged provider must come back unlabelled rather than asserting real money.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The two renderer cases now EXECUTE renderCostTab and assert on the emitted <td> instead of grepping the module source. The substring versions were theatre and were proven so: they stayed green against a column that rendered an em dash for every row, and stayed green when the whole Cost-by-Bot table was deleted with the matched strings left behind in a comment. They also drive the contributingBots payload, which is the shape the ticket-activity route always sends and the branch that clobbers the other - the defect they failed to catch lived there.
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   rollupTaskUsageByAgent,
   mergeAgentUsageMaps,
   readTaskUsageSummary,
 } from '@/app/routes/cockpit-cost-route-helpers';
-
-const RENDERER = join(process.cwd(), 'src/pages/cockpit/js/views/ticket-view-cost-renderer.js');
+// The REAL renderer module. Asserting on its source text instead let both halves of this feature
+// ship broken: the substring cases stayed green against a column that rendered an em dash for
+// every row, and green again when the entire Cost-by-Bot table was deleted and the strings left
+// behind in a comment. Executing it and reading the emitted <td> is the only assertion that bites.
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-expect-error - untyped cockpit JS module
+import { renderCostTab } from '../../src/pages/cockpit/js/views/ticket-view-cost-renderer.js';
 
 /** A chat_tasks row as the task store hands it over: provider_id mapped to providerId. */
 function taskRow(agentId: string, providerId: string | undefined, cost = 1) {
@@ -143,15 +147,51 @@ describe('the cockpit Cost-by-Bot "Provider" column is fed, not structurally dea
     expect(unknown.usageByAgent['bot-a']?.costUnitLabel).toBeNull();
   });
 
-  it('the renderer still reads the field this rollup produces', () => {
-    // Asserting against the real renderer source, not a copy of it. If someone renames the
-    // field on either side, these two halves stop agreeing and this case is what notices.
-    const source = readFileSync(RENDERER, 'utf-8');
-    expect(source, 'the Provider header is gone - the column was removed, not fixed')
-      .toContain('<th>Provider</th>');
-    expect(source, 'the renderer no longer reads providerId; the rollup field is now orphaned')
-      .toMatch(/bot\.providerId/);
-    expect(source, 'the renderer dropped the unit label; Est. Cost is summing units again')
-      .toMatch(/bot\.costUnitLabel/);
+  it('the rendered Cost-by-Bot row actually shows the provider and the unit', () => {
+    // `contributingBots` is the shape the ticket-activity route ALWAYS sends, and the renderer's
+    // second normalize branch clobbers the first with it. A payload without it would have passed
+    // even while the browser showed an em dash, which is exactly what happened.
+    const body: { innerHTML: string } = { innerHTML: '' };
+    renderCostTab(body, { id: 't1' }, {
+      totalCost: 1.5, totalTokens: 15, totalRequests: 1,
+      usageByAgent: {
+        'bot-a': {
+          agentId: 'bot-a', agentName: 'Bot A', providerId: 'claude-code',
+          costUnitLabel: 'price-equivalent (subscription)',
+          totalRequests: 1, totalInputTokens: 10, totalOutputTokens: 5, totalTokens: 15, totalCost: 1.5,
+        },
+      },
+      contributingBots: [{
+        agentId: 'bot-a', agentName: 'Bot A', providerId: 'claude-code',
+        costUnitLabel: 'price-equivalent (subscription)',
+        totalRequests: 1, totalInputTokens: 10, totalOutputTokens: 5, totalTokens: 15, totalCost: 1.5,
+      }],
+    });
+
+    expect(body.innerHTML, 'the Cost-by-Bot table is gone entirely').toContain('<th>Provider</th>');
+    expect(body.innerHTML, 'the Provider cell rendered an em dash despite a provider in the payload')
+      .toContain('<td>claude-code</td>');
+    expect(body.innerHTML, 'the em dash is still being rendered for a row that has a provider')
+      .not.toContain('<td>—</td>');
+    expect(body.innerHTML, 'the ADR-127 unit label never reached the markup')
+      .toContain('price-equivalent (subscription)');
   });
+
+  it('a row with no provider renders the em dash and no unit label', () => {
+    const body: { innerHTML: string } = { innerHTML: '' };
+    renderCostTab(body, { id: 't1' }, {
+      totalCost: 1, totalTokens: 15, totalRequests: 1,
+      usageByAgent: {},
+      contributingBots: [{
+        agentId: 'bot-b', agentName: 'Bot B',
+        totalRequests: 1, totalInputTokens: 10, totalOutputTokens: 5, totalTokens: 15, totalCost: 1,
+      }],
+    });
+
+    expect(body.innerHTML).toContain('<td>—</td>');
+    expect(body.innerHTML, 'a unit was asserted for a row whose provider is unknown')
+      .not.toContain('price-equivalent');
+    expect(body.innerHTML).not.toContain('billed');
+  });
+
 });
