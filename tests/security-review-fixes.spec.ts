@@ -67,30 +67,16 @@ test.describe('P1 — /api/debug/tickets/:id/trace requires authentication', () 
   });
 });
 
-// ── P2: reviewerBot is no longer silently dropped ─────────────────────────
-test.describe('P2 — registerWorkflow passes reviewerBot through', () => {
-  test('swarm-app-service.registerWorkflow includes reviewerBot in registration payload', async () => {
-    const fs = await import('fs');
-    const repoRoot = path.resolve(__dirname, '..');
-    const src = fs.readFileSync(
-      path.join(repoRoot, 'src/features/swarm-apps/services/swarm-app-service.ts'),
-      'utf-8',
-    );
-    // Find the registerFromApp call body and assert reviewerBot is one of
-    // the keys passed in.
-    const block = src.match(/registerFromApp\(\s*manifest\.name,\s*\{[\s\S]*?\}\s*\)/);
-    expect(block, 'expected to find registerFromApp call in swarm-app-service.ts').toBeTruthy();
-    expect(block![0]).toContain('reviewerBot:');
-    expect(block![0]).toContain('manifest.workflow.reviewerBot');
-  });
+// ── P2: reviewerBot is no longer silently dropped ─────────────────────
+// RETIRED, not lost. This was two source-text regexes over swarm-app-service.ts and
+// types.ts: they never executed the bridge, so they could only ever catch the deletion of
+// the one literal string they were told to look for - and the defect they guard against is
+// a field being added and forgotten, which no regex over the old field can see.
+// Replaced by tests/unit/swarm-app-manifest-load.spec.ts, which loads a manifest declaring
+// EVERY SwarmAppWorkflow key through the real service and reads each value back off the
+// real registry, plus a case that derives the key list from the INTERFACE so a new field
+// missing from the literal fails by name. Proven on both mutations (CKR-1).
 
-  test('SwarmAppWorkflow type declares reviewerBot field', async () => {
-    const fs = await import('fs');
-    const repoRoot = path.resolve(__dirname, '..');
-    const src = fs.readFileSync(path.join(repoRoot, 'src/features/swarm-apps/types.ts'), 'utf-8');
-    expect(src).toMatch(/reviewerBot\?:\s*string/);
-  });
-});
 
 // ── P2: workspace path startsWith confusion is gone ────────────────────────
 test.describe('P2 — sanitizeWorkspacePath rejects sibling-prefix paths', () => {
