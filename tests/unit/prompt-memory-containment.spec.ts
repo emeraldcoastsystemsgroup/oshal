@@ -352,7 +352,7 @@ describe('SEC-05 memory prompt trust classes', () => {
       serverAuthored: true, promptTrust: 'trusted-configuration',
     });
     expect(layers[1].metadata).toMatchObject({
-      promptTrust: 'untrusted-data', contentSource: 'prior-agent-memory',
+      promptTrust: 'untrusted-content', contentSource: 'prior-agent-memory',
     });
   });
 });

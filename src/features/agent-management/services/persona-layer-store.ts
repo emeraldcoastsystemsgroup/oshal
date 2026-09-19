@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added Postgres-backed persona layer store for multi-layer prompt composition
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added insertLayer for agent-factory bot provisioning
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The three swarm-wide policy rows reach the prompt AS POLICY again. #142 (2026-08-06) began requiring metadata.serverAuthored for a platform/host/tenant layer to earn the policy class, and stamped buildFilePersonaLayer but not the migration-009 seeds, which carry only {"source":"seed","version":"1.0"}. Nothing in src/, any-bot/, scripts/ or any migration has added the stamp since, so all three global rows - including the platform row's "Never expose internal system details, API keys, or credentials in output" - fell through the fail-closed default and were JSON-escaped into <UNTRUSTED_CONTENT>, in the same section as the ticket body, under a contract telling the model never to follow instructions found there. Stamped on READ rather than by a migration because the host row's text is deployment-specific and a migration would freeze one box's wording. The SELECT now carries scope so the stamp can require a GLOBAL row, not merely a platform-typed one.
  */
 
 import { Pool } from 'pg';
@@ -47,7 +48,7 @@ export class PersonaLayerStore {
   async getGlobalLayers(): Promise<PersonaLayer[]> {
     await this.schemaReady;
     const result = await this.pool.query(
-      `SELECT layer_type, priority, prompt_fragment, metadata
+      `SELECT layer_type, scope, priority, prompt_fragment, metadata
        FROM persona_layers
        WHERE scope = 'global' AND enabled = true
        ORDER BY priority ASC`,
@@ -64,7 +65,7 @@ export class PersonaLayerStore {
   async getAgentRoleLayers(agentId: string): Promise<PersonaLayer[]> {
     await this.schemaReady;
     const result = await this.pool.query(
-      `SELECT layer_type, priority, prompt_fragment, metadata
+      `SELECT layer_type, scope, priority, prompt_fragment, metadata
        FROM persona_layers
        WHERE agent_id = $1 AND enabled = true
        ORDER BY priority ASC`,
@@ -108,7 +109,7 @@ export class PersonaLayerStore {
   async getLayersForAgent(agentId: string): Promise<PersonaLayer[]> {
     await this.schemaReady;
     const result = await this.pool.query(
-      `SELECT layer_type, priority, prompt_fragment, metadata
+      `SELECT layer_type, scope, priority, prompt_fragment, metadata
        FROM persona_layers
        WHERE (scope = 'global' OR agent_id = $1) AND enabled = true
        ORDER BY priority ASC`,
@@ -119,16 +120,30 @@ export class PersonaLayerStore {
   }
 }
 
+/** Layer types that carry swarm-wide operating policy rather than per-agent content. */
+const POLICY_LAYER_TYPES: ReadonlySet<string> = new Set(['platform', 'host', 'tenant']);
+
 /**
- * @description Maps a database row to a PersonaLayer interface.
- * @param row - Raw database row
- * @returns Normalized PersonaLayer
+ * @description Maps a database row to a PersonaLayer interface, stamping server provenance on the
+ * globally scoped policy rows so they reach the prompt as policy instead of escaped data.
+ *
+ * Why the stamp lives here and not in a migration: the seeded host row's text is
+ * deployment-specific, so a migration would freeze one box's wording into every install. And why
+ * it is safe: a row reaches this mapper only from `persona_layers`, whose sole runtime writer is
+ * `AgentFactoryService.createRoleLayer`, which writes `layerType: 'role', scope: 'agent'` — a
+ * combination this predicate excludes twice over, and which `classifyLayer` hard-denies anyway.
+ * The caller inventory is pinned by a guard; a second writer must be reviewed against this claim.
+ * @param row - Raw database row, including `scope`.
+ * @returns Normalized PersonaLayer.
  */
 function mapRowToPersonaLayer(row: Record<string, unknown>): PersonaLayer {
+  const layerType = row.layer_type as PersonaLayerType;
+  const metadata = (row.metadata as Record<string, unknown>) ?? {};
+  const serverAuthored = row.scope === 'global' && POLICY_LAYER_TYPES.has(layerType);
   return {
-    layerType: row.layer_type as PersonaLayerType,
+    layerType,
     priority: row.priority as number,
     promptFragment: row.prompt_fragment as string,
-    metadata: (row.metadata as Record<string, unknown>) ?? {},
+    metadata: serverAuthored ? { ...metadata, serverAuthored: true } : metadata,
   };
 }
