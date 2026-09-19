@@ -16,7 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Make the primary API Postgres pool ceiling deployment-configurable and stamp application_name so a 47-backend managed cluster can be budgeted and audited without changing the existing local default.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | createOrchestrator takes the inline-turn cost ledger (oshal_cost_events writer) so every chat turn the controller orchestrator finishes lands in the per-event ledger the windowed budget caps read; without it inline spend only ever reached chat_tasks.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Own the main pool's connection 'error' events (ownPoolConnectionErrors): this pool had no pool-level or client-level listener at all, so a server-terminated connection - idle or checked out - was an uncaught exception and, through the crash guards, the end of the api process (the 2026-09-05 deploy).
- * 14 | maintainer@emeraldcoastsystemsgroup.com   | createOrchestrator takes its collaborators as one OrchestratorServices object with costLedger REQUIRED, closing a budget fail-open. The ledger was the 14th positional parameter and optional, so deleting `createInlineTurnCostLedger(pool)` from the single call site in composition-root type-checked clean; the orchestrator then took its `if (!this.deps.costLedger) return;` early exit, oshal_cost_events got no rows, and BudgetService trailing-window caps summed zero and never fired - invisible spend, with every existing ledger spec still green because they build deps by hand and never cross the wiring. Requiring the field makes that deletion a compile error at the one place it can happen, which no behavioural test could have caught.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | createOrchestrator takes its collaborators as one OrchestratorServices object with costLedger REQUIRED, closing a budget fail-open. The ledger was the 14th positional parameter and optional, so deleting `createInlineTurnCostLedger(pool)` from the single call site in composition-root type-checked clean; the orchestrator then took its `if (!this.deps.costLedger) return;` early exit, oshal_cost_events got no rows, and BudgetService trailing-window caps summed zero and never fired - invisible spend, with every existing ledger spec still green because they build deps by hand and never cross the wiring. Requiring the field makes that deletion a compile error at the one place it can happen. No EXISTING behavioural test crossed the composition wiring - no test anywhere references createOrchestrator, and the ledger spec hand-builds its deps - so nothing in the suite would have gone red.
  */
 
 import path from 'path';
@@ -98,16 +98,8 @@ export function createDatabasePool(): Pool {
 }
 
 /**
- * @description Creates the chat task orchestrator with the runtime tool executor.
- * @param taskStore - Task persistence service.
- * @param messageStore - Message persistence service.
- * @param streamManager - Stream manager.
- * @param getProvider - Dynamic provider resolver.
- * @param getTools - Runtime tool resolver.
- * @param getSystemPrompt - Runtime prompt resolver.
- * @param services - Collaborators. `costLedger` is required: it is the sole writer of the
- *                   per-event ledger the budget caps read, so it must not be droppable.
- * @returns Configured task orchestrator.
+ * @description Collaborators handed to the chat task orchestrator. Grouped rather than passed
+ * positionally so a required member cannot be dropped by trailing it off the argument list.
  */
 export interface OrchestratorServices {
   memoryService?: MemoryLayerService;
@@ -119,12 +111,25 @@ export interface OrchestratorServices {
   connectorSpecToolService?: ConnectorSpecToolService;
   /** REQUIRED, and deliberately not optional. The ledger is the only writer of
    *  `oshal_cost_events`, which is what BudgetService's trailing-window caps SUM. Omit it and the
-   *  caps see zero spend and never fire - an invisible-spend fail-open that no behavioural test can
-   *  catch, because every orchestrator assertion still passes with the ledger absent. Requiring it
-   *  here is what turns "someone deleted the wiring" into a compile error at the one call site. */
+   *  caps see zero spend and never fire - an invisible-spend fail-open that no test in the suite
+   *  would have caught, because every orchestrator assertion still passes with the ledger absent
+   *  and nothing crosses the composition wiring. Requiring it here is what turns "someone deleted
+   *  the wiring" into a compile error at the one call site. */
   costLedger: InlineTurnCostLedger;
 }
 
+/**
+ * @description Creates the chat task orchestrator with the runtime tool executor.
+ * @param taskStore - Task persistence service.
+ * @param messageStore - Message persistence service.
+ * @param streamManager - Stream manager.
+ * @param getProvider - Dynamic provider resolver.
+ * @param getTools - Runtime tool resolver.
+ * @param getSystemPrompt - Runtime prompt resolver.
+ * @param services - Collaborators. `costLedger` is required: it is the sole writer of the
+ *                   per-event ledger the budget caps read, so it must not be droppable.
+ * @returns Configured task orchestrator.
+ */
 export function createOrchestrator(
   taskStore: InMemoryTaskStore,
   messageStore: InMemoryMessageStore,
