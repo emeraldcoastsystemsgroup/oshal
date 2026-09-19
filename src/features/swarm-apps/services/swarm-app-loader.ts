@@ -22,6 +22,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Validate package-owned tool declarations through the shared tool contract before activation.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Validate dependencies (required/optional tiers or the legacy flat form) through the shared CLI/runtime contract, fail-closed at load.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | ADR-157 S1: move the whole schedule contract (prompt + service-route rules, the static-JSON walker, probeBelongsToRoute and containsFixtureInterpolation) into manifest-schedule-validation.ts — this file was 836 code lines, past its 800 budget — and hand that validator the imported authorization catalog so a service schedule's `requires` is checked against the permissions the app actually defines.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | Refuse `pipeline: staged` at load (CKR-10 / D2). Its executor was retired for the graph engine, so such a manifest fell through to manifest-worker and ran only workerBot with every authored approval gate dropped and nothing logged - a silently wrong run. Refused with the two pipelines that do work named in the message. Publish is unaffected: the studio compiles its own staged authoring into a graph and never emits this value.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -606,6 +607,19 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
       );
     }
   }
+  // `pipeline: staged` has no executor. It was retired in favour of the graph engine, and a
+  // manifest that declares it falls through chooseDispatchPath to manifest-worker: only workerBot
+  // runs, every approval gate the author wrote is dropped, and nothing is logged. That is a
+  // silently wrong run, so it is refused at load rather than accepted and quietly degraded.
+  // Publish is unaffected - the studio compiles its own staged authoring INTO a graph.
+  if (manifest.workflow && String((manifest.workflow as { pipeline?: unknown }).pipeline ?? '').trim() === 'staged') {
+    throw new Error(
+      `Manifest ${absPath}: pipeline 'staged' has no executor and would run only workerBot, ` +
+      `dropping every approval gate. Use pipeline 'graph' with a processDefinition, which the ` +
+      `workflow studio's Publish emits, or 'manifest-worker' for a single-bot workflow.`,
+    );
+  }
+
   try { readAppDependencies(manifest); } catch (err) { throw new Error(`Manifest ${absPath}: ${(err as Error).message}`); }
 
   // ADR-090 addendum: `skillProfiles:` names PROFILEABLE CAPABILITIES (not kernel modules), and

@@ -36,7 +36,6 @@ export type {
   SwarmAppReadinessDeclaration,
   SwarmAppGuestSeedDeclaration,
   SwarmAppWorkflow,
-  SwarmAppWorkflowStage,
   SwarmAppRibbonPolicy,
   SwarmAppAssistant,
   SwarmApplicationRecord,

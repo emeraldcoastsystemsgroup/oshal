@@ -146,8 +146,10 @@ export function compileWorkflowSpec(spec: WorkflowPublishSpec, scope: SwarmAppSc
   const workflow: SwarmAppWorkflow = {
     name: displayName,
     pipeline: 'graph',
-    workerBot: stages[0].bot, // informational; the graph drives execution
-    stages,
+    // informational; the graph drives execution. `stages` is NOT carried: nothing ever read it
+    // off a manifest workflow, and the field is gone from the type (CKR-10). The node graph below
+    // is the executable form.
+    workerBot: stages[0].bot,
     processDefinition: buildNodeGraphProcessDefinition(displayName, stages),
     ...(spec.autoStart === true ? { autoStart: true } : {}),
   };
@@ -318,8 +320,10 @@ function compileGraphSpec(
   const workflow: SwarmAppWorkflow = {
     name: displayName,
     pipeline: 'graph',
-    workerBot: stages[0].bot, // informational; the graph drives execution
-    stages,
+    // informational; the graph drives execution. `stages` is NOT carried: nothing ever read it
+    // off a manifest workflow, and the field is gone from the type (CKR-10). The node graph below
+    // is the executable form.
+    workerBot: stages[0].bot,
     processDefinition: { name: displayName, nodeGraph: { nodes: engineNodes, edges: engineEdges, topologicalOrder } },
     ...(spec.autoStart === true ? { autoStart: true } : {}),
   };
