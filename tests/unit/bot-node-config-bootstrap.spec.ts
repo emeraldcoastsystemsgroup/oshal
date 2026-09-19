@@ -79,7 +79,7 @@ describe('bot-node boot config bootstrap-pull (ADR-034 env-as-seed)', () => {
 
     it('a record with only a provider does not clobber the model seeds', () => {
       const env: NodeJS.ProcessEnv = { FORCE_LLM_MODEL: 'seed-model', CODEX_MODEL: 'seed-codex' };
-      const applied = applyPulledBotConfigToEnv({ providerId: 'claude-code', modelId: null, configVersion: 1 }, env);
+      const applied = applyPulledBotConfigToEnv({ providerId: 'claude-code', modelId: null, fallbackOrder: null, configVersion: 1 }, env);
       expect(applied).toEqual(['FORCE_LLM_PROVIDER']);
       expect(env.FORCE_LLM_MODEL).toBe('seed-model');
       expect(env.CODEX_MODEL).toBe('seed-codex');
@@ -87,7 +87,7 @@ describe('bot-node boot config bootstrap-pull (ADR-034 env-as-seed)', () => {
 
     it('a model pulled WITHOUT a provider only sets the generic FORCE_LLM_MODEL (never a harness-specific key)', () => {
       const env: NodeJS.ProcessEnv = {};
-      const applied = applyPulledBotConfigToEnv({ providerId: null, modelId: 'some-model', configVersion: 2 }, env);
+      const applied = applyPulledBotConfigToEnv({ providerId: null, modelId: 'some-model', fallbackOrder: null, configVersion: 2 }, env);
       expect(applied).toEqual(['FORCE_LLM_MODEL']);
       expect(env.CODEX_MODEL).toBeUndefined();
       expect(env.CLAUDE_CODE_MODEL).toBeUndefined();
@@ -95,12 +95,12 @@ describe('bot-node boot config bootstrap-pull (ADR-034 env-as-seed)', () => {
 
     it('claude-code records write CLAUDE_CODE_MODEL; legacy aliases normalize (codex-cli → openai-codex)', () => {
       const claudeEnv: NodeJS.ProcessEnv = {};
-      applyPulledBotConfigToEnv({ providerId: 'claude-code', modelId: 'claude-opus-4-5', configVersion: 1 }, claudeEnv);
+      applyPulledBotConfigToEnv({ providerId: 'claude-code', modelId: 'claude-opus-4-5', fallbackOrder: null, configVersion: 1 }, claudeEnv);
       expect(claudeEnv.CLAUDE_CODE_MODEL).toBe('claude-opus-4-5');
       expect(claudeEnv.CODEX_MODEL).toBeUndefined();
 
       const codexAliasEnv: NodeJS.ProcessEnv = {};
-      applyPulledBotConfigToEnv({ providerId: 'codex-cli', modelId: 'gpt-5.5', configVersion: 1 }, codexAliasEnv);
+      applyPulledBotConfigToEnv({ providerId: 'codex-cli', modelId: 'gpt-5.5', fallbackOrder: null, configVersion: 1 }, codexAliasEnv);
       // FORCE_LLM_PROVIDER keeps the raw vocabulary (resolveCurrentProvider accepts both);
       // the harness-specific model key routes via the normalized name.
       expect(codexAliasEnv.FORCE_LLM_PROVIDER).toBe('codex-cli');
@@ -111,13 +111,49 @@ describe('bot-node boot config bootstrap-pull (ADR-034 env-as-seed)', () => {
     });
   });
 
+  describe('the chain-less pull must not blank a configured node (regression)', () => {
+    it('a null fallbackOrder leaves a deliberately-set env variable exactly as it was', () => {
+      const env: NodeJS.ProcessEnv = { OSHAL_PROVIDER_FALLBACK_ORDER: 'claude-code,cline-cli' };
+      const applied = applyPulledBotConfigToEnv(
+        { providerId: 'openai-codex', modelId: null, fallbackOrder: null, configVersion: 1 }, env,
+      );
+      expect(applied).toEqual(['FORCE_LLM_PROVIDER']);
+      expect(env.OSHAL_PROVIDER_FALLBACK_ORDER).toBe('claude-code,cline-cli');
+    });
+
+    it('an EMPTY chain is applied as the off sentinel the resolver knows, never as a blank', () => {
+      // A blank value falls through to the legacy single-name variables, two of which compose
+      // passes to every bot — so writing '' for "no failover" produces failover.
+      const env: NodeJS.ProcessEnv = { OSHAL_PROVIDER_FALLBACK_ORDER: 'claude-code' };
+      applyPulledBotConfigToEnv(
+        { providerId: 'openai-codex', modelId: null, fallbackOrder: [], configVersion: 1 }, env,
+      );
+      // 'none' is the resolver's own vocabulary; provider-fallback-chain.spec.ts drives the
+      // resolver over this exact value so the two halves cannot drift apart.
+      expect(env.OSHAL_PROVIDER_FALLBACK_ORDER).toBe('none');
+    });
+
+    it('a non-empty chain is written in the order the administrator wrote', () => {
+      const env: NodeJS.ProcessEnv = {};
+      applyPulledBotConfigToEnv(
+        { providerId: 'openai-codex', modelId: null, fallbackOrder: ['claude-code', 'anthropic'], configVersion: 1 }, env,
+      );
+      expect(env.OSHAL_PROVIDER_FALLBACK_ORDER).toBe('claude-code,anthropic');
+    });
+  });
+
   describe('pullBotConfigFromController — fail-open pull', () => {
     it('parses a successful controller response', async () => {
       const fetchImpl = vi.fn(async () => jsonResponse(runtimeBody('openai-codex', 'gpt-5.5', 9)));
       const pulled = await pullBotConfigFromController({
         agentId: AGENT_ID, controllerBaseUrl: 'http://controller:5000', fetchImpl: fetchImpl as unknown as typeof fetch,
       });
-      expect(pulled).toEqual({ providerId: 'openai-codex', modelId: 'gpt-5.5', configVersion: 9 });
+      // fallbackOrder null, not []: this controller response carries no chain, and the two are
+      // different answers on the wire — null leaves the node's env alone, [] is a deliberate
+      // "no failover". Conflating them blanked OSHAL_PROVIDER_FALLBACK_ORDER on every pull.
+      expect(pulled).toEqual({
+        providerId: 'openai-codex', modelId: 'gpt-5.5', fallbackOrder: null, configVersion: 9,
+      });
       const [url] = fetchImpl.mock.calls[0] as unknown as [string];
       expect(url).toBe(`http://controller:5000/api/agents/${AGENT_ID}/runtime`);
     });

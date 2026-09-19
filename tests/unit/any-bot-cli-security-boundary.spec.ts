@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 describe('autonomous CLI provider boundary', () => {
-  it.each(['cline', 'claude-code', 'codex-cli', 'gemini-cli'])(
+  it.each(['cline', 'claude-code', 'codex-cli', 'gemini-cli', 'antigravity-cli'])(
     'rejects %s at provider selection before work acceptance',
     (providerName) => {
       expect(() => assertUnattendedProviderSelection(providerName)).toThrowError(/hosted provider or audited brokered sandbox/);
@@ -71,7 +71,7 @@ describe('autonomous CLI provider boundary', () => {
       .toThrowError(/unbrokered autonomous CLI/);
   });
 
-  it.each(['cline', 'claude-code', 'codex-cli', 'gemini-cli'] as HarnessType[])(
+  it.each(['cline', 'claude-code', 'codex-cli', 'gemini-cli', 'antigravity-cli'] as HarnessType[])(
     'denies in-controller %s before adapter.run can allocate work',
     async (harnessType) => {
       const run = vi.fn();

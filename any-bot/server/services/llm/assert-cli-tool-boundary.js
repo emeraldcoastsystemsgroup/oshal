@@ -7,12 +7,20 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: expose a provider-selection preflight so unbrokered autonomous CLIs are rejected before task/workspace acceptance, with an explicit hosted-or-brokered remediation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Remove the unaudited caller-supplied brokeredSandbox bypass and include Gemini CLI aliases in unattended preflight; no broker attestation exists today.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: the SPAWN boundary gets the same demo carve the TS preflight has, and for the same reason — a deployment running as a demo may launch the CLI for its own operator. Authority is read from the PROCESS environment plus the per-request OSHAL_USER_SUB the handler already threads into extraEnv; a caller-supplied option is never accepted as attestation (that bypass was removed in entry 3 and stays removed). Everything else — every other caller, every identity-less launch, every non-demo deployment — keeps the denial.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The Antigravity CLI reached the harness inventory, the factory record and the TS unattended-denial set, and never reached THIS set - so the spawn boundary, which is the one that actually starts a child process, would not have recognised it by any of its three spellings. Not reachable today (the harness has no bot-node runtime, so nothing resolves to it), which is why it reads as an omission rather than an incident; it is listed now because a boundary that depends on someone remembering the second list is not a boundary. Guarded behaviourally in tests/unit/any-bot-cli-security-boundary.spec.ts.
  */
 'use strict';
 
 const UNBROKERED_AUTONOMOUS_PROVIDERS = new Set([
   'cline', 'cline-cli', 'claude', 'claude-code', 'codex', 'codex-cli', 'openai-codex',
   'gemini', 'gemini-cli',
+  // Every spelling the Antigravity CLI answers to: the row/harness id, the bare vendor word, and
+  // the binary name the installer produces. This list and UNBROKERED_AUTONOMOUS_PROVIDERS in
+  // src/features/llm-provider/services/unattended-provider-policy.ts are two halves of ONE
+  // refusal - the TS half gates the controller preflight, this one gates the spawn - and the
+  // harness was added to the TS half only, which is exactly how a boundary ends up open on the
+  // side nobody re-read.
+  'antigravity', 'antigravity-cli', 'agy',
 ]);
 
 /** True when this deployment runs as a demo. Mirrors src/shared/deployment-mode.ts (DEMO_MODE alone). */

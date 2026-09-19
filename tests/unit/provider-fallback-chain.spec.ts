@@ -16,6 +16,7 @@ import {
   type ProviderSwitchRow,
 } from '../../src/shared/llm-runtime/bot-provider-switch';
 import {
+  createClineBackedRungProvider,
   maybeWrapBotNodeProviderFailover,
   resolveBotNodeProviderFallbackOrder,
 } from '../../src/app/bot-node-runtime';
@@ -149,17 +150,123 @@ describe('the provider fallback chain is configuration, not code', () => {
     });
 
     it('reads an ordered list from configuration, and one name still works', () => {
-      process.env.OSHAL_PROVIDER_FALLBACK_ORDER = 'claude-code, anthropic  gemini';
-      expect(resolveBotNodeProviderFallbackOrder('openai-codex')).toEqual(
-        ['claude-code', 'anthropic', 'gemini'],
-      );
-      process.env.OSHAL_PROVIDER_FALLBACK_ORDER = 'none';
-      expect(resolveBotNodeProviderFallbackOrder('openai-codex')).toEqual([]);
+      expect(resolveBotNodeProviderFallbackOrder('openai-codex', {
+        OSHAL_PROVIDER_FALLBACK_ORDER: 'claude-code, anthropic  gemini',
+      })).toEqual(['claude-code', 'anthropic', 'gemini']);
+      expect(resolveBotNodeProviderFallbackOrder('openai-codex', {
+        OSHAL_PROVIDER_FALLBACK_ORDER: 'none',
+      })).toEqual([]);
     });
 
     it('invents no chain when nothing is configured', () => {
       // The outage shape: a chain this file made up, that no setting could change.
-      expect(resolveBotNodeProviderFallbackOrder('openai-codex')).toEqual([]);
+      //
+      // An EXPLICIT empty env, not a deleted key: the resolver reads five variables and this case
+      // has to establish "unconfigured" for all five. Deleting one and inheriting the shell for
+      // the rest is what made the sibling guard in codex-default-floor.spec.ts go red from
+      // ambient environment, and the variable that breaks it is the one this feature tells
+      // operators to set.
+      expect(resolveBotNodeProviderFallbackOrder('openai-codex', {})).toEqual([]);
+    });
+  });
+
+  describe('a rung may name any provider the catalog knows, not only a runtime key', () => {
+    const RUNTIMES = (): Record<string, any> => ({
+      'claude-code': { id: 'claude-code' },
+      'openai-codex': { id: 'openai-codex' },
+      'cline-cli': { id: 'cline-cli', generateResponse: async () => ({ ok: true }) },
+    });
+    const CATALOG = ['openrouter', 'anthropic', 'gemini'];
+
+    /** Unwrap the nesting and read the realized rung order back out. */
+    function rungNames(wrapped: any): string[] {
+      const names: string[] = [];
+      let node: any = wrapped;
+      while (node && node.fallback) { names.push(node.fallbackName); node = node.fallback; }
+      return names;
+    }
+
+    it('realizes every rung of a mixed chain, not just the native one', () => {
+      // The exact chain .env.example and the cockpit placeholder advertise. Before the rung
+      // translator this realized as ONE rung: openrouter and anthropic are not runtime keys, so
+      // indexing the three-key runtime map dropped them into a log line nothing surfaces.
+      const wrapped: any = maybeWrapBotNodeProviderFailover(
+        { id: 'primary' }, 'gemini-runtime', RUNTIMES(),
+        ['claude-code', 'openrouter', 'anthropic'],
+        { clineApiProviders: CATALOG },
+      );
+      expect(rungNames(wrapped)).toEqual(['claude-code', 'openrouter', 'anthropic']);
+    });
+
+    it('keeps two Cline-backed rungs distinct instead of collapsing them onto one runtime', () => {
+      // Both execute on cline-cli. Deduping on the runtime key alone silently discarded the
+      // second vendor in the order the administrator wrote.
+      const wrapped: any = maybeWrapBotNodeProviderFailover(
+        { id: 'primary' }, 'openai-codex', RUNTIMES(),
+        ['openrouter', 'anthropic'],
+        { clineApiProviders: CATALOG },
+      );
+      expect(rungNames(wrapped)).toEqual(['openrouter', 'anthropic']);
+    });
+
+    it('a Cline-backed rung fronts its OWN vendor and restores what it found', async () => {
+      const env: NodeJS.ProcessEnv = { CLINE_API_PROVIDER: 'gemini', CLINE_API_MODEL: 'gemini-3.8-flash' };
+      const seen: Array<string | undefined> = [];
+      const runtime = {
+        id: 'cline-cli',
+        generateResponse: async () => { seen.push(env.CLINE_API_PROVIDER); return { ok: true }; },
+      };
+      const rung = createClineBackedRungProvider(runtime, 'anthropic', env);
+
+      await rung.generateResponse([], {});
+
+      expect(seen, 'the rung must run on the vendor it names').toEqual(['anthropic']);
+      // Restored to what was there on ENTRY, not to the container seeds: an active primary that
+      // is itself Cline-backed must keep its own backing when a rung returns.
+      expect(env.CLINE_API_PROVIDER).toBe('gemini');
+      expect(env.CLINE_API_MODEL).toBe('gemini-3.8-flash');
+    });
+
+    it('a rung does not inherit another vendor model, and restores an absent key as absent', async () => {
+      const env: NodeJS.ProcessEnv = { CLINE_API_MODEL: 'gpt-5.5' };
+      let modelDuringCall: string | undefined = 'unset';
+      const runtime = {
+        generateResponse: async () => { modelDuringCall = env.CLINE_API_MODEL; return { ok: true }; },
+      };
+      await createClineBackedRungProvider(runtime, 'anthropic', env).generateResponse([], {});
+      // fallback_order stores provider ids only, so there is no per-rung model. Carrying the
+      // primary vendor model id would fail as a wrong-model error, not as the failover it is.
+      expect(modelDuringCall).toBeUndefined();
+      expect(env.CLINE_API_MODEL).toBe('gpt-5.5');
+      expect(env.CLINE_API_PROVIDER).toBeUndefined();
+    });
+
+    it('restores the backing even when the rung throws', async () => {
+      const env: NodeJS.ProcessEnv = { CLINE_API_PROVIDER: 'gemini' };
+      const runtime = { generateResponse: async () => { throw new Error('vendor 429'); } };
+      await expect(
+        createClineBackedRungProvider(runtime, 'anthropic', env).generateResponse([], {}),
+      ).rejects.toThrow('vendor 429');
+      expect(env.CLINE_API_PROVIDER).toBe('gemini');
+    });
+
+    it('never makes the primary a rung of itself, even when named by its backing id', () => {
+      // cline-cli fronting anthropic IS the primary here; listing anthropic must not produce a
+      // rung that re-spawns the vendor that just failed.
+      const providers = RUNTIMES();
+      const wrapped: any = maybeWrapBotNodeProviderFailover(
+        providers['cline-cli'], 'anthropic', providers,
+        ['anthropic', 'claude-code'],
+        { clineApiProviders: CATALOG },
+      );
+      expect(rungNames(wrapped)).toEqual(['claude-code']);
+    });
+
+    it('delegates every other member to the runtime it wraps', () => {
+      const runtime = { getModelInfo: () => ({ model: 'x' }), id: 'cline-cli', generateResponse: async () => ({}) };
+      const rung = createClineBackedRungProvider(runtime, 'anthropic', {});
+      expect(rung.getModelInfo()).toEqual({ model: 'x' });
+      expect(rung.id).toBe('cline-cli');
     });
   });
 
