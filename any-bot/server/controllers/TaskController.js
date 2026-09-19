@@ -388,9 +388,10 @@ class TaskController {
         });
       }
 
-      // Tool-less is an execution authority boundary, not only a routing hint. An absent
-      // allowedTools option means unrestricted on the legacy interactive path, so force an
-      // exact empty list here before any registry capability can be captured or advertised.
+      // Tool-less is an execution authority boundary, not only a routing hint. The explicit
+      // empty list is kept deliberately: it states the intent at the call site rather than
+      // relying on the primitive's default. (That default is now deny-all - an absent option no
+      // longer means unrestricted - but a boundary should not be silent about what it intends.)
       const allowedTools = normalizeAllowedTools(toolLess ? [] : options.allowedTools);
       const authorizedScopes = normalizeAuthorizedScopes(options.authorizedScopes);
       const dispatchCapabilities = captureDispatchCapabilities(

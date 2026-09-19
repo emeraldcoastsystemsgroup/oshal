@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: add bounded JSON fencing for tool/prior-agent data and exact allowlist checks for swarm-dispatched tools.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The allowlist primitive failed OPEN and its own docstring described the hole word for word: normalizeAllowedTools returned null for any non-array and isDispatchToolAllowed read null as unrestricted, so an omitted or malformed field granted every advertised tool. SEC-05 closed the HTTP carrier (requireDispatchAuthorityList, two call sites), not the primitive beneath it, and the sibling scope primitive already denied a malformed value - so the pair disagreed on the same input. Now absence is never authority: a non-array yields the empty set, and the predicate requires an actual Set plus an exact member. Latent rather than live when fixed - no reachable path obtained an unrestricted set, because the three field-omitting callers live in the legacy Express app that bot-entrypoint.sh refuses with exit 78, and the live bot-node caller passes explicit arrays - so this is defence in depth, not an open hole being closed.
  */
 
 const DEFAULT_MAX_CONTENT_CHARS = 24000;
@@ -30,13 +31,19 @@ function wrapUntrustedContent(source, value, maxChars = DEFAULT_MAX_CONTENT_CHAR
 }
 
 /**
- * @description Converts an optional server allowlist to an exact set. An absent value keeps
- * legacy unrestricted behavior; a present empty array intentionally denies every tool.
+ * @description Converts a server allowlist to an exact set, failing CLOSED on anything that is not
+ * an array. Absence is not authority: a caller that omits the field, or supplies a malformed one,
+ * gets the empty set and therefore no tools. Authority is granted by an explicit list only.
+ *
+ * This used to return null for a non-array, and {@link isDispatchToolAllowed} read null as
+ * "unrestricted" - so an omitted field granted every advertised tool. SEC-05 closed the HTTP
+ * carrier (`requireDispatchAuthorityList`) but not the primitive underneath it. The scope
+ * primitive already failed closed on a malformed value, so the two also disagreed.
  * @param {unknown} value - Request-scoped allowed tool names.
- * @returns {Set<string>|null} Exact allowlist, or null when no dispatch restriction exists.
+ * @returns {Set<string>} Exact allowlist; empty denies every tool, including completion.
  */
 function normalizeAllowedTools(value) {
-  if (!Array.isArray(value)) return null;
+  if (!Array.isArray(value)) return new Set();
   return new Set(value.filter((name) =>
     typeof name === 'string'
       && name.length > 0
@@ -46,13 +53,16 @@ function normalizeAllowedTools(value) {
 
 /**
  * @description Enforces a server-derived tool allowlist without case or whitespace aliases.
+ * There is no unrestricted value: a missing or non-Set allowlist denies, so a caller cannot
+ * obtain authority by failing to supply one.
  * @param {Set<string>|null} allowedTools - Normalized request allowlist.
  * @param {unknown} toolName - Model-requested tool name.
- * @returns {boolean} True only when unrestricted or exactly allowlisted.
+ * @returns {boolean} True only when the name is exactly allowlisted.
  */
 function isDispatchToolAllowed(allowedTools, toolName) {
-  return allowedTools === null
-    || (typeof toolName === 'string' && allowedTools.has(toolName));
+  return allowedTools instanceof Set
+    && typeof toolName === 'string'
+    && allowedTools.has(toolName);
 }
 
 /**
