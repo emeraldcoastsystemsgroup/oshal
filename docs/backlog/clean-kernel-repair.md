@@ -650,12 +650,42 @@ the quantity sanity-check; `eats-concierge` gains "ALWAYS explain a pick" into `
 fixture. **Do not write it as "any key the parser does not consume"** — measured, that fires on 50 of 103
 files across 25 keys. (3) The `foundation?: { persona: string }` field leaves
 `src/features/swarm-apps/types.ts:775` and `scripts/oshal-app.js:124,136` **only after** the 5 store
-manifests have dropped the key and shipped. (4) **The store half, which criterion (1) otherwise breaks:**
-10 personas in `oshal-applications` declare `extends:`, and two of them target files that live in *core*
-(`extends: travel-foundation`, `extends: world-foundation`). So the store personas drop the key and ship
-**before** the core `*-foundation.yaml` files are deleted, and the dead-key spec in (2) extends to the
-store package suite — otherwise the entry can be signed off with the dead key still shipping in ten
-installed packages.
+manifests have dropped the key and shipped. (4) **The store half.** 10 personas in `oshal-applications` declare `extends:`, and the dead-key
+spec in (2) extends to the store package suite — otherwise the entry can be signed off with the dead
+key still shipping in ten installed packages.
+
+> **Correction of record, 2026-09-19.** This criterion previously said two store personas *"target
+> files that live in core"* (`travel-foundation`, `world-foundation`) and therefore mandated that the
+> store drop the key and ship BEFORE core deletes its `*-foundation.yaml` files. **That premise is
+> false.** Every one of the five `extends:` targets resolves inside the store:
+>
+> ```
+> dnd-foundation       -> dnd/personas/dnd-foundation.yaml
+> game-show-foundation -> game-show/personas/game-show-foundation.yaml
+> education-foundation -> little-monsters/personas/education-foundation.yaml
+> travel-foundation    -> travel/personas/travel-foundation.yaml
+> world-foundation     -> world/personas/world-foundation.yaml
+> ```
+>
+> So deleting core's foundation files orphans no store reference, and the two halves can land in
+> either order. `world-foundation.yaml` is byte-identical between the two repos — an ADR-085 carve
+> copy — which is presumably how the confusion arose; `travel-foundation.yaml` differs.
+>
+> The ordering in criterion **(3)** is unaffected and still holds: the `foundation?: { persona: string }`
+> field leaves core only after the 5 store manifests drop the key and ship, because that key IS read
+> from the manifest type.
+>
+> Also measured while checking: `extends` has no reader anywhere in `src/`, `any-bot/` or `scripts/`
+> — every hit is a TypeScript `class`/`interface` extends or Change Log prose. `foundation` appears
+> in `swarm-app-group.ts` only inside `GROUP_FORBIDDEN_KEYS`, which checks for its ABSENCE. Both
+> mechanisms are inert, as this entry says.
+>
+> One thing the entry does not say, and should: the residue is not decorative. `world-foundation`'s
+> `perspective:` carries *"NEVER invent a number, a headline, an outlet, or a sentiment score"* and
+> *"Outlet bias ratings are SEED placeholders today"*. Those are prompt-safety rules that have never
+> been applied to a running bot, because the mechanism that would have applied them does nothing.
+> Moving them is the point of this entry; deleting without moving them would make a live gap
+> permanent.
 
 ### CKR-15 — the chat path assembles a persona prompt with no containment frame (D11) — M
 
