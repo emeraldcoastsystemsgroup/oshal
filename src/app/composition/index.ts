@@ -31,6 +31,7 @@ export {
 export {
   createDatabasePool,
   createOrchestrator,
+  type OrchestratorServices,
   createToolFramework,
   createVerificationComponents,
   initializeToolRegistry,
