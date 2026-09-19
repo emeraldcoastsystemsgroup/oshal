@@ -13,6 +13,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Durable execution: load workflowCheckpoint from ticket metadata to resume with state, save a checkpoint before each node, clear on terminal; unifies + fixes the state-loss in the approval-gate resume path.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Run-history recording: optional runRecorder opens a workflow_runs row per dispatch (reused across suspend/resume via metadata.workflowRunId), streams per-node steps via the engine's onStep observer, and closes the run with its terminal disposition. Fire-and-forget like saveCheckpoint — every recorder call is non-throwing so a recording failure can never break a run.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Register the multi-app planner's plan-step executor on the engine instance so a compiled NL plan runs on this same graph rail (data-passing between app-bot steps + approval gates). Additive: studio-authored graphs never emit plan-step nodes.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The approval-gate suspend names its reason (CKR-12 / D5). This is the one approval_required that genuinely needs a human, and it was indistinguishable in the cockpit from the two that do not.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -175,7 +176,10 @@ export async function dispatchGraphTicket(
         } catch {
           /* already paused on a re-run — ignore */
         }
-        await deps.ticketService.updateStatus(ticketId, 'approval_required');
+        await deps.ticketService.updateStatus(ticketId, 'approval_required', {
+          reason: 'approval_gate',
+          source: 'dispatch-graph-worker',
+        });
         await finishRunRecord('suspended', 'suspended', result.reason);
         logger.info({ ticketId, resumeNode: result.resumeNodeId }, 'Graph workflow paused at approval gate — awaiting operator approval (state checkpointed)');
       }

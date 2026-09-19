@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Ran the gov-contracting cron tick under runWithSystemIdentity — a cross-owner background sweep over per-user opportunity/ticket rows; SYSTEM keeps it visible once OSHAL_DB_GUC_STRICT denies the identity-less case.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Resolve exact OIDC subjects through bound digest directories, enumerate canonical markers or unambiguous legacy entries, and reject linked/escaped CRM databases, SQLite sidecars, capture folders, and economy files before use.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: run the app-owned Python scan with an explicit runtime/SAM environment and owner-bound paths instead of inheriting controller, database, connector, and provider credentials.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | A drafted federal-capture lead names capture_lead_review as its approval reason (CKR-12 / D5). It creates the ticket already in approval_required, so it bypasses the transition backstop and needs its own - the same shape as incident intake. The reason goes INSIDE the existing metadata literal: a spread earlier in the same object is silently overwritten by the later `metadata:` key and type-checks clean, which is how the first cut of this change did nothing at all.
  */
 
 /**
@@ -220,6 +221,11 @@ async function createDraftTicket(
       fit_score: lead.fit_score,
       tenant: TENANT,
       source: 'gov-contracting-cron',
+      // CKR-12: this path CREATES the ticket already in approval_required rather than
+      // transitioning into it, so the transition backstop never sees it and the reason has to
+      // travel with the metadata that is actually written. It must live INSIDE this object - an
+      // earlier spread would be silently overwritten by this key, which type-checks clean.
+      ...(autoApprove ? {} : { reason: 'capture_lead_review' }),
     },
     ownerSub: userSub,
   });
