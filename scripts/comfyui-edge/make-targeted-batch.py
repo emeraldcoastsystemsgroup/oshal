@@ -8,7 +8,12 @@
 # drifts. Weak values are passed as a '||'-separated list (the scorecard's weak_cells[].value).
 #
 #   python make-targeted-batch.py --character oshbrainrot --weak "side profile view||screaming wide open mouth" --count 60
-import argparse, json, os, time, shutil, glob, zipfile, random, urllib.request
+import argparse, json, os, time, shutil, glob, random, sys, urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+from curation_judge import curate, discover_candidates, load_json, measure_candidates  # noqa: E402
 
 HOME = os.path.expanduser("~")
 BASE = "http://127.0.0.1:8188"
@@ -83,24 +88,54 @@ def biased_pick(axis_vals, weak):
     return random.choice(axis_vals)
 
 
-def recurate():
-    """Even-sample the (now-augmented) dataset to ~TARGET_CURATED and refresh curated.zip."""
+def recurate(hero=None, measurements_path=None, overrides_path=None):
+    """Even-sample the augmented dataset for DIVERSITY, then JUDGE it before it becomes the
+    training set.
+
+    This used to zip the even-sample straight into curated.zip with no judgement at all, which
+    made the judge a make-curate-only feature: overnight-loop.py runs make-targeted-batch and then
+    trains on ~/overnight/curated.zip, the exact path this function overwrites. So every autonomous
+    improve round trained on unjudged data - off-identity, two-eyed and melted frames included -
+    while the manual path rejected them. Even sampling is DIVERSITY, never judgement.
+
+    FAIL-CLOSED, matching curation_judge: if the run cannot be measured, it raises rather than
+    writing an unjudged training set. overnight-loop.py treats a non-zero exit as "targeted batch
+    failed; stopping", which is the correct outcome - a stopped loop beats a loop that trains on
+    whatever it rendered.
+
+    @param hero - Locked hero image the identity check measures against.
+    @param measurements_path - Precomputed id -> measurements JSON, skipping the CLIP pass.
+    @param overrides_path - Human override JSON; the human always wins, on this path too.
+    @returns The number of candidates KEPT, which is the size of the training set.
+    """
     os.makedirs(DEST, exist_ok=True)
-    imgs = sorted(glob.glob(os.path.join(DATA, "oshbrainrot_*.png")))
-    if not imgs:
+    candidates = discover_candidates(DATA, "oshbrainrot_*.png")
+    if not candidates:
         return 0
-    step = max(1, len(imgs) // TARGET_CURATED)
-    sel = imgs[::step][:TARGET_CURATED]
+    step = max(1, len(candidates) // TARGET_CURATED)
+    sampled = candidates[::step][:TARGET_CURATED]
+
+    hero_path = hero or os.path.join(INP, HERO)
+    if measurements_path:
+        measurements = load_json(measurements_path)
+    elif os.path.exists(hero_path):
+        measurements = measure_candidates(sampled, hero_path)
+    else:
+        raise SystemExit(
+            "REFUSING to recurate unjudged: hero %s not found. Pass --hero or --measurements. "
+            "overnight-loop.py trains on this zip, so writing it unjudged would train the next "
+            "version on rejects." % hero_path
+        )
+
+    overrides = load_json(overrides_path) if overrides_path else {}
     zpath = os.path.join(DEST, "curated.zip")
-    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in sel:
-            base = os.path.splitext(os.path.basename(p))[0]
-            txt = os.path.join(DATA, base + ".txt")
-            z.write(p, os.path.basename(p))
-            if os.path.exists(txt):
-                z.write(txt, base + ".txt")
-    log("recurated -> %s (%d images)" % (zpath, len(sel)))
-    return len(sel)
+    # dest_dir is the curated SUBdirectory, never DEST itself: curate() rebuilds its destination
+    # from scratch, and DEST is ~/overnight - the loop's own working directory.
+    report = curate(sampled, measurements, os.path.join(DEST, "curated"), zpath, overrides=overrides)
+    s = report["summary"]
+    log("recurated -> %s (%d kept of %d sampled, %d rejected, %d overridden)"
+        % (zpath, s["kept"], s["candidates"], s["rejected"], s["overridden"]))
+    return s["kept"]
 
 
 def main():
@@ -109,6 +144,10 @@ def main():
     ap.add_argument("--weak", default="", help="'||'-separated weak axis-values from the scorecard")
     ap.add_argument("--count", type=int, default=60)
     ap.add_argument("--seed-base", type=int, default=700000)
+    # The judge options, mirroring make-curate.py so the two paths are configured the same way.
+    ap.add_argument("--hero", help="locked hero image the identity check measures against")
+    ap.add_argument("--measurements", help="precomputed id -> measurements JSON (skips CLIP)")
+    ap.add_argument("--overrides", help="human override JSON: id -> {decision, note}")
     a = ap.parse_args()
     weak = set(v.strip() for v in a.weak.split("||") if v.strip())
     os.makedirs(DATA, exist_ok=True)
@@ -142,7 +181,7 @@ def main():
         open(os.path.join(DATA, "oshbrainrot_t%04d.txt" % i), "w").write("oshbrainrot, " + desc)
         made += 1
         log("img %d ok | %s" % (i, desc))
-    n = recurate()
+    n = recurate(hero=a.hero, measurements_path=a.measurements, overrides_path=a.overrides)
     log("==== TARGETED BATCH DONE: +%d images, curated set now %d ====" % (made, n))
 
 
