@@ -722,6 +722,9 @@ if [ ! -f "$ENV_FILE" ]; then
     # so the owner is knowable before the api ever boots — packages staged now can belong to
     # the operator created later, instead of landing unowned and invisible to everyone.
     if [ -n "$ADMIN_EMAIL" ]; then echo "OSHAL_INSTALL_OWNER_SUB=$(local_sub "$ADMIN_EMAIL")"; fi
+    # An app access assignment is keyed by (subject, ISSUER) since migration 145, so the grant
+    # must name the issuer this owner signs in under or it resolves for nobody.
+    if [ "$AUTH_MODE" = "mock" ]; then echo "OSHAL_INSTALL_OWNER_ISSUER=urn:oshal:mock-oidc"; else echo "OSHAL_INSTALL_OWNER_ISSUER=urn:oshal:local-auth"; fi
     # Compose defaults UI_PROFILE to the 7-item starter cockpit, whose rail lists NO installed
     # application — after staging dozens of them, the operator's first cockpit looked empty.
     # The full operator cockpit (every app surface grouped) is oshal-framework; the starter

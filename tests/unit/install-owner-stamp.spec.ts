@@ -5,12 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove an unowned app load adopts the deployment's install owner while any existing owner is left alone — the rule that keeps person-scoped packages staged before first login from being invisible to everyone.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The adopting owner becomes the application's administrator exactly once, never over an existing tier, and a failed grant never fails the load: an operator who held no tier saw none of the 58 protected applications on a fresh install.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | The grant is issuer-keyed after migration 145: it conflicts on (user_sub, app_name, principal_issuer) and names the issuer the owner signs in under, because a row written against the wrong issuer resolves for nobody.
  */
 import type { Pool } from 'pg';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AppAccessService } from '@/features/swarm-apps/services/app-access-service';
-import { adoptedInstallOwner, grantInstallOwnerAdmin, withInstallOwner } from '@/features/swarm-apps/services/install-owner';
+import { adoptedInstallOwner, grantInstallOwnerAdmin, installOwnerIssuer, withInstallOwner } from '@/features/swarm-apps/services/install-owner';
 
 const OWNER = 'local-465e37a0f03a4012';
 
@@ -56,9 +57,27 @@ describe('install owner administrator grant', () => {
     const { access, query } = poolReturning(1);
     await expect(grantInstallOwnerAdmin(access, 'cad-studio', OWNER)).resolves.toBe(true);
     const [sql, params] = query.mock.calls[0];
-    expect(sql).toContain('ON CONFLICT (user_sub, app_name) DO NOTHING');
+    // Keyed by (subject, issuer) since migration 145: a grant on the subject-only key would
+    // resolve for nobody, and DO UPDATE would overwrite a tier someone set.
+    expect(sql).toContain('ON CONFLICT (user_sub, app_name, principal_issuer) DO NOTHING');
     expect(sql).not.toContain('DO UPDATE');
     expect(params.slice(0, 4)).toEqual([OWNER, 'cad-studio', 'admin', OWNER]);
+    expect(params[5]).toBe('urn:oshal:local-auth');
+  });
+
+  it('names the issuer the owner actually signs in under', () => {
+    const saved = { issuer: process.env.OSHAL_INSTALL_OWNER_ISSUER, mock: process.env.MOCK_OIDC };
+    try {
+      delete process.env.OSHAL_INSTALL_OWNER_ISSUER; delete process.env.MOCK_OIDC;
+      expect(installOwnerIssuer()).toBe('urn:oshal:local-auth');
+      process.env.MOCK_OIDC = 'true';
+      expect(installOwnerIssuer()).toBe('urn:oshal:mock-oidc');
+      process.env.OSHAL_INSTALL_OWNER_ISSUER = 'https://accounts.example.test';
+      expect(installOwnerIssuer()).toBe('https://accounts.example.test');
+    } finally {
+      if (saved.issuer === undefined) delete process.env.OSHAL_INSTALL_OWNER_ISSUER; else process.env.OSHAL_INSTALL_OWNER_ISSUER = saved.issuer;
+      if (saved.mock === undefined) delete process.env.MOCK_OIDC; else process.env.MOCK_OIDC = saved.mock;
+    }
   });
 
   it('reports nothing granted when a tier already exists', async () => {

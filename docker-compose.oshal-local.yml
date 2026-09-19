@@ -413,6 +413,7 @@ x-bot-env: &bot-env
   # unowned row would be invisible to everyone: person-scoped apps match on ownerSub, and
   # NULL matches nobody. The loader stamps this on rows that have no owner yet.
   OSHAL_INSTALL_OWNER_SUB: ${OSHAL_INSTALL_OWNER_SUB:-}
+  OSHAL_INSTALL_OWNER_ISSUER: ${OSHAL_INSTALL_OWNER_ISSUER:-}
   OSHAL_ALLOW_LEGACY_UNOWNED: ${OSHAL_ALLOW_LEGACY_UNOWNED:-false}
   # SECURITY: Developer Console (ADR-077). Super-admin is a DISTINCT, more privileged role
   # than operator and is double-gated + fail-closed: the capability must be explicitly

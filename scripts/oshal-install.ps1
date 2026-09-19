@@ -565,6 +565,8 @@ if (-not (Test-Path $envFile)) {
     # Same sha256-of-lowercased-email the local-auth store derives, so packages staged before
     # anyone can log in belong to the operator instead of landing unowned and invisible.
     "OSHAL_INSTALL_OWNER_SUB=$(LocalSub $AdminEmail)"
+    # Keyed by (subject, ISSUER) since migration 145 - lockstep with oshal-install.sh.
+    "OSHAL_INSTALL_OWNER_ISSUER=$(if ($AuthMode -eq 'mock') { 'urn:oshal:mock-oidc' } else { 'urn:oshal:local-auth' })"
     # Compose defaults UI_PROFILE to the 7-item starter cockpit, whose rail lists NO installed
     # application. Lockstep with sh: the full operator cockpit unless OSHAL_UI_PROFILE overrides.
     "UI_PROFILE=$(if ($env:OSHAL_UI_PROFILE) { $env:OSHAL_UI_PROFILE } else { 'oshal-framework' })"
