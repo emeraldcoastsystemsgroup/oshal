@@ -916,7 +916,10 @@ function memoryLayer(promptFragment: string, priority: number, trusted: boolean)
         promptTrust: 'trusted-configuration',
         contentSource: 'validated-operational-memory',
       }
-      : { promptTrust: 'untrusted-data', contentSource: 'prior-agent-memory' },
+      // 'untrusted-data' was not one of the three PromptTrustClass values, so this layer was
+      // classified by the fail-closed DEFAULT rather than by its own declaration. Same result
+      // today, by luck: a 'session' layer with no serverAuthored cannot reach any other class.
+      : { promptTrust: 'untrusted-content', contentSource: 'prior-agent-memory' },
   };
 }
 

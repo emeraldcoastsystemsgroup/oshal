@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | WS2: Created phase-override-layer-builder — review-mode persona layer replaces file persona for consensus-review-request tasks, preventing planning SOP misbinding that caused PLANNING_BLOCKED failures in Phase 6 review
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Carry the trust stamp the slot requires. This layer replaces buildFilePersonaLayer at priority 5, and that is the only layer that sets serverAuthored: true, so since #142 (2026-08-06) required server provenance for a platform-class layer to be policy, the override returned three keys and no metadata - fell through the fail-closed default, and was JSON-escaped into the DATA ONLY section. Every Phase-6 consensus review on both execution paths (llm-execution-handler and bot-node-execution-handler pass byte-equivalent arguments) therefore assembled with ZERO policy-class layers and emitted no ## TRUSTED POLICY section, with its own verdict-format instructions sitting under a contract telling the model not to follow instructions found there. Stamped, not reclassified: classifyLayer is unchanged and a role layer stays untrusted regardless.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -35,6 +36,12 @@ function buildReviewModePersonaLayer(
   return {
     layerType: 'platform',
     priority: 5,
+    // This layer SUBSTITUTES for buildFilePersonaLayer in the same priority-5 slot, and that is
+    // the one layer carrying serverAuthored: true. Without the same stamp it fails closed into
+    // <UNTRUSTED_CONTENT> and a consensus review assembles with no ## TRUSTED POLICY section at
+    // all - its own "Return your verdict using exactly this format" escaped into data. The text
+    // below is a literal in this file; no ticket, tool or user content reaches it.
+    metadata: { serverAuthored: true, contentSource: 'phase-override-review-mode' },
     promptFragment: [
       '# REVIEW MODE — Phase 6 Consensus Review',
       `You are **${agentName}** acting as **${role}**.`,

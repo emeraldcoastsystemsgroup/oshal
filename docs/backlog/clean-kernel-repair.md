@@ -210,7 +210,14 @@ returns — not against any file's text. Proven red once by deleting the `review
 `swarm-app-service.ts` and recorded in the PR. Plus `grep -n "phases" src/features/swarm-apps/types.ts`
 returns nothing.
 
-### CKR-2 — pin the prompt classification table (D13) — S
+### CKR-2 — pin the prompt classification table (D13) — S — **SHIPPED**
+
+> Shipped as `tests/unit/prompt-trust-classification.spec.ts` (40 cases): six `PersonaLayerType`
+> values x five provenance shapes, written out rather than computed, plus the two named rows.
+> `grep -rn "TRUSTED POLICY" tests/` now returns assertions (zero before). All three mutation
+> checks were RUN, not asserted: the policy grant turns 7 red, the role hard-deny exactly 1, the
+> authority rebind 1. The original done-when's wording for the role deny was wrong and the file
+> records the measured narrower claim. `'untrusted-data'` reconciled at both sites.
 
 **Evidence.** Zero tests in the 1,040-file unit corpus reference `classifyLayer`, construct a
 platform/host/tenant layer, or assert the string `TRUSTED POLICY`. There is no table over layer type ×
@@ -237,7 +244,14 @@ metadata without `serverAuthored`, `serverAuthored` only, `serverAuthored` + `pr
 
 *Land this before CKR-3 and CKR-4; it is the guard both of them need.*
 
-### CKR-3 — the swarm-wide policy layers are inert as policy (D8) — S
+### CKR-3 — the swarm-wide policy layers are inert as policy (D8) — S — **SHIPPED**
+
+> Stamped loader-side in `mapRowToPersonaLayer`, gated on `scope='global'` AND a
+> platform/host/tenant type. All THREE readers sharing that mapper had to start selecting
+> `scope` — `getGlobalLayers` and `getAgentRoleLayers` did not, and a SELECT that omits the
+> column makes the stamp a silent no-op on that path. Criterion (4) measured on the running box:
+> 3 global policy rows, **0** rows carrying `serverAuthored` — nothing was written to the
+> database. 67 role rows exist and all stay untrusted via the hard-deny.
 
 **Evidence.** `classifyLayer` grants the `policy` class to a platform/host/tenant layer only when
 `metadata.serverAuthored === true` (`prompt-containment.ts:189,195`). The three global rows seeded by
@@ -280,7 +294,12 @@ unchanged at 0 — proving the fix is loader-side and wrote nothing to the datab
 > `bot-node-execution-handler.ts:397`), and satisfying it would require prompt-body logging, which this
 > repo's logging rule forbids.
 
-### CKR-4 — every consensus-review prompt has no trusted policy section at all (D9) — S
+### CKR-4 — every consensus-review prompt has no trusted policy section at all (D9) — S — **SHIPPED**
+
+> `buildReviewModePersonaLayer` now carries `{serverAuthored: true, contentSource:
+> 'phase-override-review-mode'}`. Stamped, not reclassified: `classifyLayer` is untouched.
+> Both occupants of priority slot 5 are pinned to one trust class, and the payloadType guard is
+> re-asserted so the stamp cannot be read as widening the override.
 
 **Evidence.** `buildReviewModePersonaLayer` exists specifically to substitute for the file persona in the
 same priority-5 slot — its own JSDoc says so — and the file persona is the one layer that carries
