@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added the STATIC seam-coverage block: every migrated background runner (boot chain, audit writer, scheduler dispatch, queue/worker loops, cron sweeps, bot-node execute) must reference runWithSystemIdentity, and the retired runWithoutRequestIdentity must have ZERO references — so a future bare background caller (or a reverted wrap) fails CI. Mirrors tests/unit/identity-middleware-ordering.spec.ts discipline.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Extended SYSTEM_SEAMS with the 5 boot seeders the hardened guc warn-audit surfaced (initializeToolRegistry chain, agent-profile + inline-controller seeders, person-model lazy-DDL, feedback-loop ensureSchema). The old audit collapsed 30+ identity-less sites into 2 by keying dedup on a node-internal frame; these were invisible until the site-identification fix.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Extended SYSTEM_SEAMS with the two mesh-subscription handlers the live deny audit caught running identity-less (remote-client-task-results landing — the DENIED "WorkItemRepository.findByExternalIdAnyProvider" site — and the config-sync config-change handler, same shape found by inspection). Mesh poll callbacks carry no ALS identity; both now wrap in runWithSystemIdentity. Behavioral proof lives in tests/unit/mesh-handler-system-identity.spec.ts.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Fixes a RED main. #605 made authorization grants (subject, issuer) pairs and added oshal.current_issuer to the GUC stamp, taking it from two parameters to three; this case still asserted the two-parameter shape and had been failing since. Updated to the real shape, and a second case added so the issuer is actually COVERED rather than merely tolerated - nothing in this spec asserted it reached Postgres at all, which is how the change landed without anyone noticing the pin.
  */
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
@@ -94,7 +95,25 @@ describe('positive SYSTEM identity sentinel', () => {
     const pool = wrapPoolWithGuc(fakePool(client));
     await runWithRequestIdentity({ sub: 'auth0|bob', isOperator: false }, () => pool.query('SELECT 1'));
     const stamp = client.setConfigCalls.find((c) => Array.isArray(c.params));
-    expect(stamp?.params).toEqual(['auth0|bob', 'off']);
+    // Three GUCs since #605: sub, issuer, is_operator. The issuer is '' here because this
+    // fixture declares none — the point of the case is that the SUB is still bob's, not the
+    // sentinel's, so the shape is asserted whole rather than by index.
+    expect(stamp?.params).toEqual(['auth0|bob', '', 'off']);
+  });
+
+  it("the principal issuer is stamped too, so a grant cannot be read across issuers", async () => {
+    // #605 made authorization grants (subject, issuer) pairs. The issuer reaches Postgres by the
+    // same stamp as the sub, and nothing here covered it — this spec was asserting a two-GUC
+    // shape that had been three for some time, which is why it was red on main.
+    process.env[ENV] = 'deny';
+    const client = fakeClient();
+    const pool = wrapPoolWithGuc(fakePool(client));
+    await runWithRequestIdentity(
+      { sub: 'auth0|bob', principalIssuer: 'https://tenant-a.example/', isOperator: false },
+      () => pool.query('SELECT 1'),
+    );
+    const stamp = client.setConfigCalls.find((c) => Array.isArray(c.params));
+    expect(stamp?.params).toEqual(['auth0|bob', 'https://tenant-a.example/', 'off']);
   });
 });
 
