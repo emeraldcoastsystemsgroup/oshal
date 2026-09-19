@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the declared CRM connection budget: pool-max resolution bounds, per-service application_name stamping, and the 23-of-47 launch ceiling against DigitalOcean's 2 GiB tier.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove actual local Compose applies the existing managed API pool budget, preserves explicit overrides and leaves other services unchanged after a live role-limit saturation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fixes a RED main, and the cause was the guard, not the code. The bot ceiling MOVED from bot-node-runtime.ts to bot-node-database-pool.ts in a decomposition - the call byte-identical, the behaviour untouched - and this case failed because it pinned a file PATH. It now locates each ceiling by its CALL anywhere under src/ and requires exactly one occurrence, so a move passes, a deletion fails, and a second inconsistent call site fails too.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Walk the tree ONCE. The previous entry's fix called sourceFilesUnder inside the per-call loop, re-walking and re-reading everything four times - 6,212 reads instead of 1,553. Warm that is about 1.6s and green; on a COLD checkout it is 11-23s against vitest's default 5000ms timeout, and a cold checkout is precisely how ci-local.sh runs this: git archive into a purged directory, then test:unit. So a guard added to make main green was itself red the first time the real gate would have seen it, and green every time it was checked by hand.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -111,16 +112,29 @@ describe('managed PostgreSQL pool budget', () => {
     // in a decomposition, with the call byte-identical and the behaviour untouched. A guard that
     // a refactor breaks and a deletion would also break cannot tell you which one happened.
     // Exactly one occurrence each, so a second, inconsistent call site is a failure too.
-    for (const call of [
+    const calls = [
       'resolvePoolMax(process.env.OSHAL_DB_POOL_MAX, 20)',
       'resolvePoolMax(process.env.PGPOOL_MAX, 20, 2)',
       'resolvePoolMax(process.env.RAG_DB_POOL_MAX, 4)',
       'resolvePoolMax(process.env.DB_MAX_CONNECTIONS, 5)',
-    ]) {
-      const hits = sourceFilesUnder(path.resolve(root, 'src'))
-        .filter((file) => fs.readFileSync(file, 'utf8').includes(call))
-        .map((file) => path.relative(root, file).split(path.sep).join('/'));
-      expect(hits, `${call} should appear exactly once under src/`).toHaveLength(1);
+    ];
+    // ONE walk, one read per file, all four strings checked against it. The first cut called
+    // sourceFilesUnder inside this loop, which walked and re-read the whole tree four times:
+    // 6,212 reads instead of 1,553. Warm that is ~1.6s and passes; on a COLD checkout it is
+    // 11-23s against vitest's default 5000ms timeout, and a cold checkout is exactly how
+    // ci-local.sh runs this — `git archive | tar -x` into a purged directory, then test:unit.
+    // A guard added to make main green cannot itself be red the first time the gate sees it.
+    const hits = new Map<string, string[]>(calls.map((call) => [call, []]));
+    for (const file of sourceFilesUnder(path.resolve(root, 'src'))) {
+      const source = fs.readFileSync(file, 'utf8');
+      for (const call of calls) {
+        if (source.includes(call)) {
+          hits.get(call)?.push(path.relative(root, file).split(path.sep).join('/'));
+        }
+      }
+    }
+    for (const call of calls) {
+      expect(hits.get(call), `${call} should appear exactly once under src/`).toHaveLength(1);
     }
   });
 
