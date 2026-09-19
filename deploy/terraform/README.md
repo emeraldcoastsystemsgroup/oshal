@@ -100,11 +100,20 @@ Before the weekend apply, in order:
    CLI home paths — which also needs a token-refresh story (the host keepalive
    refreshes OAuth 2-hourly; a static Secret goes stale). **Decide before the
    weekend; without it every bot heartbeats but no LLM executes.**
-5. **Not yet in the chart** (compose-only infra): TimescaleDB (`oshal-tsdb` —
-   trading), ArangoDB (graph — `/api/graph` degrades to 503, acceptable),
-   Vault, code-server, speaker-diarization, ollama, cloudflared/headscale.
-   Features degrade accordingly — **trading cannot run on k8s until tsdb is
-   templated**; keep trading on the dev box or add the template first.
+5. **What the MODULE forwards, which is narrower than what the chart ships.**
+   The chart templates TimescaleDB, ArangoDB, Vault, code-server,
+   speaker-diarization and ollama, each behind its own `infra.<name>.inCluster`
+   flag (ollama defaults OFF, matching compose, where it sits behind the
+   `local-llm` profile and a plain `up` never starts it). Trading runs on k8s.
+   What this Terraform path still lacks is the *switch*: `main.tf` forwards only
+   `var.postgres_in_cluster`, so pointing Timescale or Vault at a managed
+   service from here needs those variables added to the module first — until
+   then they can only run in-cluster on this path.
+   For what the chart does and does not promise about durability, see
+   [the chart's durability boundary](../helm/oshal/README.md#durability-boundary):
+   the PVCs are ordinary claims, no backup or restore job ships with either the
+   chart or this module, and protecting `oshal-workspace` and
+   `data-oshal-chromadb-0` belongs to whatever backs up volumes on your cluster.
 6. **Remote state backend** (S3/azurerm/…) before the first production apply —
    local tfstate is kind-proveout-only.
 7. After apply: `kubectl -n <ns> get pods` all Ready, `/api/agents` shows the
