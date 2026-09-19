@@ -411,7 +411,19 @@ is green.
 > non-array — tools → `null` (unrestricted), scopes → empty `Set` (deny-all) — so a fix must close both
 > the absent and the malformed shape, and a test that only covers `undefined` will miss the divergence.
 
-### CKR-8 — a database-less bot node resolves to zero tools, including the completion tool (D15, part 1) — S
+### CKR-8 — a database-less bot node resolves to zero tools, including the completion tool (D15, part 1) — S — **SHIPPED**
+
+> The asymmetry was the defect: the database-backed resolver has ALWAYS floored completion
+> unconditionally (`prompt-authorization-resolver.ts`), and only the resolver-absent branch did
+> not — so the same bot finished its task with a database and hung without one. Floored in
+> `resolvePromptAuthorityBinding`, additively, so the documented server-authored persona fallback
+> still reaches the binding. `any-bot-runtime-capabilities.ts` moved from `src/app/` to
+> `src/shared/llm-runtime/` so a features-layer module can reach the contract without importing
+> upward. Guard: `tests/unit/database-less-node-completion-floor.spec.ts` (5 cases), crossing into
+> the REAL `captureDispatchCapabilities`/`authorizeCapability` over a REAL ToolRegistry — the
+> snapshot, not the binding, is what the model is offered. Proven red: 4 of 5 fail without the
+> floor, and the 5th (resolver present) correctly stays green. Registered in the Test Lab.
+> Part 2, deprecating the redundant field, remains a separate decision item and is NOT bundled.
 
 **Evidence.** All three counts are exact: 103 personas, 13 declare `allowed_tools`, 70 declare
 `authorizations`, 3 declare both, 23 declare neither. When a node has no database repository the resolver
