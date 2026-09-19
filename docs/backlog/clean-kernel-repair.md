@@ -778,7 +778,32 @@ linking after `executeBotOrInline` returns — **not** by adding an `externalId`
 updated_at < NOW() - INTERVAL '1 day'` returns 0; the pre-existing 683 rows are explicitly out of scope, no
 backfill.
 
-### CKR-20 — cross-ticket and cross-owner workspace isolation does not exist (R3.3) — S to decide, L to build
+### CKR-20 — cross-ticket and cross-owner workspace isolation does not exist (R3.3) — **MEASURED and PINNED 2026-09-19; the decision is open**
+
+**Done-when (1), second half: done.** `tests/unit/compose-workspace-mount-posture.spec.ts` asserts
+against the RESOLVED compose (the mounts arrive through a `<<:` merge, so a regex cannot see them)
+that every workspace mount is `:rw` with no subpath, and that the mounting set is exactly the
+bot-anchor inheritors plus `code-server`. **Measured: 40 mounts, 40 of them `:rw`, 0 subpaths, 39
+inheritors** — the entry's arithmetic is right, and `oshal-api` is itself an inheritor so the
+invariant is inheritors + 1.
+
+**Done-when (3): done.** The same spec pins that `runtimeToolMatchesCapabilities` short-circuits to
+`true` for `CORE_RUNTIME_TOOL_NAMES` BEFORE any tag work, and that `execute_command` is in that set
+— so a later reader cannot repeat the belief that persona YAML gates the shell. The assertion is on
+the ORDER of the two, so moving capability matching in front of the short-circuit fails it, which
+is the change that would make the belief true.
+
+**Done-when (1), first half: OPEN, and deliberately left so.**
+[workspace-isolation-decision.md](workspace-isolation-decision.md) names ADR-060's three options
+verbatim plus the fourth this entry adds, with what each costs. Which one is the operator's call —
+that is the whole point of the criterion and not something to default into by not choosing.
+
+**Done-when (2): not done.** The two-container traversal proof is still owed, and the note stands:
+`ToolExecutorService` is constructed in the CONTROLLER, not on the bot-nodes, so the proof has to
+exercise the path that actually runs the shell.
+
+<details><summary>Original entry</summary>
+
 
 Both halves accurate and the ADR quote near-verbatim. All **40** workspace mounts are `:rw` with no
 subpath; every bot container sees every other ticket's and every other user's working directory as a
@@ -813,6 +838,8 @@ capability matching — so a later reader cannot repeat the false belief that pe
 tool.
 
 ---
+
+</details>
 
 ## Not real
 
