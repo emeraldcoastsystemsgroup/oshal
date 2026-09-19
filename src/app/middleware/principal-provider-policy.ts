@@ -4,15 +4,17 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Reuse enabled login providers to scope observed principals and existing operator continuity.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Reads the one MOCK_OIDC predicate instead of a local truthiness helper. Seven places read this variable through FIVE different helpers, and they did not agree: two accepted `on` and five did not, so MOCK_OIDC=on meant "demo" to the deploy-mode resolver and "off" to the auth bypass. The accepted set is deliberately NOT widened to include `on` - widening would newly enable an auth bypass on any box that has the variable set to it, and a half-demo deployment was already not working. Now every reader answers identically by construction.
  */
 import { envFlag, resolveLoginProviders, resolveMicrosoftSecondaryLoginProvider, type LoginProvider } from '@/shared/middleware/oidc-providers';
 import type { VerifiedPrincipal } from '@/features/principal-directory';
+import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 
 /** @description Resolve the same enabled providers as interactive authentication, without contacting an identity provider.
  * @param env Actual authentication configuration. @returns Trusted exact issuer records; disabled providers are absent.
  */
 export function principalLoginProviders(env: NodeJS.ProcessEnv): ReadonlyMap<string, LoginProvider> {
-  if (envFlag(env.MOCK_OIDC, false)) return new Map();
+  if (isMockOidcEnabled(env)) return new Map();
   const hybrid = envFlag(env.ENTRA_LOCAL_AUTH_HYBRID, false);
   const bridge = envFlag(env.ENTRA_LOCAL_IDENTITY_BRIDGE, false);
   if (envFlag(env.LOCAL_AUTH, false) && !hybrid && !bridge) return new Map();

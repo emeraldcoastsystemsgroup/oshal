@@ -4,17 +4,21 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard: MOCK_OIDC is ONE predicate, not three readings. isMockOidcEnabled() accepts true|1|yes in any case, but server.ts tested MOCK_OIDC === 'true' at the /api/auth/user mode string and at the demo-auth route mount — so MOCK_OIDC=1 took the full auth bypass while reporting mode 'oidc' and never mounting the demo /logout. Part 1 runs the real application auth set, the real auth-state router and the real demo mount over a real HTTP listener and requires every value the helper accepts to produce an identical observation at all three call sites. Part 2 parses src/app/server.ts and requires that file to hold no MOCK_OIDC env read of its own and to reach both of its sites through the shared registrars — an AST walk, so a commented-out or renamed call cannot satisfy it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Widened from server.ts to the WHOLE tree. The original entry closed two readings in server.ts; six more survived elsewhere - two strict `=== 'true'` comparisons in the authorization identity resolver, one each in the judge and test-lab routes, and two code-identical private copies of the helper in the resilient ticket and workspace stores - plus five different generic truthiness helpers reading the same variable, two of which accepted `on` and three of which did not. Now an INVENTORY gate: every live reading of MOCK_OIDC anywhere in src/ must go through isMockOidcEnabled, so an eighth reading cannot be added quietly. Plus a behavioural case pinning that the deploy-mode resolver and the auth bypass agree on every spelling, including `on`, which they did not before.
  */
 
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApplicationAuthMiddlewareSet } from '@/app/middleware/application-auth';
 import { createAuthStateRoutes, mountDemoAuthRoutes } from '@/app/routes/auth-state-routes';
 import { isMockOidcEnabled } from '@/shared/middleware/oidc';
+import { readdirSync, statSync } from 'node:fs';
+import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
+import { detectMode } from '@/shared/deploy-mode/deploy-mode';
 
 const SERVER_FILE = resolve(__dirname, '../../src/app/server.ts');
 
@@ -172,6 +176,90 @@ function readServerCallSites(): ServerCallSites {
   visit(sourceFile);
   return { envReads, byName, authStateMounts, appUseIdentifiers };
 }
+
+describe('nothing in src/ reads MOCK_OIDC except the one predicate', () => {
+  /**
+   * Every LIVE reading of the `MOCK_OIDC` variable in src/ — comments, string literals and the
+   * similarly-prefixed sibling variables removed.
+   *
+   * The identifier, not the substring: `MOCK_OIDC_EMAIL`, `MOCK_OIDC_SUB`, `MOCK_OIDC_NAME` and
+   * `MOCK_OIDC_ALLOW_HEADER` are DIFFERENT variables that merely share a prefix, and the first
+   * draft of this scan flagged all four. So did a one-line `/** ... *\/` JSDoc. Both were the
+   * scan being wrong rather than the code.
+   */
+  function liveReadings(): Array<{ file: string; line: number; text: string }> {
+    const hits: Array<{ file: string; line: number; text: string }> = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) {
+          // src/pages is browser code. It cannot import a Node module, and what it reads is
+          // `window.MOCK_OIDC` / localStorage — a different carrier with different inputs, not
+          // this process's environment. Out of scope for a process-env predicate, deliberately.
+          if (entry !== 'pages') walk(full);
+          continue;
+        }
+        if (!/\.(ts|js)$/.test(full)) continue;
+        readFileSync(full, 'utf8')
+          .replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, ' '))  // block comments, keep line count
+          .split(/\r?\n/)
+          .forEach((raw, index) => {
+            const code = raw.replace(/\/\/.*$/, '')
+              .replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""').replace(/`[^`]*`/g, '``');
+            // MOCK_OIDC as a whole identifier: not followed by another identifier character,
+            // which is what excludes MOCK_OIDC_EMAIL and friends.
+            if (!/\bMOCK_OIDC(?![A-Za-z0-9_])/.test(code)) return;
+            hits.push({ file: full.replace(/\\/g, '/'), line: index + 1, text: raw.trim() });
+          });
+      }
+    };
+    walk(join(process.cwd(), 'src'));
+    return hits;
+  }
+
+  it('every live reading of the variable goes through isMockOidcEnabled', () => {
+    // Seven places read MOCK_OIDC through FIVE different helpers, and they disagreed: two
+    // accepted `on` and five did not, so MOCK_OIDC=on meant "demo" to the deploy-mode resolver
+    // and "off" to the auth bypass — a deployment half in demo mode and half out of it. Every
+    // one of those disagreements failed CLOSED, which is why none became an incident; the hazard
+    // is someone reconciling one site in the permissive direction.
+    //
+    // An INVENTORY, not a sample: a behavioural check on the sites that exist today stays green
+    // the day an eighth reading appears somewhere new.
+    const offenders = liveReadings().filter((hit) => {
+      if (hit.text.includes('isMockOidcEnabled')) return false;
+      // The canonical definition itself, and the re-export that keeps old imports working.
+      if (hit.file.endsWith('src/shared/middleware/principal-issuer.ts')) return false;
+      return true;
+    });
+    expect(
+      offenders.map((hit) => `${hit.file.slice(hit.file.indexOf('src/'))}:${hit.line} ${hit.text}`),
+      'each of these interprets MOCK_OIDC itself instead of asking the one predicate',
+    ).toEqual([]);
+  });
+
+  it('the deploy-mode resolver and the bypass agree on every spelling, including the ones they used to differ on', () => {
+    // detectMode used a local flag() that accepted `on`; the bypass never did. The set is
+    // deliberately NOT widened to include `on`: widening would newly enable an auth bypass on any
+    // box that has the variable set to it, and a half-demo deployment was already not working.
+    for (const value of ['true', '1', 'yes', 'TRUE', ' 1 ', 'on', 'On', 'false', '0', 'no', 'banana', '']) {
+      const env = { MOCK_OIDC: value } as NodeJS.ProcessEnv;
+      const bypass = isMockOidcEnabled(env);
+      expect(
+        detectMode(env) === 'demo',
+        `MOCK_OIDC=${JSON.stringify(value)}: the deploy mode and the auth bypass must agree`,
+      ).toBe(bypass);
+    }
+    // And the two that used to disagree, stated explicitly so the intent is not lost:
+    expect(isMockOidcEnabled({ MOCK_OIDC: 'on' } as NodeJS.ProcessEnv)).toBe(false);
+    expect(detectMode({ MOCK_OIDC: 'on' } as NodeJS.ProcessEnv)).not.toBe('demo');
+  });
+
+  it('an absent variable is off, and the predicate reads the env it is given', () => {
+    expect(isMockOidcEnabled({} as NodeJS.ProcessEnv)).toBe(false);
+    expect(isMockOidcEnabled({ MOCK_OIDC: 'true' } as NodeJS.ProcessEnv)).toBe(true);
+  });
+});
 
 describe('server.ts owns no MOCK_OIDC reading of its own', () => {
   it('reaches both of its call sites through the shared registrars, in the order the HTTP guard mounts them', () => {

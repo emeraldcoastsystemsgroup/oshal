@@ -4,10 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 — deploy modes. Every posture this resolves already existed as an individual environment switch; what did not exist was anything that read the COMBINATION. A deployer sets a dozen unrelated variables and the dangerous combinations fail OPEN and silently: MOCK_OIDC makes requiresAuth a pass-through, REMOTE_CLIENT_REQUIRE_NODE_TOKEN ships false so the retired swarm-wide shared secret stays live, a stopped Headscale turns an off-LAN join request into a LAN-only code. This module is a pure function over the environment — no I/O, no singletons — so the mode table is testable as a table, which matters because the composition is the thing most likely to be got wrong. Generalizes the one precedent that already did this right: local-auth-routes throws at boot when LOCAL_AUTH and MOCK_OIDC are both set, rather than degrading to open auth. Unset mode resolves to the deployment's CURRENT behaviour and only advises — choosing a default here would silently re-posture every existing box, which is the exact failure the ADR exists to prevent.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Reads the one MOCK_OIDC predicate instead of a local truthiness helper. Seven places read this variable through FIVE different helpers, and they did not agree: two accepted `on` and five did not, so MOCK_OIDC=on meant "demo" to the deploy-mode resolver and "off" to the auth bypass. The accepted set is deliberately NOT widened to include `on` - widening would newly enable an auth bypass on any box that has the variable set to it, and a half-demo deployment was already not working. Now every reader answers identically by construction. This module's own flag() accepted `on`, which is where half the disagreement came from; it stays for the other variables it reads.
  *
  * @module shared/deploy-mode
  */
 
+
+import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 /** The deployment shapes this project actually runs. */
 export type DeployMode = 'demo' | 'home' | 'connected' | 'tenant';
 
@@ -143,7 +146,7 @@ export function parseDeployMode(raw: string | undefined): DeployMode | null | 'i
  * @returns The mode that best matches the observed settings.
  */
 export function detectMode(env: NodeJS.ProcessEnv): DeployMode {
-  if (flag(env.MOCK_OIDC)) return 'demo';
+  if (isMockOidcEnabled(env)) return 'demo';
   const hasIdp = Boolean(String(env.OIDC_ISSUER_BASE_URL || '').trim());
   if (hasIdp && !flag(env.LOCAL_AUTH)) return 'tenant';
   if (String(env.HEADSCALE_URL || '').trim()) return 'connected';
@@ -166,14 +169,14 @@ function auditAgainstMode(
   const violations: DeployViolation[] = [];
   const deviations: DeployDeviation[] = [];
 
-  if (flag(env.MOCK_OIDC) && !posture.openAuthAllowed) {
+  if (isMockOidcEnabled(env) && !posture.openAuthAllowed) {
     violations.push({
       setting: 'MOCK_OIDC',
       value: 'true',
       reason: `MOCK_OIDC makes every route publicly callable, which ${mode} mode does not permit`,
     });
   }
-  if (flag(env.MOCK_OIDC) && flag(env.LOCAL_AUTH)) {
+  if (isMockOidcEnabled(env) && flag(env.LOCAL_AUTH)) {
     violations.push({
       setting: 'LOCAL_AUTH',
       value: 'true',

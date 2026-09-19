@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added resilient ticket store wrapper that falls back to in-memory persistence during MOCK_OIDC localhost runs when Postgres is unavailable
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P1 (ADR-119): delegated the new findLatestByMetadataKey through the standard primary/fallback executor
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Deleted a code-identical private copy of isMockOidcEnabled and imported the shared one. The copy existed because the predicate lived in oidc.ts, which imports express-openid-connect, and a ticket store must not pull the auth stack to read an environment variable. It now lives in principal-issuer.ts, which nothing heavy imports.
  */
 
 import type { Pool } from 'pg';
@@ -23,6 +24,7 @@ import type {
 import { createChildLogger } from '@/shared/logger';
 import { InMemoryTicketStore } from './in-memory-ticket-store';
 import { PostgresTicketStore } from './ticket-store-postgres';
+import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 
 const logger = createChildLogger({ module: 'ResilientTicketStore' });
 
@@ -296,11 +298,6 @@ export class ResilientTicketStore implements ITicketStore {
     }
     return this.primary;
   }
-}
-
-function isMockOidcEnabled(): boolean {
-  const value = (process.env.MOCK_OIDC ?? '').trim().toLowerCase();
-  return value === 'true' || value === '1' || value === 'yes';
 }
 
 function isDatabaseConnectionFailure(error: unknown): boolean {

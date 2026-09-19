@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add the opt-in Entra-to-local identity bridge used during LOCAL_AUTH migration: tenant-bound verified OIDC identities link once to an existing active/invited local account by asserted email, then every request retains the canonical local subject and issuer. Includes a hybrid pilot flag with combined local/Microsoft sign-in and fail-closed configuration.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Read stable protocol identity from verified idTokenClaims because express-openid-connect removes issuer and other protocol claims from its presentation-filtered user view.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Retain verified directory evidence through canonical mapping and enforce absolute cache freshness under continuous requests.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reads the one MOCK_OIDC predicate instead of a local truthiness helper. Seven places read this variable through FIVE different helpers, and they did not agree: two accepted `on` and five did not, so MOCK_OIDC=on meant "demo" to the deploy-mode resolver and "off" to the auth bypass. The accepted set is deliberately NOT widened to include `on` - widening would newly enable an auth bypass on any box that has the variable set to it, and a half-demo deployment was already not working. Now every reader answers identically by construction.
  */
 
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
@@ -24,6 +25,7 @@ import {
   runRuntimeSchemaBootstrap,
 } from '@/shared/services/database';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 
 const logger = createChildLogger({ module: 'entra-local-identity-bridge' });
 
@@ -365,7 +367,7 @@ export function createEntraLocalIdentityBridgeMiddleware(
   if (envFlag(env.LOCAL_AUTH) && !isEntraLocalAuthHybridEnabled(env)) {
     throw new Error('Entra identity bridge with LOCAL_AUTH=true requires ENTRA_LOCAL_AUTH_HYBRID=true; standalone LOCAL_AUTH must not invoke external identity mapping.');
   }
-  if (envFlag(env.MOCK_OIDC)) {
+  if (isMockOidcEnabled(env)) {
     throw new Error('Entra identity bridge refuses MOCK_OIDC; it requires a cryptographically verified Entra session.');
   }
   const tenantId = requireBridgeTenantId(env);

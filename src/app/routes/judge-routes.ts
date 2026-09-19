@@ -16,6 +16,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * ---------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial creation — POST /api/judge over the quality-judge concierge (JudgeService, @/features/quality-judge). Body validation (rubric = non-empty string array), caller-sub threading for cost attribution, structured error replies.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Reads the ONE MOCK_OIDC predicate instead of testing `=== 'true'`. The auth bypass accepts true|1|yes in any case, so a deployment started with MOCK_OIDC=1 was authenticated as the mock user while this site read the flag as OFF - a deployment half in demo mode and half out of it. It failed CLOSED here, which is why it went unnoticed rather than becoming an incident; the hazard is the next person "fixing" the inconsistency in the permissive direction on one site alone.
  * ---------------------------------------------------------------------------
  * @module judge-routes
  */
@@ -23,6 +24,7 @@
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
+import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 import {
   JudgeService,
   QUALITY_JUDGE_AGENT_ID,
@@ -45,7 +47,7 @@ function resolveCallerSub(req: Request): string {
     const sub = u.sub || u.oid;
     if (sub) return String(sub);
   }
-  if (process.env.MOCK_OIDC === 'true') return 'demo-viewer';
+  if (isMockOidcEnabled()) return 'demo-viewer';
   throw Object.assign(new Error('Not authenticated'), { status: 401 });
 }
 
