@@ -3,8 +3,11 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — AntigravityCliHarnessAdapter wraps Google's Antigravity CLI (`agy`) as a registered harness beside `gemini-cli`, so both Google terminal agents are selectable configuration and either can be a fallback rung. Flags, auth and the JSON envelope are taken from the published headless documentation (antigravity.google/docs/cli/headless, /docs/cli/install) rather than inferred: `-p` for the prompt, `--output-format json`, `--model`, `--effort`, `--print-timeout`. The JSON envelope is a SINGLE object — conversation_id / status / response / error / duration_seconds / num_turns / usage — not the JSONL the gemini-cli adapter tolerates, and `status` is authoritative over the exit code, so a SUCCESS-shaped exit with status ERROR still fails. `--dangerously-skip-permissions` is deliberately never passed: it auto-approves every tool call, which is the opposite of this repo's fail-closed harness posture.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — AntigravityCliHarnessAdapter wraps Google's Antigravity CLI (`agy`) as a registered harness beside `gemini-cli`, so both Google terminal agents are selectable configuration api-side. Neither is a usable fallback RUNG: HARNESS_BY_ID gives both botNodeRuntime: null, and a rung resolves through resolveBotNodeSwitch, which answers null for an id that is neither a built runtime nor a ProviderRegistry provider id (the registry has "gemini", not "gemini-cli"). Flags, auth and the JSON envelope are taken from the published headless documentation (antigravity.google/docs/cli/headless, /docs/cli/install) rather than inferred: `-p` for the prompt, `--output-format json`, `--model`, `--effort`, `--print-timeout`. The JSON envelope is a SINGLE object — conversation_id / status / response / error / duration_seconds / num_turns / usage — not the JSONL the gemini-cli adapter tolerates, and `status` is authoritative over the exit code, so a SUCCESS-shaped exit with status ERROR still fails. `--dangerously-skip-permissions` is deliberately never passed: it auto-approves every tool call, which is the opposite of this repo's fail-closed harness posture.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | blockingReason(): the musl wall, MEASURED rather than assumed. The installer asks for manifests/linux_amd64_musl.json (404) and the glibc artifact is a PIE against /lib64/ld-linux-x86-64.so.2 that fails to relocate under gcompat on node:20-alpine (__open, __lseek, __read, pvalloc: symbol not found), proven in a throwaway container. The harness is registered and selectable, and on a musl node it now refuses with that sentence instead of an ENOENT on a file that exists - the confusion the cline 3.x glibc build already cost this project once.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A non-numeric ANTIGRAVITY_TIMEOUT_MS produced NaN, not the default. `??` falls through on null and undefined only, and parseInt returns NaN for anything unparseable, so a typo in the env reached both the adapter ceiling and the CLI flag as the literal string "NaNm". Parsed and validated once: finite and positive, or the default. Also corrects the "usable as a fallback rung" claim in entry 1 - HARNESS_BY_ID gives this harness botNodeRuntime: null, so no bot node resolves it and no rung is built for it.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Do not create a config tree in a person's home directory uninvited. The default settings path is ~/.gemini/antigravity-cli/settings.json, which on a host run is the operator's REAL Gemini CLI configuration directory and in the shipped stack is inside a read-only bind mount - so the previous unconditional mkdirSync+writeFileSync both touched the operator's machine and could not work where it was aimed. The file is now written only when the deployment named the path (ANTIGRAVITY_SETTINGS_PATH or the constructor) or the directory already exists; otherwise it says what to set and returns. An existing file is still never rewritten.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | "status is authoritative" was implemented as a four-name DENYLIST, so it only held for the four statuses already known. Any status the vendor adds, renames or misspells reached the caller with exit 0 and was returned as the model's answer - the precise failure the guard was written to prevent, one unknown name away from firing. Inverted to an allowlist: SUCCESS completes, an absent status is tolerated because the text output mode emits none, and everything else throws carrying the raw status and parsed.error.
  */
 
 import fs from 'fs';
@@ -26,7 +29,11 @@ const DEFAULT_MODEL = 'gemini-3.8-flash';
  */
 const DEFAULT_TIMEOUT_MS = 3_600_000;
 
-/** Terminal states the CLI reports in `status`. Only SUCCESS is a completed answer. */
+/**
+ * Terminal failure states the CLI is documented to report, kept so each gets its own message.
+ * They are NOT the gate: the gate is an allowlist in parseJsonOutput, because a denylist lets
+ * an unknown status through as a successful answer.
+ */
 const TERMINAL_FAILURE_STATES = new Set(['ERROR', 'CANCELED', 'INTERRUPTED', 'INVALID']);
 /** Non-terminal states: the run did not finish, which is a failure for a batch invocation. */
 const NON_TERMINAL_STATES = new Set(['WAITING', 'RUNNING']);
@@ -90,7 +97,8 @@ interface AntigravityJsonResult {
  * task workspace and reads the single JSON envelope it returns.
  *
  * This is a sibling of {@link GeminiCliHarnessAdapter}, not a replacement: both are registered
- * CLI harnesses over the same Google key, and either can be selected or used as a fallback rung.
+ * CLI harnesses over the same Google key. Either can be SELECTED; neither can be a fallback rung,
+ * because both carry botNodeRuntime: null and therefore resolve to no runtime at a bot node.
  * Unattended execution remains gated by `assertAuditedAutonomousHarness`, exactly as every other
  * CLI harness in this inventory.
  */
@@ -103,11 +111,16 @@ export class AntigravityCliHarnessAdapter extends BaseCliHarnessAdapter {
   private readonly workspaceRoot: string;
   private readonly outputFormat: 'text' | 'json';
   private readonly settingsPath: string;
+  /** True when a deployment named the path, rather than it falling back to the user's home. */
+  private readonly settingsPathIsDeclared: boolean;
 
   constructor(config: AntigravityCliHarnessConfig = {}) {
-    const timeoutMs = config.timeoutMs
-      ?? (process.env.ANTIGRAVITY_TIMEOUT_MS ? parseInt(process.env.ANTIGRAVITY_TIMEOUT_MS, 10) : undefined)
-      ?? DEFAULT_TIMEOUT_MS;
+    // `??` catches null and undefined, NOT NaN - so a non-numeric ANTIGRAVITY_TIMEOUT_MS used to
+    // survive as NaN all the way into `--print-timeout NaNm` and the adapter's own ceiling.
+    // Validate instead of coalescing: anything that is not a finite positive number is not a
+    // timeout, whether it arrived from the env or from a caller's config.
+    const configured = config.timeoutMs ?? Number(process.env.ANTIGRAVITY_TIMEOUT_MS);
+    const timeoutMs = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_TIMEOUT_MS;
     super('antigravity-cli-harness-adapter', timeoutMs);
 
     this.binaryPath = config.binaryPath
@@ -131,8 +144,9 @@ export class AntigravityCliHarnessAdapter extends BaseCliHarnessAdapter {
 
     this.outputFormat = config.outputFormat ?? 'json';
 
-    this.settingsPath = config.settingsPath
-      ?? process.env.ANTIGRAVITY_SETTINGS_PATH
+    const declaredSettingsPath = config.settingsPath ?? process.env.ANTIGRAVITY_SETTINGS_PATH;
+    this.settingsPathIsDeclared = Boolean(declaredSettingsPath);
+    this.settingsPath = declaredSettingsPath
       ?? path.join(os.homedir(), '.gemini', 'antigravity-cli', 'settings.json');
 
     this.logger.info({
@@ -251,7 +265,20 @@ export class AntigravityCliHarnessAdapter extends BaseCliHarnessAdapter {
   private ensureProviderSettings(): void {
     try {
       if (fs.existsSync(this.settingsPath)) return;
-      fs.mkdirSync(path.dirname(this.settingsPath), { recursive: true });
+      // Never CREATE a configuration tree inside a person's home directory that they did not ask
+      // for. The default path is the operator's real Gemini CLI config directory on a host run
+      // (and a read-only bind mount in the shipped stack), so the adapter writes there only when
+      // the directory already exists — otherwise a deployment must name the path explicitly via
+      // ANTIGRAVITY_SETTINGS_PATH, which is what the compose stack does.
+      const parent = path.dirname(this.settingsPath);
+      if (!this.settingsPathIsDeclared && !fs.existsSync(parent)) {
+        this.logger.info(
+          { settingsPath: this.settingsPath },
+          'AntigravityCliHarnessAdapter: not creating a provider settings file under the user home; set ANTIGRAVITY_SETTINGS_PATH to have one written',
+        );
+        return;
+      }
+      fs.mkdirSync(parent, { recursive: true });
       fs.writeFileSync(this.settingsPath, `${JSON.stringify({ modelProvider: 'gemini' }, null, 2)}\n`, 'utf8');
       this.logger.info({ settingsPath: this.settingsPath }, 'AntigravityCliHarnessAdapter: wrote the provider settings file (GEMINI_API_KEY alone has no effect without it)');
     } catch (err) {
@@ -354,6 +381,20 @@ export class AntigravityCliHarnessAdapter extends BaseCliHarnessAdapter {
     if (NON_TERMINAL_STATES.has(status)) {
       throw new Error(
         `AntigravityCliHarnessAdapter: Antigravity CLI did not finish (status ${status}) for task ${taskId ?? 'unknown'}`,
+      );
+    }
+    // An ALLOWLIST, not a denylist. The two sets above name the statuses we happen to know, and
+    // the comment on them has always said "only SUCCESS is a completed answer" - but the code
+    // tested membership of four failure names, so any status the vendor adds, renames or
+    // misspells arrived here with exit 0 and was handed back AS THE MODEL'S ANSWER. That is the
+    // exact shape this adapter's own guard was written to prevent, one name away.
+    //
+    // An ABSENT status is tolerated deliberately: the text output mode emits no envelope status,
+    // and exit 0 with a body is the only signal available there.
+    if (status && status !== 'SUCCESS') {
+      throw new Error(
+        `AntigravityCliHarnessAdapter: unrecognised Antigravity CLI status ${status} for task ${taskId ?? 'unknown'} `
+        + `(exit ${exitCode ?? 'null'}): ${parsed.error ?? 'no error detail'}`,
       );
     }
     if (exitCode !== 0 && exitCode !== null) {

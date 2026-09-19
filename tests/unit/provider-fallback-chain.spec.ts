@@ -158,6 +158,27 @@ describe('the provider fallback chain is configuration, not code', () => {
       })).toEqual([]);
     });
 
+    it('the node-local kill switch beats a configured chain, as .env.example promises', () => {
+      // "Set false to disable provider failover on this node entirely, whatever is configured
+      // above." It was read AFTER the configured order had already returned, so it could never
+      // fire in either arm while compose passed it to every bot.
+      const configured = { OSHAL_PROVIDER_FALLBACK_ORDER: 'claude-code,cline-cli' };
+      expect(resolveBotNodeProviderFallbackOrder('openai-codex', configured))
+        .toEqual(['claude-code', 'cline-cli']);
+
+      for (const off of ['false', 'off', 'none', 'FALSE', ' Off ']) {
+        expect(
+          resolveBotNodeProviderFallbackOrder('openai-codex', { ...configured, OSHAL_PROVIDER_AUTO_FAILOVER: off }),
+          `${off} must disable failover on this node`,
+        ).toEqual([]);
+      }
+      // Anything else leaves the administrator's chain alone — it is opt-OUT, not opt-in.
+      expect(resolveBotNodeProviderFallbackOrder('openai-codex', { ...configured, OSHAL_PROVIDER_AUTO_FAILOVER: 'true' }))
+        .toEqual(['claude-code', 'cline-cli']);
+      expect(resolveBotNodeProviderFallbackOrder('openai-codex', { ...configured, OSHAL_PROVIDER_AUTO_FAILOVER: '' }))
+        .toEqual(['claude-code', 'cline-cli']);
+    });
+
     it('invents no chain when nothing is configured', () => {
       // The outage shape: a chain this file made up, that no setting could change.
       //
@@ -260,6 +281,32 @@ describe('the provider fallback chain is configuration, not code', () => {
         { clineApiProviders: CATALOG },
       );
       expect(rungNames(wrapped)).toEqual(['claude-code']);
+    });
+
+    it('a harness with no bot-node runtime produces NO rung, and nothing may claim otherwise', () => {
+      // gemini-cli and antigravity-cli carry botNodeRuntime: null in HARNESS_BY_ID, and neither
+      // spelling is a ProviderRegistry id - the registry has 'gemini', not 'gemini-cli'. So
+      // resolveBotNodeSwitch answers null for both and no rung is built.
+      //
+      // This case exists because the opposite was asserted in SEVEN durable places (ROADMAP row,
+      // four change-log entries, two JSDoc blocks) and was false in all of them. A claim that
+      // nothing executes is a claim that rots silently.
+      const wrapped: any = maybeWrapBotNodeProviderFailover(
+        { id: 'primary' }, 'openai-codex', RUNTIMES(),
+        ['gemini-cli', 'antigravity-cli'],
+        { clineApiProviders: CATALOG },
+      );
+      expect(rungNames(wrapped), 'neither harness can be a rung').toEqual([]);
+      expect(wrapped, 'with no usable rung the primary is returned bare').toEqual({ id: 'primary' });
+
+      // ...while the API-provider id for the same vendor IS usable, which is the distinction the
+      // corrected wording has to preserve: selectable api-side, and 'gemini' works as a rung.
+      const viaApiId: any = maybeWrapBotNodeProviderFailover(
+        { id: 'primary' }, 'openai-codex', RUNTIMES(),
+        ['gemini'],
+        { clineApiProviders: CATALOG },
+      );
+      expect(rungNames(viaApiId)).toEqual(['gemini']);
     });
 
     it('delegates every other member to the runtime it wraps', () => {

@@ -71,6 +71,7 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Registered the Notifications per-channel account tier card (NOTIFICATION_SCENARIOS): a read-only step over GET /api/notify/prefs with its route, page and sender suites. Guard: tests/unit/test-lab-notification-registration.spec.ts.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | Registered the 'provider-switch' scenario ("a bot's LLM provider is a row in a table"): a read-only probe of the fleet-default row + snapshot and of the rung every bot reports through /api/agents, failing on a switch-refused bot; regressionTests attach the unit/integration/browser guards that ship with the switch.
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Attached tests/unit/dispatch-switch-row-stamping.spec.ts to the 'provider-switch' regressionTests: the tier-1 dispatch-stamping guard (a fleet or per-bot row reaching a DEDICATED bot node), added after review found that rung unguarded.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | Attached the fallback-ORDER guards to the provider-switch regressionTests: provider-fallback-chain, antigravity-cli-harness and bot-node-config-bootstrap. Migration 148 added fallback_order to the same row the scenario already reads, and its guards shipped registered nowhere - a test file on disk is not Test Lab registration.
  * @module test-lab-scenarios
  */
 
@@ -330,7 +331,7 @@ export const SCENARIOS: Scenario[] = [
   // ── The LLM provider switch: per-bot row > fleet default > registry literal ────────────────────
   {
     id: 'provider-switch', title: 'LLM provider switch — the fleet default and the resolved rung per bot', group: 'tool',
-    description: 'Read the fleet-default switch row (operator-gated → degraded for non-operators) and confirm every bot reports the rung that will serve its next dispatch (bot-row | fleet-default | registry-harness). Read-only: nothing here writes a row.',
+    description: 'Read the fleet-default switch row (operator-gated → degraded for non-operators) and confirm every bot reports the rung that will serve its next dispatch (bot-row | fleet-default | registry-harness), plus the ordered FALLBACK chain that row carries (migration 148). Read-only: nothing here writes a row.',
     regressionTests: [
       { level: 'unit', path: 'tests/unit/bot-provider-switch.spec.ts' },
       { level: 'unit', path: 'tests/unit/bot-provider-precedence.spec.ts' },
@@ -338,6 +339,11 @@ export const SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/bot-node-provider-switch.spec.ts' },
       { level: 'unit', path: 'tests/unit/dispatch-switch-row-stamping.spec.ts' },
       { level: 'unit', path: 'tests/unit/compose-bot-provider-literal.spec.ts' },
+      // The fallback ORDER half of the same row (migration 148): the chain an administrator
+      // writes, and the harnesses that cannot serve as a rung of it.
+      { level: 'unit', path: 'tests/unit/provider-fallback-chain.spec.ts' },
+      { level: 'unit', path: 'tests/unit/antigravity-cli-harness.spec.ts' },
+      { level: 'unit', path: 'tests/unit/bot-node-config-bootstrap.spec.ts' },
       { level: 'integration', path: 'tests/unit/provider-switch-store-postgres.spec.ts' },
       { level: 'integration', path: 'tests/unit/provider-switch-routes.spec.ts' },
       { level: 'integration', path: 'tests/unit/config-runtime-precedence.spec.ts' },
