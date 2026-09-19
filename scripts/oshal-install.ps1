@@ -96,7 +96,10 @@ function LocalSub([string]$email) {
 # non-interactive host REFUSE rather than install a swarm nobody owns.
 function Test-EmailShape([string]$value) {
   if (-not $value) { return $false }
-  return $value -match '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+  # Lockstep with oshal-install.sh's valid_email. The old pattern admitted &, |, > and ", and
+  # this value is interpolated into a `cmd /c "..."` string below - so the validator is what
+  # stands between the operator's own typo and a command they did not mean to run.
+  return $value -match '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
 }
 function Require-AdminEmail([string]$value) {
   while (-not (Test-EmailShape $value)) {

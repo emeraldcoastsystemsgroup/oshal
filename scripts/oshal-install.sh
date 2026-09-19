@@ -16,6 +16,7 @@
 # 10 | maintainer@emeraldcoastsystemsgroup.com  | The install ends with a USER who owns the swarm, not an allowlist entry. --auth-mode (basic|mock, default basic) picks the sign-in stack. basic writes LOCAL_AUTH=true/MOCK_OIDC=false, creates the administrator through the ADR-117 bootstrap (one-use proof from scripts/oshal-setup-root.mjs, swarm root claimed per ADR-148) with a random password nobody sees, then opens scripts/oshal-admin-link.mjs's one-time set-password link instead of /welcome: choosing the password signs that browser in and continues to the wizard, so the operator arrives authenticated and there is no generated credential to print and lose (the first cut printed one, and a hung closing step lost it). OSHAL_ADMIN_PASSWORD remains for headless automation. mock keeps the no-login demo posture but still claims root. Both write OSHAL_INSTALL_OWNER_SUB — the sha256-of-lowercased-email the local-auth store derives — so packages staged before any login belong to the operator. Unattended runs without --admin-email get admin@localhost. The Windows browser-open no longer hangs (cmd `start` read a lone quoted URL as a window title), and closing output gives the reissue command.
 # 11 | maintainer@emeraldcoastsystemsgroup.com  | The operator's first cockpit shows their applications. UI_PROFILE is written as oshal-framework (OSHAL_UI_PROFILE overrides): compose defaults to the 7-item starter cockpit, whose rail lists no installed application at all. Paired with the loader granting the install owner an explicit admin tier on each application it adopts — without one, the rail hid all 58 ADR-149 protected applications from the person who installed them.
 # 12 | maintainer@emeraldcoastsystemsgroup.com  | The store-source check fails OPEN and no longer breaks the offline install. store_is_public treated every non-200 as private, so a box with no curl, no network, a proxy, or a transient GitHub blip was told to supply a read token for the PUBLIC default store; only 401/403/404 now asks, and anything else proceeds. --from-archive skips the probe entirely - it is the documented zero-network path, it resolves to MODE=1, and this function runs before the mode dispatch, so the offline install was exiting 2 on a box that was working correctly. And the advertised "Enter to skip" no longer kills the run: under set -euo pipefail the skip path ended on a [ -n ] test returning 1, which terminated the installer with no message.
+# 13 | maintainer@emeraldcoastsystemsgroup.com  | Two review findings. valid_email constrained only the LOCAL part, so `me@example.com&whoami` passed; harmless in this script, which hands argv to docker exec, but oshal-install.ps1 interpolates the same value into a `cmd /c` string and lockstep is why both validators exist. The character is rejected anywhere now, and a second @ with it. And the one-time set-password link - swarm root for an hour - is no longer printed when stdout is not a terminal, because an unattended run is one whose output something is capturing. The reissue command is how it is obtained deliberately.
 # =============================================================================
 #
 # One-click:
@@ -225,8 +226,13 @@ local_sub() {
 # tokens bind to a shared demo sub. So: prompt until it is answered, and on a
 # non-interactive host REFUSE rather than install a swarm nobody owns.
 valid_email() {
+  # The DOMAIN is constrained as well as the local part. It was not, so an address like
+  # `me@example.com&whoami` passed. Harmless here - this script hands argv to docker exec and
+  # never builds a shell string - but oshal-install.ps1 interpolates the same value into a
+  # `cmd /c "..."`, and lockstep is the whole reason these two validators exist. Reject the
+  # character anywhere rather than relying on every consumer to quote it correctly.
   case "$1" in
-    *[!a-zA-Z0-9._%+-]*@* | @* | *@ | *' '* ) return 1 ;;
+    *[!a-zA-Z0-9._%+@-]* | @* | *@ | *@*@* | *' '* ) return 1 ;;
     *@*.* ) return 0 ;;
     * ) return 1 ;;
   esac
@@ -977,10 +983,15 @@ if [ "$AUTH_MODE" = "basic" ]; then
   if [ "$ADMIN_ACCOUNT_CREATED" -eq 1 ]; then
     note "It exists, holds swarm root, and owns every package this install staged."
   fi
-  if [ -n "$SET_PASSWORD_LINK" ]; then
+  if [ -n "$SET_PASSWORD_LINK" ] && [ -t 1 ]; then
     note "Your browser is opening a one-time page to choose your password; doing so signs you in."
     note "If it did not open, use this link (expires $SET_PASSWORD_EXPIRES):"
     note "  $SET_PASSWORD_LINK"
+  elif [ -n "$SET_PASSWORD_LINK" ]; then
+    # Unattended: stdout is being captured by something. That link confers swarm root for an
+    # hour, so it is not printed - the reissue command below is how it is obtained deliberately.
+    note "A one-time set-password link was issued. It is NOT printed on an unattended run;"
+    note "reissue it below when you are at a terminal."
   elif [ "$PASSWORD_SUPPLIED" -eq 1 ]; then
     note "Sign in at http://localhost:$COCKPIT_PORT/login with the password this install was given."
   fi
