@@ -552,8 +552,13 @@ refuses a workflow with no `workerBot` and no executable graph (which fell throu
 `swarm` decompose pipeline). All three tests that codified the degradation are inverted, each with
 a Change Log line saying why the old assertion was wrong.
 
-Store landed first, as the entry required: `print-ingest` was the only manifest in either trunk
-with the broken shape. It got the approval gate its own comment promises (0.3.1,
+Store landed first, as the entry required — `oshal-applications` **#238 is merged**, and
+`print-ingest` (the only manifest in either trunk with the broken shape) is 0.3.1 on that trunk.
+One honest lag: the PUBLIC `oshal-apps` snapshot is DERIVED and republishes on the nightly, so it
+still carries 0.3.0 until that runs. A box holding an installed 0.3.0 will have that one manifest
+refused — contained per-app by `autoLoadAll`'s per-file catch, but `autoLoadAllWithRetry` re-runs
+the whole pass while anything is failing, so it costs three passes and two 15-second sleeps per
+boot until the snapshot catches up. It got the approval gate its own comment promises (0.3.1,
 `oshal-applications` PR #238) — the package had traded the retired `staged` executor for a
 `graph` that dropped gates exactly the same way.
 
