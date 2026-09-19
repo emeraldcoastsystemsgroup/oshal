@@ -321,7 +321,25 @@ keyed by the root ticket.
 The single highest-leverage change in this document, and the one that is language-neutral: it is worth
 doing whether or not a rewrite ever happens, and a rewrite that has not done it would port a tangle.
 
-### R2.1 — Publish the seed inventory — S
+### R2.1 — Publish the seed inventory — S — **SHIPPED 2026-09-19**
+
+> **Correction of record.** This document and `01-high-level-spec.md` carried "924 package files
+> import 124 kernel internals at roughly 1,500 sites" in four cells. Nobody could reproduce it,
+> because the measurement had walked a tree containing the store's generated `output/` snapshot —
+> the build's own copy of every package was counted as packages importing the kernel.
+>
+> `scripts/kernel-import-inventory.js` now generates it, enumerating TRACKED files via
+> `git ls-files` and matching import CONTEXT (`from`, `require(`, `import(`) rather than any `@/`
+> occurrence. Measured 2026-09-19 against `oshal-applications`: **1,413 sites / 516 files /
+> 125 modules**, and proven idempotent — writing new importing files under `output/` does not move
+> the triple, which is the property the replaced figure did not have.
+>
+> One deviation from the CKR-9 done-when, stated rather than tuned away: criterion (2) expected
+> `sites` below 1,000 and `files` below 400, from an earlier estimate of "~840-870 sites /
+> ~310-320 files". The generator measures 1,413 and 516. The methodology is documented in the
+> script; the honest reading is that the earlier estimate used a narrower one, or the store has
+> grown since. Adjusting the matcher until it produced a number under the threshold would have
+> made the figure unreproducible again, which is the defect this entry exists to fix.
 
 **Fix.** Generate the list of kernel modules that store packages import, with call-site counts, and mark
 each `promote to SDK` or `move to package`. This is Phase 0 step 2 of the project plan and is pure
@@ -342,7 +360,7 @@ reaches into a route module.
 ### R2.3 — Migrate packages onto the SDK, in waves — XL
 
 **Fix.** Package by package, replace deep imports with SDK imports. Start with the smallest packages,
-which are one to three days each, and let the largest wait. Roughly 1,500 import sites across 924 files,
+which are one to three days each, and let the largest wait. 1,413 import sites across 516 files (generated, see R2.1),
 but the distribution is heavily skewed: eight modules account for most of them, and the top two, logging
 and the application context, are mechanical.
 
@@ -465,7 +483,7 @@ move.
 | Capability primitives where absent means unrestricted | 2 | 0 | 0 |
 | Persona fields declaring tools | 2 | 1 | 1 |
 | Task records for interactive work | none | none | same as queued |
-| Packages importing kernel internals | ~1,500 sites | ~1,500 | 0 |
+| Packages importing kernel internals | 1,413 sites | 1,413 | 0 |
 | Cross-ticket workspace isolation | none | none | by decision 4 |
 
 **What repair cannot reach**, and should not be claimed: layering enforced by the build rather than by

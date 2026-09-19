@@ -465,7 +465,22 @@ Registered in `test-lab-scenarios.ts` with a unit-level `regressionTests` refere
 > Part 2 — deprecating the redundant field — is a separate decision item below. Do not bundle it: the
 > original done-when was conditional on it and therefore uncheckable.
 
-### CKR-9 — publish the kernel-import inventory (R2.1) — S
+### CKR-9 — publish the kernel-import inventory (R2.1) — S — **SHIPPED**
+
+> `scripts/kernel-import-inventory.js` generates the triple and the per-module table. Measured
+> 2026-09-19: **1,413 sites / 516 files / 125 modules**. Criteria (1), (3) and (4) hold — it
+> enumerates via `git ls-files` and is proven idempotent (an untracked `output/` tree does not
+> move the triple), the four cells now cite the generator with the retired figure surviving only
+> inside a correcting banner, and every module gets exactly one row and one of the two verdicts.
+> Verdicts derive from R2.2’s named surface and FAIL CLOSED: a module nobody has classified is
+> `move to package`, because R2.2 describes what packages are ALLOWED to use.
+>
+> **Criterion (2) does NOT hold, and was not tuned away.** It expected sites below 1,000 and
+> files below 400, from an earlier estimate of ~840-870 / ~310-320. The generator measures 1,413
+> and 516. Its methodology is documented in the script; adjusting the matcher until the number
+> fit the threshold would have made the figure unreproducible again, which is the defect this
+> entry exists to fix. The largest single importer is `@/shared/logger` at 371 sites (SDK
+> surface), and the largest non-SDK one is `@/app/composition/app-context` at 216.
 
 **Evidence.** The wave's own numbers are unreproducible: `~1,500 sites / 924 files` was measured over a
 tree containing a generated `output/` snapshot, against a tracked reality of ~840-870 sites / ~310-320
