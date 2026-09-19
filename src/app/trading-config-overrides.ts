@@ -25,12 +25,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BLEND overrides (ADR-095 round 2): an applied blend enables rotation at the blend cadence (the merged-target path executes it), and policyOverrideOf resolves the MOST-CONSERVATIVE component policy (tightest stop, earliest tp) for book-level exits/caps.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Honesty rails: apply/revert now auto-record a strategy-journal entry so every knob turn reaches the daily report's "What changed" section without anyone remembering to write it down.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-134 PR2 — per-book actives: the one-active index swaps atomically to (user_sub, book_id) WHERE active with a clone-backfill (each currently-active book-less row becomes identical per-legacy-book actives; history keeps book_id NULL; a rolled-back image can still insert a book-less active — the CHECK is deferred to PR4). getActiveOverride/applyOverride/revertOverride gain book scope; deactivation WHEREs are book-scoped (the cross-revert trap); book-less calls keep today's both-books contract for deployed store twins.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Take the trading advisory lock like the rest of the family. This bootstrap issued bare pool.query DDL, so two concurrent fires could race CREATE TABLE IF NOT EXISTS against itself (23505 on pg_type_typname_nsp_index) or interleave a check-then-CREATE pair (42710). The `ensured` memo never helped: it is per-process, and the race is between processes. The statement text is passed through VERBATIM as one element rather than split, so the transaction shape is exactly what it was - the change adds the lock and nothing else.
  *
  * @module trading-config-overrides
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import type { PolicyOverride } from '@/features/trading';
 import type { StrategyConfig } from './trading-strategy-lab-sim';
 import { conservativeBlendPolicy } from './trading-blend';
@@ -82,7 +84,12 @@ export async function ensureOverridesSchema(pool: Pool): Promise<void> {
   // rollback benign: old getActiveOverride reads either identical row). History rows keep
   // book_id NULL. The CHECK (NOT active OR book_id IS NOT NULL) is DEFERRED to PR4 — rolled-back
   // PR1-era code must still be able to insert a book-less active row (adversarial-review rule).
-  await pool.query(`
+  // Serialised on the trading advisory lock, like every other module in the family. The
+  // statement text below is unchanged and still runs as ONE multi-statement query, so the
+  // transaction shape is exactly what it was; this adds the lock and nothing else.
+  await runRuntimeSchemaBootstrap({
+    pool, moduleName: 'trading config overrides', lockKey: SCHEMA_LOCK_KEYS.trading,
+    statements: [`
     CREATE TABLE IF NOT EXISTS trading_config_overrides (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_sub TEXT NOT NULL,
@@ -111,7 +118,12 @@ export async function ensureOverridesSchema(pool: Pool): Promise<void> {
             AND x.book_id = md5('oshal-book:'||o.user_sub||':'||k.kind)::uuid);
     UPDATE trading_config_overrides SET active = false, deactivated_at = now()
      WHERE active AND book_id IS NULL;
-  `);
+  `],
+    requirements: [{
+      table: 'trading_config_overrides',
+      columns: ['id', 'user_sub', 'strategy_name', 'config', 'apply_pct', 'active', 'created_at', 'book_id'],
+    }],
+  });
   ensured = true;
   logger.info('trading config-overrides schema ensured (per-book actives, ADR-134)');
 }
