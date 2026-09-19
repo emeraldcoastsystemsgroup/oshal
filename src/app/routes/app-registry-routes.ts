@@ -335,13 +335,6 @@ export function withDependencyGate(
 }
 
 /**
- * @description Resolves a dependency app's state the way scripts/oshal-app.js does: an installed
- * package folder, then a framework manifest (swarm-apps/<name>.yaml), then the source's catalog.
- * @param deployedDir - the deploy directory the installer writes to.
- * @param published - package names the source's catalog publishes.
- * @returns A resolver for describeManifestImpact.
- */
-/**
  * @description Read the version of a package staged in deployed-apps, if it is there at all.
  * @param deployedDir - the workspace's deployed-apps directory. @param name - exact package name.
  * @returns the on-disk version, '' when installed without a readable version, or null when absent.
@@ -356,6 +349,13 @@ export function installedPackageVersion(deployedDir: string, name: string): stri
   } catch { return ''; }
 }
 
+/**
+ * @description Resolves a dependency app's state the way scripts/oshal-app.js does: an installed
+ * package folder, then a framework manifest (swarm-apps/<name>.yaml), then the source's catalog.
+ * @param deployedDir - the deploy directory the installer writes to.
+ * @param published - package names the source's catalog publishes.
+ * @returns A resolver for describeManifestImpact.
+ */
 export function dependencyStateResolver(deployedDir: string, published: ReadonlySet<string>): (name: string) => DependencyAppState {
   return (name) => {
     if (fs.existsSync(path.join(deployedDir, name, 'oshal-app.yaml'))) return 'installed';

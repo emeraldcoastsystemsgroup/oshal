@@ -416,14 +416,6 @@ async function upsertWithIssuer(pool: Pool, values: unknown[], userIssuer: strin
 }
 
 /**
- * @description The pre-145 upsert, for a database that has no `user_issuer` column yet. A
- * requested issuer binding is REFUSED rather than dropped: an assignment the operator believes is
- * bound to one identity must never be stored in a shape a different identity can resolve.
- * @param pool - Control-plane pool. @param values - user_sub, app_name, tier, assigned_by_sub, reason.
- * @param userIssuer - The binding that was asked for; anything but null fails loudly.
- * @returns The stored row, reported as carrying no issuer.
- */
-/**
  * @description Write a tier only when this principal has none for the application. Same principal
  * key as upsertWithIssuer — DO NOTHING instead of DO UPDATE, so a default grant can run on every
  * adoption and never touch a tier, or an explicit deny, someone set on purpose.
@@ -468,6 +460,14 @@ async function insertIfAbsentWithoutIssuer(pool: Pool, values: unknown[], userIs
   return (result.rowCount ?? 0) > 0;
 }
 
+/**
+ * @description The pre-145 upsert, for a database that has no `user_issuer` column yet. A
+ * requested issuer binding is REFUSED rather than dropped: an assignment the operator believes is
+ * bound to one identity must never be stored in a shape a different identity can resolve.
+ * @param pool - Control-plane pool. @param values - user_sub, app_name, tier, assigned_by_sub, reason.
+ * @param userIssuer - The binding that was asked for; anything but null fails loudly.
+ * @returns The stored row, reported as carrying no issuer.
+ */
 async function upsertWithoutIssuer(pool: Pool, values: unknown[], userIssuer: string | null): Promise<AssignmentRow> {
   if (userIssuer !== null) {
     throw new Error('oshal_app_access.user_issuer is missing; apply migration 145 before assigning an issuer-bound tier');
