@@ -603,9 +603,31 @@ read as fact by everyone who touched that file since.
 (c) needed no change: `updateStatus` already mirrors `reason` and `nextAction` onto the ticket row
 via `buildTicketRowStatusMetadataPatch`, and `GET /api/tickets/:id` returns the whole record.
 
-`tests/unit/approval-required-reason.spec.ts` — 7 cases, mutation-proven against three separate
-regressions: dropping the transition backstop (2 red), dropping the creation backstop (2 red), and
-a writer that stops naming its reason (1 red). The writer scan is a wiring gate, named as one.
+**A THIRD route in, found in review.** `updateTicket` is typed `Omit<…, 'status'>` and did not
+exclude it at RUNTIME — `PATCH /api/tickets/:id` hands `req.body` straight in, and JSON does not
+respect an `Omit`. A body carrying `status` wrote it to the store directly, skipping
+`VALID_TRANSITIONS`, the status-history record and the reason backstop entirely. It is dropped and
+logged now (a client echoing a whole ticket back is an ordinary PATCH shape, not a 500).
+
+`tests/unit/approval-required-reason.spec.ts` — 9 cases, mutation-proven against five regressions:
+dropping the transition backstop (2 red), dropping the creation backstop (2 red), a transition
+writer that stops naming its reason (1 red), a CREATION writer that stops naming its reason (1 red),
+and PATCH setting the status again (1 red).
+
+**Done-when (b) is met differently from how it was written, and that is worth stating.** It asked
+for "one test per enumerated writer, and the list is exactly five". What shipped is two source
+scans plus service-level behaviour cases: the transition scan reads the three `updateStatus` call
+sites, the creation scan reads every `createTicket` call that sets the status, and the vocabulary
+cases drive the real service. Both scans are wiring gates and are labelled as such. The creation
+scan exists because the first review found that deleting `gov-contracting-cron`'s reason left the
+whole suite green — the transition scan cannot see a writer that never calls `updateStatus`.
+
+**Two residuals, recorded rather than fixed here:** the vocabulary is not ENFORCED (a free-text
+`reason` passed to `updateStatus` is stored verbatim; `nextAction` still fails closed to
+`operator_review_required`), and the same field lands as `metadata.source` on creation but
+`metadata.statusSource` on a transition. Neither is reachable from HTTP today — the ticket routes
+pass no transition metadata — so both are latent. See
+[approval-reason-vocabulary-residuals.md](approval-reason-vocabulary-residuals.md).
 
 <details><summary>Original entry</summary>
 

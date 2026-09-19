@@ -61,6 +61,9 @@ relevant ADR or feature documentation, release notes, and git history.
 - [jarvis-daily-dashboard.md](./jarvis-daily-dashboard.md) — Jarvis and the daily dashboard: the
   compact presentation, and recorded-report producer adoption with its pending publication and
   delivery acceptance.
+- [approval-reason-vocabulary-residuals.md](./approval-reason-vocabulary-residuals.md) — the
+  CKR-12 reason vocabulary is called closed but is not enforced, and the source field lands
+  under two different keys depending on whether the ticket was created or transitioned.
 - [machine-auth-discovery-blind-spot.md](./machine-auth-discovery-blind-spot.md) — the
   machine-auth discovery scan does not list `serviceSecretOr` or `getTrustedServiceUserSub`,
   so eight route files authenticate a machine caller and nobody was ever asked what they
