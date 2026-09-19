@@ -8,7 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-083: 'task' workflow default workerBot project-manager → general-bot. The owner is now chosen by the knowledge-owner call-out (task-call-out.ts); the workflow default is only the last resort, and it must be a tool-capable DOER, not the PM planner (whose claude-code 401s escalated task tickets).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Comment corrections only. The pipeline doc block said 'staged' is "Executed by dispatch-staged-worker" - no such file exists - and the built-in list advertised it, in the same file whose chooseDispatchPath records the executor as retired and has no branch for it. A manifest declaring pipeline: staged silently becomes a single-bot manifest-worker run with every approval gate dropped.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | A fifth site in this file implied 'staged' is live: the workerBot doc said it is "informational only" for 'staged'/'graph'. For a manifest declaring the retired 'staged' pipeline the opposite is true - it falls through to manifest-worker and workerBot is the ONLY bot that runs.
- * 6 | maintainer@emeraldcoastsystemsgroup.com   | chooseDispatchPath routes `pipeline: graph` to the graph worker whether or not a processDefinition is present (CKR-11 / D4). The old `&& workflow.processDefinition` degraded a graph workflow missing its definition into a single-bot manifest-worker run with every authored approval gate dropped and nothing logged - the defer arm warns, that arm did not. dispatchGraphTicket already escalates this shape with reason 'graph_workflow_definition_missing'; that branch was simply unreachable, because routing never sent anything to it. The entry point is a hand-authored manifest - Publish cannot produce the shape, since all three of its modes emit a processDefinition unconditionally.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | chooseDispatchPath routes `pipeline: graph` to the graph worker whether or not a processDefinition is present (CKR-11 / D4). The old `&& workflow.processDefinition` degraded a graph workflow missing its definition into a single-bot manifest-worker run with every authored approval gate dropped and nothing logged - the defer arm warns, that arm did not. dispatchGraphTicket already escalates this shape with reason 'graph_workflow_definition_missing'. Its guard is `!definition || !definition.nodeGraph`, and only the FIRST half was unreachable: routing never sent a definition-LESS workflow there, but a truthy definition carrying no nodeGraph reached that escalation on main and still does. The entry point is a hand-authored manifest - Publish cannot produce the shape, since all three of its modes emit a processDefinition unconditionally.
  */
 
 /**
@@ -130,6 +130,8 @@ export const WORKFLOW_PIPELINES: WorkflowDefinition[] = [
  * - 'defer' when an app-contributed ticketType isn't yet in the registry
  *   (startup race between queueManager.start() and swarmAppService.autoLoadAll()).
  * - 'incident-rca' for the single-bot RCA pipeline.
+ * - 'graph' for a workflow declaring the ProcessDefinition engine — whether or not a definition
+ *   is present, because a missing one must escalate rather than degrade to a one-bot run
  * - 'manifest-worker' for app-contributed single-worker workflows
  *   (e.g. Little Monsters education → lecture-scribe).
  * - 'swarm' for the default build/decompose pipeline (catches built-in
@@ -156,8 +158,10 @@ export function chooseDispatchPath(
   // Requiring processDefinition here sent a graph workflow missing its definition on to the
   // manifest-worker arm, which runs workerBot alone and logs nothing - every approval gate the
   // author wrote silently dropped. dispatchGraphTicket has escalated that exact shape since it
-  // was written ('graph_workflow_definition_missing'); this condition was what made that branch
-  // unreachable. An author who declares 'graph' now gets a graph run or an escalated ticket.
+  // was written ('graph_workflow_definition_missing'). Its guard is `!definition ||
+  // !definition.nodeGraph`; this condition made only the FIRST half unreachable, since a truthy
+  // definition with no nodeGraph was routed here already. An author who declares 'graph' now gets
+  // a graph run or an escalated ticket, never a silent one-bot run.
   if (workflow?.pipeline === 'graph') return 'graph';
   if (ticketType !== 'build' && workflow?.workerBot && workflow.pipeline !== 'swarm') {
     return 'manifest-worker';

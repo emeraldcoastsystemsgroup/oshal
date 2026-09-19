@@ -23,7 +23,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Validate dependencies (required/optional tiers or the legacy flat form) through the shared CLI/runtime contract, fail-closed at load.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | ADR-157 S1: move the whole schedule contract (prompt + service-route rules, the static-JSON walker, probeBelongsToRoute and containsFixtureInterpolation) into manifest-schedule-validation.ts — this file was 836 code lines, past its 800 budget — and hand that validator the imported authorization catalog so a service schedule's `requires` is checked against the permissions the app actually defines.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Refuse `pipeline: staged` at load (CKR-10 / D2). Its executor was retired for the graph engine, so such a manifest fell through to manifest-worker and ran only workerBot with every authored approval gate dropped and nothing logged - a silently wrong run. Refused with the two pipelines that do work named in the message. Publish is unaffected: the studio compiles its own staged authoring into a graph and never emits this value.
- * 20 | maintainer@emeraldcoastsystemsgroup.com   | readManifest refuses two more silently-degrading workflow shapes (CKR-11 / D4). `pipeline: graph` with no processDefinition has no graph to execute, so every ticket of that type escalates on arrival; and a workflow with no workerBot and no executable graph falls through to the 7-phase 'swarm' decompose pipeline, which is both wrong and expensive. Refused at load rather than at dispatch, because by dispatch a ticket exists and a person is waiting on it. Audited before landing: every workflow in the ten core manifests and all 61 store packages declares a workerBot, and print-ingest was the only manifest in either trunk with the graph-without-definition shape - fixed in the store first.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | readManifest refuses two more silently-degrading workflow shapes (CKR-11 / D4). `pipeline: graph` with no processDefinition has no graph to execute, so every ticket of that type escalates on arrival; and a workflow with no workerBot and no executable graph falls through to the 7-phase 'swarm' decompose pipeline, which is both wrong and expensive. Refused at load rather than at dispatch, because by dispatch a ticket exists and a person is waiting on it. Audited before landing: every workflow in the ten core manifests and all 61 store packages declares a workerBot, and print-ingest was the only manifest in either trunk with the graph-without-definition shape - fixed in the store first. Extracted to a helper and corrected after review: the definition check reads processDefinition.nodeGraph rather than the object's truthiness, because the engine walks nodeGraph and an empty object would have loaded here and escalated at dispatch anyway; and a near-miss pipeline spelling ('graph ', 'Graph') is refused, because this function trims while the router compares exactly, so accepting one would bless a value the router sends to manifest-worker - the very degradation being fixed.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -560,6 +560,76 @@ function validateSmokeDeclarations(manifest: SwarmAppManifest, absPath: string):
  * @param manifestPath - absolute or cwd-relative path to the YAML file
  * @returns the parsed manifest
  */
+/** Pipelines the dispatcher has an executor for. A value outside this set is a label an app
+ *  contributed, which falls through to 'swarm' by design (see dispatch-routing). */
+const KNOWN_PIPELINES = ['graph', 'manifest-worker', 'swarm', 'incident-rca'] as const;
+
+/** Pipelines that legitimately run with no workerBot. */
+const EXPLICIT_NO_WORKER_BOT = new Set<string>(['swarm', 'incident-rca']);
+
+/**
+ * @description Refuses a workflow that would run as something other than what its author declared.
+ * @param manifest - The parsed manifest.
+ * @param absPath - Absolute manifest path, for the message.
+ * @returns Nothing; throws on a shape with no executor.
+ *
+ * Refused at load rather than at dispatch, because by dispatch a ticket exists and a person is
+ * waiting on it.
+ */
+function assertWorkflowHasAnExecutor(
+  manifest: { name?: unknown; ticketType?: unknown; workflow?: unknown },
+  absPath: string,
+): void {
+  const workflow = manifest.workflow as {
+    pipeline?: unknown; workerBot?: unknown; processDefinition?: unknown;
+  } | undefined;
+  if (!workflow) return;
+
+  const raw = String(workflow.pipeline ?? '');
+  const pipeline = raw.trim();
+  const where = `Manifest ${absPath}: app '${String(manifest.name ?? '')}'`;
+  const ticketType = String(manifest.ticketType ?? '');
+
+  // A near-miss spelling is refused rather than accepted. The router compares the pipeline
+  // EXACTLY (dispatch-routing) while this function trims, so accepting 'graph ' here would bless
+  // a value the router then sends to manifest-worker - the exact silent degradation this whole
+  // check exists to stop. A genuinely unknown label is still legal: apps contribute their own,
+  // and those fall through to 'swarm' by design. Only a value that looks like it MEANT one of
+  // ours is refused.
+  const canonical = KNOWN_PIPELINES.find((known) => known === pipeline.toLowerCase());
+  if (canonical && raw !== canonical) {
+    throw new Error(
+      `${where} declares workflow.pipeline ${JSON.stringify(raw)}, which the dispatcher compares ` +
+      `exactly and would not match. Write '${canonical}'.`,
+    );
+  }
+
+  // 'graph' names the ProcessDefinition engine, and the engine walks `processDefinition.nodeGraph`
+  // - dispatchGraphTicket escalates on `!definition || !definition.nodeGraph`. Checking the
+  // definition's truthiness alone would let `processDefinition: {}` load and escalate at dispatch
+  // anyway, which is precisely what this refusal is supposed to prevent.
+  const hasGraph = Boolean((workflow.processDefinition as { nodeGraph?: unknown } | undefined)?.nodeGraph);
+  if (pipeline === 'graph' && !hasGraph) {
+    throw new Error(
+      `${where} declares workflow.pipeline 'graph' but no workflow.processDefinition.nodeGraph. ` +
+      `There is no graph to execute, so every ticket of type '${ticketType}' escalates on arrival. ` +
+      `Add a processDefinition carrying a nodeGraph (the workflow studio's Publish emits one), or ` +
+      `use 'manifest-worker' for a single-bot run.`,
+    );
+  }
+
+  // No workerBot and nothing else to run means the ticket falls through to the 7-phase 'swarm'
+  // decompose pipeline - wrong, and expensive. An author who WANTS that says so explicitly.
+  const hasWorkerBot = Boolean(String(workflow.workerBot ?? '').trim());
+  if (!hasWorkerBot && !(pipeline === 'graph' && hasGraph) && !EXPLICIT_NO_WORKER_BOT.has(pipeline)) {
+    throw new Error(
+      `${where} declares a workflow with no workflow.workerBot and no executable graph, so tickets ` +
+      `of type '${ticketType}' would run the 7-phase 'swarm' decompose pipeline instead. Name a ` +
+      `workerBot, supply a processDefinition, or declare pipeline 'swarm' if that is what you want.`,
+    );
+  }
+}
+
 export function readManifest(manifestPath: string): SwarmAppManifest {
   const absPath = path.isAbsolute(manifestPath)
     ? manifestPath
@@ -621,40 +691,7 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
     );
   }
 
-  // Two more shapes that run as something other than what the author declared. Both are refused
-  // here rather than at dispatch, because by dispatch a ticket already exists and a person is
-  // waiting on it.
-  const workflow = manifest.workflow as {
-    pipeline?: unknown; workerBot?: unknown; processDefinition?: unknown;
-  } | undefined;
-  if (workflow) {
-    const pipeline = String(workflow.pipeline ?? '').trim();
-    const hasDefinition = Boolean(workflow.processDefinition);
-    const hasWorkerBot = Boolean(String(workflow.workerBot ?? '').trim());
-
-    // 'graph' names the ProcessDefinition engine. Without a definition there is no graph to walk,
-    // so the ticket escalates on arrival - correct, but a load-time refusal tells the author now.
-    if (pipeline === 'graph' && !hasDefinition) {
-      throw new Error(
-        `Manifest ${absPath}: app '${manifest.name}' declares workflow.pipeline 'graph' but no ` +
-        `workflow.processDefinition. There is no graph to execute, so every ticket of type ` +
-        `'${String(manifest.ticketType ?? '')}' escalates on arrival. Add a processDefinition ` +
-        `(the workflow studio's Publish emits one), or use 'manifest-worker' for a single-bot run.`,
-      );
-    }
-
-    // No workerBot and nothing else to run means the ticket falls through to the 7-phase 'swarm'
-    // decompose pipeline - wrong, and expensive. An author who WANTS that says so explicitly.
-    const EXPLICIT_NO_WORKER_BOT = new Set(['swarm', 'incident-rca']);
-    if (!hasWorkerBot && !(pipeline === 'graph' && hasDefinition) && !EXPLICIT_NO_WORKER_BOT.has(pipeline)) {
-      throw new Error(
-        `Manifest ${absPath}: app '${manifest.name}' declares a workflow with no workflow.workerBot ` +
-        `and no executable graph, so tickets of type '${String(manifest.ticketType ?? '')}' would run ` +
-        `the 7-phase 'swarm' decompose pipeline instead. Name a workerBot, supply a ` +
-        `processDefinition, or declare pipeline 'swarm' if that is genuinely what you want.`,
-      );
-    }
-  }
+  assertWorkflowHasAnExecutor(manifest, absPath);
 
   try { readAppDependencies(manifest); } catch (err) { throw new Error(`Manifest ${absPath}: ${(err as Error).message}`); }
 

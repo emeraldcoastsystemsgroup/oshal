@@ -544,8 +544,10 @@ asserted by a named case in `tests/unit/swarm-app-manifest-load.spec.ts`.
 
 **Shipped.** `chooseDispatchPath` routes on the DECLARED pipeline, so `pipeline: graph` reaches the
 graph worker whether or not a definition is present. `dispatchGraphTicket` already escalated that
-shape with `reason: 'graph_workflow_definition_missing'` — the branch existed and was unreachable,
-because routing never sent anything to it. `readManifest` now refuses the shape at load, and also
+shape with `reason: 'graph_workflow_definition_missing'`. Its guard is
+`!definition || !definition.nodeGraph`, and only the FIRST half was unreachable — a truthy
+definition carrying no `nodeGraph` reached that escalation before this change and still does, which
+is why the loader refusal checks `processDefinition.nodeGraph` rather than the object's truthiness. `readManifest` now refuses the shape at load, and also
 refuses a workflow with no `workerBot` and no executable graph (which fell through to the 7-phase
 `swarm` decompose pipeline). All three tests that codified the degradation are inverted, each with
 a Change Log line saying why the old assertion was wrong.
@@ -555,7 +557,7 @@ with the broken shape. It got the approval gate its own comment promises (0.3.1,
 `oshal-applications` PR #238) — the package had traded the retired `staged` executor for a
 `graph` that dropped gates exactly the same way.
 
-Verified before landing: **11 core manifests and all 61 store packages load** under the new
+Verified before landing: **10 core manifests (CLAUDE.md Rule 0c: exactly ten) and all 61 store packages load** under the new
 refusals, 0 refused; and `print-ingest` at 0.3.0 IS refused, which proves the ordering requirement
 was real rather than assumed. Mutation-proven both halves — restoring the old route fails 2 cases,
 removing the loader refusals fails 2 more.
