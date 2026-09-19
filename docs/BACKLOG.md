@@ -1304,7 +1304,9 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   openai-codex, claude-code, cline-cli, byo-llm, image-provider:openrouter and
   deterministic-provider). The label reuses `classifyCostUnit`/`COST_UNIT_LABELS` — the same
   ADR-127 classification `GET /api/budgets/spend` already reports by — rather than a second one,
-  and is left null for an ABSENT or cross-provider row. **An unrecognised-but-present id is still
+  and is left null for an ABSENT or cross-provider row — including the `UNKNOWN_PROVIDER` sentinel
+  the direct cost summary writes for a NULL `provider_id`, which is truthy and therefore survived
+  every absent-check until a review drove one end to end. **An unrecognised-but-present id is still
   labelled `billed`**, which is `classifyCostUnit`'s deliberate conservative default and not a
   claim this display path makes; a CLI provider added to the harness union but not to its
   price-equivalent set will read as metered money until it is added, exactly as `antigravity-cli`
@@ -1319,9 +1321,9 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   should have caught it were `readFileSync` + substring checks on the renderer source: they stayed
   green against the broken column, and stayed green when the entire Cost-by-Bot table was deleted
   with the matched strings left behind in a comment. They now execute `renderCostTab` and assert
-  on the emitted `<td>`. `tests/unit/cockpit-cost-provider-column.spec.ts` (10 cases) is
+  on the emitted `<td>`. `tests/unit/cockpit-cost-provider-column.spec.ts` (12 cases) is
   mutation-proven against five regressions: dropping the provider from the rollup, dropping the
-  label from the per-task build, removing the unknown/mixed guard, restoring the
+  label from the per-task build, removing the absent/mixed guard, restoring the
   `contributingBots` drop, and deleting the table outright.
 - **Still by design, not a defect:** the BYO lane records $0 (tokens only) — the label names the
   unit, it does not price it. The caller's own endpoint bills the caller, so no price is knowable.

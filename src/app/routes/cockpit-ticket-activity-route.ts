@@ -11,9 +11,11 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Project escalatedAt — when the ticket's current escalation was recorded — beside the recorded detail. The cockpit looks the durable swarm_escalations record up by ticket id, which returns the ticket's newest record rather than one scoped to this escalation; without that date the cockpit cannot tell a record left over from an earlier run from one that explains the escalation on screen now.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | This route carries providerId through its own copy of normalizeDirectUsageByAgent. The compiler found this site, not a grep: making the field required on CockpitAgentUsageStats turned a silently-dropped column into a build error, which is the whole reason it was typed as required rather than optional.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Carries costUnitLabel through the ticket-activity copy alongside providerId, so this surface labels a subscription price-equivalent and a BYO token count apart from metered spend instead of summing all three into one Est. Cost column.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | The direct cost summary's UNKNOWN_PROVIDER sentinel reads as ABSENT. It writes the literal 'unknown' for a NULL provider_id, which is truthy and which classifyCostUnit answers 'billed' for - so the cockpit rendered `unknown` in the Provider column labelled `billed`, asserting real metered money for a bot with no recorded provider. That is the majority case: 2,701 live chat_tasks rows carry a null provider_id.
  */
 
 import type { Request, Response } from 'express';
+import { UNKNOWN_PROVIDER } from '@/features/operational-intelligence';
 import {
   deriveTicketEscalationDetail,
   readTicketEscalatedAt,
@@ -430,6 +432,12 @@ function hasCostData(summary: any): boolean {
     || Object.keys(summary?.usageByAgent || {}).length > 0;
 }
 
+/** The direct cost summary writes 'unknown' for an absent provider. Absent is what it means. */
+function readDirectProviderId(value: unknown): string | null {
+  const provider = readOptionalString(value) || null;
+  return provider === UNKNOWN_PROVIDER ? null : provider;
+}
+
 function normalizeDirectUsageByAgent(value: unknown): Record<string, CockpitAgentUsageStats> {
   const normalized: Record<string, CockpitAgentUsageStats> = {};
 
@@ -440,8 +448,12 @@ function normalizeDirectUsageByAgent(value: unknown): Record<string, CockpitAgen
       agentName: readOptionalString(record.agentName) || agentId,
       // This route has its OWN copy of the direct-summary normalizer. The field has to be
       // carried here too, or the Provider column blanks on the ticket-activity surface alone.
-      providerId: readOptionalString(record.providerId) || null,
-      costUnitLabel: deriveCostUnitLabel(readOptionalString(record.providerId) || null),
+      // The direct summary writes the UNKNOWN_PROVIDER sentinel for a NULL provider_id, and it
+      // LOOKS like a provider: truthy, and classifyCostUnit answers 'billed' for it. Left alone
+      // the cockpit rendered `unknown` in the Provider column labelled `billed` — real metered
+      // money asserted for a bot with no recorded provider, which is the majority of live rows.
+      providerId: readDirectProviderId(record.providerId),
+      costUnitLabel: deriveCostUnitLabel(readDirectProviderId(record.providerId)),
       totalInputTokens: readOptionalNumber(record.totalInputTokens) || 0,
       totalOutputTokens: readOptionalNumber(record.totalOutputTokens) || 0,
       totalTokens: readOptionalNumber(record.totalTokens) || 0,

@@ -45,6 +45,10 @@ export type CockpitAgentUsageStats = {
    *  neither case can a single unit be named, and classifyCostUnit would answer 'billed' for
    *  both, which reads as real money and may be neither.
    *
+   *  "Absent" includes the direct cost summary's UNKNOWN_PROVIDER sentinel, which is the literal
+   *  string 'unknown' and therefore truthy: it is mapped back to null where that summary is read,
+   *  because otherwise it reads here as a present provider and gets labelled.
+   *
    *  An unrecognised-but-PRESENT id is still labelled 'billed', which is classifyCostUnit's
    *  deliberate conservative default rather than a claim this helper makes. See
    *  deriveCostUnitLabel for why correcting that belongs in cost-unit.ts. */
@@ -331,8 +335,10 @@ function createEmptyModelUsage(): CockpitModelUsageStats {
  * @param providerId - The row's merged provider id, the 'mixed' sentinel, or null when absent.
  * @returns The operator-facing unit label, or null when no single unit can be named.
  *
- * Returns null for an ABSENT provider and for the 'mixed' sentinel. It does NOT return null for
- * an unrecognised-but-present id: `classifyCostUnit` answers 'billed' for anything outside its
+ * Returns null for an ABSENT provider and for the 'mixed' sentinel. Callers reading the direct
+ * cost summary must map its UNKNOWN_PROVIDER sentinel to null first — it is the literal string
+ * 'unknown', so it arrives here looking like a provider and would be labelled 'billed'. It does
+ * NOT return null for an unrecognised-but-present id: `classifyCostUnit` answers 'billed' for anything outside its
  * known sets, deliberately, because the metered reading is the conservative one for a budget
  * surface. So a CLI provider added to the harness union but not to PRICE_EQUIVALENT_PROVIDERS
  * will read here as real metered money until it is added - which has happened before, and is

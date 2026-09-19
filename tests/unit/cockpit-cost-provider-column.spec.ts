@@ -7,12 +7,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Also guards the ADR-127 cost-unit label. Est. Cost stacked a subscription price-equivalent, a $0 BYO token count and real metered spend into one figure. The load-bearing case is the negative one: an ABSENT provider and the 'mixed' sentinel must come back unlabelled rather than asserting real money. An unrecognised but PRESENT id is still labelled 'billed' on purpose - cline-cli is asserted that way in this same file - because that is classifyCostUnit's conservative default.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The two renderer cases now EXECUTE renderCostTab and assert on the emitted <td> instead of grepping the module source. The substring versions were theatre and were proven so: they stayed green against a column that rendered an em dash for every row, and stayed green when the whole Cost-by-Bot table was deleted with the matched strings left behind in a comment. They also drive the contributingBots payload, which is the shape the ticket-activity route always sends and the branch that clobbers the other - the defect they failed to catch lived there.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Covers the DIRECT cost summary, which the ticket-activity route prefers over the task rollup. Its per-bot provider aggregation was first-wins, which was invisible until this feature rendered it - a bot spanning claude-code and cline-cli would have shown one provider and one confident ADR-127 unit label for spend that is two different units. It widens to "mixed" now, and the case asserts the derived label then declines to name a unit.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Covers a NULL provider_id end to end, which nothing did. The direct summary writes the literal 'unknown' for one; that is truthy, so it survived every absent-check, and classifyCostUnit answers 'billed' for anything unrecognised - so the cockpit rendered `unknown` labelled `billed`, asserting real metered money for a bot with no recorded provider. 2,701 live chat_tasks rows are in that state, so it was the majority case. Also renames the merge case that said "unknown" where its body passes an ABSENT provider - the same conflation this file spent an entry correcting.
  */
 
 import { describe, it, expect } from 'vitest';
 // The direct cost summary is the PREFERRED source for this surface, so its own per-bot
 // aggregation has to widen the same way the cockpit merge does.
 import { CostTrackingService } from '@/features/operational-intelligence';
+import { buildUsageSummaryFromDirectCostSummary } from '@/app/routes/cockpit-route-helpers';
 import {
   rollupTaskUsageByAgent,
   mergeAgentUsageMaps,
@@ -74,7 +76,7 @@ describe('the cockpit Cost-by-Bot "Provider" column is fed, not structurally dea
     expect(across['bot-a']?.providerId).toBe('mixed');
   });
 
-  it('a known provider merged with an unknown one keeps the known one', () => {
+  it('a known provider merged with an ABSENT one keeps the known one', () => {
     const merged = mergeAgentUsageMaps(
       rollupTaskUsageByAgent([taskRow('bot-a', undefined)]),
       rollupTaskUsageByAgent([taskRow('bot-a', 'cline-cli')]),
@@ -175,6 +177,41 @@ describe('the cockpit Cost-by-Bot "Provider" column is fed, not structurally dea
       // And the label derived from it must then decline to name a unit.
       expect(deriveCostUnitLabel(summary.usageByAgent['bot-a'].providerId)).toBeNull();
       expect(deriveCostUnitLabel(summary.usageByAgent['bot-b'].providerId)).toBe('price-equivalent (subscription)');
+    });
+  });
+
+  it('a NULL provider_id reaches the markup as an em dash, not as "unknown / billed"', () => {
+    // The whole path, because every layer of it looked right on its own. The direct summary
+    // writes the literal 'unknown' for a NULL provider_id; that is truthy, so it survived every
+    // absent-check, and classifyCostUnit answers 'billed' for anything it does not recognise —
+    // so the cockpit asserted real metered money for a bot with no recorded provider. 2,701 live
+    // chat_tasks rows are in exactly that state, so this was the majority case, not a corner.
+    const rows = [{
+      agent_id: 'bot-null', provider_id: null, total_cost: '1', total_input_tokens: '1',
+      total_output_tokens: '1', total_tokens: '2', total_requests: '1', cost_currency: 'USD',
+      usage_by_model: {},
+    }];
+    const service = new CostTrackingService({ query: async () => ({ rows, rowCount: 1 }) } as never);
+
+    return service.queryCostByTicket('tkt-null').then((summary) => {
+      expect(summary, 'the query returned null — the fake pool shape is wrong').toBeTruthy();
+      const direct = { usageByAgent: summary?.usageByAgent ?? {} };
+      const normalized = buildUsageSummaryFromDirectCostSummary(direct as never);
+      const row = normalized.usageByAgent['bot-null'];
+
+      expect(row?.providerId, 'the sentinel reached the cockpit as a provider').toBeNull();
+      expect(row?.costUnitLabel, 'a bot with no provider was labelled with a unit').toBeNull();
+
+      const body: { innerHTML: string } = { innerHTML: '' };
+      renderCostTab(body, { id: 't1' }, {
+        totalCost: 1, totalTokens: 2, totalRequests: 1,
+        usageByAgent: normalized.usageByAgent,
+        contributingBots: Object.values(normalized.usageByAgent),
+      });
+      expect(body.innerHTML).toContain('<td>—</td>');
+      expect(body.innerHTML, 'the markup still says "unknown"').not.toContain('<td>unknown</td>');
+      expect(body.innerHTML, 'real metered money asserted for a bot with no provider')
+        .not.toContain('billed');
     });
   });
 

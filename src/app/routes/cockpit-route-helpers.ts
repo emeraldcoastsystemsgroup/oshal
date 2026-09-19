@@ -12,9 +12,11 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Expanded child ticket fallback aggregation to include every linked task so per-bot rollups stay complete in localhost memory-backed runs
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | normalizeDirectUsageByAgent carries providerId. Tickets with a direct cost summary take this path instead of the task rollup, so leaving it out would have blanked the cockpit Provider column for precisely those tickets while the rollup path showed it.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Carries costUnitLabel through the direct-cost-summary path alongside providerId, so this surface labels a subscription price-equivalent and a BYO token count apart from metered spend instead of summing all three into one Est. Cost column.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | The direct cost summary's UNKNOWN_PROVIDER sentinel reads as ABSENT. It writes the literal 'unknown' for a NULL provider_id, which is truthy and which classifyCostUnit answers 'billed' for - so the cockpit rendered `unknown` in the Provider column labelled `billed`, asserting real metered money for a bot with no recorded provider. That is the majority case: 2,701 live chat_tasks rows carry a null provider_id.
  */
 
 import path from 'node:path';
+import { UNKNOWN_PROVIDER } from '@/features/operational-intelligence';
 import fs from 'node:fs';
 import { DEFAULT_PROJECT_ID, DEFAULT_PROJECT_NAME, normalizeOshalTicketState } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
@@ -873,7 +875,16 @@ async function readTicketCostSummary(ctx: AppContext, ticketId: string): Promise
   }
 }
 
-function buildUsageSummaryFromDirectCostSummary(summary: any): {
+/**
+ * @description Reshapes a direct ticket cost summary into the usage shape the cockpit renders.
+ * @param summary - The summary CostTrackingService.queryCostByTicket returns, or null.
+ * @returns Totals plus per-model and per-agent usage, with the UNKNOWN_PROVIDER sentinel read
+ *          as an absent provider so a bot with none is not labelled with a cost unit.
+ *
+ * Exported so a guard can drive a NULL provider_id from the query through to the rendered cell.
+ * That path had every layer looking right on its own and was wrong end to end.
+ */
+export function buildUsageSummaryFromDirectCostSummary(summary: any): {
   totalCost: number;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -915,6 +926,12 @@ function normalizeDirectUsageByModel(value: unknown): Record<string, CockpitMode
   return normalized;
 }
 
+/** The direct cost summary writes 'unknown' for an absent provider. Absent is what it means. */
+function readDirectProviderId(value: unknown): string | null {
+  const provider = readOptionalString(value) || null;
+  return provider === UNKNOWN_PROVIDER ? null : provider;
+}
+
 function normalizeDirectUsageByAgent(value: unknown): Record<string, CockpitAgentUsageStats> {
   const normalized: Record<string, CockpitAgentUsageStats> = {};
   Object.entries(readRecord(value)).forEach(([agentId, stats]) => {
@@ -924,8 +941,12 @@ function normalizeDirectUsageByAgent(value: unknown): Record<string, CockpitAgen
       agentName: readOptionalString(record.agentName) || agentId,
       // Carried through here too: this is the path taken when a ticket has a direct cost
       // summary, and dropping the field here would blank the column for exactly those tickets.
-      providerId: readOptionalString(record.providerId) || null,
-      costUnitLabel: deriveCostUnitLabel(readOptionalString(record.providerId) || null),
+      // The direct summary writes the UNKNOWN_PROVIDER sentinel for a NULL provider_id, and it
+      // LOOKS like a provider: truthy, and classifyCostUnit answers 'billed' for it. Left alone
+      // the cockpit rendered `unknown` in the Provider column labelled `billed` — real metered
+      // money asserted for a bot with no recorded provider, which is the majority of live rows.
+      providerId: readDirectProviderId(record.providerId),
+      costUnitLabel: deriveCostUnitLabel(readDirectProviderId(record.providerId)),
       totalInputTokens: readOptionalNumber(record.totalInputTokens) || 0,
       totalOutputTokens: readOptionalNumber(record.totalOutputTokens) || 0,
       totalTokens: readOptionalNumber(record.totalTokens) || 0,
