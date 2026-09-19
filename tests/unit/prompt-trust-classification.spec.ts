@@ -60,13 +60,15 @@ const PROVENANCE: Array<{ name: string; metadata?: Record<string, unknown> }> = 
  * Expected class per (provenance, layerType). Written out rather than computed, so this table
  * disagrees with a wrong implementation instead of agreeing with it.
  *
- * Mutation checks a reader can run:
- *  - delete `prompt-containment.ts:195` (the platform/host/tenant policy grant) -> the six
- *    'policy' cells below go red.
- *  - delete the role hard-deny at `prompt-containment.ts:193` -> the role cells under
- *    'serverAuthored only' and 'serverAuthored + trusted-configuration' go red.
- *  - move `buildAuthorityRebind` off the end of `assembleContainedPrompt` (`:130`) -> the
- *    authority-last case at the bottom of this file goes red.
+ * Mutation checks, each RUN rather than asserted, with the count this file actually produced:
+ *  - delete `prompt-containment.ts:195` (the platform/host/tenant policy grant) -> 7 red.
+ *  - delete the role hard-deny at `prompt-containment.ts:193` -> exactly 1 red, the
+ *    role + "serverAuthored + trusted-configuration" cell. That line is load-bearing for THAT
+ *    shape only: with `serverAuthored` alone and no `promptTrust`, a role layer still falls
+ *    through to the fail-closed default, so removing the deny does not change it. Stated
+ *    precisely because the looser version ("the role cells go red") is wrong and was measured so.
+ *  - move `buildAuthorityRebind` off the end of `assembleContainedPrompt` (`:130`) -> 1 red,
+ *    the authority-last case at the bottom of this file.
  */
 const EXPECTED: Record<string, Record<PersonaLayerType, string>> = {
   'no metadata': {
