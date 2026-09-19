@@ -1299,7 +1299,7 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   carry `providerId` and `costUnitLabel` server-side, so the "Provider" column stops rendering an
   em dash for every bot and the "Est. Cost" cell names the unit its figure is in. The column was
   structurally dead, not merely empty: `ticket-view-cost-renderer.js:51` has always read
-  `bot.providerId`, but `CockpitAgentUsageStats` never declared the field and all four construction
+  `bot.providerId`, but `CockpitAgentUsageStats` never declared the field and all five TypeScript construction
   sites dropped it. `chat_tasks.provider_id` was populated the whole time (896 live rows across
   openai-codex, claude-code, cline-cli, byo-llm, image-provider:openrouter and
   deterministic-provider). The label reuses `classifyCostUnit`/`COST_UNIT_LABELS` — the same
