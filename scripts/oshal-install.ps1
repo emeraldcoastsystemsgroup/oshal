@@ -32,6 +32,7 @@
   8 | maintainer@emeraldcoastsystemsgroup.com   | Two gaps the 2026-09-16 remote install walked into. (1) WSL2 preflight: winget installs Docker Desktop successfully on a box whose WSL2 features are off, Docker Desktop then never starts, and every message here pointed at Docker - so the client wrote a patch script by hand to get past a Windows problem this installer never mentioned. Detection is by EXIT CODE (wsl.exe emits UTF-16LE; matching its text is a check that stops working silently), enabling needs elevation and ALWAYS needs a reboot, so it ends the run either way rather than pretending to continue. -SkipWslCheck for a Hyper-V backend. (2) Stale-image refusal: GHCR is published only by the manual-only CI workflow, so latest rots with nothing saying so - that box came up 52 days and 983 commits behind and its operator reported MISSING FEATURES, not an old image. Refuses past the threshold unless -AllowStaleImage, and fails open when it cannot check.
   9 | maintainer@emeraldcoastsystemsgroup.com   | Lockstep with oshal-install.sh: the install ends with a USER who owns the swarm. -AuthMode (basic|mock, default basic) picks the sign-in stack. basic creates the administrator through the ADR-117 bootstrap (swarm root claimed, ADR-148) with a random password nobody sees, then opens scripts/oshal-admin-link.mjs's one-time set-password link instead of /welcome - choosing the password signs that browser in and lands on the wizard, so there is no generated credential to print and lose. -AdminPassword stays for headless automation. mock still claims root for the mock principal. Both write OSHAL_INSTALL_OWNER_SUB so staged packages have an owner. Closing output states the real sign-in path, the reissue command, and the 0.0.0.0 exposure mock implies.
   10 | maintainer@emeraldcoastsystemsgroup.com  | Lockstep with oshal-install.sh seq 11: UI_PROFILE=oshal-framework (OSHAL_UI_PROFILE overrides), so the first cockpit's rail lists the installed applications instead of the 7-item starter view.
+  11 | maintainer@emeraldcoastsystemsgroup.com   | Honour OSHAL_API_PORT, in lockstep with oshal-install.sh. The sh made the cockpit port configurable (COCKPIT_PORT) and this script kept five hardcoded localhost:35457 URLs, so an install on any other port printed a sign-in link, a cockpit URL, a welcome destination and a reissue command that all pointed at nothing. The Change Log on both files claims lockstep; this is what lockstep means.
 #>
 [CmdletBinding()]
 param(
@@ -68,6 +69,11 @@ param(
   [ValidateSet('kernel', 'full')][string]$Fleet = "kernel"
 )
 $ErrorActionPreference = 'Stop'
+# Lockstep with oshal-install.sh's COCKPIT_PORT. The sh made the port configurable and this script
+# kept five hardcoded localhost:35457 URLs, so an install on any other port printed sign-in links,
+# a cockpit URL and a reissue command that all pointed at nothing. Same variable, same default.
+$CockpitPort = if ($env:OSHAL_API_PORT) { $env:OSHAL_API_PORT } else { '35457' }
+$CockpitOrigin = "http://localhost:$CockpitPort"
 if (-not $PackageAuditMode) { $PackageAuditMode = if ($env:OSHAL_PACKAGE_AUDIT_MODE) { $env:OSHAL_PACKAGE_AUDIT_MODE } else { 'compatible' } }
 $PackageAuditMode = $PackageAuditMode.Trim().ToLowerInvariant()
 if ($PackageAuditMode -notin @('compatible', 'enforce')) { throw "PackageAuditMode must be compatible or enforce" }
@@ -686,7 +692,7 @@ for ($i = 0; $i -lt 50; $i++) {
 # -- The first account: a swarm with nobody in it is a swarm nobody owns ------
 # Lockstep with oshal-install.sh seed_first_admin. Without it the roster is empty, swarm
 # root is UNCLAIMED and every operator-gated page 403s at the person who just installed it.
-$origin = "http://localhost:35457"
+$origin = $CockpitOrigin
 if ($AuthMode -eq 'mock') {
   Say "claiming swarm root for $AdminEmail"
   try {
@@ -768,12 +774,12 @@ if ($LASTEXITCODE -ne 0) {
 # paste-a-key flow, so it cannot happen out here in PowerShell - the wizard is where linking
 # actually lives. (/cockpit would 302 here anyway while onboarding is incomplete; landing on the
 # wizard directly is the honest version of the same redirect.)
-$welcome = if ($NoAi) { 'http://localhost:35457/cockpit/' } else { 'http://localhost:35457/welcome' }
+$welcome = if ($NoAi) { "$CockpitOrigin/cockpit/" } else { "$CockpitOrigin/welcome" }
 # Basic auth opens the one-time SET-PASSWORD link instead: choosing the password there signs this
 # browser in and continues to / - the welcome wizard while setup is incomplete. Lockstep with sh.
 if ($script:SetPasswordLink) { $welcome = $script:SetPasswordLink }
 Say "installed - opening your swarm"
-Note "cockpit: http://localhost:35457/cockpit/"
+Note "cockpit: $CockpitOrigin/cockpit/"
 Start-Process $welcome
 
 Say "how you sign in"
@@ -785,10 +791,10 @@ if ($AuthMode -eq 'basic') {
     Note "If it did not open, use this link (expires $($script:SetPasswordExpires)):"
     Note "  $($script:SetPasswordLink)"
   } elseif ($script:PasswordSupplied) {
-    Note "Sign in at http://localhost:35457/login with the password this install was given."
+    Note "Sign in at $CockpitOrigin/login with the password this install was given."
   }
   Note "Link expired or lost? Issue a new one - no password is ever lost for good:"
-  Note "  docker exec oshal-local-api node scripts/oshal-admin-link.mjs --origin http://localhost:35457 --email $AdminEmail"
+  Note "  docker exec oshal-local-api node scripts/oshal-admin-link.mjs --origin $CockpitOrigin --email $AdminEmail"
   Note "Invite other people from the cockpit (Users -> invite); each gets their own login."
   Note "Real identity provider (Google, Microsoft/Entra, any OIDC)? Set LOCAL_AUTH=false and MOCK_OIDC=false"
   Note "plus OIDC_ISSUER_URL / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET / APP_URL in $envFile, restart the api."

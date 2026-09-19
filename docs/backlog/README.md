@@ -59,5 +59,8 @@ relevant ADR or feature documentation, release notes, and git history.
 - [jarvis-daily-dashboard.md](./jarvis-daily-dashboard.md) — Jarvis and the daily dashboard: the
   compact presentation, and recorded-report producer adoption with its pending publication and
   delivery acceptance.
+- [service-auth-smokes-unexercised.md](./service-auth-smokes-unexercised.md) — a service-auth
+  smoke with no bound operator transport reports PENDING, so the installer's postflight now
+  exercises none of them and still exits 0. The narrowing was right; the gap needs a name.
 - [archive/](./archive/README.md) — dated snapshots of verified-resolved queue entries; these are
   searchable implementation history, not active work.

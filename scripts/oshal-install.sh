@@ -17,6 +17,8 @@
 # 11 | maintainer@emeraldcoastsystemsgroup.com  | The operator's first cockpit shows their applications. UI_PROFILE is written as oshal-framework (OSHAL_UI_PROFILE overrides): compose defaults to the 7-item starter cockpit, whose rail lists no installed application at all. Paired with the loader granting the install owner an explicit admin tier on each application it adopts — without one, the rail hid all 58 ADR-149 protected applications from the person who installed them.
 # 12 | maintainer@emeraldcoastsystemsgroup.com  | The store-source check fails OPEN and no longer breaks the offline install. store_is_public treated every non-200 as private, so a box with no curl, no network, a proxy, or a transient GitHub blip was told to supply a read token for the PUBLIC default store; only 401/403/404 now asks, and anything else proceeds. --from-archive skips the probe entirely - it is the documented zero-network path, it resolves to MODE=1, and this function runs before the mode dispatch, so the offline install was exiting 2 on a box that was working correctly. And the advertised "Enter to skip" no longer kills the run: under set -euo pipefail the skip path ended on a [ -n ] test returning 1, which terminated the installer with no message.
 # 13 | maintainer@emeraldcoastsystemsgroup.com  | Two review findings. valid_email constrained only the LOCAL part, so `me@example.com&whoami` passed; harmless in this script, which hands argv to docker exec, but oshal-install.ps1 interpolates the same value into a `cmd /c` string and lockstep is why both validators exist. The character is rejected anywhere now, and a second @ with it. And the one-time set-password link - swarm root for an hour - is no longer printed when stdout is not a terminal, because an unattended run is one whose output something is capturing. The reissue command is how it is obtained deliberately.
+# 14 | maintainer@emeraldcoastsystemsgroup.com  | --from-archive uses the image the archive ACTUALLY contains. IMAGE was still the registry default when that branch ran, so an archive built with any other tag loaded fine and then every later step pointed at something that was never pulled: docker create to extract compose.dist.yml, and OSHAL_BOT_IMAGE in the generated .env. Offline there is no pull to paper over it. The tag is read from docker load output, preferring the oshal-bot image when an archive carries several, and an untagged load says so instead of proceeding silently.
+# 15 | maintainer@emeraldcoastsystemsgroup.com  | A re-run reuses the administrator email the existing .env already names. oshal-install.ps1 gates its whole env-generation block on the file being absent, so it never re-asks; this script asked unconditionally, which is not the lockstep both Change Logs claim - and it is a question whose answer is already written down. --admin-email still wins, and an unattended run is unchanged.
 # =============================================================================
 #
 # One-click:
@@ -237,8 +239,30 @@ valid_email() {
     * ) return 1 ;;
   esac
 }
+# An email this box already answered. oshal-install.ps1 gates its whole .env block on the file
+# existing, so a re-run there never re-asks; this script asked every time, which is not lockstep
+# and is a question with a right answer already written down two lines from where it is asked.
+existing_admin_email() {
+  for _envf in "$DIR/.env" "$DIR/src/.env"; do
+    [ -f "$_envf" ] || continue
+    _prev=$(sed -n 's/^OSHAL_OPERATOR_EMAILS=//p' "$_envf" | head -1)
+    [ -z "$_prev" ] && _prev=$(sed -n 's/^MOCK_OIDC_EMAIL=//p' "$_envf" | head -1)
+    if [ -n "$_prev" ]; then printf '%s' "$_prev"; return 0; fi
+  done
+  return 1
+}
+
 require_admin_email() {
   [ "$MODE" = "3" ] && return 0                      # a leaf node joins an existing swarm's identity
+  # A previous install on this box already answered. Reuse it rather than asking again - and
+  # only when the operator did not name one on this run, which still wins.
+  if [ -z "$ADMIN_EMAIL" ]; then
+    _prev_email=$(existing_admin_email || true)
+    if [ -n "$_prev_email" ] && valid_email "$_prev_email"; then
+      ADMIN_EMAIL="$_prev_email"
+      note "administrator $ADMIN_EMAIL (from the existing .env; pass --admin-email to change it)"
+    fi
+  fi
   while [ -z "$ADMIN_EMAIL" ] || ! valid_email "$ADMIN_EMAIL"; do
     if [ -n "$ADMIN_EMAIL" ]; then echo "   not an email address: $ADMIN_EMAIL" >&2; ADMIN_EMAIL=""; fi
     if [ ! -t 0 ]; then
@@ -662,7 +686,28 @@ if [ "$MODE" = "2" ]; then
 elif [ -n "$FROM_ARCHIVE" ]; then
   [ -f "$FROM_ARCHIVE" ] || { echo "archive not found: $FROM_ARCHIVE"; exit 1; }
   say "loading the offline swarm snapshot (docker load — no network needed)"
-  docker load -i "$FROM_ARCHIVE"
+  # Use what the archive ACTUALLY contains. IMAGE was still $REGISTRY/oshal-bot:$TAG from the
+  # registry default, so an archive built with any other tag loaded fine and then every later
+  # step — `docker create "$IMAGE"` to extract compose.dist.yml, and OSHAL_BOT_IMAGE in .env —
+  # pointed at something that was never there. Offline, there is no pull to paper over it.
+  _load_out=$(docker load -i "$FROM_ARCHIVE")
+  printf '%s
+' "$_load_out"
+  _loaded=$(printf '%s
+' "$_load_out" | sed -n 's/^Loaded image: //p')
+  # An archive can carry several images; prefer the swarm image over whatever else rode along.
+  _pick=$(printf '%s
+' "$_loaded" | grep -m1 'oshal-bot' || true)
+  [ -z "$_pick" ] && _pick=$(printf '%s
+' "$_loaded" | head -1)
+  if [ -n "$_pick" ]; then
+    IMAGE="$_pick"
+    say "archive provides $IMAGE"
+  else
+    # `Loaded image ID: sha256:…` (no tag) reaches here. Say so rather than proceeding silently
+    # against a tag the archive may not contain.
+    echo "warning: docker load reported no tagged image; continuing with $IMAGE" >&2
+  fi
   COMPOSE_SRC=""
 else
   say "pulling $IMAGE (first pull is a few GB — one-time)"
