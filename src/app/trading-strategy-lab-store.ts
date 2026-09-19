@@ -11,12 +11,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — strategies CRUD, run persistence with curves, baseline pinning, forward-state save/load with appended equity points.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | trading_strategy_notes (ADR-095): dated per-strategy notes / lessons-learned / decision journal + CRUD, so every tested configuration carries its narrative (the operator ask: "notes and lessons learned on each"). Table added to ensureLabSchema, mirrored in migration 073.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Take the trading advisory lock like the rest of the family. This bootstrap issued bare pool.query DDL, so two concurrent fires could race CREATE TABLE IF NOT EXISTS against itself (23505 on pg_type_typname_nsp_index) or interleave a check-then-CREATE pair (42710). The `ensured` memo never helped: it is per-process, and the race is between processes. The statement text is passed through VERBATIM as one element rather than split, so the transaction shape is exactly what it was - the change adds the lock and nothing else.
  *
  * @module trading-strategy-lab-store
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { runRuntimeSchemaBootstrap, SCHEMA_LOCK_KEYS } from '@/shared/services/database';
 import type { EquityPoint, LabMetrics, StrategyConfig, WalkState } from './trading-strategy-lab-sim';
 
 const logger = createChildLogger({ module: 'trading-strategy-lab-store' });
@@ -60,7 +62,12 @@ let ensured = false;
  */
 export async function ensureLabSchema(pool: Pool): Promise<void> {
   if (ensured) return;
-  await pool.query(`
+  // Serialised on the trading advisory lock, like every other module in the family. The
+  // statement text below is unchanged and still runs as ONE multi-statement query, so the
+  // transaction shape is exactly what it was; this adds the lock and nothing else.
+  await runRuntimeSchemaBootstrap({
+    pool, moduleName: 'trading strategy lab', lockKey: SCHEMA_LOCK_KEYS.trading,
+    statements: [`
     CREATE TABLE IF NOT EXISTS trading_strategies (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_sub TEXT NOT NULL,
@@ -112,7 +119,12 @@ export async function ensureLabSchema(pool: Pool): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_trd_strategy_notes_strategy ON trading_strategy_notes (strategy_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_trd_strategy_notes_owner ON trading_strategy_notes (user_sub);
-  `);
+  `],
+    requirements: [{
+      table: 'trading_strategies',
+      columns: ['id', 'user_sub', 'name', 'config', 'status', 'created_at'],
+    }],
+  });
   ensured = true;
   logger.info('Strategy Lab schema ensured');
 }
