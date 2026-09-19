@@ -9,6 +9,8 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Fixed cockpit ticket activity workspace wiring so artifact browsing points at the shared root ticket workspace instead of task-scoped linked task IDs
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Escalated tickets now carry the escalation reason the transition recorded. The cockpit read the durable swarm_escalations store only, so an escalation raised outside a swarm run (a dispatch failure, an operator park) rendered as "no reason available" while ticket_status_history held reason/source/severity/nextAction all along. The payload projects that recorded detail instead of duplicating the fact into a second store.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Project escalatedAt — when the ticket's current escalation was recorded — beside the recorded detail. The cockpit looks the durable swarm_escalations record up by ticket id, which returns the ticket's newest record rather than one scoped to this escalation; without that date the cockpit cannot tell a record left over from an earlier run from one that explains the escalation on screen now.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | This route carries providerId through its own copy of normalizeDirectUsageByAgent. The compiler found this site, not a grep: making the field required on CockpitAgentUsageStats turned a silently-dropped column into a build error, which is the whole reason it was typed as required rather than optional.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Carries costUnitLabel through the ticket-activity copy alongside providerId, so this surface labels a subscription price-equivalent and a BYO token count apart from metered spend instead of summing all three into one Est. Cost column.
  */
 
 import type { Request, Response } from 'express';
@@ -22,6 +24,7 @@ import { canAccessResource } from '@/shared/middleware/authz';
 import type { AppContext } from '../composition-root';
 import {
   type CockpitAgentUsageStats,
+  deriveCostUnitLabel,
   mergeAgentUsageMaps,
   mergeModelUsageMaps,
   normalizeUsageByModel,
@@ -435,6 +438,10 @@ function normalizeDirectUsageByAgent(value: unknown): Record<string, CockpitAgen
     normalized[agentId] = {
       agentId,
       agentName: readOptionalString(record.agentName) || agentId,
+      // This route has its OWN copy of the direct-summary normalizer. The field has to be
+      // carried here too, or the Provider column blanks on the ticket-activity surface alone.
+      providerId: readOptionalString(record.providerId) || null,
+      costUnitLabel: deriveCostUnitLabel(readOptionalString(record.providerId) || null),
       totalInputTokens: readOptionalNumber(record.totalInputTokens) || 0,
       totalOutputTokens: readOptionalNumber(record.totalOutputTokens) || 0,
       totalTokens: readOptionalNumber(record.totalTokens) || 0,

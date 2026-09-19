@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add recordCostOnce(outboxId, event): receipt insertion, chat_tasks mutation, and cost-ledger append share one transaction so durable remote-task settlement replay cannot double bill or acknowledge a partial cost publication.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Serialize distinct remote-task cost effects for the same chat-task rollup with a transaction advisory lock, preventing concurrent outbox workers from losing an increment.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | recordLedgerEvent(event): the oshal_cost_events append alone, for a producer that already owns its chat_tasks rollup (the inline orchestrator's taskStore.recordUsage). Routing inline turns through recordCost would add every turn to chat_tasks twice; skipping the ledger left windowed budget caps blind to inline spend.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Per-bot provider aggregation widens to 'mixed' instead of keeping whichever row came first. This is the summary the cockpit ticket Cost tab PREFERS, and that surface now renders the provider per bot and derives an ADR-127 cost-unit label from it - so a bot spanning claude-code and cline-cli would have shown one provider and one confident unit label for spend that is two different units. First-wins was harmless while nothing displayed it and became a quiet lie the moment something did.
  */
 
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
@@ -423,7 +424,7 @@ export class CostTrackingService {
 
         summary.usageByAgent[agentId] = {
           agentId,
-          providerId: providerId || existingAgentSummary.providerId || '',
+          providerId: mergeAgentProviderId(existingAgentSummary.providerId, providerId),
           totalCost: existingAgentSummary.totalCost + totalCost,
           totalInputTokens: existingAgentSummary.totalInputTokens + totalInputTokens,
           totalOutputTokens: existingAgentSummary.totalOutputTokens + totalOutputTokens,
@@ -824,6 +825,28 @@ function normalizeModelId(modelId: string): string {
 function normalizeIdentifier(value: unknown): string {
   const trimmed = typeof value === 'string' ? value.trim() : '';
   return trimmed.length > 0 ? trimmed : 'unknown';
+}
+
+/**
+ * @description Combines the provider on two cost rows for one bot without picking a winner.
+ * @param current - Provider already accumulated for this bot, or '' when unknown.
+ * @param incoming - Provider on the row being folded in, or '' when unknown.
+ * @returns The shared provider, the known one when only one side has it, or 'mixed' when they differ.
+ *
+ * This was first-wins, which is invisible until something renders it. The cockpit ticket Cost tab
+ * now shows the provider per bot AND derives an ADR-127 unit label from it, and this summary is the
+ * PREFERRED source for that surface - so a bot that ran on claude-code and cline-cli would have
+ * displayed one provider and one confident unit label for spend that is two different units.
+ * Deliberately duplicates the rule in the cockpit's own merge rather than sharing it: that helper
+ * lives in the app layer and this is a feature slice, and a shared module would have to sit outside
+ * both. Four lines is the smaller price.
+ */
+function mergeAgentProviderId(current: string | undefined, incoming: string | undefined): string {
+  const left = (current || '').trim();
+  const right = (incoming || '').trim();
+  if (!left) return right;
+  if (!right || right === left) return left;
+  return 'mixed';
 }
 
 function normalizeCurrency(value: unknown): string {
