@@ -130,3 +130,54 @@ since a package author has no reason to think about the controller's harness at 
   the default was that nobody had to say anything.
 - Guard: `tests/unit/codex-default-floor.spec.ts` gains the no-claude-code-default rows. As with
   the parent ADR, a red spec is the signal that someone moved a default without an ADR.
+
+## Amendment 2 — there is no automatic ladder at all; the administrator writes the chain (2026-09-18)
+
+Status: Accepted — operator directive 2026-09-18. Amends Decision #2 of Amendment 1.
+
+**Context.** Amendment 1 narrowed the automatic ladder to one rung and forbade claude-code from
+appearing in any automatic chain. It did not question the ladder itself. The bot-node kept a
+`Record` literal mapping three provider names to their hardcoded successors, and the
+claude-code exclusion of 2026-08-13 lived inside it as a *missing array entry*.
+
+That shape failed in the way this repo keeps re-learning. The operator, 2026-09-18:
+
+> "the administrator should be able to define as many llms as they want and the order in which
+> that fall back no matter what … there should be any code stateing what the administrator set the
+> defalt too … we better not be hard coding and we better have a configuration that is setable in
+> the ux and we better have a env that corialtes as well"
+
+The concrete cost: when the one remaining automatic rung ran out of tokens, recovery required
+editing and redeploying code, because no setting could express a different order.
+
+**Decision.**
+
+1. **No code names a fallback provider, and no code decides who falls back to whom.** The
+   `Record` literal is deleted. A node with nothing configured performs **no failover** — the
+   honest answer, rather than a chain the module invented.
+2. **The chain is a row.** `oshal_bot_provider_switch.fallback_order` (migration 148) holds an
+   ordered list of any length, resolved by the same precedence as the provider itself: the bot's
+   row, then the fleet-default row, then the environment, then nothing. An **empty array is a real
+   answer** — "no failover" — and only a null inherits.
+3. **It is settable without curl and without a deploy**, in the cockpit fleet-default panel, and
+   correlates to `OSHAL_PROVIDER_FALLBACK_ORDER` per node.
+4. **Amendment 1's Decision #2 is superseded in mechanism, not in intent.** Nothing automatic
+   falls back to claude-code, because nothing falls back automatically at all. An administrator
+   may now name claude-code deliberately — which Amendment 1 already permitted explicitly, and
+   which the old map could not express.
+5. **`OSHAL_PROVIDER_AUTO_FAILOVER` is a real node-local kill switch**, consulted before the
+   configured order rather than after it, where it could never fire.
+
+**Consequences.**
+
+- **On upgrade, failover stops until a chain is set.** Before this change an unconfigured
+  bot-node walked `openai-codex → cline-cli`, `claude-code → openai-codex → cline-cli`,
+  `cline-cli → openai-codex`. A deployment that relied on that behaviour must write a chain — one
+  row, no deploy — or accept that a failover-eligible failure now surfaces instead of switching
+  vendor. This is the reason this is an ADR and not a refactor.
+- A vendor exclusion is now an administrator's decision expressed in data, not an entry someone
+  has to remember to leave out of an array.
+- Guard: `tests/unit/provider-fallback-chain.spec.ts` — an unconfigured node produces no chain for
+  any provider the module knows by name, and invented provider names survive a chain intact and in
+  order. `tests/unit/codex-default-floor.spec.ts` keeps Amendment 1's rows, now reading an explicit
+  environment so the guard cannot go green or red on whatever the ambient shell exports.

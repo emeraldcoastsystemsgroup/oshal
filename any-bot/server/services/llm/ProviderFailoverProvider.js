@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added provider stall failover wrapper for bot-node any-bot providers.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Classify SUCCESSFUL primary/fallback responses with the narrow runtime-banner check, not the broad throttle/auth keywords, so a valid answer mentioning 429/quota/unauthorized is no longer treated as a failover-eligible failure.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A nested chain attributed every recovery to the FIRST rung. An administrator-defined order folds into A->(B->(C)), and the returned providerFailover object literal overwrote the inner wrapper's record carried in by the spread - so when C answered, the record still read "A -> B". That is the number a reader uses to decide which vendor is failing and which to drop. Added `answered` (the provider that actually produced the response) and `chain` (every provider walked, in order); `primary` and `fallback` keep their per-hop meaning.
  */
 
 'use strict';
@@ -91,14 +92,27 @@ class ProviderFailoverProvider {
       );
     }
 
-    logger.info(`[ProviderFailover] fallback succeeded via ${this.fallbackName}`);
+    // An administrator-defined chain is NESTED: A->(B->(C)). The spread below carries the inner
+    // wrapper's providerFailover, and the object literal then overwrote it — so when C answered,
+    // the record still read "A -> B" and every recovery was attributed to the FIRST rung. That is
+    // the number someone reads to decide which vendor to drop.
+    const inner = fallbackResponse && fallbackResponse.providerFailover;
+    const answered = (inner && inner.answered) || this.fallbackName;
+    const innerChain = (inner && Array.isArray(inner.chain)) ? inner.chain : [this.fallbackName];
+    logger.info(`[ProviderFailover] fallback succeeded via ${answered}`);
     return {
       ...fallbackResponse,
-      provider: fallbackResponse.provider || this.fallbackName,
+      provider: fallbackResponse.provider || answered,
       providerFailover: {
         reason: this.reason,
+        /** This hop's primary. At the outermost wrapper, the provider the chain started from. */
         primary: this.primaryName,
+        /** This hop's immediate fallback — NOT necessarily the provider that answered. */
         fallback: this.fallbackName,
+        /** The provider that actually produced this response. Use THIS for attribution. */
+        answered,
+        /** Every provider walked, in order, ending with the one that answered. */
+        chain: [this.primaryName, ...innerChain],
       },
     };
   }

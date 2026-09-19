@@ -202,6 +202,36 @@ describe('the Antigravity CLI is a registered harness beside gemini-cli', () => 
     }
   });
 
+  it('reports unhealthy WITH the measured cause on a node that cannot run it', async () => {
+    // blockingReason() is consumed in run(), and run() is unreachable: the audited-harness guard
+    // throws first for every CLI harness. So the musl diagnosis reached no surface at all, and an
+    // operator saw only the generic unbrokered-CLI refusal. healthCheck is not behind that guard.
+    const adapter = new AntigravityCliHarnessAdapter();
+    const realPlatform = process.platform;
+    const existsSync = vi.spyOn(fs, 'existsSync');
+    try {
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      existsSync.mockImplementation((p) => String(p).includes('libc.musl'));
+      await expect(adapter.healthCheck()).resolves.toBe(false);
+    } finally {
+      existsSync.mockRestore();
+      Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
+    }
+  });
+
+  it('refuses an oversized prompt by name instead of dying as spawn E2BIG', () => {
+    // Linux caps a SINGLE argv value at MAX_ARG_STRLEN (128 KiB) regardless of the much larger
+    // ARG_MAX. The Codex adapter learned this live - a positional prompt killed every Dungeon
+    // Master turn once the conversation grew - and both siblings moved to stdin. This adapter
+    // cannot yet, so the bound is explicit and the refusal names the cause.
+    const adapter = new AntigravityCliHarnessAdapter();
+    expect(() => callPrivate(adapter, 'buildArgs', { prompt: 'x'.repeat(200_000), taskId: 't' }, 'm'))
+      .toThrow(/over the \d+-byte limit for a single argv value/);
+    // A normal prompt is untouched.
+    const ok = callPrivate<string[]>(adapter, 'buildArgs', { prompt: 'hello', taskId: 't' }, 'm');
+    expect(ok[ok.indexOf('-p') + 1]).toContain('hello');
+  });
+
   it('is metered in the same cost unit as its sibling on the identical Google credential', () => {
     // It reached the harness union, the factory record, HARNESS_BY_ID and the unattended-denial
     // set without reaching the price-equivalent sets, so one account would have read in two units.
