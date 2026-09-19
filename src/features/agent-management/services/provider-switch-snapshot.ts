@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | In-memory snapshot of the switch table so the SYNCHRONOUS harness resolver (resolveHarnessForAgent runs inside getProvider(agentId), which has no await) and the async dispatch stamper read the same rows and therefore agree. Refreshed at boot, after every write through the api, and on a timer so a row written straight into the table ("literally a switch in a table") takes effect without an api restart. A failed refresh keeps the last good rows and logs the error; a snapshot that never loaded resolves as "no rows", which is today's registry behaviour.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | resolveFallbackChain: the fallback_order column had no reader. The cockpit wrote a row and the panel reported it while every bot resolved an empty chain, because resolveProviderFallbackChain had zero production callers. The chain now resolves from the same rows, by the same precedence, as the provider id.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pass the environment rung, which had zero callers. resolveProviderFallbackChain has accepted environmentOrder and defined a "environment" source since migration 148, and nothing in the repo - production or test - ever supplied it, so ADR-162's ladder ran one rung shorter than the migration COMMENT and the JSDoc both describe. Read from the api process only when neither the bot row nor the fleet row carries a chain; an empty value is not a chain and falls through to source "none", which the boot pull delivers as null so a node keeps whatever it already has.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -156,6 +157,11 @@ export class ProviderSwitchSnapshot {
     return resolveProviderFallbackChain({
       botRow: this.rowFor(agentId),
       fleetRow: this.fleetDefault(),
+      // The third rung of the ADR-162 ladder, which had NO caller anywhere in the repo - so the
+      // documented four-rung ladder was three, and the operator's "an env that correlates as
+      // well" existed on neither side. This is the api process's own variable, read only when no
+      // row supplies a chain; an empty value is not a chain and falls through to 'none'.
+      environmentOrder: process.env.OSHAL_PROVIDER_FALLBACK_ORDER ?? null,
       primaryProviderId,
       catalog: this.catalog,
     });

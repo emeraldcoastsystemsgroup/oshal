@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Named guard provider-switch-cockpit (headless Chromium over the REAL config-admin page, the REAL AgentProfileController, the REAL /runtime and fleet-default routes, the REAL precedence rule and a REAL ProviderSwitchSnapshot): the per-bot provider select is ENABLED for a registry-declared bot (PR #97 made it read-only because it did nothing; the row makes it do something), its reported source starts at 'registry-harness'; writing the fleet default from the panel is one save and every bot with no row reports 'fleet-default'; saving a provider on one bot writes its own row and it reports 'bot-row' while the other bot stays on the fleet default; clearing the fleet default returns the row-less bot to 'registry-harness'. Doubles: the agent-profile persistence, the config-sync push (pushed:true, persisting into the same in-memory agent_config the switch store reads) and the switch store itself — the database boundary is provider-switch-store-postgres.spec.ts. Chromium is headless; nothing opens on the desktop.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot switch row is an operator-written row of oshal_bot_provider_switch, never the agent_config record: the store double now holds per-bot rows written ONLY through the runtime route's writeBotSwitch seam (wired as agent-provider-mount.ts wires it) and listAll no longer projects agentConfig — the pre-fix projection let the bot-row case pass with the seam absent. The case now asserts the row itself (scope, provider, updatedBy = the session's sub) and that the other bot has none; with the seam unwired the case is red (no bot-row ever appears).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The fallback-order control, driven in a real browser against the real route: an administrator types an ordered list and the stored row carries that EXACT order (asserted as an array - a chain that arrives reordered is a different chain), and an empty box stores [] rather than being guessed as "unchanged". The store double now mirrors the real upsert contract on that argument.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Two cases for the panel defects a review found: editing the MODEL used to wipe a stored fallback chain, because the panel sent fallbackOrder on every save and so could never ask the API to leave it alone; and null ("nothing configured") rendered identically to [] ("deliberately no failover"), so an administrator could not tell which one the fleet had. An untouched control now writes nothing, and a stored empty chain renders as `none`, which round-trips back to [].
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -222,6 +223,66 @@ describe('provider-switch-cockpit', () => {
       () => (document.querySelector('#fleetDefaultStatus')?.textContent || '').includes('Fallback: none'),
       undefined, { timeout: 20_000 },
     );
+    expect(fleetRow?.fallbackOrder).toEqual([]);
+  }, 60_000);
+
+  it('an untouched chain control writes NOTHING, so the API is told to leave the chain alone', async () => {
+    // null ("no chain configured, inherit") and [] ("configured, deliberately no failover") are
+    // different answers, and the API is told which by whether fallbackOrder is PRESENT at all.
+    // The panel sent it on every save, so it could never say "leave it alone" — which made the
+    // store's own "a provider change must not wipe the chain" protection unreachable from the
+    // only UI that writes the row, and rewrote a null chain to [] the first time anyone saved.
+    //
+    // Asserted on the REQUEST BODY rather than on the resulting row, because the row cannot
+    // distinguish "sent the same value back" from "did not send it" — and that distinction is
+    // the whole defect.
+    const bodies: Array<Record<string, unknown>> = [];
+    const capture = (request: { url(): string; method(): string; postData(): string | null }): void => {
+      if (request.method() !== 'PUT' || !request.url().includes('/provider-switch/fleet-default')) return;
+      try { bodies.push(JSON.parse(request.postData() || '{}')); } catch { /* not our write */ }
+    };
+    page!.on('request', capture);
+    try {
+      // Store a chain, then touch ONLY the model.
+      await page!.fill('#fleetDefaultFallbackInput', 'openrouter, anthropic');
+      await page!.click('#saveFleetDefaultButton');
+      await page!.waitForFunction(
+        () => (document.querySelector('#fleetDefaultStatus')?.textContent || '').includes('Fallback order'),
+        undefined, { timeout: 20_000 },
+      );
+      expect(bodies.at(-1), 'an edited control sends the chain').toHaveProperty('fallbackOrder');
+
+      await page!.fill('#fleetDefaultModelInput', 'gpt-5.5');
+      await page!.click('#saveFleetDefaultButton');
+      await page!.waitForFunction(
+        () => (document.querySelector('#fleetDefaultStatus')?.textContent || '').includes('gpt-5.5'),
+        undefined, { timeout: 20_000 },
+      );
+      expect(bodies.at(-1), 'the model-only save must have happened').toMatchObject({ modelId: 'gpt-5.5' });
+      expect(
+        Object.keys(bodies.at(-1) ?? {}),
+        'an untouched chain control must omit fallbackOrder entirely',
+      ).not.toContain('fallbackOrder');
+      expect(fleetRow?.fallbackOrder).toEqual(['openrouter', 'anthropic']);
+    } finally {
+      page!.off('request', capture);
+    }
+  }, 60_000);
+
+  it('an explicitly empty chain renders as a word, not as an empty box', async () => {
+    // null (nothing configured) and [] (deliberately no failover) are different answers, and an
+    // empty box could not tell them apart - so an administrator could not see which one they had.
+    await page!.fill('#fleetDefaultFallbackInput', '');
+    await page!.click('#saveFleetDefaultButton');
+    await page!.waitForFunction(
+      () => (document.querySelector('#fleetDefaultStatus')?.textContent || '').includes('Fallback: none'),
+      undefined, { timeout: 20_000 },
+    );
+    expect(fleetRow?.fallbackOrder).toEqual([]);
+    expect(await page!.inputValue('#fleetDefaultFallbackInput'), 'a stored empty chain is visible').toBe('none');
+
+    // And typing that same word back is not a provider named "none" — it round-trips to [].
+    await page!.click('#saveFleetDefaultButton');
     expect(fleetRow?.fallbackOrder).toEqual([]);
   }, 60_000);
 

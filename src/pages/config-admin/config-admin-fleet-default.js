@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The fleet-default switch control ("a bot's LLM provider is a row in a table"; operator acceptance 2026-09-17: moving the whole fleet back to Codex is ONE write from the cockpit). Renders the one reserved row beside the per-bot provider select: a provider select over the SAME /api/providers list the per-bot control uses, a model input, Save (PUT /api/agents/provider-switch/fleet-default) and Clear (DELETE). The API's refusal text (unknown id + the accepted ids) is shown verbatim; the browser never re-derives the catalog. A non-operator or a box without Postgres sees the panel disabled with the API's own reason.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The FALLBACK ORDER is settable here (operator, 2026-09-18: "we better have a configuration that is setable in the ux and we better have a env that corialtes as well"). An ordered comma-separated control beside the provider it falls back FROM, suggesting ids from the same /api/providers list the selects use - never a hardcoded list. The box always shows the stored chain, so what is in it IS the intent, including an empty box, which stores [] ("no failover, surface the failure") rather than being guessed as "unchanged". The panel states the chain in words, so it can never imply a failover that is not configured, and names the per-node env override.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The panel destroyed the stored chain on every save and promised a timing it does not deliver. It sent fallbackOrder unconditionally, so the store's deliberate "a provider change must not wipe the chain" protection was unreachable from the only UI that writes the row - change the model, save, and the chain silently became []. A value identical to the rendered one now means untouched and the key is omitted, which is how the API is told to leave the chain alone. An explicit empty chain renders as `none` so it is visibly different from an empty box ("nothing configured"), and `none`/`off`/`false` parse back to [] - the resolver's own vocabulary. The success banner also claimed "the next dispatch to an idle bot runs on it" for BOTH the provider and the chain; only the provider is resolved per dispatch, so the chain sentence now says it reaches each bot at its next start.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -95,9 +96,14 @@ export async function saveFleetDefault(app) {
   const host = app.elements.fleetDefaultPanel;
   const providerId = readString(host?.querySelector('#fleetDefaultProviderInput')?.value);
   const modelId = readString(host?.querySelector('#fleetDefaultModelInput')?.value);
-  // The control always shows the stored chain, so what is in the box IS the intent — including an
-  // empty box, which is the deliberate "no failover" the API stores as []. Never guessed.
-  const fallbackOrder = parseChain(readString(host?.querySelector('#fleetDefaultFallbackInput')?.value));
+  // The control renders the stored chain, so a value IDENTICAL to what was rendered means the
+  // administrator did not touch it — and an untouched control must not write. Sending the parsed
+  // value unconditionally destroyed the store's deliberate "a provider change must not wipe the
+  // chain" protection on every save: edit the model, save, and the chain silently became [].
+  // Omitting the key entirely is how the API is told to leave the stored chain exactly as it is.
+  const typedChain = readString(host?.querySelector('#fleetDefaultFallbackInput')?.value);
+  const chainUntouched = typedChain.trim() === chainText(app.state.fleetDefault?.row).trim();
+  const fallbackOrder = chainUntouched ? undefined : parseChain(typedChain);
   if (!providerId) {
     app.setStatus('Choose a provider for the fleet default, or clear it.', 'error');
     return;
@@ -106,11 +112,21 @@ export async function saveFleetDefault(app) {
   try {
     const body = await requestJson(`${ENDPOINT}/fleet-default`, {
       method: 'PUT',
-      body: JSON.stringify({ providerId, ...(modelId ? { modelId } : {}), fallbackOrder }),
+      body: JSON.stringify({
+        providerId, ...(modelId ? { modelId } : {}),
+        ...(fallbackOrder === undefined ? {} : { fallbackOrder }),
+      }),
     });
     app.state.fleetDefault = { ...app.state.fleetDefault, row: body.fleetDefault || null, snapshot: body.snapshot || null, error: null };
     await refreshAgentsAfterSwitch(app);
-    app.setStatus(`Fleet default is now ${body.fleetDefault?.providerId}${body.fleetDefault?.modelId ? ` / ${body.fleetDefault.modelId}` : ''}. ${describeChain(body.fleetDefault)} The next dispatch to an idle bot runs on it.`, 'success');
+    // Two different timings, and saying one sentence for both was wrong: the PROVIDER is resolved
+    // per dispatch, so the next idle bot picks it up; the CHAIN reaches a node on its boot pull.
+    app.setStatus(
+      `Fleet default is now ${body.fleetDefault?.providerId}${body.fleetDefault?.modelId ? ` / ${body.fleetDefault.modelId}` : ''}`
+      + ' — the next dispatch to an idle bot runs on it. '
+      + `${describeChain(body.fleetDefault)} A chain change reaches each bot at its next start.`,
+      'success',
+    );
   } catch (error) {
     logger.error('Fleet default write failed', serializeUiError(error));
     app.setStatus(`Fleet default not changed: ${error?.message || error}`, 'error');
@@ -152,7 +168,10 @@ async function refreshAgentsAfterSwitch(app) {
  * @returns {string} Comma-separated ids, or '' when the row carries no chain.
  */
 function chainText(row) {
-  return Array.isArray(row?.fallbackOrder) ? row.fallbackOrder.join(', ') : '';
+  if (!Array.isArray(row?.fallbackOrder)) return '';
+  // An explicit empty chain is shown as the word the resolver and the env variable already use,
+  // so a stored "no failover" is visibly different from "no chain configured" (an empty box).
+  return row.fallbackOrder.length === 0 ? 'none' : row.fallbackOrder.join(', ');
 }
 
 /**
@@ -174,7 +193,11 @@ function describeChain(row) {
  * @returns {string[]} Ordered provider ids; [] means no failover, deliberately.
  */
 function parseChain(value) {
-  return String(value || '').split(',').map((entry) => entry.trim()).filter(Boolean);
+  const entries = String(value || '').split(',').map((entry) => entry.trim()).filter(Boolean);
+  // `none` / `off` / `false` alone is the same "no failover" an empty box means, spelled out. It
+  // is the resolver's own vocabulary, so an administrator can type what the panel shows them.
+  if (entries.length === 1 && ['none', 'off', 'false'].includes(entries[0].toLowerCase())) return [];
+  return entries;
 }
 
 /**

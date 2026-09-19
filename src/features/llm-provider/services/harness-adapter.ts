@@ -37,7 +37,7 @@ const logger = createChildLogger({ module: 'harness-adapter' });
  * - `gemini-cli`  — Google Gemini CLI subprocess (`gemini`)
  * - `antigravity-cli` — Google Antigravity CLI subprocess (`agy`). A SIBLING of `gemini-cli`, not a
  *                   replacement: both are registered terminal agents over the same Google key, and
- *                   either can be selected or used as a fallback rung.
+ *                   either can be selected; neither can be a fallback rung (botNodeRuntime: null).
  * - `a2a`         — External A2A agent over JSON-RPC HTTP (outbound gateway, Plan F)
  * - `noop`        — No-op stub harness for test / local dev
  */

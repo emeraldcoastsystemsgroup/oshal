@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The per-bot switch rows live in the same table now (migration 147 entry 2: a row an operator wrote through PUT /:agentId/runtime, the only per-bot record that beats the fleet default). GET lists them as perBot so an operator can see which bots hold their own row and who wrote it; DELETE takes the scope — 'fleet-default' as before, or an agent id to release that bot back to the fleet default — and refreshes the snapshot. The PUT stays fleet-only: a per-bot write goes through the runtime route, which pushes to the bot first (ADR-034) and then writes the row.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | A Cline-backed id (gemini, anthropic, ...) written to the fleet default without a modelId is refused 400 model_required with the reason and nothing is written — the Cline runtime would otherwise fall back to the container's FORCE_LLM_MODEL seed (gpt-5.5), the exact 'models/gpt-5.5 is not found' failure by another door. Native ids (codex-cli, claude-code) may still omit the model.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | PUT accepts fallbackOrder: the administrator names as many providers as they want, in the order they want, in the same write that sets the provider. Every rung is validated against the same runnable catalog as the provider id, and a rung equal to the selected provider is refused, so a chain cannot silently do nothing when it is finally needed. Omitting the field leaves an existing chain untouched; [] is an explicit "no failover".
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The "a provider cannot fail over to itself" refusal compared SPELLINGS and therefore missed every alias. classifyProviderId deliberately answers with the id as written, so codex-cli and openai-codex - one harness, two spellings - compared unequal, and a chain naming its own primary through an alias was accepted 200, stored, and reported by the cockpit as a failover that can never fire. Both the refusal and the dedupe now compare harnessType plus the Cline backing id.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -104,7 +105,16 @@ async function handleWrite(req: Request, res: Response, deps: ProviderSwitchRout
     }
     // Every rung is validated against the SAME runnable catalog as the provider itself, so an
     // administrator cannot write a chain that silently does nothing at 3am.
+    // Compare on the classified IDENTITY, never on the spelling. classifyProviderId answers with
+    // the id AS WRITTEN (so a row keeps the catalog's own casing), which meant `codex-cli` and
+    // `openai-codex` — one harness, two spellings — compared unequal: a chain naming its own
+    // primary through an alias was accepted 200, stored, and reported back by the cockpit as a
+    // working failover that can never fire. Same for the dedupe, which kept both spellings.
+    const identityOf = (c: { harnessType?: string; clineApiProvider?: string | null }): string =>
+      `${c.harnessType ?? ''}|${(c.clineApiProvider ?? '').toLowerCase()}`;
+    const primaryIdentity = identityOf(classified);
     const chain: string[] = [];
+    const seenIdentities = new Set<string>();
     for (const entry of fallbackRaw ?? []) {
       const rung = classifyProviderId(entry, catalog);
       if (!rung.ok) {
@@ -114,14 +124,18 @@ async function handleWrite(req: Request, res: Response, deps: ProviderSwitchRout
         });
         return;
       }
-      if (rung.providerId === classified.providerId) {
+      const identity = identityOf(rung);
+      if (identity === primaryIdentity) {
         res.status(400).json({
           success: false, applied: false, code: 'fallback_order_invalid',
-          error: `fallbackOrder entry "${entry}" is the selected provider — a provider cannot fail over to itself`,
+          error: `fallbackOrder entry "${entry}" is the selected provider `
+            + `(${classified.providerId}) — a provider cannot fail over to itself`,
         });
         return;
       }
-      if (!chain.includes(rung.providerId)) chain.push(rung.providerId);
+      if (seenIdentities.has(identity)) continue;
+      seenIdentities.add(identity);
+      chain.push(rung.providerId);
     }
     const updatedBy = getCaller(req).sub ?? 'operator';
     const row = await deps.store.upsert(

@@ -28,6 +28,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com | Declare read-only user-context installation smokes with a clearable caller PAT prerequisite.
  * 23 | maintainer@emeraldcoastsystemsgroup.com | manifest.dependencies gains the required/optional tiers (SwarmAppDependencyLists); the legacy flat apps/tools/connectors form stays valid and reads as all-required. Consumers read it through @/shared/app-dependencies, never the raw keys.
  * 24 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: a service-route schedule declares its principal class and its needs — `runsAs` (system | user) is the package's PROPOSAL, granting nothing until a person activates it, and `requires` names permissions from this app's own imported authorization catalog. Both optional and additive: a manifest that omits them loads exactly as before and its schedule is unclassified until an administrator classifies it at activation.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | Recorded WHY antigravity-cli is absent from the packaged-bot harness set. It is a registered, selectable harness, and "selectable like any other provider" was written on several surfaces without qualifying that the manifest boundary excludes it - so the omission read as an oversight someone would helpfully "fix", producing manifests that load and then fail at dispatch. The exclusion is deliberate and stays until a bot node can execute the harness.
  */
 
 import type { BriefingDeclaration } from '@/shared/briefings';
@@ -120,6 +121,11 @@ export const SWARM_APP_BOT_HARNESS_TYPES = [
   'gemini-cli',
   'a2a',
   'noop',
+  // DELIBERATELY NOT 'antigravity-cli'. It is a registered harness and selectable as a switch
+  // ROW, but no bot node can execute it (HARNESS_BY_ID gives it botNodeRuntime: null and Google
+  // publishes no musl build), so a packaged bot that declared it would load and then fail at
+  // dispatch. This list is the manifest boundary and it fails closed on purpose — add an entry
+  // here only once a node can actually run it. See docs/backlog/antigravity-and-node-footprint.md.
 ] as const;
 
 /** @description A validated packaged-bot execution harness. */

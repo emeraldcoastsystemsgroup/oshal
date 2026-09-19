@@ -571,8 +571,12 @@ export function maybeWrapBotNodeProviderFailover(
 /**
  * @description Resolves the ordered fallback chain for a primary provider FROM CONFIGURATION.
  *
- * No provider is named in this file, and none may be. The order is whatever an administrator
- * wrote — any number of providers, any order — supplied by the boot pull as
+ * No fallback POLICY is named in this file, and none may be. The three RUNTIME KEYS this node
+ * builds are named here (claude-code, openai-codex, cline-cli) - they have to be, they are what
+ * the node constructs - and the earlier wording of this line said "no provider is named in this
+ * file", which was literally false about its own module. The rule that matters is narrower and
+ * is the one that was actually broken: no code decides who falls back to whom. The order is
+ * whatever an administrator wrote — any number of providers, any order — supplied by the boot pull as
  * `OSHAL_PROVIDER_FALLBACK_ORDER` from the `fallback_order` column of this bot's switch row or the
  * fleet-default row (migration 148), resolved by `resolveProviderFallbackChain`. The legacy
  * single-name variables remain readable so an existing deployment keeps working.
@@ -604,6 +608,23 @@ export function resolveBotNodeProviderFallbackOrder(
   ].find((value) => typeof value === 'string' && value.trim() !== '') ?? '';
   const parsed = String(rawOrder).split(/[\s,]+/).map((entry) => entry.trim()).filter(Boolean);
   const isOff = (value: string): boolean => ['none', 'off', 'false'].includes(value.toLowerCase());
+
+  // The node-local kill switch, consulted BEFORE the configured order and not after it. Read
+  // after, as it was, it could never fire: a configured order had already returned, and an
+  // unconfigured node returns the same [] either way - so the variable was inert in both arms
+  // while .env.example described it as disabling failover "whatever is configured above" and
+  // compose passed it to every bot. It now means what that line says.
+  const autoFailover = String(env.OSHAL_PROVIDER_AUTO_FAILOVER ?? 'true').trim().toLowerCase();
+  if (isOff(autoFailover)) {
+    if (parsed.length > 0) {
+      logger.warn(
+        { primaryName, configured: parsed },
+        'A provider fallback order is configured but OSHAL_PROVIDER_AUTO_FAILOVER is off on this node; no failover will run here.',
+      );
+    }
+    return [];
+  }
+
   if (parsed.length > 0) {
     if (parsed.length === 1 && isOff(parsed[0])) return [];
     const order = parsed
@@ -615,10 +636,8 @@ export function resolveBotNodeProviderFallbackOrder(
     return order;
   }
 
-  // Nothing configured. Auto-failover stays opt-out, but with no configured order there is no
-  // order to walk — the honest answer is "no fallback", not a chain this file invented.
-  const autoFailover = String(env.OSHAL_PROVIDER_AUTO_FAILOVER ?? 'true').trim().toLowerCase();
-  if (isOff(autoFailover)) return [];
+  // Nothing configured. With no order to walk the honest answer is "no fallback", not a chain
+  // this file invented.
   logger.info(
     { primaryName },
     'No provider fallback order is configured for this node; a failover-eligible failure will surface instead of switching provider. Set the fleet-default row\'s fallback_order (or OSHAL_PROVIDER_FALLBACK_ORDER) to define one.',

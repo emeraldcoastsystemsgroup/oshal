@@ -158,6 +158,27 @@ describe('the provider fallback chain is configuration, not code', () => {
       })).toEqual([]);
     });
 
+    it('the node-local kill switch beats a configured chain, as .env.example promises', () => {
+      // "Set false to disable provider failover on this node entirely, whatever is configured
+      // above." It was read AFTER the configured order had already returned, so it could never
+      // fire in either arm while compose passed it to every bot.
+      const configured = { OSHAL_PROVIDER_FALLBACK_ORDER: 'claude-code,cline-cli' };
+      expect(resolveBotNodeProviderFallbackOrder('openai-codex', configured))
+        .toEqual(['claude-code', 'cline-cli']);
+
+      for (const off of ['false', 'off', 'none', 'FALSE', ' Off ']) {
+        expect(
+          resolveBotNodeProviderFallbackOrder('openai-codex', { ...configured, OSHAL_PROVIDER_AUTO_FAILOVER: off }),
+          `${off} must disable failover on this node`,
+        ).toEqual([]);
+      }
+      // Anything else leaves the administrator's chain alone — it is opt-OUT, not opt-in.
+      expect(resolveBotNodeProviderFallbackOrder('openai-codex', { ...configured, OSHAL_PROVIDER_AUTO_FAILOVER: 'true' }))
+        .toEqual(['claude-code', 'cline-cli']);
+      expect(resolveBotNodeProviderFallbackOrder('openai-codex', { ...configured, OSHAL_PROVIDER_AUTO_FAILOVER: '' }))
+        .toEqual(['claude-code', 'cline-cli']);
+    });
+
     it('invents no chain when nothing is configured', () => {
       // The outage shape: a chain this file made up, that no setting could change.
       //
@@ -167,6 +188,41 @@ describe('the provider fallback chain is configuration, not code', () => {
       // ambient environment, and the variable that breaks it is the one this feature tells
       // operators to set.
       expect(resolveBotNodeProviderFallbackOrder('openai-codex', {})).toEqual([]);
+    });
+  });
+
+  describe('a recovery is attributed to the provider that actually answered', () => {
+    it('a three-rung chain names the THIRD provider, not the first fallback', async () => {
+      // An administrator's order folds into A->(B->(C)). The record used to be rebuilt by the
+      // outermost wrapper after the spread, so when C answered it still read "A -> B" — every
+      // recovery credited to the first rung, which is the number someone reads to decide which
+      // vendor is failing and which to drop.
+      const fail = (name: string) => ({
+        // The message must be failover-ELIGIBLE, or the wrapper rethrows instead of walking the
+        // chain: the classifier looks for throttle/quota/auth/stall shapes, not plain prose.
+        generateResponse: async () => { throw new Error(`${name}: 429 quota exhausted`); },
+      });
+      const answer = (name: string) => ({
+        generateResponse: async () => ({ content: 'done', provider: name, usage: {}, cost: 0 }),
+      });
+      const providers: Record<string, any> = {
+        'claude-code': fail('claude-code'),
+        'openai-codex': fail('openai-codex'),
+        'cline-cli': answer('cline-cli'),
+      };
+
+      const wrapped: any = maybeWrapBotNodeProviderFailover(
+        fail('primary'), 'gemini-runtime', providers,
+        ['claude-code', 'openai-codex', 'cline-cli'],
+        { clineApiProviders: [] },
+      );
+      const response = await wrapped.generateResponse([{ role: 'user', content: 'go' }], {});
+
+      expect(response.providerFailover.answered, 'the provider that produced the answer').toBe('cline-cli');
+      expect(response.providerFailover.chain, 'every provider walked, in order').toEqual(
+        ['gemini-runtime', 'claude-code', 'openai-codex', 'cline-cli'],
+      );
+      expect(response.provider).toBe('cline-cli');
     });
   });
 
@@ -262,6 +318,32 @@ describe('the provider fallback chain is configuration, not code', () => {
       expect(rungNames(wrapped)).toEqual(['claude-code']);
     });
 
+    it('a harness with no bot-node runtime produces NO rung, and nothing may claim otherwise', () => {
+      // gemini-cli and antigravity-cli carry botNodeRuntime: null in HARNESS_BY_ID, and neither
+      // spelling is a ProviderRegistry id - the registry has 'gemini', not 'gemini-cli'. So
+      // resolveBotNodeSwitch answers null for both and no rung is built.
+      //
+      // This case exists because the opposite was asserted in SEVEN durable places (ROADMAP row,
+      // four change-log entries, two JSDoc blocks) and was false in all of them. A claim that
+      // nothing executes is a claim that rots silently.
+      const wrapped: any = maybeWrapBotNodeProviderFailover(
+        { id: 'primary' }, 'openai-codex', RUNTIMES(),
+        ['gemini-cli', 'antigravity-cli'],
+        { clineApiProviders: CATALOG },
+      );
+      expect(rungNames(wrapped), 'neither harness can be a rung').toEqual([]);
+      expect(wrapped, 'with no usable rung the primary is returned bare').toEqual({ id: 'primary' });
+
+      // ...while the API-provider id for the same vendor IS usable, which is the distinction the
+      // corrected wording has to preserve: selectable api-side, and 'gemini' works as a rung.
+      const viaApiId: any = maybeWrapBotNodeProviderFailover(
+        { id: 'primary' }, 'openai-codex', RUNTIMES(),
+        ['gemini'],
+        { clineApiProviders: CATALOG },
+      );
+      expect(rungNames(viaApiId)).toEqual(['gemini']);
+    });
+
     it('delegates every other member to the runtime it wraps', () => {
       const runtime = { getModelInfo: () => ({ model: 'x' }), id: 'cline-cli', generateResponse: async () => ({}) };
       const rung = createClineBackedRungProvider(runtime, 'anthropic', {});
@@ -298,46 +380,70 @@ describe('the provider fallback chain is configuration, not code', () => {
       expect(surface, 'the write must carry the chain').toContain('fallbackOrder');
       expect(surface, 'suggestions come from the provider list, never a literal')
         .toMatch(/renderDatalist\(app\.state\.providers\)/);
-      const providerLiterals = surface.match(
-        /'(claude-code|openai-codex|codex-cli|cline-cli|gemini|anthropic|openrouter)'/g,
+      // Quoting-independent, and scoped to EXECUTABLE code. The old form matched only
+      // single-quoted ids, so the placeholder copy — which names three providers, unquoted,
+      // inside a template string — sailed through an assertion titled "must name no provider".
+      //
+      // Example ids in placeholder text are legitimate: they show an administrator what a chain
+      // looks like. What must never appear is a provider id used as LOGIC. So the check strips
+      // comments and the placeholder attribute, then looks for any known id however it is spelled.
+      const executable = surface
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/[^\n]*/g, '')
+        .replace(/placeholder="[^"]*"/g, '');
+      const namedProviders = executable.match(
+        /\b(claude-code|openai-codex|codex-cli|cline-cli|gemini-cli|openrouter)\b/g,
       );
-      expect(providerLiterals, 'the surface must name no provider').toBeNull();
+      expect(namedProviders, 'no provider id may appear in this surface as logic').toBeNull();
     });
   });
 
   describe('no provider may be named in the failover path', () => {
-    it('has no hardcoded fallback map', () => {
+    // These were three source greps scoped to function bodies located with indexOf, so renaming a
+    // function or moving code out of its body turned them green on a live violation — the exact
+    // guard shape this repo has a rule against, and I wrote them. The real guard is behavioural:
+    // the resolver cannot have an opinion about providers it has never heard of.
+    it('treats provider names it has never seen exactly as it treats the familiar ones', () => {
+      const invented = ['vendor-alpha', 'vendor-beta', 'vendor-gamma'];
+      expect(
+        resolveBotNodeProviderFallbackOrder('vendor-omega', { OSHAL_PROVIDER_FALLBACK_ORDER: invented.join(',') }),
+        'an unknown primary and three unknown rungs must survive intact and in order',
+      ).toEqual(invented);
+
+      // Reversed, it is a different chain — order is the administrator's, never normalised.
+      const reversed = [...invented].reverse();
+      expect(resolveBotNodeProviderFallbackOrder('vendor-omega', {
+        OSHAL_PROVIDER_FALLBACK_ORDER: reversed.join(','),
+      })).toEqual(reversed);
+    });
+
+    it('invents nothing for a primary it does recognise', () => {
+      // The outage shape in its strongest form: every provider this file knows by name, asked with
+      // an empty environment, must produce nothing. A map hidden anywhere in the module reddens
+      // this regardless of which function it lives in or what that function is called.
+      for (const primary of ['claude-code', 'openai-codex', 'cline-cli', 'codex-cli', 'cline', 'gemini']) {
+        expect(
+          resolveBotNodeProviderFallbackOrder(primary, {}),
+          `${primary} must have no chain of its own`,
+        ).toEqual([]);
+      }
+    });
+
+    it('is the administrator who removes a provider from a chain, not this module', () => {
+      // A vendor exclusion used to be encoded as a missing array entry, so restoring it required
+      // editing code. Any id the administrator writes is a rung, including one previously dropped.
+      expect(resolveBotNodeProviderFallbackOrder('openai-codex', {
+        OSHAL_PROVIDER_FALLBACK_ORDER: 'claude-code',
+      })).toEqual(['claude-code']);
+    });
+
+    // Kept as a COMPANION to the behavioural cases above, not as the evidence: it is cheap and it
+    // names the exact literal that caused the outage, but a rename defeats it and that is fine
+    // because the cases above do not care what anything is called.
+    it('companion check: the literal Record that caused the outage is not back', () => {
       const source = readFileSync(RUNTIME_SOURCE, 'utf8');
       expect(source, 'the literal Record is the defect; it must not return')
         .not.toMatch(/fallbackOrder\s*:\s*Record</);
-    });
-
-    it('does not restrict the failover wrapper to a closed set of provider names', () => {
-      const source = readFileSync(RUNTIME_SOURCE, 'utf8');
-      const signature = source.slice(
-        source.indexOf('export function maybeWrapBotNodeProviderFailover'),
-        source.indexOf('export function resolveBotNodeProviderFallbackOrder'),
-      );
-      expect(signature.length, 'both functions must exist for this check to mean anything')
-        .toBeGreaterThan(0);
-      // A union of string literals in the parameter list is exactly what stopped a fourth
-      // provider from ever being a fallback.
-      const parameters = signature.slice(0, signature.indexOf('): any {'));
-      expect(parameters, 'a closed provider union on the parameters is the defect')
-        .not.toMatch(/'[a-z0-9-]+'\s*\|\s*'[a-z0-9-]+'/);
-    });
-
-    it('names no provider inside the order resolver', () => {
-      const source = readFileSync(RUNTIME_SOURCE, 'utf8');
-      const body = source.slice(
-        source.indexOf('export function resolveBotNodeProviderFallbackOrder'),
-        source.indexOf('export function normalizeProviderName'),
-      );
-      // The env var names and the off-switch vocabulary are configuration KEYS, not providers.
-      const providerLiterals = body.match(
-        /'(claude-code|openai-codex|codex-cli|cline-cli|cline|gemini|gemini-cli|anthropic|openrouter|openai)'/g,
-      );
-      expect(providerLiterals, 'the chain is the administrator’s, not this file’s').toBeNull();
     });
   });
 });
