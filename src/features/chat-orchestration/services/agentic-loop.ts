@@ -13,11 +13,13 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Routed per-turn cost through shared resolver so token-bearing zero-cost providers still contribute estimated model-level telemetry
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove generic connector credentials from the model-provider loop; credentials are resolved only inside audited server-side operations.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | The run now carries a tier-aware tool trace beside the flat toolsUsed list: every invocation records which of the three tiers owned it and, for a provider-embedded tool, the provider operation the provider ran. toolsUsed alone could not tell a registry tool from a harness primitive from a provider-side operation.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | Fence tool results as untrusted content (CKR-6 / D11-a). A tool result is the one input on the chat path a third party can influence, and it reached the model unmarked on any provider whose mapping FLATTENS the content array: anthropic-provider.ts does `JSON.stringify(msg.content)` into an ordinary `user` message, so the structured tool_result block loses the protocol slot that byo-hosted-provider preserves with `role: 'tool'`. Fenced at the single point where a result enters the conversation rather than in each adapter, because per-mapping fencing has to be got right in every future one too.
  */
 
 import { createChildLogger } from '@/shared/logger';
 import type { LLMMessage, ContentBlock, ModelUsageStats, ProcessResult, TaskUsageSummary } from '@/shared/types';
 import { resolveUsageCost, type LLMService, type LLMToolDefinition, type LLMResponse, type StreamCallback } from '@/features/llm-provider';
+import { wrapUntrustedPromptContent } from '@/features/swarm-orchestration';
 import { buildToolRunTraceEntry, type ToolRunTraceEntry } from '@/shared/tools/embedded-tool-tier';
 import { FollowupQuestionSignal } from './followup-question-signal';
 import { FatalToolError } from './fatal-tool-error';
@@ -311,7 +313,16 @@ async function executeToolBlocks(
 ): Promise<void> {
   for (const block of toolBlocks) {
     const result = await executeAndTrack(block, executeTool, toolsUsed, toolRuns, providerId);
-    addToolResultToHistory(history, block.id, result.content, result.isError);
+    // Fence HERE, at the one place a tool result enters the conversation, rather than in each
+    // provider mapping. A tool result is the only input on this path a third party can influence,
+    // and whether it stays marked as tool output depends entirely on the mapping underneath:
+    // byo-hosted-provider keeps the protocol slot (`role: 'tool'`), but anthropic-provider
+    // JSON.stringify's the whole content array into an ordinary `user` message, so the structured
+    // `tool_result` block arrives as plain text with nothing saying where it came from. Fencing
+    // per mapping would mean getting it right in every present and future adapter.
+    addToolResultToHistory(
+      history, block.id, wrapUntrustedPromptContent('tool-result', result.content), result.isError,
+    );
   }
 }
 
