@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give each disk/subprocess-heavy separation case a local 30-second ceiling. Concurrent full-suite load can exhaust Vitest's 5-second default on Windows even when the guard is healthy; a suite-local helper keeps every mutation case active without weakening unrelated unit-test budgets.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | CORE-06 timeout containment: retain a 20-second exception only for the real-repository tree walk; tiny fixture mutations return to the global unit-test budget.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Package-build residue: the gate now judges UNTRACKED state too. A fixture may plant files AFTER its commit, and five cases pin the rule: an untracked file under src/app/routes/ (the shape seventeen sports-edge sources took there on 2026-09-09) is red; a gitignored one is not (it is not what `git add -A` stages); a surviving src/__oshal_store_parity_* (store compiler) or src/__oshal_build_* (`oshal-app.js build`) staging directory is red; a tracked route file stays green. Each red case failed against the previous gate before the change.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Two cases for check 4b, the cross-repo-import shape: a fixture file whose specifier leaves the repo is RED, and a deep relative import that stays inside it stays GREEN. The second is not padding - the first draft of the check reported every any-bot/server/app-modules file, because `git rev-parse` answers with forward slashes on Windows and the prefix comparison never matched. The escaping specifier is ASSEMBLED from parts rather than written out: the guard reads every tracked source line, so spelling it as a literal would make this very file the violation it tests for, which is the fixture-literal trap the publish gate has the same way.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -114,6 +115,9 @@ function withFixture(
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+/** The sibling checkout's directory name, assembled so this file never spells an escaping specifier. */
+const STORE_REPO = ['oshal', 'applications'].join('-');
 
 describe('repo separation (ADR-115): application code never mixes into the swarm repo', () => {
   it('passes on this repository', () => {
@@ -226,6 +230,59 @@ describe('repo separation (ADR-115): application code never mixes into the swarm
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('FAILS when a kernel file imports ACROSS the repo boundary into a sibling checkout', () => {
+    // The mirror image of every other shape here: not application code carried inside the kernel,
+    // but kernel code reaching out of it. A core spec really did import a store package's route
+    // module through `../../../oshal-applications/...`. It resolved on a developer box with the
+    // sibling beside it, and could never resolve in the sanctioned gate, which builds from a `git
+    // archive` export with no sibling anywhere near it — so the file collapsed at import and
+    // counted red in the nightly for as long as it stood.
+    // The escaping specifier is ASSEMBLED rather than written out. The guard reads every tracked
+    // source line, so spelling it here as a plain `from '...'` literal would make this very file
+    // the violation it is testing for — the fixture-literal trap the publish gate has the same
+    // way. Assembling it also means the guard has to resolve the path, not merely match the text.
+    const escaping = ['..', '..', '..', STORE_REPO, 'some-package', 'src-routes', 'routes'].join('/');
+    withFixture(
+      (dir) => {
+        mkdirSync(join(dir, 'tests/unit'), { recursive: true });
+        writeFileSync(
+          join(dir, 'tests/unit/reaches-out.spec.ts'),
+          `import { handler } from '${escaping}';\nexport default handler;\n`,
+          'utf8',
+        );
+      },
+      ({ code, output }) => {
+        expect(output).toContain('kernel file(s) importing across the repository boundary');
+        expect(output).toContain('tests/unit/reaches-out.spec.ts:1');
+        expect(output).toContain(escaping);
+        expect(code).toBe(1);
+      },
+    );
+  });
+
+  it('passes a deep relative import that stays INSIDE the repo (the any-bot shape this must not flag)', () => {
+    // `any-bot/server/app-modules/*.js` is full of `../services/...` and `../utils/...`. Those
+    // resolve inside the tree and are not violations; an early draft of the check reported all of
+    // them, because `git rev-parse` answers with forward slashes on Windows and the prefix
+    // comparison against a natively-resolved path never matched.
+    withFixture(
+      (dir) => {
+        mkdirSync(join(dir, 'any-bot/server/app-modules'), { recursive: true });
+        mkdirSync(join(dir, 'any-bot/server/utils'), { recursive: true });
+        writeFileSync(join(dir, 'any-bot/server/utils/config.js'), 'module.exports = {};\n', 'utf8');
+        writeFileSync(
+          join(dir, 'any-bot/server/app-modules/routes-thing.js'),
+          "const config = require('../utils/config');\nmodule.exports = config;\n",
+          'utf8',
+        );
+      },
+      ({ code, output }) => {
+        expect(output).toContain('no kernel file imports across the repository boundary');
+        expect(code).toBe(0);
+      },
+    );
   });
 
   it('FAILS when a store package manifest is tracked in the kernel', () => {

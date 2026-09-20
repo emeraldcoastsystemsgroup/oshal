@@ -5,9 +5,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Swarm root (ADR-148) guards. These run against the LIVE Postgres on purpose: the claim this feature makes is "exactly one root, enforced by the database", and that claim is about a partial unique index — a mocked pool would prove only that the code calls query(). Per the integration-boundary corollary a database fix needs a real store/query against the enforcing schema, so a missing DB FAILS these specs loudly rather than skipping (a spec that skips is a guard that does not exist).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | This spec now STARTS its own PostgreSQL and removes it, instead of resolving an address from the environment at all. Refusing an unpointed run made the 2026-09-14 accident impossible, but it was the wrong shape of answer: `specDatabaseUrl` was called at MODULE level, so nothing supplying the variable meant the import threw and vitest reported a failed suite with ZERO cases — the partial unique index, the two doors onto root and the fail-closed operator gate were all unproven in every gate the file appeared in, and a guard that cannot run proves nothing. A private server is both safe and executable, and there is no value any caller can supply that would reach a deployment. The "refuses to run: this database already has a swarm root" bail goes with it: a server created seconds ago holds no root but this file's. `-c row_security=off` is carried across from the old pool unchanged. NO database role is declared — the subject here is the APPLICATION role column (root/admin/user rows in swarm_roles), and the store's own contract is that this table is deliberately NOT owner-RLS'd because the privileged-identity cache must read every row, so a NOSUPERUSER login would have nothing extra to observe. The per-case DELETE stays: it is isolation BETWEEN cases on a table nothing else can reach, not teardown of somebody's data.
  */
 
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   ensureSwarmRoleSchema, listRoles, getRole, getRootSubFromStore, refreshPrivilegedCache,
@@ -15,14 +16,14 @@ import {
 } from '@/features/swarm-roles';
 import { isOperatorIdentity, isBreakGlassOnlyOperator } from '@/shared/middleware/authz';
 import { clearPrivilegedIdentities, getRootSub } from '@/shared/middleware/privileged-identities';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 
-const DSN = specDatabaseUrl(['SWARM_ROLES_TEST_DSN', 'TEST_DATABASE_URL']);
-
-/** Strips the password out of a DSN so a connection failure message is safe to print. */
-function safeDsn(dsn: string): string {
-  return dsn.replace(/\/\/([^:@/]+):[^@/]*@/, '//$1:***@');
-}
+// A PostgreSQL this file owns: started here, removed in afterAll, reachable from nothing else.
+// `row_security=off` is the libpq option the old pool carried, kept verbatim.
+const database = new DisposablePostgres({
+  purpose: 'swarm-roles-store', database: 'swarm_roles_fixture', memory: '256m', max: 4,
+  statementTimeoutMs: 60_000, options: '-c row_security=off',
+});
 
 /** Unique per run so a parallel run or a leftover row can never be mistaken for this one's. */
 const RUN = `role-${process.pid.toString(36)}-${Date.now().toString(36)}`;
@@ -31,40 +32,28 @@ const SUB_B = `${RUN}-b`;
 const SUB_C = `${RUN}-c`;
 
 let pool: Pool;
-/** Rows this spec created, so cleanup never touches a real deployment's roles. */
+/** The subs this spec assigns roles to, so the listing case can name the rows it expects. */
 const OWNED = [SUB_A, SUB_B, SUB_C];
 
-/** Removes only this run's rows — including any root, which the store itself refuses to delete. */
+/**
+ * Isolation BETWEEN cases — each one starts from an unclaimed root — on a table that lives in a
+ * server this file created and will destroy. It is not teardown of anybody's data.
+ */
 async function wipe(): Promise<void> {
   await pool.query('DELETE FROM swarm_roles WHERE user_sub = ANY($1::text[])', [OWNED]);
   clearPrivilegedIdentities();
 }
 
 beforeAll(async () => {
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try {
-    await pool.query('SELECT 1');
-  } catch (error) {
-    throw new Error(
-      `swarm-roles-store requires the live oshal Postgres at ${safeDsn(DSN)} — bring the stack ` +
-        `up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`,
-    );
-  }
+  pool = await database.start();
   await ensureSwarmRoleSchema(pool);
-  // This spec asserts on a swarm with no OTHER root. A real deployment row would make the
-  // single-root assertions ambiguous, so refuse rather than silently delete someone's root.
-  const existing = await getRootSubFromStore(pool);
-  if (existing && !OWNED.includes(existing)) {
-    throw new Error(
-      `swarm-roles-store refuses to run: this database already has a swarm root (${existing}). ` +
-        'Point SWARM_ROLES_TEST_DSN at a scratch database instead of mutating a real swarm.',
-    );
-  }
   await wipe();
-});
+}, 120_000);
 
 afterEach(wipe);
-afterAll(async () => { await pool?.end(); });
+// No teardown DELETE pass: the whole server goes away, so there is nothing to clean and nowhere
+// to clean it.
+afterAll(async () => { await database.stop(); });
 
 describe('the single-root invariant is enforced by the DATABASE, not by application code', () => {
   it('permits exactly one winner when two claims race', async () => {

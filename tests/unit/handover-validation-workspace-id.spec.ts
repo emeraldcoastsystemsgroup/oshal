@@ -6,6 +6,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | CV-4 regression guard: the handover validator is handed the TICKET id while handovers are written under the WORKSPACE id, so a ticket whose workspace id differs from its ticket id can never pass. Drives the real MultiRoundDispatchService with a REAL RALFHandoverManager rooted at a temp directory — a stubbed manager or a bare SHARED_WORKSPACE_ROOT proves nothing, because the strict path returns true immediately when the manager is absent and never reads the env.
  */
 
+/**
+ * Companion to tests/unit/handover-read-uses-workspace-id.spec.ts, which covers the same defect with
+ * two cases and a doubled handover manager. Both are kept deliberately: a doubled manager cannot prove
+ * the strict path, because validateHandover returns true the moment the manager is absent and never
+ * reads the workspace root. These cases drive a real manager, add the relaxed path (which isolates the
+ * second call site) and add the negatives that stop the fix degenerating into always-true.
+ */
+
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
@@ -78,13 +86,13 @@ function buildService(): MultiRoundDispatchService {
 
 /**
  * @description Run one round and report whether the handover was accepted.
- * @returns The public handoversEnforced flag from the phase result.
+ * @returns The public allHandoversPresent flag from the phase result.
  */
 async function runRound(): Promise<boolean> {
   const result = await buildService().executePhaseWithRounds(
     'run-cv4', TICKET_ID, PHASE, [], AGENT_ID, POLICY, WORKSPACE_ID,
   );
-  return result.handoversEnforced;
+  return result.allHandoversPresent;
 }
 
 describe('CV-4 — handover validation uses the workspace id, not the ticket id', () => {

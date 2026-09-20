@@ -10,8 +10,9 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | BF-030: Added SYSTEM_PM_AGENT_ID — planning phase always routes to PM; keyword matching fallback was selecting wrong agents (tester-bot) when capability strings didn't match exactly
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Fixed child-ticket direct execution units to remain root-level within their own run so execution polling persists completion normally
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Phase 8 now auto-enables for high-complexity tickets (score >= 7) in addition to USE_ARCHITECTURE_PHASE env var — removes silent skip for complex work
- * 8 | maintainer@emeraldcoastsystemsgroup.com   | Session 19: Wired enforceHandoverGate into architecture and planning rounds — handover missing now logged as structured enforcement event
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Session 19: Wired assessHandoverCoverage into architecture and planning rounds — handover missing now logged as structured enforcement event
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Session 20: Switched handover gates from non-strict (warn-only) to strict (block advancement) after E2E validation plan confirmed
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Follows the rename to assessHandoverCoverage / allHandoversPresent, and stops calling it a failed gate. These two call sites logged 'continuing with warning' immediately after the helper logged that the ticket was blocked - the same execution saying both. Neither gates; both now say coverage and say the phase continues.
  */
 
 import { existsSync } from 'fs';
@@ -31,7 +32,7 @@ import type { PhaseGateConfig } from './phase-gate-config';
 import type { MultiRoundDispatchService } from './multi-round-dispatch-service';
 import type { SwarmOnlineAgentIdsResolver } from './swarm-ticket-processing-support';
 import type { SwarmCyclePolicy } from './swarm-cycle-policy';
-import { enforceHandoverGate } from './swarm-ticket-lifecycle-helpers';
+import { assessHandoverCoverage } from './swarm-ticket-lifecycle-helpers';
 import type {
   AgentAssignment,
   DecomposedWorkUnit,
@@ -280,9 +281,11 @@ export class PlanningRoundOrchestrator {
       input.policy,
       input.workspaceTaskId,
     );
-    const archGate = enforceHandoverGate(input.item.externalId, archResult, true);
-    if (!archGate.passed) {
-      logger.warn({ ticketId: input.item.externalId, phase: ARCHITECTURE_PHASE, missing: archGate.missingHandovers }, 'Architecture handover gate failed — continuing with warning (handovers written to agent workspace)');
+    const archCoverage = assessHandoverCoverage(input.item.externalId, archResult, true);
+    if (!archCoverage.passed) {
+      // Reported, not enforced — the phase proceeds. Said plainly here because the pair of lines
+      // this replaces claimed a gate had failed and the ticket was blocked, then continued.
+      logger.warn({ ticketId: input.item.externalId, phase: ARCHITECTURE_PHASE, missing: archCoverage.missingHandovers }, 'Architecture handover coverage incomplete — continuing (handovers are written to the agent workspace)');
     }
 
     artifactPaths.technicalSpecificationPath = ensureArtifact(
@@ -317,9 +320,9 @@ export class PlanningRoundOrchestrator {
       input.policy,
       input.workspaceTaskId,
     );
-    const planGate = enforceHandoverGate(input.item.externalId, result, true);
-    if (!planGate.passed) {
-      logger.warn({ ticketId: input.item.externalId, phase: SWARM_PHASES.PLANNING, missing: planGate.missingHandovers }, 'Planning handover gate failed — continuing with warning (handovers written to agent workspace)');
+    const planCoverage = assessHandoverCoverage(input.item.externalId, result, true);
+    if (!planCoverage.passed) {
+      logger.warn({ ticketId: input.item.externalId, phase: SWARM_PHASES.PLANNING, missing: planCoverage.missingHandovers }, 'Planning handover coverage incomplete — continuing (handovers are written to the agent workspace)');
     }
 
     return { routing, finalOutput: result.finalOutput };

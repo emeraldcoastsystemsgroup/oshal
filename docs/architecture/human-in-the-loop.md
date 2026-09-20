@@ -12,8 +12,9 @@ Authored workflows run on the graph engine (the `graph` queue-manager dispatch p
 
 1. The engine **suspends** the run and returns `outcome: 'suspended'` + `resumeNodeId`
    (the gate's successor node).
-2. The graph dispatcher persists the resume point on the ticket
-   (`metadata.graphResumeNode`) and parks the ticket at status **`approval_required`**.
+2. The graph dispatcher persists the resume point AND the engine state on the ticket
+   (`metadata.workflowCheckpoint`, whose `resumeNodeId` names the node to continue from) and parks
+   the ticket at status **`approval_required`**.
 3. The queue manager only polls `approved` tickets, so the ticket **waits** here — no bot
    runs the rest of the workflow until a human approves.
 4. On approval the ticket flips to `approved`, the next poll re-dispatches it, and the engine
@@ -81,7 +82,7 @@ operator allowlist above.
    execute-agent → deliver`).
 2. **Create a ticket** of that workflow's `ticketType` (status `approved`).
 3. The poll cycle dispatches it: stage 1's bot runs, then the ticket **parks at
-   `approval_required`** with `metadata.graphResumeNode` set.
+   `approval_required`** with `metadata.workflowCheckpoint.resumeNodeId` set.
 4. **Approve** it (§2) → stage 2's bot runs → `deliver` → status `complete`.
 
 Unit coverage for the suspend/resume control flow:

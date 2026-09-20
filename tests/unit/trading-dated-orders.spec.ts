@@ -7,9 +7,10 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-136 D4 follow-up: minute precision (09:37 accepted), the window derived from the leg cron (07:00–19:59 ET) and proven to AGREE with cron-parser's actual fires of EVENT_PLANS_CRON in America/New_York (first fire 07:00, last 19:59, none at 20:00 or Saturday, 60 s steps); the extended-session rule (pre/post only for limit + extendedHours + day; market / GTC / non-ext refused) and its FAIL-CLOSED form (no order shape → refused, so the 1.9.2 store call cannot widen the window); NYSE holidays refused BY NAME (Labor Day 3 days out; Thanksgiving + observed Independence Day with injected clocks; a TRADING_MARKET_HOLIDAYS one-off); an early-close afternoon (2026-11-27 15:00) is ACCEPTED and the runtime places it when the venue says 'post' (only 'closed' expires) — the as-built "early closes are runtime-only" sentence, guarded. Real-DB: a 07:30 pre-session limit+ext+day row fires exactly once when the session is 'pre'. Source pins: the engine honours a decision's extended_hours on a LIMIT outside the TRADING_EXTENDED_HOURS branch (so a dated ext limit places with the flag off).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | De-fuse a dated time bomb in the PROTECTED-timed-entry case. It pinned notBefore to the hardcoded FIRE (2026-09-09 09:35 ET) but ticked the clock at Date.now() + 3 days, while createPinnedLotIntent stamps createdAt from the REAL clock with no injection seam. Written 2026-09-04 it passed; on 2026-09-09 the calendar reached FIRE, Date.now() + 3d moved past notBefore + 2d, the lot correctly released, and the assertion failed - a green-to-red flip with no code change behind it. Worse, its premise (a moment both 3 days after intent AND before the fire time) had become unreachable, so no tick value could fix it. notBefore now moves with the real clock. The guard keeps its teeth: mutating the release clock back to createdAt-only (dropping Math.max in stepPendingFill) still fails it with the same message.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | This spec now STARTS its own PostgreSQL and removes it, instead of taking an address from the environment at all. Refusing an unpointed run (entry 4) made the 2026-09-14 accident impossible but left the spec UNRUNNABLE: nothing supplies OSHAL_TEST_DSN, so the module-level resolve threw at import and vitest reported a Failed Suite with zero of these cases executed — a guard that cannot run proves nothing in any gate, and a safe spec that never runs is still a spec that never catches the regression it was written for. A private server is both safe and executable, and there is no longer any value a caller can supply that would reach a deployment. The DELETE-by-sub teardown is gone with it: the container is destroyed, so no cleanup SQL runs anywhere, which is the property that failed twice. The pool's `max: 4` and `-c row_security=off` carry across unchanged — the FORCE-RLS reads in this file are made as the fixture superuser and must stay explicit. The `ALTER TABLE ... OWNER TO oshal_app` handoff stays as written: it is already wrapped in an `IF EXISTS (SELECT 1 FROM pg_roles ...)` check, and on a fresh fixture with no such role it is correctly a no-op. One setting is NEW rather than carried: `statementTimeoutMs: 60_000`. The old pool declared no statement timeout at all, and the fixture's own default is 15 s, which a cold container plus schema bootstrap can exceed on a loaded box; it matches the trading-event-plans reference conversion.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import crypto from 'crypto';
 import { readFileSync } from 'fs';
 import * as path from 'path';
@@ -24,9 +25,15 @@ import { ensureBooksSchema, ensureLegacyBooks, legacyBook } from '../../src/app/
 import { ensureTradingSchema, TradingError } from '../../src/app/trading-engine';
 import type { AppContext } from '../../src/app/composition/app-context';
 import type { OrderResult } from '../../src/features/trading';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+// A PostgreSQL this file owns: started here, removed in afterAll, reachable from nothing else.
+// `row_security=off` keeps the superuser's reads across the FORCE-RLS dated-order and pinned-lot
+// tables explicit, and `max: 4` is the pool size this spec has always used.
+const database = new DisposablePostgres({
+  purpose: 'trading-dated-orders', database: 'trading_fixture', memory: '384m', max: 4,
+  statementTimeoutMs: 60_000, options: '-c row_security=off',
+});
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-dated-${RUN}`;
 let pool: Pool;
@@ -55,19 +62,14 @@ function fakePlace() {
 beforeAll(async () => {
   process.env.SESSION_SECRET = process.env.SESSION_SECRET || `spec-secret-${RUN}`;
   process.env.TRADING_MAX_NOTIONAL_USD = '50000'; process.env.TRADING_MAX_QTY = '100000';
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try { await pool.query('SELECT 1'); } catch (error) {
-    throw new Error(`trading-dated-orders requires the live oshal Postgres at ${DSN.replace(/:[^:@/]+@/, ':***@')} — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
+  pool = await database.start();
   await ensureBooksSchema(pool as never); await ensureTradingSchema(pool as never); await ensureDatedOrdersSchema(pool as never); await ensurePinnedLotsSchema(pool as never);
   await pool.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'oshal_app') THEN EXECUTE 'ALTER TABLE oshal_trading_dated_orders OWNER TO oshal_app'; EXECUTE 'ALTER TABLE oshal_trading_pinned_lots OWNER TO oshal_app'; END IF; END $$;`);
   await ensureLegacyBooks(pool as never, SUB);
 }, 120_000);
 
-afterAll(async () => {
-  for (const t of ['oshal_trading_dated_orders', 'oshal_trading_pinned_lots', 'oshal_trading_books']) await pool.query(`DELETE FROM ${t} WHERE user_sub = $1`, [SUB]).catch(() => {});
-  await pool.end();
-});
+// No DELETE pass: the whole server goes away, so there is nothing to clean and nowhere to clean it.
+afterAll(async () => { await database.stop(); });
 
 describe('the leg fires dated orders — dispatchTradingEventSchedule ticks them on the same cadence/gate as plans + lots', () => {
   it('source pin: the event-plans dispatch dynamically imports trading-dated-orders and calls tickDatedOrders on EVERY fire (outside the full-tick branch)', () => {

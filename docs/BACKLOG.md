@@ -3433,3 +3433,37 @@ work in `ocean-lab`, `aero-lab` and `embodied`; no core code.
   and engine fingerprints or is not displayed. No slice buys, builds or tests hardware, and none attempts
   free-surface hydrodynamics, added mass, cavitation, or aerodynamics inside the physics plant.
 
+
+### The test tree is never typechecked (2026-09-20)
+
+`tsconfig.json` excludes `tests`, `**/*.spec.ts` and `**/*.test.ts`, and `npm run typecheck` runs
+only that config and `tsconfig.server.json`, which includes `src/**` alone. So **not one of the
+1050 files under `tests/` is typechecked by any gate.**
+
+What that costs, with a worked example rather than an argument: `authorization-runtime.spec.ts`
+passed `{ resolve: ... } as never` as its `AppAccessResolver`. `#605` renamed that method to
+`resolveForPrincipal(appName, userSub, userIssuer, declaration)` when grants became
+`(subject, issuer)` pairs. The cast silenced the only thing that would have objected, so the
+mounter called an undefined method at runtime, its catch fired, and **all 17 cases in the file
+returned `503 app_access_unavailable`** instead of the statuses they assert. It was red for weeks,
+invisible among 73 other red files. Fixed 2026-09-20; the double is typed now, which buys nothing
+until this entry is done.
+
+Measured, both ways:
+- A probe `tsconfig` over `tests/` + `src/` with `rootDir: "."`: **933 errors**. The bulk are
+  config-shaped (missing `vitest/globals` types, `TS2593`/`TS2304` on `describe`/`it`, `TS2835`
+  extension-ful relative imports), not 933 distinct defects — but they have to be worked through
+  before the real ones are visible.
+- Renaming the resolver method back to `resolve` leaves `npm run typecheck` at **exit 0**.
+
+**Done when**
+- A `tsconfig.tests.json` typechecks `tests/**` (and `src/**`, since the specs import it) with the
+  test-runner globals declared, and `npm run typecheck` runs it alongside the existing two.
+- `scripts/ci-local.sh`'s typecheck gate runs it too, so the nightly sees it.
+- The error count is zero, or every remaining suppression is an explicit `@ts-expect-error` with a
+  reason — never a widened `exclude` and never a blanket `as never`.
+- A guard proves the config is actually wired: renaming a method on a typed test double makes
+  `npm run typecheck` exit non-zero. Assert that by mutation, not by reading `package.json`.
+
+**Not in scope**: changing any assertion to satisfy the compiler. A type error that reveals a spec
+asserting something it cannot mean is a finding to report, not to silence.

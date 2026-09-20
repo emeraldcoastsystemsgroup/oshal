@@ -6,6 +6,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Public posture is now ONE rule (2026-09-06 review): the weekly page rendered every book with a close — including a DISABLED account — while the journal clause deliberately omitted them, and quoted an "all books" total that counted the book it was about to hide. Both go through lib.enabledOnly(), so this spec pins that the disabled b-spec-off appears in the operator-facing OK line and in the deck JSON but NEVER in the rendered page, its footer, or the total's book count.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-134 D2 #7 report guard. Proves, against the live Postgres AS THE ENFORCING ROLE (oshal_app, force-RLS; self-validated: current_user + rolsuper=false + rolbypassrls=false), that the shared scripts/lib/trading-book-report.js SQL prints a per-book breakdown + a sum across books under the is_operator GUC the scripts stamp; that without the GUC the roster is empty and the summarizer still never dresses a non-paper ref as paper; that a book with no prior close reports pl/pct null (never 0); and — via REAL CLI runs of the three scripts — that site-oshal-report.js renders every ref + 'all books' with live refs percent-only by default, oshal-deck-data.js scopes its headline/orders to ONE book (OSHAL_TRADING_BOOK) with two live books seeded and fails loud on an unknown ref, and oshal-report-journal.js writes exactly one 'daily-report' row naming every ENABLED ref + 'all books' inside the 500-char cap, right after the headline figures. Also proves the per-book reads fail LOUD by real failure injection: the same CLI pointed at a throwaway EMPTY database prints BOOKS_READ_FAIL for each read and still renders the rest of the page (a silent fallback would drop the books section AND the paper week sentence with only 'books=none' as a hint). Static pins: Dockerfile COPYs site-oshal-report.js and .dockerignore allowlists it (a COPY of an excluded path fails the build).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | This file now STARTS its own PostgreSQL and both of its roles instead of resolving an address at all. Refusing an unpointed run closed the 2026-09-14 accident but left every case collapsing at import, so the guard ran nowhere; worse, the enforcing-role half still read DATABASE_URL out of the repo's .env and, failing that, fell back to a literal oshal_app DSN on the local stack — the operator's live trading database — which is precisely the address this spec must never be able to name. The fixture's `roles: ['oshal_app']` supplies a REAL non-superuser, non-bypassrls login, so the self-validation at the head of the file keeps passing honestly rather than being relaxed; the whole public schema is then handed to that role (`ALTER TABLE … OWNER TO`), which is what puts FORCE ROW LEVEL SECURITY on the critical path rather than the plain ENABLE that would filter any non-owner — measured by mutation: `NO FORCE` on oshal_trading_books turns the "roster is EMPTY without the GUC" case red, and substituting the superuser pool for the role turns both that case and the self-validation red. The ledger tables the CLIs read get the deployment's own owner-or-operator policy (migration 060 applies it there; the runtime bootstrap does not), so the enforcing role is enforced against the same surface it is in production. The throwaway EMPTY database for the fail-loud case is a SECOND database on this same private server rather than a second container, and it is no longer dropped by hand — the server is destroyed, which is the property that failed twice on 2026-09-14. The DELETE-by-sub teardown is gone with it.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -13,37 +14,44 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
-import { Pool } from 'pg';
-import { ensureLegacyBooks, legacyBookId } from '../../src/app/trading-books-store';
-import { specDatabaseUrl, specDatabaseHost } from '../helpers/spec-database-url';
+import type { Pool } from 'pg';
+import { ensureBooksSchema, ensureLegacyBooks, legacyBookId } from '../../src/app/trading-books-store';
+import { ensureTradingSchema } from '../../src/app/trading-schema';
+import { ensureDailyEquityTable } from '../../src/app/trading-daily-equity-store';
+import { ensureStrategyJournalTable } from '../../src/app/trading-strategy-journal';
+import { buildOwnerRlsPolicyStatements } from '@/shared/services/database';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const lib = require('../../scripts/lib/trading-book-report') as typeof import('../../scripts/lib/trading-book-report');
 
 const root = join(__dirname, '..', '..');
-const SUPER_DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
-/** The enforcing role connects to the SAME cluster the run named — never a second address. */
-const PG_HOST = specDatabaseHost(['OSHAL_TEST_DSN']);
 /**
- * The enforcing role's DSN. OSHAL_TEST_APP_DSN is THE supported path (set it in CI and on any box
- * whose password is not the dev default); the operator-local .env read is a convenience for this
- * workstation only, and the dev default is the last resort. A missing/short .env is never fatal —
- * the connect below fails loud and names OSHAL_TEST_APP_DSN.
+ * A PostgreSQL this file owns, with the enforcing role on it. Nothing here reads an address from
+ * the environment, so there is no value any caller could supply that would reach a deployment.
+ * `row_security=off` keeps the SUPERUSER pool's reads across the FORCE-RLS tables explicit; the
+ * role's own pool deliberately does not inherit it (on a non-privileged role it would turn an
+ * enforced read into an error instead of the filtered result this spec exists to observe).
  */
-function appDsn(): string {
-  if (process.env.OSHAL_TEST_APP_DSN) return process.env.OSHAL_TEST_APP_DSN;
-  try {
-    const m = /^DATABASE_URL=(postgresql:\/\/oshal_app:\S+)$/m.exec(readFileSync(join(root, '.env'), 'utf8'));
-    if (m) return m[1].trim().replace(/@[^/]+\//, `@${PG_HOST}/`);
-  } catch { /* no .env here */ }
-  return `postgresql://oshal_app:oshal-app-dev@${PG_HOST}/oshal`;
-}
-const APP_DSN = appDsn();
+const database = new DisposablePostgres({
+  purpose: 'trading-book-report-scripts', database: 'trading_fixture', memory: '384m', max: 4,
+  statementTimeoutMs: 60_000, options: '-c row_security=off',
+  roles: [{ name: 'oshal_app', max: 4 }],
+});
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-adr134obs-${RUN}`;
 const D1 = '2026-01-05', D2 = '2026-01-06';
 const B_ON = crypto.randomUUID(), B_OFF = crypto.randomUUID();
 const scratch = mkdtempSync(join(tmpdir(), 'oshal-book-report-'));
 let superPool: Pool, appPool: Pool;
+
+/**
+ * A libpq URL for the ENFORCING role on this file's private server — the value the three CLIs get
+ * as DATABASE_URL. Built from the fixture's generated credentials at call time, never from env.
+ */
+function roleDsn(db?: string): string {
+  const c = database.roleConnection('oshal_app');
+  return `postgresql://${c.user}:${encodeURIComponent(c.password)}@${c.host}:${c.port}/${db ?? c.database}`;
+}
 
 const etNoon = (day: string) => `(($1::date + time '12:00') AT TIME ZONE 'America/New_York')`.replace('$1', `'${day}'`);
 
@@ -62,15 +70,46 @@ async function seedFill(bookId: string, mode: 'paper' | 'live', symbol: string):
     [SUB, mode, bookId, dec.decision_id, `${SUB}:${symbol}`, symbol]);
 }
 
+/**
+ * Give the fixture the shape the deployment has: the ledger tables the report CLIs read carry the
+ * owner-or-operator policy (migration 060 installs it there; the runtime bootstraps above do not),
+ * and the whole public schema is OWNED by the enforcing role. The ownership handoff is what puts
+ * FORCE ROW LEVEL SECURITY on the critical path: a NON-owner is filtered by plain ENABLE, so
+ * without it the "roster is EMPTY without the GUC" case would pass while never once exercising the
+ * FORCE the deployment's own owner depends on. Measured: `NO FORCE ROW LEVEL SECURITY` on
+ * oshal_trading_books turns that case red (all four books come back), which it could not do unless
+ * oshal_app really owns the table.
+ */
+async function handSchemaToTheEnforcingRole(): Promise<void> {
+  for (const table of ['oshal_trading_orders', 'oshal_trading_decisions', 'oshal_trading_signals']) {
+    for (const statement of buildOwnerRlsPolicyStatements(table, 'user_sub')) await superPool.query(statement);
+  }
+  await superPool.query(`DO $$
+    DECLARE name text;
+    BEGIN
+      FOR name IN SELECT tablename FROM pg_tables WHERE schemaname='public' LOOP
+        EXECUTE format('ALTER TABLE public.%I OWNER TO oshal_app', name);
+      END LOOP;
+      FOR name IN SELECT sequencename FROM pg_sequences WHERE schemaname='public' LOOP
+        EXECUTE format('ALTER SEQUENCE public.%I OWNER TO oshal_app', name);
+      END LOOP;
+    END $$`);
+}
+
 beforeAll(async () => {
-  superPool = new Pool({ connectionString: SUPER_DSN, max: 2, options: '-c row_security=off' });
-  try { await superPool.query('SELECT 1'); } catch (error) {
-    throw new Error(`trading-book-report-scripts requires the live oshal Postgres — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
-  appPool = new Pool({ connectionString: APP_DSN, max: 2 });
-  try { await appPool.query('SELECT 1'); } catch (error) {
-    throw new Error(`the enforcing-role DSN did not authenticate — set OSHAL_TEST_APP_DSN to the oshal_app connection string (cause: ${(error as Error).message})`);
-  }
+  superPool = await database.start();
+  appPool = database.rolePool('oshal_app');
+  await ensureBooksSchema(superPool as never);
+  await ensureTradingSchema(superPool as never);
+  await ensureDailyEquityTable(superPool as never);
+  await ensureStrategyJournalTable(superPool as never);
+  // The daily-equity PRIMARY KEY is re-keyed (user_sub, mode, et_day) → (user_sub, book_id, et_day)
+  // by the ADR-134 cutover migration, NOT by the runtime bootstrap above — and a second LIVE book
+  // closing on the same day is precisely what the legacy mode-keyed PK refuses. The file is applied
+  // verbatim (its DO-blocks skip every table this fixture does not have) rather than hand-copied, so
+  // the fixture is re-keyed by the same statement the deployment was.
+  await superPool.query(readFileSync(join(root, 'scripts', 'migrations', '125-trading-books-cutover.sql'), 'utf8'));
+  await handSchemaToTheEnforcingRole();
   await ensureLegacyBooks(superPool as never, SUB);
   // Two statements so created_at orders them (the roster ORDER BY is created_at, then ref).
   await superPool.query(`INSERT INTO oshal_trading_books (book_id, user_sub, ref, label, kind, broker, enabled) VALUES ($1,$2,'b-spec-on','Spec margin','live','schwab',true)`, [B_ON, SUB]);
@@ -92,20 +131,11 @@ beforeAll(async () => {
   await seedFill(B_ON, 'live', 'BSPC');
 }, 120_000);
 
-/** Set by the fail-loud test: a throwaway EMPTY database whose missing tables make the reads fail. */
-let emptyDb: string | null = null;
-
+// No DELETE pass and no DROP DATABASE: the whole server goes away, so there is nothing to clean and
+// nowhere to clean it — including the throwaway empty database the fail-loud case mints below.
 afterAll(async () => {
-  if (emptyDb) await superPool.query(`DROP DATABASE IF EXISTS ${emptyDb} WITH (FORCE)`).catch(() => {});
-  for (const t of ['oshal_trading_orders', 'oshal_trading_decisions', 'oshal_trading_signals', 'oshal_trading_daily_equity', 'oshal_trading_strategy_journal', 'oshal_trading_books']) {
-    await superPool.query(`DELETE FROM ${t} WHERE user_sub LIKE 'spec-adr134obs-%'`).catch(() => {});
-  }
-  await appPool.end();
-  await superPool.end();
+  await database.stop();
   rmSync(scratch, { recursive: true, force: true });
-  // Explicit hook timeout: DROP DATABASE ... WITH (FORCE) plus six DELETEs on a loaded box exceeded
-  // vitest's 10s default, which failed the FILE after every test had passed (and, worse, left the
-  // throwaway database behind).
 }, 120_000);
 
 const byRef = (s: { books: Array<{ ref: string }> }, ref: string) => s.books.find((b) => b.ref === ref) as never as Record<string, unknown>;
@@ -184,7 +214,7 @@ describe('the lib SQL as the ENFORCING role (oshal_app, force-RLS)', () => {
 const runNode = (script: string, args: string[], env: Record<string, string>, cwd = scratch) => {
   const r = spawnSync(process.execPath, [join(root, 'scripts', script), ...args], {
     encoding: 'utf8', timeout: 90_000, cwd,
-    env: { ...process.env, DATABASE_URL: APP_DSN, OSHAL_USER_SUB: SUB, OSHAL_REPORT_LIVE_DOLLARS: '', ...env },
+    env: { ...process.env, DATABASE_URL: roleDsn(), OSHAL_USER_SUB: SUB, OSHAL_REPORT_LIVE_DOLLARS: '', ...env },
   });
   return { status: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 };
@@ -240,11 +270,14 @@ describe('real CLI runs as oshal_app', () => {
     // Real failure injection: a throwaway EMPTY database. Every other read in the script goes through
     // its swallowing q() helper, so the ONLY thing that can speak here is the per-book catch — which
     // is exactly the path whose silence would drop "The books" AND the paper week sentence with no trace.
-    emptyDb = `oshal_spec_a134_${RUN.replace(/[^a-z0-9]/gi, '')}`; // an identifier, so no hyphens
+    // It is a SECOND database on this file's own private server, not a second container: "empty" is
+    // then a fact about a database nothing ever migrated, it is reached as the same enforcing role,
+    // and it needs no teardown because the server it lives on is destroyed in afterAll.
+    const emptyDb = `oshal_spec_a134_${RUN.replace(/[^a-z0-9]/gi, '')}`; // an identifier, so no hyphens
     await superPool.query(`CREATE DATABASE ${emptyDb}`);
-    const dsn = SUPER_DSN.replace(/\/[^/?]+(\?|$)/, `/${emptyDb}$1`);
+    await superPool.query(`GRANT CONNECT ON DATABASE ${emptyDb} TO oshal_app`);
     const out = join(scratch, 'oshal-report-empty.html');
-    const r = runNode('site-oshal-report.js', [`--through=${D2}`, '--days=2', `--out=${out}`, '--commits=0'], { DATABASE_URL: dsn });
+    const r = runNode('site-oshal-report.js', [`--through=${D2}`, '--days=2', `--out=${out}`, '--commits=0'], { DATABASE_URL: roleDsn(emptyDb) });
     expect(r.out).toMatch(/BOOKS_READ_FAIL perBookEquitySeries/);
     expect(r.out).toMatch(/BOOKS_READ_FAIL bookRoster/);
     expect(r.status, r.out).toBe(0); // the rest of the page still renders; the failure is on the record

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-134 PR2 per-book strategy guards on the REAL database: the clone-backfill turns a pre-book active row into identical per-legacy-book actives (rollback-benign); an apply to book A never deactivates book B (the cross-revert trap); revert is book-scoped; one-active-per-(user, book) is a DB invariant; a legacy-shaped book-less ACTIVE insert still succeeds until PR4 (the deferred CHECK — rollback shape); the journal carries book_ref; and the single-learning-book rule is a partial-unique DB invariant with the review dispatch source-gated on it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Provisions its OWN disposable PostgreSQL instead of resolving an address. specDatabaseUrl has no default and throws at IMPORT, so with nothing set this file was one of 14 trading specs collapsed to "no tests" on main. A triage called that environmental - a missing database - and it is not: Docker is up, the image is cached, and the repo already ships DisposablePostgres. The blocker was an in-repo edit.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
@@ -16,9 +17,17 @@ import {
 import { ensureLegacyBooks, legacyBookId } from '../../src/app/trading-books-store';
 import { recordStrategyJournal } from '../../src/app/trading-strategy-journal';
 import type { StrategyConfig } from '../../src/app/trading-strategy-lab-sim';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+// Its OWN server, not an address. specDatabaseUrl has no default and throws at IMPORT
+// when nothing is set, which collapsed this whole file to "no tests". It has no default
+// because of the 2026-09-14 incident where trading specs pointed at the operator's live
+// Postgres; a disposable cluster answers both halves - nothing to point, nothing to point at.
+const fixture = new DisposablePostgres({
+  purpose: 'trading-override-book-scope',
+  options: '-c row_security=off',
+  max: 4,
+});
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-adr134o-${RUN}`;
 const SUB_PRE = `spec-adr134o-${RUN}-pre`;
@@ -28,12 +37,7 @@ const CFG = { kind: 'rotation', posture: 'balanced', corePct: 0, coreSymbol: 'SP
 let pool: Pool;
 
 beforeAll(async () => {
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try {
-    await pool.query('SELECT 1');
-  } catch (error) {
-    throw new Error(`trading-override-book-scope requires the live oshal Postgres — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
+  pool = await fixture.start();
   // Seed a PRE-PR2-shaped active row (book_id NULL) BEFORE the module's schema ensure runs, so the
   // clone-backfill inside ensureOverridesSchema operates on it exactly as it will on the live box.
   await pool.query(`
@@ -56,7 +60,7 @@ afterAll(async () => {
   await pool.query(`DELETE FROM trading_config_overrides WHERE user_sub LIKE 'spec-adr134o-%'`).catch(() => {});
   await pool.query(`DELETE FROM oshal_trading_strategy_journal WHERE user_sub LIKE 'spec-adr134o-%'`).catch(() => {});
   await pool.query(`DELETE FROM oshal_trading_books WHERE user_sub LIKE 'spec-adr134o-%'`).catch(() => {});
-  await pool.end();
+  await fixture.stop();
 });
 
 describe('clone-backfill — a pre-book active becomes identical per-legacy-book actives', () => {
