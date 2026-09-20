@@ -49,6 +49,7 @@
  * 44 | maintainer@emeraldcoastsystemsgroup.com   | Document the promoted default-on/fail-closed ADR-034 runtime-param rail threaded into manifest and incident dispatches.
  * 45 | maintainer@emeraldcoastsystemsgroup.com   | Thread the ticket owner's hosted-connection resolver into manifest-worker dispatch so a protected application target can be sent in its supported direct/hosted shape instead of being signed, delegated and then denied at the worker.
  * 46 | maintainer@emeraldcoastsystemsgroup.com   | Both approval_required writers here name their reason (CKR-12 / D5): planning_complete when PM planning produced children, planner_returned_no_work when it produced none. Also deletes two comments that stated the opposite of what the code does - 'children will wait for the build gate' and 'children are picked up after build approval'. ADR-031's own amendment stopped children waiting on this state on 2026-06-22 and PARENT_READY_FOR_CHILD_DISPATCH_STATES has included it ever since, so those lines had been misdirecting every reader since then. The parent is parked, not gating, and its nextAction now says so.
+ * 47 | maintainer@emeraldcoastsystemsgroup.com   | CV-3: a ticket whose planner returned zero work units escalates instead of parking at approval_required. The park had no automatic exit - the ticket produced nothing and waited indefinitely for a human with no indication anything was wrong - so labelling it (CKR-12) did not move it. The reason planner_returned_no_work moved with the writer, out of APPROVAL_REQUIRED_REASONS and into the new ESCALATION_REASONS, which leaves exactly one approval_required writer in this file.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -1016,15 +1017,17 @@ export class QueueManagerService {
             return;
           }
         } else if (processed?.planningDecomposition !== undefined) {
-          // BUG-FIX Session 35: PM ran in discovery/design mode and wrote workspace files but
-          // did NOT call swarm-create-ticket (empty planningDecomposition array).
-          // Without this guard the ticket stays stranded in in_process_design indefinitely.
-          // Move it to approval_required so an operator can review and advance it.
+          // The PM ran and wrote workspace files but produced no work units. This used to park the
+          // ticket at approval_required, which has no automatic exit: the ticket produced nothing
+          // and waited forever for a human who had no indication anything was wrong. It escalates
+          // instead (CV-3) — the failure gets named rather than retried into silence, which is the
+          // ADR-022 posture, and it surfaces in a queue somebody already watches. The reason comes
+          // from the closed ESCALATION_REASONS vocabulary, so this is not a new meaning of a status.
           logger.warn(
             { ticketId },
-            'PM agent completed with empty planningDecomposition — ticket produced no child work units. Moving to approval_required for operator review.',
+            'PM agent completed with empty planningDecomposition — ticket produced no child work units. Escalating for operator review.',
           );
-          await this.ticketService.updateStatus(ticketId, 'approval_required', {
+          await this.ticketService.updateStatus(ticketId, 'escalated', {
             reason: 'planner_returned_no_work',
             source: 'queue-manager-service',
           });

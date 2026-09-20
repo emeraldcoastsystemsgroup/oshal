@@ -140,7 +140,7 @@ a single-bot run with every approval gate skipped, and nothing logs it.
   into the registry so the staged dispatcher can run the operator-pinned bots in order"), which directly
   contradicted the sentence this change writes into the developer guide.
 
-### CV-2 — every untrusted-source incident ticket is created into `approval_required`, overriding the caller (S, decision) — **DECIDED 2026-09-20**
+### CV-2 — every untrusted-source incident ticket is created into `approval_required`, overriding the caller (S, decision) — **SHIPPED 2026-09-20**
 
 `src/features/ticketing/services/ticket-service.ts:121-123` forces `approval_required` on any `incident`
 ticket whose `externalProvider` is not in `TRUSTED_ALERT_PROVIDERS` (`{prometheus, alertmanager}`),
@@ -176,7 +176,26 @@ is stricter than today’s defer-to-next-poll behaviour; and "a workflow and tic
 one" means the single-poller-plus-registry implementation is a divergence from the operator’s model of
 the system, which is the Q-09 per-tenant queue work the ADR sweep already raised.
 
-### CV-3 — a ticket whose decomposition returned no work units is stranded permanently (S, decision) — **DECIDED 2026-09-20: ESCALATE**
+**SHIPPED.** `createTicket` forces nothing: `resolvedStatus = input.status ?? 'backlog'`, and
+`TRUSTED_ALERT_PROVIDERS` is deleted. The front gate is the workflow's — `sweepAutoStartTickets`
+promotes a backlog ticket whose workflow declares `autoStart`, and leaves one whose workflow does
+not, which `queue-manager-autostart-sweep.spec.ts` already pins.
+
+`tests/unit/ticket-entry-status-follows-workflow.spec.ts` carries four CV-2 cases, **proven red
+first** by restoring the override: an untrusted provider is not rewritten, a trusted provider gets
+no different treatment (so the list is gone rather than inverted), the cockpit route is handed back
+each of the two statuses it is willing to ask for, and a caller that explicitly asks for
+`approval_required` still gets the CKR-12 creation backstop — removing the override must not remove
+the backstop underneath it. Three of the four fail against the restored override; the fourth is the
+one that must stay green either way.
+
+Two collateral corrections. `approval-required-reason.spec.ts`'s intake fixture now ASKS for the
+status, because the service no longer chooses it — what that case proves is the creation route, not
+the override. And `docs/runbooks/self-healing-monitoring.md` pointed at `TRUSTED_ALERT_PROVIDERS` as
+the auto-approve mechanism; the decision is the alert route's own `intakeStatus`, which is what the
+prometheus path has always passed explicitly, so that path is behaviour-identical.
+
+### CV-3 — a ticket whose decomposition returned no work units is stranded permanently (S, decision) — **SHIPPED 2026-09-20: ESCALATES**
 
 `queue-manager-service.ts:1025` sets `approval_required` when the planner produced zero work units. There
 is no automatic exit from that state: the ticket produced nothing and waits forever for a human who has no
@@ -200,6 +219,23 @@ free string, so this stops being a sixth meaning of a status the way it was a fo
 
 **Reads with CV-2.** The escalation is the workflow’s outcome for an empty plan, not a special case
 bolted onto the queue manager — same principle: the ticket follows its workflow.
+
+**SHIPPED.** `queue-manager-service.ts` writes `escalated` with `reason: 'planner_returned_no_work'`
+where it used to park at `approval_required`, and the reason moved with the writer: it left
+`APPROVAL_REQUIRED_REASONS` for a new `ESCALATION_REASONS`, the escalated twin of the same closed
+vocabulary. The escalation backstop derives `nextAction` from that table instead of resolving every
+escalation to the same generic review, so this reason resolves to `operator_review_plan`.
+
+The two tables are **disjoint, and a case pins that** — a reason string resolving in both would mean
+two statuses at once, which is exactly the CKR-16 defect and is the mistake this change could have
+made. `tests/unit/ticket-entry-status-follows-workflow.spec.ts` drives the real `dispatchTicket`
+against a pipeline doubled only at its own LLM seam: an empty `planningDecomposition` escalates with
+the reason set (red first against the `approval_required` write), and a plan that DID produce work
+units is untouched, so the change cannot degenerate into always-escalate.
+
+One consequence worth naming: this leaves **two** `approval_required` transition writers in `src/`,
+not three, so the CKR-12 writer-inventory floor drops to 2. The floor is there to catch a scan that
+matches nothing — it is not a claim about how many writers there should be.
 
 ### CV-4 — the handover validator cannot pass on a ticket whose workspace id differs from its ticket id (S, no decision) — **SHIPPED**
 
