@@ -161,7 +161,7 @@ indication anything is wrong. Labelling it (D5) does not move it.
 - **Done when:** the operator decides whether such a ticket auto-escalates or auto-cancels, and the chosen
   behaviour is asserted by a test that drives the real planner path with an empty result.
 
-### CV-4 — the handover validator cannot pass on a ticket whose workspace id differs from its ticket id (S, no decision)
+### CV-4 — the handover validator cannot pass on a ticket whose workspace id differs from its ticket id (S, no decision) — **SHIPPED**
 
 `multi-round-dispatch-service.ts:359` and `:371` pass `ticketId` where the handover is written under
 `workspaceTaskId`. Behaviour-neutral today only because nothing consumes the flag — which is R0.12.
@@ -176,8 +176,21 @@ indication anything is wrong. Labelling it (D5) does not move it.
 
 ---
 
-## Ready to ship — no operator decision needed
+**Shipped, by two changes that met in the middle.** The source fix landed on `main` through the CKR-18
+change, independently and with the same shape: both call sites pass `workspaceTaskId ?? ticketId`. This
+entry keeps that version rather than a duplicate of it.
 
+What this change adds is the coverage that version does not have.
+`tests/unit/handover-read-uses-workspace-id.spec.ts` has two cases and doubles the handover manager;
+`tests/unit/handover-validation-workspace-id.spec.ts` has four and drives a **real**
+`RALFHandoverManager` rooted at a temp directory, which is what this entry asked for: the strict path
+returns true the moment the manager is absent and never reads the workspace root, so a doubled manager
+cannot prove the strict path at all. The four cases are the strict path, the **relaxed** path — a
+handover written by a different agent, which the strict filter rejects and only the filename scan can
+match, isolating the second call site — a no-handover case so the fix cannot degenerate into
+always-true, and a case asserting a handover filed under the *ticket* id is no longer accepted. Red
+first: 3 of 4 failed before the source fix, including that last one returning true, which is the defect
+stated exactly.
 ### CKR-1 — the two workflow types cannot be kept in step, and one field is already dropped (D1 + D3) — S — **SHIPPED**
 
 > `phases` deleted from `SwarmAppWorkflow` and from ADR-033b’s canonical example (the
@@ -339,7 +352,7 @@ pinning both occupants of slot 5 to one trust class; and the payloadType guard s
 `buildPhasePersonaOverride('verification-request', ...)` returns null
 (`phase-override-layer-builder.ts:78-80`) — so the fix cannot be mistaken for widening the override.
 
-### CKR-5 — the two assembly sequences have nothing keeping them in step (D10) — S, guard only
+### CKR-5 — the two assembly sequences have nothing keeping them in step (D10) — S, guard only — **SHIPPED**
 
 **Evidence.** The seven-step layer gather runs in the same order in
 `src/app/bot-node-execution-handler.ts:359-388` and
@@ -358,6 +371,15 @@ envelope and stubbed deps, and asserts deep equality of the two persona-layer ar
 between `llm-execution-handler.ts:226` and `:232` with no counterpart. **The commit changes no file under
 `src/`.** Explicitly out of scope: extracting a shared builder, and changing what either handler passes to
 `assemblePromptForAnyBot`.
+
+**Shipped.** `tests/unit/persona-layer-sequence-parity.spec.ts`. Both factories are driven with one
+identical non-direct envelope; the layer arrays are captured at the shared prompt-authority binding
+(the bot-node handler reaches it through the barrel, the LLM handler through the owning module, so
+mocking the owning module intercepts both) and compared on `(layerType, priority,
+metadata.contentSource)`. Proven red by inserting one extra `personaLayers.push(...)` ahead of the
+awareness layer in `llm-execution-handler.ts` with no counterpart: 3 layers against 2, assertion
+fails; probe reverted. The spec also asserts both arrays are non-empty, so a sequence that stopped
+producing layers fails rather than passing vacuously. **No file under `src/` changed**, as specified.
 
 ### CKR-6 — the chat runtime does not fence tool results as untrusted (D11-a) — S — **SHIPPED**
 
@@ -540,7 +562,38 @@ required — this file names the identifier); CV-1's grep is clean; and a fixtur
 manifest declaring `pipeline: staged` makes `readManifest` throw an error whose message contains `graph`,
 asserted by a named case in `tests/unit/swarm-app-manifest-load.spec.ts`.
 
-### CKR-11 — a graph workflow with no process definition silently becomes a one-bot run (D4) — S
+### CKR-11 — a graph workflow with no process definition silently becomes a one-bot run (D4) — **DONE 2026-09-19**
+
+**Shipped.** `chooseDispatchPath` routes on the DECLARED pipeline, so `pipeline: graph` reaches the
+graph worker whether or not a definition is present. `dispatchGraphTicket` already escalated that
+shape with `reason: 'graph_workflow_definition_missing'`. Its guard is
+`!definition || !definition.nodeGraph`, and only the FIRST half was unreachable — a truthy
+definition carrying no `nodeGraph` reached that escalation before this change and still does, which
+is why the loader refusal checks `processDefinition.nodeGraph` rather than the object's truthiness. `readManifest` now refuses the shape at load, and also
+refuses a workflow with no `workerBot` and no executable graph (which fell through to the 7-phase
+`swarm` decompose pipeline). All three tests that codified the degradation are inverted, each with
+a Change Log line saying why the old assertion was wrong.
+
+Store landed first, as the entry required — `oshal-applications` **#238 is merged**, and
+`print-ingest` (the only manifest in either trunk with the broken shape) is 0.3.1 on that trunk.
+One honest lag: the PUBLIC `oshal-apps` snapshot is DERIVED and republishes on the nightly, so it
+still carries 0.3.0 until that runs. A box holding an installed 0.3.0 will have that one manifest
+refused — contained per-app by `autoLoadAll`'s per-file catch, but `autoLoadAllWithRetry` re-runs
+the whole pass while anything is failing, so it costs three passes and two 15-second sleeps per
+boot until the snapshot catches up. It got the approval gate its own comment promises (0.3.1,
+`oshal-applications` PR #238) — the package had traded the retired `staged` executor for a
+`graph` that dropped gates exactly the same way.
+
+Verified before landing: **10 core manifests (CLAUDE.md Rule 0c: exactly ten) and all 61 store packages load** under the new
+refusals, 0 refused; and `print-ingest` at 0.3.0 IS refused, which proves the ordering requirement
+was real rather than assumed. Mutation-proven both halves — restoring the old route fails 2 cases,
+removing the loader refusals fails 2 more.
+
+**Decision taken:** part (a) escalates rather than silently running one bot. Consistent with CKR-10,
+and with the principle the whole repair series rests on — a refused run beats a silently wrong one.
+
+<details><summary>Original entry</summary>
+
 
 Real, and worse than claimed in two ways: **three** tests codify the degradation
 (`tests/dispatch-routing.spec.ts:83,90`; `tests/unit/dispatch-path-routing.spec.ts:97,99`;
@@ -571,6 +624,8 @@ assertions are inverted, each carrying a Change Log line saying why the old asse
 Criterion (a) turns all three red; a lane that flips "the two" leaves the third failing. (e) **Land the store fix first or `print-ingest` stops installing:** in
 `oshal-applications`, `git ls-files '*oshal-app.yaml' | xargs grep -l '^  pipeline: graph'` lists only
 files that also match `grep -l '^  processDefinition:'`.
+
+</details>
 
 ### CKR-12 — `approval_required` means five things, not three (D5) — **DONE 2026-09-19**
 
@@ -662,7 +717,54 @@ appear in `queue-manager-service.ts`. **Not in scope:** CV-3.
 
 </details>
 
-### CKR-13 — workflow position is unreadable from the ticket (D6) — S
+### CKR-13 — workflow position is unreadable from the ticket (D6) — **(a) and (b) DONE 2026-09-19; (c) BLOCKED, and it is not close**
+
+**(a) done.** `grep -rn graphResumeNode docs/ --exclude-dir=backlog` returns nothing, and
+`docs/architecture/human-in-the-loop.md` names `metadata.workflowCheckpoint` / `resumeNodeId` at
+both sites. Verified against the code first rather than taken from this entry: the dispatcher
+WRITES `workflowCheckpoint.resumeNodeId` (`dispatch-graph-worker.ts:106`) and reads
+`graphResumeNode` only as a fallback (`:97`). An explanatory sentence naming the legacy key was
+written and then removed — the criterion's anti-gaming clause cuts both ways, and the reader who
+needs that history has this entry.
+
+**(b) done.** `GET /api/tickets/:id` carries a `workflowPosition` for a graph ticket: the run id,
+the resume node id (flagged when it came from the legacy key), and the node id / title / type /
+status of the most recent `workflow_run_steps` row. Added ONLY when the ticket is a graph run, so
+every other ticket's payload is byte-identical. The read is owner-scoped by the GUC pool exactly as
+every other ticket read is, and it never throws — a position that cannot be read must not turn a
+ticket fetch into a 500.
+
+`tests/unit/ticket-workflow-position-postgres.spec.ts` drives the REAL `dispatchGraphTicket`
+against the REAL `ProcessDefinitionExecutionEngine`, on a disposable `postgres:16-alpine` running
+migration 062 as shipped, with the REAL `WorkflowRunHistoryStore` recording. The only double is the
+bot dispatch at the engine-services seam, which is where the done-when says to put it.
+
+The self-validation earned its place immediately: `workflow_runs.ticket_id` is a UUID column, the
+first fixture used `'tkt-ckr13'`, `startRun` swallowed the 22P02 and returned null — and every
+position assertion would have passed on an empty read. Mutation-proven: never populating the last
+step turns 1 red, and removing the legacy fallback turns 1 red.
+
+**(c) BLOCKED — measured, not assumed.** The retirement is gated on
+`SELECT count(*) FROM tickets WHERE metadata ? 'graphResumeNode'` returning 0. On the operator box
+on 2026-09-19 it returns **5**:
+
+| status | count |
+|---|---|
+| `approval_required` | 3 |
+| `escalated` | 2 |
+
+Three of them are parked at a gate right now. Retiring the legacy read would strand exactly those —
+they are the tickets it exists for. The fallback stays, and `readResumePoint` flags when it fired so
+the count can be watched rather than guessed at. Re-run the query before revisiting this.
+
+**Still out of scope, unchanged:** whether position becomes a first-class column or a distinct
+in-flight status. And the consequence this entry records but does not fix — a graph ticket whose
+current node outlives `approvedStaleMinutes` forces the queue-health verdict to `blocked`, per NODE
+rather than per run, because age reads `updatedAt` and every node bumps it through the checkpoint
+write.
+
+<details><summary>Original entry</summary>
+
 
 Confirmed: a graph ticket is dispatched from `approved`, no code writes an `in_process_*` status, and the
 six status writes in `dispatch-graph-worker.ts` (`67,167,174,178,193,213`) only suspend or terminate. The
@@ -689,6 +791,8 @@ the engine-services seam. (c) Retiring the legacy read at `dispatch-graph-worker
 `SELECT count(*) FROM tickets WHERE metadata ? 'graphResumeNode'` returning 0 on the live box — it is the
 only path back for tickets parked before 2026-07-05.
 
+</details>
+
 ### CKR-14 — `extends` and `foundation.persona` are dead inheritance (D7) — S
 
 Both mechanisms are genuinely inert, confirmed across both parsers, both bot-node providers, and a zero-hit
@@ -710,12 +814,42 @@ the quantity sanity-check; `eats-concierge` gains "ALWAYS explain a pick" into `
 fixture. **Do not write it as "any key the parser does not consume"** — measured, that fires on 50 of 103
 files across 25 keys. (3) The `foundation?: { persona: string }` field leaves
 `src/features/swarm-apps/types.ts:775` and `scripts/oshal-app.js:124,136` **only after** the 5 store
-manifests have dropped the key and shipped. (4) **The store half, which criterion (1) otherwise breaks:**
-10 personas in `oshal-applications` declare `extends:`, and two of them target files that live in *core*
-(`extends: travel-foundation`, `extends: world-foundation`). So the store personas drop the key and ship
-**before** the core `*-foundation.yaml` files are deleted, and the dead-key spec in (2) extends to the
-store package suite — otherwise the entry can be signed off with the dead key still shipping in ten
-installed packages.
+manifests have dropped the key and shipped. (4) **The store half.** 10 personas in `oshal-applications` declare `extends:`, and the dead-key
+spec in (2) extends to the store package suite — otherwise the entry can be signed off with the dead
+key still shipping in ten installed packages.
+
+> **Correction of record, 2026-09-19.** This criterion previously said two store personas *"target
+> files that live in core"* (`travel-foundation`, `world-foundation`) and therefore mandated that the
+> store drop the key and ship BEFORE core deletes its `*-foundation.yaml` files. **That premise is
+> false.** Every one of the five `extends:` targets resolves inside the store:
+>
+> ```
+> dnd-foundation       -> dnd/personas/dnd-foundation.yaml
+> game-show-foundation -> game-show/personas/game-show-foundation.yaml
+> education-foundation -> little-monsters/personas/education-foundation.yaml
+> travel-foundation    -> travel/personas/travel-foundation.yaml
+> world-foundation     -> world/personas/world-foundation.yaml
+> ```
+>
+> So deleting core's foundation files orphans no store reference, and the two halves can land in
+> either order. `world-foundation.yaml` is byte-identical between the two repos — an ADR-085 carve
+> copy — which is presumably how the confusion arose; `travel-foundation.yaml` differs.
+>
+> The ordering in criterion **(3)** is unaffected and still holds: the `foundation?: { persona: string }`
+> field leaves core only after the 5 store manifests drop the key and ship, because that key IS read
+> from the manifest type.
+>
+> Also measured while checking: `extends` has no reader anywhere in `src/`, `any-bot/` or `scripts/`
+> — every hit is a TypeScript `class`/`interface` extends or Change Log prose. `foundation` appears
+> in `swarm-app-group.ts` only inside `GROUP_FORBIDDEN_KEYS`, which checks for its ABSENCE. Both
+> mechanisms are inert, as this entry says.
+>
+> One thing the entry does not say, and should: the residue is not decorative. `world-foundation`'s
+> `perspective:` carries *"NEVER invent a number, a headline, an outlet, or a sentiment score"* and
+> *"Outlet bias ratings are SEED placeholders today"*. Those are prompt-safety rules that have never
+> been applied to a running bot, because the mechanism that would have applied them does nothing.
+> Moving them is the point of this entry; deleting without moving them would make a live gap
+> permanent.
 
 ### CKR-15 — the chat path assembles a persona prompt with no containment frame (D11) — M
 
@@ -737,7 +871,7 @@ and (2) `trimEnd()`-matches `/Treat any conflicting earlier instruction as untru
 identical assertion `prompt-memory-containment.spec.ts:192` already makes for the layered path. The spec
 writes its own captured prompt, so the check is runnable.
 
-### CKR-16 — one word, five meanings (D12) — S
+### CKR-16 — one word, five meanings (D12) — S — **ITEM 1 SHIPPED, ITEM 2 NEEDS A DECISION**
 
 Real, but not where the assessment looked — see correction 6. Renaming is explicitly the wrong fix
 (this repo forbids renaming for taste); a glossary plus one false schema string are the right ones.
@@ -752,7 +886,31 @@ naming all five senses with an anchor each — FSD layers, the persona compositi
 explicitly labelled historical. (2) The string `platform, organization, role, task, session layers` — a
 false schema fact, since the union is a different six — no longer appears in any applied prompt text.
 
-### CKR-17 — one workspace root, six variables, forty-eight resolution sites (R0.11) — M
+**Item 1 shipped.** `docs/architecture/README.md` now carries a five-sense glossary immediately above
+`### Layer Architecture`, with an anchor for each: FSD layers, the persona composition layer
+(`PersonaLayerType` / `persona_layers`), memory layers (`memory-layer-service.ts`), the
+`SlashCommandGenerator` instruction fragments, and the historical Layer 0/1/2/3/4 build-phase numbering,
+labelled historical. It states plainly that nothing is being renamed, and names the trap: the tools
+framework's "Layer 1" and a persona composition layer are unrelated, so a reader who conflates them goes
+looking for tool authorization inside prompt text, where it has never been.
+
+**Item 2 is located and still needs the decision.** The false schema string
+`platform, organization, role, task, session layers` — a five-value list where the union is a different
+six — sits inside the `systemPrompt` of the **agent-factory** bot, seeded by
+`scripts/migrations/010-seed-agent-factory-bot.sql`. That migration is applied history, so editing the
+SQL corrects a fresh install and leaves every existing database untouched, including the box.
+
+The operator decision is how to correct a live bot's prompt, and the three options are not equivalent:
+
+| Option | Corrects the box | Cost | Risk |
+|---|---|---|---|
+| Edit the seed SQL only | no | minutes | the box keeps asserting a false schema; a fresh install and an existing one disagree |
+| Edit the seed **and** add a forward migration that updates the row | yes | small, but it is a new migration touching a live prompt | a prompt edit applied by migration is hard to review in a diff |
+| Edit the seed and correct the row through the agent API | yes | manual step, recorded | not reproducible on another deployment without the same step |
+
+No option is taken here, because all three change what a live bot is told about the platform.
+
+### CKR-17 — one workspace root, six variables, forty-eight resolution sites (R0.11) — M — **STEP 1 SHIPPED**
 
 **Materially worse than claimed, and every number in the claim is wrong.** Not two resolvers but one
 canonical (`src/shared/workspace-root.ts:45`, 9 callers) plus **39 inline resolution sites** across at
@@ -777,7 +935,76 @@ frozen before `beforeEach` ran, and a fix that leaves a `resolveSharedWorkspaceR
 still fails. If the case passes without either change, it proves nothing. (4) A second case does the same
 for `workspace-bootstrap-service.ts:105` vs `task-explorer-workspace-service.ts:93`.
 
-### CKR-18 — the handover gate does not gate, and says the opposite (R0.12) — S
+**Step 1 shipped.** `tests/unit/workspace-root-resolution.spec.ts`. `WORKSPACE_ENV_KEYS` lists all six
+variables and `beforeEach` clears every one, so a case that sets exactly one proves which variable was
+read. Four cases: the prompt root against the deliverable-capture root, workspace bootstrap against the
+task explorer, each of the four resolver variables honoured in priority order, and a blank value not
+shadowing a configured lower-priority one. Every case uses `vi.resetModules()` and imports after setting
+the variable.
+
+Three sites converged onto `resolveSharedWorkspaceRoot()`, which is the minimum that makes the two
+comparison cases meaningful — **not** the 39-site convergence, which this entry says is a separate call:
+
+- `jarvis-deliverable-files.ts` — module-scope `WORKSPACE_ROOT` and `USERFILES_ROOT` consts became
+  call-time functions. Both are containment boundaries, and reading only `CLINE_WORKSPACE_ROOT` meant a
+  deployment configured through `OSHAL_WORKSPACE_ROOT` resolved them to the container default while the
+  rest of the platform resolved elsewhere. The module-scope freeze is also what would have let this guard
+  pass without the fix.
+- `llm-execution-handler.ts` — the inline chain read only `SHARED_WORKSPACE_ROOT`. This one is the string
+  the bot is instructed to write everything into.
+- `workspace-bootstrap-service.ts` — read two of the six and fell back to `workspace` where everything
+  else falls back to `workspace-shared`.
+
+**Proven red per site**, not in aggregate: reverting each of the three to its `origin/main` version turns
+exactly one case red and the other three stay green; restoring all three returns 4 of 4. A guard that
+passed on the unpatched tree would have proven nothing, which this entry warned about explicitly.
+
+**One finding the entry did not predict.** Routing the deliverable module's extraction regex through the
+canonical resolver broke it on Windows: the resolver normalises to the host separator, while the text it
+matches was written by a bot in a Linux container and always uses `/`. The regex is now built from the
+same absolute root with separators normalised to `/`. Production is unaffected either way, since the
+container is Linux, but the existing capture spec caught it immediately — 4 of its 14 cases went red.
+
+**Still open:** the other 36 inline resolution sites, at least fifteen distinct precedence chains, and the
+fourth vocabulary on the `any-bot/` side. `docker-compose.core.yml` and `docker-compose.yml` still set
+only two of the six, so the divergence remains live under those files.
+
+### CKR-18 — the handover gate does not gate, and says the opposite (R0.12) — **DONE 2026-09-19**
+
+All five clauses met, each verified by the grep or the spec the criterion names.
+
+**(1)** The string announcing a blocked ticket is gone from `src/` (was 1, now 0). It had to be
+paraphrased in the new Change Logs too — quoting what you removed re-adds it to a bare grep, the
+same way the docs criterion in CKR-13 behaves.
+
+**(2)** `enforceHandoverGate` → `assessHandoverCoverage`, `handoversEnforced` →
+`allHandoversPresent`: 12 non-Change-Log hits, now 0. `HandoverGateResult` went with them, since
+leaving it as the return type of a function that no longer claims to gate is the same lie one step
+along. This is renaming for accuracy, not taste — the identifier said *enforce* and *gate* while
+the function assesses and neither caller gates on it.
+
+**(3)** The unused `enforceHandoverGate` import is deleted, and entry 31 in that file — which said
+importing it made "gate checks now available on multi-round phase transitions", when it made
+nothing available — is corrected in place rather than rewritten.
+
+**(4) CV-4 landed, and it is the load-bearing half.** `readAgentHandover(agentId, workspaceTaskId)`
+names its second parameter, and both call sites passed `ticketId`. Where the two differ the read
+looked in a directory the handover was never written to, so a round that wrote one was reported as
+missing. Without this the signal was noise.
+
+**(5)** Two specs, because there are two claims. `handover-coverage-not-a-gate.spec.ts` (5 cases)
+asserts the shortfall is still REPORTED, that the caller keeps its `finalOutput`, and that the log
+record matches `/coverage/` and neither `/blocked/` nor `/FAILED/` — asserted on the record the
+logger was called with, because the defect was never in the return value.
+`handover-read-uses-workspace-id.spec.ts` (2 cases) drives the real `MultiRoundDispatchService`
+through its public entry with the handover manager doubled ON the seam whose argument is the claim.
+
+Mutation-proven: restoring the old log wording turns 1 red, and passing `ticketId` again turns 1
+red. The CV-4 spec's self-validation earned its place — the first fixture's mesh stub lacked
+`send`, the flow threw before the read, and the assertion would have passed on an empty list.
+
+<details><summary>Original entry</summary>
+
 
 The log-line dishonesty is confirmed; the assessment's *repeated-work* consequence is unproven.
 `enforceHandoverGate` (`swarm-ticket-lifecycle-helpers.ts:414`) logs "Ticket
@@ -805,6 +1032,8 @@ and the log record matches `/coverage/` and neither `/blocked/` nor `/FAILED/`.
 **Not in this item, each its own entry:** the `HANDOVER-<role>.md` vs `{agentId}_PHASE_n_ROUND_n.md`
 convention split, and the `WorkspaceArtifactEnforcer` / `ParityValidationChecklist` test-only wiring plus
 the false Change Log at `src/app/extensions/swarm/index.ts:28`.
+
+</details>
 
 ### CKR-19 — interactive spend is invisible to the trace and to the budget caps (R1.1) — M
 
@@ -838,7 +1067,32 @@ linking after `executeBotOrInline` returns — **not** by adding an `externalId`
 updated_at < NOW() - INTERVAL '1 day'` returns 0; the pre-existing 683 rows are explicitly out of scope, no
 backfill.
 
-### CKR-20 — cross-ticket and cross-owner workspace isolation does not exist (R3.3) — S to decide, L to build
+### CKR-20 — cross-ticket and cross-owner workspace isolation does not exist (R3.3) — **MEASURED and PINNED 2026-09-19; the decision is open**
+
+**Done-when (1), second half: done.** `tests/unit/compose-workspace-mount-posture.spec.ts` asserts
+against the RESOLVED compose (the mounts arrive through a `<<:` merge, so a regex cannot see them)
+that every workspace mount is `:rw` with no subpath, and that the mounting set is exactly the
+bot-anchor inheritors plus `code-server`. **Measured: 40 mounts, 40 of them `:rw`, 0 subpaths, 39
+inheritors** — the entry's arithmetic is right, and `oshal-api` is itself an inheritor so the
+invariant is inheritors + 1.
+
+**Done-when (3): done.** The same spec pins that `runtimeToolMatchesCapabilities` short-circuits to
+`true` for `CORE_RUNTIME_TOOL_NAMES` BEFORE any tag work, and that `execute_command` is in that set
+— so a later reader cannot repeat the belief that persona YAML gates the shell. The assertion is on
+the ORDER of the two, so moving capability matching in front of the short-circuit fails it, which
+is the change that would make the belief true.
+
+**Done-when (1), first half: OPEN, and deliberately left so.**
+[workspace-isolation-decision.md](workspace-isolation-decision.md) names ADR-060's three options
+verbatim plus the fourth this entry adds, with what each costs. Which one is the operator's call —
+that is the whole point of the criterion and not something to default into by not choosing.
+
+**Done-when (2): not done.** The two-container traversal proof is still owed, and the note stands:
+`ToolExecutorService` is constructed in the CONTROLLER, not on the bot-nodes, so the proof has to
+exercise the path that actually runs the shell.
+
+<details><summary>Original entry</summary>
+
 
 Both halves accurate and the ADR quote near-verbatim. All **40** workspace mounts are `:rw` with no
 subpath; every bot container sees every other ticket's and every other user's working directory as a
@@ -873,6 +1127,8 @@ capability matching — so a later reader cannot repeat the false belief that pe
 tool.
 
 ---
+
+</details>
 
 ## Not real
 

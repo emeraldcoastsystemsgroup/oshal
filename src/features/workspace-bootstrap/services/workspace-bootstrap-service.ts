@@ -11,6 +11,7 @@ import path from 'path';
 import { execFile as execFileCallback } from 'child_process';
 import { promisify } from 'util';
 import { createChildLogger } from '@/shared/logger';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const execFileAsync = promisify(execFileCallback);
 const logger = createChildLogger({ module: 'workspace-bootstrap-service' });
@@ -103,11 +104,10 @@ export class WorkspaceBootstrapService {
   }
 
   private resolveWorkspaceRoot(): string {
-    const configuredRoot = process.env.CLINE_WORKSPACE_ROOT || process.env.WORKSPACE_ROOT;
-    if (configuredRoot && configuredRoot.trim().length > 0) {
-      return path.resolve(configuredRoot);
-    }
-    return path.resolve(process.cwd(), 'workspace');
+    // CKR-17: one resolver. This read two of the six workspace variables and fell back to
+    // "workspace" where every other component falls back to "workspace-shared", so an
+    // unconfigured process bootstrapped a workspace nothing else would look in.
+    return resolveSharedWorkspaceRoot();
   }
 
   private normalizeWorkspaceId(taskId: string): string {

@@ -5,19 +5,31 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the apply reaper's run-ledger join against the REAL schema. Migration 118 declares apply_runs.ticket_id TEXT while tickets.ticket_id is UUID, so the uncast LATERAL join raised `operator does not exist: text = uuid` on every sweep. The reaper catches and logs, so it degraded silently to "0 reaped" — orphan recovery never ran, and only a deploy's log scan found it. This must execute against a live database: the defect lives entirely in Postgres type resolution and every mock of the pool returns whatever the test author expects.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | This spec now STARTS its own PostgreSQL and removes it, instead of resolving an address from the environment at all. Refusing an unpointed run made the 2026-09-14 accident impossible, but nothing in the repo supplied the variable, so `specDatabaseUrl` threw at MODULE LOAD and vitest reported a failed suite with zero cases run — the type-resolution defect above was unguarded in every gate from the day the refusal landed. A guard that cannot execute proves nothing, so refusing was the wrong shape of answer: owning the server leaves no address to point and nothing to point it at. The schema comes from the deployment's own migrations (005 for the chat_tasks the ticket family references, 100 for `tickets`, 118 for `apply_runs`) rather than hand-written DDL, so the UUID/TEXT divergence this file asserts is the one production ships. No superuser role handoff and no DELETE teardown: the file makes no non-superuser claim, and the whole server is destroyed in afterAll, so no cleanup SQL runs anywhere.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import { REHYDRATE_APPLY_TICKETS_SQL, STALE_APPLY_TICKETS_SQL } from '@/app/apply-enqueue';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 
-const DSN = specDatabaseUrl(['APPLY_LEDGER_TEST_DSN', 'TEST_DATABASE_URL']);
-
-/** Strips the password out of a DSN so a connection failure message is safe to print. */
-function safeDsn(dsn: string): string {
-  return dsn.replace(/\/\/([^:@/]+):[^@/]*@/, '//$1:***@');
-}
+// A PostgreSQL this file owns: started here, removed in afterAll, reachable from nothing else.
+// The three migrations are the deployment's own: 005 creates chat_tasks (the ticket family's
+// FK target), 100 creates `tickets` with ticket_id UUID, 118 creates `apply_runs` with
+// ticket_id TEXT — which is precisely the divergence the production cast exists for.
+const database = new DisposablePostgres({
+  purpose: 'apply-reaper-ledger-join',
+  database: 'apply_ledger_fixture',
+  memory: '384m',
+  max: 2,
+  connectionTimeoutMillis: 5_000,
+  statementTimeoutMs: 30_000,
+  migrations: [
+    '005-conversation-history-and-usage.sql',
+    '100-ticket-family-base-schema.sql',
+    '118-apply-runs-ledger.sql',
+  ],
+});
 
 let pool: Pool;
 
@@ -36,18 +48,12 @@ const LEDGER_JOINS: ReadonlyArray<readonly [string, string]> = [
 
 describe('apply reaper run-ledger join', () => {
   beforeAll(async () => {
-    pool = new Pool({ connectionString: DSN, max: 2, connectionTimeoutMillis: 5_000 });
-    // Fail LOUDLY rather than skipping. A guard that quietly disappears when the database is
-    // absent is exactly how this defect reached a deploy in the first place.
-    await pool.query('SELECT 1').catch((err: Error) => {
-      throw new Error(
-        `apply-reaper guard needs a live Postgres at ${safeDsn(DSN)} — ${err.message}. ` +
-        'Start the stack (bash scripts/oshal-up.sh) or set APPLY_LEDGER_TEST_DSN.',
-      );
-    });
-  }, 30_000);
+    pool = await database.start();
+  }, 120_000);
 
-  afterAll(async () => { await pool?.end(); });
+  // No DELETE pass: the whole server goes away, so there is nothing to clean and nowhere to
+  // clean it. stop() ends the pool itself.
+  afterAll(async () => { await database.stop(); });
 
   it('has the type mismatch this cast exists for — apply_runs.ticket_id TEXT vs tickets.ticket_id UUID', async () => {
     const { rows } = await pool.query<{ table_name: string; data_type: string }>(

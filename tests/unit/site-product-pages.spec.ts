@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the multi-page product site. Replaces the single-page site-product-page.spec.ts. Four failure shapes are pinned, all against the REAL manifests rather than a fixture of them: UNDER-CLAIMING (the committed pages must equal a fresh render, because the index grid advertised 7 apps while 54 shipped), OVER-PUBLISHING (withheld apps must not get a page — the withhold list once keyed off the filename and silently published an internal app), BROKEN NAVIGATION (every internal link must resolve to a file that exists, which is the failure a single-page build could not have), and ORPHANS (a delisted app must not keep a live page).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Four cases were red in the sanctioned nightly for two reasons, neither of them a site defect. (a) Two shelled out to `git ls-files` and died 'fatal: not a git repository', because the gate builds GATE_SRC with `git archive | tar -x` and an export has no .git. They now fall back to a disk walk, which is not a weakening: an export IS HEAD's tracked set, so a file present in one is tracked by construction - the same fallback, for the same crash, as trackedFiles() in scripts/check-repo-separation.js. Skipping there would have made them guards that do not exist. (b) Two read model.apps, which is UNDEFINED when catalog.build() returns { missingStore: true }, so they threw a TypeError instead of standing down; they now carry the same it.runIf(storePresent) their eleven siblings already had. Separately, the staleness the gate could not see was real and is now reconciled: the committed site had 61 apps against a model of 68, and 78 pages were regenerated. The seven new pages are all packages already in the PUBLIC store; the three withheld apps stayed withheld and the orb was checked for them by name.
  */
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -35,6 +36,43 @@ interface Model { missingStore?: boolean; counts: Record<string, number>; shelve
 const REPO = path.resolve(__dirname, '..', '..');
 const storePresent = fs.existsSync(path.join(catalog.STORE_DIR, 'marketplace.json'));
 const model = catalog.build();
+
+/**
+ * @description Every path git tracks under a repo-relative directory, as forward-slash strings.
+ * @param dir - Repo-relative directory, forward slashes.
+ * @returns The tracked set.
+ *
+ * The sanctioned gate builds GATE_SRC with `git archive | tar -x`, so it has NO `.git` and
+ * `git ls-files` exits 'fatal: not a git repository' — which took out two cases here on an
+ * otherwise healthy tree. Skipping them there would make them guards that do not exist, so
+ * instead the question is answered the other way: an export IS HEAD's tracked set, so a file
+ * present on disk in one is tracked by construction. Same reasoning, and the same fallback, as
+ * `trackedFiles()` in scripts/check-repo-separation.js, which was added after the identical crash.
+ */
+function trackedUnder(dir: string): Set<string> {
+  try {
+    return new Set(
+      execFileSync('git', ['ls-files', '--', dir], { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+        .split(/\r?\n/).filter(Boolean),
+    );
+  } catch {
+    const found = new Set<string>();
+    const walk = (rel: string): void => {
+      const full = path.join(REPO, rel);
+      if (!fs.existsSync(full)) return;
+      for (const entry of fs.readdirSync(full, { withFileTypes: true })) {
+        const child = `${rel}/${entry.name}`;
+        if (entry.isDirectory()) walk(child);
+        else found.add(child);
+      }
+    };
+    walk(dir);
+    return found;
+  }
+}
+
+/** A path under site/oswarm.ai as `git ls-files` spells it, whatever separators went in. */
+const sitePath = (rel: string): string => `site/oswarm.ai/${rel.split(path.sep).join('/').replace(/^\//, '')}`;
 
 /** Every generated page, keyed by its site-relative path. Empty when the store trunk is absent. */
 const rendered: Map<string, string> = model.missingStore ? new Map() : gen.renderAll(model);
@@ -138,10 +176,7 @@ describe('product site: every internal link resolves', () => {
   it('every referenced screenshot exists and is tracked in git', () => {
     // A page that references /assets/foo.png with no such file publishes a broken image (and the
     // deploy's asset gate would fail). Assert every referenced asset is a real, tracked file.
-    const tracked = new Set(
-      execFileSync('git', ['ls-files', '--', 'site/oswarm.ai/assets'], { cwd: REPO, encoding: 'utf8' })
-        .split(/\r?\n/).filter(Boolean),
-    );
+    const tracked = trackedUnder('site/oswarm.ai/assets');
     const missing: string[] = [];
     for (const rel of onDisk) {
       const html = fs.readFileSync(path.join(gen.SITE, rel), 'utf8');
@@ -186,7 +221,7 @@ describe('product site: every internal link resolves', () => {
     expect(seg).toContain('OpenAI');
   });
 
-  it('the catalog orb lists every app, each linking to a real app page', () => {
+  it.runIf(storePresent)('the catalog orb lists every app, each linking to a real app page', () => {
     // The hub orb is the completeness showcase — it must be the WHOLE catalog, and every node must
     // point at a page that exists. A silently-missing app (or a node linking nowhere) turns this red.
     const html = fs.readFileSync(path.join(gen.SITE, 'product', 'index.html'), 'utf8');
@@ -218,11 +253,8 @@ describe('product site: every internal link resolves', () => {
     // The site deploys from the working tree, so a page can exist locally, publish fine, and be
     // absent from a fresh clone. That is exactly what happened to /build/: .gitignore's generic
     // `build/` artifact rule silently untracked it. On disk is not the same as shipped.
-    const tracked = new Set(
-      execFileSync('git', ['ls-files', '--', 'site/oswarm.ai'], { cwd: REPO, encoding: 'utf8' })
-        .split(/\r?\n/).filter(Boolean).map((p) => p.replace(/\//g, path.sep)),
-    );
-    const untracked = onDisk.filter((rel) => !tracked.has(path.join('site', 'oswarm.ai', rel)));
+    const tracked = trackedUnder('site/oswarm.ai');
+    const untracked = onDisk.filter((rel) => !tracked.has(sitePath(rel)));
     expect(
       untracked,
       'these generated pages are ignored or unstaged — a fresh clone would deploy without them',
@@ -311,7 +343,7 @@ describe('product site: every app-open link survives a first login', () => {
   // by (a) a themed subdomain — the app lives in the hostname — and (b) a ?next= deep-link that
   // the guest gate carries through for apps without one.
 
-  it('maps every subdomain key to a real app and a bare *.oshal.ai host', () => {
+  it.runIf(storePresent)('maps every subdomain key to a real app and a bare *.oshal.ai host', () => {
     const appNames = new Set(model.apps.map((a) => a.name));
     // Apps that legitimately have a themed subdomain but no public marketing page (a live
     // client CRM served at factor-crm.oshal.ai, not catalogued). A NEW key that matches no app

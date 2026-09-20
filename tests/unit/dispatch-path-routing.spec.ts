@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Vitest unit guard for chooseDispatchPath wired to the REAL BUILT_IN_TICKET_TYPES + WorkflowPipelineRegistry.resolve (the existing tests/dispatch-routing.spec.ts hand-builds the built-in set; this exercises the actual dispatcher inputs end-to-end, including the app-contributed defer→manifest-worker transition).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Inverted the graph-without-definition assertion (CKR-11 / D4). The old assertion was wrong, not merely outdated: it codified a SILENT degradation as correct behaviour. A graph workflow missing its definition routed to manifest-worker, which runs workerBot alone and never logs the DEGRADATION (its own work logs fine), so every approval gate the author wrote was dropped without a trace. It now routes to 'graph', where dispatchGraphTicket escalates it with reason 'graph_workflow_definition_missing'. That guard is `!definition || !definition.nodeGraph` and only the FIRST half was unreachable - a truthy definition carrying no nodeGraph reached it on main and still does. 'Never dispatches nothing' was the right instinct; manifest-worker was the wrong answer to it.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -83,7 +84,7 @@ describe('chooseDispatchPath — app-contributed workflow flows through registry
     expect(chooseDispatchPath(TEST_TICKET, registry.resolve(TEST_TICKET), BUILT_IN_TICKET_TYPES)).toBe('manifest-worker');
   });
 
-  it('a graph workflow routes to graph only WITH a processDefinition, else falls through to manifest-worker', () => {
+  it('a graph workflow routes to graph on its DECLARED pipeline, with or without a processDefinition', () => {
     const withGraph: WorkflowDefinition = {
       ticketType: TEST_TICKET,
       name: 'Test Graph Flow',
@@ -94,9 +95,10 @@ describe('chooseDispatchPath — app-contributed workflow flows through registry
     registry.registerFromApp(TEST_APP, withGraph);
     expect(chooseDispatchPath(TEST_TICKET, registry.resolve(TEST_TICKET), BUILT_IN_TICKET_TYPES)).toBe('graph');
 
-    // A graph pipeline with no compiled definition must NOT dispatch nothing — it degrades.
+    // A graph pipeline with no compiled definition must not dispatch nothing — and must not
+    // quietly become a one-bot run either. It routes to the graph worker, which escalates it.
     const noGraph: WorkflowDefinition = { ...withGraph, processDefinition: undefined };
-    expect(chooseDispatchPath(TEST_TICKET, noGraph, BUILT_IN_TICKET_TYPES)).toBe('manifest-worker');
+    expect(chooseDispatchPath(TEST_TICKET, noGraph, BUILT_IN_TICKET_TYPES)).toBe('graph');
   });
 
   it('an app CANNOT hijack a built-in: registerFromApp is rejected and build still routes to swarm', () => {

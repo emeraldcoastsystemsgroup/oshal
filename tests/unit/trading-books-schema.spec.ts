@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-134 PR1 schema guards against the REAL oshal Postgres (fail-loud when the stack is down, per the alert-incident-cutover precedent): dual-rail convergence + double-run idempotence, TS↔SQL legacy-book-id bijection, zero NULL book_ids after backfill on user-bearing rows, the straggler-writer trigger filling a legacy-shaped INSERT, cross-user account binding refused at the core store AND the composite FK, and the flag-off dispatch hard-skip rules (foreign bookId → logged no-op; unresolvable bookId under the flag → skip, never legacy fallback).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The prologue is the shared one (tests/helpers/trading-spec-schema.ts). Its own eight ensure* calls were written against the operator's already-built database and did not include ensureDekSchema, so on a bare cluster seedAccount's REAL envelope path died with 42P01 on oshal_user_deks and every lifecycle case failed in the same breath. tests/unit/trading-spec-bare-cluster-prerequisites.spec.ts proves the shared prologue complete on an EMPTY server.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Provisions its OWN disposable PostgreSQL instead of resolving an address. specDatabaseUrl has no default and throws at IMPORT, so with nothing set this file was one of 14 trading specs collapsed to "no tests" on main. A triage called that environmental - a missing database - and it is not: Docker is up, the image is cached, and the repo already ships DisposablePostgres. The blocker was an in-repo edit.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
@@ -16,10 +17,18 @@ import {
 import { accountDigest } from '../../src/app/trading-accounts-store';
 import { dispatchTradingSchedule } from '../../src/app/trading-schedule-dispatch';
 import type { AppContext } from '../../src/app/composition/app-context';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 import { ensureTradingSpecSchema } from '../helpers/trading-spec-schema';
 
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+// Its OWN server, not an address. specDatabaseUrl has no default and throws at IMPORT
+// when nothing is set, which collapsed this whole file to "no tests". It has no default
+// because of the 2026-09-14 incident where trading specs pointed at the operator's live
+// Postgres; a disposable cluster answers both halves - nothing to point, nothing to point at.
+const fixture = new DisposablePostgres({
+  purpose: 'trading-books-schema',
+  options: '-c row_security=off',
+  max: 4,
+});
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB_A = `spec-adr134-${RUN}-a`;
 const SUB_B = `spec-adr134-${RUN}-b`;
@@ -30,12 +39,7 @@ const ctx = () => ({ pool, ticketService: { createTicket: async () => ({}) } } a
 beforeAll(async () => {
   process.env.SESSION_SECRET = process.env.SESSION_SECRET || `spec-secret-${RUN}`;
   delete process.env.TRADING_MULTI_ACCOUNT;
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try {
-    await pool.query('SELECT 1');
-  } catch (error) {
-    throw new Error(`trading-books-schema requires the live oshal Postgres at ${DSN.replace(/:[^:@/]+@/, ':***@')} — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
+  pool = await fixture.start();
   // The runtime rails ARE the migration (dual-rail; idempotent). Running them here both applies
   // and proves them — the designed mixed-version-safe sequence.
   await ensureTradingSpecSchema(pool);
@@ -45,7 +49,7 @@ afterAll(async () => {
   await pool.query(`DELETE FROM oshal_trading_gate_blocks WHERE user_sub LIKE 'spec-adr134-%'`).catch(() => {});
   await pool.query(`DELETE FROM oshal_trading_books WHERE user_sub LIKE 'spec-adr134-%'`).catch(() => {});
   await pool.query(`DELETE FROM oshal_trading_accounts WHERE user_sub LIKE 'spec-adr134-%'`).catch(() => {});
-  await pool.end();
+  await fixture.stop();
 });
 
 describe('legacy book identity — TS ↔ SQL bijection', () => {

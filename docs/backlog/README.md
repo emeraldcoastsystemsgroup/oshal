@@ -68,5 +68,9 @@ relevant ADR or feature documentation, release notes, and git history.
   machine-auth discovery scan does not list `serviceSecretOr` or `getTrustedServiceUserSub`,
   so eight route files authenticate a machine caller and nobody was ever asked what they
   write. Three failures in `machine-write-identity.spec.ts` are red on main because of it.
+- [workspace-isolation-decision.md](./workspace-isolation-decision.md) — all 40 containers
+  mount one workspace volume `:rw` with no subpath, and `execute_command` bypasses persona
+  capability matching. Measured and pinned; ADR-060's three options plus a deliberate
+  fourth are listed, and the choice is the operator's.
 - [archive/](./archive/README.md) — dated snapshots of verified-resolved queue entries; these are
   searchable implementation history, not active work.

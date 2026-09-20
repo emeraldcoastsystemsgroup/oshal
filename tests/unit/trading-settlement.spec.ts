@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix guards: a market BUY whose price read throws (or answers null) with unsettled proceeds present is 503 under refuse and an explicit "NOT checked for unsettled funding" advisory under warn — never a silent $0 pass; with nothing unsettled the price is never read. Source pin: the kernel module contains no silent catch (every catch binds err and logs it at error).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The prologue is the shared one (tests/helpers/trading-spec-schema.ts). Its three ensure* calls omitted ensureDekSchema, so on a bare cluster seedAccount's REAL envelope path died with 42P01 on oshal_user_deks before a single settlement case ran. tests/unit/trading-spec-bare-cluster-prerequisites.spec.ts proves the shared prologue complete on an EMPTY server.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Provisions its OWN disposable PostgreSQL instead of resolving an address. specDatabaseUrl has no default and throws at IMPORT, so with nothing set this file was one of 14 trading specs collapsed to "no tests" on main. A triage called that environmental - a missing database - and it is not: Docker is up, the image is cached, and the repo already ships DisposablePostgres. The blocker was an in-repo edit.
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Pool } from 'pg';
@@ -47,10 +48,18 @@ import {
 } from '../../src/app/trading-settlement';
 import { schwabSettlementFigures } from '../../src/features/trading/services/schwab-broker-adapter';
 import { alpacaAccountType } from '../../src/features/trading/services/alpaca-broker-adapter';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 import { ensureTradingSpecSchema } from '../helpers/trading-spec-schema';
 
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+// Its OWN server, not an address. specDatabaseUrl has no default and throws at IMPORT
+// when nothing is set, which collapsed this whole file to "no tests". It has no default
+// because of the 2026-09-14 incident where trading specs pointed at the operator's live
+// Postgres; a disposable cluster answers both halves - nothing to point, nothing to point at.
+const fixture = new DisposablePostgres({
+  purpose: 'trading-settlement',
+  options: '-c row_security=off',
+  max: 4,
+});
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-settle-${RUN}`;
 let pool: Pool;
@@ -97,10 +106,7 @@ beforeAll(async () => {
   process.env.TRADING_MAX_NOTIONAL_USD = '50000'; process.env.TRADING_MAX_QTY = '100000';
   process.env.TRADING_EXTENDED_HOURS = 'false';
   delete process.env.TRADING_MULTI_ACCOUNT; delete process.env.TRADING_CASH_SETTLEMENT_POLICY; delete process.env.TRADING_SETTLEMENT_DAYS;
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try { await pool.query('SELECT 1'); } catch (error) {
-    throw new Error(`trading-settlement requires the live oshal Postgres at ${DSN.replace(/:[^:@/]+@/, ':***@')} — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
+  pool = await fixture.start();
   await ensureTradingSpecSchema(pool);
   await ensureLegacyBooks(pool as never, SUB);
   const acct = await seedAccount('CASH');
@@ -112,7 +118,7 @@ afterAll(async () => {
   for (const t of ['oshal_trading_orders', 'oshal_trading_decisions', 'oshal_trading_signals', 'oshal_trading_books', 'oshal_trading_accounts']) {
     await pool.query(`DELETE FROM ${t} WHERE user_sub = $1`, [SUB]).catch(() => {});
   }
-  await pool.end();
+  await fixture.stop();
 });
 
 beforeEach(() => {

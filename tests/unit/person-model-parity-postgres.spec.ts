@@ -6,8 +6,11 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-100 Phases 2-4 real-Postgres gate on a scratch database created for the run: (1) the fresh-database enable gate — the full migration chain, then the lazy person-model DDL twice (every object once, rerun changes nothing, consent ledger refuses UPDATE but stays DELETE-clean); (2) deletion/re-projection parity through the migration-138 triggers — a segment delete removes its ambient-recall chunk, a merge re-points asks + chunk tags and rebuilds rollups in the same transaction, forgetting a voice leaves zero derived rows, and the discovered data-lifecycle delete leaves zero rag_chunks rows for the sub while the other owner survives; (3) rebuild idempotency. Fails LOUDLY without a live Postgres — a skipping guard is no guard.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary half of the lazy-DDL guard inventory (tests/helpers/lazy-ddl-guards.ts): after the lazy DDL, every known by-name trigger/function guard must render on a real Postgres exactly as its pinned live definition (pg_get_triggerdef / prosrc), so a pin that drifts from the engine is red here and a definition that drifts from the pin is red in the static spec.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | This spec now STARTS its own PostgreSQL and removes it, instead of taking an address from the environment at all. Refusing an unpointed run (entry 3) made the 2026-09-14 accident impossible but left the file unrunnable: specDatabaseUrl threw while the MODULE was being evaluated, so vitest reported a failed suite with ZERO tests collected and every parity claim below went unasserted in every gate — which is the same amount of protection the old default gave, only without the production writes. A private server is both safe and executable: the address is invented at startup, nothing inherits a DSN, and no caller-supplied value can reach a deployment. The scratch-database dance goes with it — there is no CREATE DATABASE, no pg_terminate_backend and no DROP DATABASE against someone else's cluster, because the whole server is force-removed instead, so no cleanup SQL ever runs anywhere this file did not create.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The container runs pgvector/pgvector:pg16 — the live stack's own datastore image — rather than delegating to tests/helpers/disposable-postgres.ts, which is pinned to postgres:16-alpine. That image ships no `vector` control file, so migration 070 would take its documented self-skip branch, rag_chunks would never be created, and the five deletion/re-projection cases here would assert over a table that does not exist. tests/unit/migration-runner-fresh-install-postgres.spec.ts pins the same image for the same reason; this file follows it rather than weakening the claim to fit a fixture.
  */
 
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'crypto';
 import { resolve } from 'path';
 import { Pool } from 'pg';
@@ -17,11 +20,13 @@ import { personModelSchemaStatements } from '@/features/person-model';
 import { SpeakerProfileStore } from '@/features/speaker-diarization';
 import { discoverSubKeyedExporters, executeDeleteAll } from '@/features/data-lifecycle';
 import { KNOWN_BY_NAME_GUARDS, normalizeSql } from '../helpers/lazy-ddl-guards';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
 
-const ADMIN_DSN = specDatabaseUrl(['PERSON_MODEL_TEST_DSN', 'TEST_DATABASE_URL']);
+/** The live stack's datastore image (docker-compose.oshal-local.yml), so migration 070 does not self-skip. */
+const POSTGRES_IMAGE = 'pgvector/pgvector:pg16';
+const MIGRATIONS_DIR = resolve(__dirname, '..', '..', 'scripts', 'migrations');
 const RUN = randomUUID().slice(0, 8);
-const SCRATCH_DB = `pm_gate_${RUN}`;
+const CONTAINER = `oshal-person-model-parity-fixture-${randomUUID()}`;
+const FIXTURE_DB = 'person_model_fixture';
 const A = `spec-adr100-${RUN}-a`;
 const B = `spec-adr100-${RUN}-b`;
 const P1 = randomUUID();
@@ -29,10 +34,37 @@ const P2 = randomUUID();
 const P3 = randomUUID();
 const AT = '2026-09-10T15:00:00.000Z';
 const seg = (n: number): string => `seg-${RUN}-${n}`;
-const safeDsn = (dsn: string): string => dsn.replace(/\/\/([^:@/]+):[^@/]*@/, '//$1:***@');
 
-let admin: Pool;
+let started = false;
 let pool: Pool;
+
+/** Docker arguments are fixed except the password minted below; no inherited DSN is ever read. */
+function docker(args: string[]): string {
+  return execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 }).trim();
+}
+
+/**
+ * @description Start a PostgreSQL this file owns — loopback-published on a kernel-assigned port, data
+ * on a tmpfs, credentials minted here — and wait for it to answer. Nothing outside this process can
+ * name it, which is why there is no longer any address for the spec to be pointed at.
+ * @returns The connected pool for the private server.
+ * @throws When Docker is unavailable or the server never became ready.
+ */
+async function startPostgres(): Promise<Pool> {
+  const password = randomUUID();
+  docker(['run', '--detach', '--rm', '--name', CONTAINER, '--label', 'oshal.test-fixture=person-model-postgres',
+    '--publish', '127.0.0.1::5432', '--tmpfs', '/var/lib/postgresql/data', '--memory', '512m', '--cpus', '1',
+    '--env', `POSTGRES_PASSWORD=${password}`, '--env', `POSTGRES_DB=${FIXTURE_DB}`, POSTGRES_IMAGE]);
+  started = true;
+  const match = /:(\d+)$/.exec(docker(['port', CONTAINER, '5432/tcp']));
+  if (!match) throw new Error('Disposable PostgreSQL must publish exactly one loopback port');
+  const fresh = new Pool({ host: '127.0.0.1', port: Number(match[1]), user: 'postgres', password, database: FIXTURE_DB, max: 4, connectionTimeoutMillis: 1_000 });
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    try { await fresh.query('SELECT 1'); return fresh; }
+    catch { await new Promise((tick) => setTimeout(tick, 400)); }
+  }
+  throw new Error('Disposable PostgreSQL did not become ready');
+}
 
 async function count(sql: string, params: unknown[] = []): Promise<number> {
   const { rows } = await pool.query(`SELECT COUNT(*)::int AS n FROM ${sql}`, params);
@@ -92,30 +124,20 @@ async function insertEnrichment(owner: string, id: string, topics: string[], ask
 
 describe('person-model fresh-database gate + deletion/re-projection parity (ADR-100, migration 138)', () => {
   beforeAll(async () => {
-    admin = new Pool({ connectionString: ADMIN_DSN, max: 2 });
-    // Fail LOUDLY rather than skipping — a guard that quietly disappears when the database is absent
-    // is exactly how a parity defect reaches a deploy.
-    await admin.query('SELECT 1').catch((err: Error) => {
-      throw new Error(`person-model parity gate needs a live Postgres at ${safeDsn(ADMIN_DSN)} — ${err.message}. Start the stack (bash scripts/oshal-up.sh) or set PERSON_MODEL_TEST_DSN.`);
-    });
-    await admin.query(`CREATE DATABASE "${SCRATCH_DB}"`);
-    const url = new URL(ADMIN_DSN);
-    url.pathname = `/${SCRATCH_DB}`;
-    pool = new Pool({ connectionString: url.toString(), max: 4 });
+    // Fail LOUDLY rather than skipping — a guard that quietly disappears when Docker is absent is
+    // exactly how a parity defect reaches a deploy.
+    pool = await startPostgres();
     process.env.RUN_MIGRATIONS = 'true';
     delete process.env.OSHAL_SCHEMA_BOOTSTRAP;
-    const applied = await new DatabaseBootstrapService(pool, resolve(__dirname, '..', '..', 'scripts', 'migrations')).applyMigrations();
+    const applied = await new DatabaseBootstrapService(pool, MIGRATIONS_DIR).applyMigrations();
     expect(applied).toContain('138-person-model-parity.sql');
     expect(applied).toContain('070-rag-chunks-pgvector.sql');
   }, 300_000);
 
+  // No DROP DATABASE and no DELETE pass: the whole server goes away, so there is nothing to clean
+  // and nowhere to clean it.
   afterAll(async () => {
-    await pool?.end().catch(() => undefined);
-    if (admin) {
-      await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [SCRATCH_DB]).catch(() => undefined);
-      await admin.query(`DROP DATABASE IF EXISTS "${SCRATCH_DB}"`).catch(() => undefined);
-      await admin.end();
-    }
+    try { await pool?.end(); } finally { if (started) docker(['rm', '--force', CONTAINER]); }
   }, 60_000);
 
   it('applies the lazy person-model DDL on the freshly migrated database, and a rerun changes nothing', async () => {

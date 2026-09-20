@@ -7,9 +7,10 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review round 2: normalizePricingDate also refuses a WEEKEND date (the reminder leg runs weekdays only, so a Saturday pricing date gave a T-0 whose due minute could never be reached).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Review round 3: the outward hop is now proven BOUNDED (a router that never resolves costs one deadline, not the tick — announceEventAlert returns notified:null and the shelf row still lands, and alertFirstS1 with a hanging seam still returns having claimed), notifyTimeoutMs config is pinned (env → clamped → 20s default), and alertNotifierFrom is pinned as the seam the state-machine hook passes: a deps bag carrying `notify` wins, anything else falls back to the real two-rail announce. That resolver is what keeps the design's injectable notify seam without the plan module's EventPlanDeps having to change before the hook can land.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | This spec now STARTS its own PostgreSQL and removes it, the way its trading-event-plans sibling does, instead of taking an address from the environment at all. Refusing an unpointed run made the accident impossible but not the run: nothing supplied OSHAL_TEST_DSN, so `const DSN = specDatabaseUrl(...)` threw at MODULE LOAD and vitest reported a failed suite with zero cases executed — a guard that cannot run is not protecting the alert rail, it is only silent about it. A private server is both safe and executable, and there is no longer any value a caller can supply that would reach a deployment. The DELETE-by-sub teardown for both subs goes with it: the container is destroyed, so no cleanup SQL runs anywhere, which is precisely the statement class that ran in production twice on 2026-09-14. The `ALTER TABLE oshal_trading_event_plans OWNER TO oshal_app` handoff is gone too — that role exists only in the shared deployment this spec no longer touches, and its `IF EXISTS (SELECT 1 FROM pg_roles ...)` guard made it a no-op on a private server. The pool's `max: 4` and `-c row_security=off` carry over unchanged onto the fixture. One setting is NEW rather than carried: `statementTimeoutMs: 60_000`. The old pool declared no statement timeout at all, and the fixture's own default is 15 s, which a cold container plus schema bootstrap can exceed on a loaded box; it matches the trading-event-plans reference conversion.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import crypto from 'crypto';
 import { readFileSync } from 'fs';
 import * as path from 'path';
@@ -23,9 +24,14 @@ import { ensureBooksSchema, ensureLegacyBooks, legacyBook } from '../../src/app/
 import { ensureTradingSchema } from '../../src/app/trading-engine';
 import type { AppContext } from '../../src/app/composition/app-context';
 import type { NotifyOutcome } from '../../src/features/notifications';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+// A PostgreSQL this file owns: started here, removed in afterAll, reachable from nothing else.
+// `row_security=off` keeps the superuser's reads across the FORCE-RLS plan table explicit.
+const database = new DisposablePostgres({
+  purpose: 'trading-event-alerts', database: 'trading_fixture', memory: '384m', max: 4,
+  statementTimeoutMs: 60_000, options: '-c row_security=off',
+});
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-evta-${RUN}`;
 const SUB_B = `spec-evtb-${RUN}`;
@@ -47,23 +53,13 @@ function fakeRouter(outcome: NotifyOutcome = { delivered: true, channel: 'email'
 beforeAll(async () => {
   process.env.SESSION_SECRET = process.env.SESSION_SECRET || `spec-secret-${RUN}`;
   process.env.TRADING_MAX_NOTIONAL_USD = '50000'; process.env.TRADING_MAX_QTY = '100000';
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try { await pool.query('SELECT 1'); } catch (error) {
-    throw new Error(`trading-event-alerts requires the live oshal Postgres at ${DSN.replace(/:[^:@/]+@/, ':***@')} — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
+  pool = await database.start();
   await ensureBooksSchema(pool as never); await ensureTradingSchema(pool as never); await ensureEventPlansSchema(pool as never);
-  await pool.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'oshal_app') THEN EXECUTE 'ALTER TABLE oshal_trading_event_plans OWNER TO oshal_app'; END IF; END $$;`);
   await ensureLegacyBooks(pool as never, SUB);
 }, 120_000);
 
-afterAll(async () => {
-  for (const s of [SUB, SUB_B]) {
-    await pool.query(`DELETE FROM jarvis_tasks WHERE user_sub = $1`, [s]).catch(() => {});
-    await pool.query(`DELETE FROM oshal_trading_event_plans WHERE user_sub = $1`, [s]).catch(() => {});
-    await pool.query(`DELETE FROM oshal_trading_books WHERE user_sub = $1`, [s]).catch(() => {});
-  }
-  await pool.end();
-});
+// No DELETE pass: the whole server goes away, so there is nothing to clean and nowhere to clean it.
+afterAll(async () => { await database.stop(); });
 
 describe('pure pieces', () => {
   it('the shelf task id carries the FULL planId and differs per owner (global-PK collision guard)', () => {
