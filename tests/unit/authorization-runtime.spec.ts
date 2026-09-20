@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApplicationAuthorizationRuntime, applicationAuthorizationMode } from '@/app/composition/application-authorization-runtime';
 import { ManifestRouteMounterImpl } from '@/app/composition/manifest-route-mounter';
 import { createApplicationAuthorizationGate } from '@/app/middleware/application-authorization-gate';
+import type { AppAccessResolver } from '@/features/swarm-apps';
 import { ApplicationAuthorizationService, MemoryAuthorizationStore } from '@/features/application-authorization';
 import { SwarmAppService, type SwarmAppManifest, type SwarmApplicationRecord } from '@/features/swarm-apps';
 import type { AuthorizationActor, AuthorizationCatalog } from '@/shared/application-authorization';
@@ -150,8 +151,31 @@ beforeEach(async () => {
   };
   const ctx = { pool, fixtureObserve: observe, fixtureHasCatalog: () => hasCatalog,
     fixtureFactoryContext: (value: unknown) => factoryContexts.push(value), applicationAuthorization: runtime, authorizationTool: {} } as unknown as AppContext;
+  // TYPED, deliberately: this double used to be cast `as never`, and that cast is what let it rot.
+  // It declared `resolve`, which #605 replaced with `resolveForPrincipal(appName, userSub,
+  // userIssuer, declaration)` when grants became (subject, issuer) pairs. Nothing complained at
+  // compile time, so the rename surfaced only at runtime — the mounter called an undefined method,
+  // its catch fired, and all 17 cases in this file got 503 app_access_unavailable instead of the
+  // status they assert. It is typed now, but be clear about what that does and does not buy: the
+  // annotation is NOT a guard today, because tsconfig.json excludes `tests`, `**/*.spec.ts` and
+  // `**/*.test.ts`, and `npm run typecheck` runs only that config and tsconfig.server.json — so
+  // nothing typechecks this tree at all (measured: a probe config over tests/ reports 933 errors).
+  // Verified by mutation: renaming this method back to `resolve` leaves `npm run typecheck` at
+  // exit 0. What actually catches the rename is this file going RED, which it did — for weeks,
+  // unnoticed among 73 other red files. The annotation is here so the day the test tree IS
+  // typechecked, this is one fewer thing to find. See docs/BACKLOG.md.
+  const appAccessDouble: AppAccessResolver = {
+    resolveForPrincipal: async (appName, userSub) => ({
+      appName, userSub, tier: 'admin', bundle: null, source: 'default',
+    }),
+  };
   mounter = new ManifestRouteMounterImpl(app, requiresAuth, ctx,
-    { resolve: async () => ({ appName: 'runtime-app', userSub: 'alice', tier: 'admin', source: 'default' }) } as never, runtime);
+    // The double implements AppAccessResolver's REAL method. It used to declare `resolve`, which
+    // #605 replaced with `resolveForPrincipal(appName, userSub, userIssuer, declaration)` when
+    // grants became (subject, issuer) pairs. The `as never` cast silenced the type error, so the
+    // rename showed up only at runtime: the mounter called an undefined method, the catch fired,
+    // and every case in this file got 503 app_access_unavailable instead of the status it asserts.
+    appAccessDouble, runtime);
   app.use((_req, res) => res.status(404).json({ error: 'fixture_not_found' }));
   apps = new SwarmAppService(pool as never, repo as never, { updateAgentStatus: async () => undefined } as never,
     undefined, undefined, undefined, mounter, undefined, undefined, undefined,

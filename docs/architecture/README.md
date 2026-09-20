@@ -38,6 +38,26 @@ The guiding model is:
 - [OSHAL-agent-runtime-design-and-implementation-plan.md](./OSHAL-agent-runtime-design-and-implementation-plan.md)
   - full target runtime design and corrected responsibility boundary
 
+### "Layer" means five different things in this codebase
+
+The word is overloaded, and two of the senses sit next to each other in the same prompt-assembly
+path, which is where the confusion actually costs something. Each sense below is distinct, all five
+are load-bearing somewhere, and **none of them is being renamed** — this repository does not rename
+for taste. Read this before using the word in a document, an identifier or a persona.
+
+| Sense | Where it is defined | What it means |
+|---|---|---|
+| **FSD layers** | [CLAUDE.md](../../CLAUDE.md) "Feature-Sliced Design", and the section directly below | The import direction `app/ → pages/ → features/ → entities/ → shared/`. A compile-and-lint boundary, nothing to do with prompts. |
+| **Persona composition layers** | [`persona-layer-composer.ts`](../../src/features/agent-management/services/persona-layer-composer.ts) (`PersonaLayerType`), table `persona_layers` | The closed six-value union `platform \| host \| tenant \| role \| session \| task` with integer precedence, assembled into one prompt. **This is the sense meant by "persona layer".** |
+| **Memory layers** | [`memory-layer-service.ts`](../../src/features/memory/services/memory-layer-service.ts) | The three non-swarm memory tiers above durable task history: checkpoints, per-agent local memory, and knowledge-memory document metadata for retrieval. |
+| **Slash-command instruction layers** | [`SlashCommandGenerator.js`](../../any-bot/server/services/SlashCommandGenerator.js) | Static and dynamic custom-instruction fragments, split so each concern stays independently maintainable. A file-generation concept, not a prompt-assembly one. |
+| **Layer 0/1/2/3/4** *(historical)* | [layer0-provider-framework.md](./layer0-provider-framework.md), [layer1-tools-framework.md](./layer1-tools-framework.md) | **Historical build-phase numbering**, kept because the documents are still accurate about providers and tools. It is not a runtime hierarchy and nothing dispatches on it. |
+
+The trap worth naming: the tools framework's "Layer 1" and a persona composition layer are unrelated,
+and a reader who assumes otherwise will look for tool authorization inside the prompt text. Tool
+availability is resolved separately from `agent_tools.auth_mode` and handed to the runtime as a
+binding; it is never prompt text.
+
 ### Layer Architecture
 - [layer0-provider-framework.md](./layer0-provider-framework.md)
   - provider config, model selection, secrets, and runtime provider resolution

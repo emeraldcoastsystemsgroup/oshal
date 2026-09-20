@@ -15,6 +15,9 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Alert triage P3 (ADR-119 FR-E4): VALID_TRANSITIONS allows backlog → complete — the opt-in self-resolve close for a fully-resolved alert incident that never left backlog (previously an Invalid state transition, forcing a fake promote before closing)
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Persist verified ticket-owner issuer provenance in reserved metadata so later background bot dispatch can sign the original identity namespace without accepting a caller-spoofed value.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Do not lose an already inserted ticket to a failed provenance capture. Capture is supplementary and its absence fails closed at dispatch, so it is logged and degraded rather than thrown back at a creation the store has already accepted.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Every approval_required ticket carries a reason from a closed vocabulary and a nextAction saying whether anyone has to act (CKR-12 / D5). The cockpit renders ONE badge for at least five conditions and ONE of them needs no human: planning_complete does NOT block children - ADR-031's amendment (headed 2026-07-18) records that commit 6a376cb6 stopped it on 2026-06-22, and PARENT_READY_FOR_CHILD_DISPATCH_STATES has included the state since. planner_returned_no_work is NOT in that category - it resolves to operator_review_plan, because somebody has to look at the plan. Two backstops for the two routes through this file: buildStatusTransitionMetadata covers transitions, and createTicket covers creation, which does not pass through it - an incident held at intake is created in the state, never transitioned into it.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | A THIRD route into approval_required, found in review, and two corrections. updateTicket is typed Omit<..., 'status'> and did not exclude it at RUNTIME - PATCH /api/tickets/:id passes req.body straight in, and JSON does not respect an Omit - so a body carrying status wrote it to the store directly, skipping VALID_TRANSITIONS, the status-history record and the reason backstop. A PATCH that sets approval_required this way produced a ticket with no reason and no nextAction, which falsifies the "two routes in" claim the previous entry makes. Dropped and logged rather than rejected: a client echoing a whole ticket back is an ordinary PATCH shape. Also: "two of them need no human" was wrong - planner_returned_no_work resolves to operator_review_plan, because somebody does have to look at the plan. One needs no human, not two. And ADR-031's amendment is headed 2026-07-18; 2026-06-22 is commit 6a376cb6, which is what changed the behaviour.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | Extracted buildCreationApprovalMetadata. Adding the creation backstop inline took createTicket from 40 to 54 code lines, over the 50-line cap - the rule caught it, a review caught that I had not.
  */
 
 import {
@@ -121,12 +124,18 @@ export class TicketService {
     const resolvedStatus = (input.ticketType === 'incident' && !isTrustedAlertSource)
       ? 'approval_required'
       : (input.status ?? 'backlog');
+    // Creation does NOT pass through buildStatusTransitionMetadata - there is no transition to
+    // stamp - so it needs its own backstop, or an incident held at intake reaches the cockpit
+    // with the same unexplained badge the transition path just stopped producing.
+    const approvalMetadata = buildCreationApprovalMetadata(
+      resolvedStatus, input.ticketType, input.metadata ?? {},
+    );
     // Classify the ticket into its proper queue (application) instead of dumping it
     // into "Default". An explicit queueId already on the metadata (e.g. chat rows
     // written as queue=chat) is respected; otherwise the ticketType maps to its
     // owning app queue. This is the single point that reclassifies every creation
     // path that flows through the service.
-    const derivedMetadata = applyDerivedQueueMetadata(input.metadata ?? {}, {
+    const derivedMetadata = applyDerivedQueueMetadata({ ...(input.metadata ?? {}), ...approvalMetadata }, {
       ticketType: input.ticketType,
       metadata: input.metadata ?? {},
     });
@@ -359,7 +368,23 @@ export class TicketService {
     logger.info({ ticketId }, 'Updating ticket fields');
     const current = await this.ticketStore.get(ticketId);
     if (!current) throw new Error('Ticket not found');
-    await this.ticketStore.update(ticketId, protectTicketAuthorityUpdate(current, updates));
+    // `status` is excluded by the TYPE and was not excluded at RUNTIME, which is a different
+    // thing entirely: PATCH /api/tickets/:id passes req.body straight in, and JSON does not
+    // respect an Omit. A body carrying `status` wrote it directly to the store - skipping
+    // VALID_TRANSITIONS, the status-history record, and the approval_required reason backstop.
+    // Dropped rather than rejected, because a client echoing a whole ticket back is an ordinary
+    // PATCH shape and should not 500; logged, because a caller that expected it to take effect
+    // needs to find out.
+    const { status: attemptedStatus, ...fieldUpdates } =
+      updates as Partial<InternalTicket> & { status?: unknown };
+    if (attemptedStatus !== undefined) {
+      logger.warn(
+        { ticketId, attemptedStatus, currentStatus: current.status },
+        'updateTicket ignored a status field — status changes go through updateStatus, which '
+        + 'enforces the transition table, records history, and stamps an approval reason',
+      );
+    }
+    await this.ticketStore.update(ticketId, protectTicketAuthorityUpdate(current, fieldUpdates));
   }
 
   /**
@@ -473,6 +498,84 @@ export class TicketService {
   }
 }
 
+/**
+ * @description The closed set of reasons a ticket may sit at `approval_required`, and what each
+ * one is actually waiting for. The cockpit renders ONE badge - "Approval Required" - for all of
+ * them, and two of the five need no human at all, so the badge alone tells an operator nothing
+ * about whether to act. Every writer names its reason; anything else is a bug, not a new case.
+ *
+ * `planning_complete` is the one that reads wrongly without this table: children are NOT blocked
+ * on it, so nothing here needs a human. ADR-031's amendment (headed 2026-07-18) records that
+ * commit 6a376cb6 stopped it on 2026-06-22, and PARENT_READY_FOR_CHILD_DISPATCH_STATES has
+ * included this state ever since. `planner_returned_no_work` is NOT in that category - somebody
+ * does have to look at the plan, which is why it resolves to operator_review_plan.
+ */
+export const APPROVAL_REQUIRED_REASONS = Object.freeze({
+  /** A graph workflow reached an approval-gate node and suspended. A human must approve to resume. */
+  approval_gate: 'operator_approve_to_resume',
+  /** PM planning produced child tickets. The parent is parked; the children already dispatch. */
+  planning_complete: 'none_children_dispatch_independently',
+  /** The planner returned no work at all. Somebody has to look at the plan. */
+  planner_returned_no_work: 'operator_review_plan',
+  /** An incident arrived from an untrusted source and is held at intake for triage. */
+  incident_intake_triage: 'operator_approve_to_dispatch',
+  /** A federal-capture lead was drafted for review rather than auto-approved. */
+  capture_lead_review: 'operator_approve_or_close',
+  /**
+   * The backstop value: a writer reached this state without naming why. It is IN the vocabulary
+   * deliberately, so "every approval_required ticket carries a reason from the closed set" is
+   * literally true rather than true-except-for-a-hole. It resolves to operator review because an
+   * unexplained hold is the one case a human definitely has to look at.
+   *
+   * A transition is NOT rejected for omitting a reason. Transitions into this state arrive from
+   * the cockpit as well as from the five writers, and a 500 on an operator's own status change
+   * would be a worse failure than an unlabelled badge.
+   */
+  unspecified_approval_required: 'operator_review_required',
+} as const);
+
+/**
+ * @description The reasons a ticket may sit at `approval_required`. Union of the vocabulary's own
+ * keys, so a reason added there is a reason here and the two cannot drift apart.
+ */
+export type ApprovalRequiredReason = keyof typeof APPROVAL_REQUIRED_REASONS;
+
+/**
+ * @description Resolves the nextAction for an approval_required reason, fail-closed.
+ * @param reason - A reason from the closed vocabulary, or anything at all.
+ * @returns The matching nextAction, or the review fallback for an unrecognised reason.
+ */
+function approvalNextAction(reason: string): string {
+  return (APPROVAL_REQUIRED_REASONS as Record<string, string>)[reason] ?? 'operator_review_required';
+}
+
+/**
+ * @description The approval reason a ticket CREATED in `approval_required` carries.
+ * @param resolvedStatus - The status this creation will actually store.
+ * @param ticketType - The ticket type, which is what makes an intake hold identifiable.
+ * @param metadata - Metadata the caller supplied; anything it names is kept.
+ * @returns Metadata to merge onto the creation, or an empty object for any other status.
+ *
+ * Separate from buildStatusTransitionMetadata because creation is a separate route into the
+ * state and does not pass through it: an incident held at intake is created there and never
+ * transitioned into it, so without this it reached the cockpit with the unexplained badge the
+ * transition backstop had just stopped producing.
+ */
+function buildCreationApprovalMetadata(
+  resolvedStatus: OshalTicketState,
+  ticketType: string,
+  metadata: TicketStatusMetadata,
+): TicketStatusMetadata {
+  if (resolvedStatus !== 'approval_required') return {};
+  const reason = readNonEmptyString(metadata.reason)
+    ?? (ticketType === 'incident' ? 'incident_intake_triage' : 'unspecified_approval_required');
+  return {
+    reason,
+    source: readNonEmptyString(metadata.source) ?? 'ticket-service',
+    nextAction: readNonEmptyString(metadata.nextAction) ?? approvalNextAction(reason),
+  };
+}
+
 function buildStatusTransitionMetadata(
   ticketId: string,
   fromStatus: OshalTicketState,
@@ -494,6 +597,22 @@ function buildStatusTransitionMetadata(
       previousStatus: readNonEmptyString(base.previousStatus) ?? fromStatus,
       ticketId: readNonEmptyString(base.ticketId) ?? ticketId,
       quarantinedAt: readNonEmptyString(base.quarantinedAt) ?? new Date().toISOString(),
+      ...(changedBy ? { changedBy } : {}),
+    };
+  }
+  // approval_required backstop. Four writers reached this state and none passed transition
+  // metadata, so the cockpit rendered one "Approval Required" badge for at least five different
+  // conditions - two of which need no human. A reason is now structurally present, and its
+  // nextAction says whether anyone has to do anything.
+  if (toStatus === 'approval_required') {
+    const reason = readNonEmptyString(base.reason) ?? 'unspecified_approval_required';
+    return {
+      ...base,
+      reason,
+      source: readNonEmptyString(base.source) ?? 'ticket-service',
+      nextAction: readNonEmptyString(base.nextAction) ?? approvalNextAction(reason),
+      previousStatus: readNonEmptyString(base.previousStatus) ?? fromStatus,
+      ticketId: readNonEmptyString(base.ticketId) ?? ticketId,
       ...(changedBy ? { changedBy } : {}),
     };
   }

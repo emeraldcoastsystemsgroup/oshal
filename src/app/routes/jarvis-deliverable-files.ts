@@ -32,18 +32,32 @@ import path from 'node:path';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition-root';
 import { saveContent } from './storage-target';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'jarvis-deliverable-files' });
 
-/** The shared agent workspace. Worker output may reference files under here — and nowhere else. */
-const WORKSPACE_ROOT = process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared';
+/**
+ * The shared agent workspace. Worker output may reference files under here — and nowhere else.
+ *
+ * Resolved per call, not at module scope, and through the one canonical resolver rather than a
+ * single environment variable. A module-scope const froze the root at import, so a process that
+ * set the root after this module loaded read a different directory than the rest of the platform;
+ * reading only CLINE_WORKSPACE_ROOT meant a deployment configured through OSHAL_WORKSPACE_ROOT or
+ * SHARED_WORKSPACE_ROOT resolved here to the container default while everything else resolved to
+ * the configured root. Both are containment boundaries, so disagreement is not cosmetic.
+ */
+function workspaceRoot(): string {
+  return resolveSharedWorkspaceRoot();
+}
 
 /**
  * Every user's PRIVATE store lives at `<workspace>/userfiles/<sha256(sub)>` (storage-target.ts).
  * It is inside the workspace root, so a containment check against the root alone would happily
  * authorise reading another tenant's private files. This subtree is refused outright.
  */
-const USERFILES_ROOT = path.join(WORKSPACE_ROOT, 'userfiles');
+function userfilesRoot(): string {
+  return path.join(workspaceRoot(), 'userfiles');
+}
 
 /** Bounds. A deliverable is a report, not a disk image, and one answer is not a backup job. */
 const MAX_FILES = 5;
@@ -88,11 +102,16 @@ export function extractWorkspacePaths(text: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   // Built from the CONFIGURED root, not a hardcoded '/app/workspace-shared'. The root is
-  // overridable via CLINE_WORKSPACE_ROOT, and a literal here would silently extract nothing on
-  // any deployment that sets it — the capture would appear to work and produce no links.
+  // resolved through the one canonical resolver, so it honours every workspace variable the
+  // platform supports; a literal here would silently extract nothing on any deployment that sets
+  // one — the capture would appear to work and produce no links.
   // A path segment charset deliberately narrower than the filesystem's: no spaces, no quotes, no
   // parens — so a trailing `)` from a markdown link or a `.` ending a sentence is not swallowed.
-  const rootPattern = WORKSPACE_ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // POSIX separators before escaping. The text under extraction was written by a bot running in a
+  // Linux container, so it always uses '/', while the resolver normalises to the host separator —
+  // on Windows that produced a pattern that could never match its own workspace. The root is the
+  // same absolute path either way; only the separator style is normalised for the match.
+  const rootPattern = workspaceRoot().split(path.sep).join('/').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`${rootPattern}/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*`, 'g');
   for (const m of String(text || '').matchAll(re)) {
     const raw = m[0].replace(/[.,;:]+$/, '');
@@ -118,9 +137,10 @@ function readIfSafe(candidate: string): { name: string; buf: Buffer } | null {
     // realpath FIRST: it resolves `..` and follows symlinks, so the containment checks below are
     // made against where the path actually lands, not where it claims to.
     const real = fs.realpathSync(candidate);
-    if (!isInside(WORKSPACE_ROOT, real)) return null;
+    if (!isInside(workspaceRoot(), real)) return null;
     // The private-store subtree is another tenant's data. Refused even though it is under the root.
-    if (isInside(USERFILES_ROOT, real) || real === USERFILES_ROOT) return null;
+    const userfiles = userfilesRoot();
+    if (isInside(userfiles, real) || real === userfiles) return null;
     const st = fs.statSync(real);
     if (!st.isFile() || st.size === 0 || st.size > MAX_BYTES) return null;
     return { name: path.basename(real), buf: fs.readFileSync(real) };

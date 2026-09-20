@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com     | Prove package Takeout registration, archive guards, owner dispatch, and lifecycle teardown.
+ * 2   | maintainer@emeraldcoastsystemsgroup.com     | Drop the one case that reached into the STORE repo. It imported a package handler over a relative path into a sibling checkout, which Rule 0c forbids and which made this file permanently red in the sanctioned nightly: that gate runs from a git-archive export under the local state directory, where no sibling store repo exists, so the static specifier could not resolve and every case here collapsed at import. The coverage was not dropped - it moved to the package that owns it, youtube-kids/tests/session-crypto.test.mjs, where it runs against the COMPILED artifact and was widened to cover the randomized envelope and the pre-database refusal. What stays here is the core contract: the Takeout slice registry, the archive guards, owner dispatch, lifecycle teardown and manifest validation, none of which need a store checkout.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -18,7 +19,6 @@ import type { AppContext } from '@/app/composition/app-context';
 import { createTakeoutRoutes } from '@/app/routes/takeout-routes';
 import { TakeoutSliceRegistry } from '@/app/takeout-slice-registry';
 import { readManifest, SwarmAppService, type SwarmAppTakeoutSliceDeclaration } from '@/features/swarm-apps';
-import { ingestTakeoutWatchHistory as ingestKidLensTakeout } from '../../../oshal-applications/youtube-kids/src-routes/youtube-kids-routes';
 
 const ARCHIVE_JSON = 'Takeout/Product/history.json';
 const ARCHIVE_HTML = 'Takeout/Product/history.html';
@@ -145,43 +145,6 @@ describe('package-contributed Takeout route', () => {
     registry.unregister('product-app');
     await expect(registry.register('escaped-app', packageDir, [declaration({ module: '../outside.js' })]))
       .rejects.toThrow(/outside package/);
-  });
-});
-
-describe('Kid Lens package handler', () => {
-  it('reuses the encrypted direct-upload store and keys each write to the supplied owner', async () => {
-    const previousSecret = process.env.SESSION_SECRET;
-    process.env.SESSION_SECRET = 'takeout-registration-test-secret';
-    const writes: Array<{ sql: string; params?: unknown[] }> = [];
-    const pool = {
-      query: async (sql: string, params?: unknown[]) => {
-        if (sql.includes('INSERT INTO oshal_youtube_activity')) writes.push({ sql, params });
-        return { rows: [], rowCount: 0 };
-      },
-    };
-    const content = JSON.stringify([{
-      title: 'Watched Build a glider',
-      subtitles: [{ name: 'Science Channel' }],
-      time: '2026-08-05T10:00:00.000Z',
-    }]);
-    try {
-      const ownerA = await ingestKidLensTakeout(
-        { ...fakeContext, pool } as unknown as AppContext,
-        { userSub: 'parent-a', content, fileName: ARCHIVE_JSON },
-      );
-      const ownerB = await ingestKidLensTakeout(
-        { ...fakeContext, pool } as unknown as AppContext,
-        { userSub: 'parent-b', content, fileName: ARCHIVE_JSON },
-      );
-      expect(ownerA.summary).toContain('1 watch entries across 1 channels');
-      expect(ownerB.summary).toContain('1 watch entries across 1 channels');
-      expect(writes.map((write) => write.params?.[0])).toEqual(['parent-a', 'parent-b']);
-      expect(writes[0].params?.[2]).not.toBe(content);
-      expect(String(writes[0].params?.[2]).split(':')).toHaveLength(3);
-    } finally {
-      if (previousSecret === undefined) delete process.env.SESSION_SECRET;
-      else process.env.SESSION_SECRET = previousSecret;
-    }
   });
 });
 

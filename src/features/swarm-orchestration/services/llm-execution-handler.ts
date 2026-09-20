@@ -67,6 +67,7 @@ import {
   type TrustedPromptConfiguration,
 } from './prompt-containment';
 import { optionalExactUserSubject } from '@/shared/security/exact-user-subject';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 /**
  * @description Proxy wrapper around LLMService that captures token usage from provider responses.
@@ -1003,8 +1004,10 @@ ${messageText}
   }
 
   // Workspace boundary enforcement — prevents bots from wandering into /app/src
-  const wsRoot = process.env.SHARED_WORKSPACE_ROOT
-    || (require('fs').existsSync('/app/workspace') ? '/app/workspace' : require('path').resolve(process.cwd(), 'workspace-shared'));
+  // CKR-17: one resolver. This inline chain read only SHARED_WORKSPACE_ROOT, so a deployment
+  // configured through OSHAL_WORKSPACE_ROOT told the bot a workspace path that no other component
+  // agreed with — and this string is the path the bot is instructed to write everything into.
+  const wsRoot = resolveSharedWorkspaceRoot();
   const workspacePath = workspaceTaskId ? require('path').join(wsRoot, workspaceTaskId) : wsRoot;
   parts.push(`== WORKSPACE RULES (MANDATORY) ==
 

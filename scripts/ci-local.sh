@@ -32,6 +32,7 @@
 # 25 | maintainer@emeraldcoastsystemsgroup.com   | An inherited export the purge cannot clear no longer ends the run. `rm -rf` was bounded in entry 22, but a purge FAIL still returned from prepare_head_src: twelve node gates were skipped and $GATE_SRC kept naming the half-deleted tree, which gate_kernel_skills_image and gate_trivy read outside the node-gate block - so the image tier silently judged a previous commit. The export is disposable, so a corpse that will not delete is renamed to ci-src.abandoned.<ts>-<pid> and this run exports beside it; sweep_abandoned_exports gives each one a bounded retry next run, and a rename that itself fails points GATE_SRC at a path that does not exist so those gates refuse loudly. Closes the last done-when of the 2026-09-09 nine-hour wedge: a run that inherits a leftover export reaches its gates and writes an outcome line.
 # 26 | maintainer@emeraldcoastsystemsgroup.com   | New --publish-image flag. Nothing has ever published this trunk's container image: the only pusher is the workflow_dispatch-only image job in .github/workflows/ci.yml, which has been dispatched by hand once (2026-09-16, failed with the image job skipped) and has never published, so the registry's `latest` is the pre-cutover 2026-07-26 artifact and `--mode 1` - the DEFAULT documented install - still hands it to every new user. That cost a day: a stale image does not look stale, and the box that installed it reported MISSING FEATURES while every symptom pointed at configuration. Publishing from this gate spends nothing of the constrained hosted-runner budget and puts the build, the kernel-skills image probe, the smoke boot and the Trivy scan in front of the push - a better pre-publish bar than the hosted pipeline applies. Fail-closed: no flag, a red run, --skip-image, or an absent credential all publish nothing. The credential is the operator's to mint; this script never creates one and never prints one.
 # 27 | maintainer@emeraldcoastsystemsgroup.com   | The publish block refuses a SCHEDULED run whose source posture is not scheduled-origin-main. A failed fetch already degraded to local HEAD with only a warning and nothing in FAILED_GATES, so an all-green run of whatever branch the trunk checkout had (a feature branch, most nights in this tree) would have been pushed as :latest the moment --publish-image was passed. Interactive runs are the operator's call and are not gated here.
+# 28 | maintainer@emeraldcoastsystemsgroup.com   | gate_unit supplies OSHAL_STORE_DIR as well as OSHAL_STORE_REPO. The product-site guard resolves its catalog from STORE_DIR, whose default is a SIBLING of the tree it runs in - and --head mode runs from a git-archive export with no sibling anywhere near it, so eleven cases in site-product-pages.spec.ts it.runIf-SKIPPED in every nightly. One of them is the guard that catches the committed public site drifting away from the manifests, and it had drifted by seven whole apps before anyone looked. Measured both ways on this box: with STORE_DIR unresolvable the file reports "16 passed | 11 skipped", with it resolved "27 passed". A guard that skips in CI is a guard that does not exist.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -300,7 +301,14 @@ gate_store_compatibility() {
     --dependencies "$GATE_SRC" --reports "$STATE_DIR/store-compatibility"
 }
 
-gate_unit() { (cd "$GATE_SRC" && OSHAL_STORE_REPO="${OSHAL_STORE_REPO:-$REPO_WIN/../oshal-applications}" timeout 1800 npm run test:unit); }
+# OSHAL_STORE_DIR as well as OSHAL_STORE_REPO: the product-site guard resolves its catalog from
+# STORE_DIR, which defaults to a SIBLING of the tree it runs in — and in --head mode that tree is a
+# git-archive export with no sibling anywhere near it. Eleven cases in site-product-pages.spec.ts
+# therefore `it.runIf(storePresent)`-skipped in every nightly, including the one that catches the
+# committed site drifting away from the manifests. It had drifted by seven whole apps before anyone
+# looked. A guard that skips in CI is a guard that does not exist, so the gate now supplies the
+# checkout and those cases run for real.
+gate_unit() { (cd "$GATE_SRC" && OSHAL_STORE_REPO="${OSHAL_STORE_REPO:-$REPO_WIN/../oshal-applications}" OSHAL_STORE_DIR="${OSHAL_STORE_DIR:-$REPO_WIN/../oshal-applications}" timeout 1800 npm run test:unit); }
 
 # Connector structural-audit gate (ADR-065): FAIL on any error-level issue in a
 # swarm-apps/connectors/*.yaml spec (bad shape, duplicate tool name, paginating resource

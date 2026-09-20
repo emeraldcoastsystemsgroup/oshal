@@ -12,6 +12,8 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add recordCostOnce(outboxId, event): receipt insertion, chat_tasks mutation, and cost-ledger append share one transaction so durable remote-task settlement replay cannot double bill or acknowledge a partial cost publication.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Serialize distinct remote-task cost effects for the same chat-task rollup with a transaction advisory lock, preventing concurrent outbox workers from losing an increment.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | recordLedgerEvent(event): the oshal_cost_events append alone, for a producer that already owns its chat_tasks rollup (the inline orchestrator's taskStore.recordUsage). Routing inline turns through recordCost would add every turn to chat_tasks twice; skipping the ledger left windowed budget caps blind to inline spend.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Per-bot provider aggregation widens to 'mixed' instead of keeping whichever row was folded in last. (Entry 10 originally said "came first"; see entry 11 - it was last-wins.) This is the summary the cockpit ticket Cost tab PREFERS, and that surface now renders the provider per bot and derives an ADR-127 cost-unit label from it - so a bot spanning claude-code and cline-cli would have shown one provider and one confident unit label for spend that is two different units. It was harmless while nothing displayed it and became a quiet lie the moment something did.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | mergeAgentProviderId treats the UNKNOWN_PROVIDER sentinel as absent, and its doc stops describing the old behaviour wrongly. Both arguments arrive through normalizeIdentifier, so a NULL provider_id is the literal 'unknown', not '' - so a bot with one claude-code row and one NULL row reported 'mixed', and the cockpit then declined to name a unit for spend whose unit was perfectly well known. The doc also said the aggregation this replaced was first-wins. It was LAST-wins: `providerId || existing || ''` with providerId always truthy, so the incoming row always won. The sentinel is exported and named, because it looks like a provider - truthy, reaches the cockpit, and classifyCostUnit answers 'billed' for it.
  */
 
 import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
@@ -423,7 +425,7 @@ export class CostTrackingService {
 
         summary.usageByAgent[agentId] = {
           agentId,
-          providerId: providerId || existingAgentSummary.providerId || '',
+          providerId: mergeAgentProviderId(existingAgentSummary.providerId, providerId),
           totalCost: existingAgentSummary.totalCost + totalCost,
           totalInputTokens: existingAgentSummary.totalInputTokens + totalInputTokens,
           totalOutputTokens: existingAgentSummary.totalOutputTokens + totalOutputTokens,
@@ -821,9 +823,45 @@ function normalizeModelId(modelId: string): string {
   return trimmed.length > 0 ? trimmed : 'unknown';
 }
 
+/** What an absent identifier becomes in this summary. Named because it LOOKS like a provider:
+ *  it is truthy, it reaches the cockpit, and classifyCostUnit answers 'billed' for it. */
+export const UNKNOWN_PROVIDER = 'unknown';
+
 function normalizeIdentifier(value: unknown): string {
   const trimmed = typeof value === 'string' ? value.trim() : '';
-  return trimmed.length > 0 ? trimmed : 'unknown';
+  return trimmed.length > 0 ? trimmed : UNKNOWN_PROVIDER;
+}
+
+/**
+ * @description Combines the provider on two cost rows for one bot without picking a winner.
+ * @param current - Provider accumulated so far: a real id, the UNKNOWN_PROVIDER sentinel, or ''.
+ * @param incoming - Provider on the row being folded in, in the same three shapes.
+ * @returns The shared provider, the known one when only one side names one, UNKNOWN_PROVIDER when
+ *          neither does, or 'mixed' when two DIFFERENT real providers meet.
+ *
+ * Both parameters arrive through normalizeIdentifier, so an absent provider is the literal
+ * 'unknown' rather than ''. Treating that as a real value was the defect: a bot with one
+ * claude-code row and one NULL row reported 'mixed', and the cockpit then declined to name a unit
+ * for spend whose unit was perfectly well known.
+ *
+ * The aggregation this replaces was LAST-wins, not first-wins: `providerId || existing || ''` with
+ * providerId always truthy, so the row being folded in always won. Either way it was invisible
+ * until something rendered it. The cockpit ticket Cost tab now shows the provider per bot AND
+ * derives an ADR-127 unit label from it, and this summary is the PREFERRED source for that surface.
+ *
+ * Deliberately duplicates the cockpit's own merge rather than sharing it: that helper lives in the
+ * app layer and this is a feature slice, so a shared module would have to sit outside both.
+ */
+function mergeAgentProviderId(current: string | undefined, incoming: string | undefined): string {
+  const named = (value: string | undefined): string => {
+    const trimmed = (value || '').trim();
+    return trimmed && trimmed !== UNKNOWN_PROVIDER ? trimmed : '';
+  };
+  const left = named(current);
+  const right = named(incoming);
+  if (!left) return right || UNKNOWN_PROVIDER;
+  if (!right || right === left) return left;
+  return 'mixed';
 }
 
 function normalizeCurrency(value: unknown): string {

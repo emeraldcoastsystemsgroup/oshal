@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-159 - seed the engine's OWN filled buys for every fixture position (seedEngineFills), so the golden book is one the engine actually bought. Without them the fixture describes a book of hand-bought shares, which the engine now monitors instead of managing: every stop, take-profit, cap trim, rotation drop-out sell and beta-core top-up in the plan below would be withheld and the characterization would assert the withheld plan rather than the managed one. Each seeded fill is the venue average to the share, so the wash-sale veto stays inert and the plan is unchanged. The plan asserted here is therefore also the proof that a COVERED book's plan survives ADR-159 end to end.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The prologue is the shared one (tests/helpers/trading-spec-schema.ts), which adds trading_config_overrides: sweepGoldenResidue reads that table in beforeAll, BEFORE the first fire that used to create it lazily, so on a bare cluster it was 42P01 and the file never reached a test. bootstrapOnce goes with it - its single retry existed only for the concurrent-CREATE race that the trading family's advisory lock now prevents, and the shared prologue takes that lock.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Provisions its OWN disposable PostgreSQL instead of resolving an address. specDatabaseUrl has no default and throws at IMPORT, so with nothing set this file was one of 14 trading specs collapsed to "no tests" on main. A triage called that environmental - a missing database - and it is not: Docker is up, the image is cached, and the repo already ships DisposablePostgres. The blocker was an in-repo edit.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Pool } from 'pg';
@@ -160,10 +161,18 @@ vi.mock('@/shared/logger', async (importOriginal) => {
 
 import { legacyBook } from '../../src/app/trading-books-store';
 import { dispatchTradingSchedule } from '../../src/app/trading-schedule-dispatch';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 import { ensureTradingSpecSchema } from '../helpers/trading-spec-schema';
 
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+// Its OWN server, not an address. specDatabaseUrl has no default and throws at IMPORT
+// when nothing is set, which collapsed this whole file to "no tests". It has no default
+// because of the 2026-09-14 incident where trading specs pointed at the operator's live
+// Postgres; a disposable cluster answers both halves - nothing to point, nothing to point at.
+const fixture = new DisposablePostgres({
+  purpose: 'trading-dispatch-golden-plan',
+  options: '-c row_security=off',
+  max: 4,
+});
 const SUB_SCAN = `spec-golden-${h.RUN}-scan`;
 const SUB_ROT = `spec-golden-${h.RUN}-rot`;
 const SUB_LIVE = `spec-golden-${h.RUN}-live`;
@@ -186,12 +195,7 @@ const tickets: Array<{ title: string }> = [];
 const ctx = () => ({ pool, ticketService: { createTicket: async (t: { title: string }) => { tickets.push(t); return {}; } } } as unknown as AppContext);
 
 beforeAll(async () => {
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try {
-    await pool.query('SELECT 1');
-  } catch (error) {
-    throw new Error(`trading-dispatch-golden-plan requires the live oshal Postgres at ${DSN.replace(/:[^:@/]+@/, ':***@')} — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
+  pool = await fixture.start();
   // The shared prologue (tests/helpers/trading-spec-schema.ts) — including trading_config_overrides,
   // which sweepGoldenResidue below reads BEFORE the first fire that used to create it lazily, and
   // which is therefore 42P01 on any database that was not already built.
@@ -227,7 +231,7 @@ afterAll(async () => {
       expect(n, `${t} still holds spec rows after cleanup`).toBe(0);
     }
   } finally {
-    await pool.end();
+    await fixture.stop();
     for (const [k, v] of Object.entries(h.saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 }, SETTLE_MS + 60_000);

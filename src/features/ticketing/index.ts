@@ -20,6 +20,8 @@ export {
   ResilientWorkspaceStore,
   TicketProjectAssignmentService,
   TicketService,
+  APPROVAL_REQUIRED_REASONS,
+  type ApprovalRequiredReason,
   PostgresQueuedApplicationPrincipalStore,
   ensureQueuedApplicationPrincipalSchema,
   QUEUED_APPLICATION_PRINCIPAL_SCHEMA,

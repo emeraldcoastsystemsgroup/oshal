@@ -8,6 +8,7 @@
 
 export {
   CostTrackingService,
+  UNKNOWN_PROVIDER,
   type CostEvent,
   type CostSummary,
 } from './cost-tracking-service';

@@ -8,6 +8,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-134 D2 #7 watchdog guard. Proves, through the REAL PowerShell 5.1 boundary, that scripts/trading-watchdog.ps1 derives its expected live set FROM oshal_trading_books (docker exec psql against the live Postgres: enabled live books in, disabled/paper out), maps autopilot legs from the REAL Redis schedule store (seeded records in the real shape: legacy no-bookId+mode live -> 'live', taskData.bookId -> its book, inactive/foreign ignored), evaluates beats per book on the leg's own "scheduleId", and FAILS CLOSED (books unreadable -> 'books-unreadable' + legacy live assumed; empty leg map -> 'legs-unreadable' + the legacy live beat still required; legless book -> the per-sub trading-events tick). Also executes scripts/trading-books-cutover.sh's check_observability_pair under bash with stub docker/schtasks for every refuse branch and one pass, source-pins the two cross-module log strings the watchdog depends on, pins that the leg read is attempted even when the books read failed (so 'legs-unreadable' never names a schedule store the run did not consult), and pins that every docker/psql target is a parameter rather than a literal container name.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The two CONTAINER names had the same defect the DSN had, and SEQ 4 did not close it: OSHAL_TEST_DB_CONTAINER and OSHAL_TEST_REDIS_CONTAINER each fell back to the local stack's own container, so the `docker exec psql` target was the deployment even on a run whose DSN was correctly pointed at a throwaway — the harness wrote through the deployment's own credentials while the resolver reported the run safe. Both now resolve through specContainerName, which has no default and refuses the local stack's containers outright.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | This file now STARTS the Postgres and the Redis it talks to. SEQ 4 and SEQ 5 made an unpointed run refuse rather than reach the deployment, which was correct but left the spec unrunnable: the two container names had no value anything could supply, so every case here threw at import and the whole file counted as red on main. Refusing was the wrong shape of answer for a spec whose entire premise is `docker exec` into a real server - there is now nothing to point, because DisposablePostgres and DisposableRedis mint the containers and hand over their names. The PowerShell, psql and redis-cli boundaries are untouched and still real; the psql identity comes from the fixture instead of the literal 'oshal'/'oshal'; and the key sweep plus the books DELETE are gone, because a force-removed container leaves nothing to clean.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -16,8 +17,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
 import { Pool } from 'pg';
-import { ensureLegacyBooks, legacyBookId } from '../../src/app/trading-books-store';
-import { specContainerName, specDatabaseUrl } from '../helpers/spec-database-url';
+import { ensureBooksSchema, ensureLegacyBooks, legacyBookId } from '../../src/app/trading-books-store';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
+import { DisposableRedis } from '../helpers/disposable-redis';
 
 const root = join(__dirname, '..', '..');
 const watchdogPath = join(root, 'scripts', 'trading-watchdog.ps1');
@@ -26,9 +28,17 @@ const watchdogSource = readFileSync(watchdogPath, 'utf8');
 const cutoverSource = readFileSync(cutoverPath, 'utf8');
 const powershell = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
 const scratch = mkdtempSync(join(tmpdir(), 'oshal-watchdog-books-'));
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
-const DB_CONTAINER = specContainerName('OSHAL_TEST_DB_CONTAINER');
-const REDIS_CONTAINER = specContainerName('OSHAL_TEST_REDIS_CONTAINER');
+// The watchdog reaches Postgres and Redis by CONTAINER NAME (`docker exec ... psql` / `redis-cli`),
+// which is the boundary these cases exist to cross — so the fixtures are real servers this file
+// starts and removes, and the names below are theirs. Both are known at construction time, before
+// anything is started, which is why they can be module-level constants the harness closes over.
+const database = new DisposablePostgres({
+  purpose: 'trading-watchdog-books', database: 'oshal', memory: '384m', max: 2,
+  statementTimeoutMs: 60_000, options: '-c row_security=off',
+});
+const cache = new DisposableRedis({ purpose: 'trading-watchdog-books' });
+const DB_CONTAINER = database.containerName;
+const REDIS_CONTAINER = cache.containerName;
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-adr134wd-${RUN}`;
 const B_ON = crypto.randomUUID();
@@ -37,7 +47,7 @@ const B_PAUSED = crypto.randomUUID();
 // DISABLED live book whose autopilot leg is ACTIVE — the round-4 hole: its protective exits still
 // run, so a silent leg is a real-money failure the watchdog used to filter out of existence.
 const B_OFF_ACTIVE = crypto.randomUUID();
-const redisKeys: string[] = [];
+
 let pool: Pool;
 
 const sourceSection = (start: string, end: string): string => {
@@ -95,20 +105,19 @@ const TICK = 'event plans + protected lots + dated orders tick';
 
 const docker = (args: string[]): string => {
   const r = spawnSync('docker', args, { encoding: 'utf8', timeout: 30_000 });
-  if (r.status !== 0) throw new Error(`docker ${args.slice(0, 3).join(' ')} failed (the live stack must be up: bash scripts/oshal-up.sh): ${r.stderr}`);
+  if (r.status !== 0) throw new Error(`docker ${args.slice(0, 3).join(' ')} failed against this file's own fixture container: ${r.stderr}`);
   return (r.stdout ?? '').trim();
 };
 const redisSet = (id: string, record: object): void => {
-  const key = `oshal:scheduler:schedule:${id}`;
-  redisKeys.push(key);
-  docker(['exec', REDIS_CONTAINER, 'redis-cli', 'SET', key, JSON.stringify(record)]);
+  docker(['exec', REDIS_CONTAINER, 'redis-cli', 'SET', `oshal:scheduler:schedule:${id}`, JSON.stringify(record)]);
 };
+/** The fixture's own psql identity — `docker exec` reaches it over the local socket, no password. */
+const dbTarget = () => ({ DbContainer: DB_CONTAINER, DbUser: database.connection.user, DbName: database.connection.database });
 
 beforeAll(async () => {
-  pool = new Pool({ connectionString: DSN, max: 2, options: '-c row_security=off' });
-  try { await pool.query('SELECT 1'); } catch (error) {
-    throw new Error(`trading-watchdog-books requires the live oshal Postgres — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
+  pool = await database.start();
+  await cache.start();
+  await ensureBooksSchema(pool as never);
   await ensureLegacyBooks(pool as never, SUB);
   // Explicit created_at so the roster's ORDER BY is deterministic rather than insert-latency luck.
   const seedBook = (id: string, ref: string, label: string, enabled: boolean, secs: number) =>
@@ -133,17 +142,12 @@ beforeAll(async () => {
   redisSet(`trading-autopilot_${SUB}-other_live`, { ...base, id: `trading-autopilot_${SUB}-other_live`, ownerSub: `${SUB}-other`, taskType: 'trading-autopilot:x:live', taskData: { userSub: `${SUB}-other`, mode: 'live' } });
 }, 120_000);
 
+// The key sweep and the books DELETE are gone with the servers they used to clean: both containers
+// are force-removed here, so there is no store left holding a live-mode autopilot record and no row
+// left to delete. What remains is the scratch directory, which is this file's own temp dir.
 afterAll(async () => {
-  // BY PATTERN, not just the keys we remember: these are live-mode autopilot records in the
-  // PRODUCTION schedule store, so a half-cleaned run must not leave any behind (they are not
-  // dispatchable — the store reads its id index / next-run zset, which a raw SET never touches —
-  // but leaving them is still litter in a real trading deployment's Redis).
-  const stale = docker(['exec', REDIS_CONTAINER, 'redis-cli', '--scan', '--pattern', `oshal:scheduler:schedule:trading-autopilot_${SUB}*`]);
-  for (const key of new Set([...redisKeys, ...stale.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)])) {
-    try { docker(['exec', REDIS_CONTAINER, 'redis-cli', 'DEL', key]); } catch { /* best effort */ }
-  }
-  await pool.query(`DELETE FROM oshal_trading_books WHERE user_sub LIKE 'spec-adr134wd-%'`).catch(() => {});
-  await pool.end();
+  await cache.stop();
+  await database.stop();
   rmSync(scratch, { recursive: true, force: true });
 }, 120_000);
 
@@ -151,7 +155,7 @@ describe('Get-ExpectedLiveBooks — the expected set comes FROM oshal_trading_bo
   it('returns EVERY live book — enabled AND disabled — each carrying its own Enabled flag; never paper', () => {
     // Round 4: `AND enabled` used to be in the SQL, which is what made a disabled book's still-running
     // protective exits unwatchable. The flag now travels with the row instead of filtering it away.
-    const r = runHarness({ Mode: 'books', Sub: SUB, DbContainer: DB_CONTAINER, DbUser: 'oshal', DbName: 'oshal' });
+    const r = runHarness({ Mode: 'books', Sub: SUB, ...dbTarget() });
     expect(r.status, `${r.out}\n${r.err}`).toBe(0);
     const books = lastJson<Array<{ Ref: string; BookId: string; Enabled: boolean }>>(r.out);
     expect(books, r.out).not.toBeNull();
@@ -163,10 +167,10 @@ describe('Get-ExpectedLiveBooks — the expected set comes FROM oshal_trading_bo
   }, 90_000);
 
   it('returns $null (fail-closed signal) when the DB container is wrong, and an empty set for a sub with no live books', () => {
-    const bad = runHarness({ Mode: 'books', Sub: SUB, DbContainer: `no-such-container-${RUN}`, DbUser: 'oshal', DbName: 'oshal' });
+    const bad = runHarness({ Mode: 'books', Sub: SUB, ...dbTarget(), DbContainer: `no-such-container-${RUN}` });
     expect(bad.status).toBe(0);
     expect(bad.out.split(/\r?\n/).at(-1)).toBe('null');
-    const none = runHarness({ Mode: 'books', Sub: `${SUB}-nobody`, DbContainer: DB_CONTAINER, DbUser: 'oshal', DbName: 'oshal' });
+    const none = runHarness({ Mode: 'books', Sub: `${SUB}-nobody`, ...dbTarget() });
     expect(none.status, none.err).toBe(0);
     expect(lastJson<unknown[]>(none.out)).toEqual([]);
   }, 90_000);
