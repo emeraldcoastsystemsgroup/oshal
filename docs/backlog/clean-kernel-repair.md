@@ -747,7 +747,42 @@ frozen before `beforeEach` ran, and a fix that leaves a `resolveSharedWorkspaceR
 still fails. If the case passes without either change, it proves nothing. (4) A second case does the same
 for `workspace-bootstrap-service.ts:105` vs `task-explorer-workspace-service.ts:93`.
 
-### CKR-18 — the handover gate does not gate, and says the opposite (R0.12) — S
+### CKR-18 — the handover gate does not gate, and says the opposite (R0.12) — **DONE 2026-09-19**
+
+All five clauses met, each verified by the grep or the spec the criterion names.
+
+**(1)** The string announcing a blocked ticket is gone from `src/` (was 1, now 0). It had to be
+paraphrased in the new Change Logs too — quoting what you removed re-adds it to a bare grep, the
+same way the docs criterion in CKR-13 behaves.
+
+**(2)** `enforceHandoverGate` → `assessHandoverCoverage`, `handoversEnforced` →
+`allHandoversPresent`: 12 non-Change-Log hits, now 0. `HandoverGateResult` went with them, since
+leaving it as the return type of a function that no longer claims to gate is the same lie one step
+along. This is renaming for accuracy, not taste — the identifier said *enforce* and *gate* while
+the function assesses and neither caller gates on it.
+
+**(3)** The unused `enforceHandoverGate` import is deleted, and entry 31 in that file — which said
+importing it made "gate checks now available on multi-round phase transitions", when it made
+nothing available — is corrected in place rather than rewritten.
+
+**(4) CV-4 landed, and it is the load-bearing half.** `readAgentHandover(agentId, workspaceTaskId)`
+names its second parameter, and both call sites passed `ticketId`. Where the two differ the read
+looked in a directory the handover was never written to, so a round that wrote one was reported as
+missing. Without this the signal was noise.
+
+**(5)** Two specs, because there are two claims. `handover-coverage-not-a-gate.spec.ts` (5 cases)
+asserts the shortfall is still REPORTED, that the caller keeps its `finalOutput`, and that the log
+record matches `/coverage/` and neither `/blocked/` nor `/FAILED/` — asserted on the record the
+logger was called with, because the defect was never in the return value.
+`handover-read-uses-workspace-id.spec.ts` (2 cases) drives the real `MultiRoundDispatchService`
+through its public entry with the handover manager doubled ON the seam whose argument is the claim.
+
+Mutation-proven: restoring the old log wording turns 1 red, and passing `ticketId` again turns 1
+red. The CV-4 spec's self-validation earned its place — the first fixture's mesh stub lacked
+`send`, the flow threw before the read, and the assertion would have passed on an empty list.
+
+<details><summary>Original entry</summary>
+
 
 The log-line dishonesty is confirmed; the assessment's *repeated-work* consequence is unproven.
 `enforceHandoverGate` (`swarm-ticket-lifecycle-helpers.ts:414`) logs "Ticket
@@ -775,6 +810,8 @@ and the log record matches `/coverage/` and neither `/blocked/` nor `/FAILED/`.
 **Not in this item, each its own entry:** the `HANDOVER-<role>.md` vs `{agentId}_PHASE_n_ROUND_n.md`
 convention split, and the `WorkspaceArtifactEnforcer` / `ParityValidationChecklist` test-only wiring plus
 the false Change Log at `src/app/extensions/swarm/index.ts:28`.
+
+</details>
 
 ### CKR-19 — interactive spend is invisible to the trace and to the budget caps (R1.1) — M
 
