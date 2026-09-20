@@ -5,9 +5,10 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-138 D3 lot state machine against the REAL oshal Postgres (fail-loud when down) with injected venue fakes: intent → the entry order fills (ledger row + venue truth) → open → exits placed as TP LIMIT GTC + STOP GTC 'pinned-lot' decisions on the lot's book → the take-profit fills → the stop is CANCELLED and the lot closes with P&L; pinnedQtyBySymbol counts only held lots; a trailing-stop variant places TRAILING_STOP; release cancels working exits; the FORCE-RLS table exists.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | This spec now STARTS its own PostgreSQL and removes it, instead of taking an address from the environment at all. Refusing an unpointed run made the 2026-09-14 accident impossible but left the spec unrunnable: the `const DSN = specDatabaseUrl(...)` threw AT IMPORT, so every case in the file collapsed before it ran and the lot state machine was guarded by nothing in any gate. A private server makes it both safe and executable, and there is no longer any value a caller can supply that would reach a deployment. The DELETE-by-sub teardown goes with it — the container is destroyed, so no cleanup SQL runs anywhere, which is the property that failed twice. The conditional `ALTER TABLE ... OWNER TO oshal_app` goes too: that role exists only in the shared deployment this spec no longer touches, so the guard could never fire; the FORCE-RLS assertion reads pg_class and does not depend on the owner. One setting is NEW rather than carried: `statementTimeoutMs: 60_000`. The old pool declared no statement timeout at all, and the fixture's own default is 15 s, which a cold container plus schema bootstrap can exceed on a loaded box; it matches the trading-event-plans reference conversion.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import crypto from 'crypto';
 import {
   ensurePinnedLotsSchema, normalizePinnedLotRules, createPinnedLotIntent, getPinnedLot, listPinnedLots, releasePinnedLot,
@@ -18,9 +19,15 @@ import { ensureBooksSchema, ensureLegacyBooks, legacyBook } from '../../src/app/
 import { ensureTradingSchema } from '../../src/app/trading-engine';
 import type { AppContext } from '../../src/app/composition/app-context';
 import type { OrderResult } from '../../src/features/trading';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+// A PostgreSQL this file owns: started here, removed in afterAll, reachable from nothing else.
+// `row_security=off` keeps the superuser's reads across the FORCE-RLS lot table explicit, and the
+// pool size is the four the old environment-resolved pool asked for.
+const database = new DisposablePostgres({
+  purpose: 'trading-pinned-lots', database: 'trading_fixture', memory: '384m', max: 4,
+  statementTimeoutMs: 60_000, options: '-c row_security=off',
+});
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-lot-${RUN}`;
 let pool: Pool;
@@ -57,21 +64,13 @@ async function seedFilledEntry(bookId: string, symbol: string, qty: number, avg:
 beforeAll(async () => {
   process.env.SESSION_SECRET = process.env.SESSION_SECRET || `spec-secret-${RUN}`;
   process.env.TRADING_MAX_NOTIONAL_USD = '50000'; process.env.TRADING_MAX_QTY = '100000';
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try { await pool.query('SELECT 1'); } catch (error) {
-    throw new Error(`trading-pinned-lots requires the live oshal Postgres at ${DSN.replace(/:[^:@/]+@/, ':***@')} — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
+  pool = await database.start();
   await ensureBooksSchema(pool as never); await ensureTradingSchema(pool as never); await ensurePinnedLotsSchema(pool as never);
-  await pool.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'oshal_app') THEN EXECUTE 'ALTER TABLE oshal_trading_pinned_lots OWNER TO oshal_app'; END IF; END $$;`);
   await ensureLegacyBooks(pool as never, SUB);
 }, 120_000);
 
-afterAll(async () => {
-  for (const t of ['oshal_trading_orders', 'oshal_trading_decisions', 'oshal_trading_signals', 'oshal_trading_pinned_lots', 'oshal_trading_books']) {
-    await pool.query(`DELETE FROM ${t} WHERE user_sub = $1`, [SUB]).catch(() => {});
-  }
-  await pool.end();
-});
+// No DELETE pass: the whole server goes away, so there is nothing to clean and nowhere to clean it.
+afterAll(async () => { await database.stop(); });
 
 describe('protected lots — intent → fill → exits → take-profit closes and cancels the stop', () => {
   const book = legacyBook(SUB, 'paper');
