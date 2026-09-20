@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the rag_chunks owner_sub fix (BACKLOG security burn-down): migration 070's RLS policies compare the owner_sub COLUMN to the identity GUCs, but the pgvector engine wrote every chunk with the column NULL (ACL only in metadata JSONB) through a private UNWRAPPED pool — so the database-layer backstop was inert for every engine-written row. This spec drives the REAL engine against an injected pool and asserts the two halves that make RLS bite: (1) addChunks lifts metadata.owner_sub into the owner_sub INSERT column (and leaves shared-corpus chunks NULL); (2) the engine pool is GUC-wrapped — a user-identity ingest stamps oshal.current_sub on the SAME connection BEFORE the INSERT and resets it after, and a SYSTEM-sentinel (background sweep) ingest stamps operator. Remove the column population or unwrap the pool and this file goes red exactly the way the live WITH CHECK / read policies would.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove every valid owner_sub is copied with exact case/surrounding whitespace while the existing whitespace-only validation remains unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fixes a RED main - the SECOND spec left behind by the same change. #605 made authorization grants (subject, issuer) pairs and added oshal.current_issuer to the GUC stamp, taking it from two parameters to three; this file and background-system-identity both still asserted the two-parameter shape. Found by an adversarial re-check of a triage that had missed it, after the same root cause had already been missed twice - which is the argument for fixing the pattern and not just the file: the two specs assert the same stamp and neither referenced the other.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -80,7 +81,9 @@ describe('pgvector rag engine: owner_sub reaches the COLUMN and identity reaches
     expect(setIdx, 'no identity GUC was stamped — the engine pool is no longer wrapped').toBeGreaterThanOrEqual(0);
     expect(insertIdx).toBeGreaterThan(setIdx);
     expect(resetIdx).toBeGreaterThan(insertIdx);
-    expect(calls[setIdx].params).toEqual(['user-a', 'off']); // the caller's sub, not operator
+    // Three GUCs since #605: sub, issuer, is_operator. The issuer is '' because this fixture
+    // declares none — what this case pins is that the SUB is the caller's, not the operator's.
+    expect(calls[setIdx].params).toEqual(['user-a', '', 'off']); // the caller's sub, not operator
 
     // (1) the INSERT names the owner_sub column and carries the per-chunk owner values.
     const insert = calls[insertIdx];
@@ -122,6 +125,6 @@ describe('pgvector rag engine: owner_sub reaches the COLUMN and identity reaches
     const calls = pool.calls;
     const setIdx = callIndex(calls, 'set_config');
     expect(setIdx, 'search ran identity-less — owned rows would be invisible to their own user').toBeGreaterThanOrEqual(0);
-    expect(calls[setIdx].params).toEqual(['user-c', 'off']);
+    expect(calls[setIdx].params).toEqual(['user-c', '', 'off']);
   });
 });

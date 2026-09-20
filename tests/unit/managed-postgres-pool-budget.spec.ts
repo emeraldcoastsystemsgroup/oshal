@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the declared CRM connection budget: pool-max resolution bounds, per-service application_name stamping, and the 23-of-47 launch ceiling against DigitalOcean's 2 GiB tier.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove actual local Compose applies the existing managed API pool budget, preserves explicit overrides and leaves other services unchanged after a live role-limit saturation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Fixes a RED main, and the cause was the guard, not the code. The bot ceiling MOVED from bot-node-runtime.ts to bot-node-database-pool.ts in a decomposition - the call byte-identical, the behaviour untouched - and this case failed because it pinned a file PATH. It now locates each ceiling by its CALL anywhere under src/ and requires exactly one occurrence, so a move passes, a deletion fails, and a second inconsistent call site fails too.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Walk the tree ONCE. The previous entry's fix called sourceFilesUnder inside the per-call loop, re-walking and re-reading everything four times - 6,212 reads instead of 1,553. Warm that is about 1.6s and green; on a COLD checkout it is 11-23s against vitest's default 5000ms timeout, and a cold checkout is precisely how ci-local.sh runs this: git archive into a purged directory, then test:unit. So a guard added to make main green was itself red the first time the real gate would have seen it, and green every time it was checked by hand.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,6 +20,17 @@ import {
 
 const root = process.cwd();
 const read = (relative: string) => fs.readFileSync(path.resolve(root, relative), 'utf8');
+/** Every .ts file under a directory, so a ceiling can be located by CALL rather than by path. */
+function sourceFilesUnder(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...sourceFilesUnder(full));
+    else if (entry.name.endsWith('.ts')) out.push(full);
+  }
+  return out;
+}
+
 const poolKeys = ['OSHAL_DB_POOL_MAX', 'PGPOOL_MAX', 'RAG_DB_POOL_MAX'] as const;
 type ComposeService = { environment?: Record<string, string>; [key: string]: unknown };
 
@@ -94,18 +107,35 @@ describe('managed PostgreSQL pool budget', () => {
   });
 
   it('wires independent API, optional, RAG, and bot ceilings', () => {
-    expect(read('src/app/composition/app-runtime-factory.ts')).toContain(
-      "resolvePoolMax(process.env.OSHAL_DB_POOL_MAX, 20)",
-    );
-    expect(read('src/shared/services/database/optional-postgres-pool.ts')).toContain(
-      "resolvePoolMax(process.env.PGPOOL_MAX, 20, 2)",
-    );
-    expect(read('src/features/rag/services/pgvector-rag-engine.ts')).toContain(
-      "resolvePoolMax(process.env.RAG_DB_POOL_MAX, 4)",
-    );
-    expect(read('src/app/bot-node-runtime.ts')).toContain(
-      "resolvePoolMax(process.env.DB_MAX_CONNECTIONS, 5)",
-    );
+    // Searches the whole tree rather than pinning a file path. This case was RED on main for no
+    // defect at all: the bot ceiling MOVED from bot-node-runtime.ts to bot-node-database-pool.ts
+    // in a decomposition, with the call byte-identical and the behaviour untouched. A guard that
+    // a refactor breaks and a deletion would also break cannot tell you which one happened.
+    // Exactly one occurrence each, so a second, inconsistent call site is a failure too.
+    const calls = [
+      'resolvePoolMax(process.env.OSHAL_DB_POOL_MAX, 20)',
+      'resolvePoolMax(process.env.PGPOOL_MAX, 20, 2)',
+      'resolvePoolMax(process.env.RAG_DB_POOL_MAX, 4)',
+      'resolvePoolMax(process.env.DB_MAX_CONNECTIONS, 5)',
+    ];
+    // ONE walk, one read per file, all four strings checked against it. The first cut called
+    // sourceFilesUnder inside this loop, which walked and re-read the whole tree four times:
+    // 6,212 reads instead of 1,553. Warm that is ~1.6s and passes; on a COLD checkout it is
+    // 11-23s against vitest's default 5000ms timeout, and a cold checkout is exactly how
+    // ci-local.sh runs this — `git archive | tar -x` into a purged directory, then test:unit.
+    // A guard added to make main green cannot itself be red the first time the gate sees it.
+    const hits = new Map<string, string[]>(calls.map((call) => [call, []]));
+    for (const file of sourceFilesUnder(path.resolve(root, 'src'))) {
+      const source = fs.readFileSync(file, 'utf8');
+      for (const call of calls) {
+        if (source.includes(call)) {
+          hits.get(call)?.push(path.relative(root, file).split(path.sep).join('/'));
+        }
+      }
+    }
+    for (const call of calls) {
+      expect(hits.get(call), `${call} should appear exactly once under src/`).toHaveLength(1);
+    }
   });
 
   it('lets direct DATABASE_URL own verify-full TLS parsing', () => {

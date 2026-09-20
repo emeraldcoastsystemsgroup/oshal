@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add specContainerName, the same no-default rule for a spec that reaches a database through `docker exec` rather than a DSN. A container variable falling back to the local stack's own database container is the identical defect wearing a container name instead of a port: the resolver refused the live DSN while the psql the spec actually ran went to the live container anyway. Unset now throws and names the variable, and the live stack's own containers are refused outright — there is no acknowledgement flag here, because a spec that execs into a deployment container has no read-mostly case the way host-database-url.ts does.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Resolve the database a DESTRUCTIVE spec connects to, and REFUSE when nothing pointed it anywhere. 23 DB-backed specs ended their DSN expression in a hardcoded loopback fallback built from the compose published-port knob, and that port is the operator LIVE trading Postgres — so `npx vitest run tests/unit/trading-*.spec.ts` with no environment variable set created and dropped schema, and wrote order rows (some tagged mode=live), in production. It fired twice on 2026-09-14 from two lanes that had each been told in writing not to touch that database, and left 24 orphan spec-* rows in oshal_trading_books accumulating since 2026-09-07. A brief is not a guard; the DEFAULT had to change. This resolver has no default: unpointed throws and names the variables that would have answered, and a DSN that lands ON the live published port throws unless the run says out loud that it meant it. The published-port constant is imported from host-database-url.ts rather than restated — that module rewrites a compose DSN for a HOST-side Playwright run, which is a legitimate read-mostly use of the published port, and it is deliberately left byte-identical.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | specRedisUrl - the same no-default rule for the REDIS half, which entry 1 solved for Postgres and nobody carried across. trading-event-leg-cadence ended its Redis URL in a loopback fallback built from the published-port knob; on the box this was found on that knob was set to the port the live Redis was listening on, and the compose default was closed, so running the spec reached the operator's live swarm queue and scheduler state. check-spec-database-default.sh reported OK throughout, because its vocabulary named only the Postgres knobs. Unpointed now throws and names the variables, and a URL landing on the published Redis port throws unless the run says out loud that it meant it.
  */
 
 import { DEFAULT_PUBLISHED_PG_PORT } from './host-database-url';
@@ -71,6 +72,54 @@ export function specDatabaseUrl(vars: readonly string[], env: NodeJS.ProcessEnv 
       `Postgres — the operator's real trading database — and this spec creates and destroys data. ` +
       `Point it at a disposable PostgreSQL, or set ${LIVE_STACK_ACKNOWLEDGEMENT}=1 if running ` +
       `against the deployment is genuinely what you meant.`,
+    );
+  }
+  return value;
+}
+
+/**
+ * The live stack's published Redis port. Compose declares `${OSHAL_REDIS_PORT:-56380}`, so the
+ * operator's own value wins when they set one - and on the box this was found on, they had:
+ * OSHAL_REDIS_PORT=16379, with 16379 open and the compose default closed.
+ */
+export function publishedRedisPort(env: NodeJS.ProcessEnv = process.env): string {
+  return env.OSHAL_REDIS_PORT?.trim() || '56380';
+}
+
+/**
+ * @description Resolve the Redis a destructive spec connects to, and REFUSE when nothing pointed it
+ * anywhere. The same contract as {@link specDatabaseUrl}, for the same reason.
+ * @param vars - Environment variable names this spec accepts, most specific first.
+ * @param env - Environment to read (injectable so the guard can exercise both outcomes).
+ * @returns The Redis URL the spec must use.
+ * @throws When no variable is set, or when the resolved URL is the live stack's Redis unacknowledged.
+ *
+ * This exists because the Postgres half of the lesson was learned and the Redis half was not. The
+ * entry above records 23 specs whose DSN ended in a loopback fallback built from the published-port
+ * knob, which wrote order rows tagged mode=live into the operator's real database, twice, on
+ * 2026-09-14. One spec was still doing exactly that with Redis - a default of
+ * a loopback fallback built from the published-port knob - and the guard that catches the
+ * Postgres shape reported OK, because its vocabulary named only the Postgres knobs.
+ */
+export function specRedisUrl(vars: readonly string[], env: NodeJS.ProcessEnv = process.env): string {
+  if (vars.length === 0) throw new Error('specRedisUrl needs at least one environment variable name');
+  const resolved = vars.map((name) => [name, env[name]] as const).find(([, value]) => Boolean(value));
+  if (!resolved) {
+    throw new Error(
+      `This spec writes and deletes keys in whatever Redis it is given, so it has no default: ` +
+      `set ${vars.join(' or ')} to a DISPOSABLE Redis before running it. ` +
+      `Do NOT point it at the live stack (127.0.0.1:${publishedRedisPort(env)}) - that is the ` +
+      `operator's running swarm. A throwaway is one command: ` +
+      `docker run -d --rm -p 127.0.0.1:0:6379 redis:7-alpine.`,
+    );
+  }
+  const [name, value] = resolved as readonly [string, string];
+  if (pointsAtLiveStack(value, publishedRedisPort(env)) && env[LIVE_STACK_ACKNOWLEDGEMENT] !== '1') {
+    throw new Error(
+      `${name} points at 127.0.0.1:${publishedRedisPort(env)}, the LIVE stack's published Redis - ` +
+      `the running swarm's own queue and scheduler state - and this spec writes and deletes keys. ` +
+      `Point it at a disposable Redis, or set ${LIVE_STACK_ACKNOWLEDGEMENT}=1 if running against ` +
+      `the deployment is genuinely what you meant.`,
     );
   }
   return value;

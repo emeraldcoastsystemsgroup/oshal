@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for the two-runtimes doctrine (CLAUDE.md "Two runtimes, one image": the swarm controller NEVER calls an LLM; bot nodes own execution). Half (a): a static import-graph walk from src/app/server.ts (same regex-walk idiom as scripts/check-kernel-skills.ts) proving the controller graph never reaches the any-bot JS LLM layer or the bot-node entrypoints, and that every harness-stack module it DOES reach is pinned to today's exact sanctioned importer edges — a new edge into the harness stack fails this spec. Half (b): pins scripts/bot-entrypoint.sh runtime selection (swarm/unset → dist/app/server.js, bot-node → dist/app/bot-node-server.js).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Barrel split landed (TODO-BOUNDARY-FINDING resolved): the llm-provider barrels no longer re-export harness modules, so every "barrel re-export" edge left the allowlist; the new '@/features/llm-provider/harness' sub-barrel is now a tracked forbidden module whose SOLE sanctioned importer is provider-runtime.ts. Added a named barrel-boundary regression test that scans both barrels' import specifiers directly (graph-independent), so a reintroduced harness re-export goes red even if the walker changes.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "Bot runtime consolidation": half (b) re-anchored on the consolidated runtime switch — the any-bot branch now exits instead of exec'ing the legacy server, so bot-node is the leading `if`, and the selectable set is the single CANONICAL_BOT_RUNTIMES declaration with a fail-closed default. The behavioural proof (the shell actually refusing an unknown value) is tests/unit/bot-runtime-consolidation.spec.ts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Fixes a RED main by sanctioning two edges, each checked rather than waved through - this pin exists to force exactly that review. (1) antigravity-cli-harness-adapter joins the graph in the SAME shape as its three siblings: imported only by the harness barrel, extending base-cli-harness-adapter, reached through harness-adapter. It is a declared sibling of gemini-cli in the HarnessType union and it imports and is gated by assertAuditedAutonomousHarness, so the fail-closed unattended posture covers it like every other CLI - verified in the adapter, not taken from its comment. (2) manifest-bot-runtime-defaults imports resolveRuntimeModelName and resolveRuntimeProviderName from provider-runtime and nothing else, which is precisely the config-helper category the block above already sanctions for app-runtime-factory and tool-runtime-context. Neither edge reaches harness RUNTIME from the controller.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -65,6 +66,7 @@ const SANCTIONED_FORBIDDEN_EDGES: Record<string, string[]> = {
     // readNonEmptyString / readChatAgentProfileConfig / createProviderResolver):
     'src/app/composition/app-runtime-factory.ts',
     'src/app/composition/index.ts',
+    'src/app/composition/manifest-bot-runtime-defaults.ts',
     'src/app/composition/tool-runtime-context.ts',
     // SANCTIONED inline-persona dispatch (resolveHarnessForAgent — see block comment above):
     'src/app/extensions/swarm/index.ts',
@@ -76,7 +78,11 @@ const SANCTIONED_FORBIDDEN_EDGES: Record<string, string[]> = {
   'src/features/llm-provider/services/a2a-harness-adapter.ts': [
     'src/features/llm-provider/harness/index.ts',
   ],
+  'src/features/llm-provider/services/antigravity-cli-harness-adapter.ts': [
+    'src/features/llm-provider/harness/index.ts',
+  ],
   'src/features/llm-provider/services/base-cli-harness-adapter.ts': [
+    'src/features/llm-provider/services/antigravity-cli-harness-adapter.ts',
     'src/features/llm-provider/services/claude-code-cli-harness-adapter.ts',
     'src/features/llm-provider/services/codex-cli-harness-adapter.ts',
     'src/features/llm-provider/services/gemini-cli-harness-adapter.ts',
@@ -93,6 +99,7 @@ const SANCTIONED_FORBIDDEN_EDGES: Record<string, string[]> = {
   'src/features/llm-provider/services/harness-adapter.ts': [
     'src/features/llm-provider/harness/index.ts',
     'src/features/llm-provider/services/a2a-harness-adapter.ts',
+    'src/features/llm-provider/services/antigravity-cli-harness-adapter.ts',
     'src/features/llm-provider/services/base-cli-harness-adapter.ts',
     'src/features/llm-provider/services/claude-code-cli-harness-adapter.ts',
     'src/features/llm-provider/services/codex-cli-harness-adapter.ts',
