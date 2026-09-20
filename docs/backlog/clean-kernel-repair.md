@@ -735,7 +735,7 @@ The operator decision is how to correct a live bot's prompt, and the three optio
 
 No option is taken here, because all three change what a live bot is told about the platform.
 
-### CKR-17 — one workspace root, six variables, forty-eight resolution sites (R0.11) — M
+### CKR-17 — one workspace root, six variables, forty-eight resolution sites (R0.11) — M — **STEP 1 SHIPPED**
 
 **Materially worse than claimed, and every number in the claim is wrong.** Not two resolvers but one
 canonical (`src/shared/workspace-root.ts:45`, 9 callers) plus **39 inline resolution sites** across at
@@ -759,6 +759,40 @@ stylistic**: they are module-scope consts evaluated at import, so a statically i
 frozen before `beforeEach` ran, and a fix that leaves a `resolveSharedWorkspaceRoot()` call at module scope
 still fails. If the case passes without either change, it proves nothing. (4) A second case does the same
 for `workspace-bootstrap-service.ts:105` vs `task-explorer-workspace-service.ts:93`.
+
+**Step 1 shipped.** `tests/unit/workspace-root-resolution.spec.ts`. `WORKSPACE_ENV_KEYS` lists all six
+variables and `beforeEach` clears every one, so a case that sets exactly one proves which variable was
+read. Four cases: the prompt root against the deliverable-capture root, workspace bootstrap against the
+task explorer, each of the four resolver variables honoured in priority order, and a blank value not
+shadowing a configured lower-priority one. Every case uses `vi.resetModules()` and imports after setting
+the variable.
+
+Three sites converged onto `resolveSharedWorkspaceRoot()`, which is the minimum that makes the two
+comparison cases meaningful — **not** the 39-site convergence, which this entry says is a separate call:
+
+- `jarvis-deliverable-files.ts` — module-scope `WORKSPACE_ROOT` and `USERFILES_ROOT` consts became
+  call-time functions. Both are containment boundaries, and reading only `CLINE_WORKSPACE_ROOT` meant a
+  deployment configured through `OSHAL_WORKSPACE_ROOT` resolved them to the container default while the
+  rest of the platform resolved elsewhere. The module-scope freeze is also what would have let this guard
+  pass without the fix.
+- `llm-execution-handler.ts` — the inline chain read only `SHARED_WORKSPACE_ROOT`. This one is the string
+  the bot is instructed to write everything into.
+- `workspace-bootstrap-service.ts` — read two of the six and fell back to `workspace` where everything
+  else falls back to `workspace-shared`.
+
+**Proven red per site**, not in aggregate: reverting each of the three to its `origin/main` version turns
+exactly one case red and the other three stay green; restoring all three returns 4 of 4. A guard that
+passed on the unpatched tree would have proven nothing, which this entry warned about explicitly.
+
+**One finding the entry did not predict.** Routing the deliverable module's extraction regex through the
+canonical resolver broke it on Windows: the resolver normalises to the host separator, while the text it
+matches was written by a bot in a Linux container and always uses `/`. The regex is now built from the
+same absolute root with separators normalised to `/`. Production is unaffected either way, since the
+container is Linux, but the existing capture spec caught it immediately — 4 of its 14 cases went red.
+
+**Still open:** the other 36 inline resolution sites, at least fifteen distinct precedence chains, and the
+fourth vocabulary on the `any-bot/` side. `docker-compose.core.yml` and `docker-compose.yml` still set
+only two of the six, so the divergence remains live under those files.
 
 ### CKR-18 — the handover gate does not gate, and says the opposite (R0.12) — S
 
