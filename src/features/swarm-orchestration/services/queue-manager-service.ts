@@ -48,6 +48,7 @@
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | ADR-119 P4 (A2): setAutoApplyGate — the bounded auto-apply hook threaded into the incident-RCA dispatch deps, wired at the app layer exactly like setBudgetService (optional; unset = unchanged Mode-A human gate). The hook is only ever consulted by the incident pipeline's Mode-A finalizer, never by the build/manifest/graph paths.
  * 44 | maintainer@emeraldcoastsystemsgroup.com   | Document the promoted default-on/fail-closed ADR-034 runtime-param rail threaded into manifest and incident dispatches.
  * 45 | maintainer@emeraldcoastsystemsgroup.com   | Thread the ticket owner's hosted-connection resolver into manifest-worker dispatch so a protected application target can be sent in its supported direct/hosted shape instead of being signed, delegated and then denied at the worker.
+ * 46 | maintainer@emeraldcoastsystemsgroup.com   | Both approval_required writers here name their reason (CKR-12 / D5): planning_complete when PM planning produced children, planner_returned_no_work when it produced none. Also deletes two comments that stated the opposite of what the code does - 'children will wait for the build gate' and 'children are picked up after build approval'. ADR-031's own amendment stopped children waiting on this state on 2026-06-22 and PARENT_READY_FOR_CHILD_DISPATCH_STATES has included it ever since, so those lines had been misdirecting every reader since then. The parent is parked, not gating, and its nextAction now says so.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -998,15 +999,21 @@ export class QueueManagerService {
           childTicketIds = createdChildIds;
 
           if (childTicketIds.length > 0) {
-            await this.ticketService.updateStatus(ticketId, 'approval_required');
+            await this.ticketService.updateStatus(ticketId, 'approval_required', {
+              reason: 'planning_complete',
+              source: 'queue-manager-service',
+            });
             // Update task brief with child IDs now that decomposition is complete
             writeTaskBrief(ticket, childTicketIds, this.pipelineDeps.taskFolderService, rootWorkspaceId, 'approval_required');
 
             logger.info(
-              { ticketId, childCount: childTicketIds.length },
-              'Child tickets created from PM planning — parent moved to approval_required and children will wait for the build gate',
+              { ticketId, childCount: childTicketIds.length, reason: 'planning_complete' },
+              'Child tickets created from PM planning — parent parked at approval_required; children dispatch independently',
             );
-            return; // Parent waits in approval_required; children are picked up after build approval
+            // The parent is parked, NOT gating. ADR-031's amendment stopped children waiting on
+            // this state on 2026-06-22, and PARENT_READY_FOR_CHILD_DISPATCH_STATES has included
+            // it since. The two comments that used to sit here said the opposite.
+            return;
           }
         } else if (processed?.planningDecomposition !== undefined) {
           // BUG-FIX Session 35: PM ran in discovery/design mode and wrote workspace files but
@@ -1017,7 +1024,10 @@ export class QueueManagerService {
             { ticketId },
             'PM agent completed with empty planningDecomposition — ticket produced no child work units. Moving to approval_required for operator review.',
           );
-          await this.ticketService.updateStatus(ticketId, 'approval_required');
+          await this.ticketService.updateStatus(ticketId, 'approval_required', {
+            reason: 'planner_returned_no_work',
+            source: 'queue-manager-service',
+          });
           return;
         }
       }
