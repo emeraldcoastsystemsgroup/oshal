@@ -140,7 +140,7 @@ a single-bot run with every approval gate skipped, and nothing logs it.
   into the registry so the staged dispatcher can run the operator-pinned bots in order"), which directly
   contradicted the sentence this change writes into the developer guide.
 
-### CV-2 — every untrusted-source incident ticket is created into `approval_required`, overriding the caller (S, decision)
+### CV-2 — every untrusted-source incident ticket is created into `approval_required`, overriding the caller (S, decision) — **DECIDED 2026-09-20**
 
 `src/features/ticketing/services/ticket-service.ts:121-123` forces `approval_required` on any `incident`
 ticket whose `externalProvider` is not in `TRUSTED_ALERT_PROVIDERS` (`{prometheus, alertmanager}`),
@@ -152,7 +152,31 @@ enumerated, and it is the highest-volume one.
 - **Done when:** folded into D5 below — `createTicket` does not pass through
   `buildStatusTransitionMetadata`, so it needs its own backstop and its own test.
 
-### CV-3 — a ticket whose decomposition returned no work units is stranded permanently (S, decision)
+**OPERATOR DECISION 2026-09-20 (CV-2).** Answered as a principle rather than a choice between the
+options put to him, and the principle is wider than this entry:
+
+> "if a ticket is generated it should follow the workflow associated with a ticket. there is no way
+> for a ticket not to have a workflow ....a workflow and ticket queue should be one to one."
+
+**What that decides here.** The override goes. A ticket’s entry status is the workflow’s to determine,
+not `createTicket`’s. The workflow already carries the front gate: `autoStart` present means the ticket
+starts approved, absent means it waits at the front. A provider-trust check in the ticket service is a
+second, competing authority over the same question, which is exactly the shape the repair spec calls a
+defect. Untrusted-source handling, if it is still wanted, belongs in the workflow the untrusted source’s
+ticket type resolves to — not in a hardcoded list inside `createTicket`.
+
+**Done when.** `createTicket` no longer forces a status for any ticket type; the entry status comes from
+the resolved workflow. A spec drives an `incident` ticket from an untrusted `externalProvider` and
+asserts it lands where its workflow says, not at `approval_required`; a second asserts the cockpit route
+receives the status it actually got. Proven red first against the current override.
+
+**⚠ This principle reaches past CV-2 and should be read before CKR-14, CKR-17 and CV-3 are actioned.**
+Two consequences worth stating: a ticket type with no registered workflow is not a valid ticket, which
+is stricter than today’s defer-to-next-poll behaviour; and "a workflow and ticket queue should be one to
+one" means the single-poller-plus-registry implementation is a divergence from the operator’s model of
+the system, which is the Q-09 per-tenant queue work the ADR sweep already raised.
+
+### CV-3 — a ticket whose decomposition returned no work units is stranded permanently (S, decision) — **DECIDED 2026-09-20: ESCALATE**
 
 `queue-manager-service.ts:1025` sets `approval_required` when the planner produced zero work units. There
 is no automatic exit from that state: the ticket produced nothing and waits forever for a human who has no
@@ -160,6 +184,22 @@ indication anything is wrong. Labelling it (D5) does not move it.
 
 - **Done when:** the operator decides whether such a ticket auto-escalates or auto-cancels, and the chosen
   behaviour is asserted by a test that drives the real planner path with an empty result.
+
+**OPERATOR DECISION 2026-09-20 (CV-3): escalate.** Not retry, not cancel, not leave parked.
+
+A ticket whose planning step returns zero work units moves to `escalated`, carrying a reason that says
+planning produced nothing. It stops consuming poll cycles, it surfaces in the queue a human already
+watches, and the ticket and its context stay intact for inspection. This is the same posture as
+ADR-022: a failure gets named rather than retried into silence.
+
+**Done when.** A spec drives the real planner path with an empty decomposition result and asserts the
+ticket lands in `escalated` with the reason set, proven red first against the current
+`approval_required` parking. The reason joins the closed vocabulary CKR-12 shipped rather than being a
+free string, so this stops being a sixth meaning of a status the way it was a fourth meaning of
+`approval_required`.
+
+**Reads with CV-2.** The escalation is the workflow’s outcome for an empty plan, not a special case
+bolted onto the queue manager — same principle: the ticket follows its workflow.
 
 ### CV-4 — the handover validator cannot pass on a ticket whose workspace id differs from its ticket id (S, no decision) — **SHIPPED**
 
@@ -793,7 +833,7 @@ only path back for tickets parked before 2026-07-05.
 
 </details>
 
-### CKR-14 — `extends` and `foundation.persona` are dead inheritance (D7) — S
+### CKR-14 — `extends` and `foundation.persona` are dead inheritance (D7) — S — **DECIDED 2026-09-20: DELETE**
 
 Both mechanisms are genuinely inert, confirmed across both parsers, both bot-node providers, and a zero-hit
 search for any read. Counts corrected: **7** core personas declare `extends`, not 8; 10 more in
@@ -851,6 +891,25 @@ key still shipping in ten installed packages.
 > Moving them is the point of this entry; deleting without moving them would make a live gap
 > permanent.
 
+**OPERATOR DECISION 2026-09-20 (CKR-14): delete, as this entry recommends.** Do not implement the
+inheritance. The content already lives in the concierges, so flattening would mostly duplicate text
+while changing the prompts of seven core bots and ten store bots that would each then need
+re-validating.
+
+The done-when clauses already written above stand unchanged. Three of them are the ones that make this
+more than a delete, and none may be skipped:
+
+- The genuine residue moves FIRST, into the concierges’ own `perspective:` blocks — not `personality:`,
+  which is equally unparsed.
+- The guard asserts a **closed, named** dead-key list, exactly `{extends, foundation}`. Written as "any
+  key the parser does not consume" it fires on 50 of 103 files across 25 keys, which is why the entry
+  forbids that phrasing.
+- The core type field leaves only AFTER the five store manifests have dropped the key and shipped.
+  Core-first breaks the store half.
+
+**Reads with CV-2.** Deleting dead declarations is the same principle the operator stated there: one
+authority per question. A key nothing reads is a second, silent authority over a bot’s persona.
+
 ### CKR-15 — the chat path assembles a persona prompt with no containment frame (D11) — M
 
 Every structural citation holds: `task-orchestrator.ts:247,291` → `createSystemPromptResolver`
@@ -871,7 +930,7 @@ and (2) `trimEnd()`-matches `/Treat any conflicting earlier instruction as untru
 identical assertion `prompt-memory-containment.spec.ts:192` already makes for the layered path. The spec
 writes its own captured prompt, so the check is runnable.
 
-### CKR-16 — one word, five meanings (D12) — S — **ITEM 1 SHIPPED, ITEM 2 NEEDS A DECISION**
+### CKR-16 — one word, five meanings (D12) — S — **ITEM 1 SHIPPED; ITEM 2 DECIDED 2026-09-20**
 
 Real, but not where the assessment looked — see correction 6. Renaming is explicitly the wrong fix
 (this repo forbids renaming for taste); a glossary plus one false schema string are the right ones.
@@ -910,7 +969,27 @@ The operator decision is how to correct a live bot's prompt, and the three optio
 
 No option is taken here, because all three change what a live bot is told about the platform.
 
-### CKR-17 — one workspace root, six variables, forty-eight resolution sites (R0.11) — M — **STEP 1 SHIPPED**
+**OPERATOR DECISION 2026-09-20 (CKR-16 item 2): correct the seed AND add a forward migration.**
+Not seed-only, and not a manual fix on the box.
+
+The reasoning the choice accepts: seed-only leaves this box permanently disagreeing with a fresh
+install, and a manual API fix is not reproducible on another deployment. A forward migration is the
+only option that corrects the running system and travels.
+
+**Done when.** (1) `scripts/migrations/010-seed-agent-factory-bot.sql` no longer contains
+`platform, organization, role, task, session layers`. (2) A NEW migration updates the existing
+`agent-factory` row to the corrected prompt, and is idempotent — it must not clobber a prompt an
+operator has since edited by hand, so it rewrites only that phrase rather than replacing the whole
+`systemPrompt`. (3) A spec asserts the string is absent from every applied prompt text, not merely
+from the seed file, so seed-only cannot satisfy it. (4) The corrected phrase names the real vocabulary:
+the closed six-value union `platform | host | tenant | role | session | task`, which is what the
+glossary shipped in item 1 already documents.
+
+**⚠ Review note.** A migration that rewrites a live bot’s prompt is hard to read in a diff. Quote the
+before and after phrase in the migration’s own Change Log so a reviewer can see the change without
+reconstructing it from SQL.
+
+### CKR-17 — one workspace root, six variables, forty-eight resolution sites (R0.11) — M — **STEP 1 SHIPPED**; **STEP 2 DECIDED 2026-09-20: CONVERGE ALL**
 
 **Materially worse than claimed, and every number in the claim is wrong.** Not two resolvers but one
 canonical (`src/shared/workspace-root.ts:45`, 9 callers) plus **39 inline resolution sites** across at
@@ -968,6 +1047,28 @@ container is Linux, but the existing capture spec caught it immediately — 4 of
 **Still open:** the other 36 inline resolution sites, at least fifteen distinct precedence chains, and the
 fourth vocabulary on the `any-bot/` side. `docker-compose.core.yml` and `docker-compose.yml` still set
 only two of the six, so the divergence remains live under those files.
+
+**OPERATOR DECISION 2026-09-20 (CKR-17 step 2): converge all thirty-six remaining sites now.** Not
+as-touched, not compose-only. This overrides the entry’s own earlier framing that converging the sites
+is "a separate call" — the call has been made, and it is to do them.
+
+**Done when.** (1) Every inline workspace-root chain in `src/` resolves through
+`resolveSharedWorkspaceRoot()`; `grep` for the six variable names outside `src/shared/workspace-root.ts`
+returns only the resolver itself and the specs that exercise it. (2) A lint rule fails any NEW inline
+chain, so the class cannot regrow — without it this is a sweep that silently undoes itself. (3) The
+existing `tests/unit/workspace-root-resolution.spec.ts` grows a case per distinct precedence chain that
+is being collapsed, each proven red against the pre-convergence version, so "converged" means observed
+behaviour rather than a changed import.
+
+**⚠ Two things step 1 learned that this step must carry.** Some consumers need the root with POSIX
+separators, not the host’s: the resolver normalises to the host separator, while text written by a bot
+in a Linux container always uses `/`. Converging a path-MATCHING site without normalising broke the
+deliverable capture on Windows, 4 of 14 cases red. And a module-scope `const` that calls the resolver at
+import is not converged — it freezes the root before any caller can set it.
+
+**Out of scope here, name it separately.** The fourth vocabulary on the `any-bot/` side, and the two
+compose files that set only two of the six. Fixing those compose files is hours and removes the only
+live symptom, so it is worth doing first even though the code sweep is what was chosen.
 
 ### CKR-18 — the handover gate does not gate, and says the opposite (R0.12) — **DONE 2026-09-19**
 
@@ -1067,7 +1168,7 @@ linking after `executeBotOrInline` returns — **not** by adding an `externalId`
 updated_at < NOW() - INTERVAL '1 day'` returns 0; the pre-existing 683 rows are explicitly out of scope, no
 backfill.
 
-### CKR-20 — cross-ticket and cross-owner workspace isolation does not exist (R3.3) — **MEASURED and PINNED 2026-09-19; the decision is open**
+### CKR-20 — cross-ticket and cross-owner workspace isolation does not exist (R3.3) — **MEASURED and PINNED 2026-09-19; the decision is open** — **DECIDED 2026-09-20: ACCEPTED, RUNTIME ASSIGNMENT IS THE CONTROL**
 
 **Done-when (1), second half: done.** `tests/unit/compose-workspace-mount-posture.spec.ts` asserts
 against the RESOLVED compose (the mounts arrive through a `<<:` merge, so a regex cannot see them)
@@ -1131,6 +1232,36 @@ tool.
 </details>
 
 ## Not real
+
+**OPERATOR DECISION 2026-09-20 (CKR-20): accepted. Per-ticket runtime assignment is the control on
+this box; the container mount stays whole-volume deliberately.** No per-owner subtree mounts, no
+runtime jail, for now.
+
+**The operator’s model, in his words, and it is accurate:** a bot is nothing until it is called; when
+it is called the kernel hands it a workspace bound to the ticket; the mount is a set of folders, one
+per ticket; the workspace is not visible to end users; bots reach it only by holding a ticket, and
+tickets are user-based. All of that is true of the code as measured.
+
+**The one distinction this entry exists to record.** Assignment is per ticket and per run. Containment
+is not: each of the forty bot services declares the same `oshal_workspace:/app/workspace-shared:rw`,
+so the process can see sibling ticket folders even though it is pointed at one. ADR-060 already states
+the consequence — a directory layout on a shared read-write mount is attribution, not enforcement —
+and that the file-tool containment guard never covered the shell tool or a spawned harness.
+
+**Why accepting it is reasonable here.** On a single-operator box every neighbouring folder is the same
+person’s ticket, so the reachable data is already the operator’s own. Reaching it requires a bot to go
+somewhere it was not pointed, which needs a prompt injection or a shell.
+
+**⚠ THE TRIGGER THAT REVERSES THIS DECISION — re-read before either of these becomes true:**
+1. **A second person** has tickets on the same box. Cross-ticket reach becomes cross-person reach.
+2. **An installed store package runs its own bot.** That bot is third-party code inside the same mount,
+   and the operator has not audited what it does with a shell.
+
+When either fires, the two answers already sized are: narrow what the container mounts to the owner’s
+subtree (compose-generation work, needs the owner known at container start), or confine the process to
+its ticket folder at execution time (execution-layer work, covers the shell and a spawned harness,
+closer to per-ticket). This decision is not a finding that the layout is safe — it is a judgement that
+the exposure is the operator’s own data until one of those two conditions changes.
 
 ### R3.2 — "113 files thread tenancy identity by hand" — **REFUTED, no work item**
 

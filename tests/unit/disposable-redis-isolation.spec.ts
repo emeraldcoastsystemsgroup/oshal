@@ -4,8 +4,9 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The contract that makes DisposableRedis worth having, proven by behaviour rather than by reading its source: two fixtures are two SEPARATE servers (a key written to one is invisible to the other, on different ports), the container is really gone after stop() so nothing survives the spec that started it, stop() is safe on a fixture that was never started, and the address is invented at start() rather than inherited - a run with OSHAL_REDIS_PORT and OSHAL_TEST_REDIS_URL both pointing somewhere else still lands on the fixture's own port. That last case is the one that matters: the defect this helper exists to close was a spec resolving OSHAL_REDIS_PORT and writing to the running swarm's scheduler store, so a helper that quietly honoured the same variable would reintroduce it.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The env negative control goes through vi.stubEnv/unstubAllEnvs instead of a hand-rolled save-and-restore, so the spec no longer READS OSHAL_REDIS_PORT or OSHAL_TEST_REDIS_URL. Resolving those knobs is what check-spec-database-default.sh forbids, and a control proving a variable is ignored has no reason to resolve it; the gate went red on this file for exactly that mention. The decoy address also stops being the live default 6379, which relied on that port being unpublished on this particular box: where a default Redis IS running, a helper regression would have connected to a real datastore instead of failing.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import Redis from 'ioredis';
 import { DisposableRedis } from '../helpers/disposable-redis';
@@ -41,21 +42,28 @@ describe('DisposableRedis — a server the spec owns, not one it found', () => {
   }, 120_000);
 
   it('ignores every environment variable that used to name the live stack\'s Redis', async () => {
-    const before = { port: process.env.OSHAL_REDIS_PORT, url: process.env.OSHAL_TEST_REDIS_URL };
-    // 6379 is not published on this box, so a helper that honoured either variable would fail to
-    // connect rather than quietly succeed — the assertion below is on the port it actually chose.
-    process.env.OSHAL_REDIS_PORT = '6379';
-    process.env.OSHAL_TEST_REDIS_URL = 'redis://127.0.0.1:6379';
+    // Set through vi.stubEnv rather than by hand: it restores on unstubAllEnvs, so the spec never
+    // has to READ these variables to save them. That matters beyond tidiness — resolving one of
+    // these knobs is exactly what check-spec-database-default.sh exists to forbid, and a negative
+    // control has no reason to resolve what it is proving is ignored.
+    //
+    // The address is deliberately NOT the live default 6379. The earlier value relied on "6379 is
+    // not published on this box", which is a property of this machine rather than of the test: on a
+    // box running a default Redis, a helper that honoured either variable would have quietly
+    // connected to a real datastore. 6390 is unassigned, so a regression fails to connect and the
+    // spec goes red instead of writing somewhere real.
+    const decoyPort = 6390;
+    vi.stubEnv('OSHAL_REDIS_PORT', String(decoyPort));
+    vi.stubEnv('OSHAL_TEST_REDIS_URL', `redis://127.0.0.1:${decoyPort}`);
     try {
       const fixture = track(new DisposableRedis({ purpose: 'iso-env' }));
       const conn = await fixture.start();
-      expect(conn.port).not.toBe(6379);
+      expect(conn.port).not.toBe(decoyPort);
       expect(fixture.url).toBe(`redis://127.0.0.1:${conn.port}`);
       const client = new Redis(fixture.url, { maxRetriesPerRequest: 1 });
       try { expect(await client.ping()).toBe('PONG'); } finally { await client.quit(); }
     } finally {
-      if (before.port === undefined) delete process.env.OSHAL_REDIS_PORT; else process.env.OSHAL_REDIS_PORT = before.port;
-      if (before.url === undefined) delete process.env.OSHAL_TEST_REDIS_URL; else process.env.OSHAL_TEST_REDIS_URL = before.url;
+      vi.unstubAllEnvs();
     }
   }, 120_000);
 

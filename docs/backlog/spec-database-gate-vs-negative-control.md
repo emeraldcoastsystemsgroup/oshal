@@ -1,44 +1,56 @@
 # The live-datastore gate and the spec that proves the knob is ignored
 
-**Status:** open, needs one decision. Found 2026-09-20 by running the full suite against merged `main`.
-**Red today:** `tests/unit/ci-local-spec-database-default.spec.ts` fails, because the gate it asserts
-now reports FAIL.
+**Status: RESOLVED 2026-09-20.** Fixed in the spec, not in the gate. No rule was changed and no
+allowlist was added. Kept as a record because the way this was first framed was wrong, and the
+correction is the useful part.
 
-## What happened
+## What was actually wrong
 
-Two changes that were each correct alone became a red gate when both landed.
+`scripts/ci/check-spec-database-default.sh` flags any tree file naming `OSHAL_PG_PORT`,
+`OSHAL_TSDB_PORT` or `OSHAL_REDIS_PORT`. It matches the variable name rather than the value, and its
+change log records that this was deliberate: a rule instead of an allowlist.
 
-- The gate (`scripts/ci/check-spec-database-default.sh`) flags any tree file mentioning
-  `process.env.OSHAL_PG_PORT`, `OSHAL_TSDB_PORT` or `OSHAL_REDIS_PORT`. It flags the **variable name**,
-  not the value, and it does so deliberately: its own change log records that it was written to judge
-  the rule rather than to maintain an allowlist.
-- `tests/unit/disposable-redis-isolation.spec.ts` mentions `OSHAL_REDIS_PORT` four times — save, set,
-  and two restores — because its whole purpose is to prove `DisposableRedis` **ignores** that variable.
-  Its negative control sets the variable to the live address and asserts the fixture chose a different
-  port anyway.
+`tests/unit/disposable-redis-isolation.spec.ts` named `OSHAL_REDIS_PORT` four times — a read to save
+it, a write to set it, and two writes to restore it — because its negative control proves
+`DisposableRedis` ignores that variable.
 
-So the gate is flagging the one file whose reason for existing is the behaviour the gate wants.
+The gate was right and the spec was wrong. **A control proving a variable is ignored has no reason to
+resolve that variable.** The save-and-restore was hand-rolled, and the read it required is exactly what
+the gate forbids.
 
-## Why the obvious fixes are not obviously right
+## The fix
 
-| Option | Cost | Why it is not free |
-|---|---|---|
-| Allowlist the spec | minutes | The gate's author explicitly rejected allowlists, and recorded that a helper which *looks* like an exception "is NOT an exception and is not allowlisted — it passes on the rule as written". An allowlist is the first thing that erodes. |
-| Refine the rule so a save/set/restore triple is not a "reach" | hours | It has to stay strict enough to catch the original defect: a spec resolving `OSHAL_REDIS_PORT` and writing to the running swarm's scheduler store. A rule that tolerates assignment tolerates that. |
-| Change the control to a non-live address | minutes | **Does not work.** The gate matches the variable name, so the value is irrelevant. It would also be a workaround, and this spec's own suite asserts the gate "ALLOWS the legitimate uses, so it does not have to be worked around". |
+Two changes to the spec. Neither touches the gate.
 
-A fourth option is to leave it red and record why, which is what this entry does until the decision is made.
+1. **`vi.stubEnv` / `vi.unstubAllEnvs` instead of a hand-rolled save and restore.** Vitest restores the
+   values itself, so the spec never reads the variables at all. The gate's remaining `process.env`
+   matches for that file drop to zero and it passes on the rule as written.
+2. **The decoy address is no longer the live default `6379`.** The old comment justified that value with
+   "6379 is not published on this box" — a property of this machine, not of the test. On a box running a
+   default Redis, a regression in `DisposableRedis` would have quietly connected to a real datastore.
+   The decoy is now an unassigned port, so a regression fails to connect and the spec goes red instead
+   of writing somewhere real.
 
-## One thing worth noting either way
+## What was wrong with how this was first written up
 
-The spec's comment justifies its control value with "6379 is not published on this box". That is a
-box-specific assumption. On a machine where 6379 **is** published — a default Redis install — a
-regression in `DisposableRedis` would make this spec write to a live Redis rather than fail to connect.
-Whichever option is chosen, that assumption should stop being load-bearing.
+The original entry presented three options — allowlist the spec, refine the rule, or change the control
+value — and called the choice an operator decision because "weakening a security guard is not a wrap-up
+decision to take alone."
 
-## Done when
+That framing manufactured a dilemma. The operator said so, and was right. Two of the three options were
+about changing the gate, when the gate was behaving correctly; the third was dismissed as ineffective
+because the value is not what matches, which was true but missed that the *read* could be removed
+entirely. The gate's own failure message already points at the sanctioned path for a spec that
+legitimately needs an address. Nothing here needed a decision.
 
-The gate and the spec are both green, by a change that a reader can tell was not a workaround: either
-the rule distinguishes a negative control from a reach, or the exception is named, narrow and justified
-in the gate's own change log. Proven by a fixture that still goes red for the original defect — a spec
-that resolves the knob and writes to the live store.
+**The lesson worth keeping: when a good guard fires, check whether the guarded code is wrong before
+proposing to change the guard.** Presenting the guard's options first makes weakening it look like one
+reasonable choice among several.
+
+## Verification
+
+- `bash scripts/ci/check-spec-database-default.sh` — `OK — 1237 test files`.
+- `tests/unit/ci-local-spec-database-default.spec.ts` — 21 passed, including the case asserting the gate
+  is green on the tree it ships in.
+- `tests/unit/disposable-redis-isolation.spec.ts` — 4 passed, so the control still proves what it did.
+- eslint clean on the changed spec.
