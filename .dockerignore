@@ -51,6 +51,13 @@ scripts/
 # context so every app (walmart, uber, spotify, duffel, …) survives a container
 # recreate. New oshal-*.js CLIs are included automatically.
 !scripts/oshal-*.js
+# ... and the .mjs siblings. oshal-setup-root.mjs issues the one-use installer proof that the
+# first-admin bootstrap (ADR-117/148) requires, so without it that ceremony cannot run AT ALL
+# in a shipped image — the glob above only ever matched .js.
+!scripts/oshal-*.mjs
+# Dockerfile.oshal COPYs this but it matches neither the oshal-*.js glob nor any entry
+# above, so scripts/ dropped it from the context and the COPY failed the source build.
+!scripts/image-freshness.js
 # The weekly report publisher execs scripts/site-oshal-report.js INSIDE the api container
 # (scripts/publish-oshal-report-weekly.ps1), but the name does not match the oshal-*.js glob
 # above, so the image never contained it and the weekly page could not be generated on the box.

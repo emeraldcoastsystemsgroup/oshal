@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Bot Forge edit-in-place guard: re-deploying an edited pack must re-emit the SAME pack (same bot agentIds, same ticketType, one manifest, bumped version) instead of minting a duplicate identity set. Drives the REAL swarm-pack router over HTTP against a real on-disk pack tree and the real emitted manifest.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A pack slug belongs to whoever deployed it. The pack tree is per-user but the emitted manifest path is not, so a second authenticated user deploying the same slug inherited the incumbent agent ids and ticket queue and overwrote their manifest - loadApp then registered the newcomer persona under the row the incumbent tickets point at. The emission now records packOwnerKey and a deploy that would take over another owner slug is refused 409. A manifest written before owners were stamped carries none and is adopted, because breaking the packs already deployed here would cost more than it saves.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Asserts the deploy loads the manifest AS THE CALLER. It called loadApp with no scope, so withInstallOwner stamped OSHAL_INSTALL_OWNER_SUB and any authenticated user's own pack became the install owner's, with that owner made its administrator. The fake loader now captures the scope, which is the boundary that failed - the pure adoption rule was correct all along and a test of it would have stayed green.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -74,6 +75,8 @@ describe('Bot Forge edit-in-place — an edited pack re-emits the SAME pack', ()
   let server: Server;
   let baseUrl = '';
   const loaded: string[] = [];
+  // Captured so a case can assert WHO the manifest was loaded as, not just that it loaded.
+  const loadScopes: Array<{ ownerSub?: string | null } | undefined> = [];
 
   beforeAll(async () => {
     const { createSwarmPackRoutes } = await import('../../src/app/routes/swarm-pack-routes');
@@ -84,7 +87,9 @@ describe('Bot Forge edit-in-place — an edited pack re-emits the SAME pack', ()
       next();
     });
     app.use('/api/swarm/packs', createSwarmPackRoutes({
-      loadApp: async (manifestPath: string) => { loaded.push(manifestPath); return {}; },
+      loadApp: async (manifestPath: string, scopeMeta?: { ownerSub?: string | null }) => {
+        loaded.push(manifestPath); loadScopes.push(scopeMeta); return {};
+      },
     }));
     server = app.listen(0);
     await new Promise<void>((resolve) => server.once('listening', resolve));
@@ -104,6 +109,23 @@ describe('Bot Forge edit-in-place — an edited pack re-emits the SAME pack', ()
     for (const file of fs.existsSync(PERSONA_DIR) ? fs.readdirSync(PERSONA_DIR) : []) {
       if (file.startsWith(`${SLUG}-`)) fs.rmSync(path.join(PERSONA_DIR, file), { force: true });
     }
+  });
+
+  it('the deploy loads the manifest AS THE CALLER, so install-owner adoption cannot claim it', async () => {
+    // loadApp was called with no scope at all. withInstallOwner then stamped
+    // OSHAL_INSTALL_OWNER_SUB — which every new install sets — so one authenticated user's own
+    // pack became the install owner's, with that owner made its administrator. Adoption exists
+    // for rows staged before anyone could sign in; a request that HAS an identity must supply it.
+    const before = loadScopes.length;
+    writePack({ name: SLUG, mode: 'bundle' }, [{ name: `${SLUG}-scope-bot`, role: 'Scope' }]);
+    const res = await deploy();
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(loadScopes.length, 'the deploy did not reach loadApp').toBeGreaterThan(before);
+    expect(loadScopes[loadScopes.length - 1]?.ownerSub, 'the manifest was loaded with no owner — the install owner would adopt it')
+      .toBe(currentSub);
+
+    // Leave no emission behind: the edit case below asserts its FIRST deploy reports edited:false.
+    fs.rmSync(path.join(deployedDir, `${SLUG}.yaml`), { force: true });
   });
 
   async function deploy(): Promise<{ status: number; body: DeployBody }> {

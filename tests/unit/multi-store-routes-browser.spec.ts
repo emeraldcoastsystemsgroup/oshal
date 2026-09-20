@@ -134,6 +134,23 @@ describe('multi-store HTTP boundaries', () => {
     expect(result.json.apps.map((app: any) => `${app.registry}/${app.name}`)).toEqual(['first-store/sample-app', 'second-store/sample-app']);
     expect(result.json.sources.find((row: any) => row.slug === 'broken-store')).toMatchObject({ ok: false, count: 0 });
   });
+  it('marks catalog entries this swarm already carries, with the version on disk', async () => {
+    // Without this the store offers a bare Install for packages that are installed and running —
+    // a mode-2 install stages its packages before first boot, so the operator's first look at the
+    // catalog is a list of things they already own.
+    prior();                                   // stage sample-app 0.1.0 in deployed-apps
+    const result = await call('/api/swarm/registries/catalog?refresh=1');
+    expect(result.status).toBe(200);
+    for (const app of result.json.apps.filter((row: any) => row.name === 'sample-app')) {
+      expect(app).toMatchObject({ installed: true, installedVersion: '0.1.0' });
+    }
+    rmSync(join(dest, 'sample-app'), { recursive: true, force: true });
+    const after = await call('/api/swarm/registries/catalog?refresh=1');
+    for (const app of after.json.apps.filter((row: any) => row.name === 'sample-app')) {
+      expect(app.installed).toBe(false);
+      expect(app.installedVersion).toBeUndefined();
+    }
+  });
   it('rejects non-operators for catalog, preview, install and trust changes before a mutation', async () => {
     const count = mutationCount;
     for (const [endpoint, method, body] of [
