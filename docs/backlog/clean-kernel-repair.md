@@ -161,7 +161,7 @@ indication anything is wrong. Labelling it (D5) does not move it.
 - **Done when:** the operator decides whether such a ticket auto-escalates or auto-cancels, and the chosen
   behaviour is asserted by a test that drives the real planner path with an empty result.
 
-### CV-4 — the handover validator cannot pass on a ticket whose workspace id differs from its ticket id (S, no decision)
+### CV-4 — the handover validator cannot pass on a ticket whose workspace id differs from its ticket id (S, no decision) — **SHIPPED**
 
 `multi-round-dispatch-service.ts:359` and `:371` pass `ticketId` where the handover is written under
 `workspaceTaskId`. Behaviour-neutral today only because nothing consumes the flag — which is R0.12.
@@ -176,8 +176,21 @@ indication anything is wrong. Labelling it (D5) does not move it.
 
 ---
 
-## Ready to ship — no operator decision needed
+**Shipped, by two changes that met in the middle.** The source fix landed on `main` through the CKR-18
+change, independently and with the same shape: both call sites pass `workspaceTaskId ?? ticketId`. This
+entry keeps that version rather than a duplicate of it.
 
+What this change adds is the coverage that version does not have.
+`tests/unit/handover-read-uses-workspace-id.spec.ts` has two cases and doubles the handover manager;
+`tests/unit/handover-validation-workspace-id.spec.ts` has four and drives a **real**
+`RALFHandoverManager` rooted at a temp directory, which is what this entry asked for: the strict path
+returns true the moment the manager is absent and never reads the workspace root, so a doubled manager
+cannot prove the strict path at all. The four cases are the strict path, the **relaxed** path — a
+handover written by a different agent, which the strict filter rejects and only the filename scan can
+match, isolating the second call site — a no-handover case so the fix cannot degenerate into
+always-true, and a case asserting a handover filed under the *ticket* id is no longer accepted. Red
+first: 3 of 4 failed before the source fix, including that last one returning true, which is the defect
+stated exactly.
 ### CKR-1 — the two workflow types cannot be kept in step, and one field is already dropped (D1 + D3) — S — **SHIPPED**
 
 > `phases` deleted from `SwarmAppWorkflow` and from ADR-033b’s canonical example (the
@@ -339,7 +352,7 @@ pinning both occupants of slot 5 to one trust class; and the payloadType guard s
 `buildPhasePersonaOverride('verification-request', ...)` returns null
 (`phase-override-layer-builder.ts:78-80`) — so the fix cannot be mistaken for widening the override.
 
-### CKR-5 — the two assembly sequences have nothing keeping them in step (D10) — S, guard only
+### CKR-5 — the two assembly sequences have nothing keeping them in step (D10) — S, guard only — **SHIPPED**
 
 **Evidence.** The seven-step layer gather runs in the same order in
 `src/app/bot-node-execution-handler.ts:359-388` and
@@ -358,6 +371,15 @@ envelope and stubbed deps, and asserts deep equality of the two persona-layer ar
 between `llm-execution-handler.ts:226` and `:232` with no counterpart. **The commit changes no file under
 `src/`.** Explicitly out of scope: extracting a shared builder, and changing what either handler passes to
 `assemblePromptForAnyBot`.
+
+**Shipped.** `tests/unit/persona-layer-sequence-parity.spec.ts`. Both factories are driven with one
+identical non-direct envelope; the layer arrays are captured at the shared prompt-authority binding
+(the bot-node handler reaches it through the barrel, the LLM handler through the owning module, so
+mocking the owning module intercepts both) and compared on `(layerType, priority,
+metadata.contentSource)`. Proven red by inserting one extra `personaLayers.push(...)` ahead of the
+awareness layer in `llm-execution-handler.ts` with no counterpart: 3 layers against 2, assertion
+fails; probe reverted. The spec also asserts both arrays are non-empty, so a sequence that stopped
+producing layers fails rather than passing vacuously. **No file under `src/` changed**, as specified.
 
 ### CKR-6 — the chat runtime does not fence tool results as untrusted (D11-a) — S — **SHIPPED**
 
@@ -789,7 +811,7 @@ and (2) `trimEnd()`-matches `/Treat any conflicting earlier instruction as untru
 identical assertion `prompt-memory-containment.spec.ts:192` already makes for the layered path. The spec
 writes its own captured prompt, so the check is runnable.
 
-### CKR-16 — one word, five meanings (D12) — S
+### CKR-16 — one word, five meanings (D12) — S — **ITEM 1 SHIPPED, ITEM 2 NEEDS A DECISION**
 
 Real, but not where the assessment looked — see correction 6. Renaming is explicitly the wrong fix
 (this repo forbids renaming for taste); a glossary plus one false schema string are the right ones.
@@ -804,7 +826,31 @@ naming all five senses with an anchor each — FSD layers, the persona compositi
 explicitly labelled historical. (2) The string `platform, organization, role, task, session layers` — a
 false schema fact, since the union is a different six — no longer appears in any applied prompt text.
 
-### CKR-17 — one workspace root, six variables, forty-eight resolution sites (R0.11) — M
+**Item 1 shipped.** `docs/architecture/README.md` now carries a five-sense glossary immediately above
+`### Layer Architecture`, with an anchor for each: FSD layers, the persona composition layer
+(`PersonaLayerType` / `persona_layers`), memory layers (`memory-layer-service.ts`), the
+`SlashCommandGenerator` instruction fragments, and the historical Layer 0/1/2/3/4 build-phase numbering,
+labelled historical. It states plainly that nothing is being renamed, and names the trap: the tools
+framework's "Layer 1" and a persona composition layer are unrelated, so a reader who conflates them goes
+looking for tool authorization inside prompt text, where it has never been.
+
+**Item 2 is located and still needs the decision.** The false schema string
+`platform, organization, role, task, session layers` — a five-value list where the union is a different
+six — sits inside the `systemPrompt` of the **agent-factory** bot, seeded by
+`scripts/migrations/010-seed-agent-factory-bot.sql`. That migration is applied history, so editing the
+SQL corrects a fresh install and leaves every existing database untouched, including the box.
+
+The operator decision is how to correct a live bot's prompt, and the three options are not equivalent:
+
+| Option | Corrects the box | Cost | Risk |
+|---|---|---|---|
+| Edit the seed SQL only | no | minutes | the box keeps asserting a false schema; a fresh install and an existing one disagree |
+| Edit the seed **and** add a forward migration that updates the row | yes | small, but it is a new migration touching a live prompt | a prompt edit applied by migration is hard to review in a diff |
+| Edit the seed and correct the row through the agent API | yes | manual step, recorded | not reproducible on another deployment without the same step |
+
+No option is taken here, because all three change what a live bot is told about the platform.
+
+### CKR-17 — one workspace root, six variables, forty-eight resolution sites (R0.11) — M — **STEP 1 SHIPPED**
 
 **Materially worse than claimed, and every number in the claim is wrong.** Not two resolvers but one
 canonical (`src/shared/workspace-root.ts:45`, 9 callers) plus **39 inline resolution sites** across at
@@ -828,6 +874,40 @@ stylistic**: they are module-scope consts evaluated at import, so a statically i
 frozen before `beforeEach` ran, and a fix that leaves a `resolveSharedWorkspaceRoot()` call at module scope
 still fails. If the case passes without either change, it proves nothing. (4) A second case does the same
 for `workspace-bootstrap-service.ts:105` vs `task-explorer-workspace-service.ts:93`.
+
+**Step 1 shipped.** `tests/unit/workspace-root-resolution.spec.ts`. `WORKSPACE_ENV_KEYS` lists all six
+variables and `beforeEach` clears every one, so a case that sets exactly one proves which variable was
+read. Four cases: the prompt root against the deliverable-capture root, workspace bootstrap against the
+task explorer, each of the four resolver variables honoured in priority order, and a blank value not
+shadowing a configured lower-priority one. Every case uses `vi.resetModules()` and imports after setting
+the variable.
+
+Three sites converged onto `resolveSharedWorkspaceRoot()`, which is the minimum that makes the two
+comparison cases meaningful — **not** the 39-site convergence, which this entry says is a separate call:
+
+- `jarvis-deliverable-files.ts` — module-scope `WORKSPACE_ROOT` and `USERFILES_ROOT` consts became
+  call-time functions. Both are containment boundaries, and reading only `CLINE_WORKSPACE_ROOT` meant a
+  deployment configured through `OSHAL_WORKSPACE_ROOT` resolved them to the container default while the
+  rest of the platform resolved elsewhere. The module-scope freeze is also what would have let this guard
+  pass without the fix.
+- `llm-execution-handler.ts` — the inline chain read only `SHARED_WORKSPACE_ROOT`. This one is the string
+  the bot is instructed to write everything into.
+- `workspace-bootstrap-service.ts` — read two of the six and fell back to `workspace` where everything
+  else falls back to `workspace-shared`.
+
+**Proven red per site**, not in aggregate: reverting each of the three to its `origin/main` version turns
+exactly one case red and the other three stay green; restoring all three returns 4 of 4. A guard that
+passed on the unpatched tree would have proven nothing, which this entry warned about explicitly.
+
+**One finding the entry did not predict.** Routing the deliverable module's extraction regex through the
+canonical resolver broke it on Windows: the resolver normalises to the host separator, while the text it
+matches was written by a bot in a Linux container and always uses `/`. The regex is now built from the
+same absolute root with separators normalised to `/`. Production is unaffected either way, since the
+container is Linux, but the existing capture spec caught it immediately — 4 of its 14 cases went red.
+
+**Still open:** the other 36 inline resolution sites, at least fifteen distinct precedence chains, and the
+fourth vocabulary on the `any-bot/` side. `docker-compose.core.yml` and `docker-compose.yml` still set
+only two of the six, so the divergence remains live under those files.
 
 ### CKR-18 — the handover gate does not gate, and says the opposite (R0.12) — **DONE 2026-09-19**
 
