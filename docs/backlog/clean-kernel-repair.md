@@ -696,7 +696,7 @@ and (2) `trimEnd()`-matches `/Treat any conflicting earlier instruction as untru
 identical assertion `prompt-memory-containment.spec.ts:192` already makes for the layered path. The spec
 writes its own captured prompt, so the check is runnable.
 
-### CKR-16 — one word, five meanings (D12) — S
+### CKR-16 — one word, five meanings (D12) — S — **ITEM 1 SHIPPED, ITEM 2 NEEDS A DECISION**
 
 Real, but not where the assessment looked — see correction 6. Renaming is explicitly the wrong fix
 (this repo forbids renaming for taste); a glossary plus one false schema string are the right ones.
@@ -710,6 +710,30 @@ naming all five senses with an anchor each — FSD layers, the persona compositi
 `SlashCommandGenerator` prompt fragments (`:257`), and the historical Layer 0/1/2/3/4 build-phase numbering,
 explicitly labelled historical. (2) The string `platform, organization, role, task, session layers` — a
 false schema fact, since the union is a different six — no longer appears in any applied prompt text.
+
+**Item 1 shipped.** `docs/architecture/README.md` now carries a five-sense glossary immediately above
+`### Layer Architecture`, with an anchor for each: FSD layers, the persona composition layer
+(`PersonaLayerType` / `persona_layers`), memory layers (`memory-layer-service.ts`), the
+`SlashCommandGenerator` instruction fragments, and the historical Layer 0/1/2/3/4 build-phase numbering,
+labelled historical. It states plainly that nothing is being renamed, and names the trap: the tools
+framework's "Layer 1" and a persona composition layer are unrelated, so a reader who conflates them goes
+looking for tool authorization inside prompt text, where it has never been.
+
+**Item 2 is located and still needs the decision.** The false schema string
+`platform, organization, role, task, session layers` — a five-value list where the union is a different
+six — sits inside the `systemPrompt` of the **agent-factory** bot, seeded by
+`scripts/migrations/010-seed-agent-factory-bot.sql`. That migration is applied history, so editing the
+SQL corrects a fresh install and leaves every existing database untouched, including the box.
+
+The operator decision is how to correct a live bot's prompt, and the three options are not equivalent:
+
+| Option | Corrects the box | Cost | Risk |
+|---|---|---|---|
+| Edit the seed SQL only | no | minutes | the box keeps asserting a false schema; a fresh install and an existing one disagree |
+| Edit the seed **and** add a forward migration that updates the row | yes | small, but it is a new migration touching a live prompt | a prompt edit applied by migration is hard to review in a diff |
+| Edit the seed and correct the row through the agent API | yes | manual step, recorded | not reproducible on another deployment without the same step |
+
+No option is taken here, because all three change what a live bot is told about the platform.
 
 ### CKR-17 — one workspace root, six variables, forty-eight resolution sites (R0.11) — M
 
