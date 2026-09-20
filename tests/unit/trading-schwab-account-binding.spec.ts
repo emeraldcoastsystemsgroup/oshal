@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-134 Schwab account-pin retirement. The hazard it pins: an UNBOUND Schwab reader used to take SCHWAB_ACCOUNT_NUMBER "else the FIRST account the venue enumerates", and this operator's connected login enumerates THREE real accounts (a legacy live book, a margin account and a cash IRA) - so which real-money account was read and traded was decided by enumeration order. Proven here: selectSchwabAccount uses a single enumerated account, REFUSES two-or-more unbound (naming the count and the remedy), matches a bound book exactly regardless of enumeration order, and the same refusal reaches BOTH a read path (getAccount) and an order path (placeOrder, which never issues its POST) through a real fetch seam. Against the live Postgres: loadLegacyBook falls back to the pure constructor only when the ROW is absent and RETHROWS book_binding_undecryptable rather than degrading into an unbound book (the swallow that used to live in resolveBook), and resolveBook inherits that. Finally a source pin that nothing in src/, scripts/, the compose file or .env.example reads the env pin any more.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Provisions its OWN disposable PostgreSQL instead of resolving an address. specDatabaseUrl has no default and throws at IMPORT, so with nothing set this file was one of 14 trading specs collapsed to "no tests" on main. A triage called that environmental - a missing database - and it is not: Docker is up, the image is cached, and the repo already ships DisposablePostgres. The blocker was an in-repo edit.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { Pool } from 'pg';
@@ -17,10 +18,18 @@ import {
 } from '../../src/app/trading-books-store';
 import { ensureAccountsSchema } from '../../src/app/trading-accounts-store';
 import { resolveBook } from '../../src/app/routes/trading-routes-helpers';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 
 const REPO = path.resolve(__dirname, '../..');
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+// Its OWN server, not an address. specDatabaseUrl has no default and throws at IMPORT
+// when nothing is set, which collapsed this whole file to "no tests". It has no default
+// because of the 2026-09-14 incident where trading specs pointed at the operator's live
+// Postgres; a disposable cluster answers both halves - nothing to point, nothing to point at.
+const fixture = new DisposablePostgres({
+  purpose: 'trading-schwab-account-binding',
+  options: '-c row_security=off',
+  max: 4,
+});
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB_ROWLESS = `spec-schwabpin-${RUN}-rowless`;
 const SUB_BROKEN = `spec-schwabpin-${RUN}-broken`;
@@ -39,12 +48,7 @@ beforeAll(async () => {
   process.env.SESSION_SECRET = process.env.SESSION_SECRET || `spec-secret-${RUN}`;
   process.env.TRADING_MAX_NOTIONAL_USD = process.env.TRADING_MAX_NOTIONAL_USD || '50000';
   process.env.TRADING_MAX_QTY = process.env.TRADING_MAX_QTY || '100000';
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try {
-    await pool.query('SELECT 1');
-  } catch (error) {
-    throw new Error(`trading-schwab-account-binding requires the live oshal Postgres at ${DSN.replace(/:[^:@/]+@/, ':***@')} — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
+  pool = await fixture.start();
   await ensureAccountsSchema(pool as never);
   await ensureBooksSchema(pool as never);
 }, 120_000);
@@ -52,7 +56,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await pool.query(`DELETE FROM oshal_trading_books WHERE user_sub LIKE 'spec-schwabpin-%'`).catch(() => {});
   await pool.query(`DELETE FROM oshal_trading_accounts WHERE user_sub LIKE 'spec-schwabpin-%'`).catch(() => {});
-  await pool.end();
+  await fixture.stop();
 });
 
 /* ─── the selection rule itself ─────────────────────────────────────────────────────────────── */
