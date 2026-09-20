@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | resolveCoreDir() catches the SECOND git dependence the 07-23 fix missed: with no --core flag the script still ran an unconditional `git rev-parse --show-toplevel`, which crashed 'fatal: not a git repository' in the .git-less GATE_SRC export — redding BOTH the ci-local repo-separation gate and the unit spec on a healthy tree. In an export the process is launched at the tree root, so cwd IS the tree (same rationale as trackedFiles).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Structural guard for the two-trunk split (ADR-115): application code must never mix into the swarm/kernel repo, and kernel code must never mix into the store repo. ADR-085 carved 21 app surfaces OUT of core; nothing stopped one from walking back in. The public core trunk is a DERIVED, app-free artifact — a re-mixed app is a release-blocking defect discovered at publish time, which is far too late.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Package-build residue (check 5): the package builders stage application TypeScript INSIDE this checkout so the kernel's tsc can compile it, each relying on a `finally` a killed build never reaches. On 2026-09-09 seventeen sports-edge sources sat untracked in src/app/routes/ after an `oshal-app.js build`, passing every tracked-path check. The gate now fails on any untracked, non-ignored file under src/app/routes/ (the `git add -A` set) and on any src/__oshal_build_* or src/__oshal_store_parity_* staging directory, tracked or not.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Check 4b, the MIRROR IMAGE of every check above it: not application code carried inside the kernel, but kernel code reaching OUT of it. A core spec imported a store package's route module through a relative path into the sibling checkout. It resolved on a developer box with the sibling beside it and could never resolve in the sanctioned gate, which builds from a git-archive export with no sibling anywhere near it, so the whole file collapsed at import and counted red in the nightly for as long as it stood. Every tracked source file's relative specifiers are now resolved against the repo root and anything landing outside it fails. resolveCoreDir() gained a path.resolve for the same check: `git rev-parse` answers with FORWARD slashes on Windows, so a prefix comparison against a natively-resolved path matched nothing and the first draft reported every any-bot file as an escape.
  */
 
 /**
@@ -257,6 +258,41 @@ function checkCore(coreDir) {
       '`.oshal-install.json` is written by `oshal-app install` at runtime. Untrack it.',
     );
   }
+
+  // 4b. A relative import that resolves OUTSIDE this repository. The checks above look for
+  // application code carried INSIDE the kernel; this one is the mirror image — kernel code
+  // reaching OUT to a sibling checkout, which couples the two repos just as hard while leaving
+  // the kernel tree looking clean. It is not a theoretical shape: a core spec imported a store
+  // package's route module through `../../../oshal-applications/...`, which resolved fine on a
+  // developer box with the sibling beside it and could never resolve in the sanctioned gate,
+  // because that gate runs from a `git archive` export with no sibling anywhere near it. The
+  // whole file collapsed at import and counted red in the nightly for as long as it existed.
+  const escapes = [];
+  for (const rel of files) {
+    if (!/\.(?:ts|tsx|js|mjs|cjs)$/.test(rel)) continue;
+    const full = path.join(coreDir, rel);
+    let source;
+    try { source = fs.readFileSync(full, 'utf8'); } catch { continue; }
+    const specifiers = source.matchAll(/(?:from|require\()\s*['"](\.\.?[^'"]*)['"]/g);
+    for (const match of specifiers) {
+      const resolved = path.resolve(path.dirname(full), match[1]);
+      if (resolved === coreDir || resolved.startsWith(coreDir + path.sep)) continue;
+      const line = source.slice(0, match.index).split('\n').length;
+      escapes.push(`${rel}:${line} -> ${match[1]}`);
+    }
+  }
+  if (escapes.length) {
+    fail(
+      'kernel file(s) importing across the repository boundary',
+      escapes,
+      'A relative specifier that leaves this repository only resolves on a box that happens to ' +
+        'have the sibling checked out beside it — never in the gate, which builds from a `git ' +
+        'archive` export. Move the code or the test to the repo that owns the subject (Rule 0c), ' +
+        'or reach the package through its installed runtime path rather than a source path.',
+    );
+  } else {
+    passes.push('no kernel file imports across the repository boundary');
+  }
 }
 
 /**
@@ -342,10 +378,14 @@ function checkStore(storeDir) {
  */
 function resolveCoreDir() {
   try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    // path.resolve is not cosmetic on Windows: `git rev-parse` answers with FORWARD slashes
+    // (`C:/Projects/oshal`), so a check comparing `resolved.startsWith(coreDir + path.sep)`
+    // against a natively-resolved path never matches and every file looks like it escapes the
+    // repo. The `--core` entry point already resolves its argument; this makes the two agree.
+    return path.resolve(execFileSync('git', ['rev-parse', '--show-toplevel'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
+    }).trim());
   } catch {
     return process.cwd();
   }
