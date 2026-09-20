@@ -7,9 +7,10 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review round 2: a LATE reminder's wording is pinned to the fire-time clock (the stale 'N trading days away' is gone); a weekend pricing date is refused at the input; ensureEventRemindersSchema is proven memoized (zero statements on a repeat call — the leg fires every minute and walked every plan); and the kernel-wiring block (H1-H5 in trading-event-plans.ts) fails loud until the integrator applies the hooks, so the feature cannot ship dark with every other spec green.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Review round 3: every DB case gets its OWN owner (the injected clock moves backwards between cases, so one shared sub meant another case's plans could expire on this case's tick and the assertions had to filter by planId to survive); a hung delivery seam is proven not to stall the tick (TRADING_EVENT_NOTIFY_TIMEOUT_MS bounds it, the claim row stands, the other plan on the same tick still fires); the compose pin covers that fifth env var; and the H4 hook now has to pass the injectable seam (alertNotifierFrom(deps)) — pinned as H4b, because the seam-less form makes the plan module's own spec write real jarvis_tasks rows and build the real notification router.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | This spec now STARTS its own PostgreSQL and removes it instead of resolving an address at all. Refusing an unpointed run closed the accident but did not make the spec runnable: `specDatabaseUrl` threw at MODULE level, nothing in any gate supplied the variable, so vitest reported a Failed Suite and every case here — the T-3/T-1/T-0 ladder, the expiry path, the hung-seam bound, the H1-H5 kernel-wiring pins — executed zero times. A guard that never runs is not a guard, and the only way to be both safe and executed is to own the server: the address is invented at start(), no caller can supply one that reaches a deployment, and the container is force-removed in stop(). The per-sub DELETE teardown went with it — the whole server is destroyed, so no cleanup SQL runs anywhere, which is precisely the property that failed twice on 2026-09-14. The `ALTER TABLE ... OWNER TO oshal_app` handoff is gone too: it existed to stop the superuser from taking ownership of a SHARED deployment's tables out from under the api, and `oshal_app` does not exist on a private server this file alone connects to. One setting is NEW rather than carried: `statementTimeoutMs: 60_000`. The old pool declared no statement timeout at all, and the fixture's own default is 15 s, which a cold container plus schema bootstrap can exceed on a loaded box; it matches the trading-event-plans reference conversion.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import crypto from 'crypto';
 import { readFileSync } from 'fs';
 import * as path from 'path';
@@ -27,13 +28,17 @@ import type { ScheduleRecord } from '../../src/features/scheduling';
 import { ensureBooksSchema, ensureLegacyBooks, legacyBook } from '../../src/app/trading-books-store';
 import { ensureTradingSchema, TradingError } from '../../src/app/trading-engine';
 import type { AppContext } from '../../src/app/composition/app-context';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+// A PostgreSQL this file owns: started here, removed in afterAll, reachable from nothing else.
+// `row_security=off` keeps the superuser's reads across the FORCE-RLS plan and reminder tables
+// explicit, and `max: 4` is the pool size this spec ran with before it owned its server.
+const database = new DisposablePostgres({
+  purpose: 'trading-event-reminders', database: 'trading_fixture', memory: '384m', max: 4,
+  statementTimeoutMs: 60_000, options: '-c row_security=off',
+});
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-evtr-${RUN}`;
-/** Every owner this run created, cleaned in afterAll. */
-const SUBS: string[] = [SUB];
 let pool: Pool;
 const ctx = () => ({ pool } as unknown as AppContext);
 const et = (date: string, time: string) => etWallToInstant(date, time);
@@ -44,7 +49,6 @@ const et = (date: string, time: string) => etWallToInstant(date, time);
  */
 async function caseSub(tag: string): Promise<string> {
   const sub = `spec-evtr-${RUN}-${tag}`;
-  SUBS.push(sub);
   await ensureLegacyBooks(pool as never, sub);
   return sub;
 }
@@ -67,25 +71,17 @@ beforeAll(async () => {
   process.env.SESSION_SECRET = process.env.SESSION_SECRET || `spec-secret-${RUN}`;
   process.env.TRADING_MAX_NOTIONAL_USD = '50000'; process.env.TRADING_MAX_QTY = '100000';
   delete process.env.TRADING_COTP_URL; delete process.env.TRADING_COTP_REMINDER_HOUR_ET; delete process.env.TRADING_COTP_REMINDER_DAYS;
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try { await pool.query('SELECT 1'); } catch (error) {
-    throw new Error(`trading-event-reminders requires the live oshal Postgres at ${DSN.replace(/:[^:@/]+@/, ':***@')} — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
+  pool = await database.start();
   await ensureBooksSchema(pool as never); await ensureTradingSchema(pool as never); await ensureEventPlansSchema(pool as never); await ensureEventRemindersSchema(pool as never);
-  // The spec connects as the superuser; if IT creates a table first the api (oshal_app) gets 42501 on it.
-  await pool.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'oshal_app') THEN EXECUTE 'ALTER TABLE oshal_trading_event_plans OWNER TO oshal_app'; EXECUTE 'ALTER TABLE oshal_trading_event_reminders OWNER TO oshal_app'; END IF; END $$;`);
+  // The ownership handoff this spec used to perform is gone with the shared server. It existed
+  // because a SUPERUSER that creates a table first leaves the api's `oshal_app` role with 42501 on
+  // it; on a private fixture there is no api and no `oshal_app`, and the superuser owning every
+  // table it made is the only possible outcome.
   await ensureLegacyBooks(pool as never, SUB);
 }, 120_000);
 
-afterAll(async () => {
-  for (const sub of SUBS) {
-    await pool.query(`DELETE FROM oshal_trading_event_reminders WHERE user_sub = $1`, [sub]).catch(() => {});
-    await pool.query(`DELETE FROM oshal_trading_event_plans WHERE user_sub = $1`, [sub]).catch(() => {});
-    await pool.query(`DELETE FROM oshal_trading_books WHERE user_sub = $1`, [sub]).catch(() => {});
-    await pool.query(`DELETE FROM jarvis_tasks WHERE user_sub = $1`, [sub]).catch(() => {});   // once H4 is wired the real rail can write shelf rows here
-  }
-  await pool.end();
-});
+// No DELETE pass: the whole server goes away, so there is nothing to clean and nowhere to clean it.
+afterAll(async () => { await database.stop(); });
 
 const book = (sub: string) => legacyBook(sub, 'paper');
 async function armedPlan(sub: string, name: string, pricingDate: string): Promise<string> {
