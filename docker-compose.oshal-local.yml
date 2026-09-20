@@ -153,6 +153,20 @@ x-bot-env: &bot-env
   # Entra): MOCK_OIDC=false + OIDC_ISSUER_URL + OIDC_CLIENT_ID + OIDC_CLIENT_SECRET +
   # APP_URL + SESSION_SECRET in .env. Guard: tests/unit/mock-oidc-failclosed.spec.ts.
   MOCK_OIDC: ${MOCK_OIDC:-false}
+  # The installer writes these; without the passthrough the container falls back to the
+  # fabricated demo user, which never matches OSHAL_OPERATOR_EMAILS -> no superadmin.
+  MOCK_OIDC_EMAIL: ${MOCK_OIDC_EMAIL:-}
+  MOCK_OIDC_NAME: ${MOCK_OIDC_NAME:-}
+  MOCK_OIDC_SUB: ${MOCK_OIDC_SUB:-}
+  # Which store this swarm installed from. The api seeds its built-in 'oshal-store' registry
+  # from these at first boot; without the passthrough it seeds the PUBLIC default while the
+  # installer staged from somewhere else, so the cockpit would offer to REPLACE the packages
+  # on disk with a different store's copies. The token is read only for a private store.
+  OSHAL_STORE_REPO: ${OSHAL_STORE_REPO:-}
+  OSHAL_STORE_REF: ${OSHAL_STORE_REF:-}
+  # OSHAL_STORE_TOKEN is deliberately NOT here — see the oshal-api block. It is a registry read
+  # credential, every reader of it is controller-side, and this anchor merges into every
+  # bot-node. Same rule as the connector-token master key further down.
   OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
   OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
   OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
@@ -397,6 +411,11 @@ x-bot-env: &bot-env
   # from .env and passed into the container (compose does not auto-forward .env to containers).
   OSHAL_OPERATOR_EMAILS: ${OSHAL_OPERATOR_EMAILS:-}
   OSHAL_OPERATOR_SUBS: ${OSHAL_OPERATOR_SUBS:-}
+  # The identity the installer created. Packages are staged BEFORE anyone can log in, so an
+  # unowned row would be invisible to everyone: person-scoped apps match on ownerSub, and
+  # NULL matches nobody. The loader stamps this on rows that have no owner yet.
+  OSHAL_INSTALL_OWNER_SUB: ${OSHAL_INSTALL_OWNER_SUB:-}
+  OSHAL_INSTALL_OWNER_ISSUER: ${OSHAL_INSTALL_OWNER_ISSUER:-}
   OSHAL_ALLOW_LEGACY_UNOWNED: ${OSHAL_ALLOW_LEGACY_UNOWNED:-false}
   # SECURITY: Developer Console (ADR-077). Super-admin is a DISTINCT, more privileged role
   # than operator and is double-gated + fail-closed: the capability must be explicitly
@@ -876,6 +895,12 @@ services:
       # Core API default ceiling: main 8 + four optional pools 2 each + RAG 2 = 18,
       # below oshal_app's 24-connection limit. Match the managed profile; these are
       # API-only settings. Operators must budget the aggregate when overriding them.
+      # CONTROLLER ONLY (kept out of *bot-env). Every reader is controller-side — the app
+      # registry routes, the store remote, the update-check cron and the registry store — and
+      # nothing under any-bot/ or the bot-node path touches it. Bots are this project's
+      # confirmed prompt-injection surface, so a repository read credential does not belong in
+      # their environment. Same rule as OSHAL_CONNECTOR_TOKEN_MASTER_KEY below.
+      OSHAL_STORE_TOKEN: ${OSHAL_STORE_TOKEN:-}
       OSHAL_DB_POOL_MAX: ${OSHAL_DB_POOL_MAX:-8}
       PGPOOL_MAX: ${PGPOOL_MAX:-2}
       RAG_DB_POOL_MAX: ${RAG_DB_POOL_MAX:-2}

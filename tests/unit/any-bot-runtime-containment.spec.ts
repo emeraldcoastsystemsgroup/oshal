@@ -6,10 +6,40 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: prove any-bot denies unauthorized dispatch tools and fences tool/prior-agent content before later model turns.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: enforce exact scopes over handler snapshots, side-effect-free completion, and fail-closed autonomous CLI providers.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: prove registry definitions resist in-place mutation and model input cannot carry approval or credential authority.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | This file now MINTS its own workspace directory instead of pointing at `process.cwd()/workspace`. That path is gitignored, so it does not exist in a `git archive` export - and the sanctioned gate builds GATE_SRC exactly that way, which means this SEC-05 containment guard has been red in every --head run since the path was introduced and green only in the operator's own tree, where an untracked workspace/ happens to sit. It also DECLARES that directory as a workspace root: the containment rail refuses to dispatch a tool whose task cwd is outside the declared roots, which is exactly why the fencing case could not execute one without the operator's own layout. Measured: with the directory absent the file reports 1 failed | 11 passed; with a directory it owns, 12 passed, in an export with no workspace/ anywhere. A containment guard the gate cannot run is not protecting anything.
  */
 
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * A workspace directory this file OWNS.
+ *
+ * It used to be `join(process.cwd(), 'workspace')` - a path that is in .gitignore, so it does
+ * not exist in a `git archive` export and therefore never existed in the sanctioned gate, which
+ * builds GATE_SRC exactly that way. This file has been red in every --head run since the day the
+ * path was introduced, and green only in the operator's own tree, where an untracked workspace/
+ * happens to sit. A containment guard that the gate cannot run is not protecting anything.
+ */
+const WORKSPACE = mkdtempSync(join(tmpdir(), 'oshal-containment-'));
+// The containment rail only dispatches a tool whose task cwd is inside a DECLARED workspace
+// root (task-workspace-scope.js: 'task cwd is outside allowed roots'), and the roots are read
+// from the environment at call time. Declaring this file's own directory is what makes the
+// fencing case executable anywhere; borrowing the repo's gitignored workspace/ only worked on
+// a box that happened to have one.
+const ROOT_VARS = ['WORKSPACE_DIR', 'SHARED_WORKSPACE_ROOT'] as const;
+const priorRoots = new Map<string, string | undefined>();
+beforeAll(() => {
+  for (const name of ROOT_VARS) { priorRoots.set(name, process.env[name]); process.env[name] = WORKSPACE; }
+});
+afterAll(() => {
+  for (const [name, value] of priorRoots) {
+    if (value === undefined) delete process.env[name]; else process.env[name] = value;
+  }
+  rmSync(WORKSPACE, { recursive: true, force: true });
+});
 
 const AgenticController = require('../../any-bot/server/controllers/AgenticController');
 const ToolRegistry = require('../../any-bot/server/services/ToolRegistry');
@@ -52,7 +82,7 @@ function runtimeHarness(outputs: ProviderResponse[], toolOutput: unknown = 'safe
   });
   const stream = { broadcast: vi.fn() };
   const taskController = {
-    getTask: vi.fn(async () => ({ id: 'task-1', workspace_dir: join(process.cwd(), 'workspace') })),
+    getTask: vi.fn(async () => ({ id: 'task-1', workspace_dir: WORKSPACE })),
     addMessage: vi.fn(async () => undefined),
     updateMetrics: vi.fn(async () => undefined),
   };

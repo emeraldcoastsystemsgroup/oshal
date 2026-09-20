@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 spaces carve: pin @/features/spatial-mapping (12th skill) — the spaces surface carve removes its last core import (spaces-routes.ts), and spaces-operator (inline, no node-server) has no other anchor; the installed spaces package resolves it from dist.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin authenticated artifact relay and activation-scoped package tools in the executable core build.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Pin @/shared/app-dependencies, the module behind the app-dependencies compatibility floor.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Corrects this file's own contract text, which the same branch falsified. It stated that tsconfig.server.json "excludes src/features/**" and that an explicit include of a feature is "silently a no-op" - both true until that blanket exclude was removed here to carry google-calendar into dist. This file exists to stop exactly that drift, so leaving its explanation describing a build it no longer has would have been the failure it guards against. The re-export is still the durable pin, and the text now says why.
  */
 
 /**
@@ -15,11 +16,17 @@
  *
  * ## Why this file has to exist
  *
- * `tsconfig.server.json` compiles `src/app/**`, `src/shared/**`, `src/entities/**` and
- * **excludes `src/features/**`**. A feature therefore reaches `dist/` only when something in an
- * include-root imports it. TypeScript's `exclude` filters `include` but never overrides the import
- * graph — so an import is the only reliable pin, and an *explicit tsconfig include of a feature is
- * silently a no-op* while the broad exclude stands. That is the whole bug class D8 closes.
+ * `tsconfig.server.json` compiles `src/app/**`, `src/shared/**` and `src/entities/**`. It used to
+ * also carry a blanket `src/features/**` exclude, which made an explicit per-feature include
+ * *silently a no-op* — `exclude` filters `include` but never overrides the import graph. That
+ * blanket exclude is gone, so a named include now works, and `src/features/google-calendar/**` is
+ * one.
+ *
+ * None of that changes why this file exists. A per-feature include is one line anybody can tidy
+ * away, it has to be remembered for every feature a PACKAGE resolves rather than core, and nothing
+ * fails loudly when it is dropped — the feature just stops reaching `dist/`. The re-export below
+ * is the durable pin, because it puts the dependency in the import graph where `exclude` cannot
+ * reach it. That is the bug class D8 closes.
  *
  * The consequence, learned twice: when core stopped importing `google-calendar`, it vanished from
  * the image and the first package route that required it failed at mount; `notifications` was

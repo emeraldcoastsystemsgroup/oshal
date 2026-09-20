@@ -13,9 +13,11 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Enforced object-level authorization (IDOR fix): every by-id handler (get/patch/delete/status/state/pause/resume/cancel/chat) now checks the caller owns the ticket (or is an operator) via requireTicketAccess() and returns 404 on mismatch. The list endpoint now forces ownerSub to the caller for non-operators and ignores client-supplied ownerSub unless operator, so a user can no longer enumerate or read other tenants' tickets.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Review fix (DLQ mis-count): the manual cockpit status/state PUT handlers now transition via updateStatusAs with the caller's identity instead of the actor-less updateStatus (which defaulted to 'system'). The queue DLQ policy counts only 'system' escalations as poison cycles, so a deliberate operator escalation recorded as 'system' could be quarantined as an auto-escalate loop — recording the operator actor prevents the mis-count.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: cockpit ticket chat no longer grants blanket automatic tool approval; executor policy must authorize each operation.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | GET /:ticketId answers where a graph ticket is parked (CKR-13 / D6). A graph ticket is dispatched from `approved` and nothing writes an in_process_* status, so an operator saw "Approval Required" and a status history with no way to tell which node of which workflow was waiting or what had just finished - that lived in metadata and a workflow_run_steps row nobody joined. Added only when the ticket IS a graph run, so every other ticket's payload is byte-identical.
  */
 
 import { Router } from 'express';
+import { readTicketWorkflowPosition } from './ticket-workflow-position';
 import type { Request, Response } from 'express';
 import type { AppContext } from '../composition-root';
 import {
@@ -176,7 +178,14 @@ export function createTicketRoutes(ctx: AppContext): Router {
     try {
       const ticket = await requireTicketAccess(ctx, req, res, ticketId as string);
       if (!ticket) return;
-      res.json(ticket);
+      // A graph ticket is dispatched from `approved` and no code writes an in_process_* status,
+      // so "Approval Required" was the whole story: which node of which workflow is waiting, and
+      // what just finished, were readable only by joining metadata to workflow_run_steps by hand.
+      const workflowPosition = await readTicketWorkflowPosition(
+        ctx.pool,
+        ticket.metadata as Record<string, unknown> | null,
+      );
+      res.json(workflowPosition ? { ...ticket, workflowPosition } : ticket);
     } catch (error) {
       logger.error({ err: error }, 'Failed to get ticket');
       res.status(500).json({ error: 'Failed to get ticket' });

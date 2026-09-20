@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Regression guard for multipart uploads losing the RLS request identity (docs/BACKLOG.md, 2026-09-14). Each core multer route whose post-upload handler writes through the GUC pool is driven over REAL loopback HTTP with its REAL router and REAL multer; the multipart body is written in 64 KB chunks with gaps so the parser finishes on a LATER socket chunk than the one the identity middleware ran on. The boundary that failed runs for real end to end: the server.ts identity middleware shape (runWithRequestIdentity -> next), multer streaming, the production GUC pool wrapper, and PostgreSQL row-level security evaluated for the real NOBYPASSRLS enforcing role (oshal_app) under OSHAL_DB_GUC_STRICT=deny. The fixture database is created and dropped by this spec on a loopback cluster; the operator's `oshal` database is never written. Doubled, and outside the boundary: the domain service each handler calls (RAG ingest, the knowledge-memory record, the swarm-app loader, the ambient receipt store and diarization orchestrator, the agent-profile repository). Each double performs the handler's owner-scoped write as a real INSERT through the real GUC pool into a FORCE-RLS probe table carrying the live owner-or-operator policy, and the probe's defaults record the identity PostgreSQL itself saw.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | This spec now STARTS its own PostgreSQL and removes it instead of taking an address from the environment at all. Refusing an unpointed run made the 2026-09-14 accident impossible, but it was the wrong SHAPE of answer: nothing in the repo supplied OSHAL_TEST_DSN, so the module-level `specDatabaseUrl([...])` threw AT IMPORT and vitest reported a failed suite with ZERO tests run. A guard that cannot run proves nothing in any gate — this file's whole claim (multipart uploads keep the caller's RLS identity) was unproven for exactly as long as it was unrunnable, which is the same exposure the throw was added to close. A private server is both safe and executable: the address is invented at start(), no caller can supply a value that reaches a deployment, and the container is force-removed in afterAll. The `CREATE DATABASE`/`DROP DATABASE` dance on a borrowed cluster is gone with it, and so is the pg_roles precondition check: `roles: [{ name: ENFORCING_ROLE, max: 6 }]` has the fixture MINT the NOSUPERUSER NOBYPASSRLS enforcing role (max 6 matching the app pool it replaces; the fixture itself is memory '384m', max 4, connectionTimeoutMillis 10_000, statementTimeoutMs 60_000), so the probe table is handed to a real LOGIN role rather than reached through a superuser's `SET ROLE`. The ALTER TABLE ... OWNER TO handoff is load-bearing and its failure mode was measured rather than assumed: with the handoff the refused write raises 'new row violates row-level security policy', without it the same write raises 'permission denied for table' - so dropping it would make the case fail LOUDLY on a regex mismatch, not pass for the wrong reason. Nothing else about the boundary moved — the routers, multer, the GUC pool wrapper and the FORCE-RLS probe policy are the same, and the first case still proves the fixture can go red.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -15,7 +16,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 
 vi.mock('@/shared/logger', () => ({
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -29,18 +30,27 @@ import { createSwarmAppRoutes } from '@/app/routes/swarm-app-routes';
 import { createAmbientSpeakerRoutes, type AmbientSpeakerRouteOptions } from '@/app/routes/ambient-speaker-routes';
 import { createAgentProfileRoutes } from '@/app/routes/agent-profile-routes';
 import { AgentProfileController, AgentProfileService } from '@/features/agent-profile';
-import { specDatabaseUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
 
-/** Same convention as the other enforcing-role specs: a cluster the run names, never a default. */
-const ADMIN_DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
+/** The NOSUPERUSER NOBYPASSRLS identity the probe table is owned by and the route pool connects as. */
+const ENFORCING_ROLE = 'oshal_app';
+
+// A PostgreSQL this file owns: started here, removed in afterAll, reachable from nothing else.
+// The enforcing role IS this spec's subject — FORCE ROW LEVEL SECURITY binds the table OWNER and a
+// superuser bypasses RLS unconditionally, so the fixture mints the role and the probe table below
+// is handed to it. No libpq `options`: the superuser pool never declared any, and `row_security=off`
+// on the role's pool would turn an enforced read into an error instead of a filtered result.
+const database = new DisposablePostgres({
+  purpose: 'multipart-request-identity-postgres', database: 'multipart_identity_fixture',
+  memory: '384m', max: 4, connectionTimeoutMillis: 10_000, statementTimeoutMs: 60_000,
+  roles: [{ name: ENFORCING_ROLE, max: 6 }],
+});
 
 /** Home admission is not this suite's boundary: discovery always admits, so nothing here changes shape. */
 const admitEveryApplication = {
   canDiscover: async () => true,
   resolveActor: async () => ({ sub: 'route-fixture-subject', issuer: 'https://route.fixture.test', isActive: true, isSwarmAdmin: false }),
 };
-const ENFORCING_ROLE = 'oshal_app';
-const FIXTURE_DB = `oshal_multipart_identity_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 const OWNER = 'auth0|multipart-owner';
 const OPERATOR = 'auth0|multipart-operator';
 const AGENT_ID = 'a0000000-0000-0000-0000-00000000c0de';
@@ -67,41 +77,23 @@ const PROBE_DDL = `
     WITH CHECK ((owner_sub = current_setting('oshal.current_sub', true)) OR (current_setting('oshal.is_operator', true) = 'on'));
 `;
 
-let adminPool: Pool;
 let fixtureAdmin: Pool;
 let appPool: Pool;
 let gucPool: Pool;
 let server: http.Server;
 let port = 0;
 let actingSub: string = OWNER;
-let fixtureCreated = false;
 const scratchRoot = mkdtempSync(join(tmpdir(), 'oshal-multipart-identity-'));
 const savedEnv = { strict: process.env.OSHAL_DB_GUC_STRICT, operators: process.env.OSHAL_OPERATOR_SUBS };
 
-/** The fixture database's DSN on the same cluster; refuses anything but a loopback host. */
-function fixtureDsn(): string {
-  const url = new URL(ADMIN_DSN);
-  if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) {
-    throw new Error(`refusing to create a fixture database on non-loopback host ${url.hostname}; point OSHAL_TEST_DSN at a local cluster`);
-  }
-  url.pathname = `/${FIXTURE_DB}`;
-  return url.toString();
-}
-
-/** Create the throwaway database, the probe table owned by the enforcing role, and the GUC pool. */
+/** Start the private server, create the probe table owned by the enforcing role, and the GUC pool. */
 async function openFixture(): Promise<void> {
-  adminPool = new Pool({ connectionString: ADMIN_DSN, max: 1, connectionTimeoutMillis: 5_000 });
-  const role = await adminPool.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [ENFORCING_ROLE]);
-  if (role.rowCount !== 1) {
-    throw new Error(`enforcing role ${ENFORCING_ROLE} is missing on this cluster; provision it with docs/governance/app-role-provisioning.sql`);
-  }
-  await adminPool.query(`CREATE DATABASE ${FIXTURE_DB}`);
-  fixtureCreated = true;
-  fixtureAdmin = new Pool({ connectionString: fixtureDsn(), max: 1 });
+  fixtureAdmin = await database.start();
   await fixtureAdmin.query(PROBE_DDL);
-  // The session starts AS the enforcing role, exactly the production posture; the self-check
-  // below proves it is neither superuser nor RLS-bypassing before any route case can pass.
-  appPool = new Pool({ connectionString: fixtureDsn(), max: 6, options: `-c role=${ENFORCING_ROLE}` });
+  // The pool connects AS the enforcing role — a real LOGIN role, not a superuser's SET ROLE —
+  // exactly the production posture; the self-check below proves it is neither superuser nor
+  // RLS-bypassing before any route case can pass.
+  appPool = database.rolePool(ENFORCING_ROLE);
   gucPool = wrapPoolWithGuc(appPool);
 }
 
@@ -247,20 +239,19 @@ beforeAll(async () => {
   process.env.OSHAL_OPERATOR_SUBS = OPERATOR;
   await openFixture();
   await startServer();
-}, 60_000);
+}, 120_000);
 
 afterAll(async () => {
   if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
-  await appPool?.end();
-  await fixtureAdmin?.end();
-  if (fixtureCreated) await adminPool.query(`DROP DATABASE IF EXISTS ${FIXTURE_DB} WITH (FORCE)`);
-  await adminPool?.end();
+  // No DROP DATABASE and no DELETE pass: the whole server goes away, so there is nothing to clean
+  // and nowhere to clean it. stop() ends every pool it handed out, the role's included.
+  await database.stop();
   rmSync(scratchRoot, { recursive: true, force: true });
   if (savedEnv.strict === undefined) delete process.env.OSHAL_DB_GUC_STRICT;
   else process.env.OSHAL_DB_GUC_STRICT = savedEnv.strict;
   if (savedEnv.operators === undefined) delete process.env.OSHAL_OPERATOR_SUBS;
   else process.env.OSHAL_OPERATOR_SUBS = savedEnv.operators;
-}, 60_000);
+}, 120_000);
 
 describe('multipart uploads keep the caller\'s RLS identity (real PostgreSQL, enforcing role)', () => {
   it('the fixture can go red: the GUC pool runs as NOBYPASSRLS oshal_app and RLS refuses an identity-less owner write', async () => {

@@ -5,7 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-136 D4 follow-up guards for the per-minute trading-events leg. (1) isFullTick is stateless + minute-aligned (ET minute % TRADING_EVENTS_FULL_TICK_MINUTES); scheduleFireInstant judges the schedule's DUE minute, not the poll clock. (2) legWindowFromCron derives the dated-order window from the leg cron — the v1 '*\/5 9-16' yields the hand-typed v1 window, the default yields 07:00–19:59. (3) migrateEventLegSchedules against the REAL Redis schedule store (oshal-local-redis, a spec-unique key prefix, cleaned up after): a v1-cron leg is rewritten in place (same id, executionCount/lastRunAt preserved, timezone set) and its next-run ZSET score is re-indexed to the new cron's next minute; a paused leg stays paused and un-indexed; a current leg and a foreign taskType are untouched; a second run migrates 0. (4) against the live Postgres: an armed plan does NOT step on a non-full fire and DOES step on a full fire of dispatchTradingEventSchedule. (5) source pins: the runtime wires the migration before runner.start, the dispatch keeps tickDatedOrders outside the full branch and catches a plans failure. Run with --no-file-parallelism.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The database this spec connects to is resolved by tests/helpers/spec-database-url.ts and has NO default. The fallback it replaces resolved to the published port of the local stack — the operator's LIVE trading Postgres — so any run that set no environment variable created and destroyed data in production, which is what happened twice on 2026-09-14. An unpointed run now throws and names the variable to set; a value that lands on the live stack is refused unless the run acknowledges it explicitly.
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | The Redis URL comes from specRedisUrl instead of defaulting to the live stack. It ended in a loopback fallback built from the published-port knob, and on the box this was found on that knob named the port the live Redis was listening on, with the compose default closed - so an unpointed run wrote and deleted keys in the operator's live swarm queue and scheduler state. It is the Redis twin of the Postgres incident spec-database-url.ts entry 1 records, which fired twice in production on 2026-09-14.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Both servers are now started by this file and removed when it finishes. Entry 2 stopped the Postgres half from reaching the operator's data but left the Redis half resolving OSHAL_REDIS_PORT, which on this box names the port the RUNNING swarm's Redis listens on — the seeding case wrote schedules and the teardown deleted keys in the live scheduler's own store. Refusing an unpointed run was the wrong shape of answer for a spec that must cross a real next-run ZSET: there is now nothing to point, because the fixture starts its own Postgres and its own Redis. The key-prefix sweep and the per-table DELETE pass are gone with them.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
@@ -22,12 +22,20 @@ import {
 import { ensureBooksSchema, ensureLegacyBooks, legacyBook } from '../../src/app/trading-books-store';
 import { ensureTradingSchema } from '../../src/app/trading-engine';
 import type { AppContext } from '../../src/app/composition/app-context';
-import { specDatabaseUrl, specRedisUrl } from '../helpers/spec-database-url';
+import { DisposablePostgres } from '../helpers/disposable-postgres';
+import { DisposableRedis } from '../helpers/disposable-redis';
+
+// A Postgres and a Redis this file owns: started here, removed in afterAll, reachable from nothing
+// else. Both boundaries are real — the migration guard's whole point is that it crosses the actual
+// next-run ZSET — but neither is the operator's.
+const database = new DisposablePostgres({
+  purpose: 'trading-event-leg-cadence', database: 'trading_fixture', memory: '384m', max: 4,
+  statementTimeoutMs: 60_000, options: '-c row_security=off',
+});
+const cache = new DisposableRedis({ purpose: 'trading-event-leg-cadence' });
 
 const RUN = crypto.randomUUID().slice(0, 8);
 const SUB = `spec-cadence-${RUN}`;
-const DSN = specDatabaseUrl(['OSHAL_TEST_DSN']);
-const REDIS_URL = specRedisUrl(['OSHAL_TEST_REDIS_URL']);
 const PREFIX = `oshal:scheduler-spec-${RUN}`;
 const V1_CRON = '*/5 9-16 * * 1-5';
 const AGENT_ID = '00000000-0000-4000-8000-000000000032';
@@ -40,27 +48,22 @@ const ctx = () => ({ pool } as unknown as AppContext);
 beforeAll(async () => {
   process.env.SESSION_SECRET = process.env.SESSION_SECRET || `spec-secret-${RUN}`;
   process.env.TRADING_MAX_NOTIONAL_USD = '50000'; process.env.TRADING_MAX_QTY = '100000';
-  pool = new Pool({ connectionString: DSN, max: 4, options: '-c row_security=off' });
-  try { await pool.query('SELECT 1'); } catch (error) {
-    throw new Error(`trading-event-leg-cadence requires the live oshal Postgres at ${DSN.replace(/:[^:@/]+@/, ':***@')} — bring the stack up with \`bash scripts/oshal-up.sh\` (cause: ${(error as Error).message})`);
-  }
-  redis = new Redis(REDIS_URL, { maxRetriesPerRequest: 1, enableOfflineQueue: false, lazyConnect: true });
-  try { await redis.connect(); await redis.ping(); } catch (error) {
-    throw new Error(`trading-event-leg-cadence requires the live oshal Redis at ${REDIS_URL} (oshal-local-redis; OSHAL_REDIS_PORT) — the migration guard must cross the real next-run index (cause: ${(error as Error).message})`);
-  }
-  store = new RedisScheduleStore({ redisUrl: REDIS_URL, keyPrefix: PREFIX });
+  pool = await database.start();
+  const redisUrl = (await cache.start()).url;
+  redis = new Redis(redisUrl, { maxRetriesPerRequest: 1, enableOfflineQueue: false, lazyConnect: true });
+  await redis.connect(); await redis.ping();
+  store = new RedisScheduleStore({ redisUrl, keyPrefix: PREFIX });
   svc = new ScheduleService(store, async (s) => ({ success: true, scheduleId: s.id }), { defaultTargetAgentId: AGENT_ID, ensureSchedulingEnabled: async () => undefined });
   await ensureBooksSchema(pool as never); await ensureTradingSchema(pool as never); await ensureEventPlansSchema(pool as never);
   await pool.query(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'oshal_app') THEN EXECUTE 'ALTER TABLE oshal_trading_event_plans OWNER TO oshal_app'; END IF; END $$;`);
   await ensureLegacyBooks(pool as never, SUB);
 }, 120_000);
 
+// No key sweep and no DELETE pass: both servers go away, so there is nothing to clean and nowhere
+// to clean it. The clients are closed FIRST so ioredis is not reconnecting to a removed container.
 afterAll(async () => {
-  const keys = await redis.keys(`${PREFIX}:*`).catch(() => [] as string[]);
-  if (keys.length) await redis.del(...keys);
-  await store.close(); await redis.quit();
-  for (const t of ['oshal_trading_event_plans', 'oshal_trading_dated_orders', 'oshal_trading_pinned_lots', 'oshal_trading_books']) await pool.query(`DELETE FROM ${t} WHERE user_sub = $1`, [SUB]).catch(() => {});
-  await pool.end();
+  await store?.close().catch(() => {}); await redis?.quit().catch(() => {});
+  await cache.stop(); await database.stop();
 });
 
 describe('full tick — stateless, minute-aligned, judged on the DUE minute', () => {
@@ -139,7 +142,7 @@ describe('migrateEventLegSchedules — REAL Redis schedule store, spec-unique ke
   });
 });
 
-describe('the dispatch — plans step on a FULL fire only, against the live Postgres', () => {
+describe('the dispatch — plans step on a FULL fire only, against this file\'s own Postgres', () => {
   it('an armed plan stays armed on a non-full fire and moves to watching on the next full fire', async () => {
     const prev = process.env.TRADING_EVENT_PLANS; process.env.TRADING_EVENT_PLANS = 'true';
     try {

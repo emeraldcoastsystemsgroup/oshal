@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: promote only deterministic structural verification output into trusted swarm memory; agent-reviewed output remains fenced and untrusted pending operator approval.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: keep structural-check output and user/model-derived titles untrusted until exact-digest operator approval.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: derive memory ownership from the durable ticket record, ignore provider payload identity claims, and isolate ownerless external-machine work behind deterministic synthetic principals.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | enforceHandoverGate becomes assessHandoverCoverage, handoversEnforced becomes allHandoversPresent, and the log stops contradicting the run (CKR-18 / R0.12). It logged that the handover gate had FAILED and that the ticket was blocked from advancing, and then returned a struct; both callers logged 'continuing with warning' and proceeded. One execution, two mutually contradictory lines, and an operator reading the first one learned something that never happened. Renamed for accuracy, not taste: the identifier said enforce and gate while the function assesses and neither caller gates on it.
  */
 
 import { createHash } from 'node:crypto';
@@ -394,7 +395,7 @@ export function buildProcessingResult(
  * processing service whether a phase's rounds all produced required developer
  * handovers and how many were missing so it can escalate or continue.
  */
-export interface HandoverGateResult {
+export interface HandoverCoverageResult {
   passed: boolean;
   phase: number;
   missingHandovers: number;
@@ -402,36 +403,42 @@ export interface HandoverGateResult {
 }
 
 /**
- * @description Checks whether all rounds in a phase dispatch result had valid handovers.
- * Returns a structured result that the processing service uses to decide whether to
- * escalate or continue. Logs enforcement events for operator visibility.
+ * @description Reports whether every round in a phase dispatch wrote a developer handover.
+ * It ASSESSES; it does not gate. Both callers log the shortfall and proceed, which is why the
+ * name and the log line say coverage rather than enforcement - the previous pair said a gate had
+ * failed and the ticket was blocked, immediately before the caller continued.
  *
  * @param ticketId - External ticket identifier
  * @param phaseResult - Result from multi-round dispatch containing handover flags
  * @param strict - When true, returns passed=false on any missing handover. Default true.
  * @returns Gate result indicating pass/fail and details
  */
-export function enforceHandoverGate(
+export function assessHandoverCoverage(
   ticketId: string,
-  phaseResult: { phase: number; rounds: Array<{ handoverValidated: boolean; agentId: string; round: number }>; handoversEnforced: boolean },
+  phaseResult: { phase: number; rounds: Array<{ handoverValidated: boolean; agentId: string; round: number }>; allHandoversPresent: boolean },
   strict = true,
-): HandoverGateResult {
+): HandoverCoverageResult {
   const totalRounds = phaseResult.rounds.length;
   const missingHandovers = phaseResult.rounds.filter((r) => !r.handoverValidated).length;
-  const passed = strict ? phaseResult.handoversEnforced : missingHandovers === 0;
+  const passed = strict ? phaseResult.allHandoversPresent : missingHandovers === 0;
 
   if (!passed) {
-    const failedAgents = phaseResult.rounds
+    const agentsWithoutHandover = phaseResult.rounds
       .filter((r) => !r.handoverValidated)
       .map((r) => ({ agentId: r.agentId, round: r.round }));
+    // The ticket CONTINUES. Both callers log "continuing with warning" and proceed, so the old
+    // wording — which announced a FAILED gate and a ticket held back — was the opposite of what
+    // the same execution then did, two contradictory lines from one run. This is a coverage
+    // signal; it does not gate, and it no longer claims to.
     logger.warn(
-      { ticketId, phase: phaseResult.phase, missingHandovers, totalRounds, failedAgents, strict },
-      'HANDOVER GATE FAILED — agents did not write required developer handovers. Ticket blocked from advancing.',
+      { ticketId, phase: phaseResult.phase, missingHandovers, totalRounds, agentsWithoutHandover, strict },
+      'Handover coverage incomplete — some rounds wrote no developer handover. The ticket CONTINUES; '
+      + 'this is a coverage signal, not a gate.',
     );
   } else if (totalRounds > 0) {
     logger.info(
       { ticketId, phase: phaseResult.phase, totalRounds },
-      'Handover gate passed — all rounds have valid developer handovers',
+      'Handover coverage complete — every round wrote a developer handover',
     );
   }
 

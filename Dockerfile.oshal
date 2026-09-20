@@ -295,6 +295,10 @@ COPY scripts/image-freshness.js ./scripts/
 # plaid, trading, …) — baked so app search/booking survives a container recreate.
 # Glob picks up new oshal-*.js automatically (allowlisted in .dockerignore).
 COPY scripts/oshal-*.js ./scripts/
+# ... and the .mjs siblings. oshal-setup-root.mjs issues the one-use installer proof the
+# first-admin bootstrap requires (ADR-117/148); the glob above only ever matched .js, so that
+# ceremony could not run in a shipped image at all.
+COPY scripts/oshal-*.mjs ./scripts/
 # The weekly site report generator. scripts/publish-oshal-report-weekly.ps1 execs it IN the api
 # container (/app/scripts/site-oshal-report.js) with no docker cp, but the oshal-*.js glob never
 # matched its name, so every image shipped without it (verified live 2026-09-06: absent). Needs the

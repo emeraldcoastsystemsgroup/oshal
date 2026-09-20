@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Session 109: Added failed output detection — if round output has status=failed, abort phase instead of advancing to next round.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Idle-timeout directive (adversarial-review follow-up): OUTPUT_MAX_WAIT_MS raised 30min→2h (env-tunable) so output-waiting never gives up before a bot's 60-min idle ceiling.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | CV-4: the handover read uses the WORKSPACE task id, not the ticket id. readAgentHandover(agentId, workspaceTaskId) names its second parameter explicitly and both call sites passed ticketId, so wherever the two differ the read looked in a directory the handover was never written to and reported a missing handover for a round that wrote one. It is the change that makes the coverage check capable of passing at all; without it the signal was noise. Falls back to ticketId when no workspace id was threaded through, which is the pre-existing behaviour.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -79,7 +80,7 @@ export interface PhaseDispatchResult {
   rounds: RoundExecutionResult[];
   finalOutput: unknown;
   allRoundsComplete: boolean;
-  handoversEnforced: boolean;
+  allHandoversPresent: boolean;
 }
 
 /**
@@ -241,16 +242,16 @@ export class MultiRoundDispatchService {
 
     this.orchestrator.clearState(ticketId, phase);
 
-    const handoversEnforced = rounds.every((r) => r.handoverValidated);
+    const allHandoversPresent = rounds.every((r) => r.handoverValidated);
     logger.info(
       {
-        ticketId, phase, roundCount: rounds.length, allComplete, handoversEnforced,
+        ticketId, phase, roundCount: rounds.length, allComplete, allHandoversPresent,
         agents: rounds.map((r) => ({ agentId: r.agentId, role: r.role })),
       },
       'Multi-round phase completed',
     );
 
-    return { phase, rounds, finalOutput, allRoundsComplete: allComplete, handoversEnforced };
+    return { phase, rounds, finalOutput, allRoundsComplete: allComplete, allHandoversPresent };
   }
 
   /**
@@ -274,7 +275,7 @@ export class MultiRoundDispatchService {
       rounds: [roundResult],
       finalOutput: roundResult.output,
       allRoundsComplete: true,
-      handoversEnforced: roundResult.handoverValidated,
+      allHandoversPresent: roundResult.handoverValidated,
     };
   }
 
@@ -356,7 +357,12 @@ export class MultiRoundDispatchService {
     }
 
     const output = await this.awaitRoundOutput(ticketId, policy, roundUnitId);
-    let handoverValidated = this.validateHandover(ticketId, agentId, phase, round);
+    // CV-4: readAgentHandover's second parameter is the WORKSPACE task id, and this passed the
+    // ticket id. Where the two differ the read looked in a directory the handover was never
+    // written to, so handoverValidated was false for reasons that had nothing to do with the
+    // agent — which is what made the coverage check incapable of passing at all.
+    const handoverTaskId = workspaceTaskId ?? ticketId;
+    let handoverValidated = this.validateHandover(handoverTaskId, agentId, phase, round);
     const durationMs = Date.now() - startedAt;
 
     // Handover enforcement: if no handover found in root workspace developer-handovers/,
@@ -368,7 +374,7 @@ export class MultiRoundDispatchService {
       );
       // Give the agent benefit of the doubt — the handover might be written under
       // a slightly different filename. Check once more with a relaxed match.
-      handoverValidated = this.validateHandoverRelaxed(ticketId, phase, round);
+      handoverValidated = this.validateHandoverRelaxed(handoverTaskId, phase, round);
       if (handoverValidated) {
         logger.info({ ticketId, phase, round }, 'Handover found on relaxed check');
       }
