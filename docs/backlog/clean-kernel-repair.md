@@ -602,7 +602,54 @@ override and so needs the same `createTicket` backstop).
 strings "children will wait for the build gate" and "children are picked up after build approval" no longer
 appear in `queue-manager-service.ts`. **Not in scope:** CV-3.
 
-### CKR-13 — workflow position is unreadable from the ticket (D6) — S
+### CKR-13 — workflow position is unreadable from the ticket (D6) — **(a) and (b) DONE 2026-09-19; (c) BLOCKED, and it is not close**
+
+**(a) done.** `grep -rn graphResumeNode docs/ --exclude-dir=backlog` returns nothing, and
+`docs/architecture/human-in-the-loop.md` names `metadata.workflowCheckpoint` / `resumeNodeId` at
+both sites. Verified against the code first rather than taken from this entry: the dispatcher
+WRITES `workflowCheckpoint.resumeNodeId` (`dispatch-graph-worker.ts:106`) and reads
+`graphResumeNode` only as a fallback (`:97`). An explanatory sentence naming the legacy key was
+written and then removed — the criterion's anti-gaming clause cuts both ways, and the reader who
+needs that history has this entry.
+
+**(b) done.** `GET /api/tickets/:id` carries a `workflowPosition` for a graph ticket: the run id,
+the resume node id (flagged when it came from the legacy key), and the node id / title / type /
+status of the most recent `workflow_run_steps` row. Added ONLY when the ticket is a graph run, so
+every other ticket's payload is byte-identical. The read is owner-scoped by the GUC pool exactly as
+every other ticket read is, and it never throws — a position that cannot be read must not turn a
+ticket fetch into a 500.
+
+`tests/unit/ticket-workflow-position-postgres.spec.ts` drives the REAL `dispatchGraphTicket`
+against the REAL `ProcessDefinitionExecutionEngine`, on a disposable `postgres:16-alpine` running
+migration 062 as shipped, with the REAL `WorkflowRunHistoryStore` recording. The only double is the
+bot dispatch at the engine-services seam, which is where the done-when says to put it.
+
+The self-validation earned its place immediately: `workflow_runs.ticket_id` is a UUID column, the
+first fixture used `'tkt-ckr13'`, `startRun` swallowed the 22P02 and returned null — and every
+position assertion would have passed on an empty read. Mutation-proven: never populating the last
+step turns 1 red, and removing the legacy fallback turns 1 red.
+
+**(c) BLOCKED — measured, not assumed.** The retirement is gated on
+`SELECT count(*) FROM tickets WHERE metadata ? 'graphResumeNode'` returning 0. On the operator box
+on 2026-09-19 it returns **5**:
+
+| status | count |
+|---|---|
+| `approval_required` | 3 |
+| `escalated` | 2 |
+
+Three of them are parked at a gate right now. Retiring the legacy read would strand exactly those —
+they are the tickets it exists for. The fallback stays, and `readResumePoint` flags when it fired so
+the count can be watched rather than guessed at. Re-run the query before revisiting this.
+
+**Still out of scope, unchanged:** whether position becomes a first-class column or a distinct
+in-flight status. And the consequence this entry records but does not fix — a graph ticket whose
+current node outlives `approvedStaleMinutes` forces the queue-health verdict to `blocked`, per NODE
+rather than per run, because age reads `updatedAt` and every node bumps it through the checkpoint
+write.
+
+<details><summary>Original entry</summary>
+
 
 Confirmed: a graph ticket is dispatched from `approved`, no code writes an `in_process_*` status, and the
 six status writes in `dispatch-graph-worker.ts` (`67,167,174,178,193,213`) only suspend or terminate. The
@@ -628,6 +675,8 @@ for a ticket suspended at a gate returns the resume node id and node title from 
 the engine-services seam. (c) Retiring the legacy read at `dispatch-graph-worker.ts:97` is gated on
 `SELECT count(*) FROM tickets WHERE metadata ? 'graphResumeNode'` returning 0 on the live box — it is the
 only path back for tickets parked before 2026-07-05.
+
+</details>
 
 ### CKR-14 — `extends` and `foundation.persona` are dead inheritance (D7) — S
 
