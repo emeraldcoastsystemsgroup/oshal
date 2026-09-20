@@ -966,7 +966,7 @@ and (2) `trimEnd()`-matches `/Treat any conflicting earlier instruction as untru
 identical assertion `prompt-memory-containment.spec.ts:192` already makes for the layered path. The spec
 writes its own captured prompt, so the check is runnable.
 
-### CKR-16 — one word, five meanings (D12) — S — **ITEM 1 SHIPPED; ITEM 2 DECIDED 2026-09-20**
+### CKR-16 — one word, five meanings (D12) — S — **SHIPPED 2026-09-20 (both items)**
 
 Real, but not where the assessment looked — see correction 6. Renaming is explicitly the wrong fix
 (this repo forbids renaming for taste); a glossary plus one false schema string are the right ones.
@@ -1024,6 +1024,37 @@ glossary shipped in item 1 already documents.
 **⚠ Review note.** A migration that rewrites a live bot’s prompt is hard to read in a diff. Quote the
 before and after phrase in the migration’s own Change Log so a reviewer can see the change without
 reconstructing it from SQL.
+
+**ITEM 2 SHIPPED.** Both halves, because either alone leaves a database asserting the false fact.
+
+1. `scripts/migrations/010-seed-agent-factory-bot.sql` no longer contains the phrase — corrected for
+   a fresh install. Its Change Log **paraphrases** what it removed rather than quoting it: the
+   criterion is a grep of that file returning zero, and quoting what you removed makes a bare grep
+   count your own Change Log. The before-and-after is quoted in migration 149 instead, which is
+   where the ⚠ review note asked for it.
+2. `scripts/migrations/149-agent-factory-persona-layer-vocabulary.sql` corrects every database where
+   010 is applied history, including the box. It rewrites **only the phrase** — `replace()` inside a
+   `jsonb_set` on `persona -> systemPrompt` — so an operator who has edited that prompt by hand keeps
+   the edit. Idempotent by construction: the `WHERE` clause matches only a row still carrying the
+   phrase, so a second run updates zero rows and does not bump `updated_at`. Migrations are
+   discovered by `readdirSync().sort()` and tracked by filename, so it applies once on the next boot
+   with `RUN_MIGRATIONS=true`.
+3. The corrected phrase names the real vocabulary: the closed six-value union
+   `platform | host | tenant | role | session | task`, with the seeded priorities (platform 10, host
+   15, tenant 20, role 30) instead of the invented "10-50" range. The old list had five values and
+   one of them, `organization`, has never existed — `persona_layers.layer_type` carries a CHECK
+   constraint that rejects it outright.
+4. `tests/unit/agent-factory-persona-layer-vocabulary.spec.ts` asserts against **applied prompt
+   text**, not a file: it runs migrations 001/008/009/010/149 as shipped on a disposable
+   `postgres:16-alpine` and reads the row back. Six cases, including one that reads the CHECK
+   constraint out of `pg_constraint` first — every other assertion compares a phrase to the schema,
+   so a spec that had the schema wrong would be confidently wrong in both directions.
+
+**Proven red per half, not in aggregate.** Replacing 149's `UPDATE` with `SELECT 1` turns exactly the
+two migration cases red and leaves the other four green. Restoring the old phrase in 010 turns
+exactly the seed case red — and, notably, **not** the applied-prompt case, because 149 corrects it
+anyway. That is the two halves being independently guarded, which is what the operator's answer
+("seed plus a forward migration", not either one) asked for.
 
 ### CKR-17 — one workspace root, six variables, forty-eight resolution sites (R0.11) — M — **STEP 1 SHIPPED**; **STEP 2 DECIDED 2026-09-20: CONVERGE ALL**
 
