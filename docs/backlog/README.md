@@ -71,9 +71,10 @@ relevant ADR or feature documentation, release notes, and git history.
 - [service-auth-smokes-unexercised.md](./service-auth-smokes-unexercised.md) — a service-auth
   smoke with no bound operator transport reports PENDING, so the installer's postflight now
   exercises none of them and still exits 0. The narrowing was right; the gap needs a name.
-- [spec-database-gate-vs-negative-control.md](./spec-database-gate-vs-negative-control.md) — the
-  live-datastore gate flags the variable NAME, so it flags the one spec whose purpose is proving that
-  variable is ignored. Red on main today; three fixes, each with a cost, and the choice is open.
+- [spec-database-gate-vs-negative-control.md](./spec-database-gate-vs-negative-control.md) — RESOLVED.
+  The live-datastore gate flags the variable NAME, so it flagged the one spec whose purpose is proving
+  that variable is ignored. Fixed in the spec, not the gate: a control has no reason to resolve what it
+  proves is ignored. Kept for the lesson about checking the guarded code before changing the guard.
 - [workspace-isolation-decision.md](./workspace-isolation-decision.md) — all 40 containers
   mount one workspace volume `:rw` with no subpath, and `execute_command` bypasses persona
   capability matching. Measured and pinned; ADR-060's three options plus a deliberate
