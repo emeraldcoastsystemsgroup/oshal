@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Session 109: Added failed output detection — if round output has status=failed, abort phase instead of advancing to next round.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Idle-timeout directive (adversarial-review follow-up): OUTPUT_MAX_WAIT_MS raised 30min→2h (env-tunable) so output-waiting never gives up before a bot's 60-min idle ceiling.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | CV-4: validate handovers against the WORKSPACE id, not the ticket id. Handovers are written under the root ticket workspace folder, so a round whose workspace id differs from its ticket id could never pass either the strict or the relaxed check. Both validators now name their parameter for what it actually is.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -356,7 +357,11 @@ export class MultiRoundDispatchService {
     }
 
     const output = await this.awaitRoundOutput(ticketId, policy, roundUnitId);
-    let handoverValidated = this.validateHandover(ticketId, agentId, phase, round);
+    // Handovers are written under the WORKSPACE id (the root ticket's folder), which is not the
+    // ticket id for a child ticket or any caller that supplies one. Validating against the ticket
+    // id reads a directory no bot on this round writes to, so the check can never pass there.
+    const handoverWorkspaceId = workspaceTaskId ?? ticketId;
+    let handoverValidated = this.validateHandover(handoverWorkspaceId, agentId, phase, round);
     const durationMs = Date.now() - startedAt;
 
     // Handover enforcement: if no handover found in root workspace developer-handovers/,
@@ -368,7 +373,7 @@ export class MultiRoundDispatchService {
       );
       // Give the agent benefit of the doubt — the handover might be written under
       // a slightly different filename. Check once more with a relaxed match.
-      handoverValidated = this.validateHandoverRelaxed(ticketId, phase, round);
+      handoverValidated = this.validateHandoverRelaxed(handoverWorkspaceId, phase, round);
       if (handoverValidated) {
         logger.info({ ticketId, phase, round }, 'Handover found on relaxed check');
       }
@@ -507,7 +512,7 @@ export class MultiRoundDispatchService {
    * @returns True if handover exists and has required sections
    */
   private validateHandover(
-    ticketId: string,
+    workspaceTaskId: string,
     agentId: string,
     phase: number,
     round: number,
@@ -515,20 +520,20 @@ export class MultiRoundDispatchService {
     if (!this.handoverManager) return true;
 
     try {
-      const handover = this.handoverManager.readAgentHandover(agentId, ticketId);
+      const handover = this.handoverManager.readAgentHandover(agentId, workspaceTaskId);
       if (!handover) {
-        logger.warn({ ticketId, agentId, phase, round }, 'No handover document found');
+        logger.warn({ workspaceTaskId, agentId, phase, round }, 'No handover document found');
         return false;
       }
       const hasRequiredContent = handover.content.length > 50;
       if (!hasRequiredContent) {
-        logger.warn({ ticketId, agentId, phase, round, handoverLength: handover.content.length }, 'Handover too short');
+        logger.warn({ workspaceTaskId, agentId, phase, round, handoverLength: handover.content.length }, 'Handover too short');
         return false;
       }
-      logger.info({ ticketId, agentId, phase, round }, 'Handover validated');
+      logger.info({ workspaceTaskId, agentId, phase, round }, 'Handover validated');
       return true;
     } catch (err) {
-      logger.warn({ err, ticketId, agentId }, 'Handover validation failed');
+      logger.warn({ err, workspaceTaskId, agentId }, 'Handover validation failed');
       return false;
     }
   }
@@ -540,7 +545,7 @@ export class MultiRoundDispatchService {
    * strict check only looks at {ticketId}/developer-handovers/.
    */
   private validateHandoverRelaxed(
-    ticketId: string,
+    workspaceTaskId: string,
     phase: number,
     round: number,
   ): boolean {
@@ -554,7 +559,7 @@ export class MultiRoundDispatchService {
 
       // ADR-060: handovers may live flat, under users/<owner>/, or _shared/, plus agent
       // variants (<ticketId>__*) — check every location the bot could have written them.
-      for (const dir of taskSubdirs(wsRoot, ticketId, 'developer-handovers')) {
+      for (const dir of taskSubdirs(wsRoot, workspaceTaskId, 'developer-handovers')) {
         const files = fs.readdirSync(dir) as string[];
         if (files.find((f: string) => f.includes(phasePattern) || f.includes(altPattern))) return true;
       }

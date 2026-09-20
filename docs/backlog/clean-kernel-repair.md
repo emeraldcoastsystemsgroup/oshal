@@ -161,7 +161,7 @@ indication anything is wrong. Labelling it (D5) does not move it.
 - **Done when:** the operator decides whether such a ticket auto-escalates or auto-cancels, and the chosen
   behaviour is asserted by a test that drives the real planner path with an empty result.
 
-### CV-4 — the handover validator cannot pass on a ticket whose workspace id differs from its ticket id (S, no decision)
+### CV-4 — the handover validator cannot pass on a ticket whose workspace id differs from its ticket id (S, no decision) — **SHIPPED**
 
 `multi-round-dispatch-service.ts:359` and `:371` pass `ticketId` where the handover is written under
 `workspaceTaskId`. Behaviour-neutral today only because nothing consumes the flag — which is R0.12.
@@ -175,6 +175,16 @@ indication anything is wrong. Labelling it (D5) does not move it.
   goes green on an unpatched tree.
 
 ---
+
+**Shipped.** Both call sites in `multi-round-dispatch-service.ts` now pass `workspaceTaskId ?? ticketId`,
+and both validators name the parameter `workspaceTaskId` rather than `ticketId` — including their log
+fields, which were reporting a workspace id under a ticket-id key. Guard:
+`tests/unit/handover-validation-workspace-id.spec.ts`, four cases against a **real**
+`RALFHandoverManager` rooted at a temp directory: the strict path, the relaxed path (a handover written
+by a different agent, which only the filename scan can match, isolating the second call site), a
+no-handover case so the fix cannot degenerate into always-true, and a case asserting a handover filed
+under the *ticket* id is no longer accepted. Red first: 3 of 4 failed before the change, including the
+last one returning true, which is the defect stated exactly. Green after.
 
 ## Ready to ship — no operator decision needed
 
@@ -339,7 +349,7 @@ pinning both occupants of slot 5 to one trust class; and the payloadType guard s
 `buildPhasePersonaOverride('verification-request', ...)` returns null
 (`phase-override-layer-builder.ts:78-80`) — so the fix cannot be mistaken for widening the override.
 
-### CKR-5 — the two assembly sequences have nothing keeping them in step (D10) — S, guard only
+### CKR-5 — the two assembly sequences have nothing keeping them in step (D10) — S, guard only — **SHIPPED**
 
 **Evidence.** The seven-step layer gather runs in the same order in
 `src/app/bot-node-execution-handler.ts:359-388` and
@@ -358,6 +368,15 @@ envelope and stubbed deps, and asserts deep equality of the two persona-layer ar
 between `llm-execution-handler.ts:226` and `:232` with no counterpart. **The commit changes no file under
 `src/`.** Explicitly out of scope: extracting a shared builder, and changing what either handler passes to
 `assemblePromptForAnyBot`.
+
+**Shipped.** `tests/unit/persona-layer-sequence-parity.spec.ts`. Both factories are driven with one
+identical non-direct envelope; the layer arrays are captured at the shared prompt-authority binding
+(the bot-node handler reaches it through the barrel, the LLM handler through the owning module, so
+mocking the owning module intercepts both) and compared on `(layerType, priority,
+metadata.contentSource)`. Proven red by inserting one extra `personaLayers.push(...)` ahead of the
+awareness layer in `llm-execution-handler.ts` with no counterpart: 3 layers against 2, assertion
+fails; probe reverted. The spec also asserts both arrays are non-empty, so a sequence that stopped
+producing layers fails rather than passing vacuously. **No file under `src/` changed**, as specified.
 
 ### CKR-6 — the chat runtime does not fence tool results as untrusted (D11-a) — S — **SHIPPED**
 
