@@ -8,6 +8,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { acquireFixtureSlot, type FixtureSlot } from './fixture-slots';
 
 /** What the fixture needs to know about itself. */
 export interface DisposableRedisOptions {
@@ -45,6 +46,8 @@ export class DisposableRedis {
   private readonly opts: Required<DisposableRedisOptions>;
   private connectionValue?: DisposableRedisConnection;
   private started = false;
+  /** The machine-wide slot this fixture holds while its container exists. */
+  private slot?: FixtureSlot;
 
   constructor(options: DisposableRedisOptions) {
     const purpose = options.purpose?.trim();
@@ -88,6 +91,9 @@ export class DisposableRedis {
    */
   async start(): Promise<DisposableRedisConnection> {
     if (this.started) throw new Error(`Disposable Redis (${this.opts.purpose}) is already started`);
+    // Same machine-wide ceiling the Postgres fixture observes: a Redis is cheap, but it is one
+    // more container against a 6 GB engine that the whole fleet has already OOM-killed once.
+    this.slot = await acquireFixtureSlot(`redis:${this.opts.purpose}`);
     try {
       docker(['run', '--detach', '--rm', '--name', this.containerName,
         '--label', `oshal.test-fixture=${this.opts.label}`,
@@ -134,9 +140,16 @@ export class DisposableRedis {
    */
   async stop(): Promise<void> {
     this.connectionValue = undefined;
-    if (this.started) {
-      try { docker(['rm', '--force', this.containerName], 60_000); } catch { /* an --rm container may already be gone */ }
-      this.started = false;
+    try {
+      if (this.started) {
+        try { docker(['rm', '--force', this.containerName], 60_000); } catch { /* an --rm container may already be gone */ }
+        this.started = false;
+      }
+    } finally {
+      // Released only once the container is really gone — earlier would let the next fixture
+      // start while this one still holds its memory.
+      this.slot?.release();
+      this.slot = undefined;
     }
   }
 }

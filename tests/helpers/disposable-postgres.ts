@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Pool } from 'pg';
+import { acquireFixtureSlot, type FixtureSlot } from './fixture-slots';
 
 /**
  * An extra LOGIN role the fixture creates for itself, for a spec whose subject is what a
@@ -111,6 +112,8 @@ export class DisposablePostgres {
   private readonly rolePools = new Map<string, Pool>();
   /** Every credential this fixture generated, so a failure message can be scrubbed BY VALUE. */
   private readonly minted: string[] = [];
+  /** The machine-wide slot this fixture holds while its container exists. */
+  private slot?: FixtureSlot;
 
   constructor(options: DisposablePostgresOptions) {
     const purpose = options.purpose.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -213,6 +216,10 @@ export class DisposablePostgres {
    */
   async start(): Promise<Pool> {
     if (this.started) throw new Error(`Disposable PostgreSQL (${this.opts.purpose}) is already started`);
+    // Claimed BEFORE docker run and held until stop(): about twenty specs now start a server
+    // each, vitest runs their files in parallel processes, and without a ceiling the fleet
+    // OOM-killed the engine and the operator's own 50 containers with it.
+    this.slot = await acquireFixtureSlot(`postgres:${this.opts.purpose}`);
     const password = randomUUID();
     this.minted.push(password);
     try {
@@ -288,6 +295,8 @@ export class DisposablePostgres {
    * @returns Nothing.
    */
   async stop(): Promise<void> {
+    // The slot is released in a finally at the end, after the container is really gone -
+    // releasing it earlier would let the next fixture start while this one still holds memory.
     // Role pools first, and each failure swallowed: the container removal below is what actually
     // guarantees nothing survives, so no pool may be allowed to skip it.
     for (const [name, rolePool] of this.rolePools) {
@@ -302,6 +311,8 @@ export class DisposablePostgres {
         try { docker(['rm', '--force', this.containerName], 60_000); } catch { /* an --rm container may already be gone */ }
         this.started = false;
       }
+      this.slot?.release();
+      this.slot = undefined;
     }
   }
 }
