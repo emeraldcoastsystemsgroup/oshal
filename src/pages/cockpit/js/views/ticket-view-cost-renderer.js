@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted cockpit ticket cost tab rendering to support per-bot usage tables while keeping the main detail renderer under the hard file-size limit
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The Est. Cost cell names the unit the figure is in (ADR-127). A CLI turn is a subscription price-equivalent and a BYO turn is $0 tokens-only, so a column that stacked those against metered spend was presenting three units as one number. The Provider column above it also stops rendering an em dash for every row: it reads bot.providerId, which the server never used to send. The label is omitted rather than guessed when the provider is ABSENT or the row merged across providers; an unrecognised-but-present id still reads as 'billed', which is classifyCostUnit's deliberate default.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | normalizeAgentUsage carries providerId and costUnitLabel in BOTH branches. The previous entry claimed the Provider column was fixed; it was not. The contributingBots branch rebuilds each row field by field and carried neither, and the route ALWAYS sends contributingBots derived from the same map, so that loop always clobbers the usageByAgent one - the column still rendered an em dash and the unit label never rendered at all. Five TypeScript construction sites were corrected and this sixth one is untyped JS, so the compiler could not see it and the type being required bought nothing here.
  */
 
 import { formatCost } from '../utils/formatters.js';
@@ -53,7 +55,7 @@ export function renderCostTab(body, ticket, costData) {
           <td>${escapeHtml(bot.totalInputTokens.toLocaleString())}</td>
           <td>${escapeHtml(bot.totalOutputTokens.toLocaleString())}</td>
           <td>${escapeHtml(bot.totalTokens.toLocaleString())}</td>
-          <td>${escapeHtml(formatCost(bot.totalCost))}</td>
+          <td>${escapeHtml(formatCost(bot.totalCost))}${bot.costUnitLabel ? `<span style="display:block;font-size:11px;color:var(--text-secondary)">${escapeHtml(bot.costUnitLabel)}</span>` : ''}</td>
         </tr>
       `).join('')}</tbody></table></div></div>`
     : '';
@@ -89,6 +91,7 @@ function normalizeAgentUsage(value, contributingBots) {
       agentId,
       agentName: readString(stats?.agentName) || agentId,
       providerId: readString(stats?.providerId),
+      costUnitLabel: readString(stats?.costUnitLabel),
       totalRequests: readNumber(stats?.totalRequests),
       totalInputTokens: readNumber(stats?.totalInputTokens),
       totalOutputTokens: readNumber(stats?.totalOutputTokens),
@@ -104,6 +107,13 @@ function normalizeAgentUsage(value, contributingBots) {
       normalized[agentId] = {
         agentId,
         agentName: readString(bot?.agentName) || agentId,
+        // BOTH fields, and this branch is the one that matters: the route always sends
+        // contributingBots derived from the same map, so this loop always clobbers the one above.
+        // Carrying them only in the first branch left the column rendering an em dash in the
+        // browser while five TypeScript sites and nine unit cases were green - the compiler
+        // cannot see this file.
+        providerId: readString(bot?.providerId),
+        costUnitLabel: readString(bot?.costUnitLabel),
         totalRequests: readNumber(bot?.totalRequests),
         totalInputTokens: readNumber(bot?.totalInputTokens),
         totalOutputTokens: readNumber(bot?.totalOutputTokens),

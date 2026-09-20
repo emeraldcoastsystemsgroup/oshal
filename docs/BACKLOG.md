@@ -1294,9 +1294,39 @@ carries the evidence that survived an adversarial re-derivation and the correcti
   a cross-owner read sees 0, and a forged-owner insert is refused with 42501; mutation-proven red on
   `main`'s orchestrator (3 of 5 cases fail, spend stays 0). Units: `classifyCostUnit` (billed /
   price-equivalent / byo, ADR-127) labels run-trace llm-call spans + HTML and `GET /api/budgets/spend`
-  answers `spendByUnit` beside the enforcement sum. **Not done:** the cockpit ticket Cost tab still
-  shows one "Est. Cost" column with no unit (its per-agent rows carry no provider id server-side);
-  the BYO lane still records $0 by design (tokens only) — the label names it, it does not price it.
+  answers `spendByUnit` beside the enforcement sum.
+- **Status 2026-09-19 — the cockpit half is now done too.** The ticket Cost tab's per-agent rows
+  carry `providerId` and `costUnitLabel` server-side, so the "Provider" column stops rendering an
+  em dash for every bot and the "Est. Cost" cell names the unit its figure is in. The column was
+  structurally dead, not merely empty: `ticket-view-cost-renderer.js:51` has always read
+  `bot.providerId`, but `CockpitAgentUsageStats` never declared the field and all five TypeScript construction
+  sites dropped it. `chat_tasks.provider_id` was populated the whole time (896 live rows across
+  openai-codex, claude-code, cline-cli, byo-llm, image-provider:openrouter and
+  deterministic-provider). The label reuses `classifyCostUnit`/`COST_UNIT_LABELS` — the same
+  ADR-127 classification `GET /api/budgets/spend` already reports by — rather than a second one,
+  and is left null for an ABSENT or cross-provider row — including the `UNKNOWN_PROVIDER` sentinel
+  the direct cost summary writes for a NULL `provider_id`, which is truthy and therefore survived
+  every absent-check until a review drove one end to end. **An unrecognised-but-present id is still
+  labelled `billed`**, which is `classifyCostUnit`'s deliberate conservative default and not a
+  claim this display path makes; a CLI provider added to the harness union but not to its
+  price-equivalent set will read as metered money until it is added, exactly as `antigravity-cli`
+  once did. Correcting that belongs in `cost-unit.ts` next to the sets, not in a display helper
+  that would then disagree with the budget caps.
+- **Caught in review, and worth recording.** The first cut of this fixed five TypeScript
+  construction sites and missed a sixth in untyped JS — `normalizeAgentUsage`'s `contributingBots`
+  branch in `ticket-view-cost-renderer.js` rebuilds each row and carried neither field, and the
+  route *always* sends `contributingBots`, so that branch always clobbered the other. The column
+  still rendered an em dash in the browser and the unit label never rendered at all, while the
+  type was required, the compiler was green, and nine unit cases passed. The two guards that
+  should have caught it were `readFileSync` + substring checks on the renderer source: they stayed
+  green against the broken column, and stayed green when the entire Cost-by-Bot table was deleted
+  with the matched strings left behind in a comment. They now execute `renderCostTab` and assert
+  on the emitted `<td>`. `tests/unit/cockpit-cost-provider-column.spec.ts` (12 cases) is
+  mutation-proven against five regressions: dropping the provider from the rollup, dropping the
+  label from the per-task build, removing the absent/mixed guard, restoring the
+  `contributingBots` drop, and deleting the table outright.
+- **Still by design, not a defect:** the BYO lane records $0 (tokens only) — the label names the
+  unit, it does not price it. The caller's own endpoint bills the caller, so no price is knowable.
 
 ### Seeding-repair hygiene tail (2026-08-12)
 - **Remaining:** (1) rotate whatever `config-seed/claude-credentials.json` holds, then delete it — 25 KB of credential material, world-readable perms, zero consumers since the SEC-05 closure ("never revive a static config-seed token copy"); (2) mirror the eight `requiresOwnNode` entries that exist only in `swarm-bot-registry-local.ts` into the canonical registry (finance-analyst, identity-advisor, social-writer, storage-assistant, deck-builder, trading-analyst, communications-bot, weather-bot — "register in BOTH"); (3) point `WORLD_CLASSIFY_PROVIDERS` at a hosted provider so world classify stops degrading to lexicon-only (its 27 controller CLI refusals per 2h are BY DESIGN — never weaken `assertAuditedAutonomousHarness`).
