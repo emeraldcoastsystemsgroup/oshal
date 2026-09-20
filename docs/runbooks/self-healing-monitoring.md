@@ -34,7 +34,7 @@ of routing self-healing through the same ticket system.
 | Piece | File |
 |---|---|
 | Webhook intake route | `src/app/routes/alertmanager-routes.ts` (`POST /api/alerts/alertmanager`) |
-| Auto-approve trusted alert sources | `src/features/ticketing/services/ticket-service.ts` (`TRUSTED_ALERT_PROVIDERS`) |
+| Auto-approve alert intake | `src/app/routes/alertmanager-routes.ts` (`intakeStatus`) |
 | Prometheus scrape + alerting | `ops/monitoring/prometheus.yml` |
 | Container-health alert rules | `ops/monitoring/alert-rules.yml` |
 | Alertmanager → webhook routing | `ops/monitoring/alertmanager.yml` |

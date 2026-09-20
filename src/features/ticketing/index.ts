@@ -22,6 +22,8 @@ export {
   TicketService,
   APPROVAL_REQUIRED_REASONS,
   type ApprovalRequiredReason,
+  ESCALATION_REASONS,
+  type EscalationReason,
   PostgresQueuedApplicationPrincipalStore,
   ensureQueuedApplicationPrincipalSchema,
   QUEUED_APPLICATION_PRINCIPAL_SCHEMA,

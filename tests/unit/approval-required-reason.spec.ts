@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | CKR-12 / D5. The cockpit renders ONE badge - "Approval Required" - for at least five different conditions, and ONE of them needs no human at all: planning_complete does not block children - ADR-031's amendment, headed 2026-07-18, records that commit 6a376cb6 stopped it on 2026-06-22. planner_returned_no_work resolves to operator_review_plan, because somebody does have to look at the plan; it is a planning outcome but it is still work for a person. These cases pin the two routes through TicketService - a transition, and a creation - an incident held at intake is CREATED in the state, never transitioned into it, which is why the creation path needed its own backstop. The writer inventory is a wiring gate, named as one: it reads call sites rather than executing them, and it exists so a SIXTH writer cannot be added without naming its reason.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Two cases added after review. PATCH /api/tickets/:id was a THIRD route into the state - updateTicket excluded status by TYPE but not at runtime, and req.body is JSON - so a PATCH set it with no transition check, no history and no reason. This pins that it cannot, while the legitimate field update still lands. And the transition scan could not see the CREATION writers, which is why deleting gov-contracting-cron's reason left the suite green: the second scan reads createTicket calls that set the status and requires each to name one.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | CV-2 and CV-3 moved two of the writers this file pins. CV-2: createTicket no longer forces approval_required on an untrusted-source incident, so the intake case now has to ASK for the status - the backstop it proves is the creation route, not the override, and the override was the competing authority CV-2 removed. CV-3: planner_returned_no_work left this vocabulary for ESCALATION_REASONS, because its writer escalates now; the transition-writer floor drops from 3 to 2 accordingly, and the floor is here so a SIXTH writer cannot be added silently - it is not a claim about how many there should be.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -50,10 +51,14 @@ async function buildTicketAtDiscovery(title: string): Promise<string> {
 }
 
 async function createIncident(overrides: Record<string, unknown> = {}) {
+  // The status is explicit because the service stopped choosing it (CV-2). What this fixture
+  // proves is the CREATION backstop - a ticket created already in the state never transitions
+  // into it, so buildStatusTransitionMetadata never sees it - and that is unchanged.
   return tickets.createTicket({
     title: 'an alert nobody vouched for',
     ticketType: 'incident',
-    description: 'arrived from an untrusted source',
+    status: 'approval_required',
+    description: 'held at intake by the caller that created it',
     priority: 'high',
     labels: [],
     workspaceId: null,
@@ -111,9 +116,9 @@ describe('no ticket reaches approval_required without a recorded reason', () => 
 
   it('every vocabulary reason resolves to its own nextAction, and one of them needs no human', async () => {
     // The whole point: the badge is identical for all of these, so the nextAction is what tells
-    // an operator whether to act. planning_complete is the one that needs nobody — a first draft
-    // of this said two, counting planner_returned_no_work, but that resolves to
-    // operator_review_plan below because somebody does have to look at the plan.
+    // an operator whether to act. planning_complete is the one that needs nobody. A first draft
+    // of this said two, counting planner_returned_no_work; that reason has since moved to
+    // ESCALATION_REASONS (CV-3) because its writer escalates rather than parking the ticket.
     const seen = new Map<string, string>();
     for (const reason of Object.keys(APPROVAL_REQUIRED_REASONS)) {
       const ticketId = await buildTicketAtDiscovery(`t-${reason}`);
@@ -126,7 +131,6 @@ describe('no ticket reaches approval_required without a recorded reason', () => 
     expect(seen.get('approval_gate')).toBe('operator_approve_to_resume');
     expect(seen.get('planning_complete'), 'children are NOT blocked on this state — ADR-031 amendment, 2026-06-22')
       .toBe('none_children_dispatch_independently');
-    expect(seen.get('planner_returned_no_work')).toBe('operator_review_plan');
     expect(seen.get('incident_intake_triage')).toBe('operator_approve_to_dispatch');
     expect(seen.get('capture_lead_review')).toBe('operator_approve_or_close');
   });
@@ -181,8 +185,11 @@ describe('the writers, and the comments that described the opposite of the code'
         if (!named) offenders.push(`${file.replace(process.cwd(), '')}: ${tail.slice(0, 60).trim()}`);
       }
     }
+    // Two transition writers remain: the graph approval-gate suspend, and PM planning that
+    // produced children. The third escalates now (CV-3). The floor guards against the scan
+    // silently matching nothing; it is not a claim about the right number of writers.
     expect(writers, 'no approval_required writers found — the scan is broken, not the code')
-      .toBeGreaterThanOrEqual(3);
+      .toBeGreaterThanOrEqual(2);
     expect(offenders, 'an approval_required writer does not name its reason').toEqual([]);
   });
 

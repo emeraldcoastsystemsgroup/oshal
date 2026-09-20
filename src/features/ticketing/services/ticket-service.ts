@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Every approval_required ticket carries a reason from a closed vocabulary and a nextAction saying whether anyone has to act (CKR-12 / D5). The cockpit renders ONE badge for at least five conditions and ONE of them needs no human: planning_complete does NOT block children - ADR-031's amendment (headed 2026-07-18) records that commit 6a376cb6 stopped it on 2026-06-22, and PARENT_READY_FOR_CHILD_DISPATCH_STATES has included the state since. planner_returned_no_work is NOT in that category - it resolves to operator_review_plan, because somebody has to look at the plan. Two backstops for the two routes through this file: buildStatusTransitionMetadata covers transitions, and createTicket covers creation, which does not pass through it - an incident held at intake is created in the state, never transitioned into it.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | A THIRD route into approval_required, found in review, and two corrections. updateTicket is typed Omit<..., 'status'> and did not exclude it at RUNTIME - PATCH /api/tickets/:id passes req.body straight in, and JSON does not respect an Omit - so a body carrying status wrote it to the store directly, skipping VALID_TRANSITIONS, the status-history record and the reason backstop. A PATCH that sets approval_required this way produced a ticket with no reason and no nextAction, which falsifies the "two routes in" claim the previous entry makes. Dropped and logged rather than rejected: a client echoing a whole ticket back is an ordinary PATCH shape. Also: "two of them need no human" was wrong - planner_returned_no_work resolves to operator_review_plan, because somebody does have to look at the plan. One needs no human, not two. And ADR-031's amendment is headed 2026-07-18; 2026-06-22 is commit 6a376cb6, which is what changed the behaviour.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Extracted buildCreationApprovalMetadata. Adding the creation backstop inline took createTicket from 40 to 54 code lines, over the 50-line cap - the rule caught it, a review caught that I had not.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | CV-2 and CV-3, which are one principle the operator stated: a ticket follows the workflow associated with it, and a workflow and a ticket queue are one to one. CV-2 - createTicket no longer forces a status for any ticket type. It used to rewrite every `incident` whose externalProvider was outside a hardcoded two-name trust list to approval_required, silently overriding the caller; that is a second authority over a question the workflow already answers through autoStart, and it was the highest-volume unnamed route into the status that Change Log 13 set out to close. The cockpit route asks for 'backlog' or 'approved' and its own validStatuses list does not contain approval_required, so the route believed it had created a backlog ticket. Untrusted-source handling belongs in the untrusted source's workflow. TRUSTED_ALERT_PROVIDERS is deleted with it. CV-3 - added ESCALATION_REASONS, the escalated twin of the approval vocabulary, and the escalation backstop now derives its nextAction from it instead of resolving every case to operator_review_required. planner_returned_no_work MOVED from the approval table to this one: its writer escalates now, because a ticket whose planner produced nothing had no exit from a hold. The two tables are deliberately disjoint and a spec pins that - a reason resolving in both would mean two statuses at once, which is the defect CKR-16 is about.
  */
 
 import {
@@ -40,13 +41,6 @@ import { protectTicketAuthorityUpdate } from './ticket-authority-update';
 import { stripProtectedResultMetadata } from '@/shared/protected-results';
 
 const logger = createChildLogger({ module: 'TicketService' });
-
-/**
- * @description External providers whose incident tickets auto-approve (skip the
- * front approval gate) because they are pre-validated monitoring alarms. The
- * approve-or-close gate then lands at the end of the incident-rca pipeline.
- */
-const TRUSTED_ALERT_PROVIDERS = new Set(['prometheus', 'alertmanager']);
 
 /**
  * @description Valid state transitions for the OshalTicketState lifecycle.
@@ -112,18 +106,15 @@ export class TicketService {
    * @returns The created ticket record
    */
   async createTicket(input: CreateInternalTicketInput): Promise<InternalTicket> {
-    // Incident tickets require operator approval — EXCEPT those sourced from a
-    // trusted monitoring platform. Prometheus/Alertmanager alerts are pre-validated
-    // alarms, so they auto-approve and flow straight through the incident-rca
-    // pipeline. The human-in-the-loop gate then happens at the END of the pipeline
-    // (approve-or-close the proposed remediation) rather than the front.
-    const isTrustedAlertSource =
-      input.ticketType === 'incident' &&
-      input.externalProvider != null &&
-      TRUSTED_ALERT_PROVIDERS.has(input.externalProvider);
-    const resolvedStatus = (input.ticketType === 'incident' && !isTrustedAlertSource)
-      ? 'approval_required'
-      : (input.status ?? 'backlog');
+    // The entry status is the caller's, and behind the caller it is the WORKFLOW's: a workflow
+    // that declares autoStart has its backlog tickets promoted to approved on the next poll
+    // (sweepAutoStartTickets), and one that does not leaves them at the front for a human. This
+    // service does not get a second opinion. It used to: every `incident` whose externalProvider
+    // was outside a hardcoded two-name trust list was rewritten to approval_required, which is a
+    // competing authority over the question the workflow already answers — and the cockpit route
+    // that creates these asks for 'backlog' or 'approved' and does not list the status it was
+    // being handed back. Untrusted-source handling belongs in that source's workflow.
+    const resolvedStatus = input.status ?? 'backlog';
     // Creation does NOT pass through buildStatusTransitionMetadata - there is no transition to
     // stamp - so it needs its own backstop, or an incident held at intake reaches the cockpit
     // with the same unexplained badge the transition path just stopped producing.
@@ -501,23 +492,27 @@ export class TicketService {
 /**
  * @description The closed set of reasons a ticket may sit at `approval_required`, and what each
  * one is actually waiting for. The cockpit renders ONE badge - "Approval Required" - for all of
- * them, and two of the five need no human at all, so the badge alone tells an operator nothing
+ * them, and one of them needs no human at all, so the badge alone tells an operator nothing
  * about whether to act. Every writer names its reason; anything else is a bug, not a new case.
  *
  * `planning_complete` is the one that reads wrongly without this table: children are NOT blocked
  * on it, so nothing here needs a human. ADR-031's amendment (headed 2026-07-18) records that
  * commit 6a376cb6 stopped it on 2026-06-22, and PARENT_READY_FOR_CHILD_DISPATCH_STATES has
- * included this state ever since. `planner_returned_no_work` is NOT in that category - somebody
- * does have to look at the plan, which is why it resolves to operator_review_plan.
+ * included this state ever since.
+ *
+ * `planner_returned_no_work` used to be here. It moved to ESCALATION_REASONS (CV-3): a ticket
+ * whose planner produced nothing had no exit from the hold, so it is escalated rather than
+ * parked. The two tables are disjoint on purpose - see ESCALATION_REASONS.
  */
 export const APPROVAL_REQUIRED_REASONS = Object.freeze({
   /** A graph workflow reached an approval-gate node and suspended. A human must approve to resume. */
   approval_gate: 'operator_approve_to_resume',
   /** PM planning produced child tickets. The parent is parked; the children already dispatch. */
   planning_complete: 'none_children_dispatch_independently',
-  /** The planner returned no work at all. Somebody has to look at the plan. */
-  planner_returned_no_work: 'operator_review_plan',
-  /** An incident arrived from an untrusted source and is held at intake for triage. */
+  /**
+   * An incident was held at intake for triage. This is now only reachable when a CALLER asks
+   * for it — the ticket service no longer decides it from the provider name (CV-2).
+   */
   incident_intake_triage: 'operator_approve_to_dispatch',
   /** A federal-capture lead was drafted for review rather than auto-approved. */
   capture_lead_review: 'operator_approve_or_close',
@@ -541,6 +536,43 @@ export const APPROVAL_REQUIRED_REASONS = Object.freeze({
 export type ApprovalRequiredReason = keyof typeof APPROVAL_REQUIRED_REASONS;
 
 /**
+ * @description The closed set of reasons a ticket may sit at `escalated`, and what each one is
+ * waiting for. The escalated twin of APPROVAL_REQUIRED_REASONS, and deliberately a SEPARATE
+ * table: a reason string that resolved in both would mean two different statuses at once, which
+ * is the "one word, several meanings" defect CKR-16 exists for. A spec pins them disjoint.
+ *
+ * `planner_returned_no_work` lives here rather than in the approval table because a ticket whose
+ * planner produced nothing has no exit from a hold — nobody is told anything is wrong and no poll
+ * cycle moves it. Escalating names the failure instead of retrying it into silence, which is the
+ * ADR-022 posture.
+ */
+export const ESCALATION_REASONS = Object.freeze({
+  /** The planner returned no work units at all. Somebody has to look at the plan. */
+  planner_returned_no_work: 'operator_review_plan',
+  /**
+   * The backstop value: a writer reached this state without naming why. It is IN the vocabulary
+   * deliberately, for the same reason its approval twin is — so "every escalated ticket carries a
+   * reason from the closed set" is literally true rather than true-except-for-a-hole.
+   */
+  unspecified_escalation: 'operator_review_required',
+} as const);
+
+/**
+ * @description The reasons a ticket may sit at `escalated`. Union of the vocabulary's own keys,
+ * so a reason added there is a reason here and the two cannot drift apart.
+ */
+export type EscalationReason = keyof typeof ESCALATION_REASONS;
+
+/**
+ * @description Resolves the nextAction for an escalation reason, fail-closed.
+ * @param reason - A reason from the closed vocabulary, or anything at all.
+ * @returns The matching nextAction, or the review fallback for an unrecognised reason.
+ */
+function escalationNextAction(reason: string): string {
+  return (ESCALATION_REASONS as Record<string, string>)[reason] ?? 'operator_review_required';
+}
+
+/**
  * @description Resolves the nextAction for an approval_required reason, fail-closed.
  * @param reason - A reason from the closed vocabulary, or anything at all.
  * @returns The matching nextAction, or the review fallback for an unrecognised reason.
@@ -557,9 +589,11 @@ function approvalNextAction(reason: string): string {
  * @returns Metadata to merge onto the creation, or an empty object for any other status.
  *
  * Separate from buildStatusTransitionMetadata because creation is a separate route into the
- * state and does not pass through it: an incident held at intake is created there and never
- * transitioned into it, so without this it reached the cockpit with the unexplained badge the
- * transition backstop had just stopped producing.
+ * state and does not pass through it: a ticket created already in the state is never transitioned
+ * into it, so without this it reached the cockpit with the unexplained badge the transition
+ * backstop had just stopped producing. Reaching it now requires a CALLER to ask for the status -
+ * the service stopped deciding it from the provider name (CV-2) - but the caller still need not
+ * name a reason, so the backstop stays.
  */
 function buildCreationApprovalMetadata(
   resolvedStatus: OshalTicketState,
@@ -620,12 +654,16 @@ function buildStatusTransitionMetadata(
     return base;
   }
 
+  // Same discipline as the approval backstop: the reason comes from a closed vocabulary and the
+  // nextAction is derived from it, so an escalation says what somebody is supposed to do about it
+  // rather than resolving every case to the same generic review.
+  const escalationReason = readNonEmptyString(base.reason) ?? 'unspecified_escalation';
   return {
     ...base,
-    reason: readNonEmptyString(base.reason) ?? 'unspecified_escalation',
+    reason: escalationReason,
     source: readNonEmptyString(base.source) ?? 'ticket-service',
     severity: readNonEmptyString(base.severity) ?? 'medium',
-    nextAction: readNonEmptyString(base.nextAction) ?? 'operator_review_required',
+    nextAction: readNonEmptyString(base.nextAction) ?? escalationNextAction(escalationReason),
     previousStatus: readNonEmptyString(base.previousStatus) ?? fromStatus,
     ticketId: readNonEmptyString(base.ticketId) ?? ticketId,
     escalatedAt: readNonEmptyString(base.escalatedAt) ?? new Date().toISOString(),
