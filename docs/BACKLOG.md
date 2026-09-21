@@ -957,6 +957,7 @@ including across a directory belonging to a different owner. Full reasoning and 
 
 ### CI secret-scanner remote mutation proof
 - **Remaining:** use a disposable branch to plant the scanner's sanctioned test secret, observe the remote failure, remove it, and rerun.
+- **Decision (operator, 2026-09-20): RE-SCOPED to the local gate, low priority -- "only if there is space".** No hosted Actions run and no push of a secret-shaped fixture to the public repo: the pre-push publish gate is never bypassed, and a planted commit would stay fetchable by SHA after the branch was deleted. The proof becomes: plant the scanner's sanctioned test secret in a throwaway git-archive export, run ci-local.sh's secret-scan gate and observe RED, remove it, observe GREEN -- never pushed. Actionable, but only when the box has headroom and never ahead of product work; "linked CI evidence" in the Done-when now means the local gate's own log. (PM recommended (b); the operator agreed, with that priority.)
 - **Done when:** linked CI evidence shows fail-then-pass caused by that fixture and no real credential enters Git history.
 
 ### Build-phase escalation golden run
