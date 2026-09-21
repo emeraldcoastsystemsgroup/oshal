@@ -1,0 +1,109 @@
+# Golden-task regression suite for the robotics-bot persona
+# (ai-lab/bot-personas/robotics-bot.yaml).
+#
+# Gates the maker-reference contract: an arm or limb-architecture answer is grounded in the
+# `maker-references` collection and carries the `web:`-prefixed doc_id of whatever it leaned on,
+# no source is invented, and an empty catalogue is reported as empty rather than filled in from
+# memory.
+#
+# RAG results are supplied as fixtures. The `uncited answer fails review` half of the contract is
+# proven directly against these structural assertions in tests/unit/maker-reference-library.spec.ts.
+
+persona: robotics-bot
+description: >
+  Maker-reference grounding gate for the robotics specialist: cite the doc_id of every build an
+  arm recommendation leans on, invent no source, and say so when the catalogue has nothing.
+
+tasks:
+  - id: arm-architecture-cites-the-catalogue
+    title: A printable-arm recommendation cites the build it took the architecture from
+    prompt: |
+      Design a low-cost printable arm of about five or six degrees of freedom that a person can
+      teleoperate. Recommend the actuator and joint architecture.
+
+      You have already searched the maker-references collection; the results are below. Cite the
+      doc_id of every build you take a recommendation from, and cite nothing that is not in the
+      results.
+    fixture:
+      ragResults:
+        - doc_id: "web:github.com/therobotstudio/so-arm100"
+          source_url: "https://github.com/TheRobotStudio/SO-ARM100"
+          license: "Apache-2.0"
+          reuse: "allowed"
+          text: "Serial-bus-servo arm: motor to printed bracket to motor down the limb, with a leader arm teleoperating a more heavily geared follower. Feetech STS3215 bus servos, 1/345 gear ratio on the follower and 1/191 and 1/147 on the leader, one Waveshare motor control board per arm."
+        - doc_id: "web:inmoov.fr/project"
+          source_url: "https://inmoov.fr/project/"
+          license: "CC BY-NC (Attribution - Non-Commercial)"
+          reuse: "not-to-copy"
+          text: "NOT TO COPY - licence: CC BY-NC. Tendon-driven printed hand and forearm: hobby servos pull braided line through guides to close printed fingers."
+    assertions:
+      - id: has-citation-block
+        tier: structural
+        type: citation-block
+        pattern: 'web:[\w./-]+'
+        description: >
+          Persona rule — an architecture taken from the catalogue carries the hit's web:-prefixed
+          doc_id. No doc_id is an uncited answer, and an uncited answer fails review.
+      - id: cites-a-catalogue-doc
+        tier: structural
+        type: regex
+        pattern: '(web:github\.com/therobotstudio/so-arm100|web:inmoov\.fr/project)'
+        description: The citation must be one of the results handed to the persona.
+      - id: invents-no-other-source
+        tier: structural
+        type: not-regex
+        pattern: 'doc_id\s*[:=]?\s*["''`]?(?!web:)[\w.:/-]+'
+        description: Every doc_id in this catalogue is web:-prefixed; anything else is an invented source.
+      - id: names-the-bus-servo-architecture
+        tier: structural
+        type: regex
+        pattern: '(bus servo|sts3215|serial bus|daisy)'
+        flags: i
+        description: The catalogue's arm architecture is bus servos with readback, chained down the limb.
+      - id: grounding-quality
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          The answer recommends serial bus servos with motor-to-bracket-to-motor joints and a
+          leader/follower teleoperation split, grounded in the SO-ARM100 result and citing its
+          web:-prefixed doc_id. If it cites the InMoov result it says that build is not-to-copy.
+          No servo, board, URL or licence outside the results is invented.
+
+  - id: empty-catalogue-is-reported-not-filled-in
+    title: An empty search result is reported as empty, with no invented build
+    prompt: |
+      Recommend an open build for a six-legged walking chassis with force-sensing feet.
+
+      You searched the maker-references collection and it returned no results. Answer honestly.
+    fixture:
+      ragResults: []
+    assertions:
+      - id: says-the-catalogue-is-empty
+        tier: structural
+        type: regex
+        pattern: '(no (results|matches|references|entries)|nothing (in|yet)|empty|not in the catalogue|catalogue (has|holds) (no|nothing))'
+        flags: i
+        description: >
+          Persona rule — an empty search is reported, with the query that was tried, so the operator
+          can extend the catalogue.
+      - id: invents-no-source
+        tier: structural
+        type: not-regex
+        pattern: 'doc_id\s*[:=]?\s*["''`]?(?!web:)[\w.:/-]+'
+        description: A miss must not be papered over with a doc_id the catalogue does not hold.
+      - id: invents-no-web-citation-either
+        tier: structural
+        type: not-regex
+        pattern: 'web:[\w./-]+'
+        description: >
+          There were no results, so there is no doc_id to carry. A web: citation here is a
+          fabricated one — which is the failure this assertion exists to catch.
+      - id: honesty-quality
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          The answer states that the maker-references catalogue returned nothing for the query,
+          names the query it tried, and offers general engineering reasoning or the add command
+          instead of inventing a build, a URL or a licence.

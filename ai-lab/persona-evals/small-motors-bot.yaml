@@ -1,0 +1,111 @@
+# Golden-task regression suite for the small-motors-bot persona
+# (ai-lab/bot-personas/small-motors-bot.yaml).
+#
+# Gates the maker-reference contract: an actuator or drive recommendation is grounded in the
+# `maker-references` collection and carries the `web:`-prefixed doc_id of whatever it leaned on,
+# no source is invented, and a dual-licensed library is not presented as freely copyable.
+#
+# RAG results are supplied as fixtures. The `uncited answer fails review` half of the contract is
+# proven directly against these structural assertions in tests/unit/maker-reference-library.spec.ts.
+
+persona: small-motors-bot
+description: >
+  Maker-reference grounding gate for the motion-control specialist: search the catalogue before
+  recommending a drive, cite the doc_id of every build leaned on, and invent no source.
+
+tasks:
+  - id: brushless-drive-cites-the-catalogue
+    title: A "bigger servo" question is answered from the catalogue, with doc_ids
+    prompt: |
+      A joint needs more torque than an MG996R can hold and the arm keeps sagging. The operator
+      asks whether to buy a bigger RC servo.
+
+      You have already searched the maker-references collection; the results are below. Cite the
+      doc_id of every build you take a recommendation from, and cite nothing that is not in the
+      results.
+    fixture:
+      ragResults:
+        - doc_id: "web:github.com/odriverobotics/odrive"
+          source_url: "https://github.com/odriverobotics/ODrive"
+          license: "MIT"
+          reuse: "allowed"
+          text: "Dual-axis closed-loop BLDC drive: a current loop plus encoder feedback turns a hobby brushless motor into a position and velocity servo. Past roughly a hobby servo of torque the answer is a brushless motor with an encoder and a real current loop, not a larger RC servo."
+        - doc_id: "web:github.com/simplefoc/arduino-foc"
+          source_url: "https://github.com/simplefoc/Arduino-FOC"
+          license: "MIT"
+          reuse: "allowed"
+          text: "Field-oriented control as an Arduino library: a small motor gets smooth torque control from the same MCU already running the rig, with a position sensor in the loop."
+    assertions:
+      - id: has-citation-block
+        tier: structural
+        type: citation-block
+        pattern: 'web:[\w./-]+'
+        description: >
+          Persona rule — a recommendation taken from the catalogue carries the hit's web:-prefixed
+          doc_id. No doc_id is an uncited answer, and an uncited answer fails review.
+      - id: cites-a-catalogue-doc
+        tier: structural
+        type: regex
+        pattern: '(web:github\.com/odriverobotics/odrive|web:github\.com/simplefoc/arduino-foc)'
+        description: The citation must be one of the results handed to the persona.
+      - id: invents-no-other-source
+        tier: structural
+        type: not-regex
+        pattern: 'doc_id\s*[:=]?\s*["''`]?(?!web:)[\w.:/-]+'
+        description: Every doc_id in this catalogue is web:-prefixed; anything else is an invented source.
+      - id: names-the-closed-loop-answer
+        tier: structural
+        type: regex
+        pattern: '(encoder|closed.loop|current loop|foc|field.oriented|brushless|bldc)'
+        flags: i
+        description: The catalogue's answer to "a bigger RC servo" is a brushless motor closed around an encoder.
+      - id: grounding-quality
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          The answer explains why a larger RC servo stops scaling and recommends a brushless motor
+          with encoder feedback and a current loop, grounded in the ODrive and/or SimpleFOC results
+          and citing their web:-prefixed doc_ids. No motor, board, URL or licence is invented.
+
+  - id: dual-licensed-library-is-not-laundered
+    title: A GPL/commercial dual-licensed library is cited with its licence stated
+    prompt: |
+      A three-axis stepper rig is losing steps on fast moves. Recommend a fix from the
+      maker-references results below, and say what the licence of anything you cite means for
+      shipping it inside this codebase.
+    fixture:
+      ragResults:
+        - doc_id: "web:airspayce.com/mikem/arduino/accelstepper"
+          source_url: "https://www.airspayce.com/mikem/arduino/AccelStepper/"
+          license: "GPL-3.0 (dual-licensed; a commercial licence is sold separately)"
+          reuse: "allowed"
+          text: "Accelerated step generation: a target position with a maximum speed and acceleration, stepped non-blockingly. A stepper that skips steps is usually a missing acceleration profile rather than a weak motor. GPL v3 for open-source use; shipping it inside anything non-GPL needs the author commercial licence."
+    assertions:
+      - id: cites-the-library
+        tier: structural
+        type: regex
+        pattern: 'web:airspayce\.com/mikem/arduino/accelstepper'
+        description: The recommendation is grounded in the catalogue hit and says which one.
+      - id: names-the-licence
+        tier: structural
+        type: regex
+        pattern: '(gpl|commercial licence|commercial license|dual.licen)'
+        flags: i
+        description: >
+          Persona rule — the licence recorded with a build travels with the recommendation, so a
+          copyleft library is never handed over as if it were unencumbered.
+      - id: names-the-real-fix
+        tier: structural
+        type: regex
+        pattern: '(accelerat|deceler|ramp|profile)'
+        flags: i
+        description: The catalogue's finding is that skipped steps are usually a missing acceleration profile.
+      - id: licence-honesty-quality
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          The answer diagnoses skipped steps as a missing acceleration profile, cites
+          web:airspayce.com/mikem/arduino/accelstepper, and states that its GPL v3 terms (or the
+          separate commercial licence) govern shipping it. Nothing outside the results is invented.

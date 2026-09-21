@@ -1,0 +1,27 @@
+# A build in the open maker-reference library. Recorded, cited, never vendored.
+# Written by `node scripts/maker-reference.mjs add` — doc_id and reuse are derived, not typed.
+docId: web:airspayce.com/mikem/arduino/accelstepper
+title: AccelStepper (Mike McCauley)
+whatItIs: >-
+  The Arduino stepper library that adds acceleration and deceleration and steps several motors
+  concurrently without blocking.
+mechanism: >-
+  Accelerated step generation: a target position with a maximum speed and acceleration, stepped
+  non-blockingly so several axes can run at once.
+actuators:
+  - bipolar and unipolar stepper motors (2
+  - 3 and 4 wire
+  - plus half-stepping)
+controller: >-
+  Arduino-class MCU with a step and direction driver (EasyDriver, A4988, DRV8825 class) or a motor
+  shield
+licence: GPL-3.0 (dual-licensed; a commercial licence is sold separately)
+reuse: allowed
+sourceUrl: https://www.airspayce.com/mikem/arduino/AccelStepper/
+takeaway: >-
+  Why a stepper that skips steps is usually a missing acceleration profile rather than a weak motor
+  - the reason small-motors-bot proposes a profile before a bigger NEMA frame.
+addedOn: '2026-09-21'
+licenceNote: >-
+  GPL v3 for open-source use; shipping it inside anything non-GPL needs the author commercial
+  licence. Cited, never copied.

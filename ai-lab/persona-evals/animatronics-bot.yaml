@@ -1,0 +1,113 @@
+# Golden-task regression suite for the animatronics-bot persona
+# (ai-lab/bot-personas/animatronics-bot.yaml).
+#
+# Gates the maker-reference contract the persona now carries: a mechanism answer is grounded in
+# the `maker-references` collection and carries the `web:`-prefixed doc_id of whatever it leaned
+# on, and a build whose licence forbids reuse is cited as a reference AND named as not-to-copy
+# rather than quietly treated as a source to copy from.
+#
+# RAG results are supplied as fixtures: the persona's contract is to ground its citations in the
+# results it was handed, which a deterministic fixture stands in for. The `uncited answer fails
+# review` half of that contract is proven directly against these structural assertions in
+# tests/unit/maker-reference-library.spec.ts — an answer with no doc_id must FAIL them.
+
+persona: animatronics-bot
+description: >
+  Maker-reference grounding gate for the animatronics specialist: search the catalogue before
+  answering a mechanism question, cite the doc_id of every build leaned on, invent no source, and
+  say out loud when a cited build is not-to-copy.
+
+tasks:
+  - id: eye-mechanism-cites-the-catalogue
+    title: An eye-mechanism answer cites the build it took the mechanism from
+    prompt: |
+      A prop head needs eyes that look left/right and up/down. Recommend the mechanism.
+
+      You have already searched the maker-references collection; the results are below. Cite the
+      doc_id of every build you take a recommendation from, and cite nothing that is not in the
+      results.
+    fixture:
+      ragResults:
+        - doc_id: "web:learn.adafruit.com/crickit-controlled-animatronic-eyeball"
+          source_url: "https://learn.adafruit.com/crickit-controlled-animatronic-eyeball"
+          license: "unknown"
+          reuse: "not-to-copy"
+          text: "Two-axis gimbal behind the eyeball - one servo pans, one tilts - instead of the classic four-pushrod eye linkage. Two hobby servos on a Circuit Playground Express with a CRICKIT board."
+        - doc_id: "web:inmoov.fr/project"
+          source_url: "https://inmoov.fr/project/"
+          license: "CC BY-NC (Attribution - Non-Commercial)"
+          reuse: "not-to-copy"
+          text: "Tendon-driven printed hand and forearm - hobby servos pull braided line through guides to close printed fingers."
+    assertions:
+      - id: has-citation-block
+        tier: structural
+        type: citation-block
+        pattern: 'web:[\w./-]+'
+        description: >
+          Persona rule — a mechanism answer grounded in the catalogue carries the hit's
+          web:-prefixed doc_id. No doc_id is an uncited answer, and an uncited answer fails review.
+      - id: cites-a-catalogue-doc
+        tier: structural
+        type: regex
+        pattern: '(web:learn\.adafruit\.com/crickit-controlled-animatronic-eyeball|web:inmoov\.fr/project)'
+        description: The citation must be one of the results handed to the persona, not a build recalled from nowhere.
+      - id: invents-no-other-source
+        tier: structural
+        type: not-regex
+        pattern: 'doc_id\s*[:=]?\s*["''`]?(?!web:)[\w.:/-]+'
+        description: Every doc_id in this catalogue is web:-prefixed; anything else is an invented source.
+      - id: recommends-the-gimbal
+        tier: structural
+        type: regex
+        pattern: '(gimbal|pan.{0,5}tilt|two[- ]axis)'
+        flags: i
+        description: The catalogue's own argument for a small prop eye is two servos on a gimbal rather than four pushrods.
+      - id: grounding-quality
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          The answer recommends a two-axis gimbal for the eye, takes that argument from the
+          Adafruit eyeball result, and cites its web:-prefixed doc_id. No build, URL or licence
+          appears that was not in the results.
+
+  - id: non-commercial-build-is-marked-not-to-copy
+    title: A CC BY-NC build is cited as a reference and named not-to-copy
+    prompt: |
+      The prop needs a gripping hand. Recommend the mechanism, using the maker-references results
+      below, and state plainly what may and may not be taken from each build you cite.
+    fixture:
+      ragResults:
+        - doc_id: "web:inmoov.fr/project"
+          source_url: "https://inmoov.fr/project/"
+          license: "CC BY-NC (Attribution - Non-Commercial)"
+          reuse: "not-to-copy"
+          text: "NOT TO COPY - licence: CC BY-NC. Tendon-driven printed hand: hobby servos pull braided line through guides to close printed fingers, with the servo bank in the forearm. Failure modes are line stretch, guide friction and servo stall under a closed grip."
+    assertions:
+      - id: cites-the-build
+        tier: structural
+        type: regex
+        pattern: 'web:inmoov\.fr/project'
+        description: The build is a reference and is cited like one, licence notwithstanding.
+      - id: names-the-no-copy-posture
+        tier: structural
+        type: regex
+        pattern: '(not.to.copy|non.commercial|by.nc|cannot be copied|never copied|do not copy)'
+        flags: i
+        description: >
+          Persona rule — a hit whose reuse is not-to-copy is said to be so in the answer, so the
+          catalogue never silently launders code.
+      - id: still-explains-the-mechanism
+        tier: structural
+        type: regex
+        pattern: '(tendon|braided|line|cable)'
+        flags: i
+        description: Not-to-copy restricts copying, not citing — the mechanism is still explained.
+      - id: licence-honesty-quality
+        tier: semantic
+        type: rubric
+        minScore: 75
+        rubric: >
+          The answer explains the tendon-driven hand, cites web:inmoov.fr/project, and states that
+          its CC BY-NC licence means the build informs the design but its geometry and code are not
+          copied into this codebase. It does not offer to vendor or reproduce the source files.

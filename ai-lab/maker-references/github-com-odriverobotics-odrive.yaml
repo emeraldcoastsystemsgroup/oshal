@@ -1,0 +1,23 @@
+# A build in the open maker-reference library. Recorded, cited, never vendored.
+# Written by `node scripts/maker-reference.mjs add` — doc_id and reuse are derived, not typed.
+docId: web:github.com/odriverobotics/odrive
+title: ODrive v3.x brushless servo drive
+whatItIs: >-
+  Open firmware and hardware that drives cheap brushless motors as high-performance servos for
+  robotics.
+mechanism: >-
+  Dual-axis closed-loop BLDC drive: a current loop plus encoder feedback turns a hobby brushless
+  motor into a position and velocity servo.
+actuators:
+  - brushless DC motors (hobby outrunners and similar)
+controller: ODrive v3.x board (STM32) commanded over USB, UART or CAN
+licence: MIT
+reuse: allowed
+sourceUrl: https://github.com/odriverobotics/ODrive
+takeaway: >-
+  Where -use a bigger servo- stops scaling: past roughly a hobby servo of torque, the answer is a
+  brushless motor with an encoder and a real current loop, not a larger RC servo.
+addedOn: '2026-09-21'
+licenceNote: >-
+  MIT covers the v3.x firmware in this repository. The later ODrive Pro, S1 and Micro firmware is
+  closed and is not part of this reference.
