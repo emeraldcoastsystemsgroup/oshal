@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Headless self-healing competitive-evidence generator for the "local" category: live boot health, genuine pg_dump/restore round-trip, and Cloudflare-tunnel ingress posture.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The backup/restore leg now runs through backup-restore-proof.ts instead of a local `pg_dump | psql -v ON_ERROR_STOP=0` pipeline inside `sh -c`. That pipeline exited 0 when the dump was cancelled (no pipefail, errors ignored), and the only equality asserted was the `agents` row count, so the 2026-09-12 run that was cancelled mid-dump still produced passing evidence off a partial restore. The module believes each exit code, compares every base table, bounds the run and coordinates with the deploy lock; this file's job is reduced to rendering what it observed and refusing to write anything unless backupProofAccepted() agrees.
  */
 
 /**
@@ -22,6 +23,7 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
+import { backupProofAccepted, runBackupRestoreProof, type BackupRestoreProof } from './backup-restore-proof';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -30,7 +32,6 @@ const DB_CONTAINER = 'oshal-local-db';
 const DB_USER = 'oshal';
 const DB_NAME = 'oshal';
 const TUNNEL_CONTAINER = 'oshal-local-cloudflared';
-const COUNT_TABLE = 'agents';
 const DATE = '2026-07-04';
 
 type Check = { id: string; label: string; passed: boolean; evidence: string };
@@ -88,25 +89,15 @@ async function proveLocalBoot(): Promise<BootProof> {
   return { healthStatus: health.status, healthBody: health.body, cockpitStatus: cockpit.status, bootScript, checks };
 }
 
-type BackupProof = { throwaway: string; before: number; after: number; table: string; checks: Check[] };
+type BackupProof = BackupRestoreProof;
 
-/** Genuine pg_dump of the live DB restored into a uniquely-named throwaway db, with a row-count assertion. */
-function proveBackupRestore(): BackupProof {
-  const throwaway = `oshal_restore_smoke_${Date.now()}`;
-  const before = Number(docker('exec', DB_CONTAINER, 'psql', '-U', DB_USER, '-d', DB_NAME, '-tAc', `select count(*) from ${COUNT_TABLE}`));
-  docker('exec', DB_CONTAINER, 'dropdb', '-U', DB_USER, '--if-exists', throwaway);
-  docker('exec', DB_CONTAINER, 'createdb', '-U', DB_USER, throwaway);
-  try {
-    docker('exec', DB_CONTAINER, 'sh', '-c', `pg_dump -U ${DB_USER} -d ${DB_NAME} --no-owner --no-privileges | psql -v ON_ERROR_STOP=0 -U ${DB_USER} -d ${throwaway} >/tmp/${throwaway}.log 2>&1`);
-    const after = Number(docker('exec', DB_CONTAINER, 'psql', '-U', DB_USER, '-d', throwaway, '-tAc', `select count(*) from ${COUNT_TABLE}`));
-    const checks = [
-      check('restore-nonempty', `Restored ${COUNT_TABLE} table is non-empty`, after > 0, `restored count=${after}`),
-      check('row-count-equal', `Backup/restore preserves ${COUNT_TABLE} row count`, before === after, `before=${before}, after=${after}`),
-    ];
-    return { throwaway, before, after, table: COUNT_TABLE, checks };
-  } finally {
-    docker('exec', DB_CONTAINER, 'dropdb', '-U', DB_USER, '--if-exists', throwaway);
-  }
+/**
+ * @description A genuine pg_dump of the live database restored into a uniquely-named throwaway,
+ * compared across every table, bounded, and refused outright while a deployment holds the lock.
+ * @returns The proof, whose checks decide on their own whether anything may be published.
+ */
+async function proveBackupRestore(): Promise<BackupProof> {
+  return runBackupRestoreProof({ target: { container: DB_CONTAINER, user: DB_USER, database: DB_NAME } });
 }
 
 type HostedProof = { tunnelState: string; registered: number; ingressTarget: string; checks: Check[] };
@@ -165,26 +156,29 @@ function renderBoot(p: BootProof, generatedAt: Date): string {
 }
 
 function renderBackup(p: BackupProof, generatedAt: Date): string {
+  const rows = Object.keys(p.before).length;
+  const total = Object.values(p.before).reduce((sum, n) => sum + n, 0);
   return [
-    ...header('Backup And Restore Evidence', generatedAt, `a genuine pg_dump of oshal-local-db restored into a uniquely-named throwaway database with a row-count equality assertion.`),
+    ...header('Backup And Restore Evidence', generatedAt, 'a genuine pg_dump of oshal-local-db restored into a uniquely-named throwaway database, compared table by table.'),
     '## Result', '', 'Status: passed', '',
-    `A genuine full-data backup of the live \`${DB_NAME}\` database was restored into a fresh throwaway database inside \`${DB_CONTAINER}\`, the \`${p.table}\` row count matched before and after, and the throwaway database was dropped.`, '',
+    `A genuine full-data backup of the live \`${DB_NAME}\` database was restored into a fresh throwaway database inside \`${DB_CONTAINER}\`, all ${rows} base table(s) came back with identical row counts, and the throwaway database was dropped.`, '',
     '## Commands', '', '```bash',
     `docker exec ${DB_CONTAINER} createdb -U ${DB_USER} ${p.throwaway}`,
-    `docker exec ${DB_CONTAINER} sh -c 'pg_dump -U ${DB_USER} -d ${DB_NAME} --no-owner --no-privileges | psql -U ${DB_USER} -d ${p.throwaway}'`,
-    `docker exec ${DB_CONTAINER} psql -U ${DB_USER} -d ${p.throwaway} -tAc 'select count(*) from ${p.table}'`,
+    `docker exec ${DB_CONTAINER} pg_dump -U ${DB_USER} -d ${DB_NAME} --no-owner --no-privileges -f /tmp/${p.throwaway}.sql`,
+    `docker exec ${DB_CONTAINER} psql -v ON_ERROR_STOP=1 -U ${DB_USER} -d ${p.throwaway} -f /tmp/${p.throwaway}.sql`,
     `docker exec ${DB_CONTAINER} dropdb -U ${DB_USER} ${p.throwaway}`,
     '```', '',
+    'The dump and the restore are separate commands so each exit status is believed on its own. The earlier form piped one into the other inside `sh -c` with `ON_ERROR_STOP=0` and no `pipefail`, which reported success for a cancelled dump.', '',
     '## Verification', '',
-    `- Backup: \`pg_dump\` produced a full-data dump of \`${DB_NAME}\` (not schema-only).`,
-    `- Restore: \`psql\` loaded that dump into the uniquely-named throwaway database \`${p.throwaway}\`.`,
-    `- Row-count equality: \`${p.table}\` had ${p.before} rows in the source and ${p.after} rows after restore (${p.before === p.after ? 'equal' : 'MISMATCH'}).`,
-    `- Cleanup: the throwaway database \`${p.throwaway}\` was dropped after verification.`, '',
-    'The backup/restore smoke passed: the round-trip preserved data and the temporary database was removed.', '',
+    `- Backup: \`pg_dump\` produced a full-data dump of \`${DB_NAME}\` (not schema-only) and the file carries pg_dump's own completion marker.`,
+    `- Restore: \`psql -v ON_ERROR_STOP=1\` loaded that dump into the uniquely-named throwaway database \`${p.throwaway}\`; the first error would have ended it non-zero.`,
+    `- Comparison: every one of the ${rows} base table(s) was counted on both sides — ${total} row(s) in total — not a single sentinel table.`,
+    `- Bounds: the run carried a statement and lock timeout, a wall-clock ceiling, and a watcher that terminates only this diagnostic's own backends, so a deployment cannot be left waiting on it.`,
+    `- Cleanup: the throwaway database \`${p.throwaway}\` was dropped after verification${p.sweptOrphans.length ? `, along with ${p.sweptOrphans.length} throwaway database(s) left by earlier runs` : ''}, and \`${DB_NAME}\` was re-read afterwards to confirm it survived.`, '',
     '## Checks', '', ...checksTable(p.checks), '',
     '## Command', '', '```powershell', 'npx ts-node -r tsconfig-paths/register --transpile-only scripts/evidence/prove-local-selfhost-live.ts', '```', '',
     '## Limits', '',
-    'This is a genuinely live in-container backup/restore round-trip: real `pg_dump`, real restore into a real throwaway database, real row-count comparison, real drop. It does not exercise off-host encrypted storage, rotation, or a scheduled restore-rehearsal cadence — those remain production backup-policy work. The equality assertion reads the source count immediately before the dump; on this idle local stack no writes occurred in that window.', '',
+    'This is a genuinely live in-container backup/restore round-trip: real `pg_dump`, real restore into a real throwaway database, a real per-table row-count comparison, real drop. It does not exercise off-host encrypted storage, rotation, or a scheduled restore-rehearsal cadence — those remain production backup-policy work. The counts are read immediately before the dump; on this idle local stack no writes occurred in that window.', '',
   ].join('\n');
 }
 
@@ -222,12 +216,14 @@ function writeDoc(prefix: string, md: string, json: Record<string, unknown>, gen
 
 async function main(): Promise<void> {
   const boot = await proveLocalBoot();
-  const backup = proveBackupRestore();
+  const backup = await proveBackupRestore();
   const hosted = proveHostedEnough();
 
   const allChecks = [...boot.checks, ...backup.checks, ...hosted.checks];
   const failed = allChecks.filter((c) => !c.passed);
-  if (failed.length) {
+  // backupProofAccepted is a second, independent gate on the backup leg: it also refuses a proof
+  // that is MISSING a required check, which is the state a run that stopped part-way leaves.
+  if (failed.length || !backupProofAccepted(backup)) {
     console.error('FAILED assertions — writing NO evidence docs:');
     console.error(JSON.stringify(failed, null, 2));
     process.exitCode = 1;

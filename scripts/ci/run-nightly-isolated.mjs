@@ -13,6 +13,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | The inherited-export guard joins the fixed isolated set beside the purge guard. It runs ci-local.sh's own gate sequence in Git Bash over a state directory that already holds the previous run's export - the state the 2026-09-09 nightly wedged nine hours in - so the run that has to survive a leftover is executed here rather than reasoned about.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | The trading spec bare-cluster prerequisite guard joins the fixed isolated set, for the same reason as the race guard beside it: it starts its own PostgreSQL and needs the database EMPTY, which no other gate can give it - the plain unit gate has no address to point it at, and the operator database already holds every table it is checking for.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | The planted-fixture secret-scan proof joins the fixed isolated set, beside the partial-scan guard it completes. That one replaces docker on PATH; this one runs the real gitleaks image over a disposable repository and requires the gate to go red on a planted synthetic credential and green once it is removed. Docker and Git Bash are exactly what this gate provides, and running it nightly is what keeps the proof a standing claim rather than a one-day recording.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | The nightly backup diagnostic's round-trip guard joins the fixed isolated set. It starts its own PostgreSQL and runs a real pg_dump and psql against it in the shapes the 2026-09-12 incident produced - a dump cancelled by lock contention, a restore that errors part-way, a deploy holding the lock and one taking it mid-run - so it needs Docker and no address, the same shape as the trading and alert guards beside it. Nightly is also the only gate that executes it: the plain unit gate has no server to point it at, and the operator database is the one database it must never touch.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | The partial-scan proof joins the fixed isolated set beside its two siblings. It denies read on one file of a disposable export and requires the gate to refuse the PASS while the real gitleaks image exits 0 - the 2026-09-10 failure - so it needs Docker and Git Bash, which is exactly what this gate provides. Nightly is also what keeps the FLOATING :latest tag honest: the day the image rewords its skip line, this is where it shows up.
  */
 import { spawn, execFileSync } from 'node:child_process';
@@ -29,6 +30,7 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/alert-postgres-isolation.spec.ts',
   'tests/unit/alert-event-replay-idempotency.spec.ts',
   'tests/unit/alert-consolidate-landed-postgres.spec.ts',
+  'tests/unit/backup-restore-proof.spec.ts',
   'tests/unit/nightly-isolated-runner.spec.ts',
   'tests/unit/ci-local-scheduled-ref.spec.ts',
   'tests/unit/ci-local-run-log.spec.ts',

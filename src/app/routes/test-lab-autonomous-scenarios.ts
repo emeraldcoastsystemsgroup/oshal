@@ -16,6 +16,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Register the provider-embedded tool tier: per-agent grants read from the agent's own persona, a fail-closed refusal at execution, and a run trace that names the tier and the provider operation.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Register the trading spec bare-cluster prerequisite guard on the isolated nightly scenario. It owns its PostgreSQL and asserts the trading DB specs' shared prologue builds every relation they touch on an EMPTY server, which is the gate that made three of them runnable anywhere but the operator's own database.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Register the planted-fixture secret-scan proof on the isolated nightly scenario, beside the partial-scan guard it completes. That guard replaces docker on PATH; this one runs the real gitleaks image over a disposable repository and requires the gate to go red on a planted synthetic credential and green once it is removed, so the scenario now lists a run that actually exercises the scanner.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Register the nightly backup diagnostic's round-trip guard on the isolated nightly scenario. The backup/restore leg had no Lab scenario at all, which is how a diagnostic that published passing evidence off a partial restore stayed unwatched; the guard owns its PostgreSQL and executes a real pg_dump and psql, so this scenario is the only gate that can run it.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Register the partial-scan secret-scan proof beside the other two. It is the only one of the three that makes the real gitleaks image actually skip a path and exit 0, which is the failure shape the gate was written for, so the scenario now lists a run that exercises the refusal as well as the detection.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -51,7 +52,7 @@ async function briefingSources(cookie: string): Promise<StepResult> {
 /** @description Discover autonomous regression suites without granting the browser host execution authority. */
 export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
   id: 'nightly-isolated-regression', title: 'Isolated nightly regressions', group: 'tool',
-  description: 'Disposable PostgreSQL alert, topology and trading-guard coverage with bounded local runner evidence. Deployment credentials and live notification endpoints are excluded.',
+  description: 'Disposable PostgreSQL alert, topology, backup round-trip and trading-guard coverage with bounded local runner evidence. Deployment credentials and live notification endpoints are excluded.',
   regressionTests: [
     { level: 'integration', path: 'tests/unit/alert-incident-cutover.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-incident-reopen.spec.ts' },
@@ -59,6 +60,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/alert-postgres-isolation.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-event-replay-idempotency.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-consolidate-landed-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/backup-restore-proof.spec.ts' },
     { level: 'integration', path: 'tests/unit/nightly-isolated-runner.spec.ts' },
     { level: 'integration', path: 'tests/unit/ci-local-scheduled-ref.spec.ts' },
     { level: 'integration', path: 'tests/unit/ci-local-run-log.spec.ts' },
