@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Read-only catalog reader for the data-model explorer. The catalog SQL is byte-identical to the schema-docs generator's (scripts/schema-docs/introspect.js) - tests/unit/data-model-catalog.spec.ts holds the two together - so the explorer and the generated docs can never describe the same database differently. Catalog SELECTs only.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The SQL is no longer held byte-identical to a second copy - it IS the query the schema-docs generator sends. scripts/schema-docs/introspect.js keeps only its own transport (docker exec psql / a connection URL) and the by-name Map shape the rest of that pipeline reads, and takes the statements and the fold from here through scripts/schema-docs/kernel.js.
  */
 
 import type { CatalogSnapshot, RelationInfo } from '../types';

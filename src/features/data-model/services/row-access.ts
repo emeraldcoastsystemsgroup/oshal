@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | RLS row-scope classification for the data-model explorer, read from each table's REAL policy expressions (pg_policies USING / WITH CHECK): owner column, helper function, parent table, unrestricted, or operator-only. Same rules as the schema-docs generator (scripts/schema-docs/row-access.js); tests/unit/data-model-catalog.spec.ts holds the two to identical answers.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | There is no second copy to hold identical any more: the generator's CommonJS classifier is deleted and scripts/schema-docs/render.js and pages.js read this file through scripts/schema-docs/kernel.js. Change a rule here and the committed pages change with the surface; tests/unit/data-model-catalog.spec.ts fails if a copy reappears, and tests/unit/data-model-catalog-postgres.spec.ts fails if the generator stops reading this one.
  */
 
 import type { PolicyInfo, RelationInfo, RowAccessSummary } from '../types';

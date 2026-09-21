@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Static CREATE TABLE parser for the data-model explorer, used ONLY where no catalog exists: SQLite declarations and Postgres tables a source declares that the reference database does not hold. Same rules as the schema-docs generator's scripts/schema-docs/ddl-parse.js (parity held by tests/unit/data-model-catalog.spec.ts): skips `--` comments, quoted strings and `${...}` interpolations; later ALTERs are not replayed.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The generator's CommonJS copy is deleted; scripts/schema-docs/model.js parses declarations with this file through scripts/schema-docs/kernel.js, so the docs and the explorer read a CREATE TABLE the same way by construction rather than by a parity assertion.
  */
 
 import type { ForeignKeyInfo, RelationInfo } from '../types';

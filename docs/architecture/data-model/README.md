@@ -168,8 +168,12 @@ to deploy it and what it deliberately does not do.
   families and value types only, never values).
 
 The page is signed-in only; `/api/admin/data-model` is operator-only. The catalog SQL, the RLS
-classifier and the DDL parser are held identical to this generator's by
-`tests/unit/data-model-catalog.spec.ts`. Local suites: `npm run test:data-model`.
+classifier and the DDL parser are not held identical to this generator's - they *are* this
+generator's. One implementation lives in `src/features/data-model/`, and the generator loads it
+through `scripts/schema-docs/kernel.js`; `tests/unit/data-model-catalog.spec.ts` holds that seam
+(one definition site per piece, no copy under `scripts/schema-docs/`) and
+`tests/unit/data-model-catalog-postgres.spec.ts` crosses it against a real PostgreSQL. Local
+suites: `npm run test:data-model`.
 
 ## Regenerating
 
@@ -180,6 +184,12 @@ node scripts/generate-schema-docs.js --store-root <store repo> --private-root <p
 - **Reads the running stack.** It reads `oshal-local-db` and `oshal-local-tsdb` through
   `docker exec … psql` using catalog `SELECT`s only. Use `--pg-url` / `--ts-url` for any other
   Postgres. `--help` lists every option.
+- **Reads the explorer's own code.** The catalog SQL, the RLS classifier and the `CREATE TABLE`
+  parser come from `src/features/data-model/` through `scripts/schema-docs/kernel.js`. That slice
+  is TypeScript, so the bridge registers the `tsx` require hook when the process has none - which
+  is why the plain `node` command above still works from a checkout with dev dependencies
+  installed, and why the generator stops by name rather than falling back if it cannot reach the
+  slice.
 - **Scans three repos.** The core tree, plus each package repo you pass. In a git checkout only
   tracked files count, so local build output never declares a table.
 - **Writes only what changed.** An unchanged schema regenerates to a zero diff.
