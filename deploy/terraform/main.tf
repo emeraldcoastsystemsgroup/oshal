@@ -4,6 +4,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — namespace + oshal-api-env Secret + helm_release over the chart (chart_path). Terraform owns cluster-shape and secret-minting; the chart stays the single source of workload truth (no duplicated manifests). Preconditions make the multi-user posture unfakeable: mock_oidc=false refuses to plan without real OIDC config, so a "public tenant" can never ship with dev auth by omission.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-129: pass fleet through to the chart. Default "custom" preserves 0.1.x semantics exactly — a terraform tenant's bots[] list stays authoritative; set fleet="kernel"/"full" to adopt the generated chart presets instead of hand-maintaining a list.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Forward the rest of the shared-service switches: infra.tsdb/arangodb/vault/codeServer/diarization.inCluster from tsdb_/arangodb_/vault_/code_server_/diarization_in_cluster, plus infra.codeServer.externalUrl from code_server_external_url. Helm deep-merges these values over the chart defaults, and only postgres carried a switch, so a tenant could not take Timescale, ArangoDB, the dev-mode Vault, the --auth none code-server or speaker-diarization out of its namespace from this path at all. Defaults stay the chart's own (all on), so an existing apply renders the same workloads. externalUrl is sent only when set: a null would delete the chart's key and withhold CODE_SERVER_URL. Guard: tests/unit/chart-terraform-infra-switches.spec.ts.
 
 locals {
   # Real-OIDC readiness: all four must be present for a multi-user deployment.
@@ -51,6 +52,28 @@ locals {
       }
       redis    = { storage = var.storage.redis }
       chromadb = { storage = var.storage.chromadb }
+
+      # The rest of the shared-service tier. false removes the workload and the
+      # chart withholds its URL env, so what api_extra_secret_env supplies is
+      # what the api reads (an explicit container env entry would beat envFrom).
+      tsdb = {
+        inCluster = var.tsdb_in_cluster
+      }
+      arangodb = {
+        inCluster = var.arangodb_in_cluster
+      }
+      vault = {
+        inCluster = var.vault_in_cluster
+      }
+      codeServer = merge(
+        {
+          inCluster = var.code_server_in_cluster
+        },
+        var.code_server_external_url != "" ? { externalUrl = var.code_server_external_url } : {},
+      )
+      diarization = {
+        inCluster = var.diarization_in_cluster
+      }
     }
 
     api = {

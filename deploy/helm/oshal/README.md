@@ -154,10 +154,13 @@ withhold it rather than merely allow an override, because an explicit container
 `env` entry beats `envFrom`. From there the managed service's own durability
 (replicas, backups, restore drills) is the operator's, not the chart's.
 
-On the [Terraform](../../terraform/README.md) tenant path the module forwards only
-the Postgres switch (`postgres_in_cluster`, with the URLs through
-`api_extra_secret_env`). Moving Timescale or Vault out of the cluster there needs
-their switches added to the module first.
+On the [Terraform](../../terraform/README.md) tenant path the module forwards
+`postgres_in_cluster`, `tsdb_in_cluster`, `arangodb_in_cluster`,
+`vault_in_cluster`, `code_server_in_cluster` and `diarization_in_cluster`, each
+defaulting to the chart's own default. The URLs go in `api_extra_secret_env`,
+which the module mints into the `api.envSecret` Secret. code-server's
+browser-facing link goes in `code_server_external_url`. Redis, Chroma and ollama
+keep the chart defaults on that path.
 
 ## Dynamic bots — apps bring their own
 
