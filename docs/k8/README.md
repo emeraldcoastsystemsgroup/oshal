@@ -49,6 +49,26 @@ instead — its real-OIDC and secret-minting posture guards are the point there.
 Never run a kind cluster and the compose swarm on the same machine (documented
 OOM pairing); the installer refuses to create that shape.
 
+## Docker Desktop Kubernetes and monitoring
+
+- [`deploy/helm/oshal/values-docker-desktop.yaml`](../../deploy/helm/oshal/values-docker-desktop.yaml)
+  is the overlay for Docker Desktop's built-in Kubernetes running a locally built image. The image
+  is side-loaded into the node (`pullPolicy: Never`). The cockpit is a LoadBalancer on
+  `localhost:5000`, because Docker Desktop does not publish NodePorts to the host. Bot requests are
+  sized for one ~7.6 GiB node. `swarm.extraEnv` carries compose's platform switches, including
+  `APP_PACKAGE_DYNAMIC_ROUTES=1`; without it protected store apps fail activation closed. The
+  file's header has the install commands.
+- [`deploy/monitoring/install-monitoring.sh`](../../deploy/monitoring/install-monitoring.sh) is the
+  cluster form of the compose monitoring stack, run after the chart is installed. It installs
+  kube-prometheus-stack with
+  [`kube-prometheus-stack.values.yaml`](../../deploy/monitoring/kube-prometheus-stack.values.yaml)
+  and loads `ops/monitoring/alert-rules.yml` as a PrometheusRule. It also routes the `Swarm*`
+  alerts to the api's fail-closed `/api/alerts/alertmanager` intake with a generated
+  `ALERT_WEBHOOK_TOKEN`.
+
+What a live run of both measured is recorded in the
+[remote-cluster work package](remote-cluster-work-package.md) status note (2026-09-21).
+
 ## Available documents
 
 - [`any-bot-kubernetes-setup.md`](any-bot-kubernetes-setup.md) — **legacy**: the

@@ -285,6 +285,20 @@ task store is the real `InMemoryTaskStore` in memory-only mode via
 the ADR-127 unit classification table, the by-unit fold and the run-trace label rendering. It is not
 closure evidence for the database seam; the file above is.
 
+## Chart render guards from the Docker Desktop Kubernetes install (2026-09-21)
+
+These three guards render the REAL chart with the helm binary. A render is still not evidence
+about a kubelet, an API server or a running Prometheus. Their real companion is the live Docker
+Desktop Kubernetes install run on 2026-09-21 on the operator's explicit direction (kind
+provisioning, v1.36). Its measured result is in the
+[remote-cluster work package](../k8/remote-cluster-work-package.md) status note.
+
+| Boundary audited | Mock/stub disposition | Required real companion | Status |
+|---|---|---|---|
+| `tests/unit/chart-readiness-probes.spec.ts` (ArangoDB and speaker-diarization readiness probes that could never pass, so `helm --wait` timed out) | No double. The chart is rendered by helm. The diarization half is read from the service's own Python source: key header, key env, allowlist env, `DEFAULT_ALLOWED_HOSTS`, and `/health` calling `_authenticate`. The render cannot show a kubelet probe succeeding against a running ArangoDB or speaker service. | The live Docker Desktop Kubernetes install run on 2026-09-21: the full fleet (30 pods) reached all-Ready only after both probe fixes. | Real companion run once, 2026-09-21. |
+| `tests/unit/chart-shared-env-extra.spec.ts` (`swarm.extraEnv` reaching every runtime, and the Docker Desktop overlay's `APP_PACKAGE_DYNAMIC_ROUTES`) | No double. Both roles are rendered by helm. The flag's name and its accepted values are read from the `src/` file that raises "Protected application routes require …=1". The render cannot show the api reading the ConfigMap. | The live Docker Desktop Kubernetes install run on 2026-09-21: every protected store app failed activation closed until `APP_PACKAGE_DYNAMIC_ROUTES=1` reached the api. | Real companion run once, 2026-09-21. |
+| `tests/unit/chart-monitoring-parity.spec.ts` (`deploy/monitoring` parity with `ops/monitoring`) | Scoped doubles OUTSIDE the boundary: `kubectl` and `helm` are recording stand-ins first on a minimal PATH, with a nonexistent context and kubeconfig, when the real `install-monitoring.sh` runs. The script's own generation of the PrometheusRule from `alert-rules.yml` runs for real. Prometheus pod discovery and Alertmanager routing are evaluated by the spec, not by Prometheus or Alertmanager. | The live Docker Desktop Kubernetes install run on 2026-09-21: kube-prometheus-stack 91.4.1 scraped 22 oshal targets (1 core + 21 bots), all up, with the five `Swarm*` rules loaded. | Real companion run once, 2026-09-21. |
+
 ## Rules for future fixes
 
 1. Name the failed boundary in the test header and name what remains doubled.

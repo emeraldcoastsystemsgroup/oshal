@@ -29,6 +29,25 @@ live-cluster proof (ADR-129)"** (line 887) reads:
 Parked is a statement about ordering, not cancellation. This package is what gets picked up when a
 cluster box exists.
 
+**Status note (2026-09-21) — one Docker Desktop Kubernetes install on the development box.** On the
+operator's explicit direction, and as an exception to section 1, the chart was installed on this
+box's Docker Desktop Kubernetes (kind provisioning, v1.36). Measured:
+
+- A full-fleet `helm upgrade --install` (30 pods) reached all-Ready only after the ArangoDB and
+  speaker-diarization readiness-probe fixes.
+- NodePorts are not host-reachable there; LoadBalancer Services map to `localhost`
+  ([`values-docker-desktop.yaml`](../../deploy/helm/oshal/values-docker-desktop.yaml)).
+- The api failed activation closed for every protected store app until
+  `APP_PACKAGE_DYNAMIC_ROUTES=1` reached it.
+- kube-prometheus-stack 91.4.1 ([`deploy/monitoring`](../../deploy/monitoring)) scraped 22 oshal
+  targets (1 core + 21 bots), all up, with the five `Swarm*` rules loaded. Item 16's templating
+  question was answered with a separate stack, not with chart templates.
+- 54 of 61 store apps staged; 7 were refused on audit-record version drift in the store.
+
+Not done: installer mode 4 was not run (the install was a manual `helm upgrade --install`); the
+`/welcome` wizard and a jarvis turn were not proven; the OCI chart was not published; delegation
+signing keys were absent, so protected dispatch refuses.
+
 **Provenance of every claim below.** This document was assembled from four measured sweeps of the
 tree on `main` (backlog, deploy configuration, ADRs/docs, code and guards). Every factual claim
 carries a `file:line`. Where the sweeps disagreed with each other or with the tree, that is called
