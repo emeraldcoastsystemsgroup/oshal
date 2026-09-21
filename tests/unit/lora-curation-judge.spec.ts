@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for the LoRA automated curation judge. Runs the REAL scripts/comfyui-edge/make-curate.py over a real pool of image/caption pairs and inspects the artefact train-lora.py actually consumes - curated.zip - so "rejected candidates do not enter the training set" is proved at the training-set boundary rather than at the decision function. Also drives curation_judge.py's labelled-fixture mode: the false accept/reject rates are measured and shown to bite when the thresholds are loosened, and a fixture that cannot measure a rate is refused instead of reported as a perfect zero. Fails loudly (never skips) when Python is missing, because a skipped guard is no guard.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin that curating INTO the candidate pool refuses. curate() empties --dest first, and this change made --dest operator-supplied beside an independent --source, so --source X --dest X wiped the pool - measured on this fixture: 36 files to 0, then a traceback.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cover the AUTONOMOUS improve path, which had no judge at all. make-targeted-batch.recurate() zipped an even-sample straight into curated.zip, and overnight-loop.py trains on that exact path - so the judge was a make-curate-only feature and every unattended improve round trained on unjudged renders, rejects included. Two cases, both asserting on curated.zip rather than on the decision function, because the defect was in what got WRITTEN: every fixture reject stays out of the training set the loop consumes, and an unmeasurable run refuses instead of writing one.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Cover the TRAINER, where the training set is actually assembled and where no case reached. Every case above asserts on curated.zip, but the LoRA Studio dispatch passes a FOLDER (~/overnight/curated) to both /train and /improve-overnight and never the zip. train-lora.prepare_dataset copied that folder wholesale into the kohya image directory, ignoring the curation.json lying in it, so a rejected pair present in the folder trained anyway and the judge's own report became a training file. Three cases drive the REAL prepare_dataset and assert on the kohya staging directory: survivors only from a judged folder, a refusal for an unjudged one that destroys nothing, and the human override staging it deliberately.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -374,5 +375,128 @@ describe('LoRA automated curation judge', () => {
     expect(pulledRow.judge_decision).toBe('keep');
     expect(pulledRow.decision).toBe('reject');
     expect(report.summary.overridden).toBe(2);
+  }, RUN_TIMEOUT_MS);
+});
+
+// ---------------------------------------------------------------------------------------------
+// The TRAINER. Everything above asserts on curated.zip; the LoRA Studio dispatch never sends the
+// zip. lora-train-dispatch passes `$env:USERPROFILE/overnight/curated` - a FOLDER - as --dataset to
+// both the /train and the /improve-overnight commands, and train-lora.py staged that folder into
+// kohya's image directory file by file with no reference to the curation.json sitting in it.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * @description Drive the REAL train-lora.py prepare_dataset() with its kohya staging root pointed
+ *   at a scratch directory, so the assertion inspects the directory kohya is handed rather than a
+ *   decision function. The script is loaded by path because its filename is hyphenated.
+ * @param datasetDir - The --dataset folder to stage.
+ * @param workRoot - Scratch replacement for train-lora.WORK.
+ * @param allowUnjudged - Whether to pass the human override.
+ * @returns The process result plus the parsed JSON summary when it staged.
+ */
+function stageDataset(datasetDir: string, workRoot: string, allowUnjudged = false): {
+  status: number; stdout: string; stderr: string; summary?: { img_root: string; n: number; state: string };
+} {
+  const driver = [
+    'import importlib.util, json, sys',
+    'spec = importlib.util.spec_from_file_location("trainlora", sys.argv[1])',
+    'm = importlib.util.module_from_spec(spec)',
+    'spec.loader.exec_module(m)',
+    'm.WORK = sys.argv[3]',
+    'allow = sys.argv[4] == "1"',
+    'try:',
+    '    root, img_root, n, state = m.prepare_dataset(sys.argv[2], "oshbrainrot", 1, "oshbrainrot", allow)',
+    'except m.DatasetRefused as exc:',
+    '    print("DATASET_REFUSED " + str(exc)); sys.exit(3)',
+    'print(json.dumps({"root": root, "img_root": img_root, "n": n, "state": state}))',
+  ].join('\n');
+  const r = spawnSync(
+    python(),
+    ['-c', driver, join(EDGE_DIR, 'train-lora.py'), datasetDir, workRoot, allowUnjudged ? '1' : '0'],
+    { encoding: 'utf8', timeout: RUN_TIMEOUT_MS },
+  );
+  if (r.error) throw r.error;
+  const stdout = r.stdout ?? '';
+  const lines = stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+  const last = lines[lines.length - 1] || '';
+  return {
+    status: r.status ?? -1,
+    stdout,
+    stderr: r.stderr ?? '',
+    summary: last.startsWith('{') ? JSON.parse(last) : undefined,
+  };
+}
+
+describe('the trainer stages only what the curation judge approved', () => {
+  it('leaves a reject in the dataset FOLDER out of the kohya training directory', () => {
+    // Build a real judged folder with the real make-curate.py, then put a rejected pair back into
+    // it - which is all it takes, because nothing re-judges the folder at training time and the
+    // dispatch points --dataset straight at it.
+    const ctx = buildPool();
+    expect(curate(ctx).status).toBe(0);
+
+    const restored = ctx.fixture.candidates.find((c) => c.label === 'reject')!;
+    for (const ext of ['png', 'txt']) {
+      writeFileSync(join(ctx.dest, `${restored.id}.${ext}`),
+        readFileSync(join(ctx.pool, `${restored.id}.${ext}`)));
+    }
+    expect(readdirSync(ctx.dest), 'the reject was not actually put back')
+      .toContain(`${restored.id}.png`);
+    expect(readdirSync(ctx.dest), 'the judge left no report to read').toContain('curation.json');
+
+    const staged = stageDataset(ctx.dest, join(ctx.work, 'lora-train'));
+    expect(staged.status, `prepare_dataset failed: ${staged.stderr}`).toBe(0);
+    const imgRoot = staged.summary!.img_root;
+    const trainingFiles = readdirSync(imgRoot);
+
+    expect(trainingFiles, `${restored.id} (${restored.failure}) reached the kohya training directory`)
+      .not.toContain(`${restored.id}.png`);
+    expect(trainingFiles).not.toContain(`${restored.id}.txt`);
+    expect(trainingFiles, "the judge's own report became a training file").not.toContain('curation.json');
+    for (const row of ctx.fixture.candidates.filter((c) => c.label === 'keep')) {
+      expect(trainingFiles, `${row.id} was dropped from the training directory`).toContain(`${row.id}.png`);
+      expect(trainingFiles).toContain(`${row.id}.txt`);
+    }
+    const keeps = ctx.fixture.candidates.filter((c) => c.label === 'keep').length;
+    expect(staged.summary!.n, 'the reported image count must match what was staged').toBe(keeps);
+    expect(staged.summary!.state).toBe('judged');
+  }, RUN_TIMEOUT_MS);
+
+  it('REFUSES an unjudged dataset folder, and the refusal destroys nothing', () => {
+    // Fail-closed, matching curation_judge: a folder nobody judged is every render the box made.
+    const work = mkdtempSync(join(tmpdir(), 'lora-train-unjudged-'));
+    const dataset = join(work, 'unjudged');
+    mkdirSync(dataset, { recursive: true });
+    for (const id of ['oshbrainrot_a', 'oshbrainrot_b']) {
+      writeFileSync(join(dataset, `${id}.png`), PNG_1X1);
+      writeFileSync(join(dataset, `${id}.txt`), 'oshbrainrot, never judged\n');
+    }
+    // A previous version's staging directory must survive a refusal.
+    const workRoot = join(work, 'lora-train');
+    const priorRoot = join(workRoot, 'oshbrainrot_v1');
+    mkdirSync(priorRoot, { recursive: true });
+    writeFileSync(join(priorRoot, 'previous-run.txt'), 'kept\n');
+
+    const staged = stageDataset(dataset, workRoot);
+    expect(staged.status, 'an unjudged dataset must not be staged').toBe(3);
+    expect(`${staged.stdout}${staged.stderr}`).toContain('REFUSING to train on an unjudged dataset');
+    expect(`${staged.stdout}${staged.stderr}`).toContain('curation.json');
+    expect(existsSync(join(priorRoot, 'previous-run.txt')),
+      'the refusal wiped the previous staging directory').toBe(true);
+    expect(existsSync(join(priorRoot, 'img')), 'it staged into the run it refused').toBe(false);
+  }, RUN_TIMEOUT_MS);
+
+  it('lets the human override the refusal and records that the run was unjudged', () => {
+    const work = mkdtempSync(join(tmpdir(), 'lora-train-override-'));
+    const dataset = join(work, 'unjudged');
+    mkdirSync(dataset, { recursive: true });
+    writeFileSync(join(dataset, 'oshbrainrot_a.png'), PNG_1X1);
+    writeFileSync(join(dataset, 'oshbrainrot_a.txt'), 'oshbrainrot, never judged\n');
+
+    const staged = stageDataset(dataset, join(work, 'lora-train'), true);
+    expect(staged.status, `the override must stage: ${staged.stderr}`).toBe(0);
+    expect(readdirSync(staged.summary!.img_root)).toContain('oshbrainrot_a.png');
+    expect(staged.summary!.state, 'an unjudged run must be visible in the metrics afterwards')
+      .toBe('unjudged-override');
   }, RUN_TIMEOUT_MS);
 });

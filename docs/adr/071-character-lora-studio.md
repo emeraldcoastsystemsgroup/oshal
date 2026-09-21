@@ -113,6 +113,11 @@ Built, type-clean (0 tsc errors), unit-tested (scorecard math), and Python-synta
   caption-agreement checks decide keep/reject BEFORE training, fail-closed on an unmeasured
   candidate, with a per-candidate human override that always wins) wired into `make-curate.py`,
   so a rejected pair reaches neither the curated folder nor `curated.zip`.
+  `train-lora.py` enforces the same verdicts at the **training set** itself: the dispatch sends a
+  dataset FOLDER (`~/overnight/curated`), not the zip, so the trainer stages that folder through its
+  `curation.json` — survivors only, never the report — and refuses a folder that carries no verdicts
+  unless `--allow-unjudged-dataset` (`LORA_ALLOW_UNJUDGED_DATASET=1`) is given, which is recorded as
+  `metrics.dataset_curation` on the ingested run.
 
 **Not yet run end-to-end** — requires the GPU edge box reconnected (ComfyUI + the oshal-chat worker node),
 `oshal-api` rebuilt to load the new routes, and `setup-kohya.ps1` run once. Phasing and the remaining work
