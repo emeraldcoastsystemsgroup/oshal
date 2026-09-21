@@ -23,6 +23,7 @@
  * SEQ                 | AUTHOR                                     | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial apply story store:
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read three of the six - the second of only two sites honouring WORKSPACE_DIR, which is why the resolver now reads all six. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
  *   append-only per-ticket beats (caption + optional PNG) written by the desktop worker via
  *   /api/apply/shot, read back by the cockpit apply-queue surface as a live narration. Replaces the
  *   "one terminal verdict, no visibility" submission experience. Frames are identified by MAGIC BYTES
@@ -35,16 +36,13 @@
 import { promises as fsp } from 'fs';
 import { resolve as pathResolve, basename } from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'apply-story' });
 
 /** Root of the shared workspace volume — the same mount the apply packet is staged into. */
-const WORKSPACE_ROOT = (
-  process.env.SHARED_WORKSPACE_ROOT ||
-  process.env.WORKSPACE_DIR ||
-  process.env.WORKSPACE_ROOT ||
-  '/app/workspace-shared'
-).trim();
+/** Resolved at call time, never at import: a module-scope const freezes the root. */
+function workspaceRoot(): string { return resolveSharedWorkspaceRoot(); }
 
 /** Per-run cap. A wedged worker screenshotting in a loop must not fill the workspace volume. */
 const MAX_BEATS_PER_TICKET = 60;
@@ -74,7 +72,7 @@ function safeTicketId(value: string): string | null {
 /** Absolute folder holding one ticket's beats, or null when the id is unsafe. */
 function storyDir(ticketId: string): string | null {
   const id = safeTicketId(ticketId);
-  return id ? pathResolve(WORKSPACE_ROOT, 'apply-shots', id) : null;
+  return id ? pathResolve(workspaceRoot(), 'apply-shots', id) : null;
 }
 
 /** Filesystem-safe slug for a caption, used in the frame filename so the folder reads sensibly. */

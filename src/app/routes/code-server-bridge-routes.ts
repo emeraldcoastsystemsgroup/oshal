@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted code-server bridge routes from server.ts to comply with 800-line refactoring trigger
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2. code-server's root is genuinely its OWN - it may run on a swarm target with its own mount - so CODE_SERVER_WORKSPACE_ROOT and CODE_WORKSPACE_ROOT still win. What changed is what sits beneath them: two of the six variables and then the literal /workspace, which is NOT where the compose file mounts the volume (it mounts oshal_workspace at /app/workspace-shared and roots code-server there). A deployment configured through OSHAL_WORKSPACE_ROOT alone resolved this to /workspace and every bridge link 404ed. The path-MATCHING half uses the POSIX form: it compares against paths a Linux container wrote, and the host separator breaks that comparison on Windows.
  */
 
 import express from 'express';
 import path from 'node:path';
 import { createChildLogger } from '@/shared/logger';
 import { readGlobalRuntimeSettings } from '@/shared/services/runtime-config-loader';
+import { resolveSharedWorkspaceRoot, resolveSharedWorkspaceRootPosix } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'code-server-bridge' });
 
@@ -111,9 +113,7 @@ function resolveCodeServerWorkspaceRoot(): string {
   const configuredRoot = configuredFromSettings
     || process.env.CODE_SERVER_WORKSPACE_ROOT
     || process.env.CODE_WORKSPACE_ROOT
-    || process.env.CLINE_WORKSPACE_ROOT
-    || process.env.WORKSPACE_ROOT
-    || DEFAULT_CODE_SERVER_WORKSPACE_ROOT;
+    || resolveSharedWorkspaceRoot();
   return normalizeFilesystemPath(configuredRoot) || DEFAULT_CODE_SERVER_WORKSPACE_ROOT;
 }
 
@@ -143,8 +143,7 @@ function readWorkspaceRelativePath(rawValue: string): string | null {
 
   const candidateRoots = new Set<string>([
     resolveCodeServerWorkspaceRoot(),
-    normalizeFilesystemPath(process.env.CLINE_WORKSPACE_ROOT || ''),
-    normalizeFilesystemPath(process.env.WORKSPACE_ROOT || ''),
+    normalizeFilesystemPath(resolveSharedWorkspaceRootPosix()),
     normalizeFilesystemPath(path.resolve(process.cwd(), 'workspace')),
   ].filter((value) => value.length > 0));
 

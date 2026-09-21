@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Token broker: pass task.creds to applyUserScoping so the caller's provided short-lived tokens land as .oshal-cred-<provider> files in the workspace.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Security hardening: remove connector-credential propagation into the model-visible CLI environment/workspace; preserve exact caller identity scoping only.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Default timeout 600000→3600000 (60-min ceiling, operator idle-timeout directive 2026-07-24): gemini output is batch (silent until final JSON) so idle semantics can't apply, but the duration bound must not kill long actively-working runs. GEMINI_TIMEOUT_MS overrides; adopt idleReset when a streaming output mode is verified.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the harness-specific override still wins, but the fallback beneath it resolves through resolveSharedWorkspaceRoot() instead of reading one variable and then defaulting to the RELATIVE "./workspace" - a relative default resolves against whatever cwd the process happens to have, which is not the shared mount under any compose file.
  */
 
 import fs from 'fs';
@@ -14,6 +15,7 @@ import path from 'path';
 import { assertAuditedAutonomousHarness, buildConversationAwarePrompt, type HarnessTask, type HarnessResult } from './harness-adapter';
 import { BaseCliHarnessAdapter } from './base-cli-harness-adapter';
 import type { TokenUsage } from './llm-service';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const DEFAULT_BINARY = 'gemini';
 const DEFAULT_MODEL = 'gemini-2.5-pro';
@@ -116,8 +118,7 @@ export class GeminiCliHarnessAdapter extends BaseCliHarnessAdapter {
 
     this.workspaceRoot = config.workspaceRoot
       ?? process.env.GEMINI_WORKSPACE_ROOT
-      ?? process.env.CLINE_WORKSPACE_ROOT
-      ?? './workspace';
+      ?? resolveSharedWorkspaceRoot();
 
     this.outputFormat = config.outputFormat ?? 'json';
 

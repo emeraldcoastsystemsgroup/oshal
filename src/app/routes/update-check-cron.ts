@@ -24,6 +24,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Private-store support (opt-in): OSHAL_STORE_TOKEN (fallback GITHUB_TOKEN) authorizes the raw/API fetches and rides to the installer as env for apply — live check found ALL 42 installed packages source from the private oshal-applications repo, so anonymous checks reported every app "unknown". Token is env-only: never in argv, scrubbed from captured installer output.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: isolate the operator-triggered update installer from controller/database/session/provider credentials; admit only OS/runtime, proxy/TLS settings, non-interactive Git controls, and the exact resolved store token.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: pass the validated package-audit posture to update installers so enforce mode re-installs only an exact evidenced SHA.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
  */
 import fs from 'fs';
 import path from 'path';
@@ -34,11 +35,12 @@ import { createChildLogger } from '@/shared/logger';
 import { getCaller, requiresOperator } from '@/shared/middleware/authz';
 import { notifyOperator } from '@/features/notifications';
 import { resolvePackageAuditMode } from '@/features/swarm-apps';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'update-check-cron' });
 
-const WORKSPACE_ROOT = process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared';
-const DEPLOYED_APPS_DIR = path.join(WORKSPACE_ROOT, 'deployed-apps');
+/** Resolved at call time, never at import: a module-scope const freezes the root. */
+function deployedAppsDir(): string { return path.join(resolveSharedWorkspaceRoot(), 'deployed-apps'); }
 const CORE_REPO = process.env.UPDATE_CHECK_CORE_REPO || 'emeraldcoastsystemsgroup/oshal';
 const CORE_BRANCH = process.env.UPDATE_CHECK_CORE_BRANCH || 'main';
 const FETCH_TIMEOUT_MS = 10_000;
@@ -274,8 +276,8 @@ export function getRunningBuild(): { version: string | null; commit: string | nu
 async function checkAppUpdates(): Promise<AppUpdateStatus[]> {
   let dirs: string[];
   try {
-    dirs = fs.readdirSync(DEPLOYED_APPS_DIR, { withFileTypes: true })
-      .filter((d) => d.isDirectory()).map((d) => path.join(DEPLOYED_APPS_DIR, d.name));
+    dirs = fs.readdirSync(deployedAppsDir(), { withFileTypes: true })
+      .filter((d) => d.isDirectory()).map((d) => path.join(deployedAppsDir(), d.name));
   } catch {
     return []; // no deployed-apps dir on this node — nothing installed
   }
@@ -424,7 +426,7 @@ type ApplyResult =
  */
 export async function applyAppUpdate(name: string, ownerSub: string | null, deps: UpdateApplyDeps): Promise<ApplyResult> {
   if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(name)) return { ok: false, status: 400, error: 'invalid package name' };
-  const dir = path.join(DEPLOYED_APPS_DIR, name);
+  const dir = path.join(deployedAppsDir(), name);
   const local = readLocalManifest(dir);
   if (!local) return { ok: false, status: 404, error: `"${name}" is not an installed store package` };
   if (!rawManifestUrl(local.source)) {
@@ -438,7 +440,7 @@ export async function applyAppUpdate(name: string, ownerSub: string | null, deps
   const run = await new Promise<{ code: number; output: string }>((resolve) => {
     execFile(
       process.execPath,
-      [path.join(process.cwd(), 'scripts', 'oshal-app.js'), 'install', name, '--repo', repo, '--ref', ref, '--dest', DEPLOYED_APPS_DIR],
+      [path.join(process.cwd(), 'scripts', 'oshal-app.js'), 'install', name, '--repo', repo, '--ref', ref, '--dest', deployedAppsDir()],
       {
         cwd: process.cwd(),
         timeout: 180_000,

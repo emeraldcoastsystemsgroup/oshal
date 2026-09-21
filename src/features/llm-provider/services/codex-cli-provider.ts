@@ -8,6 +8,7 @@
  *                     |                           | OAuth token handled internally by the CLI
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: fail closed before runtime allocation, OAuth copy, or unattended Codex spawn pending an audited brokered sandbox.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Consume the dependency-free unattended-provider policy without importing the harness runtime contract.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: resolves through resolveSharedWorkspaceRoot() rather than reading ONE of the six. The os.tmpdir() fallback is deliberate and KEPT - with no shared mount a run directory must still land somewhere writable - so the presence check asks whether a root is configured rather than letting the resolver invent one under cwd.
  */
 
 import { spawn } from 'child_process';
@@ -16,6 +17,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { createChildLogger } from '@/shared/logger';
 import { assertAuditedAutonomousHarness } from './unattended-provider-policy';
+import { hasConfiguredWorkspaceRoot, resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'codex-cli-provider' });
 
@@ -94,7 +96,7 @@ export class CodexHarnessProvider {
    */
   private makeRuntime(): { workspace: string; home: string } {
     assertAuditedAutonomousHarness('codex-cli');
-    const root = process.env.CLINE_WORKSPACE_ROOT || os.tmpdir();
+    const root = hasConfiguredWorkspaceRoot() ? resolveSharedWorkspaceRoot() : os.tmpdir();
     fs.mkdirSync(root, { recursive: true });
     const workspace = fs.mkdtempSync(path.join(root, 'codex-run-'));
     const home = path.join(workspace, '.codex-home');

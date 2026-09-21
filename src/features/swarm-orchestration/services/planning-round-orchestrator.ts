@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Session 19: Wired assessHandoverCoverage into architecture and planning rounds — handover missing now logged as structured enforcement event
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Session 20: Switched handover gates from non-strict (warn-only) to strict (block advancement) after E2E validation plan confirmed
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Follows the rename to assessHandoverCoverage / allHandoversPresent, and stops calling it a failed gate. These two call sites logged 'continuing with warning' immediately after the helper logged that the ticket was blocked - the same execution saying both. Neither gates; both now say coverage and say the phase continues.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six.
  */
 
 import { existsSync } from 'fs';
@@ -42,6 +43,7 @@ import type {
 import type { SwarmProcessingInput } from './swarm-ticket-processing-service';
 import type { SwarmProcessedTicketResult } from './swarm-run-store';
 import type { SwarmTicketLifecycleSnapshot } from './ticket-cycle-state-machine';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'planning-round-orchestrator' });
 
@@ -835,8 +837,7 @@ function buildSingleWorkUnit(item: ExternalWorkItem): DecomposedWorkUnit {
 
 /** @description Resolves the workspace path shared by all agents working on a ticket. */
 function resolveWorkspacePath(workspaceTaskId: string): string {
-  const workspaceRoot = process.env.SHARED_WORKSPACE_ROOT
-    || (existsSync('/app/workspace') ? '/app/workspace' : resolve(process.cwd(), 'workspace-shared'));
+  const workspaceRoot = resolveSharedWorkspaceRoot();
   return join(workspaceRoot, workspaceTaskId);
 }
 

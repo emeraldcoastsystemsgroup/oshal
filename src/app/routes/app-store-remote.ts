@@ -28,6 +28,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SECURITY: isolate the catalog-pinned installer child from controller/database/session/provider credentials; forward only OS/runtime, proxy/TLS settings, non-interactive Git controls, and the exact resolved store token.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: retain only canonical audit pointers in the registry, refuse installable rows without one, and pass the fail-closed audit mode into the isolated installer.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Hot-load the required dependencies the installer pulled from the store before the package (shared loadInstalledPackage), so an install-remote is live without the next boot; a required dependency that fails to load keeps the package unloaded.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is where the remote store catalog finds an installed package. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
  */
 import path from 'path';
 import { execFile } from 'child_process';
@@ -38,11 +39,12 @@ import { createChildLogger } from '@/shared/logger';
 import { getCaller, requiresOperator } from '@/shared/middleware/authz';
 import { resolvePackageAuditMode } from '@/features/swarm-apps';
 import { installerLogTail, resolveStoreToken } from './update-check-cron';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'app-store-remote' });
 
-const WORKSPACE_ROOT = process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared';
-const DEPLOYED_APPS_DIR = path.join(WORKSPACE_ROOT, 'deployed-apps');
+/** Resolved at call time, never at import: a module-scope const freezes the root. */
+function deployedAppsDir(): string { return path.join(resolveSharedWorkspaceRoot(), 'deployed-apps'); }
 /**
  * The store repo the catalog is read from — the PUBLIC store, which is what the installer
  * (scripts/oshal-install.sh) downloads and the only one an unauthenticated deployment can read.
@@ -254,7 +256,7 @@ export async function installRemoteApp(name: string, ownerSub: string | null, de
   if (!entry.source || !/^https:\/\/github\.com\//.test(entry.source.url)) {
     return { ok: false, status: 409, error: `"${name}" has no resolvable GitHub source in the catalog` };
   }
-  const deployedDir = deps.deployedAppsDir || DEPLOYED_APPS_DIR;
+  const deployedDir = deps.deployedAppsDir || deployedAppsDir();
   const replacement = replacementFor(deployedDir, name, { repo: entry.source.url });
   if (replacement) return { ok: false, status: 409, error: 'Source replacement requires review in App Loader.', replacement };
   logger.info({ name, repo: entry.source.url, ref: entry.source.ref }, 'install-remote: installing from store');

@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed retired legacy product references (provider name is noop; narration removed)
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Idle-timeout directive (adversarial-review follow-up): OUTPUT_MAX_WAIT_MS raised 30min→2h (env-tunable) so output-waiting never gives up before a bot's 60-min idle ceiling.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | CV-4: the handover read uses the WORKSPACE task id, not the ticket id. readAgentHandover(agentId, workspaceTaskId) names its second parameter explicitly and both call sites passed ticketId, so wherever the two differ the read looked in a directory the handover was never written to and reported a missing handover for a round that wrote one. It is the change that makes the coverage check capable of passing at all; without it the signal was noise. Falls back to ticketId when no workspace id was threaded through, which is the pre-existing behaviour.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -26,6 +27,7 @@ import type { RALFHandoverManager } from './ralf-handover-manager';
 import type { DecomposedWorkUnit } from './ticket-decomposition-service';
 import type { SwarmCyclePolicy } from './swarm-cycle-policy';
 import { buildExecutionEnvelope, sleep } from './swarm-ticket-processing-support';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'multi-round-dispatch-service' });
 
@@ -553,8 +555,7 @@ export class MultiRoundDispatchService {
     try {
       const fs = require('fs');
       const path = require('path');
-      const wsRoot = process.env.SHARED_WORKSPACE_ROOT
-        || (fs.existsSync('/app/workspace') ? '/app/workspace' : path.resolve(process.cwd(), 'workspace-shared'));
+      const wsRoot = resolveSharedWorkspaceRoot();
       const phasePattern = `PHASE_${phase}_ROUND_${round}`;
       const altPattern = `phase-${phase}-round-${round}`;
 

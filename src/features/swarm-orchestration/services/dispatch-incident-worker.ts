@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Carry the incident owner over the canonical base64url trusted-service subject header so case and whitespace remain exact on localhost fallback.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Align incident dispatch with promoted ADR-034 enforcement: provider stamping defaults on and missing authority reaches the bot as a fail-closed marker; explicit flag-off remains the compatibility rollback.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Keep authoritative incident dispatch fail-closed across transport errors by prohibiting downgrade to the unstamped localhost fallback unless compatibility mode was explicitly selected.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -29,6 +30,7 @@ import { createTicketWorkspace, writeTaskBrief } from './queue-manager-workspace
 import { INCIDENT_MODE_DISPOSITION, readRcaMode, readRcaRemediationClass } from './rca-mode';
 import { extractErrorMessage } from './queue-manager-dispatch-helpers';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'dispatch-incident-worker' });
 
@@ -172,7 +174,7 @@ export async function dispatchIncidentTicket(
 
   const path = require('path') as typeof import('path');
   const fs = require('fs') as typeof import('fs');
-  const wsRoot = process.env.SHARED_WORKSPACE_ROOT || '/app/workspace-shared';
+  const wsRoot = resolveSharedWorkspaceRoot();
   // ADR-060: the bot may have written deliverables flat, under users/<owner>/, or _shared/ —
   // resolve to the actual dir (falling back to flat for the not-yet-written case).
   const delivDir = taskSubdirs(wsRoot, ticketId, 'deliverables')[0] || path.join(wsRoot, ticketId, 'deliverables');

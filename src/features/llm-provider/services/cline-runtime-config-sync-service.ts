@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Closed the last dead-seed codex consumer: the OAuth-blob resolution chain (syncOpenAiCodexCredentials → findOpenAiCodexCredentialBlob) now reads the LIVE ~/.codex/auth.json (via resolveCodexAuthSourcePath) before falling back to the never-rotated config-seed copy, so Cline data/secrets.json can no longer be poisoned with an expired seed token while codex auth is healthy; seed fallback downgraded to a warn mirroring swarm-credentials
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: runtime sync writes non-secret metadata only, overwrites legacy credential-bearing Cline files, and retires API-key/OAuth materialization into data/secrets.json.
  * 18 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. DEFAULT_PROVIDER falls back to openai-codex (was claude-code).
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read two of the six and defaulted to the LEGACY /app/workspace mount.
  */
 
 import fs from 'fs';
@@ -31,6 +32,7 @@ import {
   filterMcpSettingsByCapabilities,
   type ToolCapabilityScope,
 } from './tool-capability-scope';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'cline-runtime-config-sync-service' });
 
@@ -396,7 +398,7 @@ export class ClineRuntimeConfigSyncService {
    * @returns Stdio MCP server registry keyed by runtime server name.
    */
   private buildStdioSessionMcpServers(): Record<string, unknown> {
-    const workspaceRoot = process.env.CLINE_WORKSPACE_ROOT || process.env.WORKSPACE_ROOT || '/app/workspace';
+    const workspaceRoot = resolveSharedWorkspaceRoot();
     const servers: Record<string, unknown> = {
       filesystem: {
         command: 'npx',

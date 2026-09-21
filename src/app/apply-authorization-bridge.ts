@@ -9,6 +9,7 @@
  * SEQ                 | AUTHOR                                     | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial fail-closed installed-app bridge. No Career
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six.
  *   table name is compiled into the kernel and no environment value can grant submit authorization.
  *
  * @module app/apply-authorization-bridge
@@ -18,6 +19,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'apply-authorization-bridge' });
 
@@ -29,7 +31,7 @@ type CareerAutoSubmitReader = (pool: Pool, userSub: string) => Promise<unknown>;
 
 /** Candidate module locations, most-specific first. */
 function candidatePaths(): string[] {
-  const workspaceRoot = process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared';
+  const workspaceRoot = resolveSharedWorkspaceRoot();
   const paths = [path.join(workspaceRoot, 'deployed-apps', 'career-hunter', 'lib', 'apply-authorization.js')];
   const storeDir = (process.env.OSHAL_STORE_DIR || '').trim();
   if (storeDir) paths.push(path.join(storeDir, 'career-hunter', 'lib', 'apply-authorization.js'));

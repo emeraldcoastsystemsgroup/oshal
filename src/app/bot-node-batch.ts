@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Persisted non-fatal batch Job telemetry for runtime, worker/queue identity, CPU/memory observations, provider/model/cost, and backend errors so operators can graph recent Job durations instead of scraping pod logs.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Ran the one-shot batch phase under runWithSystemIdentity — background execution that writes the FORCE-RLS tickets (status transition) + chat_tasks (cost) tables with no request in scope; SYSTEM keeps it visible once OSHAL_DB_GUC_STRICT denies the identity-less case.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Prohibit unsigned one-shot batch execution when HTTP delegation verification keys enable enforcement; batch token carriage is intentionally deferred.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six. The explicit --workspace-dir flag still wins: a caller naming a directory outranks any environment, which is the one precedence rule this sweep preserves.
  */
 
 /**
@@ -39,6 +40,7 @@ import { BatchJobTelemetryStore } from '@/features/batch-job-telemetry';
 import { createBotNodeRuntime } from './bot-node-runtime';
 import { buildBatchTelemetryRecord, captureBatchTelemetryStart } from './bot-node-batch-telemetry';
 import { assertDelegationBatchRuntimeAllowed } from './bot-node-delegation';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'bot-node-batch' });
 
@@ -72,7 +74,7 @@ export function parseBatchArgs(argv: string[]): BatchPhaseArgs {
   const ticketId = flags.get('ticket-id') || process.env.TICKET_ID || '';
   const agentId = flags.get('agent-id') || process.env.AGENT_ID || '';
   const phase = flags.get('phase') || process.env.PHASE || '';
-  const workspaceDir = flags.get('workspace-dir') || process.env.WORKSPACE_DIR || '/app/workspace-shared';
+  const workspaceDir = flags.get('workspace-dir') || resolveSharedWorkspaceRoot();
   const title = flags.get('title') || process.env.TICKET_TITLE || '';
   const description = flags.get('description') || process.env.TICKET_DESCRIPTION || '';
 

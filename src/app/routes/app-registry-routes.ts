@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-147: the /api/swarm/registries surface behind the App Loader. Three things here are the design, not plumbing. (1) PROBE BEFORE SAVE — a registry URL is validated by actually reading its catalog, so an operator cannot trust a source that does not resolve and an unreachable registry is diagnosed at the moment it is added rather than as an empty shelf later. (2) INSTALL PREVIEW — install mounts a package's routes INTO the controller process and runs its migrations against the platform database, so the preview enumerates exactly that (routes, migrations, bots, schedules, connectors, deps, audit posture) and Install is the second click. (3) PER-REGISTRY FENCED AGGREGATION — one unreachable registry renders as a broken row and never fails the page, mirroring how parseCatalog already fails soft per entry.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | FIX (found verifying the live deploy): a catalog audit binding whose sourceSha is the all-zeros UNAUDITED sentinel was counted as "signed". Every one of the 49 live store entries carries exactly that sentinel with an audit record at status "pending", so the loader labelled every unreviewed package "signed — carries a valid audit binding" on the install-decision screen; and because the unsigned gate keyed off the same flag, a third-party registry could skip allow_unsigned=false simply by publishing a sentinel binding. Audit posture is now a tri-state (audited | pending | none) derived from the binding's SHA, and the install decision is one pure exported function the preview AND the install both call, so the screen can no longer promise an install the route will refuse. The BUILT-IN registry deliberately keeps today's behaviour — it defers to OSHAL_PACKAGE_AUDIT_MODE exactly as /api/swarm/apps/install-remote does (ADR-147 D5: the built-in posture does not change) — so fixing the label does not break installs from the default store.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers in the App Loader. The preview lists required and optional apps/tools/connectors, each app with its state (installed | core | available from this source | unavailable) resolved exactly the way the installer resolves it, and withDependencyGate refuses the install when a required app cannot resolve or the block is invalid. Install takes the operator's optional selection (withOptional -> --with) and hot-loads every dependency the installer pulled from the store before the package itself; a required dependency that fails to load stops the package from loading.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is where the app registry finds an installed package. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
  */
 
 import path from 'path';
@@ -32,11 +33,12 @@ import { replacementFor, SOURCE_CONFLICT_EXIT, type SourceReplacement } from './
 import {
   loadInstalledPackage, optionalSelectionArgs, parseOptionalSelection, type DependencyLoadReport,
 } from './app-install-dependencies';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'app-registry-routes' });
 
-const WORKSPACE_ROOT = process.env.CLINE_WORKSPACE_ROOT || '/app/workspace-shared';
-const DEPLOYED_APPS_DIR = path.join(WORKSPACE_ROOT, 'deployed-apps');
+/** Resolved at call time, never at import: a module-scope const freezes the root. */
+function deployedAppsDir(): string { return path.join(resolveSharedWorkspaceRoot(), 'deployed-apps'); }
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const CATALOG_TTL_MS = 5 * 60 * 1000;
 
@@ -407,7 +409,7 @@ async function runInstall(
   if (!decision.allowed) return { ok: false, status: 409, error: `"${entry.name}": ${decision.note}` };
   if (!entry.source) return { ok: false, status: 409, error: `"${entry.name}" has no resolvable source` };
 
-  const deployedDir = deps.deployedAppsDir || DEPLOYED_APPS_DIR;
+  const deployedDir = deps.deployedAppsDir || deployedAppsDir();
   const replacement = replacementFor(deployedDir, entry.name, { repo: entry.source.url, registry: registry.slug });
   if (replacement && replacement.token !== replaceSource) {
     return { ok: false, status: 409, error: 'Review and confirm the existing package source before replacing it.', replacement };
@@ -578,7 +580,7 @@ export function createAppRegistryRoutes(pool: Pool, requiresAuth: RequestHandler
     // they already own with no way to tell them apart from what is genuinely new.
     try {
       const catalog = await aggregateCatalog(pool, req.query.refresh === '1');
-      const deployedDir = deps.deployedAppsDir || DEPLOYED_APPS_DIR;
+      const deployedDir = deps.deployedAppsDir || deployedAppsDir();
       const apps = (catalog.apps ?? []).map((app) => {
         const installedVersion = installedPackageVersion(deployedDir, app.name);
         return { ...app, installed: installedVersion !== null, ...(installedVersion ? { installedVersion } : {}) };
@@ -593,7 +595,7 @@ export function createAppRegistryRoutes(pool: Pool, requiresAuth: RequestHandler
     try {
       const { registry, entry, published } = await locate(pool, String(req.params.slug), String(req.params.name));
       const manifest = await readRemoteManifest(pool, registry, entry);
-      const deployedDir = deps.deployedAppsDir || DEPLOYED_APPS_DIR;
+      const deployedDir = deps.deployedAppsDir || deployedAppsDir();
       const impact = describeManifestImpact(manifest, entry, dependencyStateResolver(deployedDir, published));
       res.json({
         name: entry.name, displayName: entry.displayName, version: entry.version,

@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | EG-3: Added implementation work-type evidence checking â€” no longer skipped during verification
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Removed MOCK_OIDC verification bypass — MOCK_OIDC only controls auth, not quality gates. Task-manager agent verification now runs in all modes.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Structural checks trust workspace deliverables over output text heuristics — when real files exist, skip keyword/length string matching.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it decides whether a build produced a deliverable - a wrong root reads an empty directory and escalates a ticket that actually succeeded.
  */
 
 import fs from 'node:fs';
@@ -22,6 +23,7 @@ import { MESH_CHANNELS, type MeshTransport } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
 import { taskSubdirs } from '@/shared/workspace-task-dirs';
 import type { DecomposedWorkUnit, WorkUnitType } from './ticket-decomposition-service';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'swarm-verification-service' });
 
@@ -469,8 +471,7 @@ function checkWorkspaceDeliverables(externalId: string, workUnits: DecomposedWor
     for (const ext of workTypeExpectsExt[t] ?? []) expectedExts.add(ext);
   }
 
-  const wsRoot = process.env.SHARED_WORKSPACE_ROOT
-    || (fs.existsSync('/app/workspace') ? '/app/workspace' : path.resolve(process.cwd(), 'workspace-shared'));
+  const wsRoot = resolveSharedWorkspaceRoot();
 
   // A unit may write to the ROOT ticket's shared folder (workspaceTaskId) OR to its own
   // (externalId) folder depending on how it was dispatched — check BOTH so a real deliverable

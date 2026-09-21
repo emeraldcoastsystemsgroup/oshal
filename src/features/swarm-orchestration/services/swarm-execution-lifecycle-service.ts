@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | P2: Phase 5 (testing) and Phase 7 (delivery) handover writes — RALFHandoverManager now writes handover files after testing verdict and delivery completion so all 7 phases produce artifacts.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Feedback-carrying build retry: dispatchExecution callback now threads the policy runner's optional retryFeedback into the mesh envelope payload so the executing bot's prompt names the previous attempt's verification miss (blind re-roll fix, docs/backlog/test-lab.md #2)
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: carry the durable TicketService authority into lifecycle memory ownership resolution.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six.
  */
 
 import fs from 'node:fs';
@@ -47,6 +48,7 @@ import type { SwarmWritebackHandler } from './swarm-writeback-handler';
 import type { RALFHandoverManager } from './ralf-handover-manager';
 import type { DecomposedWorkUnit } from './ticket-decomposition-service';
 import type { TicketService } from '@/features/ticketing';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'swarm-execution-lifecycle-service' });
 
@@ -484,8 +486,7 @@ export class SwarmExecutionLifecycleService {
     logger.info({ ...record, feedback: record.feedback?.substring(0, 200) }, 'Regression handoff recorded');
     if (!args.workspaceTaskId) return;
     try {
-      const wsRoot = process.env.SHARED_WORKSPACE_ROOT
-        || (fs.existsSync('/app/workspace') ? '/app/workspace' : path.resolve(process.cwd(), 'workspace-shared'));
+      const wsRoot = resolveSharedWorkspaceRoot();
       const oshalDir = path.join(wsRoot, args.workspaceTaskId, '.oshal');
       fs.mkdirSync(oshalDir, { recursive: true });
       fs.appendFileSync(path.join(oshalDir, 'regression-trace.jsonl'), JSON.stringify(record) + '\n', 'utf8');

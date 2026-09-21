@@ -23,6 +23,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Guard protected package execution with current caller policy, restricted business identity and durable node ownership.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Execute activation-scoped package handlers with exact caller and selected tenant authority.
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Keep package input and domain error payloads off the legacy conversation event stream.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read two of the six and fell back to <cwd>/workspace where everything else falls back to workspace-shared - this is the root the SHELL tool runs in, so the two roots disagreeing is the bot writing somewhere nobody reads.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { executePackageTool, packageToolTenant, requiresPackageTool } from '@/shared/package-tools';
@@ -50,6 +51,7 @@ import { acquireScopedSubjectLease } from '@/shared/security/scoped-subject-leas
 import { FollowupQuestionSignal } from './followup-question-signal';
 import { guardTemplateValue } from './runtime-template-guard';
 import { isAuthorizationTool, type AuthorizationToolExecutor, type AuthorizationToolInvocation } from '@/shared/security/authorization-tool-contract';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const execAsync = promisify(execCallback);
 const execFileAsync = promisify(execFileCallback);
@@ -1016,11 +1018,7 @@ export class ToolExecutorService {
    * @description Resolve the task workspace root.
    */
   private resolveWorkspaceRoot(): string {
-    const configuredRoot = process.env.CLINE_WORKSPACE_ROOT || process.env.WORKSPACE_ROOT;
-    if (configuredRoot && configuredRoot.trim().length > 0) {
-      return path.resolve(configuredRoot);
-    }
-    return path.resolve(process.cwd(), 'workspace');
+    return resolveSharedWorkspaceRoot();
   }
 
   /**

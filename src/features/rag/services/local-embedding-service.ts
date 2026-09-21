@@ -7,11 +7,13 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Strip the ONNX runtime's process-global rethrow listeners once the model load settles. onnxruntime-web's Emscripten Node shell appends `process.on('unhandledRejection', t => { throw t })` and a matching `uncaughtException` rethrow the moment the wasm initialises, BEHIND installProcessCrashGuards — from that instant a stray rejection anywhere in the controller (not just in RAG) was rethrown into an uncaught exception, rethrown again, and killed the api with exit 7 and ~548 KB of minified bundle on stderr, before the crash guards' 250 ms log flush. Measured: exit 7 / 548,709 bytes without the strip, exit 0 / 54 bytes with it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Contain an Emscripten abort raised inside the wasm runtime mid-inference. The abort is a WebAssembly.RuntimeError that the awaited call already surfaced to the catch, but the catch treated it like any transient error: it logged only a text count, named no caller, and left the runtime — which has ABORT set and an undefined heap after it — armed for the next call. Now an abort makes the service unavailable for the process, the same degrade a failed model load takes, and every inference failure logs the caller, the input size (count, total and longest chars, failing batch) and a bounded error summary instead of whatever the backend printed.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Two review findings. `WebAssembly` is a lib.dom/lib.webworker global and the server build compiles with lib ES2022 + types node, so naming it broke `npm run typecheck` and would have broken the image build (Dockerfile.oshal runs that tsconfig with no noEmitOnError); the constructor is read off globalThis instead. And the sticky degrade only guarded the ENTRY to embed(): a multi-batch call already in flight kept awaiting the extractor after another caller aborted the runtime, and an aborted runtime answers with a tensor rather than throwing, so ingest would persist vectors from a heap with ABORT set. The flag is re-checked before every batch.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six. The undefined-when-absent branch is KEPT and is the reason for the presence check: with no shared mount the library must fall back to its own default cache, not to a directory this process invented under cwd.
  */
 
 import { resolve } from 'path';
 import { createChildLogger } from '@/shared/logger';
 import { snapshotProcessGuards, stripRethrowGuards } from './onnx-process-guards';
+import { hasConfiguredWorkspaceRoot, resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const logger = createChildLogger({ module: 'local-embedding-service' });
 
@@ -208,7 +210,7 @@ class LocalEmbeddingService {
       // Persist the model cache in the shared workspace volume so container
       // recreates don't re-download; env TRANSFORMERS_CACHE overrides.
       const cacheDir = process.env.TRANSFORMERS_CACHE
-        || (process.env.CLINE_WORKSPACE_ROOT ? resolve(process.env.CLINE_WORKSPACE_ROOT, '.transformers-cache') : undefined);
+        || (hasConfiguredWorkspaceRoot() ? resolve(resolveSharedWorkspaceRoot(), '.transformers-cache') : undefined);
       if (cacheDir) mod.env.cacheDir = cacheDir;
       // In the alpine image onnxruntime-node is shimmed to onnxruntime-web
       // (Dockerfile.oshal — glibc natives fail on musl; with gcompat they SEGFAULT).

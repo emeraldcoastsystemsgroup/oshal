@@ -12,6 +12,11 @@
 //   - no-empty (allowEmptyCatch:false): no swallowed exceptions (CLAUDE.md "no silent catches").
 //   - no-console: never console.log in production code (use the Pino child logger).
 //   - max-lines: the 1000 CODE-line cap (skipComments + skipBlankLines matches the definition).
+//   - no-restricted-syntax: ONE resolver for the shared workspace root. Reading any of the six
+//     workspace-root environment variables outside src/shared/workspace-root.ts is an ERROR
+//     (CKR-17 step 2). The sweep collapsed thirty-nine inline chains across fifteen precedence
+//     orders; without a gate the class regrows, because every one of them was written by
+//     someone who reasonably thought reading an env var was fine.
 //
 // TWO config objects, deliberately:
 //   1. The Feature-Sliced TypeScript surface (src/**/*.ts{,x}) gets all four rules.
@@ -86,7 +91,26 @@ export default tseslint.config(
       'no-empty': ['warn', { allowEmptyCatch: false }],
       'no-console': 'warn',
       'max-lines': ['warn', { max: 1000, skipComments: true, skipBlankLines: true }],
+      // CKR-17 step 2: ONE resolver for the shared workspace root. Before the sweep there were
+      // thirty-nine inline chains across at least fifteen distinct precedence orders reading six
+      // different variables, so which directory a bot wrote into depended on which module asked.
+      // Errors rather than warns, because without a gate the class simply regrows: every one of
+      // those chains was written by someone who reasonably thought reading an env var was fine.
+      'no-restricted-syntax': ['error', {
+        selector: "MemberExpression[object.object.name='process'][object.property.name='env']"
+          + "[property.name=/^(OSHAL_WORKSPACE_ROOT|SHARED_WORKSPACE_ROOT|CLINE_SHARED_WORKSPACE_ROOT"
+          + "|CLINE_WORKSPACE_ROOT|WORKSPACE_ROOT|WORKSPACE_DIR)$/]",
+        message: 'Use resolveSharedWorkspaceRoot() from @/shared/workspace-root — it is the ONE place '
+          + 'any of the six workspace-root variables is read (CKR-17). For a caller with its own '
+          + 'off-container fallback, hasConfiguredWorkspaceRoot() says whether a real root exists; for '
+          + 'one that MATCHES bot-written text, resolveSharedWorkspaceRootPosix() keeps the separators.',
+      }],
     },
+  },
+  {
+    // The one file the rule above exists to protect: the resolver itself has to read them.
+    files: ['src/shared/workspace-root.ts'],
+    rules: { 'no-restricted-syntax': 'off' },
   },
   {
     // The rest of the capped surface: browser/Node JavaScript under src/, the Playwright + vitest

@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Exported writePersonaContextFile for swarm execution path integration — enables role context file generation in swarm processing
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Included persona system_prompt in workspace context files so spec-driven swarm personas keep their operating procedure
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read two of the six and fell back to <cwd>/workspace where everything else falls back to workspace-shared - and what it writes is the file the agent then reads back through its sandboxed read_file, so the two roots disagreeing means the agent cannot see its own input.
  */
 
 import type { AgentProfileService } from '@/features/agent-profile';
@@ -35,6 +36,7 @@ import {
   resolveAgentCapabilitiesFromSwarmRegistry,
   type AgentCapabilityResolver,
 } from './agent-capability-resolver';
+import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 
 const personaLogger = createChildLogger({ module: 'persona-prompt-resolver' });
 
@@ -612,9 +614,7 @@ export function writePersonaContextFile(
   taskId?: string,
 ): boolean {
   try {
-    const workspaceRoot = process.env.CLINE_WORKSPACE_ROOT
-      || process.env.WORKSPACE_ROOT
-      || path.resolve(process.cwd(), 'workspace');
+    const workspaceRoot = resolveSharedWorkspaceRoot();
 
     /* Write to the per-task workspace so the agent's sandboxed read_file can find it */
     const targetDir = taskId
