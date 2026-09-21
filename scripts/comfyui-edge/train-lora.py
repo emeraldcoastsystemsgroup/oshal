@@ -10,10 +10,30 @@
 # Usage (typically invoked by the worker via shell.exec):
 #   python train-lora.py --character oshbrainrot --version 1 --dataset ~/overnight/curated.zip \
 #       --controller http://100.64.0.1:35457 --owner-sub-b64 <subject>
-# 2026-08-06 | maintainer@emeraldcoastsystemsgroup.com | Bind callbacks to the initiating owner's
-# canonical base64url identity header; a fleet secret without owner attribution is insufficient.
-# 2026-08-06 | maintainer@emeraldcoastsystemsgroup.com | Read the callback fleet secret only from
-# the edge process environment so it cannot leak through task payloads, argv, or shell history.
+#
+# THE DATASET IS NOT TRUSTED. --dataset also accepts a FOLDER, and a folder is what the LoRA Studio
+# dispatch actually sends (lora-train-dispatch passes ~/overnight/curated to both /train and
+# /improve-overnight). curation_judge.py writes its verdicts as curation.json INTO that same folder,
+# so the trainer has the judge's decisions sitting next to the pairs it stages. Staging the folder
+# wholesale ignored them, which is how a rejected pair - restored by hand, or left there by a
+# dataset builder that never ran the judge - still reached kohya. The folder branch now stages the
+# survivors only and REFUSES a folder that carries no verdicts, matching curation_judge's own
+# fail-closed stance; --allow-unjudged-dataset is the human's explicit way past it.
+#
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                                    | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Box-side kohya SD1.5 LoRA trainer: stage the
+#     curated dataset, train, publish the model to ComfyUI and POST metrics to the controller.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Bind callbacks to the initiating owner's
+#     canonical base64url identity header; a fleet secret without owner attribution is insufficient.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Read the callback fleet secret only from
+#     the edge process environment so it cannot leak through task payloads, argv, or shell history.
+# 4 | maintainer@emeraldcoastsystemsgroup.com   | Honour the curation judge at the TRAINING SET: a
+#     dataset folder is staged through its curation.json so only survivors reach kohya, the report
+#     itself never becomes a training file, an unjudged folder is refused rather than trained on,
+#     and the refusal happens before the previous staging directory is destroyed.
 import argparse, json, os, re, shutil, subprocess, time, zipfile, glob, urllib.request
 
 HOME = os.path.expanduser("~")
@@ -31,23 +51,109 @@ NETWORK_DIM = 32
 NETWORK_ALPHA = 16
 EPOCHS = 12
 SAVE_EVERY = 2
+# curation_judge.curate() writes its verdicts here, inside the folder it builds.
+CURATION_REPORT = "curation.json"
 
 
 def log(m):
     print(time.strftime("[%H:%M:%S] ") + str(m), flush=True)
 
 
-def prepare_dataset(dataset_zip, trigger, version, character):
-    """Unzip curated.zip into the kohya layout: <root>/img/<repeats>_<trigger>/<name>.png+.txt."""
+class DatasetRefused(Exception):
+    """A dataset that may not become a training set; train() reports it as a failed run."""
+
+
+def curation_verdicts(dataset_dir):
+    """
+    @description Read the curation judge's verdicts that sit beside a dataset FOLDER. curate()
+      writes curation.json into the folder it builds, keyed by the source paths it copied, so the
+      basename of each staged file is what identifies its verdict here.
+    @param dataset_dir - The folder handed to --dataset.
+    @returns basename -> decision for every file the report covers, or None when the folder carries
+      no curation.json at all (i.e. nothing judged it).
+    """
+    report_path = os.path.join(dataset_dir, CURATION_REPORT)
+    if not os.path.exists(report_path):
+        return None
+    try:
+        with open(report_path, "r", encoding="utf-8") as fh:
+            report = json.load(fh)
+    except Exception as exc:
+        raise DatasetRefused("REFUSING to train: %s is unreadable (%r), so the judge's verdicts "
+                             "cannot be applied to the training set" % (report_path, exc))
+    verdicts = {}
+    for row in report.get("candidates") or []:
+        for key in ("image", "caption"):
+            path = row.get(key)
+            if path:
+                verdicts[os.path.basename(path)] = row.get("decision")
+    if not verdicts:
+        raise DatasetRefused("REFUSING to train: %s judged no candidates" % report_path)
+    return verdicts
+
+
+def approved_dataset_files(dataset_dir, allow_unjudged=False):
+    """
+    @description Decide which files in a dataset FOLDER may become training data. The judge's
+      report is in that folder; a trainer that ignores it trains on whatever happens to be there,
+      which is the one thing the judge exists to prevent. Fail-closed, like curation_judge itself.
+    @param dataset_dir - The folder handed to --dataset.
+    @param allow_unjudged - The human's explicit override for a folder with no verdicts.
+    @returns (paths to stage, curation state). Raises DatasetRefused rather than train on rejects.
+    """
+    files = sorted(glob.glob(os.path.join(dataset_dir, "*")))
+    verdicts = curation_verdicts(dataset_dir)
+    if verdicts is None:
+        if not allow_unjudged:
+            raise DatasetRefused(
+                "REFUSING to train on an unjudged dataset: %s carries no %s. Run make-curate.py "
+                "so rejected candidates cannot enter the training set, or pass "
+                "--allow-unjudged-dataset (LORA_ALLOW_UNJUDGED_DATASET=1) to override."
+                % (dataset_dir, CURATION_REPORT))
+        log("dataset %s is UNJUDGED and the override was given - staging it as-is" % dataset_dir)
+        return [f for f in files if os.path.basename(f) != CURATION_REPORT], "unjudged-override"
+    staged, left_out = [], []
+    for path in files:
+        name = os.path.basename(path)
+        if name == CURATION_REPORT:
+            continue                                     # the report is evidence, never a pair
+        if verdicts.get(name) == "keep":
+            staged.append(path)
+        else:
+            left_out.append("%s (%s)" % (name, verdicts.get(name) or "not judged"))
+    if left_out:
+        log("curation: %d file(s) kept OUT of the training set: %s"
+            % (len(left_out), ", ".join(left_out[:12])))
+    if not staged:
+        raise DatasetRefused("REFUSING to train: no curation-approved pair in %s" % dataset_dir)
+    return staged, "judged"
+
+
+def prepare_dataset(dataset_zip, trigger, version, character, allow_unjudged=False):
+    """
+    @description Stage the dataset into the kohya layout <root>/img/<repeats>_<trigger>/. A FOLDER
+      is filtered through the curation judge's verdicts first, and the decision is taken BEFORE the
+      previous staging directory is removed so a refusal destroys nothing.
+    @param dataset_zip - curated.zip, or a folder of <name>.png/.txt pairs.
+    @param trigger - Trigger word naming the kohya repeats directory.
+    @param version - Model version being trained.
+    @param character - Character whose staging root this is.
+    @param allow_unjudged - Explicit override for a dataset folder with no curation.json.
+    @returns (root, img_root, image_count, curation_state).
+    """
+    is_folder = os.path.isdir(dataset_zip)
+    approved, state = approved_dataset_files(dataset_zip, allow_unjudged) if is_folder \
+        else (None, "zip")
     root = os.path.join(WORK, "%s_v%d" % (character, version))
     img_root = os.path.join(root, "img", "%d_%s" % (REPEATS, trigger))
     if os.path.isdir(root):
         shutil.rmtree(root, ignore_errors=True)
     os.makedirs(img_root, exist_ok=True)
     n = 0
-    if os.path.isdir(dataset_zip):                       # a folder of pairs also accepted
-        for f in glob.glob(os.path.join(dataset_zip, "*")):
-            shutil.copy(f, img_root); n += 1 if f.lower().endswith(".png") else 0
+    if is_folder:
+        for f in approved:
+            shutil.copy(f, img_root)
+            n += 1 if f.lower().endswith((".png", ".jpg", ".jpeg")) else 0
     else:
         with zipfile.ZipFile(dataset_zip) as z:
             for name in z.namelist():
@@ -57,7 +163,7 @@ def prepare_dataset(dataset_zip, trigger, version, character):
                 open(os.path.join(img_root, os.path.basename(name)), "wb").write(data)
                 if name.lower().endswith((".png", ".jpg", ".jpeg")):
                     n += 1
-    return root, img_root, n
+    return root, img_root, n, state
 
 
 def base_checkpoint(base_name):
@@ -73,13 +179,19 @@ def base_checkpoint(base_name):
 
 
 def train(character, version, dataset_zip, base_name, controller, secret, owner_sub_b64,
-          parent_version, resolution=512, epochs=EPOCHS, rank=NETWORK_DIM):
+          parent_version, resolution=512, epochs=EPOCHS, rank=NETWORK_DIM, allow_unjudged=False):
     if not os.path.exists(VENV_PY) or not os.path.exists(TRAIN_PY):
         fail(character, version, controller, secret, owner_sub_b64,
              "kohya not installed (%s missing) - run setup-kohya.ps1 first" % VENV_PY)
         return 2
     os.makedirs(MODELS, exist_ok=True); os.makedirs(LORA_DIR, exist_ok=True)
-    root, img_root, count = prepare_dataset(dataset_zip, character, version, character)
+    try:
+        root, img_root, count, curation_state = prepare_dataset(
+            dataset_zip, character, version, character, allow_unjudged)
+    except DatasetRefused as exc:
+        # A refused dataset is a FAILED run, not a crash: the controller has to see why.
+        fail(character, version, controller, secret, owner_sub_b64, str(exc))
+        return 2
     base_ckpt = base_checkpoint(base_name)
     out_name = "%s_v%d" % (character, version)
     log_dir = os.path.join(root, "logs")
@@ -137,7 +249,8 @@ def train(character, version, dataset_zip, base_name, controller, secret, owner_
                "final_loss": final_loss, "duration_sec": duration,
                "parent_version": parent_version,
                "metrics": {"repeats": REPEATS, "alpha": alpha, "optimizer": "AdamW8bit",
-                           "lr": 1e-4, "scheduler": "cosine", "resolution": resolution}}
+                           "lr": 1e-4, "scheduler": "cosine", "resolution": resolution,
+                           "dataset_curation": curation_state}}
     json.dump(metrics, open(os.path.join(MODELS, out_name + ".json"), "w"), indent=2)
     log("DONE %s in %ds (loss %s, %s steps) -> %s" % (out_name, duration, final_loss, steps, out_path))
     print("OSHAL_TRAIN_RESULT " + json.dumps(metrics), flush=True)   # captured by shell.exec
@@ -174,6 +287,9 @@ def main():
     ap.add_argument("--character", required=True)
     ap.add_argument("--version", type=int, required=True)
     ap.add_argument("--dataset", required=True, help="curated.zip (or a folder of <name>.png/.txt pairs)")
+    ap.add_argument("--allow-unjudged-dataset", action="store_true",
+                    default=os.environ.get("LORA_ALLOW_UNJUDGED_DATASET", "") == "1",
+                    help="train on a dataset FOLDER that carries no curation.json (human override)")
     ap.add_argument("--base", default="v1-5-pruned-emaonly-fp16.safetensors")
     ap.add_argument("--parent-version", type=int, default=None)
     ap.add_argument("--resolution", type=int, default=512)
@@ -185,7 +301,7 @@ def main():
     secret = os.environ.get("SWARM_SERVICE_SECRET", "")
     raise SystemExit(train(a.character, a.version, os.path.expanduser(a.dataset), a.base,
                            a.controller, secret, a.owner_sub_b64, a.parent_version,
-                           a.resolution, a.epochs, a.rank))
+                           a.resolution, a.epochs, a.rank, a.allow_unjudged_dataset))
 
 
 if __name__ == "__main__":
