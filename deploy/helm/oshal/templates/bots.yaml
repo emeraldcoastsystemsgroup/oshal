@@ -6,6 +6,7 @@
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | Kind proveout fix: bots MUST run through scripts/bot-entrypoint.sh (compose x-bot-common parity) — the image's default CMD is a bare `node dist/app/server.js`, so without an explicit command the "bot" booted the CONTROLLER, hit the real-OIDC path (no MOCK_OIDC in the shared env), and crash-looped on missing SESSION_SECRET. The entrypoint reads BOT_RUNTIME=bot-node, loads the persona, and execs bot-node-server.js.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Optional botName per bot: BOT_NAME must stay the compose-parity agent name (email-bot runs as communications-bot, jarvis-bot as oshal-assistant, the concierges…) while .name stays the Service/DNS name the controller dials (BotNodeClient → http://<registry container>:5000). Default unchanged: botName falls back to .name.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — (a) fleet presets: the range walks oshal.activeBots (fleet preset + custom extras, deduped) instead of bare .Values.bots; (b) seeding-repair parity (compose 2026-08-12): the config-seed cp lines are GONE — bot-entrypoint.sh Step 1b copy-IF-MISSING is the ONLY seeding path, and the old cp -f here force-reimposed the seed on every pod restart, silently resetting runtime provider config; (c) K5 parity: main-cluster bots connect as the least-privilege oshal_bot role (migration 099, NOSUPERUSER, RLS enforced) — never the superuser DSN the 0.1.x chart injected; override via swarm.botDatabaseUrl for managed Postgres.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — bot credentials leave literal env and the ConfigMap: DATABASE_URL is a secretKeyRef to the single BOT_DATABASE_URL key of oshal-db-credentials (in-cluster default from infra.postgres.botPassword, or swarm.botDatabaseUrl), and JWT_SECRET / ARANGO_ROOT_* arrive by envFrom from oshal-shared-secret, between the ConfigMap and botDefaults.envSecret. Guard: tests/unit/chart-credentials.spec.ts.
 {{- $root := . }}
 {{- range include "oshal.activeBots" . | fromJsonArray }}
 ---
@@ -45,6 +46,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: oshal-shared-env
+            # Chart-managed credentials (JWT_SECRET, ARANGO_ROOT_*). After the ConfigMap,
+            # before botDefaults.envSecret: an operator Secret still wins a duplicate key.
+            - secretRef:
+                name: oshal-shared-secret
             {{- if $root.Values.botDefaults.envSecret }}
             - secretRef:
                 name: {{ $root.Values.botDefaults.envSecret }}
@@ -63,14 +68,16 @@ spec:
             - name: AGENT_CAPABILITIES
               value: {{ .capabilities | quote }}
             {{- end }}
-            {{- if and (eq $root.Values.role "main") $root.Values.infra.postgres.inCluster }}
+            {{- if and (eq $root.Values.role "main") (or $root.Values.infra.postgres.inCluster $root.Values.swarm.botDatabaseUrl) }}
             # K5: least-privilege oshal_bot role (compose BOT_DATABASE_URL parity) —
             # bots must never carry the superuser DSN. NEVER on bot-pod clusters.
+            # ONE key of oshal-db-credentials, by secretKeyRef: the bot's environment
+            # never holds the Secret's superuser or oshal_app DSN.
             - name: DATABASE_URL
-              value: {{ $root.Values.swarm.botDatabaseUrl | default (printf "postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/%s" $root.Values.infra.postgres.database) | quote }}
-            {{- else if and (eq $root.Values.role "main") $root.Values.swarm.botDatabaseUrl }}
-            - name: DATABASE_URL
-              value: {{ $root.Values.swarm.botDatabaseUrl | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: oshal-db-credentials
+                  key: BOT_DATABASE_URL
             {{- end }}
             {{- range $k, $v := .extraEnv }}
             - name: {{ $k }}

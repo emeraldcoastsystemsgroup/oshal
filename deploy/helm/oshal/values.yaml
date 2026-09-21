@@ -6,6 +6,7 @@
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 (ADR-129) — codeless-install defaults: image pulls ghcr.io/emeraldcoastsystemsgroup/oshal-bot (was a CHANGE-ME under a retired image name); relay + Kyma APIRule default OFF (generic clusters have neither headscale nor the APIRule CRD — both stay as opt-ins); api Service gains type/nodePort; LLM defaults follow the codex fleet floor (openai-codex / gpt-5.5 / CODEX_REASONING_EFFORT, compose SEQ-13 parity); fleet presets kernel|full|custom with the lists GENERATED from docker-compose.oshal-local.yml by scripts/generate-chart-fleet.mjs (guard: tests/unit/chart-fleet-parity.spec.ts); bots connect as oshal_bot (K5), overridable via swarm.botDatabaseUrl.
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | swarm.extraEnv (default {}): non-secret env rendered into the oshal-shared-env ConfigMap, so it reaches EVERY runtime (the api and every bot envFrom it). Found on the first Docker Desktop install (2026-09-21): compose sets platform switches such as APP_PACKAGE_DYNAMIC_ROUTES=1 for every container and the chart had no way to, so every ADR-149 protected store app failed activation closed. Secrets never go here (api.envSecret / botDefaults.envSecret). A key the chart already sets in that ConfigMap fails the render (templates/shared-env-configmap.yaml), and explicit per-workload env still wins over it. Guard: tests/unit/chart-shared-env-extra.spec.ts.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the rbac.botLauncher comment records that the api keeps BOT_DATABASE_URL with the launcher off (templates/api.yaml SEQ 6): its bootstrap provisions oshal_bot for the chart-declared bots and refused to start without it. Guard: tests/unit/chart-bootstrap-env.spec.ts.
+# 5 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — infra.postgres.appPassword / botPassword (dev defaults oshal-app-dev / oshal-bot-dev): the oshal_app and oshal_bot passwords get a values path. api.yaml hardcoded oshal_app:oshal-app-dev, so the only escape was taking Postgres out of the cluster. jwtSecret, arangodb.rootUser/rootPassword and botDatabaseUrl are now rendered into chart-managed Secrets instead of the ConfigMap or literal env (templates/secrets.yaml), and the swarm.extraEnv comment records that the render refuses a chart-owned or credential-shaped key there. Guard: tests/unit/chart-credentials.spec.ts.
 #
 # Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
 # Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
@@ -75,8 +76,17 @@ infra:
     image: postgres:16-alpine
     database: oshal
     user: oshal
-    # Dev parity with compose. Override via api.envSecret DATABASE_URL for real deploys.
+    # Superuser (bootstrap) password. Dev parity with compose.
     password: oshal
+    # Passwords of the two least-privilege runtime roles the api's app-role bootstrap
+    # provisions: oshal_app (the api's DATABASE_URL) and oshal_bot (every bot's
+    # DATABASE_URL, unless swarm.botDatabaseUrl overrides it). The defaults are the
+    # committed dev values; anything else must be 48-128 hex characters
+    # (openssl rand -hex 24) and the two must differ - the render refuses otherwise,
+    # because the bootstrap would. The DSNs are built into the chart's
+    # oshal-db-credentials Secret; a bot reads only its own key of it.
+    appPassword: oshal-app-dev
+    botPassword: oshal-bot-dev
     storage: 8Gi
   redis:
     inCluster: true
@@ -105,6 +115,8 @@ infra:
     # Graph tier: RCA topology, jobs↔companies↔recruiters, world graph.
     inCluster: true
     image: arangodb:3.11
+    # Rendered into the oshal-shared-secret Secret (never the ConfigMap); the
+    # arangodb container, the api and every bot read the same key.
     rootUser: root
     rootPassword: oshal
     storage: 4Gi
@@ -204,23 +216,28 @@ swarm:
   logLevel: info
   queuePollIntervalMs: "30000"
   # any-bot JS layer refuses to boot in NODE_ENV=production without JWT_SECRET.
-  # Dev parity with the committed compose value; override via api.envSecret /
-  # botDefaults.envSecret (envFrom secretRef is listed after the ConfigMap, so
-  # the Secret's value wins) for anything beyond your own machine.
+  # Dev parity with the committed compose value, rendered into the chart's
+  # oshal-shared-secret Secret (never the ConfigMap). Set this value, or override
+  # it via api.envSecret / botDefaults.envSecret (listed after the chart Secret,
+  # so the operator's value wins), for anything beyond your own machine.
   jwtSecret: oshal-local-dev-secret-do-not-use-in-prod
   # K5 parity: bots connect as the least-privilege oshal_bot role (migration 099
-  # creates it at api bootstrap; NOSUPERUSER, RLS enforced). Empty = the committed
-  # dev-parity URL for the in-cluster Postgres. Managed-Postgres deployments set
+  # creates it at api bootstrap; NOSUPERUSER, RLS enforced). Empty = the in-cluster
+  # DSN built from infra.postgres.botPassword. Managed-Postgres deployments set
   # the real oshal_bot URL here (or a DATABASE_URL in botDefaults.envSecret has no
-  # effect — explicit env beats envFrom; this value is the override point).
+  # effect — explicit env beats envFrom; this value is the override point). It is
+  # rendered into the oshal-db-credentials Secret, never a literal env entry.
   botDatabaseUrl: ""
   # Cluster-local shared workspace (RWO: single-node clusters — the default
   # target — schedule every pod together; multi-node needs an RWX StorageClass).
   workspaceStorage: 5Gi
   # Non-secret env for EVERY runtime (api + bots), rendered into the shared ConfigMap.
-  # Secrets never go here — use api.envSecret / botDefaults.envSecret. A key the chart
-  # already sets in that ConfigMap (REDIS_URL, LOG_LEVEL, ...) fails the render: set
-  # it through the chart's own value instead.
+  # Secrets never go here — use api.envSecret / botDefaults.envSecret. The render
+  # enforces it: a key the chart already sets (REDIS_URL, LOG_LEVEL, ... in the
+  # ConfigMap, or JWT_SECRET / ARANGO_ROOT_* in its oshal-shared-secret Secret) fails,
+  # and so does any credential-shaped name (SECRET, PASSWORD, PASSWD, TOKEN, CREDENTIAL,
+  # a name ending in KEY, DATABASE_URL, *_DSN), so extraEnv cannot put a credential
+  # back into a ConfigMap. Set a chart-owned key through the chart's own value instead.
   extraEnv: {}
 
 # ── Bots (both roles) ─────────────────────────────────────────────────────────

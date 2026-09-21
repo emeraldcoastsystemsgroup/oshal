@@ -4,13 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the two readiness probes the first Docker Desktop Kubernetes install (2026-09-21) found could never pass, which left `helm --wait` to time out and each Service with no endpoints. (a) ArangoDB: the probe asked /_api/version, which ArangoDB authenticates once a root password is set (and the chart sets one), so it got 401 forever and the graph tier was unreachable; it must ask /_admin/server/availability, which ArangoDB serves without auth. (b) speaker-diarization: /health is key-authenticated behind Starlette's TrustedHostMiddleware, so a bare kubelet probe (Host = pod IP, no key) got refused forever. The probe must carry the service's key header with the SAME value the container is given, and a Host the service admits. Both halves are read from the service's own Python source (header name, key env, allowlist env, default allowlist, /health's authentication), not copied, so a renamed header or a narrowed allowlist goes red here instead of on a cluster. Renders the REAL chart; no helm is a loud failure.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The ArangoDB precondition (a root password is set, so /_api/version answers 401) reads the password through the render: chart 0.5.0 moved it from a literal env value to a secretKeyRef into the oshal-shared-secret Secret, and a literal-only read would see no password and fail on a working chart.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  DOCKER_DESKTOP_VALUES, REPO_ROOT, RENDER_TIMEOUT_MS, containerOf, envValue, helmTemplate,
+  DOCKER_DESKTOP_VALUES, REPO_ROOT, RENDER_TIMEOUT_MS, containerOf, envValue, helmTemplate, resolvedEnv,
 } from '../helpers/helm-template';
 
 const SPEAKER_SRC = path.join(REPO_ROOT, 'services', 'speaker-diarization', 'speaker_service');
@@ -90,10 +91,12 @@ function header(get: Record<string, any>, name: string): string | undefined {
 
 describe('ArangoDB readiness probe asks an endpoint ArangoDB serves without auth', () => {
   it.each(POSTURES)('%s: authentication is on, and no probe asks /_api/version', (_label, opts) => {
-    const c = containerOf(helmTemplate(opts), 'StatefulSet', 'oshal-arangodb', 'arangodb');
+    const objects = helmTemplate(opts);
+    const c = containerOf(objects, 'StatefulSet', 'oshal-arangodb', 'arangodb');
     // The precondition that makes /_api/version a 401: a non-empty root password turns auth on.
-    // Without it every path would pass and this guard would prove nothing.
-    expect(envValue(c, 'ARANGO_ROOT_PASSWORD'), 'the arangodb container sets no root password').toBeTruthy();
+    // Without it every path would pass and this guard would prove nothing. The password is a
+    // secretKeyRef into the chart's own Secret, so it is resolved through the render.
+    expect(resolvedEnv(objects, c).ARANGO_ROOT_PASSWORD, 'the arangodb container sets no root password').toBeTruthy();
     for (const kind of PROBE_KINDS) {
       expect(c[kind]?.httpGet?.path, `${kind} asks the authenticated ${ARANGO_AUTHENTICATED_PATH}`).not.toBe(ARANGO_AUTHENTICATED_PATH);
     }

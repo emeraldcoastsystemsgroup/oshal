@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-129 codeless k8s chart (deploy/helm/oshal). Pins: (1) the fleet block in values.yaml matches docker-compose.oshal-local.yml via the real generator (counts are generated, never hand-typed — drift here is how docs went 6.8x off reality); (2) the docker-socket bot stays EXCLUDED with its reason logged (no docker daemon inside a k8s pod); (3) every fleet bot's persona file exists on disk (a persona rename otherwise ships a crash-looping pod); (4) agent IDs are unique per fleet (the a0…030 three-way collision, k8s edition); (5) registry-pull defaults hold — public ghcr.io oshal-bot image, relay + Kyma APIRule OFF (a generic cluster has neither headscale nor the APIRule CRD, and rendering either fails the whole install); (6) the codex fleet floor (chart shared-env follows compose SEQ-13: openai-codex, model >= gpt-5.5); (7) K5 + seeding-repair parity in the bot template source: bots carry the least-privilege oshal_bot DSN (never the superuser interpolation) and NO config-seed cp (bot-entrypoint Step 1b copy-if-missing is the only seeding path).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | K5 check (7) follows the DSN into the chart's oshal-db-credentials Secret (chart 0.5.0): bots.yaml no longer holds the oshal_bot DSN as a literal, so the case renders the chart and requires every bot's DATABASE_URL, resolved through that Secret, to authenticate as oshal_bot. The template-source half (no superuser interpolation in bots.yaml) is unchanged.
  */
 
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import yaml from 'js-yaml';
+import { RENDER_TIMEOUT_MS, helmTemplate, resolvedEnv } from '../helpers/helm-template';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CHART_DIR = path.join(REPO_ROOT, 'deploy', 'helm', 'oshal');
@@ -85,13 +87,22 @@ describe('ADR-129 chart codeless-install defaults', () => {
     expect(values.swarm.codexReasoningEffort).toBeTruthy();
   });
 
-  it('bot template carries the least-privilege oshal_bot DSN, never the superuser (K5)', () => {
-    expect(botsTemplate).toContain('oshal_bot:');
+  it('bots carry the least-privilege oshal_bot DSN, never the superuser (K5)', () => {
     // The superuser interpolation belongs to the api's BOOTSTRAP_DATABASE_URL only —
     // its presence in the BOT template is the exact 0.1.x defect K5 closed.
     expect(botsTemplate.includes('.Values.infra.postgres.user'), 'bots.yaml must not build a DSN from the superuser role').toBe(false);
     expect(botsTemplate.includes('.Values.infra.postgres.password'), 'bots.yaml must not carry the superuser password').toBe(false);
-  });
+    // The DSN now arrives through the chart's Secret, so the check is on what each bot
+    // actually resolves to, not on a literal in the template.
+    const objects = helmTemplate({});
+    const bots = objects.filter((o) => o.kind === 'Deployment' && o.metadata.labels?.['oshal.io/bot'] === 'true');
+    expect(bots.length, 'the default fleet rendered no bots - nothing was checked').toBeGreaterThan(0);
+    for (const b of bots) {
+      const url = resolvedEnv(objects, b.spec?.template?.spec?.containers?.[0]).DATABASE_URL;
+      expect(url, `${b.metadata.name} resolves no DATABASE_URL`).toBeTruthy();
+      expect(new URL(url).username, `${b.metadata.name} does not connect as oshal_bot`).toBe('oshal_bot');
+    }
+  }, RENDER_TIMEOUT_MS);
 
   it('seeding-repair parity: bots never cp the config seed; api copies IF-MISSING only', () => {
     // Assert on template CODE, not the change-log narrative that documents the old bug.

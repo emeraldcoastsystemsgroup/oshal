@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for rbac.botLauncher=false crash-looping the api. BOT_DATABASE_URL was emitted only inside the botLauncher block while OSHAL_APP_ROLE_BOOTSTRAP stayed "true", so the bootstrap ran scripts/governance/provision-app-role.mjs, which refuses with "BOT_DATABASE_URL is required", and the command's own `exit 1` restarted the pod forever - on a posture values.yaml documents as a supported degrade. The env the bootstrap needs is DERIVED, never hand-listed: every name the rendered command dereferences ($NAME, ${NAME...}, process.env.NAME) that the command does not assign itself, plus every URL provision-app-role.mjs passes to parsePostgresUrl, traced back through its main() to the process.env names that feed it. Each must be supplied by the render itself (explicit env, or an envFrom source the chart creates). The real script then runs: the provision line is cut out of the RENDERED command, given --dry-run, and executed by a POSIX shell with exactly the env the render supplies - it must accept, and the same run without BOT_DATABASE_URL must refuse naming it, so the check cannot pass against a script that stopped validating.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A fourth posture: oshal_app / oshal_bot passwords supplied through values (infra.postgres.appPassword / botPassword, chart 0.5.0). The DSNs now come from the chart's oshal-db-credentials Secret by secretKeyRef, resolved through the render, and the real provision script must accept the DSNs the chart builds from supplied passwords (its strength, distinctness and role-name rules), not only the dev defaults it whitelists.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -24,6 +25,9 @@ const POSTURES: Array<[string, RenderOptions]> = [
   ['defaults, rbac.botLauncher=false', { sets: ['rbac.botLauncher=false'] }],
   ['values-docker-desktop.yaml, rbac.botLauncher=false', { valuesFiles: [DOCKER_DESKTOP_VALUES], sets: ['rbac.botLauncher=false'] }],
   ['defaults, rbac.botLauncher=true', {}],
+  // The oshal_app / oshal_bot values path (chart 0.5.0): the real script must accept the DSNs the
+  // chart builds from supplied passwords, not only the whitelisted dev defaults.
+  ['infra.postgres.appPassword/botPassword from values', { sets: [`infra.postgres.appPassword=${'a1'.repeat(24)}`, `infra.postgres.botPassword=${'b2'.repeat(24)}`] }],
 ];
 
 /**

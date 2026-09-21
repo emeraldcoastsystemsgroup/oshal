@@ -81,6 +81,38 @@ per-bot registry overrides still win.
   contributor cluster — see [values-bot-pod.example.yaml](values-bot-pod.example.yaml).
   Bot-pod clusters never receive a DATABASE_URL (trust rule).
 
+## Credentials
+
+No credential is rendered into a ConfigMap. The chart keeps its own in two Secrets:
+
+| Secret | Keys | Read by |
+|---|---|---|
+| `oshal-shared-secret` | `JWT_SECRET`; on a main cluster with in-cluster ArangoDB also `ARANGO_ROOT_USER`, `ARANGO_ROOT_PASSWORD` | the api and every chart bot (`envFrom`), and the ArangoDB container (`secretKeyRef`) |
+| `oshal-db-credentials` (main role) | `BOOTSTRAP_DATABASE_URL`, `DATABASE_URL`, `BOT_DATABASE_URL` | only by `secretKeyRef`: the api reads all three, a bot reads `BOT_DATABASE_URL` as its `DATABASE_URL` and nothing else |
+
+Their values come from `swarm.jwtSecret`, `infra.arangodb.rootUser` / `rootPassword`,
+`infra.postgres.password` (superuser), `infra.postgres.appPassword` (`oshal_app`),
+`infra.postgres.botPassword` (`oshal_bot`) and `swarm.botDatabaseUrl`. The defaults are the
+committed dev values. `appPassword` and `botPassword` must otherwise be 48-128 hex characters
+(`openssl rand -hex 24`) and differ from each other. The render refuses anything else, because
+the api's app-role bootstrap would refuse it at boot.
+
+Precedence is unchanged. `envFrom` lists the ConfigMap, then `oshal-shared-secret`, then your
+`api.envSecret` / `botDefaults.envSecret`, so a key in your Secret wins. The database URLs are
+explicit env entries, so they win over every `envFrom`. With managed Postgres set
+`infra.postgres.inCluster: false` and supply them through `api.envSecret` (see the durability
+boundary below).
+
+`swarm.extraEnv` renders into the `oshal-shared-env` ConfigMap, so it refuses credentials. A key
+the chart keeps in either the ConfigMap or `oshal-shared-secret`, and any credential-shaped name
+(`SECRET`, `PASSWORD`, `PASSWD`, `TOKEN`, `CREDENTIAL`, a name ending in `KEY`,
+`DATABASE_URL`, `*_DSN`), fails the render.
+
+A bot the controller launches at runtime (see [Dynamic bots](#dynamic-bots--apps-bring-their-own))
+is built by `src/features/agent-management/services/kubernetes-bot-launcher.ts`, not by this
+chart. Its `envFrom` names `oshal-shared-env` and `oshal-bot-env` only. It gets `JWT_SECRET` and
+`ARANGO_ROOT_*` only if your `oshal-bot-env` Secret carries them.
+
 ## Shared services
 
 The chart runs the same service tier a default `docker compose up` does, each

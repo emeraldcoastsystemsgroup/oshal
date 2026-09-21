@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the chart README's "Durability boundary" (BACKLOG: k8s durability posture for the shared-service tier). The chart is the single-box product - one replica per workload, dev-parity credentials, no backup - and the README declares durable Postgres/Timescale, a real Vault and volume backup OUT OF SCOPE, each with the boundary where a shared tenant takes over. A declaration like that rots the moment the chart changes, so this RENDERS THE REAL CHART with the helm binary and holds the section to the output: the volume table must equal the claims the chart creates with every optional flag on, in both directions; no workload above one replica; no backup, snapshot or restore object rendered or templated; every boundary switch the README names must remove its workload and withhold exactly the env it lists (an explicit container env entry beats envFrom, so a URL left in place would shadow the tenant's Secret); chart bots must take the managed DSN from swarm.botDatabaseUrl; and the Terraform sentence must name exactly the switches deploy/terraform/main.tf forwards. No helm on PATH is a loud failure, never a skip.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Hold deploy/terraform/README.md to the templates that exist. Its checklist item 5 listed TimescaleDB, ArangoDB, Vault, code-server, speaker-diarization and ollama as "Not yet in the chart (compose-only infra)" and said in bold that "trading cannot run on k8s until tsdb is templated" - all six had been templated since #198 (chart 0.3.0), so a tenant following that checklist kept trading off Kubernetes for no reason. The case DERIVES the service list from deploy/helm/oshal/templates/*.yaml rather than hardcoding it, because a literal list rots the same way the prose did.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The managed-Postgres bot DSN case resolves DATABASE_URL through the render (tests/helpers/helm-template resolvedEnv): chart 0.5.0 renders swarm.botDatabaseUrl into the oshal-db-credentials Secret and each bot reads it by secretKeyRef, so a literal-only read would find no value on a working chart.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -12,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import yaml from 'js-yaml';
+import { resolvedEnv } from '../helpers/helm-template';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CHART_DIR = path.join(REPO_ROOT, 'deploy', 'helm', 'oshal');
@@ -291,12 +293,12 @@ describe('each durability switch hands off exactly what the README says', () => 
     const pgRow = scopeRows.find((r) => switchOf(r) === 'infra.postgres.inCluster');
     expect(ticks(pgRow?.[2]), 'the Postgres row does not tell the tenant where the bots get their DSN').toContain('swarm.botDatabaseUrl');
     const dsn = 'postgresql://oshal_bot:managed@db.example.test:5432/oshal';
-    const bots = render(['infra.postgres.inCluster=false', `swarm.botDatabaseUrl=${dsn}`])
-      .filter((o) => o.kind === 'Deployment' && o.metadata.labels?.['oshal.io/bot'] === 'true');
+    const all = render(['infra.postgres.inCluster=false', `swarm.botDatabaseUrl=${dsn}`]);
+    const bots = all.filter((o) => o.kind === 'Deployment' && o.metadata.labels?.['oshal.io/bot'] === 'true');
     expect(bots.length, 'the default fleet rendered no bots - nothing was checked').toBeGreaterThan(0);
     for (const b of bots) {
-      const env = b.spec?.template?.spec?.containers?.[0]?.env ?? [];
-      const url = env.find((e: { name: string }) => e.name === 'DATABASE_URL')?.value;
+      // Resolved through the render: the DSN is a secretKeyRef into the chart's Secret.
+      const url = resolvedEnv(all, b.spec?.template?.spec?.containers?.[0]).DATABASE_URL;
       expect(url, `${b.metadata.name} does not carry swarm.botDatabaseUrl as DATABASE_URL`).toBe(dsn);
     }
   }, RENDER_TIMEOUT_MS);
