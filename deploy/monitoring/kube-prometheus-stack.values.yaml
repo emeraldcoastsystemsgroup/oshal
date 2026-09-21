@@ -1,0 +1,170 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the k8s form of docker-compose.monitoring.yml, on kube-prometheus-stack. Same contract as ops/monitoring: every oshal runtime is its own /metrics target, labelled container/tier, under the job names alert-rules.yml keys on (oshal-core, oshal-swarm-bots); Alertmanager webhooks Swarm* alerts to the fail-closed POST /api/alerts/alertmanager intake with a bearer token. Docker SD becomes pod SD; cAdvisor + docker-proxy are dropped (the kubelet already serves cAdvisor). Installed by deploy/monitoring/install-monitoring.sh.
+#
+# Sized for a single-box cluster (Docker Desktop / kind) that also carries the full
+# swarm: short retention, modest requests, and the control-plane scrapes that kind
+# binds to localhost turned off (they would only ever report down).
+
+fullnameOverride: kps
+
+# kind/Docker Desktop bind these to 127.0.0.1 inside the node — unscrapeable, and
+# their default alerts would fire forever.
+kubeEtcd: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+
+prometheus:
+  service:
+    # Docker Desktop maps LoadBalancer services to localhost:<port> (compose parity: 9090).
+    type: LoadBalancer
+    port: 9090
+    # Both the Prometheus and Alertmanager Services expose their config-reloader on
+    # 8080; Docker Desktop maps every LoadBalancer port to localhost, so the second
+    # one stays <pending> forever. Only Prometheus's is configurable — move it.
+    reloaderWebPort: 8089
+  prometheusSpec:
+    retention: 3d
+    resources:
+      requests: { cpu: 100m, memory: 400Mi }
+      limits: { memory: 1500Mi }
+    # Pick up PrometheusRules / monitors without the chart's release label, so the
+    # OSHAL rules (generated from ops/monitoring/alert-rules.yml) load.
+    ruleSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    externalLabels:
+      swarm: oshal-k8s
+    additionalScrapeConfigs:
+      # ── The control plane (ops/monitoring/prometheus.yml job oshal-core) ──────
+      - job_name: oshal-core
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: { names: [oshal] }
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            regex: oshal-api
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_number]
+            regex: '5000'
+            action: keep
+          # Compose-parity identity: the incident key + heal target read labels.container.
+          - target_label: container
+            replacement: oshal-local-api
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - target_label: tier
+            replacement: core
+      # ── The worker fleet (job oshal-swarm-bots) ──────────────────────────────
+      # Discovered by the chart's oshal.io/bot label, never listed: a new bot is
+      # scraped from its first second of life (the BUG-15 lesson in prometheus.yml).
+      - job_name: oshal-swarm-bots
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: { names: [oshal] }
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_oshal_io_bot]
+            regex: 'true'
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_number]
+            regex: '5000'
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            target_label: container
+            replacement: oshal-local-$1
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - target_label: tier
+            replacement: worker
+
+alertmanager:
+  # The chart's Alertmanager Service always carries the reloader port 8080, which
+  # Docker Desktop's own backend already holds on Windows — as a LoadBalancer it
+  # stays <pending>. Keep it ClusterIP; extraManifests below exposes 9093 alone.
+  service:
+    type: ClusterIP
+    port: 9093
+  alertmanagerSpec:
+    resources:
+      requests: { cpu: 20m, memory: 64Mi }
+      limits: { memory: 256Mi }
+    # Mounted at /etc/alertmanager/secrets/oshal-alert-webhook/token (created by the
+    # install script; the api holds the same value as ALERT_WEBHOOK_TOKEN).
+    secrets: [oshal-alert-webhook]
+  config:
+    route:
+      # Cluster alerts (Watchdog, kube-*, node-*) stay in Alertmanager's UI; only the
+      # swarm's own Swarm* alerts open incident tickets.
+      receiver: "null"
+      group_by: ['alertname', 'container']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        - receiver: oshal-incident-intake
+          matchers: ['alertname =~ "Swarm.*"']
+    receivers:
+      - name: "null"
+      - name: oshal-incident-intake
+        webhook_configs:
+          - url: http://oshal-api.oshal.svc:5000/api/alerts/alertmanager
+            send_resolved: true
+            http_config:
+              authorization:
+                type: Bearer
+                credentials_file: /etc/alertmanager/secrets/oshal-alert-webhook/token
+    inhibit_rules:
+      - source_matchers: ['alertname = SwarmContainerDown']
+        target_matchers: ['alertname =~ "SwarmContainerHigh.*"']
+        equal: ['container']
+    templates: []
+
+grafana:
+  enabled: true
+  service:
+    type: LoadBalancer
+    port: 3000
+  admin:
+    # Random password generated by the install script — never the chart default.
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+
+extraManifests:
+  # localhost:9093 -> Alertmanager, without the reloader port (see alertmanager.service).
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: kps-alertmanager-local
+    spec:
+      type: LoadBalancer
+      selector:
+        app.kubernetes.io/name: alertmanager
+        alertmanager: kps-alertmanager
+      ports:
+        - name: http-web
+          port: 9093
+          targetPort: 9093
+
+kube-state-metrics:
+  resources:
+    requests: { cpu: 10m, memory: 48Mi }
+    limits: { memory: 256Mi }
+
+prometheus-node-exporter:
+  resources:
+    requests: { cpu: 10m, memory: 24Mi }
+    limits: { memory: 128Mi }
+
+prometheusOperator:
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 256Mi }

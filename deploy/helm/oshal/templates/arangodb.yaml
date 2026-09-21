@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — in-cluster ArangoDB (compose oshal-arangodb parity), main role only. Carries no compose profile: a default `up` starts it, so the graph tier is part of the shipped platform rather than an optional add-on. ADR-045's "absent by default" degradation is expressed by inCluster: false (which also withholds ARANGO_URL, the exact signal the connector reads to return null).
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Readiness probe moved from /_api/version (authenticated: root password is set, so the probe got 401 forever, the pod never went Ready, the Service had no endpoints and helm --wait timed out) to the unauthenticated /_admin/server/availability. Found on the first Docker Desktop k8s install.
 {{- if and (eq .Values.role "main") .Values.infra.arangodb.inCluster }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -34,7 +35,8 @@ spec:
             - containerPort: 8529
           readinessProbe:
             httpGet:
-              path: /_api/version
+              # /_api/version requires auth (401 forever -> never Ready); availability is unauthenticated.
+              path: /_admin/server/availability
               port: 8529
             initialDelaySeconds: 10
             periodSeconds: 10

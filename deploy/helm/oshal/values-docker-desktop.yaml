@@ -1,0 +1,43 @@
+# CHANGE LOG
+# -----------------------------------------------------------------------------
+# SEQ                 | AUTHOR                      | DESCRIPTION
+# -----------------------------------------------------------------------------
+# 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — overlay for Docker Desktop's built-in Kubernetes (kind provisioning) running a locally built image and the full compose-parity fleet. Found on the first install: (a) the kind node does not see the host engine's images, so the locally built oshal-bot is side-loaded (see below) and never pulled — GHCR latest is only published by a manual workflow and goes stale; (b) Docker Desktop does not publish NodePorts to Windows but DOES map LoadBalancer services to localhost:<port>; (c) the chart's 256Mi-per-bot request cannot schedule 20 bots on a ~7.6 GiB node while compose bots idle at ~64 MiB.
+#
+# Install (identity is per operator — pass it, never commit it):
+#   docker save oshal-bot:latest | docker exec -i desktop-control-plane ctr -n k8s.io images import --all-platforms -
+#   helm upgrade --install oshal deploy/helm/oshal -n oshal --create-namespace \
+#     -f deploy/helm/oshal/values-docker-desktop.yaml \
+#     --set-string api.extraEnv.MOCK_OIDC_EMAIL=you@example.com \
+#     --set-string api.extraEnv.OSHAL_OPERATOR_EMAILS=you@example.com
+# Secrets the chart reads optionally but a working swarm needs:
+#   oshal-bot-env / oshal-api-env  SWARM_SERVICE_SECRET (bots refuse to boot without it)
+#   oshal-api-env                  SESSION_SECRET, REMOTE_CLIENT_SHARED_SECRET
+#   oshal-store                    OSHAL_STORE_TOKEN (private store only)
+# Monitoring: deploy/monitoring/install-monitoring.sh
+
+image:
+  repository: oshal-bot
+  tag: latest
+  # Side-loaded into the node's containerd; a pull would fail (or fetch stale GHCR).
+  pullPolicy: Never
+
+api:
+  service:
+    type: LoadBalancer   # -> http://localhost:5000
+  extraEnv:
+    MOCK_OIDC: "true"
+    OSHAL_APP_ROLE_BOOTSTRAP: "true"
+    UI_PROFILE: oshal-framework
+
+fleet: full
+
+botDefaults:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 1Gi }
+
+store:
+  repo: https://github.com/emeraldcoastsystemsgroup/oshal-applications
+  auditMode: compatible
+  tokenSecret: oshal-store

@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — speaker-diarization sidecar (compose speaker-diarization parity), main role only, no compose profile. Compose BUILDS it from services/speaker-diarization; the chart PULLS the published image so the k8s path stays build-free. Keeps the compose hardening: read-only root filesystem with a writable tmp, no privilege escalation. Audio never leaves the cluster — that is the point of the local ASR rail.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Readiness probe sends X-Speaker-Service-Key and Host: localhost. /health is key-authenticated behind TrustedHostMiddleware, so the bare probe got 401 forever, the pod never went Ready and helm --wait timed out. Found on the first Docker Desktop k8s install.
 {{- if and (eq .Values.role "main") .Values.infra.diarization.inCluster }}
 apiVersion: apps/v1
 kind: Deployment
@@ -47,6 +48,13 @@ spec:
             httpGet:
               path: /health
               port: 8080
+              # /health is authenticated and behind a trusted-host allowlist: without
+              # these the probe got 401 forever and the pod never went Ready.
+              httpHeaders:
+                - name: Host
+                  value: localhost
+                - name: X-Speaker-Service-Key
+                  value: {{ .Values.infra.diarization.serviceKey | quote }}
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 30
