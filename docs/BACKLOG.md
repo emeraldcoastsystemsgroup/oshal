@@ -1553,6 +1553,28 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Multi-user ephemeral privileged runtime
 - **Remaining:** security-review and build a per-task, short-lived privileged runtime with tmpfs credentials, caller scoping, revocation, and residue inspection.
 - **Done when:** two-user adversarial tests prevent cross-user credential/process access, a real privileged task uses only a brokered short-TTL credential, and teardown leaves no reusable secret. See [ADR-040](adr/040-devops-vault-swarm.md).
+- **Decision (operator, 2026-09-21): APPROVED — ADR-040 step 1 is greenlit, sequenced after Vault
+  hardening, and the security review is a written threat model plus an adversarial review the
+  operator signs off.** This is the go-ahead ADR-040's "Build order (when greenlit)" was waiting for
+  (`docs/adr/040-devops-vault-swarm.md:141-148`), and it covers step 1 only — the ephemeral
+  single-user privileged runtime with tmpfs credential delivery, caller scoping, revocation and
+  teardown. Steps 2-5 are not approved by this decision. **Sequencing, and why it is binding:** the
+  runtime brokers short-TTL credentials, so it starts only after "Production Vault hardening"
+  (decision 17) gives it a Vault with persistent storage, TLS, AppRole and no root token in
+  application config, and after the issue/use/revoke lifecycle is proven on the Postgres engine
+  (decision 18). A privileged runtime that proves itself against a `server -dev` Vault with a known
+  root token has proven nothing. Build it in slices, each its own PR. **What the security review
+  means, concretely, because no external party exists and the phrase must not become a checkbox:**
+  (1) a threat model in `docs/security/` — there is none for this today — naming the assets, the
+  attacker classes, the trust boundaries, and what the design deliberately does not defend against;
+  (2) an adversarial review lane that tries to break the implementation on the named boundaries:
+  cross-user credential and process access, credential residue surviving teardown, lease reuse after
+  revocation, and escape from the scoped runtime — reporting findings with evidence, not assurances;
+  (3) the operator reads the threat model and signs off **before any real credential is used**. The
+  done-when's two-user adversarial and teardown proofs stay executable evidence on top of that, not a
+  substitute for it. Note for whoever builds it: the fail-closed posture on unattended local CLI
+  harnesses does not relax as a side effect of this work — re-enabling one is its own decision.
+  (PM recommended the sequencing and this definition of the review; the operator approved both.)
 
 ### App access tiers Phase 2
 - **Remaining:** promote the implemented Phase 2 through a protected branch, apply migration 121, observe `OSHAL_APP_ACCESS_MODE=shadow`, seed explicit assignments, and canary `enforce` against the exact deployed SHA. The ten kernel manifests are declared; the historical intelligent-sales package is absent from both repositories and must be recovered rather than fabricated.
