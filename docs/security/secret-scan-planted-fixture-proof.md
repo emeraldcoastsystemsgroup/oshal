@@ -145,9 +145,8 @@ was committed.
   particular the full-history pass (`--log-opts=--all`) is untested here; this proof is the
   `--no-git` working-tree shape the local gate uses.
 - **Nothing about the partial-scan half.** `scripts/ci/ci-secret-scan.sh` refuses to call a scan
-  clean when gitleaks skipped paths it could not read. That behaviour is still covered only by
-  `tests/unit/ci-local-secret-scan.spec.ts`, which replays recorded stderr through a stand-in
-  `docker`; making a real image fail to read a real path is a separate owed item, tracked in
-  [../governance/real-boundary-regression-audit.md](../governance/real-boundary-regression-audit.md).
+  clean when gitleaks skipped paths it could not read. Nothing in *this* run exercises that: every
+  tree it scans is fully readable. That half was proven separately on 2026-09-21 against the same
+  image — see [secret-scan-unreadable-path-proof.md](./secret-scan-unreadable-path-proof.md).
 - **Nothing about rule coverage.** One rule (`aws-access-token`) is shown to fire end to end.
   This says nothing about whether any other gitleaks rule would catch any other credential shape.

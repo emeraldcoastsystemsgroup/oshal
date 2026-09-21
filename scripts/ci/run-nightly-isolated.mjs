@@ -13,6 +13,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | The inherited-export guard joins the fixed isolated set beside the purge guard. It runs ci-local.sh's own gate sequence in Git Bash over a state directory that already holds the previous run's export - the state the 2026-09-09 nightly wedged nine hours in - so the run that has to survive a leftover is executed here rather than reasoned about.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | The trading spec bare-cluster prerequisite guard joins the fixed isolated set, for the same reason as the race guard beside it: it starts its own PostgreSQL and needs the database EMPTY, which no other gate can give it - the plain unit gate has no address to point it at, and the operator database already holds every table it is checking for.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | The planted-fixture secret-scan proof joins the fixed isolated set, beside the partial-scan guard it completes. That one replaces docker on PATH; this one runs the real gitleaks image over a disposable repository and requires the gate to go red on a planted synthetic credential and green once it is removed. Docker and Git Bash are exactly what this gate provides, and running it nightly is what keeps the proof a standing claim rather than a one-day recording.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | The partial-scan proof joins the fixed isolated set beside its two siblings. It denies read on one file of a disposable export and requires the gate to refuse the PASS while the real gitleaks image exits 0 - the 2026-09-10 failure - so it needs Docker and Git Bash, which is exactly what this gate provides. Nightly is also what keeps the FLOATING :latest tag honest: the day the image rewords its skip line, this is where it shows up.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
@@ -35,6 +36,7 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/ci-local-inherited-export.spec.ts',
   'tests/unit/ci-local-secret-scan.spec.ts',
   'tests/unit/ci-local-secret-scan-planted-fixture.spec.ts',
+  'tests/unit/ci-local-secret-scan-unreadable-path.spec.ts',
   'tests/unit/ci-gate-streak.spec.ts',
   'tests/unit/trading-engine-cost-basis-postgres.spec.ts',
   'tests/unit/trading-event-plans.spec.ts',

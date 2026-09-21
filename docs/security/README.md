@@ -28,6 +28,10 @@ Security posture, hardening guidance, and control evidence for OSHAL.
   `ci-local.sh` `secret-scan` gate proven to go red on a planted synthetic credential and green
   once it is removed, against the real gitleaks image, with the two mutations that were watched
   turning the guard red.
+- [secret-scan-unreadable-path-proof.md](./secret-scan-unreadable-path-proof.md) — the same gate
+  proven to refuse a PASS when the real gitleaks image skips a path it cannot read and still exits
+  0, which is the 2026-09-10 failure, plus the check that the floating `:latest` tag still writes a
+  wording `GITLEAKS_UNREAD_PATTERN` matches.
 
 Related:
 
