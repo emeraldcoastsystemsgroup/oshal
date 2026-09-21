@@ -904,7 +904,9 @@ Five separate observations, from **"k8s shared-service tier"**:
 
 ```bash
 npx tsx scripts/validate-dynamic-bot-manifest.mjs --require-server --namespace oshal --context <ctx>
-# or, as the gate: OSHAL_CLUSTER_CONTEXT=<ctx> bash scripts/ci-local.sh --k8s-only --cluster-gates
+# or through the gate wrapper (the same check ci-local.sh --cluster-gates runs; ci-local.sh itself
+# derives its state directory with cygpath, so on a non-Windows box call the wrapper directly):
+OSHAL_CLUSTER_CONTEXT=<ctx> bash scripts/ci/check-cluster-gates.sh bot-manifest
 ```
 
 **Pass:** the output says `dry-run mode: server (validated by the real API server; nothing created)`
