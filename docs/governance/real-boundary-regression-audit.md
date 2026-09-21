@@ -299,6 +299,16 @@ provisioning, v1.36). Its measured result is in the
 | `tests/unit/chart-shared-env-extra.spec.ts` (`swarm.extraEnv` reaching every runtime, and the Docker Desktop overlay's `APP_PACKAGE_DYNAMIC_ROUTES`) | No double. Both roles are rendered by helm. The flag's name and its accepted values are read from the `src/` file that raises "Protected application routes require …=1". Every key the chart already sets in the ConfigMap, set again through `swarm.extraEnv`, must fail the render and be named. The render cannot show the api reading the ConfigMap. | The live Docker Desktop Kubernetes install run on 2026-09-21: every protected store app failed activation closed until `APP_PACKAGE_DYNAMIC_ROUTES=1` reached the api. | Real companion run once, 2026-09-21. |
 | `tests/unit/chart-monitoring-parity.spec.ts` (`deploy/monitoring` parity with `ops/monitoring`) | Scoped doubles OUTSIDE the boundary: `kubectl` and `helm` are recording stand-ins first on a minimal PATH, with a nonexistent context and kubeconfig, when the real `install-monitoring.sh` runs. The script's own generation of the PrometheusRule from `alert-rules.yml` runs for real, and so does its refusal of arguments: with `--help` or any other argument, neither stand-in may be called. Rule job selectors are read as both `job="..."` and `job=~"..."`. Prometheus pod discovery and Alertmanager routing are evaluated by the spec, not by Prometheus or Alertmanager. | The live Docker Desktop Kubernetes install run on 2026-09-21: kube-prometheus-stack 91.4.1 scraped 22 oshal targets (1 core + 21 bots), all up, with the five `Swarm*` rules loaded. | Real companion run once, 2026-09-21. |
 
+## Chart guards from the remote-cluster work package (items 2-5)
+
+These guards render the REAL chart with the helm binary, and where a claim is about a script or a
+source file they run or read that script or file. None of them reaches a kubelet or an API
+server. Their real companions need a cluster and are listed in each row as owed, not run.
+
+| Boundary audited | Mock/stub disposition | Required real companion | Status |
+|---|---|---|---|
+| `tests/unit/chart-bootstrap-env.spec.ts` (`rbac.botLauncher=false` crash-looping the api: its bootstrap ran `provision-app-role.mjs` without `BOT_DATABASE_URL`) | No double. The env the bootstrap needs is derived from the rendered command (`$NAME`, `${NAME}`, `process.env.NAME`, minus what the command assigns itself) and from `provision-app-role.mjs` (every URL `runtimeCredentials()` passes to `parsePostgresUrl`, traced through `main()` to its `process.env` names). The provision line is cut out of the rendered command, given `--dry-run`, and run by a real POSIX shell and the real script with exactly the env the render supplies. The same run with `BOT_DATABASE_URL` removed must refuse and name it. A dry run connects to no database. | A `helm install --set rbac.botLauncher=false` on a cluster, with the api reaching Ready and `provision-app-role.mjs` printing its provisioned result in the api log. | Guard green 2026-09-21. Red with the fix reverted: 4 failed, 3 passed, including `[provision-app-role] FAILED: BOT_DATABASE_URL is required`. The cluster run is owed. |
+
 ## Rules for future fixes
 
 1. Name the failed boundary in the test header and name what remains doubled.
