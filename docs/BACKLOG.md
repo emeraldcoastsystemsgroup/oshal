@@ -1256,6 +1256,13 @@ including across a directory belonging to a different owner. Full reasoning and 
   — measured, not assumed:** on `aquasec/trivy` 0.72.0, one image and one CVE id, no `exp:`
   suppressed the finding, a future `exp:` suppressed it, and a past `exp:` reported it again, so an
   unrenewed budget line reddens the gate on its own.
+- **Full-image verification, 2026-09-21 11:42.** The re-scan recorded above was taken against an
+  image whose build stopped at `Dockerfile.oshal` line 319, so it did not cover the layers after it —
+  including line 320, `RUN npm install -g ./packages/swarm-cli`, which does install packages. The
+  gap is now closed: the same `gate_trivy` filters run against the **complete deployed image**
+  (`oshal-bot:latest`, commit `8db99050`, built by `scripts/oshal-deploy.sh`) report **3 findings,
+  0 CRITICAL, 3 HIGH — the three budgeted `undici` advisories and nothing else**. No finding came
+  from the layers the truncated scan missed, so the bump set is complete as shipped.
 
 ### `unit` and `e2e-green` have been red for 46 nights and have never been triaged
 - **Remaining:** both gates appear in essentially every failed run since 2026-07-27, and no run log records WHICH specs fail — `ci-local.log` keeps only the per-gate PASS/FAIL line, and `ci-local-last-run.log` is overwritten each night. So the failure set is unknown, and it is not safe to assume it is the same set it was in July: BUG-15/16/17 are three known-red specs, but `unit` was already red on 2026-08-03, eight days before the PR that landed two of those guards. The obvious first move is a single clean run against a pinned `origin/main` export on a quiet box, with the spec-level output kept.
@@ -1524,6 +1531,24 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Vault cloud secrets engines
 - **Remaining:** configure one real AWS STS or Kubernetes secrets engine with operator-owned credentials and a least-privilege role.
 - **Done when:** the role issues a short-TTL credential, a real read succeeds, revocation makes reuse fail, and no standing cloud key is stored by a bot.
+- **Decision (operator, 2026-09-21): the Kubernetes engine moves to a REMOTE CLUSTER BOX; the
+  lifecycle proof happens here on the Postgres engine.** The operator will stand up a Kubernetes
+  instance on a separate machine with headroom — this development box runs the whole swarm in docker
+  compose and will not host a cluster. Two consequences, both binding: (1) every Kubernetes-dependent
+  clause of this entry is tagged for that machine and collected in
+  [kubernetes/remote-cluster-work-package.md](kubernetes/remote-cluster-work-package.md), which
+  carries the scope, the ordered work, the live proofs and an explicit out-of-scope list; an agent
+  working on this box must SKIP cluster work and say so rather than installing k3s/kind/minikube or
+  running `kubectl` here. (2) The part that needs no cloud and no cluster is proven here: the
+  dynamic-secret lifecycle — a role issues a short-TTL credential, a real read succeeds, revocation
+  makes reuse fail, no standing key is stored by a bot — against the **PostgreSQL** engine that is
+  already wired (`setupDb`, `vault-console-service.ts:206-235`), since `issue({engine, role})` GETs
+  `<engine>/creds/<role>` and is engine-agnostic (`:172-175`). That proof is sequenced AFTER
+  "Production Vault hardening" (decision 17), because evidence gathered against a `-dev` Vault with a
+  known root token proves little. The AWS STS engine is not adopted: no AWS account exists in this
+  project's footprint, and the operator's custody preference is self-hosted. (PM offered a
+  park-or-provide-AWS choice; the operator replied with a better split — a remote cluster box plus
+  tagged, separated instructions.)
 
 ### Multi-user ephemeral privileged runtime
 - **Remaining:** security-review and build a per-task, short-lived privileged runtime with tmpfs credentials, caller scoping, revocation, and residue inspection.
