@@ -5,11 +5,12 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Markdown + Mermaid rendering for the schema docs. Pure functions over folded table records: an erDiagram per page (key columns only - PK / FK / UNIQUE / RLS owner - so a 40-table page stays legible), a full column table per table, RLS row-scope lines, and marker-delimited block replacement so hand-written README prose survives regeneration. Output is deterministic (sorted, no timestamps) so an unchanged schema regenerates to a zero diff.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The erDiagram renderer is no longer a copy. mermaidType/mermaidName/keyRoles/mermaidDiagram now delegate to src/pages/data-model/js/er-diagram.mjs, the single implementation the data-model explorer's Export also imports, so the committed pages and the surface cannot drift apart between parity runs. Only the owner-column reader stays here: the generator classifies the policies itself through summarizeRowAccess, where the page is handed the server's summary.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Nor is the RLS classifier: summarizeRowAccess now arrives through ./kernel from the data-model feature slice, the same implementation the explorer's snapshot is built with, so the committed pages and the surface classify a policy identically by construction rather than by a parity assertion.
  */
 
 'use strict';
 
-const { summarizeRowAccess } = require('./row-access');
+const { summarizeRowAccess } = require('./kernel');
 // THE erDiagram renderer, shared verbatim with the data-model explorer's Export. Plain ESM with
 // no imports, so the browser loads it straight off the page mount. require() of an ES module
 // needs Node 20.19+/22.12+ - the same floor this repo's vitest already needs to start at all.

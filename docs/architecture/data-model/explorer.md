@@ -50,8 +50,9 @@ module default and uses the summary the server already computed.
 `tests/unit/data-model-export.spec.ts` holds that neither consumer writes an `erDiagram` of its
 own, and `tests/unit/data-model-explorer-browser.spec.ts` hands a block Chromium copied out of the
 real page to mermaid@11's own parser, which must read it as an `er` diagram and must refuse a
-mangled one. The catalog SQL, the RLS classifier and the DDL parser are still two copies each;
-that collapse is the backlog item this one was carved out of.
+mangled one. The catalog SQL, the RLS classifier and the DDL parser have since made the same
+collapse: one implementation in `src/features/data-model/services/`, which the generator loads
+through `scripts/schema-docs/kernel.js`.
 
 ## What changed since: schema drift
 
@@ -102,8 +103,8 @@ flowchart LR
 ```
 
 1. **Catalog** — one JSON query per database over `pg_class` / `pg_attribute` / `pg_constraint` /
-   `pg_policies` (+ TimescaleDB dimensions). The SQL is byte-identical to the schema-docs
-   generator's.
+   `pg_policies` (+ TimescaleDB dimensions). It is the same SQL the schema-docs generator sends,
+   because the generator loads it from here.
 2. **Declarations** — an async, bounded walk of core source (`scripts/migrations`, `src`,
    `any-bot/server`, `docker/postgres`) and every installed package directory, matching
    `CREATE TABLE` / `CREATE VIEW`, resolving `${CONST}` names, and tagging each site with its
@@ -118,9 +119,10 @@ flowchart LR
 | Path | Role |
 |---|---|
 | `src/features/data-model/types.ts` | the model's types, `CORE_OWNER`, `noDatabaseError()` |
-| `src/features/data-model/services/catalog-reader.ts` | catalog SQL + fold (parity with the generator) |
-| `src/features/data-model/services/row-access.ts` | RLS row scope from real policy expressions |
-| `src/features/data-model/services/ddl-parser.ts` | static `CREATE TABLE` parser (SQLite, absent tables) |
+| `src/features/data-model/services/catalog-reader.ts` | catalog SQL + fold — THE copy; the schema-docs generator loads it |
+| `src/features/data-model/services/row-access.ts` | RLS row scope from real policy expressions — THE copy; the generator loads it |
+| `src/features/data-model/services/ddl-parser.ts` | static `CREATE TABLE` parser (SQLite, absent tables) — THE copy; the generator loads it |
+| `scripts/schema-docs/kernel.js` | the one bridge the CommonJS generator reaches those three through |
 | `src/features/data-model/services/declaration-scanner.ts` | who declares what, and for which engine |
 | `src/features/data-model/services/ownership.ts` | attribution, declared-but-absent, database links |
 | `src/features/data-model/services/integration-map.ts` | app nodes and edges from manifests |
@@ -147,8 +149,9 @@ layer fills in. That is what makes every store doubleable in tests.
 - **Another view.** Add it to `VIEWS` in `model-index.js`, a tab button in `index.html`, and a
   branch in `currentGraph()` / `renderSide()` in `app.js`.
 - **More per-table detail.** The snapshot carries the whole relation record; extend
-  `renderRelation()` in `detail-panel.js`. Adding a *catalog* field means changing the SQL in both
-  the reader and the generator — the parity spec fails otherwise, on purpose.
+  `renderRelation()` in `detail-panel.js`. Adding a *catalog* field means changing the SQL in
+  `catalog-reader.ts` only — the generator sends whatever that file says, and the
+  one-implementation spec fails if a second copy appears.
 
 ## Tests
 
@@ -158,7 +161,7 @@ npm run test:data-model     # 92 tests; needs Docker (disposable Postgres) and P
 
 | Spec | Proves |
 |---|---|
-| `data-model-catalog.spec.ts` | the fold, and parity with the schema-docs generator (SQL, fold, RLS classifier, DDL parser) |
+| `data-model-catalog.spec.ts` | the fold, and that the SQL, the RLS classifier and the DDL parser have ONE definition site the generator reaches through its bridge |
 | `data-model-ownership.spec.ts` | scanner + attribution over a real temp source tree |
 | `data-model-integration-map.spec.ts` | MIME overlap, every edge kind, aggregation |
 | `data-model-service.spec.ts` | cache/TTL/in-flight sharing, degraded stores, key masking |

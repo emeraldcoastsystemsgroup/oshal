@@ -4,13 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Page composition for the schema docs: core domain pages, the TimescaleDB page, the SQLite page, the README's generated blocks (inventory, domain index + domain map), one SCHEMA.md per package and the store-root SCHEMAS.md index. Cross-page links resolve to the page that documents the target table; a page never names a package from a more private repo.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Read row scopes through ./kernel - the data-model slice's classifier - rather than a second copy under scripts/schema-docs/.
  */
 
 'use strict';
 
 const { CORE_DOMAINS, OTHER_DOMAIN, domainFor } = require('./domains');
 const { GENERATED_BANNER, mermaidDiagram, tableSection, viewSection, cell, plural } = require('./render');
-const { summarizeRowAccess } = require('./row-access');
+const { summarizeRowAccess } = require('./kernel');
 const { definersFor, coOwners } = require('./model');
 
 const CORE_DOCS_URL = 'https://github.com/emeraldcoastsystemsgroup/oshal/blob/main/docs/architecture/data-model';

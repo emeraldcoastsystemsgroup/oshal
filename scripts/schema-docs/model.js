@@ -4,11 +4,12 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Ownership model for the schema docs: joins the catalog (what the reference databases hold) with the source scan (who declares each table) into one core view and one view per package (tables, views, SQLite stores). A live table belongs to whoever has a Postgres CREATE TABLE for it; SQLite declarations and tables absent from every reference database are parsed statically and labelled as such. A live table nobody declares is reported, never guessed.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Parse declarations with the data-model slice's parser through ./kernel instead of the generator's own copy, so a table the docs describe and a table the explorer describes are read by one implementation.
  */
 
 'use strict';
 
-const { parseCreateTable } = require('./ddl-parse');
+const { parseCreateTable } = require('./kernel');
 
 const REPO_RANK = { core: 0, store: 1, private: 2 };
 

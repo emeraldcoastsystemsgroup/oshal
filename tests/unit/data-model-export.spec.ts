@@ -5,13 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guards for "export the view you are looking at": the browser export module against the committed-docs generator it has to match byte for byte, the erDiagram naming exactly the relations the view drew (and nothing the view did not), the owner flowchart, the scoped JSON, the standalone SVG document, filenames, and the refusals - an empty scope, a view that draws no diagram, and a malformed relation record.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The byte-parity assertion below only ever caught drift AFTER it shipped, because the surface and the generator each carried their own renderer. They now share one - src/pages/data-model/js/er-diagram.mjs - and this guard is what holds that: the exported functions must be the SAME objects on both sides, and neither consumer may build an erDiagram block of its own again.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | The RLS classifier joined the renderer: the generator's copy is gone, so the fixture's `access` summary now comes through scripts/schema-docs/kernel.js from the data-model feature slice.
  */
 
 import { describe, expect, it } from 'vitest';
 /* eslint-disable @typescript-eslint/no-require-imports */
 const docsRender = require('../../scripts/schema-docs/render.js');
 const { mermaidDiagram } = docsRender;
-const { summarizeRowAccess } = require('../../scripts/schema-docs/row-access.js');
+const { summarizeRowAccess } = require('../../scripts/schema-docs/kernel.js');
 /* eslint-enable @typescript-eslint/no-require-imports */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';

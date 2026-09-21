@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guards for the schema-docs generator's pure logic: static DDL parsing (incl. an apostrophe inside a `--` comment, which once made two package tables unparseable), engine detection (a `.sql` migration naming a SQLite API once flipped three real Postgres tables to "undeclared"), RLS row-scope classification from real policy expressions, Mermaid-legal rendering, ownership attribution (a view-backed name is never "absent"; a core page never names a private package), and fail-loud README block replacement.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Real-git guard for the tracked-files scan: in a checkout, an untracked file declaring a table (build output) is never attributed, while the same tree exported without .git is walked in full.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | The DDL parser and the RLS classifier stopped being the generator's own copies; they are the data-model slice's, reached through scripts/schema-docs/kernel.js. These cases keep asserting the same behaviour, now against the one implementation the explorer also runs.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -14,10 +15,12 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 // The generator is CommonJS so it runs with plain node; load it the same way other specs do.
+// The DDL parser and the RLS classifier are NOT the generator's own any more - ./kernel is the one
+// bridge into the data-model feature slice - so requiring them here exercises the path the
+// generator itself takes, not a second copy.
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { parseCreateTable } = require('../../scripts/schema-docs/ddl-parse.js');
+const { parseCreateTable, classifyPolicy, summarizeRowAccess } = require('../../scripts/schema-docs/kernel.js');
 const { resolveTableName, detectEngine, scanCore, scanPackageRepo } = require('../../scripts/schema-docs/source-scan.js');
-const { classifyPolicy, summarizeRowAccess } = require('../../scripts/schema-docs/row-access.js');
 const { mermaidType, mermaidDiagram, replaceBlock, displayDefault } = require('../../scripts/schema-docs/render.js');
 const { buildModel, coOwners } = require('../../scripts/schema-docs/model.js');
 const { foldCatalog } = require('../../scripts/schema-docs/introspect.js');
