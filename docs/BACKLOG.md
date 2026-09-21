@@ -1583,6 +1583,30 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Kernel-versus-app bot boundary
 - **Remaining:** promote the implemented agent-ID kernel registry and bot-role posture, apply migration 099, rotate the shared-box `oshal_bot` password, run the deployed two-user bot-DSN RLS probe, and operationalize `OSHAL_OPERATOR_SUBS` denial review.
 - **Done when:** kernel boot cannot dispatch to an unregistered app agent, a real bot DSN has neither superuser nor RLS-bypass, two-user RLS passes, and legitimate operator/queue paths remain allowed.
+- **Decision (operator, 2026-09-21): ROTATE the `oshal_bot` password now, and review denials as a
+  weekly automated digest with immediate anomaly alerts.** Measured before deciding, because the
+  entry reads more alarming than the box is: PostgreSQL is published to **`127.0.0.1:55433` only**,
+  so nothing off this machine can reach it, and `oshal_bot` is `rolsuper=f rolbypassrls=f
+  rolcreatedb=f rolcreaterole=f`, so RLS applies to everything it reads. The exposure is that `.env`
+  sets no `BOT_DATABASE_URL`, so the DSN actually in use is the compose fallback
+  (`docker-compose.oshal-local.yml:395`, `:962`, `:2051`), whose password is committed in a public
+  repository — reachable only by something already executing on this box or inside the docker
+  network. That is hygiene, not an incident, and the operator chose to close it anyway. Rotation is
+  performed **by the operator**, never by an agent: `scripts/rotate-bot-role-password.sh` generates
+  the password locally, applies `ALTER ROLE`, proves the new password authenticates before it touches
+  anything else, appends `BOT_DATABASE_URL` to the untracked `.env`, recreates the bot tier and
+  prints nothing but health. One env var covers all three compose sites because they share the same
+  `${BOT_DATABASE_URL:-…}` default. The rotation survives a reboot: migration 099 sets a password
+  only at `CREATE ROLE`, and the boot-time provisioner's `ALTER ROLE` re-converges attributes and
+  grants, never the password. **Correction to this entry's premise:** the deployed two-user RLS probe
+  is NOT blocked on rotation — `tests/rls-two-role-isolation-live.spec.ts:69` reads
+  `OSHAL_RLS_PROBE_DATABASE_URL ?? BOT_DATABASE_URL` and needs only *a* credentialed DSN for the
+  role, which existed all along; it runs against the container-internal `oshal-db:5432`, never the
+  published host port. **Denial review:** `OSHAL_OPERATOR_SUBS` and execute-entitlement denials are
+  summarised weekly into the existing alert path (subject, entitlement, count), with an immediate
+  alert on an anomaly — a subject not seen before, a volume spike, or a denial on a path that should
+  always be allowed. (PM initially tied the RLS proof to the rotation; the operator challenged the
+  premise, and the measurement above is the corrected record.)
 
 ### Inline controller bot isolation
 - **Remaining:** move Codex-harness inline bots out of the controller, remove unnecessary `DATABASE_URL` inheritance, and attack each deployed harness for controller and cross-user secrets.
