@@ -1536,7 +1536,7 @@ including across a directory belonging to a different owner. Full reasoning and 
   instance on a separate machine with headroom — this development box runs the whole swarm in docker
   compose and will not host a cluster. Two consequences, both binding: (1) every Kubernetes-dependent
   clause of this entry is tagged for that machine and collected in
-  [kubernetes/remote-cluster-work-package.md](kubernetes/remote-cluster-work-package.md), which
+  [k8/remote-cluster-work-package.md](k8/remote-cluster-work-package.md), which
   carries the scope, the ordered work, the live proofs and an explicit out-of-scope list; an agent
   working on this box must SKIP cluster work and say so rather than installing k3s/kind/minikube or
   running `kubectl` here. (2) The part that needs no cloud and no cluster is proven here: the
