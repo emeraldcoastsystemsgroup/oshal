@@ -1219,6 +1219,23 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### The nightly gate runs against a saturated box, so its results are not trustworthy
 - **Remaining:** the 2026-09-08 run is the clearest evidence yet that the gate is measuring the host, not the code. It started at 23:30 while the full swarm, Docker Desktop and an editor were running; the box had **0.4 GB free of 15.7 GB**. `head-src` (a `git archive` plus `npm ci`) took **2144 s** and failed, which skipped seven gates including `unit` and `e2e-green`; `secret-scan` then logged `cannot allocate memory` against dozens of files it could not even read; `image-build` ran **55+ minutes** against the 68 s it took in the 10:28 manual run the same day; and the docker daemon returned `500` to an unrelated `docker ps` while it was in flight. A gate that cannot allocate memory does not report on the code — it reports on the host, and it does so in the same red that a real defect would use. This is a scheduling/host decision, not a code change: stop the swarm for the run, move the run to a quiet hour, raise the WSL memory ceiling (`.wslconfig`, not the Docker Desktop slider), or accept and label resource-caused failures distinctly.
 - **Done when:** a scheduled run completes without any `cannot allocate memory` in its log and with per-gate durations within the same order of magnitude as a manual run on an idle box; and resource-exhaustion failures are reported as a distinct outcome from gate failures, so an out-of-memory night can never again be read as a code regression.
+- **Decision (operator, 2026-09-21): AUTO-QUIESCE the worker tier for the run, and LABEL resource
+  exhaustion as its own outcome.** The nightly's own launcher stops the `oshal.tier=worker`
+  containers before the run and restores them afterwards (`scripts/oshal-up.sh`), guarded so a
+  crashed or killed run still restores the tier; the datastores, the api and the monitoring overlay
+  stay up, so overnight scheduled tasks and the cockpit keep working. `run_gate`
+  (`scripts/ci-local.sh:162`) gains a distinct `resource-exhausted` classification so an
+  out-of-memory night can never be read as a code regression. **Not** chosen, and why, from
+  measurements taken the night of 2026-09-20: moving the run to another hour does not change how
+  much memory the box has free, because the swarm runs 24/7; and RAISING the WSL ceiling would make
+  this worse rather than better — the gate that starves is `unit`, whose ~11 `node` workers run on
+  **Windows**, not inside the VM, so memory given to WSL is taken from exactly the process that is
+  short. Measured that night with the 36 worker containers stopped by hand at 23:24: the run
+  completed without wedging the engine (the failure mode of 2026-09-08), but the host still fell to
+  **0.35 GB free** during `unit`, which took **1918 s** — so quiescing the swarm is necessary and is
+  not by itself sufficient, and the done-when's "durations within the same order of magnitude as an
+  idle box" must be re-measured after this lands rather than assumed. (PM recommended exactly this
+  pairing; the operator chose it.)
 
 
 ### GitHub-side residue of the 2026-09-12 attribution scrub
