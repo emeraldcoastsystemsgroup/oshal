@@ -6,6 +6,7 @@
   1 | maintainer@emeraldcoastsystemsgroup.com   | Shared helpers for the Windows one-click installer: preflight probes, .env upsert, join-code codec, Docker host-path translation, health polling.
   2 | maintainer@emeraldcoastsystemsgroup.com   | Added system-facts doctor (RAM/disk/cores/ports), Headscale detection + preauth-key minting, and join-code v2 (carries the tailnet login server + authkey for off-LAN nodes).
   3 | maintainer@emeraldcoastsystemsgroup.com   | Doctor now checks the operator allowlist: isOperator() is fail-closed, so an empty OSHAL_OPERATOR_EMAILS locks everyone out of /api/join and the Security Center on a fresh install.
+  4 | maintainer@emeraldcoastsystemsgroup.com   | The join-code refusal and the busy-port doctor row name the product as it is called today. Both were the retired standalone form, and they are read at the two moments a first-time installer is already unsure whether they have the right thing.
 
   installer/lib/common.ps1 -- dot-sourced by install-swarm.ps1 and install-node.ps1.
 
@@ -257,7 +258,7 @@ function ConvertFrom-JoinCode {
         return @{ ControlPlaneUrl = $parts[0]; SharedSecret = $parts[1]; HeadscaleUrl = ''; HeadscaleAuthKey = '' }
     }
 
-    throw "Not an Open Swarm join code (expected it to start with OSJOIN1. or OSJOIN2.)"
+    throw "Not an oshal join code (expected it to start with OSJOIN1. or OSJOIN2.)"
 }
 
 # ---------------------------------------------------------------------------
@@ -511,7 +512,7 @@ function Get-DoctorReport {
         $rows += New-DoctorRow "Port $CockpitPort is free" 'ok'
     } else {
         $rows += New-DoctorRow "Something already listens on port $CockpitPort" 'warn' `
-            'If that is an older Open Swarm this install reuses it. Otherwise set OSHAL_API_PORT.'
+            'If that is an older oshal this install reuses it. Otherwise set OSHAL_API_PORT.'
     }
 
     return $rows

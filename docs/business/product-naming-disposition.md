@@ -42,6 +42,12 @@ Four classes, decided per occurrence rather than by a blanket rewrite.
 | [`site/oswarm.ai/README.md`](../../site/oswarm.ai/README.md) | its Naming bullet still instructed editors that the brand was "Open Swarm" and the brand domain `oswarm.ai` — current guidance that contradicted the directive |
 | `site/oswarm.ai/index.html` | an "open swarm" chip on the live page |
 | `packages/oshal-vids-operator/RECAP-SOP.md` | spoken line "I work with the open swarm" |
+| [`installer/install.ps1`](../../installer/install.ps1) | the graphical installer's window title, "Open Swarm - Install" — the first words on a fresh Windows box |
+| [`installer/lib/common.ps1`](../../installer/lib/common.ps1) | the join-code refusal ("Not an Open Swarm join code") and the busy-port doctor row ("If that is an older Open Swarm this install reuses it") |
+| [`installer/lib/install-node.ps1`](../../installer/lib/install-node.ps1) | the checkout-folder hint, the shortcut description, "look for the Open Swarm window", and the Desktop/Startup shortcut name "Open Swarm Node" |
+| [`installer/lib/install-swarm.ps1`](../../installer/lib/install-swarm.ps1) | the cockpit firewall rule's display name, "Open Swarm cockpit (\<port\>)" |
+| [`installer/Open-Swarm-Node.cmd`](../../installer/Open-Swarm-Node.cmd) | the launcher's console title (the FILENAME is class 1 and keeps its form) |
+| [`src/app/routes/chat-channel-routes.ts`](../../src/app/routes/chat-channel-routes.ts) | both replies an unlinked Telegram chat receives: "an Open Swarm account" and "Welcome to Open Swarm" |
 
 ## Generated artifacts — the generator was fixed, not the output
 
@@ -64,14 +70,41 @@ class-2 attached expansion, and `scripts/copyright-deposit.js` emits the sanctio
 | [`demo/trading-appliance/01-product-spec.md`](../../demo/trading-appliance/01-product-spec.md) | a superseded buyer-facing draft titled "OpenSwarm TradeBox" | a historical banner under the title; its sibling README already framed it as "kept as-authored" |
 | `any-bot/server/**` (7 files) | CHANGE LOG entries recording the pre-OSS rebrand of a legacy agent identity and namespace onto the neutral OSHAL namespace | each entry already names it as *legacy*, in quotes, in the past tense, inside the append-only change log — the house format's own record of a removal. This register deliberately does not repeat that name |
 | `scripts/site-oshal-report.js`, `scripts/site-lab-report.js` | the retired form quoted inside a CHANGE LOG entry describing its own removal | same: a change log is the record of the change |
+| [`installer/Open-Swarm-Node.cmd`](../../installer/Open-Swarm-Node.cmd) | the launcher's first CHANGE LOG entry, written when the product still carried that name | same: rewriting it would falsify the record. The guard over this file strips `REM`/`::` comments, so the entry neither trips it nor satisfies it |
 
 The legacy agent identity above survives in change-log prose only. No live identifier, image tag,
 container name, route, persona or user-facing string carries it, and nothing in the tree matches the
 operator identifier list enforced by `scripts/publish-gate.sh`.
 
-## Out of scope here
+## The two that were identities, not just copy (class 3, with an upgrade path)
 
-Product-code strings still using the standalone form — the installer's window title, desktop
-shortcut and firewall rule, and two Telegram reply strings — are shipped user-facing behaviour
-rather than docs or evidence, and renaming a shortcut or a firewall rule is an installer change with
-its own proof obligations. They are filed as their own backlog item.
+Two of the installer rows above were never only wording. Windows matches a firewall rule by its
+**DisplayName** and a shortcut by its **filename**, so on a machine installed before the rename
+those are identities that machine already carries. Changing the string alone would have left an
+upgraded box with two rules opening the cockpit port and two shortcuts to the same launcher — one
+of each still advertising the retired name, and the duplicate in the Startup folder launching the
+node a second time at every sign-in.
+
+**Decision (operator, 2026-09-20): rename in place on upgrade.** The installer looks the old
+firewall rule and the old `.lnk` up once, removes them, then creates the oshal-named ones, so an
+upgraded box ends with exactly one of each and no dual-name lookup survives past that migration.
+The alternative considered and rejected was leaving existing installs alone and using the new names
+only on fresh ones, which would have left the retired name visible on every box already in service.
+
+Those two lookups — `$legacyRuleName` in `install-swarm.ps1` and `$legacyShortcutName` in
+`install-node.ps1` — are the only places in the installer that still know the old name, and each is
+consumed by a removal rather than merely declared.
+
+## What keeps this closed
+
+- [`tests/unit/installer-scripts-parse.spec.ts`](../../tests/unit/installer-scripts-parse.spec.ts)
+  scans every installer script a Windows user runs and fails on the standalone form, permitting it
+  only on a `$legacy…` assignment; a second case asserts the upgrade actually removes the old
+  firewall rule and the old shortcut, from the Desktop **and** the Startup folder, before the
+  oshal-named ones are created.
+- [`tests/unit/node-installer.spec.ts`](../../tests/unit/node-installer.spec.ts) covers the strings a
+  route composes: the rendered one-click node installer, and the two Telegram replies.
+- The shared rule lives in
+  [`tests/helpers/retired-product-name.ts`](../../tests/helpers/retired-product-name.ts). It matches
+  the space-separated display form only, so the class-1 filenames cannot trip it, and excludes the
+  class-2 attached expansion and the attached mark by lookahead rather than by allowlist.

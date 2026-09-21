@@ -5,6 +5,7 @@
   -----------------------------------------------------------------------------
   1 | maintainer@emeraldcoastsystemsgroup.com   | WinForms install button: pick a role (run the swarm here / join a swarm), stream the chosen installer's output into a log pane, show the join code on success.
   2 | maintainer@emeraldcoastsystemsgroup.com   | Added the swarm options panel: live resource doctor, developer (hot-swap) toggle, and an explicit off-LAN prompt before any Headscale key is minted.
+  3 | maintainer@emeraldcoastsystemsgroup.com   | The window title names the product as it is called today. It was the retired standalone form, and it is the very first thing a person reads on a fresh Windows box.
 
   installer/install.ps1 -- the graphical front door. Launched by Install-OpenSwarm.bat.
 
@@ -536,7 +537,7 @@ function New-RunPanel {
 # ---------------------------------------------------------------------------
 
 $form = New-Object Windows.Forms.Form
-$form.Text = 'Open Swarm - Install'
+$form.Text = 'oshal - Install'
 $form.ClientSize = New-Object Drawing.Size(886, 486)
 $form.StartPosition = 'CenterScreen'
 $form.BackColor = $ColBg

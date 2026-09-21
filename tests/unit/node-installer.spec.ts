@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the one-click node installer: no swarm-wide secret in the download, a refusal when a per-device token would not be enough, and no way to break out of a PowerShell literal.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Followed installer/lib/install-node.ps1 off the swarm-wide secret. Three cases pinned the OLD contract - that the checkout installer still accepted a bare join code and a URL-plus-shared-secret - which is exactly the path that produced a node the control plane then refused at register. They now assert the opposite: one device-bound credential form, no fallback branch left, and a refusal that names the way out. The behaviour these read statically is EXECUTED in tests/unit/node-enrolment-installer.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | This file already held the only assertion in the tree about the retired standalone product name, and it pinned five words of one sentence ("Open Swarm folder") as a checkout-path tell - so the seven other retired-name strings in the same installer, and the two Telegram replies, sat uncovered behind a green test. That assertion now rejects the whole standalone form, and a second block covers the other user-facing strings a route composes: the unlinked-chat and welcome replies a Telegram user reads before they have any other idea what they are talking to.
  */
 
 /**
@@ -13,9 +14,11 @@
  * This route hands a person a file with a credential in it, so the interesting assertions are
  * about what the file must NOT contain and when the route must refuse rather than help.
  */
+import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { nodePackageSpec, renderNodeInstaller } from '@/app/routes/node-installer-routes';
 import { sharedSecretRetired } from '@/features/remote-client';
+import { findStandaloneNameUses } from '../helpers/retired-product-name';
 
 const VALID = {
   controlPlaneUrl: 'http://192.168.1.5:35457',
@@ -180,7 +183,11 @@ describe('the install path a bare machine can actually take', () => {
     expect(script).toContain('npm install -g $NodePackage');
     expect(script).toContain(VALID.nodePackage);
     expect(script).not.toContain('install-node.ps1');
-    expect(script).not.toMatch(/Open Swarm folder/);
+    // Was `not.toMatch(/Open Swarm folder/)` — a checkout-path tell that pinned FIVE words of one
+    // sentence. Any other retired-name string could ride along under it, and did: the checkout
+    // installer it warns about carried seven more. The checkout tell is now the absence of the
+    // whole standalone form, which is also the naming rule this file has to keep.
+    expect(findStandaloneNameUses(script), 'the rendered installer names the retired product').toEqual([]);
     expect(script).not.toContain('-JoinCode');
   });
 
@@ -326,5 +333,35 @@ describe('the package is publishable, which is what makes the npm path exist', (
     expect(setup).not.toContain('if (process.env.OSHAL_SKIP_CLI_SETUP)');
     const gate = setup.slice(setup.indexOf('function main()'), setup.indexOf('function main()') + 600);
     expect(gate).toMatch(/if \(!askedFor\)/);
+  });
+});
+
+// The other place this controller composes copy a stranger reads. A Telegram user who has not
+// linked their account yet sees exactly two sentences from us, and the product name in them was
+// the only name they had for what they were talking to -- and it was the retired standalone form.
+//
+// What this reads is the SHIPPED LITERALS, extracted from the module rather than grepped over the
+// whole file, so an append-only change log recording the old name cannot satisfy or trip it. It
+// does NOT drive the Telegram webhook, so it is evidence about the strings the route sends, not
+// about delivery; the transport is covered by tests/unit/chat-channels-telegram.spec.ts.
+describe('chat-channel replies name the product as it is called today', () => {
+  const ROUTE = 'src/app/routes/chat-channel-routes.ts';
+
+  /** Every quoted string in the module: the copy, with the prose about the copy left out. */
+  const literals = (): string[] => {
+    const source = fs.readFileSync(ROUTE, 'utf8');
+    const matched = source.match(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g) ?? [];
+    return matched;
+  };
+
+  it('finds the replies at all, so the guard cannot pass by covering nothing', () => {
+    const joined = literals().join('\n');
+    expect(joined, 'the unlinked-chat reply is gone or reworded').toMatch(/linked to an oshal account/);
+    expect(joined, 'the welcome reply is gone or reworded').toMatch(/Welcome to oshal\b/);
+  });
+
+  it('no reply string uses the retired standalone product name', () => {
+    const offenders = literals().filter((lit) => findStandaloneNameUses(lit).length > 0);
+    expect(offenders, `standalone retired product name in ${ROUTE}`).toEqual([]);
   });
 });

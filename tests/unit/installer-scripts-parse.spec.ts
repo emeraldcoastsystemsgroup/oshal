@@ -6,12 +6,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the installer going DEAD ON ARRIVAL. installer/lib/install-swarm.ps1 shipped `$env$env:FORCE_LLM_PROVIDER = 'noop'` (doubled sigil), which is a HARD PowerShell parse error: the whole script failed to parse, so Install-OpenSwarm.bat could not execute a single step and no Windows user could complete a clean install. Nothing caught it — the installer has no test, no typecheck, and no CI gate, so a one-character corruption sat there silently. This spec parse-checks every installer script (real PowerShell parser on win32; static corruption + brace-balance checks everywhere) and asserts the ADR-085 `--profile little-monsters` reference stays gone, so the front door can never silently stop opening again.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Gave the real-parser case an explicit 120s vitest timeout. It inherited the 5s default while costing ~4.6s under full-suite load, so it flapped red on `vitest run tests/unit` and green in isolation — a guard that cries wolf is a guard nobody reads.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The wizard-open case stops pinning port 35457. It matched a regex hardcoding that port and went red the moment oshal-install.sh built its URL from $COCKPIT_PORT - no defect, just a port that became configurable, which is the same shape as the pool-ceiling guard that pinned a file path. It now asserts the LINK that actually matters: a variable is assigned a .../welcome destination, and a browser-open line uses that variable. A dropped /welcome or an open that stops using it still fails.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added the standalone-product-name guard. Every string a Windows installer showed a person — the GUI window title, the join-code refusal, the busy-port advice, the "look for the … window" line, the Desktop/Startup shortcut, the firewall rule, the launcher's console title — still read the retired standalone name, and nothing would have gone red if the next one did too. The guard scans installer code for the space-separated display form, permitting it only where a `$legacy…` assignment feeds the one-time upgrade removal, and a second case asserts that the upgrade actually removes the old firewall rule and the old shortcut instead of leaving an upgraded box carrying both names.
  */
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { cmdCodeOnly, findStandaloneNameUses, isLegacyNameLookup } from '../helpers/retired-product-name';
 
 const REPO_ROOT = process.cwd();
 
@@ -222,6 +224,88 @@ describe('installer scripts stay executable', () => {
       ).toBe(true);
     },
   );
+});
+
+// The installer is where a person meets the product for the first time, and every string it showed
+// them still carried the retired standalone name long after the rename — a window title, a refusal,
+// a Desktop shortcut, a firewall rule. None of it was covered by anything, so the next one would
+// have shipped the same way. CLAUDE.md sanctions "oshal" and "open swarm oshal" only, and
+// grandfathers identifiers; these cases hold that line on the files a Windows user actually runs.
+describe('installer strings name the product as it is called today', () => {
+  /** The installer scripts a person executes: PowerShell plus the launcher the shortcut points at. */
+  const userFacingInstallerFiles = (): string[] => [
+    ...installerPowerShellFiles(),
+    ...[
+      path.join(REPO_ROOT, 'installer', 'Open-Swarm-Node.cmd'),
+      path.join(REPO_ROOT, 'scripts', 'oshal-install.sh'),
+      path.join(REPO_ROOT, 'scripts', 'install.sh'),
+    ].filter((f) => fs.existsSync(f)),
+  ];
+
+  /** Comments are stripped per language: a change log records what something USED to be called. */
+  const strip = (file: string, text: string) =>
+    (file.toLowerCase().endsWith('.cmd') ? cmdCodeOnly(text) : codeOnly(text));
+
+  it('covers the installer files a Windows user actually runs', () => {
+    const files = userFacingInstallerFiles().map((f) => path.basename(f));
+    // Pinning the set is what stops this guard from silently covering nothing — the failure mode
+    // that let a naming drift live in install-swarm.ps1 for months with a green suite.
+    for (const required of ['install.ps1', 'common.ps1', 'install-node.ps1', 'install-swarm.ps1', 'Open-Swarm-Node.cmd']) {
+      expect(files, `${required} is not being scanned`).toContain(required);
+    }
+  });
+
+  // Too loud is as expensive as too quiet, and this project has paid for both: the little-monsters
+  // check above flagged a legitimate bundle name while missing the dead profile entirely. CLAUDE.md
+  // sanctions the attached acronym expansion and the attached mark, and grandfathers identifiers —
+  // a guard that flagged any of those three would be "fixed" by deleting correct copy or renaming
+  // a filename an installed box points at.
+  it('tells a standalone use apart from the forms that are allowed to stay', () => {
+    expect(findStandaloneNameUses("$form.Text = 'Open Swarm - Install'")).toHaveLength(1);
+    expect(findStandaloneNameUses('OSHAL - Open Swarm Harness Agent LLM')).toEqual([]);
+    expect(findStandaloneNameUses('oshal (open swarm oshal)')).toEqual([]);
+    expect(findStandaloneNameUses('Re-run Install-OpenSwarm.bat to install it.')).toEqual([]);
+    expect(findStandaloneNameUses("Join-Path $RepoRoot 'installer\\Open-Swarm-Node.cmd'")).toEqual([]);
+  });
+
+  it.each(userFacingInstallerFiles())('%s uses no standalone retired product name', (file) => {
+    const offenders = findStandaloneNameUses(strip(file, fs.readFileSync(file, 'utf8')))
+      // The ONE exception, and it is structural rather than a per-file allowlist: the operator's
+      // 2026-09-20 decision is "rename in place on upgrade", so the installer still has to FIND
+      // what an older install left behind. Such a lookup assigns a `$legacy…` variable, and the
+      // case below proves each one is consumed by a removal rather than merely declared.
+      .filter((line) => !isLegacyNameLookup(line));
+    expect(offenders, `standalone retired product name in ${path.relative(REPO_ROOT, file)}`).toEqual([]);
+  });
+
+  // The decision the backlog entry was blocked on, expressed as behaviour: an upgraded box ends
+  // with ONE firewall rule and ONE shortcut. Windows matches a firewall rule by DisplayName and a
+  // shortcut by filename, so renaming the string without removing the old artifact leaves both
+  // behind — two rules opening the same port, and two Startup entries launching the node twice.
+  it('an upgrade REMOVES what an older install left under the old name', () => {
+    const swarm = codeOnly(fs.readFileSync(path.join(REPO_ROOT, 'installer', 'lib', 'install-swarm.ps1'), 'utf8'));
+    expect(swarm, 'the cockpit firewall rule is not oshal-named').toMatch(/\$ruleName\s*=\s*"oshal cockpit \(\$CockpitPort\)"/);
+    // Declared AND consumed. A legacy constant nobody removes is a rename that forgot half its job.
+    expect(swarm, 'the old firewall rule is never looked up').toMatch(/\$legacyRuleName\s*=/);
+    expect(swarm, 'the old firewall rule is looked up but never removed')
+      .toMatch(/Remove-NetFirewallRule\s+-DisplayName\s+\$legacyRuleName/);
+    // Order is the point: remove the old rule before deciding the new one already exists, or a
+    // re-install returns early and the old rule outlives the upgrade.
+    expect(swarm.indexOf('Remove-NetFirewallRule -DisplayName $legacyRuleName'))
+      .toBeLessThan(swarm.indexOf('New-NetFirewallRule -DisplayName $ruleName'));
+
+    const node = codeOnly(fs.readFileSync(path.join(REPO_ROOT, 'installer', 'lib', 'install-node.ps1'), 'utf8'));
+    expect(node, 'the launcher shortcut is not oshal-named').toMatch(/New-LauncherShortcut\s+-Directory\s+\$\w+\s+-Name\s+'oshal Node'/);
+    expect(node, 'nothing deletes the old .lnk').toMatch(/Remove-Item\s+-LiteralPath\s+\$legacyPath/);
+    // BOTH folders: the Desktop copy is the one a person sees, the Startup copy is the one that
+    // would silently start a second node at every sign-in.
+    for (const dir of ['$desktopDir', '$startupDir']) {
+      expect(node, `the old shortcut is never removed from ${dir}`)
+        .toContain(`Remove-LegacyLauncherShortcut -Directory ${dir}`);
+    }
+    expect(node.indexOf('Remove-LegacyLauncherShortcut -Directory $desktopDir'))
+      .toBeLessThan(node.indexOf("New-LauncherShortcut -Directory $desktopDir -Name 'oshal Node'"));
+  });
 });
 
 // A fresh Windows box is the install this project keeps losing. Both regressions below were
