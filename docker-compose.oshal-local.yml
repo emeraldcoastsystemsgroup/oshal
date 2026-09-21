@@ -36,6 +36,7 @@
 # 29 | maintainer@emeraldcoastsystemsgroup.com | Signed delegation, core queued ticket types (BACKLOG "Signed delegation refuses every ticket whose worker bot runs inline"): security-analyst and workflow-assistant get dedicated bot-node services. They own the queued 'security-finding' and 'workflow-build' ticket types, and with OSHAL_DELEGATION_SIGNING_* configured a worker without a dedicated endpoint is refused before execution. Both inherit x-bot-common/x-bot-env, so they receive the public verification ring and the service secret with no extra wiring, and neither takes a `profiles:` key — a core queued ticket type must not depend on an opt-in profile.
 # 30 | maintainer@emeraldcoastsystemsgroup.com | A bot's LLM provider is a row in a table (BACKLOG, operator 2026-09-17): removed the 18 per-service FORCE_LLM_PROVIDER: openai-codex / FORCE_LLM_MODEL: gpt-5.5 literal pairs that overrode the x-bot-env interpolation (${FORCE_LLM_PROVIDER:-openai-codex} / ${FORCE_LLM_MODEL:-gpt-5.5}). With FORCE_LLM_* unset (or set to those values, as the operator box has them) every service renders byte-identically; the difference is that a deployment can now move the env seed from .env, and a switch row's model is no longer fought by a literal gpt-5.5 (that literal is what produced 'models/gpt-5.5 is not found' when a bot was switched to gemini). The JARVIS_/SALES_ parameterised pairs stay. Guard: tests/unit/compose-bot-provider-literal.spec.ts.
 # 31 | maintainer@emeraldcoastsystemsgroup.com | The api boot no longer swallows a failed migration, a failed core-RLS enforce or a failed app-role provision. All three discarded their exit status — the migration runner's .catch() logged one line and let the boot continue, and the two governance scripts were followed by `|| echo '... (non-fatal)'` — so the api came up reporting healthy on a half-applied schema or an unprovisioned bot role, which is the same "reported success when it did nothing" shape as migration 099's swallowed GRANTs. Compose was the only one of the three deployment paths that did this: deploy/helm/oshal/templates/api.yaml:113-116 already exits 1 on each, and scripts/governance/bootstrap-managed-postgres.mjs fails the managed one-shot on each. This converges compose onto them. Guard: tests/unit/bot-role-grant-fail-loud-postgres.spec.ts.
+# 32 | maintainer@emeraldcoastsystemsgroup.com | x-bot-env: DB_MAX_CONNECTIONS, so the bot fleet has a DECLARED per-container Postgres ceiling instead of the code default of 5. Unset, the 38 bot-node services here could demand 190 connections from a role capped at 8, and a fleet boot produced FATAL too many connections for role "oshal_bot" in 24 of 36 containers - a pool outage that surfaced as an authorization-shaped refusal. Three per container is 114 for the whole fleet, which fits under the role's ceiling of 120 (docs/governance/app-role-provisioning.sql) and under max_connections=200 beside oshal_app's 24. The controller inherits this anchor but never reads the key: its own ceiling is OSHAL_DB_POOL_MAX. Guard: tests/unit/managed-postgres-pool-budget.spec.ts.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -95,6 +96,12 @@ x-bot-common: &bot-common
 # endpoints themselves enforce X-Service-Secret when SWARM_SERVICE_SECRET (below) is set.
 # Only the controller (oshal-api) keeps a host-published port.
 x-bot-env: &bot-env
+  # Per-container Postgres pool ceiling for a bot node (src/app/bot-node-database-pool.ts).
+  # DECLARED rather than left to the code default of 5, because the number that matters is the
+  # fleet's: 38 bot-node services times this ceiling has to fit inside oshal_bot's CONNECTION
+  # LIMIT. The controller inherits this anchor and ignores the key - its ceiling is
+  # OSHAL_DB_POOL_MAX.
+  DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-3}
   SERVICE_NAME: oshal
   SERVICE_DISPLAY_NAME: "OSHAL"
   SERVICE_TITLE: "OSHAL Control Plane"

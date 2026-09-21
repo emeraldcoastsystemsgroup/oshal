@@ -12,6 +12,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Check effective MAINTAIN privileges on PostgreSQL 17 and later while preserving PostgreSQL 16 ACL verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Approve the derived application-execution-ownership helper (migration 142): a fourth SECURITY DEFINER helper, and the second one oshal_bot may execute. The bot ACL check verifies an explicit set of bot helpers instead of one hard-coded signature, and the helper count message follows the approved set.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Close three measured bot gaps, in the one place a grant is durable. ticket_task_links gains SELECT(role), ticket_agent_assignments gains SELECT(ticket_id, agent_id, role), and agent_tools gains the four link columns its resolver selects: PostgreSQL requires SELECT on every column an ON CONFLICT DO UPDATE names, and both upserts were raising 42501 permission denied against the previous contract - measured by running the two statements as oshal_bot on a private server with the shipped migrations, which is also what tests/unit/bot-statement-privilege-contract.spec.ts now does on every run. Approves the derived swarm-memory reader helper (migration 152) as a fifth SECURITY DEFINER helper and the third one oshal_bot may execute, so durable recall works with oshal_swarm_memory still entirely outside the contract. The two allowlist maps are exported so a guard can grant exactly this contract rather than a copy of it that drifts.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -20,25 +21,47 @@ import pg from 'pg';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sqlPath = path.resolve(here, '../../docs/governance/app-role-provisioning.sql');
-const EXPECTED_HELPERS = new Set([
+/** Every approved SECURITY DEFINER helper, exported so a fixture can seed exactly this set. */
+export const EXPECTED_HELPERS = new Set([
   'oshal_is_tenant_member(text)',
   'oshal_owns_task(text)',
   'oshal_owns_ticket(uuid)',
   'oshal_application_execution_claims(text,text,text,boolean)',
+  'oshal_swarm_memory_readable(text[],text)',
 ]);
 /** The derived helpers oshal_bot may execute. Every other function stays private to the bot. */
 const BOT_HELPERS = new Set([
   'oshal_owns_ticket(uuid)',
   'oshal_application_execution_claims(text,text,text,boolean)',
+  'oshal_swarm_memory_readable(text[],text)',
 ]);
 const FINAL_PHASE_BEGIN = '-- OSHAL_FINAL_PHASE_BEGIN';
 const FINAL_PHASE_END = '-- OSHAL_FINAL_PHASE_END';
-const BOT_TABLE_PRIVILEGES = new Map([
+/**
+ * The per-role connection ceilings this provisioner converges to, and the ones
+ * docs/governance/app-role-provisioning.sql sets. oshal_bot's is sized to the declared bot fleet
+ * (38 bot-node services at DB_MAX_CONNECTIONS=3, plus spare for the one-shot callers) rather than
+ * to a round number, and still fits inside max_connections=200 beside oshal_app's 24. Exported so
+ * tests/unit/managed-postgres-pool-budget.spec.ts can derive the fleet budget from one place.
+ */
+export const ROLE_CONNECTION_LIMITS = Object.freeze({ oshal_app: 24, oshal_bot: 120 });
+
+/**
+ * Table-wide privileges oshal_bot holds. Exported so a guard can provision exactly this contract
+ * against a real server instead of asserting over a copy of it that drifts out of step.
+ */
+export const BOT_TABLE_PRIVILEGES = new Map([
   ['persona_layers', new Set(['SELECT'])],
   ['work_items', new Set(['SELECT'])],
   ['tickets', new Set(['SELECT'])],
 ]);
-const BOT_COLUMN_PRIVILEGES = new Map([
+/**
+ * The column allowlist, per table and per verb. This is the durable place: the role SQL revokes
+ * everything from oshal_bot on every api boot and re-applies exactly what is listed here and in
+ * docs/governance/app-role-provisioning.sql, so a hand-typed GRANT is gone by the next restart.
+ * Exported for the same reason as BOT_TABLE_PRIVILEGES.
+ */
+export const BOT_COLUMN_PRIVILEGES = new Map([
   ['agents', {
     SELECT: new Set([
       'agent_id', 'name', 'status', 'api_provider_id', 'model_id', 'persona', 'metadata',
@@ -54,7 +77,11 @@ const BOT_COLUMN_PRIVILEGES = new Map([
     ]),
   }],
   ['agent_tools', {
-    SELECT: new Set(['agent_id', 'tool_id', 'auth_mode', 'installed']),
+    // The tool resolver selects the whole link row; installed_at is not selected and stays out.
+    SELECT: new Set([
+      'agent_id', 'tool_id', 'auth_mode', 'installed', 'install_verified', 'tool_config',
+      'created_at', 'updated_at',
+    ]),
   }],
   ['work_items', {
     UPDATE: new Set(['status', 'assigned_agent_id', 'execution_output', 'updated_at']),
@@ -89,7 +116,9 @@ const BOT_COLUMN_PRIVILEGES = new Map([
     ]),
   }],
   ['ticket_task_links', {
-    SELECT: new Set(['task_id', 'ticket_id']),
+    // ON CONFLICT (task_id, ticket_id) DO UPDATE SET role = EXCLUDED.role needs SELECT on all
+    // three columns the statement names; created_at is never named, so it stays out.
+    SELECT: new Set(['task_id', 'ticket_id', 'role']),
     INSERT: new Set(['task_id', 'ticket_id', 'role']),
     UPDATE: new Set(['role']),
   }],
@@ -97,7 +126,9 @@ const BOT_COLUMN_PRIVILEGES = new Map([
     INSERT: new Set(['ticket_id', 'from_status', 'to_status', 'changed_by', 'changed_by_label', 'metadata']),
   }],
   ['ticket_agent_assignments', {
-    SELECT: new Set(['phase']),
+    // Same statement shape, same rule: the three conflict-target columns plus `phase`, which the
+    // update expression's COALESCE reads. assigned_at stays out.
+    SELECT: new Set(['ticket_id', 'agent_id', 'role', 'phase']),
     INSERT: new Set(['ticket_id', 'agent_id', 'role', 'phase']),
     UPDATE: new Set(['phase']),
   }],
@@ -452,7 +483,7 @@ async function verifyPosture(client, bootstrap, phase) {
   `);
   if (roles.rowCount !== 2) fail('both oshal_app and oshal_bot must exist');
   for (const role of roles.rows) {
-    const expectedConnectionLimit = role.rolname === 'oshal_app' ? 24 : 8;
+    const expectedConnectionLimit = ROLE_CONNECTION_LIMITS[role.rolname];
     const expectedCanLogin = role.rolname === 'oshal_bot' ? phase === 'final' : true;
     if (role.rolcanlogin !== expectedCanLogin || role.rolsuper || role.rolcreatedb || role.rolcreaterole
       || role.rolbypassrls || role.rolreplication || role.rolinherit
@@ -535,7 +566,8 @@ async function verifyPosture(client, bootstrap, phase) {
      WHERE n.nspname = 'public'
        AND (
          p.prosecdef
-         OR p.proname IN ('oshal_is_tenant_member', 'oshal_owns_task', 'oshal_owns_ticket', 'oshal_application_execution_claims')
+         OR p.proname IN ('oshal_is_tenant_member', 'oshal_owns_task', 'oshal_owns_ticket',
+                          'oshal_application_execution_claims', 'oshal_swarm_memory_readable')
        )
      ORDER BY signature
   `);

@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Attach the principal-qualified app-access proofs beside package-plan and readiness regressions.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Register issuer pool reset, lifecycle authority and reviewed package assignment browser regressions.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Register the bot-role grant fail-loud proof beside the least-privilege shape guard: migration 099 wrapped every GRANT in an exception handler that degraded to a NOTICE, so the file recorded as applied whether or not the privileges landed. The new spec applies the real migration to a real disposable PostgreSQL as a real under-privileged login.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Register the bot statement privilege contract: the guard that provisions a real oshal_bot from the shipped grant text and runs every statement a bot container issues, which is what caught three open grant gaps that every existing guard over this contract was blind to.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -80,6 +81,7 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/authorization-policy.spec.ts' },
     { level: 'unit', path: 'tests/unit/bot-db-least-privilege.spec.ts' },
     { level: 'integration', path: 'tests/unit/bot-role-grant-fail-loud-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/bot-statement-privilege-contract.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-postgres-provisioning.spec.ts' },
     { level: 'unit', path: 'tests/unit/authorization-contract-files.spec.ts' },
     { level: 'integration', path: 'tests/unit/authorization-postgres-integration.spec.ts' },
