@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Redact POSTGRES_PASSWORD out of the setup-failure message. execFileSync reports the failing command as its message, so appending it printed the fixture credential the line above promises never to echo - the diagnostic stays, the value does not.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Extra LOGIN roles, because the one thing this fixture could not host was a spec whose SUBJECT is the enforcing role. A private server has only the superuser `postgres`, and a superuser bypasses row-level security unconditionally - so a FORCE-RLS assertion made over it passes for the wrong reason and proves nothing. That is why trading-book-report-scripts still resolved an oshal_app DSN out of the environment (and, failing that, out of the operator's .env) long after its sibling specs stopped: converting it onto a superuser-only fixture would have quietly made every RLS assertion in the file vacuous. `roles:` creates NOSUPERUSER NOBYPASSRLS LOGIN roles once the server answers and before migrations run, each with a password minted here like the superuser's - never a literal, never inherited from the environment - and hands back a pool/connection per role. Role pools deliberately do NOT inherit the fixture's libpq `options`: `-c row_security=off` on a non-privileged role turns an enforced read into an error instead of a filtered result.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The failure redaction now scrubs minted secrets BY VALUE as well as by the `POSTGRES_PASSWORD=` shape. A role password reaches the server inside a CREATE ROLE statement rather than a docker argv, so the entry-2 pattern would not have caught it; scrubbing the values the fixture generated covers both shapes and any future one.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Remove the container's anonymous volumes with it. This fixture mounts a tmpfs over `postgres:16-alpine`'s declared data directory, so today it mints no anonymous volume at all (measured: the running container's Mounts list is empty, and the machine's volume count is unchanged across a start/stop) - but that is a property of the image tag, not of the removal. `postgres:18` moved its data directory to `/var/lib/postgresql/18`, which this tmpfs does not cover, and two anonymous volumes holding exactly that layout were found on the dev box; on the day the tag moves, a `docker rm --force` without `--volumes` starts leaking one volume per start. The Redis sibling was already leaking for that reason. `--volumes` removes anonymous volumes only, never a named one.
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -289,9 +290,10 @@ export class DisposablePostgres {
   }
 
   /**
-   * @description End every pool — the superuser's and each role's — and force-remove the container.
-   * Safe to call twice and safe to call after a failed start: the container is removed whenever
-   * `docker run` returned at all, and the roles go away with the server that held them.
+   * @description End every pool — the superuser's and each role's — and force-remove the container
+   * together with any anonymous volume it mounted. Safe to call twice and safe to call after a
+   * failed start: the container is removed whenever `docker run` returned at all, and the roles go
+   * away with the server that held them.
    * @returns Nothing.
    */
   async stop(): Promise<void> {
@@ -308,7 +310,7 @@ export class DisposablePostgres {
       this.connectionValue = undefined;
       this.roleConnections.clear();
       if (this.started) {
-        try { docker(['rm', '--force', this.containerName], 60_000); } catch { /* an --rm container may already be gone */ }
+        try { docker(['rm', '--force', '--volumes', this.containerName], 60_000); } catch { /* an --rm container may already be gone */ }
         this.started = false;
       }
       this.slot?.release();

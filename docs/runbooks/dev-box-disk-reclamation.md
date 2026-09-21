@@ -45,11 +45,24 @@ of the live database into a freshly created throwaway database, checks the row c
 again. These three survived runs on 2026-07-25, 2026-08-06 and 2026-08-17.
 
 **305 anonymous Docker volumes (dangling).** An anonymous volume has a 64-character hexadecimal
-name instead of a readable one. The Postgres test fixture `tests/helpers/disposable-postgres.ts`
-starts a throwaway Postgres container per test run and removes it with `docker rm --force`
-(line 311) — without `--volumes`, so the data volume the postgres image declares is left behind on
-every dispose. Their creation dates matched test-run days (35 on 2026-09-15, 67 on 2026-09-20,
-26 on 2026-09-21 UTC), and a sample mounted read-only held a Postgres data directory.
+name instead of a readable one. A throwaway test fixture starts a container per test run and used to
+remove it with `docker rm --force` — without `--volumes`, so any volume the image declares for its
+data directory is left behind on every dispose. Their creation dates matched test-run days (35 on
+2026-09-15, 67 on 2026-09-20, 26 on 2026-09-21 UTC).
+
+**Which fixture, measured 2026-09-21.** This runbook first named the Postgres fixture, and that was
+wrong. `tests/helpers/disposable-postgres.ts` mounts a **tmpfs** over the data directory
+`postgres:16-alpine` declares, so the daemon mints no volume for it at all: a container started with
+exactly the fixture's arguments reports an empty `Mounts` list and the machine's `docker volume ls -q`
+count is unchanged across its whole lifetime. The leaker was its Redis sibling,
+`tests/helpers/disposable-redis.ts` — `redis:7-alpine` declares `VOLUME /data`, the fixture mounts
+nothing there, and the listing went 168 → 169 on start and **stayed** at 169 after the old removal.
+Both helpers now remove with `--volumes` (169 → 168), and `tests/unit/disposable-fixture-volume-residue.spec.ts`
+holds the line against the real daemon. Two caveats that keep the Postgres half worth the flag: a
+Postgres container run **without** that tmpfs does leak under the old removal (measured: 170 → 171,
+still listed after `docker rm --force`), and `postgres:18` moved its data directory to
+`/var/lib/postgresql/18`, which the current tmpfs would not cover — two anonymous volumes holding
+exactly that layout were among the survivors on this box.
 
 ## Stage one — reclaim inside the virtual disk (done 2026-09-20 ~22:55, box-local)
 
@@ -222,9 +235,12 @@ docker exec oshal-local-db psql -U oshal -d postgres -tAc \
 
 Anything listed is an orphan; drop it with the `DROP DATABASE` command from stage one.
 
-**The fixture volume leak — open.** It stays open until `tests/helpers/disposable-postgres.ts`
-passes `--volumes` to its `docker rm --force`. Until then, after heavy test runs, re-run the
-anonymous-volume list and remove step from stage one (step 4).
+**The fixture volume leak — closed 2026-09-21.** `tests/helpers/disposable-redis.ts` (the actual
+leaker) and `tests/helpers/disposable-postgres.ts` both pass `--volumes` to their `docker rm --force`,
+and `tests/unit/disposable-fixture-volume-residue.spec.ts` asserts against the real daemon that
+`docker volume ls -q` lists none of a disposed fixture's volumes — on the force-remove path and on
+the `--rm` autoremove path. The stage-one anonymous-volume step still applies to whatever predates
+the fix, and to any container started outside those two helpers.
 
 **Monthly check.** Three commands:
 
