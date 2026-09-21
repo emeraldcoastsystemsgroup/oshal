@@ -3,8 +3,8 @@
  "source": "docs/BACKLOG.md",
  "method": "read-only investigation; done/stale closed only if two independent refuting verifiers both confirmed",
  "tally": {
-  "actionable": 140,
-  "operator": 71,
+  "actionable": 144,
+  "operator": 67,
   "blocked": 11,
   "live-proof": 46,
   "done": 1,
@@ -428,7 +428,7 @@
   {
    "title": "CI secret-scanner remote mutation proof",
    "section": "Promotion, deployment, and regression proof",
-   "final": "operator",
+   "final": "actionable",
    "verdict": "operator",
    "why": "A remote proof needs a hosted GitHub Actions run of the gitleaks job. Every workflow that runs it is manual-dispatch-only because hosted-runner minutes are the account's binding constraint. The proof also means pushing a secret-shaped fixture to this public repo. The fail-closed pre-push publish gate exists to refuse that push, and it must not be bypassed. The history scan uses `--log-opts=--all`, so the planted commit would stay scannable, and fetchable by SHA, after the fact. Only the operator can authorise the spend and the push, or re-scope the proof to the local ci-local secret-scan gate.",
    "evidence": ".github/workflows/ci.yml:41-42 and .github/workflows/security.yml:23-24 are both `on: workflow_dispatch` only ('MANUAL ONLY', operator decision 2026-08-06). security.yml:158-181 runs gitleaks `detect --log-opts=\"--all\"` over full history plus a `--no-git` worktree pass. publish-gate.yml runs scripts/publish-gate.sh on pull_request, and that gate scans vendor-prefixed credentials (publish-gate.sh changelog entry 1). The archived history (docs/backlog/archive/2026-08-05-partial-item-history.md:783-787) records run 29048082693 green, with 'a real planted test secret makes secret-scan red (still open)'.",
@@ -437,7 +437,8 @@
    "repo": "core",
    "blockedBy": null,
    "operatorAsk": "Do you approve (a) one paid workflow_dispatch run of the Security or CI secret-scan job on a disposable branch, and (b) pushing a synthetic secret-shaped fixture to the public oshal repo past the pre-push publish gate, with the branch deleted afterwards? Or do you re-scope the done-when to a planted-fixture fail-then-pass of the local `ci-local.sh` secret-scan gate?",
-   "verifyReasons": null
+   "verifyReasons": null,
+   "decision": "RE-SCOPED to the local ci-local.sh secret-scan gate (planted fixture red->green in a throwaway export, never pushed); LOW priority - only when the box has headroom (operator, 2026-09-20)"
   },
   {
    "title": "Build-phase escalation golden run",
@@ -526,7 +527,7 @@
   {
    "title": "Dev-box disk reclamation",
    "section": "Promotion, deployment, and regression proof",
-   "final": "operator",
+   "final": "actionable",
    "verdict": "operator",
    "why": "Closing this means dropping a database and deleting images/volumes on the shared dev box, with pre/post disk figures. The repo does not name the 'confirmed orphan restore database', and the only broad cleanup script uses the global prune the entry forbids. A human has to confirm the target and approve the destructive step. Extending the scoped cleanup code is a small agent task.",
    "evidence": "`git grep -iE 'orphan restore|restore database'` hits only docs/BACKLOG.md:402, so the orphan is never identified. scripts/docker-cleanup.sh runs `docker image prune -a`, `docker builder prune -a -f` and a global `docker volume prune -f` (script lines ~86-107), the bare global prune the entry forbids. The scoped path is scripts/ci-local.sh:540-544 prune_scoped: dangling images and builder cache only, with no OSHAL image/volume classification. scripts/evidence/prove-local-selfhost-live.ts:95-111 creates `oshal_restore_smoke_<ts>` DBs and drops them in a finally block.",
@@ -535,7 +536,8 @@
    "repo": "core",
    "blockedBy": null,
    "operatorAsk": "Name the orphan restore database, or approve an agent listing the databases in oshal-local-db so you can confirm which one it is. Then approve dropping exactly that one and a scoped OSHAL image/volume cleanup, with `docker system df` captured before and after.",
-   "verifyReasons": null
+   "verifyReasons": null,
+   "decision": "APPROVED in two stages: stage one (three named oshal_restore_smoke_* databases dropped, 305 leaked fixture volumes and dangling images removed) RUN 2026-09-20 22:55; stage two (diskpart compact with Docker stopped) scheduled, operator-run; runbook docs/runbooks/dev-box-disk-reclamation.md (PR #692) (operator, 2026-09-20)"
   },
   {
    "title": "Real-boundary regression doctrine",
@@ -554,7 +556,7 @@
   {
    "title": "Installer and chat-channel strings still use the retired standalone product name",
    "section": "Promotion, deployment, and regression proof",
-   "final": "operator",
+   "final": "actionable",
    "verdict": "operator",
    "why": "Every string the entry lists still reads 'Open Swarm', and the guard and register updates have not been made. The done-when explicitly needs a recorded upgrade-path decision for the shortcut and firewall-rule names on boxes that already carry them. The firewall rule is matched by display name, so renaming it without a decision leaves a duplicate rule on upgraded boxes. The string, guard and register work (M) can follow the decision.",
    "evidence": "`git grep -n 'Open Swarm' -- installer src/app/routes/chat-channel-routes.ts`: installer/install.ps1:539; installer/lib/common.ps1:260,514; installer/lib/install-node.ps1:182,221,272,287,296; installer/lib/install-swarm.ps1:374 (also :378 'Install-OpenSwarm.bat'); installer/Open-Swarm-Node.cmd:14; src/app/routes/chat-channel-routes.ts:108,125. install-swarm.ps1:381-382 looks up the existing rule by the old DisplayName. docs/business/product-naming-disposition.md:72-77 still lists these rows under 'Out of scope here'. tests/unit/installer-scripts-parse.spec.ts has no standalone-name guard; the only related assertion, node-installer.spec.ts:165, covers the rendered npm node installer.",
@@ -563,7 +565,8 @@
    "repo": "core",
    "blockedBy": null,
    "operatorAsk": "For boxes installed under the old names, choose one: (a) rename in place on upgrade (remove the 'Open Swarm cockpit (<port>)' firewall rule and the 'Open Swarm Node' Desktop shortcut, then create the oshal-named ones), or (b) leave existing installs alone and use the new names only on fresh installs.",
-   "verifyReasons": null
+   "verifyReasons": null,
+   "decision": "(a) RENAME IN PLACE ON UPGRADE - installer looks up old-or-new name, removes the old rule/shortcut, creates the oshal-named ones; then an ordinary M queue item (operator, 2026-09-20)"
   },
   {
    "title": "Nightly gate has a twelve-night failure streak",
@@ -596,7 +599,7 @@
   {
    "title": "Monitoring overlay does not survive an ungraceful engine stop (BUG-21 tail)",
    "section": "Promotion, deployment, and regression proof",
-   "final": "operator",
+   "final": "actionable",
    "verdict": "operator",
    "why": "Nothing runs the liveness check unattended. The entry itself leaves the decision open for the operator, because the watchdog that could run it is paused by operator request and Docker must not start by itself. The done-when also needs a deliberate ungraceful Docker VM kill on the shared dev box.",
    "evidence": "`git grep -l monitoring-liveness-check -- scripts ops tests` finds only scripts/monitoring-liveness-check.sh and scripts/oshal-up.sh, so the only caller is the manual bring-up. scripts/oshal-stack-watchdog.ps1:88 exits when stack-watchdog.pause is present, and that file exists under %LOCALAPPDATA%\\oshal\\. docker-compose.monitoring.yml:67 and :133 set restart: unless-stopped. No commit after f4c6b15d (#440) and 9984375d (#446), which only record the symptom, changes this.",
@@ -605,7 +608,8 @@
    "repo": "core",
    "blockedBy": null,
    "operatorAsk": "Decide what may run `scripts/monitoring-liveness-check.sh --strict` unattended while the stack watchdog stays paused. For example, an observe-only scheduled task that exits quietly when the engine is down and never starts Docker. Also authorize one deliberate ungraceful Docker VM stop on the dev box, so the fix can be proven across the restart boundary.",
-   "verifyReasons": null
+   "verifyReasons": null,
+   "decision": "YES to both: observe-only inside the paused watchdog (never starts Docker, alerts via existing email+event log); ONE deliberate ungraceful engine stop authorized, PM schedules it on a quiet slot; then an ordinary M queue item (operator, 2026-09-20)"
   },
   {
    "title": "DB-backed alert specs borrow the operator's database",

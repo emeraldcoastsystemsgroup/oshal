@@ -1097,6 +1097,18 @@ including across a directory belonging to a different owner. Full reasoning and 
   2026-08-07 (`scripts/oshal-stack-watchdog.ps1`, pause file under `%LOCALAPPDATA%\oshal\`) because
   Docker must not start by itself, so anything that closes this has to observe without starting the
   engine.
+- **Decision (operator, 2026-09-20): YES to both.** (1) Observe-only lives INSIDE the paused stack
+  watchdog (`scripts/oshal-stack-watchdog.ps1`): the pause file keeps its meaning -- never
+  `docker start`, never launch Docker Desktop -- but a paused run still executes
+  `scripts/monitoring-liveness-check.sh --strict` and, when it is red, raises through the alert path
+  the watchdog already has (best-effort email via the api container plus a Windows event-log entry);
+  engine down means log and exit quietly. No new scheduled task. A guard proves the pause file
+  blocks every start action. (2) ONE deliberate ungraceful engine stop is authorized
+  (`wsl --shutdown` with the stack up), scheduled by the PM on a quiet slot -- outside market hours,
+  queue idle, a Saturday or right after a nightly -- with the recovery sequence at hand; pass is
+  Prometheus and Alertmanager back within one scrape interval with no `oshal-up.sh`. Diagnosing why
+  exit 255 defeats `unless-stopped` stays the first work item. Then an ordinary M queue item.
+  (PM recommended exactly this; the operator agreed.)
 
 ### DB-backed alert specs borrow the operator's database
 - **The borrowing is already gone (2026-09-11, e9179047).** Both specs own a private PostgreSQL:
