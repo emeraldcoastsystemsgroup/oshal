@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the two readiness probes the first Docker Desktop Kubernetes install (2026-09-21) found could never pass, which left `helm --wait` to time out and each Service with no endpoints. (a) ArangoDB: the probe asked /_api/version, which ArangoDB authenticates once a root password is set (and the chart sets one), so it got 401 forever and the graph tier was unreachable; it must ask /_admin/server/availability, which ArangoDB serves without auth. (b) speaker-diarization: /health is key-authenticated behind Starlette's TrustedHostMiddleware, so a bare kubelet probe (Host = pod IP, no key) got refused forever. The probe must carry the service's key header with the SAME value the container is given, and a Host the service admits. Both halves are read from the service's own Python source (header name, key env, allowlist env, default allowlist, /health's authentication), not copied, so a renamed header or a narrowed allowlist goes red here instead of on a cluster. Renders the REAL chart; no helm is a loud failure.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The ArangoDB precondition (a root password is set, so /_api/version answers 401) reads the password through the render: chart 0.5.0 moved it from a literal env value to a secretKeyRef into the oshal-shared-secret Secret, and a literal-only read would see no password and fail on a working chart.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Chart 0.5.0 adds liveness and startup probes. ArangoDB's case already covered every probe kind; the speaker-diarization case now requires a liveness probe and holds EVERY probe on the container to the same path, key header and Host as readiness - an unauthenticated liveness probe would fail forever and restart the pod in a loop.
  */
 
 import fs from 'node:fs';
@@ -130,6 +131,16 @@ describe('speaker-diarization readiness probe satisfies the service it probes', 
     const host = header(get, 'host');
     expect(host, 'no Host header: the kubelet would send the pod IP, which the allowlist refuses').toBeTruthy();
     expect(allowed, `Host ${host} is not admitted by the service's allowlist`).toContain(String(host).replace(/:\d+$/, ''));
+    // Liveness and startup ask the same authenticated endpoint; without the key and Host they
+    // would fail forever too, and a failing liveness probe restarts the pod in a loop.
+    const kinds = PROBE_KINDS.filter((k) => c[k]);
+    expect(kinds, 'the diarization container has no liveness probe').toContain('livenessProbe');
+    for (const kind of kinds) {
+      const g = c[kind].httpGet;
+      expect(g?.path, `${kind} asks another path`).toBe(service.healthPath);
+      expect(header(g, service.keyHeader), `${kind} does not send ${service.keyHeader}`).toBe(key);
+      expect(header(g, 'host'), `${kind} sends another Host`).toBe(host);
+    }
   }, RENDER_TIMEOUT_MS);
 
   it('the key header follows infra.diarization.serviceKey rather than a literal', () => {

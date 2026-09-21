@@ -8,6 +8,7 @@
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the rbac.botLauncher comment records that the api keeps BOT_DATABASE_URL with the launcher off (templates/api.yaml SEQ 6): its bootstrap provisions oshal_bot for the chart-declared bots and refused to start without it. Guard: tests/unit/chart-bootstrap-env.spec.ts.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — infra.postgres.appPassword / botPassword (dev defaults oshal-app-dev / oshal-bot-dev): the oshal_app and oshal_bot passwords get a values path. api.yaml hardcoded oshal_app:oshal-app-dev, so the only escape was taking Postgres out of the cluster. jwtSecret, arangodb.rootUser/rootPassword and botDatabaseUrl are now rendered into chart-managed Secrets instead of the ConfigMap or literal env (templates/secrets.yaml), and the swarm.extraEnv comment records that the render refuses a chart-owned or credential-shaped key there. Guard: tests/unit/chart-credentials.spec.ts.
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — infra.vault leaves dev mode: devRootToken is gone, and storage / ui / tls (enabled, secretName) configure a server-mode Vault on its own claim. tls defaults off (plain in-cluster listener) and the backup destination is unset, both because the operator has not named them yet; the comments say so. Guard: tests/unit/chart-vault-server.spec.ts.
+# 7 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — production-readiness baseline: resources (requests cpu+memory, a memory limit) for the nine infra workloads (infra.<name>.resources) and the relay's two containers; storageClassName chart-wide plus a per-claim override (infra.<name>.storageClassName, api.outputStorageClassName, swarm.workspaceStorageClassName, relay.stateStorageClassName), empty = the cluster default; pinned tags for every floating infra image (timescaledb 2.30.1-pg16, code-server 4.138.0, speaker-diarization 2.1.0-beta.1, ollama 0.34.2, tailscale v1.102.4, socat 1.8.1.3 - each the tag whose digest the floating tag resolved to on 2026-09-21, checked read-only against the registry); infra.diarization.pullPolicy so the registry sidecar no longer inherits a side-loaded platform image's Never. Guard: tests/unit/chart-production-baseline.spec.ts.
 #
 # Defaults model the compose stack (docker-compose.oshal-local.yml) with DNS parity:
 # Services are named oshal-redis / oshal-db / oshal-chromadb / oshal-api / oshal-local-api
@@ -30,6 +31,13 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
+# StorageClass for EVERY claim the chart creates (the PVCs and each StatefulSet's
+# volumeClaimTemplate). Empty = omitted = the cluster's default class. Each claim
+# also has its own override (infra.<name>.storageClassName, api.outputStorageClassName,
+# swarm.workspaceStorageClassName, relay.stateStorageClassName), which wins over this.
+# A StatefulSet's claim template is immutable: set this before the first install.
+storageClassName: ""
+
 # ── Tailnet (headscale) — used only when relay.enabled ────────────────────────
 tailnet:
   loginServer: "https://headscale.example.com"
@@ -49,8 +57,16 @@ tailnet:
 # REQUIRES it — that role's entire transport is the relay).
 relay:
   enabled: false
-  tailscaleImage: tailscale/tailscale:stable
-  socatImage: alpine/socat:latest
+  # Pinned tags (the floating :stable / :latest resolved to these on 2026-09-21).
+  tailscaleImage: tailscale/tailscale:v1.102.4
+  socatImage: alpine/socat:1.8.1.3
+  stateStorageClassName: ""
+  tailscaleResources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { memory: 256Mi }
+  forwarderResources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { memory: 64Mi }
   # main role: listeners the tailnet can reach, forwarded to in-cluster Services.
   # (Bots on contributor clusters dial mainRelayIP:6379 / :5000.)
   inbound:
@@ -89,14 +105,26 @@ infra:
     appPassword: oshal-app-dev
     botPassword: oshal-bot-dev
     storage: 8Gi
+    storageClassName: ""
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 2Gi }
   redis:
     inCluster: true
     image: redis:7-alpine
     storage: 2Gi
+    storageClassName: ""
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { memory: 1Gi }
   chromadb:
     inCluster: true
     image: chromadb/chroma:0.4.24
     storage: 4Gi
+    storageClassName: ""
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 2Gi }
   # ── The rest of the shared-service tier ────────────────────────────────────
   # These carry NO compose profile: they start on every default `docker compose
   # up`, which makes them core framework, not extras. Omitting them ships a
@@ -107,11 +135,20 @@ infra:
   tsdb:
     # TimescaleDB — the trading/world series store (compose oshal-tsdb).
     inCluster: true
-    image: timescale/timescaledb:latest-pg16
+    # Pinned (latest-pg16 resolved to this digest on 2026-09-21).
+    image: timescale/timescaledb:2.30.1-pg16
     database: oshal_ts
     user: oshal
     password: oshal
     storage: 8Gi
+    storageClassName: ""
+    # timescaledb-tune (the image's first-init script) sizes shared_buffers and
+    # friends from THIS memory limit when one is set, and from the node's memory
+    # when not; it never re-runs on an existing volume. A volume first initialised
+    # without a limit needs a limit that covers what the tune chose then.
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 2Gi }
   arangodb:
     # Graph tier: RCA topology, jobs↔companies↔recruiters, world graph.
     inCluster: true
@@ -121,6 +158,12 @@ infra:
     rootUser: root
     rootPassword: oshal
     storage: 4Gi
+    storageClassName: ""
+    # ArangoDB is told this memory limit (ARANGODB_OVERRIDE_DETECTED_TOTAL_MEMORY)
+    # so it sizes its caches to the container, not to the node.
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 2Gi }
   vault:
     # SERVER MODE (never -dev): file storage on its own claim (data-oshal-vault-0),
     # config rendered from these values. The chart ships NO root token and gives the
@@ -131,6 +174,10 @@ infra:
     inCluster: true
     image: hashicorp/vault:1.18
     storage: 1Gi
+    storageClassName: ""
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { memory: 256Mi }
     ui: true
     tls:
       # NOT DECIDED YET: the certificate source. Default off = the plain in-cluster
@@ -154,7 +201,11 @@ infra:
     # Do NOT switch this to NodePort/LoadBalancer, or put it behind an ingress,
     # without adding authentication in front of it.
     inCluster: true
-    image: codercom/code-server:latest
+    # Pinned (:latest resolved to this digest on 2026-09-21).
+    image: codercom/code-server:4.138.0
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { memory: 1Gi }
     serviceType: ClusterIP
     # Browser-facing URL for the cockpit's /code bridge. Empty = the port-forward
     # address above (which is what the cockpit link assumes).
@@ -164,7 +215,15 @@ infra:
     # cluster. Compose BUILDS it from services/speaker-diarization; k8s pulls the
     # published image (same artifact, no build on the install path).
     inCluster: true
-    image: ghcr.io/emeraldcoastsystemsgroup/oshal-speaker-diarization:latest
+    # Pinned to the release tag scripts/publish-images.sh pushes (the package.json
+    # version); :latest and every sha-* tag resolved to this digest on 2026-09-21.
+    image: ghcr.io/emeraldcoastsystemsgroup/oshal-speaker-diarization:2.1.0-beta.1
+    # Its own pull policy: this is a registry image, NOT the side-loaded platform
+    # image whose image.pullPolicy may be Never.
+    pullPolicy: IfNotPresent
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 1Gi }
     serviceKey: oshal-local-speaker-service-key
     maxAudioBytes: "16777216"
     # Controller imports stop at 55s; three extra seconds tolerate rounding.
@@ -173,8 +232,14 @@ infra:
     # Local-LLM engine. OFF by default — matching compose, where it is gated
     # behind the `local-llm` profile and a default `up` never starts it.
     inCluster: false
-    image: ollama/ollama:latest
+    # Pinned (:latest resolved to this digest on 2026-09-21).
+    image: ollama/ollama:0.34.2
     storage: 20Gi
+    storageClassName: ""
+    # Loaded models live in this memory: size the limit to the models you pull.
+    resources:
+      requests: { cpu: 250m, memory: 1Gi }
+      limits: { memory: 8Gi }
     # Models pulled once at first start (compose oshal-ollama-pull parity).
     pullModels: []
 
@@ -204,6 +269,7 @@ api:
     MOCK_OIDC: "true"
     OSHAL_APP_ROLE_BOOTSTRAP: "true"
   outputStorage: 8Gi
+  outputStorageClassName: ""
   resources:
     requests: { cpu: 500m, memory: 1Gi }
     limits: { memory: 3Gi }
@@ -245,6 +311,9 @@ swarm:
   # Cluster-local shared workspace (RWO: single-node clusters — the default
   # target — schedule every pod together; multi-node needs an RWX StorageClass).
   workspaceStorage: 5Gi
+  # The workspace claim carries helm.sh/resource-policy: keep - `helm uninstall`
+  # leaves it (and every file the swarm wrote) in place; delete it by hand.
+  workspaceStorageClassName: ""
   # Non-secret env for EVERY runtime (api + bots), rendered into the shared ConfigMap.
   # Secrets never go here — use api.envSecret / botDefaults.envSecret. The render
   # enforces it: a key the chart already sets (REDIS_URL, LOG_LEVEL, ... in the

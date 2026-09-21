@@ -10,6 +10,7 @@
 # 6 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — BOT_DATABASE_URL is emitted whenever the chart runs Postgres in-cluster, no longer only inside the rbac.botLauncher block. With botLauncher=false the api still ran the app-role bootstrap (OSHAL_APP_ROLE_BOOTSTRAP=true), provision-app-role.mjs refused with "BOT_DATABASE_URL is required", and the command's `exit 1` restarted the pod forever on a posture values.yaml documents as supported. Of the two ways out, this one keeps least privilege intact: the chart-declared bots connect as oshal_bot whatever botLauncher is, so the role must be provisioned either way (skipping the bot half of the bootstrap would leave it without LOGIN, and the script provisions both roles in one pass with no bot-less mode), and the api already holds the superuser BOOTSTRAP_DATABASE_URL, so also holding the oshal_bot DSN widens nothing. Bots still never see anything but the oshal_bot DSN. OSHAL_BOT_IMAGE and OSHAL_IMAGE_PULL_POLICY stay launcher-only. Guard: tests/unit/chart-bootstrap-env.spec.ts.
 # 7 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — no credential is a literal here any more. DATABASE_URL, BOOTSTRAP_DATABASE_URL and BOT_DATABASE_URL are secretKeyRefs into the chart's oshal-db-credentials Secret (templates/secrets.yaml); DATABASE_URL was the literal oshal_app:oshal-app-dev with no values path, and its password now comes from infra.postgres.appPassword. They stay explicit entries, so they still beat envFrom and managed Postgres still supplies them through api.envSecret with inCluster=false. JWT_SECRET and ARANGO_ROOT_* arrive by envFrom from oshal-shared-secret, listed after the ConfigMap and before api.envSecret. Guard: tests/unit/chart-credentials.spec.ts.
 # 8 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — no Vault root token on the api. VAULT_TOKEN was the literal infra.vault.devRootToken, the dev Vault's root token; the chart's Vault is now server mode, sealed until its operator unseals it (templates/vault.yaml), and the chart supplies the api no Vault token at all: src reads only VAULT_TOKEN and has no AppRole login to obtain a scoped one. Without it the DevOps Vault console answers 503 vault_not_configured and nothing else in the api reads Vault. VAULT_ADDR follows infra.vault.tls (https when on, and the listener's ca.crt, only that key, is mounted and named in NODE_EXTRA_CA_CERTS). Guard: tests/unit/chart-vault-server.spec.ts.
+# 9 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): RuntimeDefault seccomp; the api and its stage-packages init container run with no privilege escalation and every capability dropped except DAC_OVERRIDE (the oshal image is root with no USER, and the shared workspace holds files code-server writes as uid 1000); startup (10 min: Postgres wait, migrations, RLS, role provisioning) and liveness probes reuse /api/health; the init container carries the api's resources; the output claim honours storageClassName. Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- if eq .Values.role "main" }}
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -19,6 +20,9 @@ metadata:
     {{- include "oshal.labels" . | nindent 4 }}
 spec:
   accessModes: [ReadWriteOnce]
+  {{- with include "oshal.storageClassName" (dict "root" $ "override" .Values.api.outputStorageClassName) }}
+  {{ . }}
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.api.outputStorage }}
@@ -42,6 +46,9 @@ spec:
         app.kubernetes.io/name: oshal-api
         {{- include "oshal.labels" . | nindent 8 }}
     spec:
+      # The oshal image has no USER (it runs as root), so no runAsNonRoot here.
+      securityContext:
+        {{- include "oshal.podSeccomp" . | nindent 8 }}
       {{- if .Values.rbac.create }}
       serviceAccountName: {{ .Values.rbac.serviceAccountName }}
       {{- end }}
@@ -89,6 +96,12 @@ spec:
                   || { echo "package $p FAILED to stage — exiting so the pod restarts rather than booting without an app you asked for"; exit 1; };
               done
               echo "package staging complete"
+          securityContext:
+            {{- include "oshal.platformContainerSecurity" . | nindent 12 }}
+          # Init containers count toward a request-requiring ResourceQuota too. The api's own
+          # figures: an init container runs before the api, so the pod's request does not grow.
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
             - name: workspace
               mountPath: /app/workspace-shared
@@ -223,6 +236,23 @@ spec:
             initialDelaySeconds: 20
             periodSeconds: 10
             failureThreshold: 30
+          # Same endpoint. Startup allows the whole bootstrap (Postgres wait, migrations, RLS,
+          # role provisioning: up to 10 min on a first boot) before liveness starts counting.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.api.port }}
+            periodSeconds: 10
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.api.port }}
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            {{- include "oshal.platformContainerSecurity" . | nindent 12 }}
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:

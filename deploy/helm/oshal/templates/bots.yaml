@@ -7,6 +7,7 @@
 # 3 | maintainer@emeraldcoastsystemsgroup.com   | Optional botName per bot: BOT_NAME must stay the compose-parity agent name (email-bot runs as communications-bot, jarvis-bot as oshal-assistant, the concierges…) while .name stays the Service/DNS name the controller dials (BotNodeClient → http://<registry container>:5000). Default unchanged: botName falls back to .name.
 # 4 | maintainer@emeraldcoastsystemsgroup.com   | 0.2.0 — (a) fleet presets: the range walks oshal.activeBots (fleet preset + custom extras, deduped) instead of bare .Values.bots; (b) seeding-repair parity (compose 2026-08-12): the config-seed cp lines are GONE — bot-entrypoint.sh Step 1b copy-IF-MISSING is the ONLY seeding path, and the old cp -f here force-reimposed the seed on every pod restart, silently resetting runtime provider config; (c) K5 parity: main-cluster bots connect as the least-privilege oshal_bot role (migration 099, NOSUPERUSER, RLS enforced) — never the superuser DSN the 0.1.x chart injected; override via swarm.botDatabaseUrl for managed Postgres.
 # 5 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — bot credentials leave literal env and the ConfigMap: DATABASE_URL is a secretKeyRef to the single BOT_DATABASE_URL key of oshal-db-credentials (in-cluster default from infra.postgres.botPassword, or swarm.botDatabaseUrl), and JWT_SECRET / ARANGO_ROOT_* arrive by envFrom from oshal-shared-secret, between the ConfigMap and botDefaults.envSecret. Guard: tests/unit/chart-credentials.spec.ts.
+# 6 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): RuntimeDefault seccomp; no privilege escalation, every capability dropped except DAC_OVERRIDE (root image, shared workspace written by code-server's uid 1000); startup (5 min) and liveness probes reuse the tcp:5000 check. Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- $root := . }}
 {{- range include "oshal.activeBots" . | fromJsonArray }}
 ---
@@ -30,6 +31,9 @@ spec:
         oshal.io/bot: "true"
         {{- include "oshal.labels" $root | nindent 8 }}
     spec:
+      # The oshal image has no USER (it runs as root), so no runAsNonRoot here.
+      securityContext:
+        {{- include "oshal.podSeccomp" $root | nindent 8 }}
       {{- with $root.Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -91,6 +95,20 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 12
+          # Same check. Startup covers the entrypoint's seeding and persona load (5 min).
+          startupProbe:
+            tcpSocket:
+              port: 5000
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: 5000
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            {{- include "oshal.platformContainerSecurity" $root | nindent 12 }}
           resources:
             {{- toYaml ((.resources) | default $root.Values.botDefaults.resources) | nindent 12 }}
           volumeMounts:

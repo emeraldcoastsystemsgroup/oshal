@@ -196,7 +196,7 @@ consent) turns the behavioral test red by actually downloading a binary.
 
 ## Amendment 4 (2026-09-21): the chart's dev postures, closed without a cluster
 
-Chart 0.5.0 closes items 2-4 of the
+Chart 0.5.0 closes items 2-5 of the
 [remote-cluster work package](../k8/remote-cluster-work-package.md). All of it is
 render-level work. The cluster proofs that remain are listed in that package.
 
@@ -217,6 +217,16 @@ render-level work. The cluster proofs that remain are listed in that package.
 13. **`rbac.botLauncher=false` boots.** The api's app-role bootstrap receives
     `BOT_DATABASE_URL` whatever the launcher setting. Guard:
     [tests/unit/chart-bootstrap-env.spec.ts](../../tests/unit/chart-bootstrap-env.spec.ts).
+14. **A production-readiness baseline.** Every workload with a readiness check
+    now has a liveness probe on the same handler, plus a startup probe. Every
+    container has requests and a memory limit. Every pod runs RuntimeDefault
+    seccomp, with no privilege escalation and capabilities dropped. The
+    datastores, Vault, code-server and diarization run as their images' own
+    users. Infra images are pinned, and every claim honours a
+    `storageClassName`. The workspace claim survives `helm uninstall`. The
+    chart README tables which workloads cannot meet the Restricted Pod Security
+    Standard, and why. Guard:
+    [tests/unit/chart-production-baseline.spec.ts](../../tests/unit/chart-production-baseline.spec.ts).
 
 ## Consequences
 

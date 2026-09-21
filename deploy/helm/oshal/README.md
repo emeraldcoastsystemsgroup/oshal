@@ -203,26 +203,36 @@ Not decided yet, so the chart ships defaults and says so:
 
 This chart is the **single-box product**, the same posture as a default
 `docker compose up`: every workload runs one replica, each stateful service keeps
-its data on one ReadWriteOnce claim from the cluster's default StorageClass, the
+its data on one ReadWriteOnce claim from the cluster's default StorageClass (or
+the one `storageClassName` names), the
 credentials are compose's committed dev values, and nothing backs anything up.
 That is fine for one person's box. It is **not** a shared-tenant posture, and the
 chart does not try to become one: it stops at the boundaries below, and what lies
 past them is yours to run.
 
-What persists, by the claim name `kubectl -n <ns> get pvc` shows:
+What persists, by the claim name `kubectl -n <ns> get pvc` shows. The last column is
+what `helm uninstall` does to it: a StatefulSet's claims outlive the StatefulSet
+(the chart sets no claim retention policy), `oshal-workspace` carries
+`helm.sh/resource-policy: keep`, and the other two are deleted with the release.
 
-| Volume (PVC) | Holds |
-|---|---|
-| `data-oshal-db-0` | Postgres: tickets, agents, the cost ledger |
-| `data-oshal-tsdb-0` | TimescaleDB: trading + world series |
-| `data-oshal-chromadb-0` | Chroma: RAG + swarm memory |
-| `data-oshal-redis-0` | Redis append-only file: the swarm mesh |
-| `data-oshal-arangodb-0` | ArangoDB: the graph tier |
-| `data-oshal-vault-0` | Vault's file storage (encrypted by Vault; unreadable until unsealed) |
-| `oshal-workspace` | the shared workspace, including staged store packages |
-| `oshal-api-output` | the api's `/app/output`, where its seeded config lives |
-| `models-oshal-ollama-0` | pulled local models (only with `infra.ollama.inCluster: true`) |
-| `oshal-relay-state` | the tailnet relay's node state (only with `relay.enabled: true`) |
+| Volume (PVC) | Holds | After `helm uninstall` |
+|---|---|---|
+| `data-oshal-db-0` | Postgres: tickets, agents, the cost ledger | kept |
+| `data-oshal-tsdb-0` | TimescaleDB: trading + world series | kept |
+| `data-oshal-chromadb-0` | Chroma: RAG + swarm memory | kept |
+| `data-oshal-redis-0` | Redis append-only file: the swarm mesh | kept |
+| `data-oshal-arangodb-0` | ArangoDB: the graph tier | kept |
+| `data-oshal-vault-0` | Vault's file storage (encrypted by Vault; unreadable until unsealed) | kept |
+| `oshal-workspace` | the shared workspace, including staged store packages | kept |
+| `oshal-api-output` | the api's `/app/output`, where its seeded config lives | deleted |
+| `models-oshal-ollama-0` | pulled local models (only with `infra.ollama.inCluster: true`) | kept |
+| `oshal-relay-state` | the tailnet relay's node state (only with `relay.enabled: true`) | deleted |
+
+Every claim takes `storageClassName` (chart-wide) or its own override
+(`infra.<name>.storageClassName`, `api.outputStorageClassName`,
+`swarm.workspaceStorageClassName`, `relay.stateStorageClassName`). Empty leaves the
+field out, which means the cluster's default class. A StatefulSet's claim template
+cannot change after the first install, so choose the class before it.
 
 | Out of scope here | Boundary switch | The tenant supplies, in the `api.envSecret` Secret |
 |---|---|---|
@@ -243,6 +253,49 @@ On the [Terraform](../../terraform/README.md) tenant path the module forwards on
 the Postgres switch (`postgres_in_cluster`, with the URLs through
 `api_extra_secret_env`). Moving Timescale or Vault out of the cluster there needs
 their switches added to the module first.
+
+## Probes, resources and Pod Security
+
+**Probes.** Each workload that has a readiness check uses that same check as its
+liveness probe, and adds a startup probe that holds liveness off through a slow
+first boot. The api waits up to 10 minutes for Postgres and its bootstrap. The
+datastores wait 5 minutes for initdb or crash recovery. ArangoDB asks the
+unauthenticated `/_admin/server/availability`. Speaker-diarization sends its key
+and a `Host` it admits. Vault's probes pass while it is sealed. The relay has no
+probes: tailscaled and socat expose no health endpoint.
+
+**Resources.** Every container requests CPU and memory and has a memory limit:
+`api.resources`, `botDefaults.resources`, `infra.<name>.resources`,
+`relay.tailscaleResources` / `forwarderResources`. The api's init container
+reuses the api's figures. There are no CPU limits, as there never were on the api
+and the bots; a CPU limit throttles rather than protects. ArangoDB is told its
+memory limit (`ARANGODB_OVERRIDE_DETECTED_TOTAL_MEMORY`) so it sizes its caches to
+the container. TimescaleDB's first-init tune sizes Postgres from the memory limit
+if there is one, and from the node's memory otherwise. It never re-runs, so a
+volume first initialised without a limit needs a limit that covers what it chose
+then. [values-docker-desktop.yaml](values-docker-desktop.yaml) halves the default
+requests to fit its one node.
+
+**Images.** Every infra image is a pinned tag, never `:latest`. The platform
+image (`image.repository` / `image.tag`) is set separately.
+
+**Pod Security.** Every pod runs the RuntimeDefault seccomp profile. Every
+container runs with `allowPrivilegeEscalation: false` and drops every capability,
+except as the table says. Measured from the render only; admission itself is proven
+on a cluster, not here:
+
+| Workload | Runs as | Restricted | Why not |
+|---|---|---|---|
+| `oshal-db`, `oshal-tsdb` | uid 70, the image's `postgres` user | yes | |
+| `oshal-redis` | uid 999, the image's `redis` user | yes | |
+| `oshal-vault` | uid 100, the image's `vault` user | yes | |
+| `code-server` | uid 1000, the image's `USER` | yes | |
+| `speaker-diarization` | uid 10001, the image's `USER` | yes | |
+| `oshal-api` and every bot | root | no (Baseline) | the oshal image has no `USER`; and it keeps `DAC_OVERRIDE`, because code-server writes the shared workspace as uid 1000 and root without it cannot write there |
+| `oshal-chromadb` | root | no (Baseline) | the image has no `USER` and caches its embedding model under `/root` |
+| `oshal-arangodb` | root | no (Baseline) | the image has no `USER`, its entrypoint never drops privileges, and the data volumes it has written are root-owned |
+| `oshal-ollama` | root | no (Baseline) | the image has no `USER` and keeps models under `/root/.ollama` |
+| `oshal-relay` | root | no (Privileged only) | it mounts `/dev/net/tun` from the host and adds `NET_ADMIN`; off by default |
 
 ## Dynamic bots — apps bring their own
 

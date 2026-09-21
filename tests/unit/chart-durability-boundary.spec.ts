@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the chart README's "Durability boundary" (BACKLOG: k8s durability posture for the shared-service tier). The chart is the single-box product - one replica per workload, dev-parity credentials, no backup - and the README declares durable Postgres/Timescale, a real Vault and volume backup OUT OF SCOPE, each with the boundary where a shared tenant takes over. A declaration like that rots the moment the chart changes, so this RENDERS THE REAL CHART with the helm binary and holds the section to the output: the volume table must equal the claims the chart creates with every optional flag on, in both directions; no workload above one replica; no backup, snapshot or restore object rendered or templated; every boundary switch the README names must remove its workload and withhold exactly the env it lists (an explicit container env entry beats envFrom, so a URL left in place would shadow the tenant's Secret); chart bots must take the managed DSN from swarm.botDatabaseUrl; and the Terraform sentence must name exactly the switches deploy/terraform/main.tf forwards. No helm on PATH is a loud failure, never a skip.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Hold deploy/terraform/README.md to the templates that exist. Its checklist item 5 listed TimescaleDB, ArangoDB, Vault, code-server, speaker-diarization and ollama as "Not yet in the chart (compose-only infra)" and said in bold that "trading cannot run on k8s until tsdb is templated" - all six had been templated since #198 (chart 0.3.0), so a tenant following that checklist kept trading off Kubernetes for no reason. The case DERIVES the service list from deploy/helm/oshal/templates/*.yaml rather than hardcoding it, because a literal list rots the same way the prose did.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The managed-Postgres bot DSN case resolves DATABASE_URL through the render (tests/helpers/helm-template resolvedEnv): chart 0.5.0 renders swarm.botDatabaseUrl into the oshal-db-credentials Secret and each bot reads it by secretKeyRef, so a literal-only read would find no value on a working chart.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | helm uninstall no longer deletes the shared workspace (chart 0.5.0: oshal-workspace carries helm.sh/resource-policy: keep). The case requires the keep policy on the workspace claim in the default render, and holds the README volume table's new "After helm uninstall" column to what the render decides for every claim: a standalone PVC is deleted unless it carries the keep policy, and a StatefulSet's claims are kept unless it sets a Delete retention policy.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -33,7 +34,7 @@ const BACKUP_KIND = /^(CronJob|Job|VolumeSnapshot\w*|\w*Backup\w*|\w*Restore\w*)
 
 interface K8sObject {
   kind: string;
-  metadata: { name: string; labels?: Record<string, string> };
+  metadata: { name: string; labels?: Record<string, string>; annotations?: Record<string, string> };
   spec?: Record<string, any>;
 }
 
@@ -246,6 +247,27 @@ describe('chart README durability boundary is the rendered chart, not a promise'
       expect(ticks(backupRow?.[0]), `the backup row does not name ${c}`).toContain(c);
       expect(claims, `${c} is named for backup but the chart creates no such claim`).toContain(c);
     }
+  }, RENDER_TIMEOUT_MS);
+
+  it('the workspace claim survives helm uninstall, and the README says what uninstall does to every claim', () => {
+    // What `helm uninstall` does to a claim is decided by the render: a standalone PVC is deleted
+    // with the release unless it carries helm.sh/resource-policy: keep; a StatefulSet's claims
+    // outlive the StatefulSet unless it sets a Delete retention policy.
+    const fate = new Map<string, string>();
+    for (const o of render(everythingOn())) {
+      if (o.kind === 'PersistentVolumeClaim') {
+        fate.set(o.metadata.name, o.metadata.annotations?.['helm.sh/resource-policy'] === 'keep' ? 'kept' : 'deleted');
+      }
+      if (o.kind !== 'StatefulSet') continue;
+      const del = o.spec?.persistentVolumeClaimRetentionPolicy?.whenDeleted === 'Delete';
+      for (const t of o.spec?.volumeClaimTemplates ?? []) fate.set(`${t.metadata.name}-${o.metadata.name}-0`, del ? 'deleted' : 'kept');
+    }
+    expect(fate.get('oshal-workspace'), 'helm uninstall would delete the shared workspace of the swarm').toBe('kept');
+    const byDefault = render([]).find((o) => o.kind === 'PersistentVolumeClaim' && o.metadata.name === 'oshal-workspace');
+    expect(byDefault?.metadata.annotations?.['helm.sh/resource-policy'], 'the default render drops the keep policy').toBe('keep');
+    const stated = volumeRows.map((r) => `${ticks(r[0])[0]}=${r[2] ?? ''}`).sort();
+    const measured = [...fate].map(([k, v]) => `${k}=${v}`).sort();
+    expect(stated, 'the "After helm uninstall" column of the README volume table and the chart disagree').toEqual(measured);
   }, RENDER_TIMEOUT_MS);
 
   it('every workload runs exactly one replica - the single-box shape the README declares', () => {

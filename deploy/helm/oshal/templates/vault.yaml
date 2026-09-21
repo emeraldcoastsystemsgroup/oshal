@@ -4,6 +4,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment) — in-cluster Vault in DEV MODE (compose oshal-vault parity: `server -dev`, in-memory, auto-unsealed, fixed root token), main role only. No compose profile, so a default `up` starts it. Deliberately NOT a production secrets posture: dev mode loses everything on restart. A real deployment sets inCluster: false and points VAULT_ADDR/VAULT_TOKEN at a real Vault through api.envSecret — which is why there is no PVC here to imply durability it does not have.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | 0.5.0 — the Helm half of "Production Vault hardening": no more `server -dev`, no devRootToken, no root token anywhere in the chart. Vault runs in server mode as a one-replica StatefulSet with file storage on its own claim (data-oshal-vault-0) and a config rendered from values (listener, storage, ui) into the oshal-vault-config ConfigMap. TLS is a values switch (infra.vault.tls) that defaults to the plain in-cluster listener, because the certificate source is not decided yet. Unseal custody is Shamir with the operator (no cloud-KMS auto-unseal), so a fresh install comes up SEALED and UNINITIALIZED until the operator runs `vault operator init` / `unseal` (README "Vault runbook"). The probes ask /v1/sys/health with sealedcode/uninitcode 200: a sealed Vault is a healthy process doing what it should, so it is Ready (`helm --wait` completes, and the api's status call reads "sealed" instead of "unreachable") and never restart-looped by liveness. Runs as the image's vault user (uid 100, gid 1000) with every capability dropped: SKIP_CHOWN/SKIP_SETCAP keep the entrypoint from needing root, and disable_mlock replaces the IPC_LOCK capability the dev pod added (no swap is the Kubernetes node default). Guard: tests/unit/chart-vault-server.spec.ts.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): resources from infra.vault.resources, storageClassName on the claim template, and the shared seccomp/minimal-capability helpers in place of the inline copies. Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- if and (eq .Values.role "main") .Values.infra.vault.inCluster }}
 {{- $v := .Values.infra.vault }}
 {{- $scheme := ternary "https" "http" $v.tls.enabled }}
@@ -67,8 +68,7 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
-        seccompProfile:
-          type: RuntimeDefault
+        {{- include "oshal.podSeccomp" . | nindent 8 }}
       containers:
         - name: vault
           image: {{ $v.image }}
@@ -91,9 +91,9 @@ spec:
               value: oshal-vault
             {{- end }}
           securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
+            {{- include "oshal.minimalContainerSecurity" . | nindent 12 }}
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
           ports:
             - containerPort: 8200
           # Sealed (503) and uninitialized (501) are overridden to 200: the process is healthy and
@@ -146,6 +146,9 @@ spec:
         name: data
       spec:
         accessModes: [ReadWriteOnce]
+        {{- with include "oshal.storageClassName" (dict "root" $ "override" $v.storageClassName) }}
+        {{ . }}
+        {{- end }}
         resources:
           requests:
             storage: {{ $v.storage }}

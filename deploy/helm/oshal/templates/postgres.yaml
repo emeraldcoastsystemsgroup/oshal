@@ -3,6 +3,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — in-cluster Postgres (compose oshal-db parity), main role only. Disable via infra.postgres.inCluster=false when using managed Postgres (then DATABASE_URL/BOOTSTRAP_DATABASE_URL come from api.envSecret).
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Production-readiness baseline (chart 0.5.0): runs as the image's postgres user (uid/gid 70; the entrypoint supports --user and skips its root chown), fsGroup 70 with OnRootMismatch, RuntimeDefault seccomp, no privilege escalation, every capability dropped; startup and liveness probes reuse pg_isready (startup covers 5 min of initdb or crash recovery); resources from infra.postgres.resources; the claim template honours storageClassName (omitted when empty, so the cluster default and the existing claim template are unchanged). Guard: tests/unit/chart-production-baseline.spec.ts.
 {{- if and (eq .Values.role "main") .Values.infra.postgres.inCluster }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -24,6 +25,16 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
+      # The image's postgres user (uid/gid 70 in /etc/passwd of the alpine image). Its entrypoint
+      # documents running "with --user": it then skips the root chown and starts postgres
+      # directly. Data a root-started entrypoint initialised is already owned by 70.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        fsGroupChangePolicy: OnRootMismatch
+        {{- include "oshal.podSeccomp" . | nindent 8 }}
       containers:
         - name: postgres
           image: {{ .Values.infra.postgres.image }}
@@ -44,6 +55,22 @@ spec:
               command: ["pg_isready", "-U", "{{ .Values.infra.postgres.user }}", "-d", "{{ .Values.infra.postgres.database }}"]
             periodSeconds: 5
             failureThreshold: 20
+          # Same check. Startup covers initdb and crash recovery (5 min) before liveness counts.
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.infra.postgres.user }}", "-d", "{{ .Values.infra.postgres.database }}"]
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.infra.postgres.user }}", "-d", "{{ .Values.infra.postgres.database }}"]
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            {{- include "oshal.minimalContainerSecurity" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.infra.postgres.resources | nindent 12 }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
@@ -52,6 +79,9 @@ spec:
         name: data
       spec:
         accessModes: [ReadWriteOnce]
+        {{- with include "oshal.storageClassName" (dict "root" $ "override" .Values.infra.postgres.storageClassName) }}
+        {{ . }}
+        {{- end }}
         resources:
           requests:
             storage: {{ .Values.infra.postgres.storage }}
