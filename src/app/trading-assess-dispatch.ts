@@ -17,6 +17,8 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-096: record the SHADOW indicators (macd/bollinger/atr-channel/adx/stochastic/volsurge, scoreSymbolShadow on OHLCV dailies) beside the live algos + gravity2, so the overnight review builds their hit-rate/expectancy track record. Live votes untouched — shadow algos are not in ALGORITHMS.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Trading engine extraction (ADR-085 pre-carve): import repoint only — ensureTradingSchema/resolveMaturedPredictions now come from app/trading-engine.ts instead of the carvable route surface. Zero behavior change.
  *
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Every stage of the run is a NAMED step (createStepRunner): a failure logs ERROR 'assessment step failed' with the step name and the run carries on with the steps that do not depend on it, instead of one catch logging 'assessment run failed' for the whole batch. The 2026-09-15 00:01Z run lost its entire per-algo record to a market-data 429 raised inside multiTimeframeScan, and the log named the run rather than the step. The per-algo record no longer depends on the scan, and the result reports the failed step names.
+ *
  * @module trading-assess-dispatch
  */
 
@@ -40,6 +42,41 @@ export function assessTaskType(sub: string): string { return `trading-assess:${s
 
 /** One ranked name in the plan. */
 interface PlanItem { symbol: string; score: number; confidence: number; regime: number; }
+
+/** The ranked buy/sell plan one assessment produces. */
+interface AssessPlan { buys: PlanItem[]; sells: PlanItem[]; holds: number; }
+
+/**
+ * The named steps of one assessment run. A step is the unit a failure is reported against: the
+ * 2026-09-15 run lost its per-algo record to a market-data 429 and the ERROR line said only
+ * `assessment run failed`, which named the whole run for the failure of one step.
+ */
+export type AssessStep =
+  | 'ensure-schema' | 'resolve-matured' | 'multi-timeframe-scan' | 'record-assessment'
+  | 'world-snapshots' | 'per-algo-predictions' | 'plan-ticket';
+
+/** A step's outcome — its value, or the message it failed with (already logged against the step). */
+type StepResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+/**
+ * @description Build the runner every assessment step goes through: it catches the step's failure,
+ * logs it at ERROR **named by step**, records the name, and hands back a result the caller can skip
+ * on. One step failing therefore never aborts the steps that do not depend on it.
+ * @param scheduleId - The schedule being dispatched (carried on every log line).
+ * @param failed - Accumulator the runner appends each failed step name to.
+ * @returns A `run(step, fn)` that resolves to the step's `StepResult`.
+ */
+function createStepRunner(scheduleId: string, failed: AssessStep[]) {
+  return async function run<T>(step: AssessStep, fn: () => Promise<T>): Promise<StepResult<T>> {
+    try {
+      return { ok: true, value: await fn() };
+    } catch (e) {
+      failed.push(step);
+      logger.error({ err: e, scheduleId, step }, 'assessment step failed');
+      return { ok: false, error: (e as Error).message };
+    }
+  };
+}
 
 /**
  * @description Record RAW per-algo daily predictions (momentum/gravity/donchian/meanrev) so the
@@ -88,7 +125,7 @@ async function recordPerAlgoPredictions(pool: AppContext['pool'], sub: string, m
 }
 
 /** Write one ensemble prediction per actionable symbol; return the ranked buy/sell plan. */
-async function recordAssessment(pool: AppContext['pool'], sub: string, mode: TradingMode, scan: Map<string, MtfDecision>): Promise<{ buys: PlanItem[]; sells: PlanItem[]; holds: number }> {
+async function recordAssessment(pool: AppContext['pool'], sub: string, mode: TradingMode, scan: Map<string, MtfDecision>): Promise<AssessPlan> {
   const buys: PlanItem[] = []; const sells: PlanItem[] = []; let holds = 0;
   for (const [sym, d] of scan) {
     if (d.action === 'hold' || !d.price) { holds += 1; continue; }
@@ -105,7 +142,7 @@ async function recordAssessment(pool: AppContext['pool'], sub: string, mode: Tra
 }
 
 /** Post a compact ranked plan ticket (the visible "next-session assessment"). */
-async function logPlanTicket(ctx: AppContext, sub: string, mode: TradingMode, plan: { buys: PlanItem[]; sells: PlanItem[]; holds: number }): Promise<void> {
+async function logPlanTicket(ctx: AppContext, sub: string, mode: TradingMode, plan: AssessPlan): Promise<void> {
   const fmt = (xs: PlanItem[]) => xs.slice(0, 8).map((x) => `${x.symbol}(${x.score.toFixed(2)})`).join(', ') || '—';
   await ctx.ticketService.createTicket({
     title: `📊 Assessment: ${plan.buys.length} buy / ${plan.sells.length} sell [${mode}]`,
@@ -132,21 +169,36 @@ export async function dispatchTradingAssess(ctx: AppContext, schedule: ScheduleR
   if (!sub) return { success: false, scheduleId: schedule.id, error: 'assess schedule missing userSub' };
   if (!marketDataConfigured()) { logger.info({ scheduleId: schedule.id }, 'assessment skipped — market-data keys not configured'); return { success: true, scheduleId: schedule.id }; }
 
-  try {
-    await ensureTradingSchema(ctx.pool);
-    const resolved = await resolveMaturedPredictions(ctx.pool, mode).catch(() => 0);
-    const scan = await multiTimeframeScan(universe);
-    const plan = await recordAssessment(ctx.pool, sub, mode, scan);
-    // World snapshots for the Gravity-2 head-to-head (one batched read; null when the world layer is off).
-    const worldSvc = createWorldIntelligenceService();
-    const worldSnaps = worldSvc ? await readGravityWorldSnapshots(worldSvc, universe, defaultGravity2Config().windowDays).catch(() => undefined) : undefined;
-    // Raw per-algo predictions (+ gravity2) so the overnight review can learn each signal's edge → mass.
-    await recordPerAlgoPredictions(ctx.pool, sub, mode, universe, worldSnaps).catch((e) => logger.warn({ err: e }, 'per-algo prediction record failed'));
-    logger.info({ scheduleId: schedule.id, scanned: scan.size, buys: plan.buys.length, sells: plan.sells.length, resolved }, 'assessment recorded — predictions for next session');
-    await logPlanTicket(ctx, sub, mode, plan).catch((e) => logger.warn({ err: e }, 'assessment ticket failed'));
-    return { success: true, scheduleId: schedule.id, taskId: `assess-${schedule.id}` };
-  } catch (e) {
-    logger.error({ err: e, scheduleId: schedule.id }, 'assessment run failed');
-    return { success: false, scheduleId: schedule.id, error: (e as Error).message };
-  }
+  const failed: AssessStep[] = [];
+  const run = createStepRunner(schedule.id, failed);
+
+  // The schema is the one hard prerequisite — with no tables there is no step left to attempt.
+  const schema = await run('ensure-schema', () => ensureTradingSchema(ctx.pool));
+  if (!schema.ok) return { success: false, scheduleId: schedule.id, error: `assessment step failed: ensure-schema — ${schema.error}` };
+
+  const resolved = await run('resolve-matured', () => resolveMaturedPredictions(ctx.pool, mode));
+  const scan = await run('multi-timeframe-scan', () => multiTimeframeScan(universe));
+  const plan: StepResult<AssessPlan> = scan.ok
+    ? await run('record-assessment', () => recordAssessment(ctx.pool, sub, mode, scan.value))
+    : { ok: false, error: 'not attempted — multi-timeframe-scan failed' };
+  // World snapshots for the Gravity-2 head-to-head (one batched read; absent when the world layer is off).
+  const worldSvc = createWorldIntelligenceService();
+  const snaps = worldSvc
+    ? await run('world-snapshots', () => readGravityWorldSnapshots(worldSvc, universe, defaultGravity2Config().windowDays))
+    : { ok: true as const, value: undefined };
+  // Raw per-algo predictions (+ gravity2) so the overnight review can learn each signal's edge → mass.
+  // Independent of the scan: a scan that died on a rate limit must not take this record with it.
+  await run('per-algo-predictions', () => recordPerAlgoPredictions(ctx.pool, sub, mode, universe, snaps.ok ? snaps.value : undefined));
+  if (plan.ok) await run('plan-ticket', () => logPlanTicket(ctx, sub, mode, plan.value));
+
+  logger.info({
+    scheduleId: schedule.id, scanned: scan.ok ? scan.value.size : 0,
+    buys: plan.ok ? plan.value.buys.length : 0, sells: plan.ok ? plan.value.sells.length : 0,
+    resolved: resolved.ok ? resolved.value : 0, failedSteps: failed,
+  }, failed.length ? 'assessment recorded with failed steps — predictions for next session' : 'assessment recorded — predictions for next session');
+
+  return {
+    success: true, scheduleId: schedule.id, taskId: `assess-${schedule.id}`,
+    ...(failed.length ? { error: `assessment steps failed: ${failed.join(', ')}` } : {}),
+  };
 }
