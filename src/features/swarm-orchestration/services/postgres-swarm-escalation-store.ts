@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added Postgres-backed swarm escalation store with in-memory fallback for durable escalation routing
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Re-attempt persistence instead of nulling the pool: the same shape that dropped the task, message and memory stores to in-memory for a whole process lifetime on the 2026-09-15 boot. Activation runs through the shared re-attemptable helper, the pool is kept so a retry has something to retry with, and the fallback is now a state the next operation can leave.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-163 D2: refuse a save that names no swarm run, in BOTH modes. The refusal has to sit ahead of the persistence branch or it would depend on whether Postgres happened to be reachable - a runId-less record would raise against the table's NOT NULL run_id and land silently in the in-memory fallback. The canonical escalation record is the ticket_status_history transition; this table answers which run gave up and after how many attempts.
  */
 
 import type { Pool } from 'pg';
@@ -16,7 +17,12 @@ import {
   type PersistenceActivation,
 } from '@/shared/services/database';
 import type { SwarmEscalationRecord, SwarmVerificationAttemptState } from './swarm-cycle-policy';
-import { InMemorySwarmEscalationStore, type SwarmEscalationQuery, type SwarmEscalationStore } from './swarm-escalation-store';
+import {
+  assertRunScopedEscalation,
+  InMemorySwarmEscalationStore,
+  type SwarmEscalationQuery,
+  type SwarmEscalationStore,
+} from './swarm-escalation-store';
 
 const logger = createChildLogger({ module: 'postgres-swarm-escalation-store' });
 
@@ -55,8 +61,12 @@ export class PostgresSwarmEscalationStore implements SwarmEscalationStore {
   /**
    * @description Persists one escalation record.
    * @param record - Structured escalation record
+   * @throws Error when the record names no swarm run (ADR-163 D2).
    */
   async save(record: SwarmEscalationRecord): Promise<void> {
+    // Ahead of the persistence branch on purpose: otherwise the refusal would depend on whether
+    // Postgres is reachable, and a runId-less record would silently land in the fallback store.
+    assertRunScopedEscalation(record);
     await this.awaitInitialization();
     if (!this.persistentMode) {
       return this.fallbackStore.save(record);

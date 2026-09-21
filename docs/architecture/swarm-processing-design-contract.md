@@ -670,6 +670,6 @@ Any future swarm change must keep these boundaries explicit:
 |-------|---------|-------------|
 | `work_items` | Work unit state tracking | `work_item_id`, `swarm_run_id`, `status`, `execution_output`, `verification_result` |
 | `swarm_runs` | Run lifecycle persistence | `run_id`, `provider`, `status`, `lifecycle_snapshot` |
-| `swarm_escalations` | Failed ticket records | `run_id`, `ticket_id`, `target`, `severity`, `reason` |
+| `swarm_escalations` | Run-scoped verification-attempt records — what a run's policy knew when it gave up, NOT the escalation log (ADR-163; the canonical escalation record is the `escalated` transition in `ticket_status_history`) | `run_id`, `ticket_id`, `target`, `severity`, `reason` |
 | `agents` | Agent profile definitions | `agent_id`, `name`, `persona`, `base_capabilities`, `metadata` |
 | `persona_layers` | Multi-layer prompt composition | `layer_type`, `priority`, `prompt_fragment` |

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard that an escalation reason recorded by a status transition survives all the way to the cockpit activity payload: derived from a real TicketService escalation (not a hand-built row), read back over the real HTTP route, and still null when no reason was ever recorded. Also pins selectEscalationDetail so an empty durable swarm_escalations lookup cannot erase it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard that a ticket escalated more than once is dated by its CURRENT escalation: the payload carries escalatedAt over the real route even when that escalation recorded no reason, and selectEscalationDetail discards a durable record written for an earlier run rather than presenting it as the current explanation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-163 D3 flipped the precedence these cases pinned: the canonical transition detail now explains an escalation and the run-scoped swarm_escalations record enriches it, instead of the run record winning outright whenever it named a reason. The two cases are rewritten to assert the merged shape — the canonical reason AND the run record's retryClass, which the old single-record assertions could not both check — not relaxed.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -341,8 +342,15 @@ describe('cockpit escalation record precedence', () => {
   const recorded = { reason: 'manifest_worker_dispatch_failed', source: 'dispatch-manifest-worker' };
   const durable = { reason: 'pipeline_work_items_failed', retryClass: 'verification_exhausted' };
 
-  it('prefers the richer durable swarm record when it names a reason', () => {
-    expect(selectEscalationDetail(recorded, durable)).toBe(durable);
+  it('lets the canonical transition explain the escalation and the run record enrich it', () => {
+    // ADR-163: swarm_escalations answers only escalations raised inside a swarm run, so it cannot
+    // be what the panel asks first. It still contributes what only a run knows.
+    const selected = selectEscalationDetail(recorded, durable);
+
+    expect(selected?.reason).toBe('manifest_worker_dispatch_failed');
+    expect(selected?.source).toBe('dispatch-manifest-worker');
+    expect(selected?.retryClass, 'the attempt fields only the run record carries must survive the merge')
+      .toBe('verification_exhausted');
   });
 
   it('keeps the recorded transition detail when the durable lookup found nothing', () => {
@@ -407,6 +415,12 @@ describe('cockpit escalation record precedence', () => {
   });
 
   it('keeps an undatable durable record, having no evidence it is stale', () => {
-    expect(selectEscalationDetail(recorded, durable, CURRENT_ESCALATION_AT)).toBe(durable);
+    // Undatable is not evidence of staleness, so the run record is NOT discarded — its fields are
+    // still there beside the canonical reason (ADR-163 D3 changed which one explains, not which
+    // records survive).
+    const selected = selectEscalationDetail(recorded, durable, CURRENT_ESCALATION_AT);
+
+    expect(selected?.retryClass).toBe('verification_exhausted');
+    expect(selected?.reason).toBe('manifest_worker_dispatch_failed');
   });
 });

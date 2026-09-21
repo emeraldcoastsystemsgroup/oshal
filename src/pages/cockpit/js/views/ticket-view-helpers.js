@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserved canonical /app/workspace paths in cockpit detail views while mapping them back onto code-server /workspace links for operator navigation
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added selectEscalationDetail so an empty durable swarm_escalations lookup can no longer erase the escalation reason the ticket payload already carries from the recorded status transition
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | selectEscalationDetail preferred any durable record that named a reason, with nothing testing that the record belonged to the escalation on screen. The durable lookup is by ticket id and returns the ticket's newest record, so a ticket that escalated, de-escalated and escalated again explained its current escalation with a reason from the run that had already closed. Date the durable record against the current escalation and drop one written before it, so an escalation that recorded nothing says so instead of borrowing an old answer.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-163 D3: the canonical escalation record leads. swarm_escalations answers only escalations raised INSIDE a swarm run - one writer, and it needs a run id - while every escalating path writes the ticket_status_history transition the payload carries. Leading with the run record meant the cockpit's first question was answered by the store that sees a strict subset. The transition now explains the escalation and a current run record contributes only what a run knows (target, retryClass, attemptState), so the panel keeps every chip it had without the reason depending on which store happened to have a row.
  */
 
 import { getStatusLabel } from '../utils/formatters.js';
@@ -260,19 +261,22 @@ export function extractErrorMessage(error) {
 }
 
 /**
- * @description Chooses which escalation record the detail panel should render.
- * A durable swarm escalation record is the richer of the two (it carries target,
- * retry class and the verification attempt snapshot) so it wins when it names a
- * reason — but only when it belongs to the escalation on screen. That lookup is by
- * ticket id and returns the ticket's NEWEST record, so a ticket that escalated, was
- * de-escalated and escalated again still has the closed run's record to hand. A record
- * written before the current escalation is therefore dropped before precedence is
- * applied, and what remains follows the original rule: the durable record when it names
- * a reason, otherwise the detail the escalating transition recorded — an escalation
- * raised outside a swarm run never produces a durable record, and a null durable lookup
- * must not erase the reason the transition did record. When dropping a stale record
- * leaves nothing, "no reason was recorded" is the honest answer; the old reason
- * presented as the current one is the dishonest one.
+ * @description Builds the escalation record the detail panel renders, from the two records
+ * the system keeps.
+ *
+ * ADR-163: the CANONICAL record is the `escalated` transition the ticket payload carries —
+ * every escalating path writes one, run or not. The durable `swarm_escalations` record is a
+ * run-scoped verification-attempt record: one writer, reached only from a swarm run, so it
+ * answers a strict subset of escalations. It therefore enriches rather than explains — it
+ * contributes what only a run knows (target, retry class, the attempt snapshot) while the
+ * transition supplies the reason, source, severity and next action.
+ *
+ * A run record still has to belong to the escalation on screen. That lookup is by ticket id and
+ * returns the ticket's NEWEST record, so a ticket that escalated, was de-escalated and escalated
+ * again still has the closed run's record to hand; one written before the current escalation is
+ * dropped before anything is merged. When the transition recorded no reason and no current run
+ * record survives, "no reason was recorded" is the honest answer; the old reason presented as the
+ * current one is the dishonest one.
  * @param {Record<string, unknown> | null | undefined} recordedDetail - Escalation detail from the ticket payload.
  * @param {Record<string, unknown> | null | undefined} durableRecord - Record from the durable escalation store.
  * @param {string | null | undefined} escalatedAt - When the ticket's current escalation was recorded.
@@ -282,13 +286,35 @@ export function selectEscalationDetail(recordedDetail, durableRecord, escalatedA
   const escalatedAtMs = readEscalationTimestamp(recordedDetail, escalatedAt);
   const currentDurable = precedesEscalation(durableRecord, escalatedAtMs) ? null : durableRecord;
 
+  if (readEscalationReason(recordedDetail)) {
+    return currentDurable ? overlayRecordedDetail(currentDurable, recordedDetail) : recordedDetail;
+  }
   if (readEscalationReason(currentDurable)) {
     return currentDurable;
   }
-  if (readEscalationReason(recordedDetail)) {
-    return recordedDetail;
-  }
   return currentDurable || recordedDetail || null;
+}
+
+/**
+ * @description Lays the canonical transition detail over a run record, field by field. Only fields
+ * the transition actually recorded are overlaid: the detail shape fills absent fields with '', and
+ * an empty string must not erase a value the run record does carry (its severity, for instance).
+ * Whatever the transition did not record — target, retry class, the attempt snapshot — survives
+ * from the run record, which is the only thing that knows them.
+ * @param {Record<string, unknown>} runRecord - The current run-scoped escalation record.
+ * @param {Record<string, unknown>} recordedDetail - Detail from the escalating status transition.
+ * @returns {Record<string, unknown>} The merged record the panel renders.
+ */
+function overlayRecordedDetail(runRecord, recordedDetail) {
+  const merged = { ...runRecord };
+
+  Object.entries(recordedDetail).forEach(([key, value]) => {
+    if (value === null || value === undefined) return;
+    if (typeof value === 'string' && !value.trim()) return;
+    merged[key] = value;
+  });
+
+  return merged;
 }
 
 /**
