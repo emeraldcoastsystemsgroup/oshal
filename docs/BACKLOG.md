@@ -1371,6 +1371,23 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### The SEC/CORE/APP hardening-track identifiers have no definition anywhere in the repo
 - **Remaining:** the overnight hardening campaign reported progress against a status matrix keyed `SEC-01…SEC-06`, `CORE-01…CORE-07`, `APP-01…APP-04`, but the scheme is undefined: no doc states what a track ID means, what closes one, or who owns it. Verified 2026-08-06 against `main` — only **five** of the seventeen (`SEC-01`, `SEC-05`, `SEC-06`, `CORE-05`, `APP-02`) appear anywhere in `docs/`, and each is *cited in passing* rather than defined; the other twelve appear in no file and in no commit in this repo's history. A status report keyed to identifiers nobody can resolve cannot be audited, and "SEC-03 Partial" is indistinguishable from a typo. Either define the scheme in one indexed doc — ID, scope, done-when, evidence location, owner — or retire it and let the campaign report against the BACKLOG entries and ADRs that already carry those criteria.
 - **Done when:** every track ID that appears in any status report resolves to one indexed definition with a done-when and an evidence pointer, and a gate fails on an ID cited in a report but absent from the index — or the scheme is removed and no surface references it. Do not back-fill definitions by inferring intent from a matrix cell; an invented definition is worse than an undefined one.
+- **Decision (operator, 2026-09-21): the scheme is FROZEN and this entry is closed — no index, no
+  gate, no removal.** What the identifiers are was measured before deciding, and it settles the
+  question the entry was really asking: they are **prose tags inside Change Log lines and code
+  comments**, and *nothing in the repository parses or enforces them*. Every hit under `scripts/`,
+  `.github/` and `tests/` is a sentence, not a mechanism — e.g.
+  `any-bot/server/app-modules/routes-agents-provisioning.js` header entry 2 reads "SEC-05 closure:
+  retire any-bot HTTP tool mutation so arbitrary outbound handlers cannot be registered…", and
+  `SEC-06` in `.github/workflows/security.yml` is that file's own Change Log line, not a job name.
+  The explanatory sentence around each ID is what carries the meaning; the ID itself resolves to
+  nothing. So there is nothing to index (an index would define labels no consumer reads) and nothing
+  worth removing (stripping them rewrites ~258 tracked files, including the user-facing app-store
+  audit text, to delete words from sentences that already explain themselves). Standing rules from
+  here: **no new track ID is ever minted**, existing mentions stay as historical text, and a status
+  report cites BACKLOG entries or ADRs — which carry a done-when — never a track ID. The six IDs
+  with no source anywhere (`SEC-02`, `CORE-02`, `CORE-03`, `CORE-04`, `APP-01`, `APP-03`) stay
+  undefined on purpose; the entry's own rule against inventing definitions is what keeps them that
+  way. (PM measured the mechanism and recommended the freeze; the operator chose it.)
 
 ### Web-control enforcement rollout
 - **Remaining:** promote the exact-byte Alertmanager parser/HMAC guard and corrected posture API; collect and classify the default report-only CSP stream, externalize or nonce remaining inline scripts, canary `OSHAL_STRICT_CSP=on`, tune/enable `OSHAL_RATE_LIMIT_INTERNAL` and `OSHAL_RATE_LIMIT_EXPENSIVE`, and provision a distinct `ALERT_WEBHOOK_HMAC_SECRET` on both receiver and sender.
