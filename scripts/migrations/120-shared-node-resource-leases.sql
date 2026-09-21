@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add one PostgreSQL-authoritative, token-bound lease shared by recap and video-pump render-node work, plus durable pump-run bindings for restart-safe renewal and release.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve the acquire function's ON CONFLICT target to the COLUMN. RETURNS TABLE makes resource_key a PL/pgSQL variable as well, and PostgreSQL resolves the plain conflict target as a column reference through that scope, so the first production call that ever reached it - the 2026-09-17 nightly recap, once its argument quoting was fixed - failed with 'column reference "resource_key" is ambiguous'. This file is applied history on every existing database; migration 150 carries the same correction to those.
  */
 
 -- =============================================================================
@@ -76,6 +77,11 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 AS $$
+-- Every RETURNS TABLE column above is also a PL/pgSQL variable inside this body, and the plain
+-- ON CONFLICT (resource_key) target below is resolved as a column reference through that scope.
+-- Prefer the column: the variables are only ever assigned by RETURN QUERY, never read by name.
+-- (Applied history: migration 150 carries this same correction to databases that already ran 120.)
+#variable_conflict use_column
 BEGIN
   IF p_ttl_seconds < 30 OR p_ttl_seconds > 43200 THEN
     RAISE EXCEPTION 'node resource lease TTL must be between 30 and 43200 seconds';

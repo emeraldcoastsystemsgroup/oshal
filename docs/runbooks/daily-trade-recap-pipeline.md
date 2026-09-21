@@ -64,6 +64,34 @@ escape at `scripts/run-daily-recap.ps1` (`ConvertTo-NativeJsonArgument`) to a ba
 re-run: two cases go red with the production symptom, `node-lease CLI failed (exit 1): Expected
 property name or '}' in JSON at position 1`.
 
+### If the run stops at `column reference "resource_key" is ambiguous`
+
+The second failure in the same line, and the one the 2026-09-17 and 2026-09-18 nightlies actually died
+of once their quoting was fixed — `run-<date>.log` holds:
+
+```
+FAILED: could not acquire the shared render-node lease: node-lease CLI returned no JSON (exit 1):
+{"level":"error","module":"oshal-node-lease","message":"column reference \"resource_key\" is ambiguous"}
+```
+
+That message is PostgreSQL's, raised inside `oshal_acquire_node_resource_lease`: the function's
+`RETURNS TABLE` names a `resource_key` column, PL/pgSQL scopes every such column as a variable over the
+body, and the plain `ON CONFLICT (resource_key)` target is resolved as a column reference through that
+scope. Migration 150 re-creates the function with `#variable_conflict use_column` (120 carries the same
+correction for a fresh install). It reaches an existing database the way every migration does — the api
+container applies unapplied files at boot under `RUN_MIGRATIONS=true` — so a deployment built before it
+keeps failing here until the api is redeployed. Which migrations the live database has applied is a
+question for `app_migrations` (`SELECT filename FROM app_migrations WHERE filename LIKE '150-%'`); the
+corrected function's behaviour is proven by
+
+```powershell
+npx vitest run tests/unit/node-resource-lease-acquire-postgres.spec.ts --no-file-parallelism --reporter=verbose
+```
+
+which drives the real lease CLI, argv for argv as the runner sends it, against a disposable PostgreSQL
+that ran 097, 120 and 150 as shipped. Removing the directive from both migrations turns its acquire case
+red with the production message.
+
 The manifests are local integrity and coherence records, not signatures. They close stale-file,
 partial-write, substitution-race, and cross-run mixing failures, but they do not authenticate bytes
 against an attacker who can rewrite both the artifact and its manifest. Keep the output directory
