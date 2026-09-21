@@ -1500,6 +1500,26 @@ including across a directory belonging to a different owner. Full reasoning and 
 ### Production Vault hardening
 - **Remaining:** replace the local dev root-token server with persistent storage, TLS, unseal/recovery operations, AppRole/OIDC, backup, and documented rotation.
 - **Done when:** a non-local deployment runs without a root token in application config, survives restart/unseal, and completes authenticated issue/use/revoke with audit evidence. See [ADR-040](adr/040-devops-vault-swarm.md).
+- **Decision (operator, 2026-09-21): HARDEN IN PLACE NOW, name the non-local target later; unseal is
+  SHAMIR with operator-held shares.** Build against this box, in this order: persistent storage
+  (raft or file, not in-memory), TLS, an **AppRole** login path — none exists today, `approle` and
+  `role_id` appear nowhere in `src`, `any-bot`, `scripts` or `deploy`, and
+  `src/features/devops-vault/services/vault-console-service.ts:78` reads a single `VAULT_TOKEN` —
+  and removal of the root token from application config **in both places it ships**:
+  `docker-compose.oshal-local.yml` (`command: ["server","-dev"]`, `VAULT_DEV_ROOT_TOKEN_ID`, and the
+  api's `VAULT_TOKEN` default) *and* the Helm chart, which today runs `server -dev`
+  (`deploy/helm/oshal/templates/vault.yaml`), sets `devRootToken` (`values.yaml`) and injects that
+  root token into the api pod (`templates/api.yaml`). Then the rotation, backup and unseal/recovery
+  runbook. **Unseal custody: Shamir, shares held by the operator**, not cloud-KMS auto-unseal — no
+  cloud account and no cloud credential in the api environment. The consequence is accepted and must
+  be written into the runbook rather than discovered: **after any restart the hardened Vault is
+  SEALED until the operator unseals it by hand**, so anything that comes to depend on it — the
+  Vault Transit KEK backend named in "Connector-token KEK and DEK-fallback hardening" — stays down
+  until then. The local development profile keeps an auto-unsealed Vault so a dev box is not
+  hostage to this. **Still open, deliberately:** the done-when's "a non-local deployment" clause —
+  the target host or cluster, its TLS certificate source and its backup destination are named later,
+  and this entry stays open on that clause only. (PM recommended exactly this split and this custody
+  model, including the availability trade; the operator chose both.)
 
 ### Vault cloud secrets engines
 - **Remaining:** configure one real AWS STS or Kubernetes secrets engine with operator-owned credentials and a least-privilege role.
