@@ -180,10 +180,12 @@ controller as `OSHAL_BOT_IMAGE` — **never caller-supplied**, because "create a
 agent" must not become "run an arbitrary container in my namespace".
 
 Validate the exact manifest the launcher would POST against your cluster's API
-(creates nothing):
+(creates nothing). `--require-server` exits non-zero unless the API server itself
+admitted it and exposes `deployments/scale`. Without that flag, no reachable cluster
+means a client-side check labelled NOT A PROOF that still exits 0:
 
 ```bash
-npx tsx scripts/validate-dynamic-bot-manifest.mjs --namespace oshal
+npx tsx scripts/validate-dynamic-bot-manifest.mjs --require-server --namespace oshal --context <ctx>
 ```
 
 ## Store packages

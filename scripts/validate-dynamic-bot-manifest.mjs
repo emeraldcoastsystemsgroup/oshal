@@ -5,10 +5,19 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial (ADR-129 amendment 2) — real-boundary check for the dynamic bot launcher. The unit spec asserts the manifest SHAPE, which is not closure for "the Kubernetes API accepts this": a mock cannot reject an invalid field, a bad probe, or a malformed selector. This renders the exact manifest the launcher POSTs and pushes it through `kubectl apply --dry-run` — server-side when a cluster is reachable (the API server itself validates and admits, creating nothing), client-side otherwise. Run it against any cluster; it never creates a resource.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Also asks the live API server whether the enable/disable toggle target exists: the cockpit toggle scales a bot Deployment through the scale SUBRESOURCE, and a unit spec that captures the outgoing request cannot prove that path is real or that it accepts PATCH. kubectl get --raw /apis/apps/v1 is the API server own discovery document, naming deployments/scale and the verbs it accepts, and it creates nothing.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | New --require-server mode, and the default mode's client-side result is labelled NOT A PROOF. This script is cited as the live-boundary closure for the k8s launcher (chart README, ADR-129, the real-boundary audit), yet with no reachable cluster it ran a client-side dry-run, printed a warning, skipped the deployments/scale discovery and EXITED 0 - a zero exit that proved nothing about any API server. Under --require-server an unreachable cluster (or a missing kubectl) exits 2 before any fallback, a dry-run whose output does not say "(server dry run)" for every object exits 1, and the discovery check can no longer be skipped. The default mode is kept for the offline shape check and has no automated caller; scripts/ci/check-cluster-gates.sh is the gate that runs --require-server, and tests/unit/validate-dynamic-bot-manifest-require-server.spec.ts holds both modes to this.
  *
- * Usage: npx tsx scripts/validate-dynamic-bot-manifest.mjs [--namespace oshal] [--context ctx]
+ * Usage: npx tsx scripts/validate-dynamic-bot-manifest.mjs [--require-server] [--namespace oshal] [--context ctx]
  *        (tsx, not bare node: the launcher uses parameter properties, which Node's
  *         native type-stripping rejects with ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX.)
+ *
+ *   --require-server  the only mode that is evidence. It refuses (exit 2) when no API server
+ *                     answers, fails (exit 1) unless the API server itself admitted every
+ *                     object and exposes deployments/scale with PATCH, and never falls back
+ *                     to a client-side dry-run.
+ *   (default)         with a reachable cluster, the same server-side checks. With none, a
+ *                     client-side dry-run labelled NOT A PROOF that still exits 0 - a shape
+ *                     check for a box with no cluster, never closure evidence.
  */
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -21,13 +30,23 @@ const flag = (name, fallback) => {
 };
 const namespace = flag('--namespace', 'oshal');
 const context = flag('--context', '');
+const requireServer = args.includes('--require-server');
 
 const { buildBotDeployment, buildBotService } = await import(
   pathToFileURL(path.resolve('src/features/agent-management/services/kubernetes-bot-launcher.ts')).href
 );
 
 const kubectl = (a, input) => spawnSync('kubectl', [...(context ? ['--context', context] : []), ...a], { input, encoding: 'utf8' });
-const reachable = kubectl(['cluster-info']).status === 0;
+const probe = kubectl(['cluster-info']);
+const reachable = probe.status === 0;
+if (requireServer && !reachable) {
+  const why = probe.error?.code === 'ENOENT'
+    ? 'kubectl is not on PATH'
+    : `kubectl cluster-info did not succeed: ${`${probe.stdout ?? ''}${probe.stderr ?? ''}`.trim() || probe.error?.message || 'no output'}`;
+  console.error(`FAILED (--require-server): no API server reachable${context ? ` at context "${context}"` : ''} - ${why}.`);
+  console.error('A client-side dry-run proves nothing about an API server, so this mode does not fall back to one.');
+  process.exit(2);
+}
 // A server dry-run is admitted INTO a namespace, so it needs one that exists.
 // Admission of this manifest is namespace-independent, so fall back to `default`
 // rather than creating a namespace just to validate.
@@ -60,15 +79,25 @@ if (res.status !== 0) {
   console.error('\nFAILED: the Kubernetes API rejected the manifest the launcher would POST.');
   process.exit(1);
 }
-if (mode === 'client') {
-  console.warn('\nWARNING: client-side only. Re-run against a cluster for real admission validation.');
+// kubectl marks every object a server-side dry-run admitted "(server dry run)". A zero exit whose
+// output lacks that mark for any object is not evidence that an API server saw it.
+const serverAdmitted = (out.match(/\(server dry run\)/g) ?? []).length;
+if (requireServer && serverAdmitted < manifests.length) {
+  console.error(`\nFAILED (--require-server): only ${serverAdmitted} of ${manifests.length} objects report "(server dry run)" - the API server did not admit them all.`);
+  process.exit(1);
 }
-console.log('\nOK: the dynamic bot manifest is accepted by kubectl apply --dry-run.');
+if (mode === 'client') {
+  console.warn('\nWARNING: client-side only - NOT A PROOF. No API server saw this manifest; re-run with --require-server against a cluster for admission evidence.');
+  console.log('\nOK (client-side shape check only): kubectl apply --dry-run=client accepted the dynamic bot manifest.');
+} else {
+  console.log('\nOK: the dynamic bot manifest is accepted by kubectl apply --dry-run=server.');
+}
 
 // The cockpit enable/disable toggle PATCHes
 // /apis/apps/v1/namespaces/<ns>/deployments/<name>/scale. Ask the API server's own
 // discovery document whether that subresource exists and accepts PATCH. Read-only —
-// discovery creates and modifies nothing.
+// discovery creates and modifies nothing. --require-server exited above when unreachable,
+// so in that mode this check always runs.
 if (reachable) {
   const discovery = kubectl(['get', '--raw', '/apis/apps/v1']);
   if (discovery.status !== 0) {
@@ -95,5 +124,5 @@ if (reachable) {
   }
   console.log(`OK: the API server exposes deployments/scale with verbs [${verbs.join(', ')}] — the enable/disable toggle PATCHes that path.`);
 } else {
-  console.warn('WARNING: no cluster reachable — deployments/scale was not confirmed against a real API server.');
+  console.warn('WARNING: no cluster reachable — deployments/scale was not confirmed against a real API server. NOT A PROOF.');
 }

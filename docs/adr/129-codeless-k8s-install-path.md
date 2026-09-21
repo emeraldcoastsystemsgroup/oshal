@@ -150,7 +150,11 @@ Proof beyond assertions: `scripts/validate-dynamic-bot-manifest.mjs` renders the
 exact manifest the launcher POSTs and pushes it through
 `kubectl apply --dry-run=server`, so the **real API server** admits it (creating
 nothing) rather than a mock agreeing with itself — the real-boundary rule. Run
-2026-08-13 against a live cluster: both objects admitted.
+2026-08-13 against a live cluster: both objects admitted. That is only true when an
+API server answers: with none, the script falls back to a client-side dry-run and
+exits 0. Since 2026-09-21 `--require-server` makes that case a failure, and it is the
+invocation `scripts/ci-local.sh --cluster-gates` runs (the fallback is labelled NOT A
+PROOF).
 
 The refactor also exposed a live defect in the *compose* path, caught by the
 existing create-and-start guard: rollback awaited `stopBot(...).catch()`, so a
