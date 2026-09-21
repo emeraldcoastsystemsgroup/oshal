@@ -1,0 +1,20 @@
+# A build in the open maker-reference library. Recorded, cited, never vendored.
+# Written by `node scripts/maker-reference.mjs add` — doc_id and reuse are derived, not typed.
+docId: web:github.com/therobotstudio/so-arm100
+title: SO-ARM100 / SO-101 printable arm
+whatItIs: >-
+  A printable six-degree-of-freedom leader and follower arm pair built on serial bus servos, used as
+  the low-cost standard arm for the LeRobot stack.
+mechanism: >-
+  Serial-bus-servo arm: motor to printed bracket to motor down the limb, with a leader arm
+  teleoperating a more heavily geared follower.
+actuators:
+  - Feetech STS3215 bus servos (1/345 gear ratio on the follower; 1/191 and 1/147 on the leader)
+controller: One Waveshare motor control board per arm over USB-C
+licence: Apache-2.0
+reuse: allowed
+sourceUrl: https://github.com/TheRobotStudio/SO-ARM100
+takeaway: >-
+  The arm family whose shape we took: bus servos with position readback daisy-chained down the limb,
+  and a gear ratio chosen per joint rather than one servo everywhere.
+addedOn: '2026-09-21'

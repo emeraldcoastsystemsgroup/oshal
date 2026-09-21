@@ -1,0 +1,25 @@
+# A build in the open maker-reference library. Recorded, cited, never vendored.
+# Written by `node scripts/maker-reference.mjs add` — doc_id and reuse are derived, not typed.
+docId: web:inmoov.fr/project
+title: InMoov life-size printed humanoid
+whatItIs: >-
+  The first open-source life-size 3D-printed humanoid: hands, forearms, arms, torso and head
+  published as printable parts with a build order.
+mechanism: >-
+  Tendon-driven printed hand and forearm - hobby servos pull braided line through guides to close
+  printed fingers, with the servo bank in the forearm.
+actuators:
+  - HK15298 and MG996R class hobby servos
+  - braided-line tendons
+controller: Arduino (Nano/Uno per limb) driven from MyRobotLab on a host computer
+licence: CC BY-NC (Attribution - Non-Commercial)
+reuse: not-to-copy
+sourceUrl: https://inmoov.fr/project/
+takeaway: >-
+  The tendon hand and the failure modes that come with it: line stretch, guide friction and servo
+  stall under a closed grip. Read it for the mechanism only - no geometry or code from it enters
+  this tree.
+addedOn: '2026-09-21'
+licenceNote: >-
+  Non-commercial: the printable parts are published under Attribution - Non-Commercial Creative
+  Commons, so nothing from this build may be reused in a commercial context.
