@@ -26,6 +26,7 @@
  *
  * @module connectors/runtime/action-executor
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | A declared action carries the connector's declared headers. spec.headers reached the read tier only, so a write went out without them - LinkedIn's UGC Posts endpoint requires X-Restli-Protocol-Version and the bespoke fetch that the store's publish path replaced was sending it.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The audit row gained `tier` and `credential_source` (migration 151 + the runtime DDL mirror) so the READ tier can share this append-only trail. A read is not a write and must not be displayed as one, and the read resolver may fall back to a shared operator env key - without the source recorded, a successful read did not prove the OWNING user's credential went out. Executed writes stamp 'broker' because resolveActionCreds refuses rather than borrowing a key.
  */
 
 import * as crypto from 'crypto';
@@ -68,7 +69,22 @@ export interface ConnectorActionAuditRow {
   status: ConnectorActionAuditStatus;
   httpStatus?: number;
   error?: string;
+  /** Which connector tier produced the attempt. Defaults to 'write' — this executor's own rows. */
+  tier?: ConnectorActionTier;
+  /**
+   * Which credential actually went out. Left unset on write-tier rows: resolveActionCreds refuses
+   * rather than borrowing a key, so a write is the caller's own by construction and the column
+   * would only restate the tier. The READ tier may legitimately fall back to a shared operator env
+   * key, and recording that is the only way a reader can tell whose credential a read used.
+   */
+  credentialSource?: string;
 }
+
+/**
+ * @description Which connector tier an audit row came from. Reads and writes share one append-only
+ * trail, and a read displayed as a write would misrepresent what was done on someone's behalf.
+ */
+export type ConnectorActionTier = 'read' | 'write';
 
 /** @description Minimal pg surface the audit recorder needs — trivially mockable in unit tests. */
 export interface ConnectorActionAuditPool {
@@ -87,10 +103,44 @@ const AUDIT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS connector_action_audit (
   status       TEXT NOT NULL,
   http_status  INTEGER,
   error        TEXT,
+  tier         TEXT NOT NULL DEFAULT 'write',
+  credential_source TEXT,
   ts           TIMESTAMPTZ NOT NULL DEFAULT now()
 )`;
 
+/**
+ * Migration 151 mirror for a box whose table predates the read tier. Attempted ONLY when the
+ * catalog says the column is missing: under ADR-076 the runtime role is deliberately not the
+ * table's owner, and an unconditional ALTER would raise `must be owner of table` on every first
+ * audit write — turning a fail-closed write tier into a 503 on a perfectly healthy box.
+ */
+const AUDIT_READ_TIER_COLUMNS: ReadonlyArray<{ column: string; ddl: string }> = [
+  { column: 'tier', ddl: `ALTER TABLE connector_action_audit ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'write'` },
+  { column: 'credential_source', ddl: 'ALTER TABLE connector_action_audit ADD COLUMN IF NOT EXISTS credential_source TEXT' },
+];
+
 const ensuredPools = new WeakSet<object>();
+
+/**
+ * @description Lazily ensure the audit table and its read-tier columns exist, once per pool. Each
+ * add-column is guarded by a catalog read so the steady state (migration already applied, runtime
+ * role not the owner) issues no DDL at all.
+ * @param pool pg pool (or mock) with a query method.
+ * @returns Nothing; a missing column that cannot be added surfaces on the INSERT instead.
+ */
+async function ensureAuditSchema(pool: ConnectorActionAuditPool): Promise<void> {
+  if (ensuredPools.has(pool)) return;
+  await pool.query(AUDIT_TABLE_DDL);
+  const present = await pool.query(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'connector_action_audit'`,
+  ) as { rows?: Array<{ column_name?: unknown }> } | undefined;
+  const columns = new Set((present?.rows ?? []).map((row) => String(row.column_name)));
+  for (const candidate of AUDIT_READ_TIER_COLUMNS) {
+    if (!columns.has(candidate.column)) await pool.query(candidate.ddl);
+  }
+  ensuredPools.add(pool);
+}
 
 /**
  * @description Computes the sha256 hex digest of the canonical (key-sorted) JSON encoding of the
@@ -123,14 +173,12 @@ function stableStringify(value: unknown): string {
  */
 export async function recordConnectorActionAudit(pool: ConnectorActionAuditPool, row: ConnectorActionAuditRow): Promise<boolean> {
   try {
-    if (!ensuredPools.has(pool)) {
-      await pool.query(AUDIT_TABLE_DDL);
-      ensuredPools.add(pool);
-    }
+    await ensureAuditSchema(pool);
     await pool.query(
-      `INSERT INTO connector_action_audit (user_sub, connector_id, action, params_hash, risk_level, status, http_status, error)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [row.userSub, row.connectorId, row.action, row.paramsHash, row.riskLevel ?? null, row.status, row.httpStatus ?? null, row.error ?? null],
+      `INSERT INTO connector_action_audit (user_sub, connector_id, action, params_hash, risk_level, status, http_status, error, tier, credential_source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [row.userSub, row.connectorId, row.action, row.paramsHash, row.riskLevel ?? null, row.status, row.httpStatus ?? null, row.error ?? null,
+        row.tier ?? 'write', row.credentialSource ?? null],
     );
     return true;
   } catch (err) {

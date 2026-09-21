@@ -1,3 +1,22 @@
+/**
+ * Connector spec tool registration + READ-TIER credential resolution.
+ *
+ * The read tier keeps the declarative auth contract: an oauth2 spec uses the caller's brokered
+ * bearer token, an API-key spec may use its configured operator-key fallback, and basic auth uses
+ * its configured user/password source. That fallback is deliberate — a catalog connector like tmdb
+ * is usable without every user holding a personal key — but it means a successful read does NOT by
+ * itself prove the OWNING user's credential went out. {@link resolveConnectorSpecCredsWithSource}
+ * reports which one did, so the read audit trail can say so instead of implying it.
+ *
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | First recorded entry (the file predates this block). Read-tier credential resolution now reports its PROVENANCE: resolveConnectorSpecCredsWithSource returns the BuildSpecOptions together with a ConnectorCredentialSource ('broker' | 'operator-env' | 'unauthenticated' | 'absent'), and resolveConnectorSpecCreds keeps its exact previous signature and behaviour as a thin wrapper. Nothing about which credential is chosen changed - only that the choice is now observable, which is what lets the spec-route read write an honest audit row.
+ *
+ * @module connectors/runtime/spec-tools
+ */
+
 import { existsSync } from 'fs';
 import path from 'path';
 import type { Pool } from 'pg';
@@ -239,31 +258,96 @@ export class ConnectorSpecToolService {
   }
 }
 
+/**
+ * @description Which credential a read-tier resolution actually produced. `broker` is the caller's
+ * own stored connection; `operator-env` is a SHARED deployment key that belongs to nobody in
+ * particular; `unauthenticated` is a spec that declares `auth: none`; `absent` is a required
+ * credential that could not be found at all (the call will go out unauthenticated and fail).
+ */
+export type ConnectorCredentialSource = 'broker' | 'operator-env' | 'unauthenticated' | 'absent';
+
+/** @description Read-tier credentials plus the provenance of whatever was chosen. */
+export interface ResolvedConnectorSpecCreds {
+  /** Exactly what {@link resolveConnectorSpecCreds} has always returned. */
+  options: BuildSpecOptions;
+  /** Which credential the options carry — recorded on the read audit row, never the value itself. */
+  credentialSource: ConnectorCredentialSource;
+}
+
+/**
+ * @description Resolve read-tier credentials for one caller AND report which credential was used.
+ * The selection order is unchanged (caller's brokered credential first, configured operator key
+ * second); the source is what makes a read auditable — without it, an `operator-env` read is
+ * indistinguishable from a read made under the owning user's own grant.
+ * @param spec The parsed connector spec whose auth shape decides the credential kind.
+ * @param pool Database pool the token broker reads the caller's connection from.
+ * @param userSub The authenticated caller's OIDC sub; undefined skips the broker entirely.
+ * @param getAccessToken Broker resolver; defaults to the real per-user token broker.
+ * @returns The build options for the connector client plus the resolved credential source.
+ */
+export async function resolveConnectorSpecCredsWithSource(
+  spec: ConnectorSpec,
+  pool: unknown,
+  userSub: string | undefined,
+  getAccessToken: AccessTokenResolver = getValidAccessToken,
+): Promise<ResolvedConnectorSpecCreds> {
+  const credProvider = spec.credProvider || spec.provider;
+  const brokerToken = userSub ? await getAccessToken(pool, userSub, credProvider) : null;
+  const envToken = envKey(spec.provider, 'TOKEN') || envKey(spec.provider, 'KEY');
+  switch (spec.auth.type) {
+    case 'oauth2':
+      return {
+        options: { token: async () => brokerToken || envToken || null },
+        credentialSource: credentialSourceOf(brokerToken, envToken),
+      };
+    case 'apiKeyHeader':
+    case 'apiKeyQuery': {
+      const fallback = envToken || (spec.provider === 'tmdb' ? process.env.TMDB_API_KEY || '' : '');
+      return {
+        options: { apiKeyValue: brokerToken || fallback },
+        credentialSource: credentialSourceOf(brokerToken, fallback),
+      };
+    }
+    case 'basic': {
+      const colon = brokerToken ? brokerToken.indexOf(':') : -1;
+      if (colon > 0) {
+        return {
+          options: { username: brokerToken!.slice(0, colon), password: brokerToken!.slice(colon + 1) },
+          credentialSource: 'broker',
+        };
+      }
+      const username = envKey(spec.provider, 'USER');
+      const password = envKey(spec.provider, 'PASS');
+      return { options: { username, password }, credentialSource: credentialSourceOf(null, username || password) };
+    }
+    default:
+      return { options: {}, credentialSource: 'unauthenticated' };
+  }
+}
+
+/** Broker credential wins; a configured deployment key is named as the shared thing it is. */
+function credentialSourceOf(brokerToken: string | null, envValue: string): ConnectorCredentialSource {
+  if (brokerToken) return 'broker';
+  return envValue ? 'operator-env' : 'absent';
+}
+
+/**
+ * @description Resolve read-tier credentials for one caller. Unchanged signature and behaviour —
+ * the provenance-reporting {@link resolveConnectorSpecCredsWithSource} is the same resolution with
+ * its choice made visible.
+ * @param spec The parsed connector spec whose auth shape decides the credential kind.
+ * @param pool Database pool the token broker reads the caller's connection from.
+ * @param userSub The authenticated caller's OIDC sub; undefined skips the broker entirely.
+ * @param getAccessToken Broker resolver; defaults to the real per-user token broker.
+ * @returns The build options for the connector client.
+ */
 export async function resolveConnectorSpecCreds(
   spec: ConnectorSpec,
   pool: unknown,
   userSub: string | undefined,
   getAccessToken: AccessTokenResolver = getValidAccessToken,
 ): Promise<BuildSpecOptions> {
-  const credProvider = spec.credProvider || spec.provider;
-  const brokerToken = userSub ? await getAccessToken(pool, userSub, credProvider) : null;
-  const envToken = envKey(spec.provider, 'TOKEN') || envKey(spec.provider, 'KEY');
-  switch (spec.auth.type) {
-    case 'oauth2':
-      return { token: async () => brokerToken || envToken || null };
-    case 'apiKeyHeader':
-    case 'apiKeyQuery':
-      return { apiKeyValue: brokerToken || envToken || (spec.provider === 'tmdb' ? process.env.TMDB_API_KEY || '' : '') };
-    case 'basic': {
-      const colon = brokerToken ? brokerToken.indexOf(':') : -1;
-      if (colon > 0) {
-        return { username: brokerToken!.slice(0, colon), password: brokerToken!.slice(colon + 1) };
-      }
-      return { username: envKey(spec.provider, 'USER'), password: envKey(spec.provider, 'PASS') };
-    }
-    default:
-      return {};
-  }
+  return (await resolveConnectorSpecCredsWithSource(spec, pool, userSub, getAccessToken)).options;
 }
 
 /**
