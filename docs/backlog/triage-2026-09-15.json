@@ -3,12 +3,13 @@
  "source": "docs/BACKLOG.md",
  "method": "read-only investigation; done/stale closed only if two independent refuting verifiers both confirmed",
  "tally": {
-  "actionable": 137,
-  "operator": 75,
+  "actionable": 140,
+  "operator": 71,
   "blocked": 11,
   "live-proof": 46,
   "done": 1,
-  "needs-review": 14
+  "needs-review": 14,
+  "operator-parked": 1
  },
  "entries": [
   {
@@ -70,7 +71,7 @@
   {
    "title": "ADR-134 PR4 hardening tail — schema half DEFERRED (operator decision 2026-09-07)",
    "section": "Promotion, deployment, and regression proof",
-   "final": "operator",
+   "final": "actionable",
    "verdict": "operator",
    "why": "The entry is deliberately deferred. Its own done-when starts with 'the operator asks for it', or a book-less row appears, or a third live book is about to be enabled; none has been recorded. The account-pin half is already met: SCHWAB_ACCOUNT_NUMBER survives only in comments, CHANGE LOG entries and the guard spec. The schema half has not been started, and the legacy fill triggers are still live.",
    "evidence": "docs/BACKLOG.md:54 records the decision 'it was deliberately NOT taken'. docs/BACKLOG.md:59 done-when starts 'the operator asks for it'. git grep SCHWAB_ACCOUNT_NUMBER outside *.md hits only comments and CHANGE LOG entries: scripts/trading-books-cutover.sh:8,11,103, src/app/trading-accounts-store.ts:18,195, src/features/trading/services/schwab-broker-adapter.ts:28,34, plus the guard tests/unit/trading-schwab-account-binding.spec.ts:215-230. The fill trigger is still present at scripts/migrations/124-trading-books.sql:82 and src/app/trading-books-store.ts:122, so NOT NULL has not been applied.",
@@ -79,7 +80,8 @@
    "repo": "core",
    "blockedBy": null,
    "operatorAsk": "Should the ADR-134 schema hardening (book_id NOT NULL on orders/signals/decisions, dropping the legacy per-mode indexes and three fill triggers, the config CHECK and the deploy rollback floor) be taken now, even though it is roll-forward-only on the live money ledger? The other options are to keep it deferred, or to approve the cheaper books-aware watchdog detector for book-less rows instead.",
-   "verifyReasons": null
+   "verifyReasons": null,
+   "decision": "APPROVED, sequenced before any additional live book is armed; LOW priority, end of the list (operator, 2026-09-20)"
   },
   {
    "title": "Native background wake: the microphone-release invariants are unproven",
@@ -224,7 +226,7 @@
   {
    "title": "Codeless k8s install — first live-cluster proof (ADR-129)",
    "section": "Promotion, deployment, and regression proof",
-   "final": "operator",
+   "final": "operator-parked",
    "verdict": "operator",
    "why": "The installer's k8s path and the chart publish script both exist. Closing this needs a real second machine, since the dev laptop is excluded on purpose, and a GHCR token with write:packages. It also needs a one-time manual visibility flip of the GHCR package to public in the GitHub UI, and only an org admin can do that.",
    "evidence": "scripts/oshal-install.sh change log 7 (ADR-129 mode 4, the real codeless k8s install) and flags at lines 31-34. scripts/oshal-install.ps1:18-19 and 96 (-Kubernetes). scripts/publish-chart.sh:13-14 and 46-47 read GITHUB_ADMIN_TOKEN/GHCR_TOKEN (write:packages) from the operator-local .env. publish-chart.sh:7 says 'GHCR packages start PRIVATE — the installer's OCI-first path stays on repo fallback until the package is flipped public'.",
@@ -233,7 +235,8 @@
    "repo": "core",
    "blockedBy": null,
    "operatorAsk": "(1) Provide a fresh second machine, not the dev laptop, with kubectl, helm and a reachable cluster, and run `oshal-install.sh --mode 4` (or `oshal-install.ps1 -Kubernetes`) through to /welcome, a model connection and a jarvis turn. (2) Run `bash scripts/publish-chart.sh` with a GHCR token that has write:packages. (3) Flip ghcr.io/emeraldcoastsystemsgroup/charts/oshal to public in the GitHub UI so `helm show chart oci://ghcr.io/emeraldcoastsystemsgroup/charts/oshal` works anonymously.",
-   "verifyReasons": null
+   "verifyReasons": null,
+   "decision": "PARKED, end of the list; the two one-time GHCR steps whenever convenient (operator, 2026-09-20)"
   },
   {
    "title": "k8s shared-service tier — live proof of the features it restores (ADR-129 amendment)",
@@ -280,7 +283,7 @@
   {
    "title": "Rides map and fare follow-ups",
    "section": "Promotion, deployment, and regression proof",
-   "final": "operator",
+   "final": "actionable",
    "verdict": "operator",
    "why": "The done-when depends on operator decisions (keyless routing basis, Google Maps billing and key restriction) and on installing the package on the box. Some code is also still missing: the geocode cache lives only in memory, the geocoder endpoint is hardcoded, and OSHAL_ROUTING_URL does not exist.",
    "evidence": "Store rides/oshal-app.yaml is version 1.3.0. rides/src-routes/rides-routes.ts:239-241 serves vendored Leaflet from /vendor and :256 reports `provider: googleMapsBrowserKey ? 'google-maps' : 'osm'`, so the code side of the osm check is there. Core scripts/oshal-uber-rides.js:257 has `const geoCache = new Map()` (in memory only, so every restart geocodes again), :290 hardcodes the nominatim.openstreetmap.org URL, and :153 sets ROAD_FACTOR = 1.3 (straight line times a factor). Grepping both repos for OSHAL_ROUTING_URL, OSRM or Valhalla returns nothing. Tile URL is already configurable via OSHAL_MAP_TILE_URL (rides-routes.ts:262). My memory notes (rides-map-and-fake-fare.md) say the installed package was still 1.0.0, not deployed.",
@@ -289,7 +292,8 @@
    "repo": "both",
    "blockedBy": null,
    "operatorAsk": "Decide three things: (1) accept straight-line × 1.3 road factor as keyless routing, or provide an OSRM/Valhalla endpoint for OSHAL_ROUTING_URL; (2) Google Maps: OSM only with no key, or a billing-enabled browser key restricted to your referrer; (3) approve installing rides 1.3.0 on the box. The code work (a durable geocode cache and a configurable geocoder) follows from these.",
-   "verifyReasons": null
+   "verifyReasons": null,
+   "decision": "straight-line x 1.3 accepted (labelled) + OSHAL_ROUTING_URL as optional override to build; OSM only; install rides 1.3.0 after the 2026-09-20 deploy (operator, 2026-09-20)"
   },
   {
    "title": "Guest Jarvis turn and public demo card",
@@ -322,7 +326,7 @@
   {
    "title": "Strategy Studio and Bot Forge conversational parity — Studio half PROVEN 2026-09-06",
    "section": "Promotion, deployment, and regression proof",
-   "final": "operator",
+   "final": "actionable",
    "verdict": "operator",
    "why": "The Studio half is proven. The only remaining item is conditional ('only if that follow-up is commissioned'), so whether to commission Bot Forge edit-in-place is the operator's call. No edit-in-place code exists.",
    "evidence": "docs/apps/trading/studio-parity-proof.md records the 2026-09-06 run: 'Status: complete — every step passed', the library went 84 → 85 → 84 rows, and the paper book reverted. Bot Forge is core swarm-apps/codex-packer.yaml plus ai-lab/bot-personas/codex-packer.yaml. Grepping src, ai-lab and swarm-apps for edit-in-place, re-emit or existing-pack in Forge context finds nothing.",
@@ -331,7 +335,8 @@
    "repo": "core",
    "blockedBy": null,
    "operatorAsk": "Do you want Bot Forge edit-in-place for existing packs (re-emit the same pack, not a duplicate)? If not, close the entry as Studio-proven per docs/apps/trading/studio-parity-proof.md.",
-   "verifyReasons": null
+   "verifyReasons": null,
+   "decision": "ALREADY DECIDED 2026-09-15 (entry carries 'Commissioned: build Bot Forge edit-in-place'); not re-asked (operator, 2026-09-20)"
   },
   {
    "title": "Nightly tasks still launched from the ADR-115 archive",
